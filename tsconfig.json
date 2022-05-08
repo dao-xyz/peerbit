@@ -1,0 +1,35 @@
+{
+    "include": [
+        "packages/*/src"
+    ],
+    "exclude": [
+        "node_modules",
+        "packages/*/node_modules"
+    ],
+    "compilerOptions": {
+        "target": "es2019",
+        "module": "esnext",
+        "noEmit": true,
+        "declaration": true,
+        "sourceMap": true,
+        "noEmitOnError": true,
+        "stripInternal": true,
+        "moduleResolution": "node",
+        "jsx": "react",
+        "esModuleInterop": true,
+        "resolveJsonModule": true,
+        "isolatedModules": true,
+        "emitDecoratorMetadata": true,
+        "experimentalDecorators": true,
+        "typeRoots": [
+            "node_modules/@types"
+        ],
+        "skipLibCheck": true,
+    },
+    "typedocOptions": {
+        "entryPoints": ".",
+        "entryPointStrategy": "packages",
+        "out": "docs",
+        "readme": "README.md"
+    }
+}

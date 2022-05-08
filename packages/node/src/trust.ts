@@ -1,0 +1,1 @@
+export type TrustResolver = (address: string) => string[] 
