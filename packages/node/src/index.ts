@@ -1,15 +1,9 @@
 
 import OrbitDB from 'orbit-db';
-import DocumentStore from 'orbit-db-docstore';
-import FeedStore from 'orbit-db-feedstore';
 import { Identity } from 'orbit-db-identity-provider';
-import KeyValueStore from 'orbit-db-kvstore';
-import Store from 'orbit-db-store';
 import { TrustResolver } from './trust';
-import io from 'orbit-db-io';
 import { CONTRACT_ACCESS_CONTROLLER } from './acl';
-import CounterStore from 'orbit-db-counterstore';
-import { Peer, ReplicationRequest, Shard } from './shard';
+import { Peer, ReplicationRequest, Shard, ShardChain } from './shard';
 import * as IPFS from 'ipfs';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import { deserialize, serialize } from '@dao-xyz/borsh';
@@ -50,7 +44,7 @@ interface IPFSInstanceExtended extends IPFSInstance {
 
 
 
-export class ShardedDB<T> {
+export class ShardedDB {
   public node: IPFSInstanceExtended = undefined;
   public orbitDB: OrbitDB = undefined;
   public defaultOptions: ICreateOptions = undefined;
@@ -62,6 +56,7 @@ export class ShardedDB<T> {
 
 
   public replicationCapacity: number | undefined = undefined
+
 
   constructor() {
     this.IPFS = IPFS;
@@ -207,11 +202,14 @@ export class ShardedDB<T> {
     if (this["onready"]) (this as any).onready();
   }
 
-  async loadShard(name: string, index: BN): Promise<Shard<T>> {
-    const shard = new Shard<T>({ shardName: name, index, defaultOptions: this.defaultOptions })
-    await shard.loadPeers(this.orbitDB);
-    await shard.loadBlocks(this.orbitDB);
-    return shard;
+  getShardChain<B>(shardChainName: string): ShardChain<B> {
+
+    let chain = new ShardChain<B>({
+      shardChainName: shardChainName,
+      defaultOptions: this.defaultOptions,
+      db: this
+    });
+    return chain;
   }
 
   async subscribeForReplication(topic: string, capacity: number): Promise<void> {
@@ -219,9 +217,15 @@ export class ShardedDB<T> {
     await this.node.pubsub.subscribe(topic, async (msg: any) => {
       try {
         let request = deserialize(msg.data, ReplicationRequest);
+        let chain = new ShardChain<any>({
+          shardChainName: request.shard,
+          defaultOptions: this.defaultOptions,
+          db: this
+        });
+
         let shardToReplicate = new Shard({
           index: request.index,
-          shardName: request.shard,
+          chain,
           defaultOptions: this.defaultOptions
 
         });
@@ -234,58 +238,9 @@ export class ShardedDB<T> {
     }) // this.handleMessageReceived.bind(this)
   }
 
-  async addPeerToShards(name: string, startIndex: number, peersLimit: number, supportAmountOfShards: number): Promise<Shard<any>[]> {
-    let index = startIndex;
-    let supportedShards = 0;
-    let shards: Shard<any>[] = [];
-    while (supportedShards < supportAmountOfShards) {
-
-      const shard = new Shard({ shardName: name, index: new BN(index), defaultOptions: this.defaultOptions })
-      await shard.loadPeers(this.orbitDB);
-      let peersCount = Object.keys(shard.peers.all).length;
-      if (peersCount == 0 && startIndex != index) {
-        return shards; // dont create a new shard (yet)
-      }
-
-      if (Object.keys(shard.peers.all).length < peersLimit) {
-
-        // Replicate (i.e. support)
-        // const peerInfo = await this.node.id();
-        await shard.replicate(this);
-        supportedShards += 1;
-        shards.push(shard);
-
-      }
-
-      console.log('set shard peers: ', shard.peers.id, shard.peers.all)
 
 
-      index += 1;
-    }
-    return shards;
-  }
 
-  async getWritableShard(): Promise<Shard<T> | undefined> {
-    // Get the latest shard that have non empty peer
-    let index = 0;
-    let lastShard = undefined;
-    while (true) {
-      const shard = new Shard({ shardName: 'root', index: new BN(index), defaultOptions: this.defaultOptions })
-      await shard.loadPeers(this.orbitDB);
-      console.log('load shard peers: ', shard.peers.id, shard.peers.all)
-      if (Object.keys(shard.peers.all).length > 0) {
-        lastShard = shard;
-      }
-      else {
-        if (index == 0) {
-          let newShard = await Shard.requestReplicatedShard(shard, this);
-          return newShard;
-        }
-        return lastShard;
-      }
-      index += 1;
-    }
-  }
 
   async disconnect(): Promise<void> {
     await this.orbitDB.disconnect();

@@ -45,13 +45,108 @@ export class ReplicationRequest {
 
 export const SHARD_INDEX = 0;
 const MAX_SHARD_SIZE = 1024 * 500 * 1000;
-const MAX_SHARDING_WAIT_TIME = 60 * 1000;
+const MAX_SHARDING_WAIT_TIME = 30 * 1000;
+
+export class ShardChain<B> {
+    shardChainName: string;
+    defaultOptions: IStoreOptions;
+    db: ShardedDB
+
+    shardCounter: CounterStore | undefined = undefined;
+    constructor(opts?: {
+        shardChainName: string;
+        defaultOptions: IStoreOptions;
+        db: ShardedDB
+    }) {
+        if (opts) {
+            this.shardChainName = opts.shardChainName;
+            this.defaultOptions = opts.defaultOptions;
+            this.db = opts.db;
+        }
+    }
+
+    async getShardCounter(): Promise<CounterStore> {
+        if (this.shardCounter) {
+            return this.shardCounter;
+        }
+        this.shardCounter = await this.db.orbitDB.counter(this.shardChainName, this.defaultOptions);
+        await this.shardCounter.load();
+        return this.shardCounter;
+    }
+
+    async getWritableShard(): Promise<Shard<B> | undefined> {
+        // Get the latest shard that have non empty peer
+        let index = 0;
+        let lastShard = undefined;
+        while (true) {
+            const shard = new Shard({ chain: this, index: new BN(index), defaultOptions: this.defaultOptions })
+            await shard.loadPeers(this.db.orbitDB);
+            console.log('load shard peers: ', shard.peers.id, shard.peers.all)
+            if (Object.keys(shard.peers.all).length > 0) {
+                lastShard = shard;
+            }
+            else {
+                if (index == 0) {
+                    await shard.requestReplicatedShard(this.db);
+                    return shard;
+                }
+                return lastShard;
+            }
+            index += 1;
+        }
+    }
+    async loadShard(index: BN): Promise<Shard<B>> {
+
+
+        const shard = new Shard<B>({ chain: this, index, defaultOptions: this.defaultOptions })
+        await shard.loadPeers(this.db.orbitDB);
+        await shard.loadBlocks(this.db.orbitDB);
+        return shard;
+    }
+
+
+
+    async addPeerToShards(startIndex: number, peersLimit: number, supportAmountOfShards: number): Promise<Shard<any>[]> {
+        let index = startIndex;
+        let supportedShards = 0;
+        let shards: Shard<any>[] = [];
+        while (supportedShards < supportAmountOfShards) {
+
+            const shard = new Shard({ chain: this, index: new BN(index), defaultOptions: this.defaultOptions })
+            await shard.loadPeers(this.db.orbitDB);
+            let peersCount = Object.keys(shard.peers.all).length;
+            if (peersCount == 0 && startIndex != index) {
+                return shards; // dont create a new shard (yet)
+            }
+
+            if (Object.keys(shard.peers.all).length < peersLimit) {
+
+                // Replicate (i.e. support)
+                // const peerInfo = await this.node.id();
+                await shard.replicate(this.db);
+                supportedShards += 1;
+                shards.push(shard);
+
+            }
+
+            console.log('set shard peers: ', shard.peers.id, shard.peers.all)
+
+
+            index += 1;
+        }
+        return shards;
+    }
+
+
+
+
+}
+
 export class Shard<B> {
 
-    shardName: string;
+    chain: ShardChain<B>;
     index: BN;
     maxShardSize: number;
-    defaultOptions: IStoreOptions;
 
     /*     peersDBName: string;
     
@@ -65,22 +160,18 @@ export class Shard<B> {
 
     children: FeedStore<Shard<B>> | undefined
 
-    constructor(from: { shardName: string, index: BN, maxShardSize?: number, defaultOptions: IStoreOptions } = { index: new BN(0), shardName: 'root', maxShardSize: MAX_SHARD_SIZE, defaultOptions: {} }) {
-        if (from) {
-            this.shardName = from.shardName;
-            this.index = new BN(from.index);
-            this.maxShardSize = typeof from.maxShardSize === 'number' ? from.maxShardSize : MAX_SHARD_SIZE;
-            this.defaultOptions = from.defaultOptions;
-            //this.childrenShardsDBName = this.getDBName('children');
-        }
+    constructor(from: { chain: ShardChain<B>, index: BN, maxShardSize?: number, defaultOptions: IStoreOptions }) {
+        this.chain = from.chain;
+        this.index = new BN(from.index);
+        this.maxShardSize = typeof from.maxShardSize === 'number' ? from.maxShardSize : MAX_SHARD_SIZE;
     }
 
     getDBName(name: string) {
-        return this.shardName + "-" + name + "-" + this.index.toNumber()
+        return this.chain.shardChainName + "-" + name + "-" + this.index.toNumber()
     }
 
     async loadPeers(db: OrbitDB) {
-        this.peers = await db.keyvalue(this.getDBName('peers'), this.defaultOptions);
+        this.peers = await db.keyvalue(this.getDBName('peers'), this.chain.defaultOptions);
 
         this.peers.events.on('replicated', () => {
 
@@ -91,11 +182,11 @@ export class Shard<B> {
     }
 
     async loadBlocks(db: OrbitDB) {
-        this.blocks = await db.feed(this.getDBName('blocks'), this.defaultOptions);
+        this.blocks = await db.feed(this.getDBName('blocks'), this.chain.defaultOptions);
         await this.blocks.load();
     }
 
-    async addBlock(block: B, sizeBytes: number, db: ShardedDB<any>, requestSharding: boolean = true): Promise<string> {
+    async addBlock(block: B, sizeBytes: number, db: ShardedDB): Promise<string> {
 
         if (sizeBytes > MAX_SHARD_SIZE) {
             throw new Error("Block too large");
@@ -118,14 +209,15 @@ export class Shard<B> {
             if (!db.shardingTopic) {
                 throw new Error("No sharding topic");
             }
-            if (requestSharding) {
-                await Shard.requestReplicatedShard(new Shard({
-                    index: this.index.addn(1),
-                    shardName: this.shardName,
-                    defaultOptions: this.defaultOptions
-                }), db);
-                await this.addBlock(block, sizeBytes, db, requestSharding);
-            }
+            throw new Error("Please perform sharding for chain: " + this.chain.shardChainName)
+            /*  if (requestSharding) {
+                 await Shard.requestReplicatedShard(new Shard({
+                     index: this.index.addn(1),
+                     shardChainName: this.chain.shardChainName,
+                     defaultOptions: this.chain.defaultOptions
+                 }), db);
+                 await this.addBlock(block, sizeBytes, db, requestSharding);
+             } */
         }
 
         await this.memoryAdded.inc(sizeBytes);
@@ -133,24 +225,32 @@ export class Shard<B> {
         return added;
     }
 
-    static async requestReplicatedShard(shard: Shard<any>, db: ShardedDB<any>): Promise<Shard<any> | undefined> {
-        if (Object.keys(shard.peers.all).length == 0) {
+    async requestReplicatedShard(db: ShardedDB): Promise<void> {
+        let shardCounter = await this.chain.getShardCounter();
+        if (shardCounter.value < this.index.toNumber()) {
+            throw new Error(`Expecting shard counter to be less than the new index ${shardCounter} !< ${this.index}`)
+        }
+
+        if (Object.keys(this.peers.all).length == 0) {
             await db.node.pubsub.publish(db.shardingTopic, serialize(new ReplicationRequest({
-                index: shard.index,
-                shard: shard.shardName
+                index: this.index,
+                shard: this.chain.shardChainName
             })));
         }
-        let startTime = new Date().getTime();
 
-        while (Object.keys(shard.peers.all).length == 0 && new Date().getTime() - startTime < MAX_SHARDING_WAIT_TIME) {
+        let startTime = new Date().getTime();
+        while (Object.keys(this.peers.all).length == 0 && new Date().getTime() - startTime < MAX_SHARDING_WAIT_TIME) {
+            console.log('Waiting for sharding ...')
             await delay(1000);
         }
 
-        if (Object.keys(shard.peers.all).length == 0) {
+        if (Object.keys(this.peers.all).length == 0) {
             throw new Error("Fail to perform sharding");
         }
-        return shard;
+
     }
+
+
 
     async removeBlock(hash: string, ipfs: IPFSInstance): Promise<void> {
         let rem = await this.blocks.remove(hash)
@@ -164,11 +264,17 @@ export class Shard<B> {
     }
 
     async loadMemorySize(db: OrbitDB) {
-        this.memoryAdded = await db.counter(this.getDBName('memory_added'), this.defaultOptions);
-        this.memoryRemoved = await db.counter(this.getDBName('memory_removed'), this.defaultOptions);
+        this.memoryAdded = await db.counter(this.getDBName('memory_added'), this.chain.defaultOptions);
+        this.memoryRemoved = await db.counter(this.getDBName('memory_removed'), this.chain.defaultOptions);
     }
 
-    async replicate(db: ShardedDB<any>) {
+    async replicate(db: ShardedDB) {
+        /// Shard counter might be wrong because someone else could request sharding at the same time
+        let shardCounter = await this.chain.getShardCounter();
+        if (shardCounter.value <= this.index.toNumber()) {
+            await shardCounter.inc(1);
+        }
+
         let id = (await db.node.id()).id;
         if (!this.peers) {
             await this.loadPeers(db.orbitDB);

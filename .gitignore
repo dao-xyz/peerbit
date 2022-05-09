@@ -1,5 +1,7 @@
 node_modules
 ipfs
 orbitdb
+orbit-db
+orbit-db-stores
 ipfs
 ipfs-*
