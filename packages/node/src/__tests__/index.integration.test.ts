@@ -26,7 +26,8 @@ describe('node', () => {
       const blobby = new ShardedDB();
       await blobby.create({
         local: false,
-        repo: root
+        repo: root,
+        behaviours: undefined
       });
       return blobby;
     }))

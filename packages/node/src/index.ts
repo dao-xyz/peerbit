@@ -3,12 +3,15 @@ import OrbitDB from 'orbit-db';
 import { Identity } from 'orbit-db-identity-provider';
 import { TrustResolver } from './trust';
 import { CONTRACT_ACCESS_CONTROLLER } from './acl';
-import { Peer, ReplicationRequest, Shard, ShardChain } from './shard';
+import { ReplicationRequest, Shard, ShardChain, SHARD_NAME_FIELD, SHARD_STORE_OBJECT_TYPE_FIELD, SHARD_STORE_TYPE_FIELD, StoreBuilder, TypedBehaviours } from './shard';
 import * as IPFS from 'ipfs';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
-import { deserialize, serialize } from '@dao-xyz/borsh';
+import { Constructor, deserialize, serialize } from '@dao-xyz/borsh';
 import BN from 'bn.js'
-
+import Store from 'orbit-db-store';
+import FeedStore from 'orbit-db-feedstore';
+import DocumentStore from 'orbit-db-docstore';
+import { BinaryDocumentStore, BINARY_DOCUMENT_STORE_TYPE } from '@dao-xyz/orbit-db-bdocstore';
 /* const Libp2p = require('libp2p')
 const TCP = require('libp2p-tcp')
 const Websockets = require('libp2p-websockets')
@@ -42,7 +45,7 @@ interface IPFSInstanceExtended extends IPFSInstance {
   libp2p: any
 }
 
-
+OrbitDB.addDatabaseType(BINARY_DOCUMENT_STORE_TYPE, BinaryDocumentStore as any)
 
 export class ShardedDB {
   public node: IPFSInstanceExtended = undefined;
@@ -52,18 +55,24 @@ export class ShardedDB {
   public IPFS: typeof IPFS = undefined;
 
   public latestMessages: Map<string, any> = new Map() // by topic
-  public shardingTopic: string;
+  public rootId: string;
 
 
   public replicationCapacity: number | undefined = undefined
-
+  public behaviours: TypedBehaviours
 
   constructor() {
     this.IPFS = IPFS;
   }
-  async create(options: { shardingTopic?: string, rootDB?: string, local: boolean, repo: string, identity?: Identity, trustProvider?: TrustResolver } = {
-    local: false, repo: './ipfs', rootDB: undefined, shardingTopic: undefined
+  async create(options: { shardingTopic?: string, rootDB?: string, local: boolean, repo: string, identity?: Identity, trustProvider?: TrustResolver, behaviours: TypedBehaviours } = {
+    local: false, repo: './ipfs', rootDB: undefined, shardingTopic: undefined, behaviours: {
+      stores: {},
+      typeMap: {}
+    }
   }): Promise<void> {
+
+    this.behaviours = options.behaviours;
+    this.behaviours.typeMap[ShardChain.name] = ShardChain;
 
     // Create IPFS instance
     const ipfsOptions = options.local ? {
@@ -149,7 +158,7 @@ export class ShardedDB {
  await libp2p.start();
  this.node = libp2p; */
     this.node = await IPFS.create(ipfsOptions)
-    this.shardingTopic = options.shardingTopic;
+    this.rootId = options.shardingTopic;
     await this._init({
       identity: options.identity,
       rootDB: options.rootDB,
@@ -202,15 +211,75 @@ export class ShardedDB {
     if (this["onready"]) (this as any).onready();
   }
 
-  getShardChain<B>(shardChainName: string): ShardChain<B> {
-
-    let chain = new ShardChain<B>({
-      shardChainName: shardChainName,
-      defaultOptions: this.defaultOptions,
-      db: this
-    });
-    return chain;
+  getShardingTopic(): string {
+    return this.rootId + "-" + "sharding";
   }
+
+  get shardChainChain(): ShardChain<BinaryDocumentStore<ShardChain<any>>> {
+
+    // the shard of shards
+    let shardChain = new ShardChain<BinaryDocumentStore<ShardChain<any>>>({
+      shardChainName: this.rootId,
+      storeType: BINARY_DOCUMENT_STORE_TYPE,
+      objectType: ShardChain.name
+    });
+    shardChain.init({
+      behaviours: this.behaviours,
+      db: this,
+      defaultOptions: this.defaultOptions
+    })
+    return shardChain;
+  }
+
+
+  async loadShardChain<B extends Store>(shardChainName: string, storeType: Constructor<B>, objectType?: Constructor<any>): Promise<ShardChain<B>> {
+
+    let shardChains = await this.shardChainChain;
+    let counter = await shardChains.getShardCounter();
+    for (let i = 0; i < counter.value; i++) {
+      let shard = await shardChains.getShard(i);
+      await shard.loadBlocks();
+      let results = shard.blocks.query(doc => doc) // TODO: FIX
+
+      if (results.length == 1) {
+        return results[0]
+      }
+      else if ((await results).length > 2) {
+        throw new Error("Found more than 1 shard with name: " + shardChainName)
+      }
+    }
+
+    // Create new shard, if not found
+    let chain = await shardChains.getWritableShard();
+
+    let newShardChain = new ShardChain<any>({
+      shardChainName,
+      storeType: storeType.name,
+      objectType: objectType?.toString()
+    });
+
+    let bytes = serialize(newShardChain);
+    await chain.loadBlocks()
+    await chain.makeSpace(bytes.length);
+    //await chain.blocks.put(bytes);
+
+    return newShardChain;
+  }
+
+
+  /*  getFeedStoreShardChain<T>(shardChainName: string, type: string): ShardChain<FeedStore<T>> {
+ 
+     let chain = new ShardChain<FeedStore<T>>({
+       shardChainName: shardChainName,
+       defaultOptions: this.defaultOptions,
+       db: this,
+       behaviours: this.behaviours,
+       type: ''
+       //storeBuilder: (a, b, c) => c.feed(a, b)
+     });
+     return chain;
+   } */
+
 
   async subscribeForReplication(topic: string, capacity: number): Promise<void> {
     this.replicationCapacity = capacity;
@@ -218,18 +287,24 @@ export class ShardedDB {
       try {
         let request = deserialize(msg.data, ReplicationRequest);
         let chain = new ShardChain<any>({
-          shardChainName: request.shard,
-          defaultOptions: this.defaultOptions,
-          db: this
+          shardChainName: request[SHARD_NAME_FIELD],
+          storeType: request[SHARD_STORE_TYPE_FIELD],
+          objectType: request[SHARD_STORE_OBJECT_TYPE_FIELD]
         });
+
+        chain.init({
+          defaultOptions: this.defaultOptions,
+          db: this,
+          behaviours: this.behaviours,
+        })
 
         let shardToReplicate = new Shard({
           index: request.index,
           chain,
           defaultOptions: this.defaultOptions
-
         });
-        await shardToReplicate.replicate(this);
+
+        await shardToReplicate.replicate();
         const t = 1;
 
       } catch (error) {

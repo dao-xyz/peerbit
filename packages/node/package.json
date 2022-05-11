@@ -39,6 +39,7 @@
         "yaml": "^1.10.2"
     },
     "dependencies": {
+        "@dao-xyz/orbit-db-bdocstore": "^0.0.1",
         "@dao-xyz/borsh": "^2.0.2",
         "@dao-xyz/orbit-trust": "^0.0.1",
         "@solana/web3.js": "^1.41.3",
