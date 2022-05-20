@@ -27,7 +27,11 @@ describe('node', () => {
       await blobby.create({
         local: false,
         repo: root,
-        behaviours: undefined
+        behaviours: undefined,
+        replicationCapacity: 0,
+        rootAddress: 'root',
+        identity: undefined,
+        trustProvider: undefined
       });
       return blobby;
     }))

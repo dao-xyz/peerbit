@@ -1,6 +1,9 @@
 import { Keypair } from "@solana/web3.js"
 import nacl from "tweetnacl";
-
+export const hello = () => {
+    let x = 123;
+    return x;
+}
 export interface SignedPayload {
     payload: Uint8Array,
     signature: Uint8Array

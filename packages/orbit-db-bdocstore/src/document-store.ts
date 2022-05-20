@@ -20,12 +20,12 @@ export class BinaryDocumentStore<T> extends Store {
   constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IStoreOptions & { indexBy?: string, clazz: Constructor<T> }) {
     super(ipfs, id, dbname, defaultOptions(options))
     this._type = BINARY_DOCUMENT_STORE_TYPE;
-    this._index._index.init(this.options.index);
+    (this._index as DocumentIndex<T>).init(this.options.clazz);
 
   }
 
 
-  get(key: any, caseSensitive = false) {
+  public get(key: any, caseSensitive = false): T[] {
     key = key.toString()
     const terms = key.split(' ')
     key = terms.length > 1 ? replaceAll(key, '.', ' ').toLowerCase() : key.toLowerCase()
@@ -46,7 +46,7 @@ export class BinaryDocumentStore<T> extends Store {
       .map(mapper)
   }
 
-  query(mapper, options = {}) {
+  public query(mapper: ((doc: T) => boolean), options = {}): T[] {
     // Whether we return the full operation data or just the db value
     const fullOp = options["fullOp"] || false
 
@@ -55,7 +55,7 @@ export class BinaryDocumentStore<T> extends Store {
       .filter(mapper)
   }
 
-  batchPut(docs, onProgressCallback) {
+  public batchPut(docs: T[], onProgressCallback) {
     const mapper = (doc, idx) => {
       return this._addOperationBatch(
         {
@@ -73,7 +73,7 @@ export class BinaryDocumentStore<T> extends Store {
       .then(() => this.saveSnapshot())
   }
 
-  put(doc: any, options = {}) {
+  public put(doc: T, options = {}) {
     if (!doc[this.options.indexBy]) { throw new Error(`The provided document doesn't contain field '${this.options.indexBy}'`) }
 
     return this._addOperation({
@@ -83,7 +83,7 @@ export class BinaryDocumentStore<T> extends Store {
     }, options)
   }
 
-  putAll(docs, options = {}) {
+  public putAll(docs: T[], options = {}) {
     if (!(Array.isArray(docs))) {
       docs = [docs]
     }

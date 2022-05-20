@@ -10,10 +10,9 @@ export class DocumentIndex<T> {
   }
   init(clazz: Constructor<T>) {
     this.clazz = clazz;
-
   }
 
-  get(key, fullOp = false) {
+  get(key, fullOp = false): { payload: Payload } {
     return fullOp
       ? this._index[key]
       : this._index[key] ? this._index[key].payload.value : null
@@ -32,7 +31,7 @@ export class DocumentIndex<T> {
               payload: {
                 op: 'PUT',
                 key: doc.key,
-                value: deserialize(bs58.decode(doc.value), this.clazz)
+                value: this.deserializeOrPass(doc.value)
               }
             }
           }
@@ -40,7 +39,7 @@ export class DocumentIndex<T> {
       } else if (handled[item.payload.key] !== true) {
         handled[item.payload.key] = true
         if (item.payload.op === 'PUT') {
-          item.payload.value = deserialize(bs58.decode(item.payload.value), this.clazz)
+          item.payload.value = this.deserializeOrPass(item.payload.value)
           this._index[item.payload.key] = item
         } else if (item.payload.op === 'DEL') {
           delete this._index[item.payload.key]
@@ -50,10 +49,19 @@ export class DocumentIndex<T> {
       return handled
     }
 
-    oplog.values
-      .slice()
-      .reverse()
-      .reduce(reducer, {})
+    try {
+      oplog.values
+        .slice()
+        .reverse()
+        .reduce(reducer, {})
+    } catch (error) {
+      console.error(JSON.stringify(error))
+    }
   }
+  deserializeOrPass(value: string | T): T {
+    return typeof value === 'string' ? deserialize(bs58.decode(value), this.clazz) : value
+  }
+
 }
+
 

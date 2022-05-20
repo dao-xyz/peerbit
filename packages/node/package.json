@@ -1,5 +1,5 @@
 {
-    "name": "@dao-xyz/web3-orbit-node",
+    "name": "@dao-xyz/node",
     "version": "0.0.1",
     "author": "dao-xyz.network",
     "repository": "https://github.com/@dao-xyz/dao-xyz-ts",
@@ -39,8 +39,9 @@
         "yaml": "^1.10.2"
     },
     "dependencies": {
-        "@dao-xyz/orbit-db-bdocstore": "^0.0.1",
         "@dao-xyz/borsh": "^2.0.2",
+        "@dao-xyz/orbit-db-bdocstore": "^0.0.1",
+        "@dao-xyz/orbit-db-bkvstore": "^0.0.1",
         "@dao-xyz/orbit-trust": "^0.0.1",
         "@solana/web3.js": "^1.41.3",
         "bn.js": "^5.2.0",

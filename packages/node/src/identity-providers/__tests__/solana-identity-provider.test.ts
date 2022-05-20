@@ -14,12 +14,12 @@ describe('node', () => {
         let keypair = Keypair.generate();
         const identity = await Identities.createIdentity({ type: 'solana', wallet: keypair.publicKey, keypair: keypair })
         const blobby = new ShardedDB();
-        await blobby.create({
-            local: false,
-            repo: root,
-            identity
-        })
-
+        /*   await blobby.create({
+              local: false,
+              repo: root,
+              identity
+          })
+   */
         /*     await blobby.addNewPost({
                 content: 'hello'
             });

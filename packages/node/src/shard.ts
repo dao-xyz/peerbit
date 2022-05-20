@@ -1,4 +1,4 @@
-import { Constructor, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
+import { Constructor, deserialize, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
 import OrbitDB from "orbit-db";
 import FeedStore from "orbit-db-feedstore";
 import KeyValueStore from "orbit-db-kvstore";
@@ -7,73 +7,52 @@ import Store from "orbit-db-store";
 import CounterStore from "orbit-db-counterstore";
 import { ShardedDB } from ".";
 import DocumentStore from "orbit-db-docstore";
-
+import { BinaryKeyValueStore } from '@dao-xyz/orbit-db-bkvstore';
+import { BinaryKeyValueStoreOptions, StoreOptions } from "./stores";
+import { generateUUID } from "./id";
+import { Message } from 'ipfs-core-types/types/src/pubsub'
+import { EncodedQueryResponse, FilterQuery, Query, QueryRequestV0, QueryResponse, StringMatchQuery } from "./query";
+import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
+import base58 from "bs58";
 export const SHARD_INDEX = 0;
 const MAX_SHARD_SIZE = 1024 * 500 * 1000;
 const MAX_SHARDING_WAIT_TIME = 30 * 1000;
+const MAX_REPLICATION_WAIT_TIME = 30 * 1000;
+
+export const SHARD_CHAIN_ID_FIELD = "id";
 export const SHARD_NAME_FIELD = "name";
-export const SHARD_STORE_TYPE_FIELD = "storeType";
-export const SHARD_STORE_OBJECT_TYPE_FIELD = "objectType";
+
+
+
 
 // io
 
+
 @variant(1)
 export class ReplicationRequest {
+
+
+    @field({ type: 'String' })
+    shardChainName: string
+
+    @field({ type: 'u64' })
+    index: BN
+
+    @field({ type: option(StoreOptions) })
+    storeOptions: StoreOptions<any> | undefined;
+
+    @field({ type: 'u64' })
+    shardSize: BN
+
     constructor(obj?: ReplicationRequest) {
         if (obj) {
             Object.assign(this, obj);
         }
     }
 
-    @field({ type: 'String' })
-    [SHARD_NAME_FIELD]: string
-
-    @field({ type: 'u64' })
-    index: BN
-
-    @field({ type: 'String' })
-    [SHARD_STORE_TYPE_FIELD]: string
-
-    @field({ type: option('String') })
-    [SHARD_STORE_OBJECT_TYPE_FIELD]: string | undefined
-
-
-}
-
-export class Query {
-
-}
-
-@variant(0)
-export class FilterQuery extends Query {
-    @field({ type: 'String' })
-    key: string
-
-    @field({ type: vec('u8') })
-    value: Uint8Array
-
-    constructor(opts?: FilterQuery) {
-        super();
-        if (opts) {
-            Object.assign(this, opts)
-        }
-    }
 }
 
 
-@variant(2)
-export class QueryRequest {
-
-    @field({ type: vec(Query) })
-    filters: Query[]
-
-    constructor(obj?: QueryRequest) {
-        if (obj) {
-            Object.assign(this, obj);
-        }
-    }
-
-}
 
 // data
 
@@ -133,26 +112,62 @@ export type Behaviours<St> = {
 }
 
 export type TypedBehaviours = {
-    stores: {
-        [key: string]: Behaviours<any>;
-    }
     typeMap: {
         [key: string]: Constructor<any>
     }
 };
 
 
+/* const waitForReplicationEvents = async (waitForReplicationEventsCount: number, storeEvents: { on: (event: string, cb: () => void) => void }) => {
+    if (waitForReplicationEventsCount <= 0)
+        return;
+
+    let replications = 0;
+    storeEvents.on('replicated', () => {
+        replications += 1;
+    });
+
+    let startTime = +new Date;
+    while (+new Date - startTime < MAX_REPLICATION_WAIT_TIME && replications != waitForReplicationEventsCount) {
+        await delay(30);
+    }
+    if (replications < waitForReplicationEventsCount) {
+        // Could potentially be an issue where replication events already happened before this call, 
+        // hence we just warn if result is not the expected
+        console.warn("Failed to find all replication events");
+    }
+} */
+
+const waitForReplicationEvents = async (store: Store) => {
+    let startTime = +new Date;
+    while (store.replicationStatus.progress < store.replicationStatus.max) {
+        await delay(50);
+        if (+new Date - startTime > MAX_REPLICATION_WAIT_TIME) {
+            console.warn("Max replication time, aborting wait for")
+            return;
+        }
+    }
+    return;
+}
+
+
 @variant(0)
 export class ShardChain<B extends Store> {
 
     @field({ type: 'String' })
-    [SHARD_NAME_FIELD]: string;
+    _id: string;
 
     @field({ type: 'String' })
-    [SHARD_STORE_TYPE_FIELD]: string;
+    remoteAddress: string;
 
-    @field({ type: option('String') })
-    [SHARD_STORE_OBJECT_TYPE_FIELD]: string | undefined;
+    @field({ type: 'String' })
+    name: string;
+
+    @field({ type: option(StoreOptions) })
+    storeOptions: StoreOptions<B> | undefined;
+
+    @field({ type: 'u64' })
+    shardSize: BN
 
     defaultOptions: IStoreOptions;
     db: ShardedDB
@@ -160,18 +175,31 @@ export class ShardChain<B extends Store> {
     behaviours: TypedBehaviours;
 
     constructor(opts?: {
-        shardChainName: string;
-        storeType: string;
-        objectType?: string;
+        id?: string;
+        remoteAddress: string; // orbitdb/123abc123abc
+        name: string;
+        storeOptions: StoreOptions<any> | undefined;
+        shardSize: BN
     }) {
-
         if (opts) {
-            this.name = opts.shardChainName;
-            this.storeType = opts.storeType;
-            this.objectType = opts.objectType;
+            Object.assign(this, opts);
+            if (!this._id) {
+                this._id = this.id;
+            }
         }
-
     }
+
+    get id(): string {
+        // TODO, id should contain path, or be unique
+        return this.remoteAddress ? this.remoteAddress + '/' : '' + this.name + "-" + this.storeOptions.identifier;
+    }
+
+    get queryTopic(): string {
+        return this.id + "/query"
+    }
+
+
+
     init(opts: {
 
         defaultOptions: IStoreOptions;
@@ -184,9 +212,7 @@ export class ShardChain<B extends Store> {
     }
 
     async newStore(name: string): Promise<B> {
-
-        let newStore = await this.behaviours[this.storeType].newStore(name, { ... this.defaultOptions, clazz: this.objectType ? this.behaviours.typeMap[this.objectType] : undefined }, this.db.orbitDB);
-        return newStore;
+        return this.storeOptions.newStore(name, this.db.orbitDB, this.defaultOptions, this.behaviours);
     }
 
     async getShardCounter(): Promise<CounterStore> {
@@ -207,7 +233,6 @@ export class ShardChain<B extends Store> {
         while (true) {
             const shard = new Shard({ chain: this, index: new BN(index), defaultOptions: this.defaultOptions })
             await shard.loadPeers();
-            console.log('load shard peers: ', shard.peers.id, shard.peers.all)
             if (Object.keys(shard.peers.all).length > 0) {
                 lastShard = shard;
             }
@@ -230,47 +255,60 @@ export class ShardChain<B extends Store> {
 
 
 
-    async loadShard(index: BN): Promise<Shard<B>> {
+    async loadShard(index: number, options: { expectedPeerReplicationEvents: number, expectedBlockReplicationEvents: number } = { expectedPeerReplicationEvents: 0, expectedBlockReplicationEvents: 0 }): Promise<Shard<B>> {
 
-        const shard = new Shard<B>({ chain: this, index, defaultOptions: this.defaultOptions })
-        await shard.loadPeers();
-        await shard.loadBlocks();
+        const shard = new Shard<B>({ chain: this, index: new BN(index), defaultOptions: this.defaultOptions })
+        await shard.loadPeers(options.expectedPeerReplicationEvents);
+        await shard.loadBlocks(options.expectedBlockReplicationEvents);
         return shard;
     }
 
 
 
-    async addPeerToShards(startIndex: number, peersLimit: number, supportAmountOfShards: number): Promise<Shard<any>[]> {
+    async addPeerToShards(opts: {
+        startIndex: number,
+        peersLimit: number,
+        supportAmountOfShards: number
+    } = {
+            peersLimit: 1,
+            startIndex: 0,
+            supportAmountOfShards: 1
+        }): Promise<Shard<B>[]> {
 
-        let index = startIndex;
+        let index = opts.startIndex;
         let supportedShards = 0;
-        let shards: Shard<any>[] = [];
-        while (supportedShards < supportAmountOfShards) {
+        let shards: Shard<B>[] = [];
+        while (supportedShards < opts.supportAmountOfShards) {
 
-            const shard = new Shard({ chain: this, index: new BN(index), defaultOptions: this.defaultOptions })
+            const shard = new Shard<B>({ chain: this, index: new BN(index), defaultOptions: this.defaultOptions })
             await shard.loadPeers();
             let peersCount = Object.keys(shard.peers.all).length;
-            if (peersCount == 0 && startIndex != index) {
+            if (peersCount == 0 && opts.startIndex != index) {
                 return shards; // dont create a new shard (yet)
             }
 
-            if (Object.keys(shard.peers.all).length < peersLimit) {
+            if (Object.keys(shard.peers.all).length < opts.peersLimit) {
 
                 // Replicate (i.e. support)
                 // const peerInfo = await this.node.id();
-                await shard.replicate();
+                await shard.replicate({
+                    capacity: this.shardSize
+                });
                 supportedShards += 1;
                 shards.push(shard);
 
             }
 
+            /*             
             console.log('set shard peers: ', shard.peers.id, shard.peers.all)
-
+             */
 
             index += 1;
         }
         return shards;
     }
+
+
 
 
 
@@ -282,15 +320,16 @@ export class Shard<B extends Store> {
     chain: ShardChain<B>;
     index: BN;
     maxShardSize: number;
+    querable: boolean = true;
 
     /*     peersDBName: string;
     
         blocksDBName: string;
      */
     // Initializable
-    peers: KeyValueStore<string> | undefined
+    peers: BinaryKeyValueStore<Peer> | undefined
 
-    blocks: B | undefined;
+    blocks: B;
     memoryAdded: CounterStore | undefined;
     memoryRemoved: CounterStore | undefined;
 
@@ -302,24 +341,46 @@ export class Shard<B extends Store> {
         this.maxShardSize = typeof from.maxShardSize === 'number' ? from.maxShardSize : MAX_SHARD_SIZE;
     }
 
-    getDBName(name: string) {
-        return "chain-" + this.chain.name + "-" + this.chain.storeType + "-" + this.chain.objectType ? this.chain.objectType : '_' + "-" + name + "-" + this.index.toNumber()
+    getDBName(name: string): string {
+        return this.chain.id + "-" + name + "-" + this.index.toNumber()
     }
 
-    async loadPeers() {
-        this.peers = await this.chain.db.orbitDB.keyvalue(this.getDBName('peers'), this.chain.defaultOptions);
+    async loadPeers(waitForReplicationEventsCount: number = 0) {
+        if (this.peers) {
+            return this.peers;
+        }
 
-        this.peers.events.on('replicated', () => {
-
-            console.log('SOME REPL');
-        })
+        // Second argument 
+        this.peers = await new BinaryKeyValueStoreOptions<Peer>({ objectType: Peer.name }).newStore(this.getDBName('peers'), this.chain.db.orbitDB, this.chain.defaultOptions, this.chain.behaviours);
+        /*       await Promise.all([
+                  waitForReplicationEvents(waitForReplicationEventsCount, this.peers.events),
+                  this.peers.load()
+              ])
+       */
         await this.peers.load();
-
+        await waitForReplicationEvents(this.peers);
+        return this.peers;
     }
 
-    async loadBlocks(): Promise<B> {
+    async isSupported(peersCount: number = 1) {
+        await this.loadPeers(peersCount);
+        return Object.keys(this.peers.all).length >= peersCount
+    }
+
+    async loadBlocks(waitForReplicationEventsCount: number = 0): Promise<B> {
+        if (this.blocks) {
+            return this.blocks;
+        }
         this.blocks = await this.chain.newStore(this.getDBName('blocks')) //await db.feed(this.getDBName('blocks'), this.chain.defaultOptions);
+        this.blocks.events.on('replicated', (e) => {
+            console.log('Replicated', e)
+        })
+        /*  await Promise.all([
+             waitForReplicationEvents(waitForReplicationEventsCount, this.blocks.events),
+             this.blocks.load()
+         ]) */
         await this.blocks.load();
+        await waitForReplicationEvents(this.blocks);
         return this.blocks;
     }
 
@@ -368,9 +429,9 @@ export class Shard<B extends Store> {
         if (Object.keys(this.peers.all).length == 0) {
             await this.chain.db.node.pubsub.publish(this.chain.db.getShardingTopic(), serialize(new ReplicationRequest({
                 index: this.index,
-                name: this.chain.name,
-                storeType: this.chain.storeType,
-                objectType: this.chain.objectType
+                shardChainName: this.chain.name,
+                storeOptions: this.chain.storeOptions,
+                shardSize: this.chain.shardSize
             })));
         }
 
@@ -386,15 +447,25 @@ export class Shard<B extends Store> {
 
     }
 
-    async query(query: QueryRequest): Promise<any[]> {
+    async query(query: QueryRequestV0): Promise<any[]> {
         // query
-        if (this.blocks instanceof DocumentStore) {
+        if (this.blocks instanceof DocumentStore || this.blocks instanceof BinaryDocumentStore) {
+
+            /*     if (query.filters.length == 0) {
+                    return this.blocks.all;
+                } */
+            let filters: (Query | ((v: any) => boolean))[] = query.queries;
+            if (filters.length == 0) {
+                filters = [(v?) => true];
+            }
             let result = this.blocks.query(
                 doc =>
-                    query.filters.map(f => {
-                        if (f instanceof FilterQuery) {
-                            let docValue = doc[f.key];
-                            return docValue == f.value
+                    filters.map(f => {
+                        if (f instanceof Query) {
+                            return f.apply(doc)
+                        }
+                        else {
+                            return (f as ((v: any) => boolean))(doc)
                         }
                     }).reduce((prev, current) => prev && current)
             )
@@ -406,7 +477,7 @@ export class Shard<B extends Store> {
         else if (this.blocks instanceof FeedStore) {
             let result = this.blocks.iterator().collect().map(x => x.payload.value).filter(
                 doc =>
-                    query.filters.map(f => {
+                    query.queries.map(f => {
                         if (f instanceof FilterQuery) {
                             let docValue = doc[f.key];
                             return docValue == f.value
@@ -439,7 +510,7 @@ export class Shard<B extends Store> {
         this.memoryRemoved = await this.chain.db.orbitDB.counter(this.getDBName('memory_removed'), this.chain.defaultOptions);
     }
 
-    async replicate() {
+    async replicate(opts: { capacity: BN }) {
         /// Shard counter might be wrong because someone else could request sharding at the same time
         let shardCounter = await this.chain.getShardCounter();
         if (shardCounter.value <= this.index.toNumber()) {
@@ -450,7 +521,29 @@ export class Shard<B extends Store> {
         if (!this.peers) {
             await this.loadPeers();
         }
-        await this.peers.set(id, id);
+        await this.peers.set(id, new Peer({
+            id: id,
+            capacity: opts.capacity
+        }));
+
+        await this.chain.db.node.pubsub.subscribe(this.chain.queryTopic, async (msg: Message) => {
+            try {
+                await this.blocks.load();
+                let query = deserialize(Buffer.from(msg.data), QueryRequestV0);
+                let results = await this.query(query);
+                let response = new EncodedQueryResponse({
+                    results: results.map(r => base58.encode(serialize(r)))
+                });
+
+                let bytes = serialize(response);
+                await this.chain.db.node.pubsub.publish(
+                    query.getResponseTopic(this.chain.queryTopic),
+                    bytes
+                )
+            } catch (error) {
+                console.error(JSON.stringify(error))
+            }
+        })
         /*
 
         serialize(new Peer({
@@ -458,7 +551,6 @@ export class Shard<B extends Store> {
             id
         }))
         */
-        console.log('set shard peers', id, this.peers.all)
 
         await this.loadBlocks();
     }
