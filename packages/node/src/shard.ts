@@ -14,6 +14,8 @@ import { Message } from 'ipfs-core-types/types/src/pubsub'
 import { EncodedQueryResponse, FilterQuery, Query, QueryRequestV0, QueryResponse, StringMatchQuery } from "./query";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
 import base58 from "bs58";
+import { waitFor } from "./utils";
+
 export const SHARD_INDEX = 0;
 const MAX_SHARD_SIZE = 1024 * 500 * 1000;
 const MAX_SHARDING_WAIT_TIME = 30 * 1000;
@@ -138,7 +140,12 @@ export type TypedBehaviours = {
     }
 } */
 
-const waitForReplicationEvents = async (store: Store) => {
+const waitForReplicationEvents = async (store: Store, waitForReplicationEventsCount: number) => {
+    if (!waitForReplicationEventsCount)
+        return
+
+    await waitFor(() => !!store.replicationStatus && waitForReplicationEventsCount <= store.replicationStatus.max)
+
     let startTime = +new Date;
     while (store.replicationStatus.progress < store.replicationStatus.max) {
         await delay(50);
@@ -191,7 +198,9 @@ export class ShardChain<B extends Store> {
 
     get id(): string {
         // TODO, id should contain path, or be unique
-        return this.remoteAddress ? this.remoteAddress + '/' : '' + this.name + "-" + this.storeOptions.identifier;
+        /* (this.remoteAddress ? (this.remoteAddress + '/') : '') + */
+        return this.name + "-" + this.storeOptions.identifier;
+        /* return (this.remoteAddress ? (this.remoteAddress + '/') : '') + this.name + "-" + this.storeOptions.identifier; */
     }
 
     get queryTopic(): string {
@@ -255,7 +264,7 @@ export class ShardChain<B extends Store> {
 
 
 
-    async loadShard(index: number, options: { expectedPeerReplicationEvents: number, expectedBlockReplicationEvents: number } = { expectedPeerReplicationEvents: 0, expectedBlockReplicationEvents: 0 }): Promise<Shard<B>> {
+    async loadShard(index: number, options: { expectedPeerReplicationEvents?: number, expectedBlockReplicationEvents?: number } = { expectedPeerReplicationEvents: 0, expectedBlockReplicationEvents: 0 }): Promise<Shard<B>> {
 
         const shard = new Shard<B>({ chain: this, index: new BN(index), defaultOptions: this.defaultOptions })
         await shard.loadPeers(options.expectedPeerReplicationEvents);
@@ -358,7 +367,7 @@ export class Shard<B extends Store> {
               ])
        */
         await this.peers.load();
-        await waitForReplicationEvents(this.peers);
+        await waitForReplicationEvents(this.peers, waitForReplicationEventsCount);
         return this.peers;
     }
 
@@ -375,12 +384,9 @@ export class Shard<B extends Store> {
         this.blocks.events.on('replicated', (e) => {
             console.log('Replicated', e)
         })
-        /*  await Promise.all([
-             waitForReplicationEvents(waitForReplicationEventsCount, this.blocks.events),
-             this.blocks.load()
-         ]) */
+
         await this.blocks.load();
-        await waitForReplicationEvents(this.blocks);
+        await waitForReplicationEvents(this.blocks, waitForReplicationEventsCount);
         return this.blocks;
     }
 
@@ -414,7 +420,6 @@ export class Shard<B extends Store> {
                  await this.addBlock(block, sizeBytes, db, requestSharding);
              } */
         }
-
         await this.memoryAdded.inc(sizeBytes);
         /*  let added = await this.blocks.add(block);
          return added; */
@@ -545,7 +550,7 @@ export class Shard<B extends Store> {
             }
         })
         /*
-
+        
         serialize(new Peer({
             capacity: new BN(db.replicationCapacity),
             id

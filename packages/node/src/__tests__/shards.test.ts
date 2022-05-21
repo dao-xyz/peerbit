@@ -1,7 +1,7 @@
 
 import { ShardedDB } from '../index';
 import fs from 'fs';
-import Identities from 'orbit-db-identity-provider';
+import Identities, { Identity } from 'orbit-db-identity-provider';
 import { Keypair } from '@solana/web3.js';
 import { SolanaIdentityProvider } from '../identity-providers/solana-identity-provider';
 import { ShardChain, TypedBehaviours } from '../shard';
@@ -11,6 +11,9 @@ import { BinaryDocumentStoreOptions, FeedStoreOptions } from '../stores';
 import { Constructor, field, variant } from '@dao-xyz/borsh';
 import { BN } from 'bn.js';
 import { delay } from '../utils';
+import { clean } from './utils';
+import { generateUUID } from '../id';
+import { CONTRACT_ACCESS_CONTROLLER } from '../acl';
 
 
 
@@ -20,19 +23,17 @@ const testBehaviours: TypedBehaviours = {
 }
 
 
-const getPeers = async (amount: number = 1, peerCapacity: number, behaviours: TypedBehaviours = testBehaviours): Promise<ShardedDB[]> => {
 
+const getPeersSameIdentity = async (amount: number = 1, peerCapacity: number, behaviours: TypedBehaviours = testBehaviours): Promise<ShardedDB[]> => {
+    let ids = Array(amount).fill(0).map((_) => generateUUID());
+    for (const id in ids) {
+        await clean(id);
+    }
 
-    let idx = Array(amount).fill(0).map((_, idx) => idx);
     Identities.addIdentityProvider(SolanaIdentityProvider)
     let keypair = Keypair.generate();
     const rootIdentity = await Identities.createIdentity({ type: 'solana', wallet: keypair.publicKey, keypair: keypair })
-    fs.rmSync('./ipfs', { recursive: true, force: true });
-    fs.rmSync('./orbitdb', { recursive: true, force: true });
-    fs.rmSync('./orbit-db-stores', { recursive: true, force: true });
-
-    let nodeRoots = idx.map(x => './ipfs/' + x);
-
+    let nodeRoots = ids.map(x => './ipfs/' + x);
     const peers = await Promise.all(nodeRoots.map(async (root) => {
         const peer = new ShardedDB();
         await peer.create({ rootAddress: 'root', local: false, repo: root, identity: rootIdentity, behaviours, replicationCapacity: peerCapacity });
@@ -40,6 +41,15 @@ const getPeers = async (amount: number = 1, peerCapacity: number, behaviours: Ty
     }));
 
     return peers;
+}
+
+const getPeer = async (rootAddress: string = 'root', peerCapacity: number = 50 * 1000, behaviours: TypedBehaviours = testBehaviours, identity?: Identity): Promise<ShardedDB> => {
+    let id = generateUUID();
+    await clean(id);
+    let nodeRoot = './ipfs/' + id;
+    const peer = new ShardedDB();
+    await peer.create({ rootAddress, local: false, repo: nodeRoot, identity, behaviours, replicationCapacity: peerCapacity });
+    return peer;
 }
 
 
@@ -51,9 +61,10 @@ const disconnectPeers = async (peers: ShardedDB[]): Promise<void> => {
 
 describe('cluster', () => {
 
+
     test('sharding if overflow', async () => {
         let replicationTopic = 'repl';
-        let peers = await getPeers(2, 1);
+        let peers = await getPeersSameIdentity(2, 1);
         let peer = peers[0];
         let peer2 = peers[1];
         // await peer.node.swarm.connect((await peer2.node.id()).addresses[0]);
@@ -74,7 +85,7 @@ describe('cluster', () => {
 
     test('test chain', async () => {
         let replicationTopic = 'repl';
-        let peers = await getPeers(3, 1);
+        let peers = await getPeersSameIdentity(3, 1);
         let peer = peers[0];
         let peer2 = peers[1];
         let peer3 = peers[2];
@@ -100,7 +111,7 @@ describe('cluster', () => {
 
     test('test chain 2', async () => {
         let replicationTopic = 'repl';
-        let peers = await getPeers(2, 1);
+        let peers = await getPeersSameIdentity(2, 1);
         let peer = peers[0];
         let peer2 = peers[1];
         await peer.node.swarm.connect((await peer2.node.id()).addresses[0]);
@@ -128,7 +139,7 @@ describe('cluster', () => {
 
     test('working withou swarm connect', async () => {
         let replicationTopic = 'repl';
-        let peers = await getPeers(2, 1);
+        let peers = await getPeersSameIdentity(2, 1);
         let peer = peers[0];
         let peer2 = peers[1];
         delay(5000);
@@ -173,12 +184,79 @@ describe('cluster', () => {
     });
 
 
+    describe('resiliance', () => {
 
+        test('connect to remote', async () => {
+            //THEN FIX THIS
+
+            let peer1 = await getPeer();
+            let rootAddress = '/orbitdb/' + peer1.orbitDB.id;
+            let peer2 = await getPeer();
+
+            let qqq = await peer1.orbitDB.determineAddress("hello", "docstore", {
+                accessController: {
+                    //write: [this.orbitDB.identity.id],
+                    type: CONTRACT_ACCESS_CONTROLLER
+                } as any,
+
+                replicate: true
+            })
+            let qqq2 = await peer2.orbitDB.determineAddress("hello", "docstore", {
+                replicate: true
+            })
+            let qqq3 = await peer2.orbitDB.determineAddress("hello", "docstore")
+            let qqq4 = await peer1.orbitDB.determineAddress("hello", "docstore")
+            let qqq5 = await peer1.orbitDB.determineAddress("xyz", "docstore")
+            let qqq6 = await peer1.orbitDB.determineAddress("xyz", "docstore")
+
+            let addddd = qqq.toString();
+            let addddd2 = qqq2.toString();
+            let addddd3 = qqq3.toString();
+            let addddd4 = qqq4.toString();
+            let addddd5 = qqq5.toString();
+            let addddd6 = qqq6.toString();
+
+
+
+            //  --- Create
+            let rootChains = peer1.shardChainChain;
+
+            // Create Root shard
+            await rootChains.addPeerToShards();
+            expect(rootChains.shardCounter.value).toEqual(1);
+
+            // Create Feed store
+            let feedStoreOptions = new FeedStoreOptions();
+            let feedStoreChain = await peer1.createShardChain("test", feedStoreOptions, new BN(500000));
+            await feedStoreChain.addPeerToShards();
+
+
+            // --- Load assert
+
+            // The can be seen as a root folder DB
+            let rootShard = await peer2.shardChainChain.loadShard(0, { expectedBlockReplicationEvents: 1 });
+
+            // Assert root shard is replicated
+            expect(await rootShard.isSupported());
+
+            // Assert root shard contains our feed store shard chain
+            expect(Object.keys(rootShard.blocks._index._index).length).toEqual(1);
+            await disconnectPeers([peer1, peer2]);
+
+        })
+
+        test('remote drop, still alive', async => {
+
+        })
+    })
 
     describe('presharding', () => {
+
+
         test('root shard -> feed store shard', async () => {
-            let replicationTopic = 'repl';
-            let peers = await getPeers(2, 1);
+
+
+            let peers = await getPeersSameIdentity(2, 100000000);
             let peer = peers[0];
             let peer2 = peers[1];
 
@@ -188,39 +266,57 @@ describe('cluster', () => {
             // Create Root shard
             await rootChains.addPeerToShards();
 
-            expect(rootChains.shardCounter.value).toEqual(1);
-
             // Create Feed store
             let feedStoreOptions = new FeedStoreOptions();
-            let feedStoreChain = await peer.loadShardChain("test", feedStoreOptions);
-            await feedStoreChain.addPeerToShards(
-                {
-                    peersLimit: 1,
-                    startIndex: 0,
-                    supportAmountOfShards: 1
-                }
-            );
-
+            let feedStoreChain = await peer.createShardChain("test", feedStoreOptions, new BN(500000));
+            await feedStoreChain.addPeerToShards();
+            (await (await feedStoreChain.getWritableShard()).loadBlocks()).add("abc")
             // --- Load assert
 
+            expect(rootChains.shardCounter.value).toEqual(1);
+            let l0 = await rootChains.getShard(0);
+            await l0.loadBlocks();
+            expect(Object.keys(l0.blocks._index._index).length).toEqual(1);
+
+
             // The can be seen as a root folder DB
-            let rootShard = await peer2.shardChainChain.loadShard(0, {
-                expectedBlockReplicationEvents: 1,
-                expectedPeerReplicationEvents: 1
-            });
+            let l0b = await peer2.shardChainChain.loadShard(0, { expectedBlockReplicationEvents: 1 });
+
+
 
             // Assert root shard is replicated
-            expect(await rootShard.isSupported());
+            expect(await l0b.isSupported());
 
             // Assert root shard contains our feed store shard chain
-            expect(Object.keys(rootShard.blocks._index._index).length).toEqual(1);
+            /*   let qqq = await l0b.chain.db.orbitDB.determineAddress("hello", "docstore", {
+                  accessController: {
+                      //write: [this.orbitDB.identity.id],
+                      type: CONTRACT_ACCESS_CONTROLLER
+                  } as any,
+                  replicate: true
+              })
+              let qqq2 = await l0b.chain.db.orbitDB.determineAddress("hello", "docstore", {
+                  replicate: true
+              })
+              let qqq3 = await l0b.chain.db.orbitDB.determineAddress("hello", "docstore")
+              let qqq4 = await l0.chain.db.orbitDB.determineAddress("hello", "docstore")
+  
+              let addddd = qqq.toString();
+              let addddd2 = qqq2.toString();
+              let addddd3 = qqq3.toString();
+              let addddd4 = qqq4.toString(); */
+
+            expect(Object.keys(l0b.blocks._index._index).length).toEqual(1);
             await disconnectPeers(peers);
+
         });
     })
 
     describe('sharding on demand', () => {
-        test('root shard -> feed store shard', async () => {
-            let peers = await getPeers(2, 1);
+
+        test('xyz', async () => {
+
+            let peers = await getPeersSameIdentity(2, 1);
             let peer = peers[0];
             let peer2 = peers[1];
             await peer2.subscribeForReplication();
@@ -234,16 +330,13 @@ describe('cluster', () => {
 
             // Create Feed store
             let feedStoreOptions = new FeedStoreOptions();
-            let feedStoreChain = await peer.loadShardChain("test", feedStoreOptions);
+            let feedStoreChain = await peer.createShardChain("test", feedStoreOptions);
             await feedStoreChain.addPeerToShards();
 
             // --- Load assert
 
             // The can be seen as a root folder DB
-            let rootShard = await peer2.shardChainChain.loadShard(0, {
-                expectedBlockReplicationEvents: 1,
-                expectedPeerReplicationEvents: 1
-            });
+            let rootShard = await peer2.shardChainChain.loadShard(0);
 
             // Assert root shard is replicated
             expect(await rootShard.isSupported());
@@ -260,7 +353,7 @@ describe('cluster', () => {
         // Check if shard counter is updated
 
         let replicationTopic = 'repl';
-        let peers = await getPeers(2, 1);
+        let peers = await getPeersSameIdentity(2, 1);
         let peer = peers[0];
         let peer2 = peers[1];
         await peer2.subscribeForReplication();
@@ -281,7 +374,7 @@ describe('cluster', () => {
         // Check if shard counter is updated
 
         let replicationTopic = 'repl';
-        let peers = await getPeers(2, 1);
+        let peers = await getPeersSameIdentity(2, 1);
         let peer = peers[0];
         let peer2 = peers[1];
         let feedStoreOptions = new FeedStoreOptions();
@@ -297,7 +390,7 @@ describe('cluster', () => {
 
     test('splixxx', async () => {
         let replicationTopic = 'repl';
-        let peers = await getPeers(2, 1);
+        let peers = await getPeersSameIdentity(2, 1);
         let peer = peers[0];
         let peer2 = peers[1];
         // await peer.node.swarm.connect((await peer2.node.id()).addresses[0]);

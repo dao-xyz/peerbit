@@ -32,3 +32,9 @@ export const establishConnection = async (rpcUrl?: string): Promise<Connection> 
     const connection = new Connection(rpcUrl, 'confirmed');
     return connection;
 };
+export const clean = (id: string) => {
+    fs.rmSync('./ipfs/' + id + '/', { recursive: true, force: true });
+    fs.rmSync('./orbitdb/' + id + '/', { recursive: true, force: true });
+    fs.rmSync('./orbit-db/' + id + '/', { recursive: true, force: true });
+    fs.rmSync('./orbit-db-stores/' + id + '/', { recursive: true, force: true });
+}

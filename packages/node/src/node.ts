@@ -194,12 +194,12 @@ export class ShardedDB {
     get replicationTopic() {
         return this.rootAddress + "_replication"
     }
-    get shardChainChain(): ShardChain<BinaryDocumentStore<ShardChain<any>>> {
+    get shardChainChain(/* xyzAddress: string */): ShardChain<BinaryDocumentStore<ShardChain<any>>> {
 
         // the shard of shards
         let shardChain = new ShardChain<BinaryDocumentStore<ShardChain<any>>>({
-            remoteAddress: this.orbitDB.id,
-            name: this.rootAddress,
+            remoteAddress: this.rootAddress,
+            name: "_genisis",
             storeOptions: new BinaryDocumentStoreOptions({
                 indexBy: SHARD_CHAIN_ID_FIELD,
                 objectType: ShardChain.name
@@ -268,7 +268,7 @@ export class ShardedDB {
         return existingChard;
     }
 
-    async createShardChain<B extends Store>(name: string, options: StoreOptions<B>, shardSize: BN): Promise<ShardChain<B>> {
+    async createShardChain<B extends Store>(name: string, options: StoreOptions<B>, shardSize: BN = new BN(10 * 1000000)): Promise<ShardChain<B>> {
 
         const newShardChain = this._createShardChain(name, options, shardSize);
         let shardChains = await this.shardChainChain;
@@ -365,7 +365,10 @@ export class ShardedDB {
 
     async disconnect(): Promise<void> {
         await this.orbitDB.disconnect();
-        await this.node.stop();
+        await this.node.stop({
+            timeout: 0
+        });
+        const t = 123;
 
     }
     // async addNewPiece(hash, instrument = 'Piano') {

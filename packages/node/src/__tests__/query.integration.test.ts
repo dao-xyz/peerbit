@@ -12,6 +12,8 @@ import { Constructor, field, option, variant } from '@dao-xyz/borsh';
 import BN from 'bn.js';
 import { Compare, CompareQuery, QueryRequestV0, QueryResponse, StringMatchQuery } from '../query';
 import { delay, waitFor } from '../utils';
+import { clean } from './utils';
+import { generateUUID } from '../id';
 
 
 
@@ -19,7 +21,7 @@ const testBehaviours: TypedBehaviours = {
     typeMap: {}
 }
 
-
+/* 
 const getPeers = async (amount: number = 1, peerCapacity: number, behaviours: TypedBehaviours = testBehaviours): Promise<ShardedDB[]> => {
 
 
@@ -40,7 +42,28 @@ const getPeers = async (amount: number = 1, peerCapacity: number, behaviours: Ty
     }));
 
     return peers;
+} */
+
+const getPeers = async (amount: number = 1, peerCapacity: number, behaviours: TypedBehaviours = testBehaviours): Promise<ShardedDB[]> => {
+    let ids = Array(amount).fill(0).map((_) => generateUUID());
+    Identities.addIdentityProvider(SolanaIdentityProvider)
+    let keypair = Keypair.generate();
+    const rootIdentity = await Identities.createIdentity({ type: 'solana', wallet: keypair.publicKey, keypair: keypair })
+    for (const id in ids) {
+        await clean(id);
+    }
+
+    let nodeRoots = ids.map(x => './ipfs/' + x);
+    const peers = await Promise.all(nodeRoots.map(async (root) => {
+        const peer = new ShardedDB();
+        await peer.create({ rootAddress: 'root', local: false, repo: root, identity: rootIdentity, behaviours, replicationCapacity: peerCapacity });
+        return peer;
+    }));
+
+    return peers;
 }
+
+
 
 const documentDbTestSetup = async<T>(clazz: Constructor<T>, indexBy: string, shardSize = new BN(100000)): Promise<{
     creatorPeer: ShardedDB,
