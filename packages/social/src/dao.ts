@@ -6,26 +6,59 @@
  * DAOs (organizations/communities/groups)
  */
 
-import { variant } from '@dao-xyz/borsh';
-import { ShardedDB, ShardChain, BinaryDocumentStoreOptions } from '@dao-xyz/node';
+import { field, variant } from '@dao-xyz/borsh';
+import { AnyPeer, BinaryDocumentStoreOptions, Shard, RecursiveShard } from '@dao-xyz/node';
 import { BinaryDocumentStore } from '@dao-xyz/orbit-db-bdocstore';
 import { Identity } from 'orbit-db-identity-provider';
 
 @variant(0)
 export class DAO {
+
+    @field({ type: 'String' })
     name: string;
+
+    @field({ type: Shard })
+    shard: Shard<BinaryDocumentStore<DAO>>
 }
-export class DaoDB extends ShardedDB {
 
-    db: ShardedDB
-    daos: ShardChain<BinaryDocumentStore<DAO>>
+/* class RecursiveShardOrDao {
 
+    constructor() {
+
+    }
+}
+
+@variant(0)
+class RecursiveShardShard extends RecursiveShardOrDao {
+
+    @field({ type: RecursiveShard })
+    shard: RecursiveShard<any>
     constructor() {
         super();
     }
+}
 
-    public async create(options?: { rootId: string; local: boolean; identity?: Identity; }): Promise<void> {
-        await super.create({
+variant(1)
+class DaoShard extends RecursiveShardOrDao {
+
+    @field({ type: Shard })
+    shard: Shard<BinaryDocumentStore<DAO>>
+    constructor() {
+        super();
+    }
+} */
+
+export class DaoDB {
+
+    peer: AnyPeer
+    genesis: RecursiveShard<BinaryDocumentStore<DAO>>;
+    constructor(genesis: RecursiveShard<BinaryDocumentStore<DAO>>) {
+        this.genesis = genesis;
+    }
+
+    public async create(options: { rootAddress: string; local: boolean; identity?: Identity; }): Promise<void> {
+        this.peer = new AnyPeer();
+        await this.peer.create({
             ...options, ...{
                 behaviours: {
                     typeMap: {
@@ -37,40 +70,26 @@ export class DaoDB extends ShardedDB {
             }
         });
 
+        let firstNode = !this.genesis.address;
+        await this.genesis.init(this);
 
         //  --- Create
-        let rootChains = this.shardChainChain;
-
-        // Create Root shard
-        await rootChains.addPeerToShards();
-
-        // Create/Load DAO store
-
-        let daoStoreOptions = new BinaryDocumentStoreOptions<DAO>({
-            indexBy: "name",
-            objectType: DAO.name
-        });
-
-        this.daos = await this.loadShardChain("dao", daoStoreOptions);
-
+        if (firstNode) {
+            console.log('... is genesis ...');
+            // Support shard
+            await this.genesis.replicate(); // Only necessary if firstNode
+            let shard = new Shard<BinaryDocumentStore<DAO>>({
+                shardSize: this.genesis.shardSize, // Assumptions?
+                cluster: 'daos',
+                storeOptions: new BinaryDocumentStoreOptions({
+                    indexBy: 'name',
+                    objectType: DAO.name
+                })
+            });
+            await shard.init(this);
+            await this.genesis.blocks.put(shard)
+        }
     }
-
-    public async support() {
-
-        await this.daos.addPeerToShards(
-            {
-                peersLimit: 1,
-                startIndex: 0,
-                supportAmountOfShards: 1
-            }
-        );
-
-    }
-
-
-
-
-
 }
 
 export const getDAOs = () => { }
