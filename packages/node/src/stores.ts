@@ -11,7 +11,7 @@ import { BinaryKeyValueStore, BINARY_KEYVALUE_STORE_TYPE } from '@dao-xyz/orbit-
 import OrbitDB from "orbit-db";
 import FeedStore from "orbit-db-feedstore";
 import Store from "orbit-db-store";
-import { ShardChain, TypedBehaviours } from "./shard";
+import { TypedBehaviours } from "./shard";
 
 OrbitDB.addDatabaseType(BINARY_DOCUMENT_STORE_TYPE, BinaryDocumentStore as any)
 OrbitDB.addDatabaseType(BINARY_KEYVALUE_STORE_TYPE, BinaryKeyValueStore as any)
@@ -19,6 +19,10 @@ OrbitDB.addDatabaseType(BINARY_KEYVALUE_STORE_TYPE, BinaryKeyValueStore as any)
 
 
 export class StoreOptions<B extends Store> {
+
+    constructor() {
+
+    }
 
     async newStore(_address: string, _orbitDB: OrbitDB, _defaultOptions: IStoreOptions, _behaviours: TypedBehaviours): Promise<B> {
         throw new Error("Not implemented")

@@ -1,5 +1,5 @@
 
-import { ShardedDB } from '../../index';
+import { AnyPeer } from '../../index';
 import * as ipfs from 'ipfs';
 import fs from 'fs';
 import Identities from 'orbit-db-identity-provider';
@@ -13,7 +13,7 @@ describe('node', () => {
         Identities.addIdentityProvider(SolanaIdentityProvider)
         let keypair = Keypair.generate();
         const identity = await Identities.createIdentity({ type: 'solana', wallet: keypair.publicKey, keypair: keypair })
-        const blobby = new ShardedDB();
+        const blobby = new AnyPeer();
         /*   await blobby.create({
               local: false,
               repo: root,

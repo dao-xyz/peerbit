@@ -1,0 +1,18 @@
+0 silly argv {
+0 silly argv   _: [ 'bootstrap' ],
+0 silly argv   lernaVersion: '4.0.0',
+0 silly argv   '$0': '/Users/admin/git/web3-orbit/node_modules/.bin/lerna'
+0 silly argv }
+1 notice cli v4.0.0
+2 verbose rootPath /Users/admin/git/web3-orbit
+3 info versioning independent
+4 error Error: Invalid package name "dao-xyz/social-interface": name can only contain URL-friendly characters
+4 error     at invalidPackageName (/Users/admin/git/web3-orbit/node_modules/npm-package-arg/npa.js:84:15)
+4 error     at Result.setName (/Users/admin/git/web3-orbit/node_modules/npm-package-arg/npa.js:119:11)
+4 error     at new Result (/Users/admin/git/web3-orbit/node_modules/npm-package-arg/npa.js:110:10)
+4 error     at Function.resolve (/Users/admin/git/web3-orbit/node_modules/npm-package-arg/npa.js:54:15)
+4 error     at /Users/admin/git/web3-orbit/node_modules/@lerna/package-graph/index.js:66:30
+4 error     at Array.forEach (<anonymous>)
+4 error     at /Users/admin/git/web3-orbit/node_modules/@lerna/package-graph/index.js:60:38
+4 error     at Map.forEach (<anonymous>)
+4 error     at new PackageGraph (/Users/admin/git/web3-orbit/node_modules/@lerna/package-graph/index.js:49:10)

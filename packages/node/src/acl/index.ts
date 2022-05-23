@@ -5,13 +5,13 @@ import AccessController from 'orbit-db-access-controllers/src/access-controller-
 import KeyValueStore from 'orbit-db-kvstore';
 export const CONTRACT_ACCESS_CONTROLLER = 'contract-access-controller';
 import OrbitDB from 'orbit-db';
-import { Trust } from '@dao-xyz/orbit-trust';
+/* import { Trust } from '@dao-xyz/orbit-trust'; */
 class ContractAccessController extends AccessController {
-    trustProvider?: Trust;
+    /*   trustProvider?: Trust; */
     _db: KeyValueStore<any>;
-    constructor(options: { trustProvider?: Trust }) {
+    constructor(options: { /* trustProvider?: Trust */ }) {
         super();
-        this.trustProvider = options.trustProvider;
+        /*    this.trustProvider = options.trustProvider; */
 
     }
 
@@ -61,8 +61,8 @@ class ContractAccessController extends AccessController {
              this.contract = new this.web3.eth.Contract(this.abi, this.contractAddress) */
     }
 
-    static async create(_orbitdb: OrbitDB, options: { trustProvider: Trust }) {
-        return new ContractAccessController({ trustProvider: options.trustProvider })
+    static async create(_orbitdb: OrbitDB, options: {/*  trustProvider: Trust */ }) {
+        return new ContractAccessController({/*  trustProvider: options.trustProvider */ })
     }
 }
 

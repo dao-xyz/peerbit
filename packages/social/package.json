@@ -30,11 +30,13 @@
     "dependencies": {
         "@dao-xyz/borsh": "^2.0.2",
         "@dao-xyz/node": "^0.0.1",
+        "@dao-xyz/social-interface": "^0.0.1",
         "@solana/web3.js": "^1.33.0",
         "@types/bs58": "^4.0.1",
         "bs58": "^4.0.1",
         "buffer": "^6.0.3",
         "crypto-browserify": "^3.12.0",
+        "ipfs-http-client": "^56.0.3",
         "reflect-metadata": "^0.1.13"
     }
 }

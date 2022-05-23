@@ -8,7 +8,7 @@ export declare class BinaryKeyValueStore<T> extends Store {
         clazz: Constructor<T>;
     });
     get all(): T[];
-    get(key: string): T[];
+    get(key: string): T;
     set(key: string, data: T, options?: {}): Promise<string>;
     put(key: string, data: T, options?: {}): Promise<string>;
     del(key: string, options?: {}): Promise<string>;

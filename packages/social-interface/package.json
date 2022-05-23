@@ -1,5 +1,5 @@
 {
-    "name": "@dao-xyz/client",
+    "name": "@dao-xyz/social-interface",
     "version": "0.0.1",
     "author": "dao-xyz.network",
     "repository": "https://github.com/@dao-xyz/dao-xyz-ts",
@@ -30,20 +30,23 @@
         "test:integration": "node ../node_modules/.bin/jest test -c  ../jest.config.integration.cjs --runInBand --forceExit"
     },
     "devDependencies": {
+        "@types/bs58": "^4.0.1",
+        "@types/dao-xyz-orbit-db": "0.0.1",
+        "@types/ipfs": "https://github.com/lukas2005/types-ipfs.git",
         "@types/mz": "^2.7.4",
         "dotenv": "^15.0.0",
         "mz": "^2.7.0",
         "yaml": "^1.10.2"
     },
     "dependencies": {
-        "@dao-xyz/borsh": "^2.0.2",
-        "@solana/web3.js": "^1.33.0",
-        "@types/bs58": "^4.0.1",
+        "@dao-xyz/node": "^0.0.1",
+        "@dao-xyz/orbit-db-bdocstore": "^0.0.1",
+        "@dao-xyz/orbit-db-bkvstore": "^0.0.1",
+        "bn.js": "^5.2.0",
         "bs58": "^4.0.1",
         "buffer": "^6.0.3",
         "crypto-browserify": "^3.12.0",
-        "ipfs-http-client": "^56.0.3",
-        "orbit-db": "^0.28.6",
-        "reflect-metadata": "^0.1.13"
+        "reflect-metadata": "^0.1.13",
+        "tweetnacl": "^1.0.3"
     }
 }

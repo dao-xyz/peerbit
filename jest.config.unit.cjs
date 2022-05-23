@@ -1,7 +1,7 @@
 module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
-  roots: ["./packages/node", "./packages/social", "./packages/client", "./packages/orbit-db-types", "./packages/orbit-db-bdocstore", "./packages/orbit-db-bkvstore"],
+  roots: ["./packages/node", "./packages/social", "./packages/social-interface", "./packages/social-client", "./packages/orbit-db-types", "./packages/orbit-db-bdocstore", "./packages/orbit-db-bkvstore"],
   transform: {
     '^.+\\.ts?$': 'ts-jest',
   },

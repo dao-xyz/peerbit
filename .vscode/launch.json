@@ -13,7 +13,7 @@
             "args": [
                 "--i",
                 "--config",
-                "jest.config.cjs"
+                "jest.config.cjs",
             ],
             "windows": {
                 "program": "${workspaceFolder}/node_modules/jest/bin/jest"

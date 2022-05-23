@@ -36,19 +36,18 @@
         "@types/mz": "^2.7.4",
         "dotenv": "^15.0.0",
         "mz": "^2.7.0",
-        "yaml": "^1.10.2"
+        "yaml": "^1.10.2",
+        "ipfs": "^0.60.2"
     },
     "dependencies": {
         "@dao-xyz/borsh": "^2.0.2",
         "@dao-xyz/orbit-db-bdocstore": "^0.0.1",
         "@dao-xyz/orbit-db-bkvstore": "^0.0.1",
-        "@dao-xyz/orbit-trust": "^0.0.1",
         "@solana/web3.js": "^1.41.3",
         "bn.js": "^5.2.0",
         "bs58": "^4.0.1",
         "buffer": "^6.0.3",
         "crypto-browserify": "^3.12.0",
-        "ipfs": "^0.60.2",
         "orbit-db": "^0.28.4",
         "orbit-db-access-controllers": "^0.3.2",
         "orbit-db-docstore": "^1.12.0",

@@ -7,9 +7,12 @@
  */
 
 import { field, variant } from '@dao-xyz/borsh';
-import { AnyPeer, BinaryDocumentStoreOptions, Shard, RecursiveShard } from '@dao-xyz/node';
+import { AnyPeer, BinaryDocumentStoreOptions, Shard, RecursiveShard, ServerOptions } from '@dao-xyz/node';
 import { BinaryDocumentStore } from '@dao-xyz/orbit-db-bdocstore';
+import { IPFSInstanceExtended } from '@dao-xyz/node';
 import { Identity } from 'orbit-db-identity-provider';
+import OrbitDB from 'orbit-db';
+
 
 @variant(0)
 export class DAO {
@@ -56,22 +59,25 @@ export class DaoDB {
         this.genesis = genesis;
     }
 
-    public async create(options: { rootAddress: string; local: boolean; identity?: Identity; }): Promise<void> {
+    public async create(args: { id: string, rootAddress: string; orbitDB: OrbitDB, identity?: Identity; }): Promise<void> {
         this.peer = new AnyPeer();
+        let options = new ServerOptions({
+            behaviours: {
+                typeMap: {
+                    [DAO.name]: DAO
+                }
+            },
+            id: args.id,
+            replicationCapacity: 500 * 1000
+        })
         await this.peer.create({
-            ...options, ...{
-                behaviours: {
-                    typeMap: {
-                        [DAO.name]: DAO
-                    }
-                },
-                repo: './ipfs',
-                replicationCapacity: 512 * 1000,
-            }
+            options,
+            orbitDB: args.orbitDB,
+            rootAddress: args.rootAddress
         });
 
         let firstNode = !this.genesis.address;
-        await this.genesis.init(this);
+        await this.genesis.init(this.peer);
 
         //  --- Create
         if (firstNode) {
@@ -86,10 +92,9 @@ export class DaoDB {
                     objectType: DAO.name
                 })
             });
-            await shard.init(this);
+            await shard.init(this.peer);
             await this.genesis.blocks.put(shard)
         }
     }
 }
 
-export const getDAOs = () => { }

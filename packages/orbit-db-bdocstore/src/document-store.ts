@@ -75,7 +75,6 @@ export class BinaryDocumentStore<T> extends Store {
 
   public put(doc: T, options = {}) {
     if (!doc[this.options.indexBy]) { throw new Error(`The provided document doesn't contain field '${this.options.indexBy}'`) }
-
     return this._addOperation({
       op: 'PUT',
       key: doc[this.options.indexBy],

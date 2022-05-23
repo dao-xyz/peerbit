@@ -24,7 +24,7 @@ export class BinaryKeyValueStore<T> extends Store {
     return this._index._index
   }
 
-  get(key: string): T[] {
+  get(key: string): T {
     return this._index.get(key)
   }
 
