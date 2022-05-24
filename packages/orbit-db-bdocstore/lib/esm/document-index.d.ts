@@ -1,5 +1,5 @@
 import { Constructor } from "@dao-xyz/borsh";
-import { Payload } from "./Payload";
+import { Payload } from "./payload";
 export declare class DocumentIndex<T> {
     _index: {
         [key: string]: {

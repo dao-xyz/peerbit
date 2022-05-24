@@ -1,3 +1,3 @@
 export class Payload {
 }
-//# sourceMappingURL=Payload.js.map
+//# sourceMappingURL=payload.js.map
