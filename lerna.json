@@ -1,6 +1,6 @@
 {
     "packages": [
-        "packages/node",
+        "packages/shard",
         "packages/orbit-db-bdocstore",
         "packages/orbit-db-bkvstore",
         "packages/orbit-db-types"
