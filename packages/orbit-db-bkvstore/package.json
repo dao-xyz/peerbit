@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-bkvstore",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Key Value Store for orbit-db with binary ser/der",
   "type": "module",
   "sideEffects": false,
@@ -36,6 +36,6 @@
     "orbit-db-store": "4.x"
   },
   "devDependencies": {
-    "@dao-xyz-types/orbit-db": "^0.0.3"
+    "@dao-xyz-types/orbit-db": "^0.0.4"
   }
 }
