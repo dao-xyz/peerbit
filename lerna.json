@@ -2,7 +2,8 @@
     "packages": [
         "packages/node",
         "packages/orbit-db-bdocstore",
-        "packages/orbit-db-bkvstore"
+        "packages/orbit-db-bkvstore",
+        "packages/orbit-db-types"
     ],
     "version": "independent",
     "npmClient": "yarn",

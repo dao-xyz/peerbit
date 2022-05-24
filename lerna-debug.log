@@ -1,6 +1,0 @@
-39 error Error: Command failed with exit code 128: git add -- packages/orbit-db-types/package.json packages/orbit-db-bdocstore/package.json packages/orbit-db-bkvstore/package.json packages/node/package.json
-39 error fatal: Pathspec 'packages/orbit-db-types/package.json' is in submodule 'packages/orbit-db-types'
-39 error     at makeError (/Users/admin/git/web3-orbit/node_modules/execa/lib/error.js:60:11)
-39 error     at handlePromise (/Users/admin/git/web3-orbit/node_modules/execa/index.js:118:26)
-39 error     at processTicksAndRejections (node:internal/process/task_queues:96:5)
-39 error     at async Promise.all (index 0)

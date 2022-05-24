@@ -36,6 +36,6 @@
     "orbit-db-store": "4.x"
   },
   "devDependencies": {
-    "@types/dao-xyz-orbit-db-types": "^0.0.2"
+    "@dao-xyz-types/orbit-db": "^0.0.2"
   }
 }

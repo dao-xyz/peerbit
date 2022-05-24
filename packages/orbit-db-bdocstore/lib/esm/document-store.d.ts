@@ -1,4 +1,4 @@
-/// <reference types="dao-xyz-orbit-db-types" />
+/// <reference types="orbit-db" />
 import Store from 'orbit-db-store';
 import { IPFS as IPFSInstance } from 'ipfs';
 import { Identity } from 'orbit-db-identity-provider';
