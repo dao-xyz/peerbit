@@ -130,8 +130,8 @@ export class AnyPeer {
     async disconnect(): Promise<void> {
         try {
             /*   await this.orbitDB.disconnect(); */
-            let p = (await this.node.pubsub.ls()).map(topic => this.node.pubsub.unsubscribe(topic))
-            await Promise.all(p);
+            /*  let p = (await this.node.pubsub.ls()).map(topic => this.node.pubsub.unsubscribe(topic))
+             await Promise.all(p); */
             await this.node.stop();
             /*            
              */
