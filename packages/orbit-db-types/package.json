@@ -1,0 +1,25 @@
+{
+  "name": "@dao-xyz-types/orbit-db",
+  "version": "0.0.7",
+  "description": "Unofficial typings for orbit-db",
+  "types": "index.d.ts",
+  "keywords": [
+    "@types",
+    "typescript",
+    "orbit-db"
+  ],
+  "files": [
+    "*"
+  ],
+  "author": "dao.xyz",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@types/elliptic": "^6.4.6",
+    "@types/events": "^1.2.0",
+    "@types/ipfs": "https://git@github.com/lukas2005/types-ipfs.git",
+    "orbit-db": "^0.28.4"
+  }
+}
