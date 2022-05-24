@@ -1745,7 +1745,7 @@
     multiformats "^9.5.4"
     varint "^6.0.0"
 
-"@ipld/dag-cbor@^6.0.10", "@ipld/dag-cbor@^6.0.3", "@ipld/dag-cbor@^6.0.4", "@ipld/dag-cbor@^6.0.5":
+"@ipld/dag-cbor@^6.0.10", "@ipld/dag-cbor@^6.0.4", "@ipld/dag-cbor@^6.0.5":
   version "6.0.15"
   resolved "https://registry.npmjs.org/@ipld/dag-cbor/-/dag-cbor-6.0.15.tgz"
   integrity sha512-Vm3VTSTwlmGV92a3C5aeY+r2A18zbH2amehNhsX8PBa3muXICaWrN8Uri85A5hLH7D7ElhE8PdjxD6kNqUmTZA==
@@ -1759,14 +1759,6 @@
   integrity sha512-XqG8VEzHjQDC/Qcy5Gyf1kvAav5VuAugc6c7VtdaRLI+3d8lJrUP3F76GYJNNXuEnRZ58cCBnNNglkIGTdg1+A==
   dependencies:
     cborg "^1.6.0"
-    multiformats "^9.5.4"
-
-"@ipld/dag-json@^8.0.1":
-  version "8.0.9"
-  resolved "https://registry.yarnpkg.com/@ipld/dag-json/-/dag-json-8.0.9.tgz#c41641ddbd3799abd0c683015c56a37f3f6d1edc"
-  integrity sha512-NNKHmgHxc2zOEaB8qOUpAb2UK1vcEE/rBeh018Da/RzXE7N8GwiTJLRZ3Fe/G4fsiis67G0sagRz/YNQcANRsQ==
-  dependencies:
-    cborg "^1.5.4"
     multiformats "^9.5.4"
 
 "@ipld/dag-pb@^2.0.0", "@ipld/dag-pb@^2.0.2", "@ipld/dag-pb@^2.1.0", "@ipld/dag-pb@^2.1.3", "@ipld/dag-pb@^2.1.9":
@@ -3036,7 +3028,7 @@
   dependencies:
     buffer "~6.0.3"
 
-"@solana/web3.js@^1.32.0", "@solana/web3.js@^1.33.0", "@solana/web3.js@^1.41.3":
+"@solana/web3.js@^1.32.0", "@solana/web3.js@^1.41.3":
   version "1.41.4"
   resolved "https://registry.npmjs.org/@solana/web3.js/-/web3.js-1.41.4.tgz"
   integrity sha512-2/mjqUcGsBkLEvKxA+rWFE1vODBycAMa62r3wm3Uzb6nmsXQQNTotB+6YoeLQmF0mxVoy8ZA+/QENzBkGkPzSg==
@@ -5246,14 +5238,6 @@ dag-jose-utils@^0.1.1:
     multihashes "^4.0.2"
     uint8arrays "^2.1.4"
     varint "^6.0.0"
-
-dag-jose@^1.0.0:
-  version "1.0.0"
-  resolved "https://registry.yarnpkg.com/dag-jose/-/dag-jose-1.0.0.tgz#52e42d70cb5bee31ae4e8e3ab860615568d7ad73"
-  integrity sha512-U0b/YsIPBp6YZNTFrVjwLZAlY3qGRxZTIEcM/CcQmrVrCWq9MWQq9pheXVSPLIhF4SNwzp2SikPva4/BIrJY+g==
-  dependencies:
-    "@ipld/dag-cbor" "^6.0.3"
-    multiformats "^9.0.2"
 
 damerau-levenshtein@^1.0.7:
   version "1.0.8"
@@ -7575,17 +7559,6 @@ ipfs-core-config@^0.1.4:
     p-queue "^6.6.1"
     uint8arrays "^3.0.0"
 
-ipfs-core-types@^0.10.3:
-  version "0.10.3"
-  resolved "https://registry.yarnpkg.com/ipfs-core-types/-/ipfs-core-types-0.10.3.tgz#89ebe98199d4d829f2b20104bfa3299f808c80fe"
-  integrity sha512-GNid2lRBjR5qgScCglgk7w9Hk3TZAwPHQXxOLQx72wgyc0jF2U5NXRoKW0GRvX8NPbHmsrFszForIqxd23I1Gw==
-  dependencies:
-    "@ipld/dag-pb" "^2.1.3"
-    interface-datastore "^6.0.2"
-    ipfs-unixfs "^6.0.3"
-    multiaddr "^10.0.0"
-    multiformats "^9.5.1"
-
 ipfs-core-types@^0.8.4:
   version "0.8.4"
   resolved "https://registry.npmjs.org/ipfs-core-types/-/ipfs-core-types-0.8.4.tgz"
@@ -7619,32 +7592,6 @@ ipfs-core-utils@^0.12.2:
     nanoid "^3.1.23"
     parse-duration "^1.0.0"
     timeout-abort-controller "^1.1.1"
-    uint8arrays "^3.0.0"
-
-ipfs-core-utils@^0.14.3:
-  version "0.14.3"
-  resolved "https://registry.yarnpkg.com/ipfs-core-utils/-/ipfs-core-utils-0.14.3.tgz#d04c631c472507bdefc58d4e8d1d9109efbb411c"
-  integrity sha512-aBkewVhgAj3NWXPwu6imj0wADGiGVZmJzqKzODOJsibDjkx6FGdMv8kvvqtLnK8LS/dvSk9yk32IDtuDyYoV7Q==
-  dependencies:
-    any-signal "^3.0.0"
-    blob-to-it "^1.0.1"
-    browser-readablestream-to-it "^1.0.1"
-    debug "^4.1.1"
-    err-code "^3.0.1"
-    ipfs-core-types "^0.10.3"
-    ipfs-unixfs "^6.0.3"
-    ipfs-utils "^9.0.6"
-    it-all "^1.0.4"
-    it-map "^1.0.4"
-    it-peekable "^1.0.2"
-    it-to-stream "^1.0.0"
-    merge-options "^3.0.4"
-    multiaddr "^10.0.0"
-    multiaddr-to-uri "^8.0.0"
-    multiformats "^9.5.1"
-    nanoid "^3.1.23"
-    parse-duration "^1.0.0"
-    timeout-abort-controller "^3.0.0"
     uint8arrays "^3.0.0"
 
 ipfs-core@^0.12.2:
@@ -7784,30 +7731,6 @@ ipfs-http-client@^54.0.2:
     multiaddr "^10.0.0"
     multiformats "^9.4.13"
     native-abort-controller "^1.0.3"
-    parse-duration "^1.0.0"
-    stream-to-it "^0.2.2"
-    uint8arrays "^3.0.0"
-
-ipfs-http-client@^56.0.3:
-  version "56.0.3"
-  resolved "https://registry.yarnpkg.com/ipfs-http-client/-/ipfs-http-client-56.0.3.tgz#45bbea55347ef13524769d5919cbed84d9d022d6"
-  integrity sha512-E3L5ylVl6BjyRUsNehvfuRBYp1hj8vQ8in4zskVPMNzXs6JiCFUbif5a6BtcAlSK4xPQyJCeLNNAWLUeFQTLNA==
-  dependencies:
-    "@ipld/dag-cbor" "^7.0.0"
-    "@ipld/dag-json" "^8.0.1"
-    "@ipld/dag-pb" "^2.1.3"
-    any-signal "^3.0.0"
-    dag-jose "^1.0.0"
-    debug "^4.1.1"
-    err-code "^3.0.1"
-    ipfs-core-types "^0.10.3"
-    ipfs-core-utils "^0.14.3"
-    ipfs-utils "^9.0.6"
-    it-first "^1.0.6"
-    it-last "^1.0.4"
-    merge-options "^3.0.4"
-    multiaddr "^10.0.0"
-    multiformats "^9.5.1"
     parse-duration "^1.0.0"
     stream-to-it "^0.2.2"
     uint8arrays "^3.0.0"
@@ -8012,7 +7935,7 @@ ipfs-unixfs@^6.0.0, ipfs-unixfs@^6.0.3:
     err-code "^3.0.1"
     protobufjs "^6.10.2"
 
-ipfs-utils@^9.0.1, ipfs-utils@^9.0.2, ipfs-utils@^9.0.6:
+ipfs-utils@^9.0.1, ipfs-utils@^9.0.2:
   version "9.0.6"
   resolved "https://registry.npmjs.org/ipfs-utils/-/ipfs-utils-9.0.6.tgz"
   integrity sha512-/WfdwOIiJVb3uqfKRQ9Eo+vCEKsDgp7h4Pdc37MRwAiFciZ7xKAkEqsfXubV0VQi8x5jWTifeHn8WEPBLL451w==
@@ -10659,7 +10582,7 @@ multicodec@^3.0.1:
     uint8arrays "^3.0.0"
     varint "^6.0.0"
 
-multiformats@^9.0.0, multiformats@^9.0.2, multiformats@^9.0.4, multiformats@^9.1.0, multiformats@^9.1.2, multiformats@^9.4.10, multiformats@^9.4.13, multiformats@^9.4.2, multiformats@^9.4.5, multiformats@^9.4.7, multiformats@^9.5.1, multiformats@^9.5.4:
+multiformats@^9.0.0, multiformats@^9.0.2, multiformats@^9.0.4, multiformats@^9.1.0, multiformats@^9.1.2, multiformats@^9.4.10, multiformats@^9.4.13, multiformats@^9.4.2, multiformats@^9.4.5, multiformats@^9.4.7, multiformats@^9.5.4:
   version "9.6.5"
   resolved "https://registry.npmjs.org/multiformats/-/multiformats-9.6.5.tgz"
   integrity sha512-vMwf/FUO+qAPvl3vlSZEgEVFY/AxeZq5yg761ScF3CZsXgmTi/HGkicUiNN0CI4PW8FiY2P0OLklOcmQjdQJhw==
@@ -11452,31 +11375,6 @@ orbit-db@^0.28.4:
   version "0.28.5"
   resolved "https://registry.npmjs.org/orbit-db/-/orbit-db-0.28.5.tgz"
   integrity sha512-NWf/HJFtjLt0ef0PQeIWzL1YWeOKIUF2rnCggYYd31VrEX6k3ov83kbnmaYcso2sT4yHfqO1ex3BSmHWoMVQdg==
-  dependencies:
-    ipfs-pubsub-1on1 "0.0.8"
-    is-node "^1.0.2"
-    localstorage-down "^0.6.7"
-    logplease "^1.2.14"
-    multihashes "~3.0.1"
-    orbit-db-access-controllers "^0.3.2"
-    orbit-db-cache "~0.3.0"
-    orbit-db-counterstore "^1.12.1"
-    orbit-db-docstore "~1.12.0"
-    orbit-db-eventstore "~1.12.0"
-    orbit-db-feedstore "~1.12.0"
-    orbit-db-identity-provider "~0.3.0"
-    orbit-db-io "^1.0.1"
-    orbit-db-keystore "~0.3.0"
-    orbit-db-kvstore "~1.12.0"
-    orbit-db-pubsub "~0.6.0"
-    orbit-db-storage-adapter "~0.5.3"
-    orbit-db-store "^4.3.4"
-    wherearewe "^1.0.2"
-
-orbit-db@^0.28.6:
-  version "0.28.6"
-  resolved "https://registry.yarnpkg.com/orbit-db/-/orbit-db-0.28.6.tgz#46c16a155544e4904ed1ed870b384d037dbbfeff"
-  integrity sha512-0rBtKhhTQiMvnPTLKS7Yu9rahNP2CLRvZEhlMEsxyfOsFLB5TiEfDayVBItfZ2oxhqamOumyItSwE9eBF0veIA==
   dependencies:
     ipfs-pubsub-1on1 "0.0.8"
     is-node "^1.0.2"
@@ -13734,13 +13632,6 @@ timeout-abort-controller@^1.1.1:
   dependencies:
     abort-controller "^3.0.0"
     retimer "^2.0.0"
-
-timeout-abort-controller@^3.0.0:
-  version "3.0.0"
-  resolved "https://registry.yarnpkg.com/timeout-abort-controller/-/timeout-abort-controller-3.0.0.tgz#dd57ffca041652c03769904f8d95afd93fb95595"
-  integrity sha512-O3e+2B8BKrQxU2YRyEjC/2yFdb33slI22WRdUaDx6rvysfi9anloNZyR2q0l6LnePo5qH7gSM7uZtvvwZbc2yA==
-  dependencies:
-    retimer "^3.0.0"
 
 timestamp-nano@^1.0.0:
   version "1.0.0"

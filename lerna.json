@@ -3,10 +3,7 @@
         "packages/node",
         "packages/orbit-db-bdocstore",
         "packages/orbit-db-bkvstore",
-        "packages/orbit-db-types",
-        "packages/social",
-        "packages/social-client",
-        "packages/social-interface"
+        "packages/orbit-db-types"
     ],
     "version": "independent",
     "npmClient": "yarn",
