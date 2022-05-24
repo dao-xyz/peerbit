@@ -1,6 +1,11 @@
 {
-    "packages": ["packages/node"],
+    "packages": [
+        "packages/node",
+        "packages/orbit-db-bdocstore",
+        "packages/orbit-db-bkvstore",
+        "packages/orbit-db-types"
+    ],
     "version": "independent",
-    "npmClient": "npm",
+    "npmClient": "yarn",
     "useWorkspaces": true
 }

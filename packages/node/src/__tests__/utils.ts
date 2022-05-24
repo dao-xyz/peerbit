@@ -1,8 +1,13 @@
 import { Connection } from '@solana/web3.js';
 import fs from 'mz/fs';
+import { Identity } from 'orbit-db-identity-provider';
 import os from 'os';
 import path from 'path';
 import yaml from 'yaml';
+import { TypedBehaviours } from '..';
+import { generateUUID } from '../id';
+import * as IPFS from 'ipfs';
+import { AnyPeer, createOrbitDBInstance, IPFSInstanceExtended, ServerOptions } from '../node';
 /**
  * @private
  */
@@ -32,22 +37,67 @@ export const establishConnection = async (rpcUrl?: string): Promise<Connection> 
     const connection = new Connection(rpcUrl, 'confirmed');
     return connection;
 };
+export const clean = (id?: string) => {
+    let suffix = id ? id + '/' : '';
+    try {
+        fs.rmSync('./ipfs/' + suffix, { recursive: true, force: true });
+        fs.rmSync('./orbitdb/' + suffix, { recursive: true, force: true });
+        fs.rmSync('./orbit-db/' + suffix, { recursive: true, force: true });
+        fs.rmSync('./orbit-db-stores/' + suffix, { recursive: true, force: true });
+    } catch (error) {
 
-export const generateUUID = (): string => {
-    // Public Domain/MIT
-    let d = new Date().getTime(); //Timestamp
-    let d2 = (typeof performance !== 'undefined' && performance.now && performance.now() * 1000) || 0; //Time in microseconds since page-load or 0 if unsupported
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-        let r = Math.random() * 16; //random number between 0 and 16
-        if (d > 0) {
-            //Use timestamp until depleted
-            r = (d + r) % 16 | 0;
-            d = Math.floor(d / 16);
-        } else {
-            //Use microseconds since page-load if supported
-            r = (d2 + r) % 16 | 0;
-            d2 = Math.floor(d2 / 16);
-        }
-        return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+    }
+}
+
+const testBehaviours: TypedBehaviours = {
+
+    typeMap: {}
+}
+
+export const getPeer = async (rootAddress: string = 'root', behaviours: TypedBehaviours = testBehaviours, identity?: Identity, peerCapacity: number = 50 * 1000): Promise<AnyPeer> => {
+    let id = generateUUID();
+    await clean(id);
+    const peer = new AnyPeer(id);
+    let options = new ServerOptions({
+        behaviours,
+        id,
+        replicationCapacity: peerCapacity
     });
-};
+    let node = await createIPFSNode(false, './ipfs/' + id + '/');
+    let orbitDB = await createOrbitDBInstance(node, id, identity);
+    await peer.create({ rootAddress, options, orbitDB });
+    return peer;
+}
+export const disconnectPeers = async (peers: AnyPeer[]): Promise<void> => {
+    await Promise.all(peers.map(peer => peer.disconnect()));
+    await Promise.all(peers.map(peer => peer.id ? clean(peer.id) : () => { }));
+
+}
+
+export const createIPFSNode = (local: boolean = false, repo: string = './ipfs'): Promise<IPFSInstanceExtended> => {
+    // Create IPFS instance
+    const ipfsOptions = local ? {
+        preload: { enabled: false },
+        repo: repo,
+        EXPERIMENTAL: { pubsub: true },
+        config: {
+            Bootstrap: [],
+            Addresses: { Swarm: [] }
+        }
+    } : {
+        relay: { enabled: true, hop: { enabled: true, active: true } },
+        repo: repo,
+        EXPERIMENTAL: { pubsub: true },
+        config: {
+            Addresses: {
+                Swarm: [
+                    `/ip4/0.0.0.0/tcp/0`,
+                    `/ip4/127.0.0.1/tcp/0/ws`
+                ]
+            }
+
+        },
+    }
+    return IPFS.create(ipfsOptions)
+
+}

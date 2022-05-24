@@ -1,5 +1,5 @@
 
-import { ShardedDB } from '../index';
+import { AnyPeer } from '../index';
 import * as ipfs from 'ipfs';
 import fs from 'fs';
 
@@ -14,7 +14,7 @@ describe('node', () => {
     });
    */
   test('global', async () => {
-    let nodeRoots = [1, 2].map(x => './ipfs-' + x);
+    /* let nodeRoots = [1, 2].map(x => './ipfs-' + x);
     nodeRoots.forEach((n) => {
       try {
         fs.rmSync(n, { recursive: true, force: true });
@@ -23,10 +23,15 @@ describe('node', () => {
       }
     });
     const blobbies = await Promise.all(nodeRoots.map(async (root) => {
-      const blobby = new ShardedDB();
+      const blobby = new OrbitDBPeer();
       await blobby.create({
         local: false,
-        repo: root
+        repo: root,
+        behaviours: undefined,
+        replicationCapacity: 0,
+        rootAddress: 'root',
+        identity: undefined,
+        trustProvider: undefined
       });
       return blobby;
     }))
@@ -42,7 +47,7 @@ describe('node', () => {
 
     for (const b of blobbies) {
       await b.disconnect();
-    }
+    } */
     /*
     await blobby.create(false, './ipfs-1');
  

@@ -30,7 +30,7 @@ interface Root {
 }
 
 
-interface IPFSInstanceExtended extends IPFSInstance {
+export interface IPFSInstanceExtended extends IPFSInstance {
   libp2p: any
 }
 
