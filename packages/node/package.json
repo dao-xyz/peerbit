@@ -31,7 +31,7 @@
     },
     "devDependencies": {
         "@types/bs58": "^4.0.1",
-        "@dao-xyz/orbit-db-types": "0.0.1",
+        "@types/dao-xyz-orbit-db-types": "^0.0.1",
         "@types/ipfs": "https://github.com/lukas2005/types-ipfs.git",
         "@types/mz": "^2.7.4",
         "dotenv": "^15.0.0",

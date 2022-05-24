@@ -1,4 +1,4 @@
-/// <reference types="dao-xyz-orbit-db" />
+/// <reference types="dao-xyz-orbit-db-types" />
 import { Constructor } from '@dao-xyz/borsh';
 import Store from 'orbit-db-store';
 export declare const BINARY_KEYVALUE_STORE_TYPE = "bkvstore";
