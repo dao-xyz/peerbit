@@ -1,5 +1,5 @@
 import { Constructor, deserialize } from "@dao-xyz/borsh";
-import { Payload } from "./Payload";
+import { Payload } from "./payload";
 import bs58 from 'bs58';
 
 export class DocumentIndex<T> {

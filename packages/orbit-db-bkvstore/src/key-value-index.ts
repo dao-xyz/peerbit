@@ -1,5 +1,4 @@
 import { Constructor, deserialize } from "@dao-xyz/borsh";
-import { Payload } from "./payload";
 import bs58 from 'bs58';
 export class KeyValueIndex<T> {
   _index: { [key: string]: T };

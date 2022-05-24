@@ -1,7 +1,6 @@
 import Store from 'orbit-db-store'
 import { DocumentIndex } from './document-index'
 import pMap from 'p-map'
-import Readable from 'readable-stream'
 import { IPFS as IPFSInstance } from 'ipfs';
 import { Identity } from 'orbit-db-identity-provider';
 import { Constructor, serialize } from '@dao-xyz/borsh';
