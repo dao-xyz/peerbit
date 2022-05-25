@@ -72,6 +72,7 @@ export class AnyPeer {
 
     public id?: string;
 
+
     constructor(id?: string) {
         this.id = id;
     }
@@ -83,7 +84,6 @@ export class AnyPeer {
         this.node = options.orbitDB._ipfs;
 
         /*  if (this["onready"]) (this as any).onready(); */
-
     }
 
 

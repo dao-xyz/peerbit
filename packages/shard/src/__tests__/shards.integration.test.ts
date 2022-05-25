@@ -8,7 +8,8 @@ import { FeedStoreOptions } from '../stores';
 import { BN } from 'bn.js';
 import { clean, createIPFSNode, getPeer } from './utils';
 import { generateUUID } from '../id';
-import { createOrbitDBInstance, ServerOptions } from '../node';
+import { createOrbitDBInstance, IPFSInstanceExtended, ServerOptions } from '../node';
+import { delay } from '../utils';
 
 
 
@@ -46,6 +47,21 @@ const getPeersSameIdentity = async (amount: number = 1, peerCapacity: number): P
 
 
 
+const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
+
+    let peerAddressesSet = (await from.node.id()).addresses.map(x => x.toString());
+    let peerAddresses = new Set(peerAddressesSet);
+
+    const results = await swarmSource.node.swarm.addrs();
+    for (const result of results) {
+        for (const addr of result.addrs) {
+            if (peerAddresses.has(addr.toString())) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
 
 
 const disconnectPeers = async (peers: AnyPeer[]): Promise<void> => {
@@ -54,9 +70,58 @@ const disconnectPeers = async (peers: AnyPeer[]): Promise<void> => {
 
 
 describe('cluster', () => {
+    describe('manifest', () => {
+        test('save load', async () => {
+
+            let peer = await getPeer();
+            let l0 = new RecursiveShard<FeedStore<string>>({
+                cluster: 'x',
+                shardSize: new BN(500)
+            })
+            await l0.init(peer);
+            expect(l0.cid).toBeDefined();
+
+            let peer2 = await getPeer();
+            let loadedShard = await Shard.loadFromCID(l0.cid, peer2.node);
+            expect(loadedShard.address).toEqual(l0.address);
+        })
+    })
+
+    describe('recursive shard', () => {
+        test('peer backward connect', async () => {
+
+            let peer = await getPeer();
+
+            // Create Root shard
+            let l0 = new RecursiveShard<FeedStore<string>>({
+                cluster: 'x',
+                shardSize: new BN(500)
+            })
+            await l0.init(peer)
+            await l0.replicate();
+
+            // Create Feed store
+            let peer2 = await getPeer();
+
+            expect(await isInSwarm(peer, peer2)).toBeFalsy();
+
+            let feedStore = await new Shard<FeedStore<string>>({
+                cluster: 'xx',
+                shardSize: new BN(500),
+                storeOptions: new FeedStoreOptions()
+            }).init(peer2, l0); // <-- This should trigger a swarm connection from peer to peer2
+            await feedStore.replicate();
+
+            expect(await isInSwarm(peer, peer2)).toBeTruthy();
+        })
+    })
+
+
+
     describe('resiliance', () => {
 
         test('connect to remote', async () => {
+
             let peer = await getPeer();
 
             // Create Root shard
@@ -72,11 +137,9 @@ describe('cluster', () => {
                 cluster: 'xx',
                 shardSize: new BN(500),
                 storeOptions: new FeedStoreOptions()
-            }).init(peer);
-            await l0.blocks.put(feedStore)
-            await l0.addPeerToShards();
-            await (await l0.loadShard(0)).blocks.add("xxx");
-
+            }).init(peer, l0);
+            await feedStore.replicate();
+            await feedStore.blocks.add("hello");
 
 
             // --- Load assert, from another peer
@@ -96,20 +159,17 @@ describe('cluster', () => {
             // Create Root shard
             let l0 = new RecursiveShard<FeedStore<string>>({
                 cluster: 'x',
-                shardSize: new BN(500)
+                shardSize: new BN(500 * 1000)
             })
             await l0.init(peer)
             await l0.replicate();
 
             // Create Feed store
-            let feedStore = await new Shard<FeedStore<string>>({
+            await new Shard<FeedStore<string>>({
                 cluster: 'xx',
-                shardSize: new BN(500),
+                shardSize: new BN(500 * 1000),
                 storeOptions: new FeedStoreOptions()
-            }).init(peer);
-            await l0.blocks.put(feedStore)
-
-
+            }).init(peer, l0);
 
             // --- Load assert, from another peer
             let peer2 = await getPeer();
@@ -143,7 +203,7 @@ describe('cluster', () => {
             // Create Root shard
             let l0 = new RecursiveShard<FeedStore<string>>({
                 cluster: 'x',
-                shardSize: new BN(500)
+                shardSize: new BN(500 * 1000)
             })
             await l0.init(peer)
             await l0.replicate();
@@ -151,11 +211,10 @@ describe('cluster', () => {
             // Create Feed store
             let feedStore = await new Shard<FeedStore<string>>({
                 cluster: 'xx',
-                shardSize: new BN(500),
+                shardSize: new BN(500 * 1000),
                 storeOptions: new FeedStoreOptions()
-            }).init(peer);
-            await l0.blocks.put(feedStore)
-            await l0.addPeerToShards();
+            }).init(peer, l0);
+            await feedStore.replicate();
             await (await l0.loadShard(0)).blocks.add("xxx");
 
 
@@ -164,7 +223,7 @@ describe('cluster', () => {
             let l0b = new RecursiveShard<FeedStore<string>>({
                 id: l0.id,
                 cluster: 'x',
-                shardSize: new BN(500)
+                shardSize: new BN(500 * 1000)
             })
             await l0b.init(peer2)
             await l0b.loadBlocks(1);
@@ -183,7 +242,7 @@ describe('cluster', () => {
             let peer2 = await getPeer();
             let l0 = new RecursiveShard<FeedStore<string>>({
                 cluster: 'x',
-                shardSize: new BN(500)
+                shardSize: new BN(500 * 1000)
             })
 
             await l0.init(peer2)

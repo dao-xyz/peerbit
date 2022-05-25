@@ -105,7 +105,6 @@ const documentDbTestSetup = async<T>(clazz: Constructor<T>, indexBy: string, sha
         }
     }
     let peer = await getPeer(rootAddress, behaviours);
-
     // Create Root shard
     let l0 = new RecursiveShard<BinaryDocumentStore<T>>({
         cluster: 'x',
@@ -123,9 +122,8 @@ const documentDbTestSetup = async<T>(clazz: Constructor<T>, indexBy: string, sha
         cluster: 'xx',
         shardSize: new BN(500 * 1000),
         storeOptions: options
-    }).init(peer);
-    await l0.blocks.put(documentStore)
-    await l0.addPeerToShards();
+    }).init(peer, l0);
+    await documentStore.replicate();
 
 
     return {
@@ -179,9 +177,8 @@ const feedStoreTestSetup = async<T>(shardSize = new BN(100000)): Promise<{
         cluster: 'xx',
         shardSize: new BN(500),
         storeOptions: new FeedStoreOptions()
-    }).init(peer);
-    await l0.blocks.put(feedStore)
-    await l0.addPeerToShards();
+    }).init(peer, l0);
+    await feedStore.replicate();
     await (await l0.loadShard(0)).blocks.add("xxx");
 
 
@@ -229,6 +226,7 @@ describe('query', () => {
             otherPeer,
             documentStore
         } = await documentDbTestSetup(Document, 'id');
+
         let blocks = await documentStore.loadBlocks();
 
         let doc = new Document({
@@ -243,6 +241,8 @@ describe('query', () => {
         await blocks.put(doc2);
 
         let response: QueryResponse<Document> = undefined;
+
+        //await otherPeer.node.swarm.connect((await creatorPeer.node.id()).addresses[0].toString());
         await otherPeer.query(documentStore.queryTopic, new QueryRequestV0({
             queries: [new StringMatchQuery({
                 key: 'name',
