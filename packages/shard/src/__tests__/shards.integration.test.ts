@@ -151,7 +151,7 @@ describe('cluster', () => {
 
             let peer2 = await getPeer();
             let loadedShard = await Shard.loadFromCID<FeedStoreInterface>(l0.cid, peer2.node);
-            expect(loadedShard.interface.db.address).toEqual(l0.interface.db.address);
+            expect(loadedShard.interface.db.db.address).toEqual(l0.interface.db.db.address);
         })
     })
 

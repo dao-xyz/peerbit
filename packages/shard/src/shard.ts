@@ -124,8 +124,41 @@ const onReplicationMark = (store: Store<any, any>) => store.events.on('replicate
     store["replicated"] = true // replicated once
 });
 
-@variant(0) // prefix for versioning
-export class DB<B extends Store<any, any>> {
+
+export class DBInterface {
+
+    get initialized(): boolean {
+        throw new Error("Not implemented")
+    }
+
+    close() {
+        throw new Error("Not implemented")
+
+    }
+    async init(_shard: Shard<any>) {
+        throw new Error("Not implemented")
+    }
+
+    async load(): Promise<Store<any, any>> {
+        throw new Error("Not implemented")
+    }
+
+
+    async replicate(): Promise<void> {
+        throw new Error("Not implemented")
+    }
+
+    async query(_query: QueryRequestV0): Promise<any[]> {
+        throw new Error("Not implemented")
+    }
+
+
+}
+
+// Every interface has to have its own variant, else DBInterface can not be
+// used as a deserialization target.
+@variant(1)
+export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
 
     @field({ type: 'String' })
     name: string;
@@ -140,10 +173,11 @@ export class DB<B extends Store<any, any>> {
     _shard: Shard<any>
 
     constructor(opts?: {
+        name: string;
         address?: string;
         storeOptions: StoreOptions<B>;
-        name: string
     }) {
+        super();
         if (opts) {
             Object.assign(this, opts);
         }
@@ -187,40 +221,22 @@ export class DB<B extends Store<any, any>> {
         this._shard = undefined;
     }
 
-}
-
-export class DBInterface {
-
     get initialized(): boolean {
-        throw new Error("Not implemented")
-    }
-
-    close() {
-        throw new Error("Not implemented")
-
-    }
-    async init(_shard: Shard<any>) {
-        throw new Error("Not implemented")
-    }
-
-    async load(): Promise<Store<any, any>> {
-        throw new Error("Not implemented")
-    }
-
-    isLoaded(): boolean {
-        throw new Error("Not implemented")
+        return !!this.db;
     }
 
     async replicate(): Promise<void> {
-        throw new Error("Not implemented")
+        await this.load();
     }
 
-    async query(_query: QueryRequestV0): Promise<any[]> {
-        throw new Error("Not implemented")
+    async query(q: QueryRequestV0): Promise<T[]> {
+        return query(q, this.db)
     }
 
 
 }
+
+
 
 @variant(1)
 export class Shard<T extends DBInterface> {
@@ -409,7 +425,7 @@ export class Shard<T extends DBInterface> {
             await this.loadMemorySize();
         }
 
-        if (!this.interface.isLoaded()) {
+        if (!this.interface.initialized) {
             await this.interface.load();
         }
         /*  if (this.dbs.find(db => !db.db)) {
@@ -574,15 +590,14 @@ export class Shard<T extends DBInterface> {
 }
 
 
+
 @variant(0)
 export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterface {
 
-    @field({ type: DB })
-    db: DB<BinaryDocumentStore<Shard<T>>>;
+    @field({ type: SingleDBInterface })
+    db: SingleDBInterface<Shard<T>, BinaryDocumentStore<Shard<T>>>;
 
-    _shard: Shard<T>
-
-    constructor(opts?: { db: DB<BinaryDocumentStore<Shard<any>>> }) {
+    constructor(opts?: { db: SingleDBInterface<Shard<T>, BinaryDocumentStore<Shard<any>>> }) {
         super();
         if (opts) {
             Object.assign(this, opts);
@@ -590,16 +605,14 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterfac
     }
 
     get initialized(): boolean {
-        return !!this.db?.db && !!this.db._shard;
+        return this.db.initialized
     }
 
     close() {
-        this._shard = undefined;
         this.db.close();
     }
 
     async init(shard: Shard<any>) {
-        this._shard = shard;
         await this.db.init(shard);
     }
 
@@ -608,18 +621,16 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterfac
         return this.db.load(waitForReplicationEventsCount);
     }
 
-    isLoaded(): boolean {
-        return this.initialized;
-    }
+
 
     async query(q: QueryRequestV0): Promise<Shard<any>[]> {
-        return query<Shard<any>>(q, this.db.db)
+        return this.db.query(q)
     }
 
     async loadShard(index: number, options: { expectedPeerReplicationEvents?: number } = { expectedPeerReplicationEvents: 0 }): Promise<Shard<T>> {
         // Get the latest shard that have non empty peer
         let shard = (await this.db.load(index + 1)).get(index.toString())[0]
-        await shard.init(this._shard.peer);
+        await shard.init(this.db._shard.peer);
         await shard.loadPeers(options.expectedPeerReplicationEvents);
         await shard.interface.load();
         return shard;

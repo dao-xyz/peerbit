@@ -8,7 +8,7 @@ import { TypedBehaviours } from '..';
 import { generateUUID } from '../id';
 import * as IPFS from 'ipfs';
 import { AnyPeer, createOrbitDBInstance, IPFSInstanceExtended, ServerOptions } from '../node';
-import { DB, DBInterface, RecursiveShardDBInterface, Shard } from '../shard';
+import { SingleDBInterface, DBInterface, RecursiveShardDBInterface, Shard } from '../shard';
 import FeedStore from 'orbit-db-feedstore';
 import { BinaryDocumentStoreOptions, FeedStoreOptions } from '../stores';
 import BN from 'bn.js';
@@ -113,10 +113,10 @@ export const createIPFSNode = (local: boolean = false, repo: string = './ipfs'):
 @variant(122)
 export class FeedStoreInterface extends DBInterface {
 
-    @field({ type: DB })
-    db: DB<FeedStore<string>>;
+    @field({ type: SingleDBInterface })
+    db: SingleDBInterface<string, FeedStore<string>>;
 
-    constructor(opts?: { db: DB<FeedStore<string>> }) {
+    constructor(opts?: { db: SingleDBInterface<string, FeedStore<string>> }) {
         super();
         if (opts) {
             Object.assign(this, opts);
@@ -139,12 +139,9 @@ export class FeedStoreInterface extends DBInterface {
         return this.db.load();
     }
 
-    isLoaded(): boolean {
-        return this.initialized;
-    }
 
     async query(q: QueryRequestV0): Promise<string[]> {
-        return query<string>(q, this.db.db)
+        return this.db.query(q);
     }
 }
 
@@ -152,10 +149,11 @@ export const feedStoreShard = async () => new Shard({
     cluster: 'x',
     shardSize: new BN(500 * 1000),
     interface: new FeedStoreInterface({
-        db: new DB({
+        db: new SingleDBInterface({
             name: 'feed',
             storeOptions: new FeedStoreOptions()
         })
+
     }),
 })
 
@@ -163,10 +161,10 @@ export const feedStoreShard = async () => new Shard({
 @variant(123)
 export class DocumentStoreInterface<T> extends DBInterface {
 
-    @field({ type: DB })
-    db: DB<BinaryDocumentStore<T>>;
+    @field({ type: SingleDBInterface })
+    db: SingleDBInterface<T, BinaryDocumentStore<T>>;
 
-    constructor(opts?: { db: DB<BinaryDocumentStore<T>> }) {
+    constructor(opts?: { db: SingleDBInterface<T, BinaryDocumentStore<T>> }) {
         super();
         if (opts) {
             Object.assign(this, opts);
@@ -174,11 +172,11 @@ export class DocumentStoreInterface<T> extends DBInterface {
     }
 
     get initialized(): boolean {
-        return !!this.db?.db && !!this.db._shard;
+        return this.db.initialized;
     }
 
     close() {
-        this.db.db = undefined;
+        this.db.close();
     }
 
     async init(shard: Shard<any>) {
@@ -189,12 +187,9 @@ export class DocumentStoreInterface<T> extends DBInterface {
         return this.db.load(waitForReplicationEventsCount);
     }
 
-    isLoaded(): boolean {
-        return this.initialized;
-    }
 
     async query(q: QueryRequestV0): Promise<T[]> {
-        return query<T>(q, this.db.db)
+        return this.db.query(q);
     }
 }
 
@@ -202,7 +197,7 @@ export const documentStoreShard = async <T>(clazz: Constructor<T>, indexBy: stri
     cluster: 'x',
     shardSize: new BN(500 * 1000),
     interface: new DocumentStoreInterface<T>({
-        db: new DB({
+        db: new SingleDBInterface({
             name: 'documents',
             storeOptions: new BinaryDocumentStoreOptions<T>({
                 indexBy,
@@ -217,7 +212,7 @@ export const shardStoreShard = async <T extends DBInterface>(id?: string) => new
     cluster: 'x',
     shardSize: new BN(500 * 1000),
     interface: new RecursiveShardDBInterface({
-        db: new DB({
+        db: new SingleDBInterface({
             name: 'shards',
             storeOptions: new BinaryDocumentStoreOptions<Shard<T>>({
                 indexBy: 'id',
