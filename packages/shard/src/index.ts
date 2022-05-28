@@ -3,3 +3,5 @@ export * from './query';
 export * from './shard';
 export * from './stores';
 export * from './id';
+export * from './key';
+export * from './trust';
