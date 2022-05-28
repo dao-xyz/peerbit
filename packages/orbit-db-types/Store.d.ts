@@ -8,7 +8,7 @@ declare module "orbit-db-store" {
     import * as elliptic from "elliptic";
     import ipfs from "ipfs";
 
-    export default class Store {
+    export default class Store<T, X> {
 
         /**
          * The identity is used to sign the database entries.
@@ -19,7 +19,6 @@ declare module "orbit-db-store" {
         /** 
          * Contains all entries of this Store
          */
-        get all(): any[];
         type: string;
         id: string;
 
@@ -32,10 +31,7 @@ declare module "orbit-db-store" {
         replicationStatus: IReplicationStatus;
         events: EventEmitter;
         access: AccessController
-        _index: {
-            _index: any
-            get(key: any, fullOp?: boolean): any
-        };
+        _index: X;
         options: any;
 
 
@@ -60,6 +56,7 @@ declare module "orbit-db-store" {
          * @returns a `Promise` that resolves once complete
          */
         public load(amount?: number, opts = {}): Promise<void>;
+        public get all(): T[];
 
         protected _addOperation(data: any, options: { onProgressCallback?: (entry: any) => any, pin?: boolean }): Promise<string>;
         protected _addOperationBatch(data: any, batchOperation, lastOperation, onProgressCallback): Promise<any>

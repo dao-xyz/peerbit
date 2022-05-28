@@ -14,9 +14,9 @@ export class BinaryKeyValueStore extends Store {
         this._type = BINARY_KEYVALUE_STORE_TYPE;
         this._index.init(this.options.clazz);
     }
-    get all() {
-        return this._index._index;
-    }
+    /*  get all(): T[] {
+       return this._index._index
+     } */
     get(key) {
         return this._index.get(key);
     }

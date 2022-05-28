@@ -3,6 +3,7 @@ import { DocumentIndex } from './document-index.mjs';
 import pMap from 'p-map';
 import { serialize } from '@dao-xyz/borsh';
 import bs58 from 'bs58';
+import { asString } from './utils.mjs';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdocstore';
 const defaultOptions = (options) => {
@@ -18,6 +19,9 @@ export class BinaryDocumentStore extends Store {
         this._type = undefined;
         this._type = BINARY_DOCUMENT_STORE_TYPE;
         this._index.init(this.options.clazz);
+    }
+    get index() {
+        return this._index;
     }
     get(key, caseSensitive = false) {
         key = key.toString();
@@ -39,16 +43,17 @@ export class BinaryDocumentStore extends Store {
     }
     query(mapper, options = {}) {
         // Whether we return the full operation data or just the db value
-        const fullOp = options["fullOp"] || false;
+        const fullOp = options.fullOp || false;
+        const getValue = fullOp ? (value) => value.payload.value : (value) => value;
         return Object.keys(this._index._index)
             .map((e) => this._index.get(e, fullOp))
-            .filter(mapper);
+            .filter((doc) => mapper(getValue(doc)));
     }
     batchPut(docs, onProgressCallback) {
         const mapper = (doc, idx) => {
             return this._addOperationBatch({
                 op: 'PUT',
-                key: doc[this.options.indexBy],
+                key: asString(doc[this.options.indexBy]),
                 value: doc
             }, true, idx === docs.length - 1, onProgressCallback);
         };
@@ -61,7 +66,7 @@ export class BinaryDocumentStore extends Store {
         }
         return this._addOperation({
             op: 'PUT',
-            key: doc[this.options.indexBy],
+            key: asString(doc[this.options.indexBy]),
             value: bs58.encode(serialize(doc)),
         }, options);
     }
@@ -75,7 +80,7 @@ export class BinaryDocumentStore extends Store {
         return this._addOperation({
             op: 'PUTALL',
             docs: docs.map((value) => ({
-                key: value[this.options.indexBy],
+                key: asString(value[this.options.indexBy]),
                 value: bs58.encode(serialize(value))
             }))
         }, options);
@@ -86,7 +91,7 @@ export class BinaryDocumentStore extends Store {
         }
         return this._addOperation({
             op: 'DEL',
-            key: key,
+            key: asString(key),
             value: null
         }, options);
     }

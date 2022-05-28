@@ -5,6 +5,7 @@ import { IPFS as IPFSInstance } from 'ipfs';
 import { Identity } from 'orbit-db-identity-provider';
 import { Constructor, serialize } from '@dao-xyz/borsh';
 import bs58 from 'bs58';
+import { asString } from './utils';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement)
 
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdocstore';
@@ -13,16 +14,18 @@ const defaultOptions = (options: IStoreOptions): any => {
   if (!options.Index) Object.assign(options, { Index: DocumentIndex })
   return options;
 }
-export class BinaryDocumentStore<T> extends Store {
+export class BinaryDocumentStore<T> extends Store<T, DocumentIndex<T>> {
 
   _type: string = undefined;
   constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IStoreOptions & { indexBy?: string, clazz: Constructor<T> }) {
     super(ipfs, id, dbname, defaultOptions(options))
     this._type = BINARY_DOCUMENT_STORE_TYPE;
-    (this._index as DocumentIndex<T>).init(this.options.clazz);
+    this._index.init(this.options.clazz);
 
   }
-
+  public get index(): DocumentIndex<T> {
+    return this._index;
+  }
 
   public get(key: any, caseSensitive = false): T[] {
     key = key.toString()
@@ -35,7 +38,7 @@ export class BinaryDocumentStore<T> extends Store {
       }
       return e.toLowerCase().indexOf(key) !== -1
     }
-    const mapper = e => this._index.get(e)
+    const mapper = e => this._index.get(e) as T
     const filter = e => caseSensitive
       ? e.indexOf(key) !== -1
       : search(e)
@@ -45,13 +48,13 @@ export class BinaryDocumentStore<T> extends Store {
       .map(mapper)
   }
 
-  public query(mapper: ((doc: T) => boolean), options = {}): T[] {
+  public query(mapper: ((doc: T) => boolean), options: { fullOp?: boolean } = {}): T[] | { payload: Payload<T> }[] {
     // Whether we return the full operation data or just the db value
-    const fullOp = options["fullOp"] || false
-
+    const fullOp = options.fullOp || false
+    const getValue: (value: T | { payload: Payload<T> }) => T = fullOp ? (value: { payload: Payload<T> }) => value.payload.value : (value: T) => value
     return Object.keys(this._index._index)
       .map((e) => this._index.get(e, fullOp))
-      .filter(mapper)
+      .filter((doc) => mapper(getValue(doc))) as T[] | { payload: Payload<T> }[]
   }
 
   public batchPut(docs: T[], onProgressCallback) {
@@ -59,7 +62,7 @@ export class BinaryDocumentStore<T> extends Store {
       return this._addOperationBatch(
         {
           op: 'PUT',
-          key: doc[this.options.indexBy],
+          key: asString(doc[this.options.indexBy]),
           value: doc
         },
         true,
@@ -76,7 +79,7 @@ export class BinaryDocumentStore<T> extends Store {
     if (!doc[this.options.indexBy]) { throw new Error(`The provided document doesn't contain field '${this.options.indexBy}'`) }
     return this._addOperation({
       op: 'PUT',
-      key: doc[this.options.indexBy],
+      key: asString(doc[this.options.indexBy]),
       value: bs58.encode(serialize(doc)),
     }, options)
   }
@@ -89,7 +92,7 @@ export class BinaryDocumentStore<T> extends Store {
     return this._addOperation({
       op: 'PUTALL',
       docs: docs.map((value) => ({
-        key: value[this.options.indexBy],
+        key: asString(value[this.options.indexBy]),
         value: bs58.encode(serialize(value))
       }))
     }, options)
@@ -100,9 +103,10 @@ export class BinaryDocumentStore<T> extends Store {
 
     return this._addOperation({
       op: 'DEL',
-      key: key,
+      key: asString(key),
       value: null
     }, options)
   }
 }
+
 

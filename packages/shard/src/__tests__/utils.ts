@@ -8,6 +8,10 @@ import { TypedBehaviours } from '..';
 import { generateUUID } from '../id';
 import * as IPFS from 'ipfs';
 import { AnyPeer, createOrbitDBInstance, IPFSInstanceExtended, ServerOptions } from '../node';
+import { Shard } from '../shard';
+import FeedStore from 'orbit-db-feedstore';
+import { FeedStoreOptions } from '../stores';
+import BN from 'bn.js';
 /**
  * @private
  */
@@ -101,3 +105,9 @@ export const createIPFSNode = (local: boolean = false, repo: string = './ipfs'):
     return IPFS.create(ipfsOptions)
 
 }
+
+export const dummyShard = async () => new Shard<FeedStore<string>>({
+    cluster: 'x',
+    shardSize: new BN(500 * 1000),
+    storeOptions: new FeedStoreOptions()
+})

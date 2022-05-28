@@ -14,6 +14,8 @@ import { Compare, CompareQuery, QueryRequestV0, QueryResponse, StringMatchQuery 
 import { delay, waitFor } from '../utils';
 import { clean, disconnectPeers, getPeer } from './utils';
 import { generateUUID } from '../id';
+import { ACLV1 } from '../acl';
+import { P2PTrust } from '../trust';
 
 
 
@@ -118,6 +120,7 @@ const documentDbTestSetup = async<T>(clazz: Constructor<T>, indexBy: string, sha
         indexBy,
         objectType: clazz.name
     });
+
     let documentStore = await new Shard<BinaryDocumentStore<T>>({
         cluster: 'xx',
         shardSize: new BN(500 * 1000),

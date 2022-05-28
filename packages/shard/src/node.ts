@@ -1,12 +1,13 @@
 
 import OrbitDB from 'orbit-db';
 import { Identity } from 'orbit-db-identity-provider';
-import { CONTRACT_ACCESS_CONTROLLER } from './acl';
-import { Peer, Shard, TypedBehaviours } from './shard';
+import { CONTRACT_ACCESS_CONTROLLER } from './acl-c';
+import { Shard, TypedBehaviours } from './shard';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import { Constructor, deserialize, serialize } from '@dao-xyz/borsh';
 import { EncodedQueryResponse, QueryRequestV0, QueryResponse } from './query';
 import { Message } from 'ipfs-core-types/types/src/pubsub'
+import { Peer } from './peer';
 
 export interface IPFSInstanceExtended extends IPFSInstance {
     libp2p: any

@@ -6,9 +6,11 @@ import { SolanaIdentityProvider } from '../identity-providers/solana-identity-pr
 import FeedStore from 'orbit-db-feedstore';
 import { FeedStoreOptions } from '../stores';
 import { BN } from 'bn.js';
-import { clean, createIPFSNode, getPeer } from './utils';
+import { clean, createIPFSNode, dummyShard, getPeer } from './utils';
 import { generateUUID } from '../id';
-import { createOrbitDBInstance, IPFSInstanceExtended, ServerOptions } from '../node';
+import { createOrbitDBInstance, ServerOptions } from '../node';
+import { P2PTrust } from '../trust';
+import { PublicKey } from '../signer';
 import { delay } from '../utils';
 
 
@@ -70,6 +72,76 @@ const disconnectPeers = async (peers: AnyPeer[]): Promise<void> => {
 
 
 describe('cluster', () => {
+    describe('trust', () => {
+        test('add trustee', async () => {
+
+            let peer = await getPeer();
+            let l0 = await dummyShard();
+            await l0.init(peer);
+            expect(l0.cid).toBeDefined();
+            expect(l0.trust).toBeInstanceOf(P2PTrust);
+            expect((l0.trust as P2PTrust).rootTrust).toBeDefined();
+            expect((l0.trust as P2PTrust).rootTrust).toEqual(PublicKey.from(peer.orbitDB.identity))
+
+
+            let peer2 = await getPeer();
+            let newTrustee = PublicKey.from(peer2.orbitDB.identity);
+            await l0.trust.addTrust(newTrustee);
+
+            await l0.init(peer2);
+            let trust = await l0.trust.loadTrust(1);
+            expect(Object.values(trust.all)).toHaveLength(1);
+
+        })
+
+        describe('isTrusted', () => {
+
+            test('trusted by chain', async () => {
+
+                let peer = await getPeer();
+
+                let l0 = await dummyShard();
+                await l0.init(peer);
+
+                let peer2 = await getPeer();
+                let peer2Key = PublicKey.from(peer2.orbitDB.identity);
+                await l0.trust.addTrust(peer2Key);
+
+                await l0.init(peer2);
+                let peer3 = await getPeer();
+                let peer3Key = PublicKey.from(peer3.orbitDB.identity);
+                await l0.trust.addTrust(peer3Key);
+
+                // now check if peer3 is trusted from peer perspective
+                await l0.init(peer);
+                await l0.trust.loadTrust(2);
+                expect(l0.trust.isTrusted(peer3Key));
+            })
+
+            test('untrusteed by chain ', async () => {
+
+                let peer = await getPeer();
+
+                let l0 = await dummyShard();
+                await l0.init(peer);
+
+                let peer2 = await getPeer();
+                await l0.init(peer2);
+                let peer3 = await getPeer();
+                let peer3Key = PublicKey.from(peer3.orbitDB.identity);
+                await l0.trust.addTrust(peer3Key);
+
+                // now check if peer3 is trusted from peer perspective
+                //  await l0.init(peer);
+                await l0.trust.loadTrust(1);
+                expect(l0.trust.rootTrust.address).toEqual(peer.orbitDB.identity.publicKey);
+                expect(l0.trust.isTrusted(peer3Key)).toBeFalsy();
+            })
+        })
+
+
+
+    })
     describe('manifest', () => {
         test('save load', async () => {
 

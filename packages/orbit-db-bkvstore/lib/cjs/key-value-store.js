@@ -20,9 +20,9 @@ class BinaryKeyValueStore extends orbit_db_store_1.default {
         this._type = exports.BINARY_KEYVALUE_STORE_TYPE;
         this._index.init(this.options.clazz);
     }
-    get all() {
-        return this._index._index;
-    }
+    /*  get all(): T[] {
+       return this._index._index
+     } */
     get(key) {
         return this._index.get(key);
     }

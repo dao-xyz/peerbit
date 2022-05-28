@@ -1,9 +1,9 @@
 import { Constructor, deserialize } from "@dao-xyz/borsh";
-import { Payload } from "./payload";
 import bs58 from 'bs58';
+import { asString, ToStringable } from "./utils";
 
 export class DocumentIndex<T> {
-  _index: { [key: string]: { payload: Payload } };
+  _index: { [key: string]: { payload: Payload<T> } };
   clazz: Constructor<T>
   constructor() {
     this._index = {}
@@ -12,10 +12,11 @@ export class DocumentIndex<T> {
     this.clazz = clazz;
   }
 
-  get(key, fullOp = false): { payload: Payload } {
+  get(key: ToStringable, fullOp = false): ({ payload: Payload<T> } | T) {
+    let stringKey = asString(key);
     return fullOp
-      ? this._index[key]
-      : this._index[key] ? this._index[key].payload.value : null
+      ? this._index[stringKey]
+      : this._index[stringKey] ? this._index[stringKey].payload.value : null
   }
 
   updateIndex(oplog, onProgressCallback) {
@@ -23,6 +24,7 @@ export class DocumentIndex<T> {
       throw new Error("Not initialized");
     }
     const reducer = (handled, item, idx) => {
+      let key = asString(item.payload.key);
       if (item.payload.op === 'PUTALL' && item.payload.docs[Symbol.iterator]) {
         for (const doc of item.payload.docs) {
           if (doc && handled[doc.key] !== true) {
@@ -30,19 +32,19 @@ export class DocumentIndex<T> {
             this._index[doc.key] = {
               payload: {
                 op: 'PUT',
-                key: doc.key,
+                key: asString(doc.key),
                 value: this.deserializeOrPass(doc.value)
               }
             }
           }
         }
-      } else if (handled[item.payload.key] !== true) {
-        handled[item.payload.key] = true
+      } else if (handled[key] !== true) {
+        handled[key] = true
         if (item.payload.op === 'PUT') {
           item.payload.value = this.deserializeOrPass(item.payload.value)
-          this._index[item.payload.key] = item
+          this._index[key] = item
         } else if (item.payload.op === 'DEL') {
-          delete this._index[item.payload.key]
+          delete this._index[key]
         }
       }
       if (onProgressCallback) onProgressCallback(item, idx)
@@ -63,5 +65,6 @@ export class DocumentIndex<T> {
   }
 
 }
+
 
 

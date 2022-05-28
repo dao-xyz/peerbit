@@ -1,17 +1,18 @@
+/// <reference types="orbit-db" />
 import { Constructor } from "@dao-xyz/borsh";
-import { Payload } from "./payload";
+import { ToStringable } from "./utils";
 export declare class DocumentIndex<T> {
     _index: {
         [key: string]: {
-            payload: Payload;
+            payload: Payload<T>;
         };
     };
     clazz: Constructor<T>;
     constructor();
     init(clazz: Constructor<T>): void;
-    get(key: any, fullOp?: boolean): {
-        payload: Payload;
-    };
+    get(key: ToStringable, fullOp?: boolean): ({
+        payload: Payload<T>;
+    } | T);
     updateIndex(oplog: any, onProgressCallback: any): void;
     deserializeOrPass(value: string | T): T;
 }

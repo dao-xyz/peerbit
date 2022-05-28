@@ -9,6 +9,7 @@ const document_index_1 = require("./document-index");
 const p_map_1 = __importDefault(require("p-map"));
 const borsh_1 = require("@dao-xyz/borsh");
 const bs58_1 = __importDefault(require("bs58"));
+const utils_1 = require("./utils");
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
 exports.BINARY_DOCUMENT_STORE_TYPE = 'bdocstore';
 const defaultOptions = (options) => {
@@ -24,6 +25,9 @@ class BinaryDocumentStore extends orbit_db_store_1.default {
         this._type = undefined;
         this._type = exports.BINARY_DOCUMENT_STORE_TYPE;
         this._index.init(this.options.clazz);
+    }
+    get index() {
+        return this._index;
     }
     get(key, caseSensitive = false) {
         key = key.toString();
@@ -45,16 +49,17 @@ class BinaryDocumentStore extends orbit_db_store_1.default {
     }
     query(mapper, options = {}) {
         // Whether we return the full operation data or just the db value
-        const fullOp = options["fullOp"] || false;
+        const fullOp = options.fullOp || false;
+        const getValue = fullOp ? (value) => value.payload.value : (value) => value;
         return Object.keys(this._index._index)
             .map((e) => this._index.get(e, fullOp))
-            .filter(mapper);
+            .filter((doc) => mapper(getValue(doc)));
     }
     batchPut(docs, onProgressCallback) {
         const mapper = (doc, idx) => {
             return this._addOperationBatch({
                 op: 'PUT',
-                key: doc[this.options.indexBy],
+                key: (0, utils_1.asString)(doc[this.options.indexBy]),
                 value: doc
             }, true, idx === docs.length - 1, onProgressCallback);
         };
@@ -67,7 +72,7 @@ class BinaryDocumentStore extends orbit_db_store_1.default {
         }
         return this._addOperation({
             op: 'PUT',
-            key: doc[this.options.indexBy],
+            key: (0, utils_1.asString)(doc[this.options.indexBy]),
             value: bs58_1.default.encode((0, borsh_1.serialize)(doc)),
         }, options);
     }
@@ -81,7 +86,7 @@ class BinaryDocumentStore extends orbit_db_store_1.default {
         return this._addOperation({
             op: 'PUTALL',
             docs: docs.map((value) => ({
-                key: value[this.options.indexBy],
+                key: (0, utils_1.asString)(value[this.options.indexBy]),
                 value: bs58_1.default.encode((0, borsh_1.serialize)(value))
             }))
         }, options);
@@ -92,7 +97,7 @@ class BinaryDocumentStore extends orbit_db_store_1.default {
         }
         return this._addOperation({
             op: 'DEL',
-            key: key,
+            key: (0, utils_1.asString)(key),
             value: null
         }, options);
     }
