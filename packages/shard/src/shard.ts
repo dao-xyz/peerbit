@@ -135,6 +135,7 @@ export class DBInterface {
         throw new Error("Not implemented")
 
     }
+
     async init(_shard: Shard<any>) {
         throw new Error("Not implemented")
     }
