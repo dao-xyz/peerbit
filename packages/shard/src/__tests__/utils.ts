@@ -8,10 +8,14 @@ import { TypedBehaviours } from '..';
 import { generateUUID } from '../id';
 import * as IPFS from 'ipfs';
 import { AnyPeer, createOrbitDBInstance, IPFSInstanceExtended, ServerOptions } from '../node';
-import { Shard } from '../shard';
+import { DB, DBInterface, RecursiveShardDBInterface, Shard } from '../shard';
 import FeedStore from 'orbit-db-feedstore';
-import { FeedStoreOptions } from '../stores';
+import { BinaryDocumentStoreOptions, FeedStoreOptions } from '../stores';
 import BN from 'bn.js';
+import { Constructor, field, variant } from '@dao-xyz/borsh';
+import { query, QueryRequestV0 } from '../query';
+import { BinaryDocumentStore } from '@dao-xyz/orbit-db-bdocstore';
+import Store from 'orbit-db-store';
 /**
  * @private
  */
@@ -106,8 +110,119 @@ export const createIPFSNode = (local: boolean = false, repo: string = './ipfs'):
 
 }
 
-export const dummyShard = async () => new Shard<FeedStore<string>>({
+@variant(122)
+export class FeedStoreInterface extends DBInterface {
+
+    @field({ type: DB })
+    db: DB<FeedStore<string>>;
+
+    constructor(opts?: { db: DB<FeedStore<string>> }) {
+        super();
+        if (opts) {
+            Object.assign(this, opts);
+        }
+    }
+
+    get initialized(): boolean {
+        return !!this.db?.db && !!this.db._shard;
+    }
+
+    close() {
+        this.db.db = undefined;
+    }
+
+    async init(shard: Shard<any>) {
+        await this.db.init(shard);
+    }
+
+    async load(): Promise<FeedStore<string>> {
+        return this.db.load();
+    }
+
+    isLoaded(): boolean {
+        return this.initialized;
+    }
+
+    async query(q: QueryRequestV0): Promise<string[]> {
+        return query<string>(q, this.db.db)
+    }
+}
+
+export const feedStoreShard = async () => new Shard({
     cluster: 'x',
     shardSize: new BN(500 * 1000),
-    storeOptions: new FeedStoreOptions()
+    interface: new FeedStoreInterface({
+        db: new DB({
+            name: 'feed',
+            storeOptions: new FeedStoreOptions()
+        })
+    }),
+})
+
+
+@variant(123)
+export class DocumentStoreInterface<T> extends DBInterface {
+
+    @field({ type: DB })
+    db: DB<BinaryDocumentStore<T>>;
+
+    constructor(opts?: { db: DB<BinaryDocumentStore<T>> }) {
+        super();
+        if (opts) {
+            Object.assign(this, opts);
+        }
+    }
+
+    get initialized(): boolean {
+        return !!this.db?.db && !!this.db._shard;
+    }
+
+    close() {
+        this.db.db = undefined;
+    }
+
+    async init(shard: Shard<any>) {
+        await this.db.init(shard);
+    }
+
+    async load(waitForReplicationEventsCount = 0): Promise<BinaryDocumentStore<T>> {
+        return this.db.load(waitForReplicationEventsCount);
+    }
+
+    isLoaded(): boolean {
+        return this.initialized;
+    }
+
+    async query(q: QueryRequestV0): Promise<T[]> {
+        return query<T>(q, this.db.db)
+    }
+}
+
+export const documentStoreShard = async <T>(clazz: Constructor<T>, indexBy: string = 'id') => new Shard({
+    cluster: 'x',
+    shardSize: new BN(500 * 1000),
+    interface: new DocumentStoreInterface<T>({
+        db: new DB({
+            name: 'documents',
+            storeOptions: new BinaryDocumentStoreOptions<T>({
+                indexBy,
+                objectType: clazz.name
+            })
+        })
+    })
+})
+
+export const shardStoreShard = async <T extends DBInterface>(id?: string) => new Shard<RecursiveShardDBInterface<T>>({
+    id,
+    cluster: 'x',
+    shardSize: new BN(500 * 1000),
+    interface: new RecursiveShardDBInterface({
+        db: new DB({
+            name: 'shards',
+            storeOptions: new BinaryDocumentStoreOptions<Shard<T>>({
+                indexBy: 'id',
+                objectType: Shard.name
+            })
+        })
+    })
 })

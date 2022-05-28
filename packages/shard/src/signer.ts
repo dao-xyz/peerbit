@@ -1,5 +1,5 @@
 import { field } from "@dao-xyz/borsh";
-import { Identity } from "orbit-db-identity-provider";
+
 export class PublicKey {
     @field({ type: 'String' })
     type: string;

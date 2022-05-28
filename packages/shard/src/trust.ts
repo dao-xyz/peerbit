@@ -13,7 +13,7 @@ export class P2PTrustRelation {
      truster: PublicKey  *///  Dont need this becaause its going to be signed with truster anyway (bc orbitdb)
 
     @field({ type: PublicKey })
-    [TRUSTEE_KEY]: PublicKey  // child
+    [TRUSTEE_KEY]: PublicKey  // the key to trust
 
     /* @field({ type: 'String' }) 
     signature: string */ // Dont need this because its going to be signed anyway (bc orbitdb)

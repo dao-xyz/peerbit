@@ -150,7 +150,7 @@ export class BinaryFeedStoreOptions<T> extends StoreOptions<BinaryFeedStore<T>> 
 
 }
 
-const MAX_REPLICATION_WAIT_TIME = 30 * 1000;
+const MAX_REPLICATION_WAIT_TIME = 15 * 1000;
 
 export const waitForReplicationEvents = async (store: Store<any, any>, waitForReplicationEventsCount: number) => {
     /**

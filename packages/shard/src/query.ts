@@ -2,6 +2,10 @@ import { Constructor, deserialize, field, variant, vec } from "@dao-xyz/borsh";
 import { generateUUID } from "./id";
 import bs58 from "bs58";
 import BN from "bn.js";
+import Store from "orbit-db-store";
+import DocumentStore from "orbit-db-docstore";
+import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
+import FeedStore from "orbit-db-feedstore";
 
 
 export class Query {
@@ -177,5 +181,51 @@ export class QueryResponse<T> {
         return new QueryResponse({
             results
         })
+    }
+}
+
+export const query = async<T>(query: QueryRequestV0, db: Store<T, any>): Promise<T[]> => {
+    // query
+
+    if (db instanceof DocumentStore || db instanceof BinaryDocumentStore) {
+
+
+        let filters: (Query | ((v: any) => boolean))[] = query.queries;
+        if (filters.length == 0) {
+            filters = [(v?) => true];
+        }
+        let result = db.query(
+            doc =>
+                filters.map(f => {
+                    if (f instanceof Query) {
+                        return f.apply(doc)
+                    }
+                    else {
+                        return (f as ((v: any) => boolean))(doc)
+                    }
+                }).reduce((prev, current) => prev && current)
+        )
+
+        // publish response
+        return result
+
+    }
+    else if (db instanceof FeedStore) {
+        let result = db.iterator().collect().map(x => x.payload.value).filter(
+            doc =>
+                query.queries.map(f => {
+                    if (f instanceof FilterQuery) {
+                        let docValue = doc[f.key];
+                        return docValue == f.value
+                    }
+                }).reduce((prev, current) => prev && current)
+        )
+
+        // publish response
+        return result
+    }
+
+    else {
+        throw new Error("Querying not supported")
     }
 }

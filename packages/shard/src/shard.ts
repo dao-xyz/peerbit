@@ -9,7 +9,7 @@ import { BinaryKeyValueStore } from '@dao-xyz/orbit-db-bkvstore';
 import { BinaryDocumentStoreOptions, BinaryKeyValueStoreOptions, StoreOptions, waitForReplicationEvents } from "./stores";
 import { generateUUID } from "./id";
 import { Message } from 'ipfs-core-types/types/src/pubsub'
-import { EncodedQueryResponse, FilterQuery, Query, QueryRequestV0, QueryResponse, StringMatchQuery } from "./query";
+import { EncodedQueryResponse, FilterQuery, query, Query, QueryRequestV0, QueryResponse, StringMatchQuery } from "./query";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
 import base58 from "bs58";
 import { waitFor } from "./utils";
@@ -128,16 +128,106 @@ const onReplicationMark = (store: Store<any, any>) => store.events.on('replicate
     store["replicated"] = true // replicated once
 });
 
-export class DB {
+@variant(0) // prefix for versioning
+export class DB<B extends Store<any, any>> {
 
     @field({ type: 'String' })
-    address: String;
+    name: string;
 
-    db: undefined;
+    @field({ type: 'String' })
+    address: string;
+
+    @field({ type: StoreOptions })
+    storeOptions: StoreOptions<B>;
+
+    db: B;
+    _shard: Shard<any>
+
+    constructor(opts?: {
+        address?: string;
+        storeOptions: StoreOptions<B>;
+        name: string
+    }) {
+        if (opts) {
+            Object.assign(this, opts);
+        }
+    }
+
+    async init(shard: Shard<any>) {
+        this._shard = shard;
+    }
+
+
+    async newStore(): Promise<B> {
+        if (!this._shard) {
+            throw new Error("Not initialized")
+        }
+
+        this.db = await this.storeOptions.newStore(this.address ? this.address : this.getDBName(), this._shard.peer.orbitDB, this._shard.peer.options.defaultOptions, this._shard.peer.options.behaviours);
+        onReplicationMark(this.db);
+        this.address = this.db.address.toString();
+        return this.db;
+    }
+
+    async load(waitForReplicationEventsCount: number = 0): Promise<B> {
+        if (!this._shard) {
+            throw new Error("Not initialized")
+        }
+
+        if (!this.db) {
+            await this.newStore() //await db.feed(this.getDBName('blocks'), this.chain.defaultOptions);
+
+        }
+        await this.db.load();
+        await waitForReplicationEvents(this.db, waitForReplicationEventsCount);
+        return this.db;
+    }
+
+    getDBName(): string {
+        return this._shard.getDBName(this.name);
+    }
+    close() {
+        this.db = undefined;
+        this._shard = undefined;
+    }
+
+}
+
+export class DBInterface {
+
+    get initialized(): boolean {
+        throw new Error("Not implemented")
+    }
+
+    close() {
+        throw new Error("Not implemented")
+
+    }
+    async init(_shard: Shard<any>) {
+        throw new Error("Not implemented")
+    }
+
+    async load(): Promise<Store<any, any>> {
+        throw new Error("Not implemented")
+    }
+
+    isLoaded(): boolean {
+        throw new Error("Not implemented")
+    }
+
+    async replicate(): Promise<void> {
+        throw new Error("Not implemented")
+    }
+
+    async query(_query: QueryRequestV0): Promise<any[]> {
+        throw new Error("Not implemented")
+    }
+
+
 }
 
 @variant(1)
-export class Shard<B extends Store<any, any>> {
+export class Shard<T extends DBInterface> {
 
     @field({ type: 'String' })
     id: string
@@ -145,17 +235,14 @@ export class Shard<B extends Store<any, any>> {
     @field({ type: 'String' })
     cluster: string
 
-    @field({ type: option(StoreOptions) })
-    storeOptions: StoreOptions<B> | undefined;
-
     @field({ type: P2PTrust })
     trust: P2PTrust; // Infrastructure trust region, i.e. what signers can we trust for data for
 
     @field({ type: 'u64' })
     shardSize: BN
 
-    @field({ type: 'String' })
-    address: string; // the actual data db
+    @field({ type: DBInterface })
+    interface: T; // the actual data dbs, all governed by the shard
 
     @field({ type: 'String' })
     memoryAddedAddress: string; // Track memory added to data db
@@ -167,19 +254,15 @@ export class Shard<B extends Store<any, any>> {
     peersAddress: string; // peers data db
 
     @field({ type: option('String') })
-    parentShardCID: string | undefined;
+    parentShardCID: string | undefined; // one of the shards in the parent cluster
 
     @field({ type: ACL })
     acl: ACL; // A database for access control
 
     @field({ type: 'u64' })
-    createdAt: number;
-
-
-
+    shardIndex: BN // 0, 1, 2... this index will change the IFPS hash of this shard serialized. This means we can iterate shards without actually saving them in a DB
 
     _peers?: BinaryKeyValueStore<Peer>
-    blocks?: B;
     memoryAdded?: CounterStore;
     memoryRemoved?: CounterStore;
     peer: AnyPeer;
@@ -188,21 +271,22 @@ export class Shard<B extends Store<any, any>> {
     constructor(props?: {
         id: string
         cluster: string
-        storeOptions: StoreOptions<B> | undefined;
+        interface: T
         shardSize: BN
         address: string
         peersAddress: string
         memoryAddedAddress: string
         memoryRemovedAddress: string
         parentShardCID: string
-        createdAt: number
         trust: P2PTrust
         acl: ACL
+        shardIndex: BN
     } | {
         cluster: string
-        storeOptions: StoreOptions<B> | undefined;
-        shardSize: BN,
-        trust?: P2PTrust,
+        interface: T
+        shardSize: BN
+        shardIndex?: BN
+        trust?: P2PTrust
         acl?: ACL
     }) {
 
@@ -210,25 +294,30 @@ export class Shard<B extends Store<any, any>> {
         if (props) {
             Object.assign(this, props);
         }
+
+        if (!this.shardIndex) {
+            this.shardIndex = new BN(0);
+        }
+
         if (!this.id) {
             this.id = generateUUID();
         }
-        if (!this.createdAt) {
-            this.createdAt = +new Date;
-        }
+
     }
 
-    async init(from: AnyPeer, parent?: RecursiveShard<B>): Promise<Shard<B>> {
-        await this.close();
-
+    async init(from: AnyPeer, parent?: Shard<any>): Promise<Shard<T>> {
         // TODO: this is ugly but ok for now
         from.options.behaviours.typeMap[Peer.name] = Peer;
-        this.peer = from;
 
+        await this.close();
+
+        this.peer = from;
+        let isInitialized = this.initialized;
 
         if (!this.acl) {
             this.acl = new ACLV1({});
         }
+
         await this.acl.create(from, this);
 
         if (!this.trust) {
@@ -236,17 +325,14 @@ export class Shard<B extends Store<any, any>> {
                 rootTrust: PublicKey.from(from.orbitDB.identity)
             })
         }
+
         await this.trust.create(from, this);
-
-
-        let isInitialized = this.initialized;
+        await this.interface.init(this);
         await this.loadStores();
 
         if (parent) {
             this.parentShardCID = parent.cid;
-            await parent.blocks.put(this);
         }
-
 
         if (!isInitialized) {
             await this.save(from.node);
@@ -255,30 +341,20 @@ export class Shard<B extends Store<any, any>> {
     }
 
     async close() {
-        /*  if (this._peers) {
-             await this._peers.close();
-         }
-         if (this.blocks) {
-             await this.blocks.close();
-         }
-         if (this.memoryAdded) {
-             await this.memoryAdded.close();
-         }
-         if (this.memoryRemoved) {
-             await this.memoryRemoved.close();
-         } */
+
         this._peers = undefined;
-        this.blocks = undefined;
+        //this.dbs.forEach(db => { db.db = undefined });
+        this.interface.close();
         this.memoryAdded = undefined;
         this.memoryRemoved = undefined;
     }
 
     async loadStores() {
-        this.blocks = await this.newStore(this.address ? this.address : this.getDBName('blocks')) //await db.feed(this.getDBName('blocks'), this.chain.defaultOptions);
-        onReplicationMark(this.blocks);
+        //this.blocks = await this.newStore(this.address ? this.address : this.getDBName('blocks')) //await db.feed(this.getDBName('blocks'), this.chain.defaultOptions);
+        //await Promise.all(this.dbs.map(db => db.newStore(this)));
 
+        await this.interface.load();
 
-        this.address = this.blocks.address.toString();
         this._peers = await new BinaryKeyValueStoreOptions<Peer>({ objectType: Peer.name }).newStore(this.peersAddress ? this.peersAddress : this.getDBName("peers"), this.peer.orbitDB, this.peer.options.defaultOptions, this.peer.options.behaviours);
         onReplicationMark(this._peers);
 
@@ -302,15 +378,9 @@ export class Shard<B extends Store<any, any>> {
 
     }
 
-
-    getDBName(name: string): string {
-        return this.id + '-' + name;
-    }
-
     get queryTopic(): string {
         return this.cluster;
     }
-
 
     async loadPeers(waitForReplicationEventsCount: number = 0) {
         if (!this._peers) {
@@ -327,18 +397,23 @@ export class Shard<B extends Store<any, any>> {
         await this.loadPeers(peersCount);
         return Object.keys(this._peers.all).length >= peersCount
     }
-    async newStore(name: string): Promise<B> {
-        return this.storeOptions.newStore(name, this.peer.orbitDB, this.peer.options.defaultOptions, this.peer.options.behaviours);
+
+    /* async loadDBs(): Promise<DB<any>[]> {
+        await Promise.all(this.dbs.map(db => db.load(this)))
+        return this.dbs;
     }
 
-    async loadBlocks(waitForReplicationEventsCount: number = 0): Promise<B> {
-        if (!this.blocks) {
-            this.blocks = await this.newStore(this.address ? this.address : this.getDBName('blocks')) //await db.feed(this.getDBName('blocks'), this.chain.defaultOptions);
-        }
-        await this.blocks.load();
-        await waitForReplicationEvents(this.blocks, waitForReplicationEventsCount);
-        return this.blocks;
+    async loadDB<T extends Store<any, any>>(name: string): Promise<DB<T>> {
+        let db = this.dbs.find(x => x.name == name);
+        await db.load(this);
+        return db;
     }
+    async loadShardDB<B extends Store<Shard, any>>(name: string): Promise<B> {
+        let db = await this.loadDB(name);
+        return db.db as B;
+    }
+ */
+
 
     async makeSpace(sizeBytes: number): Promise<void> {
 
@@ -350,9 +425,12 @@ export class Shard<B extends Store<any, any>> {
             await this.loadMemorySize();
         }
 
-        if (!this.blocks) {
-            await this.loadBlocks();
+        if (!this.interface.isLoaded()) {
+            await this.interface.load();
         }
+        /*  if (this.dbs.find(db => !db.db)) {
+             await this.loadDBs();
+         } */
         // This is not a perfect memory check since, there could
         // be a parallel peer that also wants to add memory at the same  time
         // However though, we will not overshoot greatly 
@@ -396,56 +474,6 @@ export class Shard<B extends Store<any, any>> {
 
     }
 
-    async query(query: QueryRequestV0): Promise<any[]> {
-        // query
-        if (this.blocks instanceof DocumentStore || this.blocks instanceof BinaryDocumentStore) {
-
-            /*     if (query.filters.length == 0) {
-                    return this.blocks.all;
-                } */
-            let filters: (Query | ((v: any) => boolean))[] = query.queries;
-            if (filters.length == 0) {
-                filters = [(v?) => true];
-            }
-            let result = this.blocks.query(
-                doc =>
-                    filters.map(f => {
-                        if (f instanceof Query) {
-                            return f.apply(doc)
-                        }
-                        else {
-                            return (f as ((v: any) => boolean))(doc)
-                        }
-                    }).reduce((prev, current) => prev && current)
-            )
-
-            // publish response
-            return result
-
-        }
-        else if (this.blocks instanceof FeedStore) {
-            let result = this.blocks.iterator().collect().map(x => x.payload.value).filter(
-                doc =>
-                    query.queries.map(f => {
-                        if (f instanceof FilterQuery) {
-                            let docValue = doc[f.key];
-                            return docValue == f.value
-                        }
-                    }).reduce((prev, current) => prev && current)
-            )
-
-            // publish response
-            return result
-        }
-
-        else {
-            throw new Error("Querying not supported")
-        }
-
-    }
-
-
-
     async removeAndFreeMemory(amount: number, remove: () => Promise<string>): Promise<void> {
         let rem = await remove();
         if (rem) {
@@ -465,6 +493,7 @@ export class Shard<B extends Store<any, any>> {
 
         if (this.parentShardCID) {
             let parentShard = await Shard.loadFromCID(this.parentShardCID, this.peer.node);
+            // TODO:  fix to work if parent is a cluster
             await parentShard.init(this.peer);
             let parentPeers = await parentShard.loadPeers(1); // Expect at least 1 peer from parent
             let thisAddressSet = new Set(thisPeer.addresses);
@@ -488,15 +517,17 @@ export class Shard<B extends Store<any, any>> {
 
         await Promise.all([
             this.loadPeers(),
-            this.loadBlocks(),
+            this.interface.load(),
             this.loadMemorySize()]);
 
         await this.addPeer();
         await this.peer.node.pubsub.subscribe(this.queryTopic, async (msg: Message) => {
             try {
-                await this.blocks.load();
+                // TODO: is load needed?
+                //await this.loadDBs();
+
                 let query = deserialize(Buffer.from(msg.data), QueryRequestV0);
-                let results = await this.query(query);
+                let results = await this.interface.query(query);
                 let response = new EncodedQueryResponse({
                     results: results.map(r => base58.encode(serialize(r)))
                 });
@@ -518,11 +549,11 @@ export class Shard<B extends Store<any, any>> {
         }))
         */
 
-        await this.loadBlocks();
+        //await this.loadBlocks();
     }
 
     get initialized(): boolean {
-        return !!this.address && !!this.peersAddress && !!this.memoryAddedAddress && !!this.memoryRemovedAddress
+        return this.interface.initialized && !!this.peersAddress && !!this.memoryAddedAddress && !!this.memoryRemovedAddress
     };
 
     async save(node: IPFSInstanceExtended): Promise<string> {
@@ -538,206 +569,270 @@ export class Shard<B extends Store<any, any>> {
     }
 
 
-    static async loadFromCID<B extends Store<any, any>>(cid: string, node: IPFSInstanceExtended) {
+    static async loadFromCID<T extends DBInterface>(cid: string, node: IPFSInstanceExtended) {
         let arr = await node.cat(cid);
         for await (const obj of arr) {
-            return deserialize<Shard<B>>(Buffer.from(obj), Shard)
+            return deserialize<Shard<T>>(Buffer.from(obj), Shard)
 
         }
     }
 
-
-
-}
-
-// TODO verify serialization work with inheritance
-@variant(2)
-export class RecursiveShard<T extends Store<any, any>> extends Shard<BinaryDocumentStore<Shard<T>>> {
-
-
-
-    /* @field({ type: 'u64' })
-    XYZshards: BN
-
-    defaultOptions: IStoreOptions;
-    db: ShardedDB
-    shardCounter: CounterStore | undefined = undefined;
-    behaviours: TypedBehaviours; */
-
-    /* constructor(opts?: {
-        id?: string;
-        name: string;
-        remoteAddress?: string;
-        storeOptions: StoreOptions<any> | undefined;
-        shardSize: BN
-    }) {
-        if (opts) {
-            Object.assign(this, opts);
-            if (!this._id) {
-                this._id = this.id;
-            }
-        }
-    } */
-    /* 
-        get queryTopic(): string {
-            return this.id + "/query"
-        }
-     */
-
-    /* 
-        init(opts: {
-    
-            defaultOptions: IStoreOptions;
-            db: ShardedDB;
-            behaviours: TypedBehaviours;
-        }) {
-            this.defaultOptions = opts.defaultOptions;
-            this.db = opts.db;
-            this.behaviours = opts.behaviours;
-        } */
-
-
-
-    /* async getShardCounter(): Promise<CounterStore> {
-
-        if (this.shardCounter) {
-            return this.shardCounter;
-        }
-        this.shardCounter = await this.db.orbitDB.counter(this.name, this.defaultOptions);
-        await this.shardCounter.load();
-        return this.shardCounter;
-
-    } */
-
-    constructor(props?: {
-        id: string
-        cluster: string
-        storeOptions: StoreOptions<BinaryKeyValueStore<Shard<T>>> | undefined
-        shardSize: BN
-        address: string
-        peersAddress: string
-        memoryAddedAddress: string
-        memoryRemovedAddress: string
-        parentShardCID: string
-        createdAt: number
-        trust: P2PTrust,
-        acl: ACL
-    } | {
-        cluster: string
-        shardSize: BN,
-        trust?: P2PTrust,
-        acl?: ACL
-    }) {
-        const storeOptions = new BinaryDocumentStoreOptions<Shard<T>>({
-            objectType: RecursiveShard.name,
+    getDBName(name: string): string {
+        return this.id + '-' + name;
+    }
+    static get recursiveStoreOption() {
+        return new BinaryDocumentStoreOptions<Shard<any>>({
+            objectType: Shard.name,
             indexBy: 'id'
         })
 
-        super({ ...props, storeOptions });
+    }
+}
+
+
+@variant(0)
+export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterface {
+
+    @field({ type: DB })
+    db: DB<BinaryDocumentStore<Shard<T>>>;
+
+    _shard: Shard<T>
+
+    constructor(opts?: { db: DB<BinaryDocumentStore<Shard<any>>> }) {
+        super();
+        if (opts) {
+            Object.assign(this, opts);
+        }
     }
 
-    async init(from: AnyPeer, parent?: RecursiveShard<BinaryDocumentStore<Shard<T>>>): Promise<RecursiveShard<T>> {
-        from.options.behaviours.typeMap[RecursiveShard.name] = RecursiveShard;
-        await super.init(from, parent);
-        return this;
+    get initialized(): boolean {
+        return !!this.db?.db && !!this.db._shard;
     }
 
-    /*  async addShard(shard: Shard<T>) {
-         if (shard.cid != undefined) {
-             throw new Error("Already initialized. `addShard` requires an uniniialized shard")
-         }
- 
-         shard.parentShardCID = this.cid;
-         await this.blocks.put(shard);
-     } */
-    /* 
-    async getWritableShard(storeOptions: StoreOptions<T>, peer: AnyPeer): Promise<Shard<T>> {
+    close() {
+        this._shard = undefined;
+        this.db.close();
+    }
+
+    async init(shard: Shard<any>) {
+        this._shard = shard;
+        await this.db.init(shard);
+    }
+
+
+    async load(waitForReplicationEventsCount = 0): Promise<BinaryDocumentStore<Shard<any>>> {
+        return this.db.load(waitForReplicationEventsCount);
+    }
+
+    isLoaded(): boolean {
+        return this.initialized;
+    }
+
+    async query(q: QueryRequestV0): Promise<Shard<any>[]> {
+        return query<Shard<any>>(q, this.db.db)
+    }
+
+    async loadShard(index: number, options: { expectedPeerReplicationEvents?: number } = { expectedPeerReplicationEvents: 0 }): Promise<Shard<T>> {
         // Get the latest shard that have non empty peer
-        let lastShard = undefined;
-
-        // get "latest" shard
-
-
-        const shard = new Shard<T>({
-            id: generateUUID(),
-            cluster: this.cluster,
-            shardSize: this.shardSize,
-            storeOptions,
-            address: undefined,
-            memoryAddedAddress: undefined,
-            memoryRemovedAddress: undefined,
-            peersAddress: undefined,
-            parentShardCID: this.cid
-        });
-
-        await shard.init(peer);
-        await shard.loadPeers();
-
-        if (Object.keys(shard._peers.all).length > 0) {
-            lastShard = shard;
-        }
-        else {
-            await shard.requestReplicate();
-            this.blocks.put(shard);
-            return shard;
-        }
-        return lastShard;
-
-
-    } 
-    */
-
-    async loadShard(index: number, options: { expectedPeerReplicationEvents?: number, expectedBlockReplicationEvents?: number } = { expectedPeerReplicationEvents: 0, expectedBlockReplicationEvents: 0 }): Promise<Shard<T>> {
-        // Get the latest shard that have non empty peer
-        let block: Shard<T> = await (await this.loadBlocks(index + 1)).get(index.toString())[0];
-        await block.init(this.peer);
-        await block.loadPeers(options.expectedPeerReplicationEvents);
-        await block.loadBlocks(options.expectedBlockReplicationEvents);
-        return block;
+        let shard = (await this.db.load(index + 1)).get(index.toString())[0]
+        await shard.init(this._shard.peer);
+        await shard.loadPeers(options.expectedPeerReplicationEvents);
+        await shard.interface.load();
+        return shard;
     }
 
-
-    /* async addPeerToShards(opts: {
-        startIndex: number,
-        peersLimit: number,
-        supportAmountOfShards: number
-    } = {
-            peersLimit: 1,
-            startIndex: 0,
-            supportAmountOfShards: 1
-        }): Promise<Shard<T>[]> {
-
-        let index = opts.startIndex;
-        let supportedShards = 0;
-        let shards: Shard<T>[] = [];
-        while (supportedShards < opts.supportAmountOfShards) {
-
-            const results = await (await this.loadBlocks(index + 1)).get(index.toString());
-            const shard: Shard<T> = results[0]
-            await shard.init(this.peer);
-            await shard.loadPeers();
-            let peersCount = Object.keys(shard._peers.all).length;
-            if (peersCount == 0 && opts.startIndex != index) {
-                return shards; // dont create a new shard (yet)
-            }
-
-            if (Object.keys(shard._peers.all).length < opts.peersLimit) {
-
-                // Replicate (i.e. support)
-                // const peerInfo = await this.node.id();
-                await shard.replicate();
-                supportedShards += 1;
-                let serialized = serialize(shard);
-                await this.makeSpace(serialized.length);
-                shards.push(shard);
-            }
-
-       
-            index += 1;
-        }
-        return shards;
-    }
- */
 
 }
 
+
+// TODO verify serialization work with inheritance
+/* @variant(2)
+export class RecursiveShard<T extends Store<any, any>> extends Shard<BinaryDocumentStore<Shard<T>>> {
+ */
+
+
+/* @field({ type: 'u64' })
+XYZshards: BN
+
+defaultOptions: IStoreOptions;
+db: ShardedDB
+shardCounter: CounterStore | undefined = undefined;
+behaviours: TypedBehaviours; */
+
+/* constructor(opts?: {
+    id?: string;
+    name: string;
+    remoteAddress?: string;
+    storeOptions: StoreOptions<any> | undefined;
+    shardSize: BN
+}) {
+    if (opts) {
+        Object.assign(this, opts);
+        if (!this._id) {
+            this._id = this.id;
+        }
+    }
+} */
+/*
+    get queryTopic(): string {
+        return this.id + "/query"
+    }
+ */
+
+/*
+    init(opts: {
+ 
+        defaultOptions: IStoreOptions;
+        db: ShardedDB;
+        behaviours: TypedBehaviours;
+    }) {
+        this.defaultOptions = opts.defaultOptions;
+        this.db = opts.db;
+        this.behaviours = opts.behaviours;
+    } */
+
+
+
+/* async getShardCounter(): Promise<CounterStore> {
+
+    if (this.shardCounter) {
+        return this.shardCounter;
+    }
+    this.shardCounter = await this.db.orbitDB.counter(this.name, this.defaultOptions);
+    await this.shardCounter.load();
+    return this.shardCounter;
+
+} */
+
+/* constructor(props?: {
+    id: string
+    cluster: string
+    storeOptions: StoreOptions<BinaryKeyValueStore<Shard<T>>> | undefined
+    shardSize: BN
+    address: string
+    peersAddress: string
+    memoryAddedAddress: string
+    memoryRemovedAddress: string
+    parentShardCID: string
+    createdAt: number
+    trust: P2PTrust,
+    acl: ACL
+} | {
+    cluster: string
+    shardSize: BN,
+    trust?: P2PTrust,
+    acl?: ACL
+}) {
+    const storeOptions = new BinaryDocumentStoreOptions<Shard<T>>({
+        objectType: RecursiveShard.name,
+        indexBy: 'id'
+    })
+
+    super({ ...props, storeOptions });
+}
+
+async init(from: AnyPeer, parent?: RecursiveShard<BinaryDocumentStore<Shard<T>>>): Promise<RecursiveShard<T>> {
+    from.options.behaviours.typeMap[RecursiveShard.name] = RecursiveShard;
+    await super.init(from, parent);
+    return this;
+} */
+
+/*  async addShard(shard: Shard<T>) {
+     if (shard.cid != undefined) {
+         throw new Error("Already initialized. `addShard` requires an uniniialized shard")
+     }
+ 
+     shard.parentShardCID = this.cid;
+     await this.blocks.put(shard);
+ } */
+/*
+async getWritableShard(storeOptions: StoreOptions<T>, peer: AnyPeer): Promise<Shard<T>> {
+    // Get the latest shard that have non empty peer
+    let lastShard = undefined;
+
+    // get "latest" shard
+
+
+    const shard = new Shard<T>({
+        id: generateUUID(),
+        cluster: this.cluster,
+        shardSize: this.shardSize,
+        storeOptions,
+        address: undefined,
+        memoryAddedAddress: undefined,
+        memoryRemovedAddress: undefined,
+        peersAddress: undefined,
+        parentShardCID: this.cid
+    });
+
+    await shard.init(peer);
+    await shard.loadPeers();
+
+    if (Object.keys(shard._peers.all).length > 0) {
+        lastShard = shard;
+    }
+    else {
+        await shard.requestReplicate();
+        this.blocks.put(shard);
+        return shard;
+    }
+    return lastShard;
+
+
+} 
+*/
+
+/*  async loadShard(index: number, options: { expectedPeerReplicationEvents?: number, expectedBlockReplicationEvents?: number } = { expectedPeerReplicationEvents: 0, expectedBlockReplicationEvents: 0 }): Promise<Shard<T>> {
+     // Get the latest shard that have non empty peer
+     let block: Shard<T> = await (await this.loadBlocks(index + 1)).get(index.toString())[0];
+     await block.init(this.peer);
+     await block.loadPeers(options.expectedPeerReplicationEvents);
+     await block.loadBlocks(options.expectedBlockReplicationEvents);
+     return block;
+ } */
+
+
+/* async addPeerToShards(opts: {
+    startIndex: number,
+    peersLimit: number,
+    supportAmountOfShards: number
+} = {
+        peersLimit: 1,
+        startIndex: 0,
+        supportAmountOfShards: 1
+    }): Promise<Shard<T>[]> {
+
+    let index = opts.startIndex;
+    let supportedShards = 0;
+    let shards: Shard<T>[] = [];
+    while (supportedShards < opts.supportAmountOfShards) {
+
+        const results = await (await this.loadBlocks(index + 1)).get(index.toString());
+        const shard: Shard<T> = results[0]
+        await shard.init(this.peer);
+        await shard.loadPeers();
+        let peersCount = Object.keys(shard._peers.all).length;
+        if (peersCount == 0 && opts.startIndex != index) {
+            return shards; // dont create a new shard (yet)
+        }
+
+        if (Object.keys(shard._peers.all).length < opts.peersLimit) {
+
+            // Replicate (i.e. support)
+            // const peerInfo = await this.node.id();
+            await shard.replicate();
+            supportedShards += 1;
+            let serialized = serialize(shard);
+            await this.makeSpace(serialized.length);
+            shards.push(shard);
+        }
+
+   
+        index += 1;
+    }
+    return shards;
+}
+*/
+
+/* }
+ */

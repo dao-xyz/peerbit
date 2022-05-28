@@ -1,10 +1,10 @@
 
-import { RecursiveShard, Shard, AnyPeer } from '../index';
+import { Shard, AnyPeer } from '../index';
 import fs from 'fs';
 import Identities from 'orbit-db-identity-provider';
 import { Keypair } from '@solana/web3.js';
 import { SolanaIdentityProvider } from '../identity-providers/solana-identity-provider';
-import { TypedBehaviours } from '../shard';
+import { DB, TypedBehaviours } from '../shard';
 import FeedStore from 'orbit-db-feedstore';
 import { BinaryDocumentStore } from '@dao-xyz/orbit-db-bdocstore';
 import { BinaryDocumentStoreOptions, FeedStoreOptions } from '../stores';
@@ -12,7 +12,7 @@ import { Constructor, field, option, variant } from '@dao-xyz/borsh';
 import BN from 'bn.js';
 import { Compare, CompareQuery, QueryRequestV0, QueryResponse, StringMatchQuery } from '../query';
 import { delay, waitFor } from '../utils';
-import { clean, disconnectPeers, getPeer } from './utils';
+import { clean, disconnectPeers, DocumentStoreInterface, documentStoreShard, getPeer, shardStoreShard } from './utils';
 import { generateUUID } from '../id';
 import { ACLV1 } from '../acl';
 import { P2PTrust } from '../trust';
@@ -67,38 +67,9 @@ const getPeers = async (amount: number = 1, peerCapacity: number, behaviours: Ty
 const documentDbTestSetup = async<T>(clazz: Constructor<T>, indexBy: string, shardSize = new BN(100000)): Promise<{
     creatorPeer: AnyPeer,
     otherPeer: AnyPeer,
-    documentStore: Shard<BinaryDocumentStore<T>>
+    documentStore: Shard<DocumentStoreInterface<T>>
 
 }> => {
-    /* let peers = await getPeers(2, 1, {
-        ...testBehaviours,
-        typeMap: {
-            [clazz.name]: clazz
-        }
-    });
-    let creatorPeer = peers[0];
-    await creatorPeer.subscribeForReplication();
-
-    //  --- Create
-    let rootChains = creatorPeer.shardChainChain;
-
-    // Create Root shard
-    await rootChains.addPeerToShards();
-    expect(rootChains.shardCounter.value).toEqual(1);
-
-    // Create Feed store
-    let options = new BinaryDocumentStoreOptions<T>({
-        indexBy,
-        objectType: clazz.name
-    });
-
-    let chain = await creatorPeer.createShardChain("test", options, shardSize);
-    await chain.addPeerToShards();
-    return {
-        creatorPeer,
-        otherPeer: peers[1],
-        shardChain: chain
-    } */
 
     let rootAddress = 'root';
     let behaviours: TypedBehaviours = {
@@ -108,24 +79,12 @@ const documentDbTestSetup = async<T>(clazz: Constructor<T>, indexBy: string, sha
     }
     let peer = await getPeer(rootAddress, behaviours);
     // Create Root shard
-    let l0 = new RecursiveShard<BinaryDocumentStore<T>>({
-        cluster: 'x',
-        shardSize: new BN(500 * 1000)
-    })
+    let l0 = await shardStoreShard();
     await l0.init(peer);
     await l0.replicate();
 
     // Create Feed store
-    let options = new BinaryDocumentStoreOptions<T>({
-        indexBy,
-        objectType: clazz.name
-    });
-
-    let documentStore = await new Shard<BinaryDocumentStore<T>>({
-        cluster: 'xx',
-        shardSize: new BN(500 * 1000),
-        storeOptions: options
-    }).init(peer, l0);
+    let documentStore = await (await documentStoreShard(clazz, indexBy)).init(peer, l0);
     await documentStore.replicate();
 
 
@@ -136,34 +95,14 @@ const documentDbTestSetup = async<T>(clazz: Constructor<T>, indexBy: string, sha
     }
 }
 
+
+/* 
 const feedStoreTestSetup = async<T>(shardSize = new BN(100000)): Promise<{
     creatorPeer: AnyPeer,
     otherPeer: AnyPeer
 
 }> => {
-    /* let peers = await getPeers(2, 1, {
-        ...testBehaviours
-    });
-    let creatorPeer = peers[0];
-    await creatorPeer.subscribeForReplication();
-
-    //  --- Create
-    let rootChains = new RecursiveShard();
-    let rootChains = creatorPeer.shardChainChain;
-
-    // Create Root shard
-    await rootChains.addPeerToShards();
-    expect(rootChains.shardCounter.value).toEqual(1);
-
-    // Create Feed store
-    let options = new FeedStoreOptions<T>();
-    let chain = await creatorPeer.createShardChain("test", options, shardSize);
-    await chain.addPeerToShards();
-    return {
-        creatorPeer,
-        otherPeer: peers[1],
-        shardChain: chain
-    } */
+   
 
     let peer = await getPeer();
 
@@ -195,7 +134,7 @@ const feedStoreTestSetup = async<T>(shardSize = new BN(100000)): Promise<{
         otherPeer: peer2
     }
 }
-
+ */
 
 
 
@@ -230,7 +169,7 @@ describe('query', () => {
             documentStore
         } = await documentDbTestSetup(Document, 'id');
 
-        let blocks = await documentStore.loadBlocks();
+        let blocks = documentStore.interface.db.db;
 
         let doc = new Document({
             id: '1',
@@ -270,7 +209,8 @@ describe('query', () => {
                 otherPeer,
                 documentStore
             } = await documentDbTestSetup(Document, 'id');
-            let blocks = await documentStore.loadBlocks();
+
+            let blocks = documentStore.interface.db.db;
 
             let doc = new Document({
                 id: '1',
@@ -316,7 +256,8 @@ describe('query', () => {
                 otherPeer,
                 documentStore
             } = await documentDbTestSetup(Document, 'id');
-            let blocks = await documentStore.loadBlocks();
+
+            let blocks = documentStore.interface.db.db;
 
             let doc = new Document({
                 id: '1',
@@ -361,7 +302,8 @@ describe('query', () => {
                 otherPeer,
                 documentStore
             } = await documentDbTestSetup(Document, 'id');
-            let blocks = await documentStore.loadBlocks();
+
+            let blocks = documentStore.interface.db.db;
 
             let doc = new Document({
                 id: '1',
@@ -408,7 +350,8 @@ describe('query', () => {
                 otherPeer,
                 documentStore
             } = await documentDbTestSetup(Document, 'id');
-            let blocks = await documentStore.loadBlocks();
+
+            let blocks = documentStore.interface.db.db;
 
             let doc = new Document({
                 id: '1',
@@ -453,7 +396,8 @@ describe('query', () => {
                 otherPeer,
                 documentStore
             } = await documentDbTestSetup(Document, 'id');
-            let blocks = await documentStore.loadBlocks();
+
+            let blocks = documentStore.interface.db.db;
 
             let doc = new Document({
                 id: '1',
