@@ -143,11 +143,6 @@ export class DBInterface {
         throw new Error("Not implemented")
     }
 
-
-    async replicate(): Promise<void> {
-        throw new Error("Not implemented")
-    }
-
     async query(_query: QueryRequestV0): Promise<any[]> {
         throw new Error("Not implemented")
     }
@@ -223,10 +218,6 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
 
     get initialized(): boolean {
         return !!this.db;
-    }
-
-    async replicate(): Promise<void> {
-        await this.load();
     }
 
     async query(q: QueryRequestV0): Promise<T[]> {
