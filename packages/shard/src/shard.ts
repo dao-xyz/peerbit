@@ -13,7 +13,7 @@ import base58 from "bs58";
 import { waitFor } from "./utils";
 import { AnyPeer, IPFSInstanceExtended } from "./node";
 import { Peer } from "./peer";
-import { PublicKey } from "./signer";
+import { PublicKey } from "./key";
 import { P2PTrust } from "./trust";
 
 export const SHARD_INDEX = 0;

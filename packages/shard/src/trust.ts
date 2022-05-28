@@ -1,9 +1,8 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
-import OrbitDB from "orbit-db";
 import { AnyPeer } from "./node";
 import { Shard } from "./shard";
-import { PublicKey } from "./signer";
+import { PublicKey } from "./key";
 import { BinaryDocumentStoreOptions, waitForReplicationEvents } from "./stores";
 export const TRUSTEE_KEY = 'trustee';
 @variant(0)

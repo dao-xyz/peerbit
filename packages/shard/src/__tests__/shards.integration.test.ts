@@ -10,7 +10,7 @@ import { clean, createIPFSNode, FeedStoreInterface, feedStoreShard, getPeer, sha
 import { generateUUID } from '../id';
 import { createOrbitDBInstance, ServerOptions } from '../node';
 import { P2PTrust } from '../trust';
-import { PublicKey } from '../signer';
+import { PublicKey } from '../key';
 
 
 
