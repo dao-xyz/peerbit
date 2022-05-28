@@ -1,10 +1,8 @@
 import { Constructor, deserialize, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
 import OrbitDB from "orbit-db";
-import FeedStore from "orbit-db-feedstore";
 import BN from 'bn.js';
 import Store from "orbit-db-store";
 import CounterStore from "orbit-db-counterstore";
-import DocumentStore from "orbit-db-docstore";
 import { BinaryKeyValueStore } from '@dao-xyz/orbit-db-bkvstore';
 import { BinaryDocumentStoreOptions, BinaryKeyValueStoreOptions, StoreOptions, waitForReplicationEvents } from "./stores";
 import { generateUUID } from "./id";
@@ -17,8 +15,6 @@ import { AnyPeer, IPFSInstanceExtended } from "./node";
 import { Peer } from "./peer";
 import { PublicKey } from "./signer";
 import { P2PTrust } from "./trust";
-import { ACL, ACLV1 } from "./acl";
-import { type } from "os";
 
 export const SHARD_INDEX = 0;
 const MAX_SHARD_SIZE = 1024 * 500 * 1000;
@@ -256,9 +252,6 @@ export class Shard<T extends DBInterface> {
     @field({ type: option('String') })
     parentShardCID: string | undefined; // one of the shards in the parent cluster
 
-    @field({ type: ACL })
-    acl: ACL; // A database for access control
-
     @field({ type: 'u64' })
     shardIndex: BN // 0, 1, 2... this index will change the IFPS hash of this shard serialized. This means we can iterate shards without actually saving them in a DB
 
@@ -279,7 +272,6 @@ export class Shard<T extends DBInterface> {
         memoryRemovedAddress: string
         parentShardCID: string
         trust: P2PTrust
-        acl: ACL
         shardIndex: BN
     } | {
         cluster: string
@@ -287,7 +279,6 @@ export class Shard<T extends DBInterface> {
         shardSize: BN
         shardIndex?: BN
         trust?: P2PTrust
-        acl?: ACL
     }) {
 
 
@@ -313,12 +304,6 @@ export class Shard<T extends DBInterface> {
 
         this.peer = from;
         let isInitialized = this.initialized;
-
-        if (!this.acl) {
-            this.acl = new ACLV1({});
-        }
-
-        await this.acl.create(from, this);
 
         if (!this.trust) {
             this.trust = new P2PTrust({
@@ -363,7 +348,6 @@ export class Shard<T extends DBInterface> {
         this.memoryAddedAddress = this.memoryAdded.address.toString();
         this.memoryRemovedAddress = this.memoryRemoved.address.toString();
 
-        await this.acl.create(this.peer, this);
         await this.trust.create(this.peer, this);
 
     }

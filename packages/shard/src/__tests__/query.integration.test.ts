@@ -1,21 +1,12 @@
 
 import { Shard, AnyPeer } from '../index';
-import fs from 'fs';
-import Identities from 'orbit-db-identity-provider';
-import { Keypair } from '@solana/web3.js';
-import { SolanaIdentityProvider } from '../identity-providers/solana-identity-provider';
 import { DB, TypedBehaviours } from '../shard';
-import FeedStore from 'orbit-db-feedstore';
-import { BinaryDocumentStore } from '@dao-xyz/orbit-db-bdocstore';
-import { BinaryDocumentStoreOptions, FeedStoreOptions } from '../stores';
 import { Constructor, field, option, variant } from '@dao-xyz/borsh';
 import BN from 'bn.js';
 import { Compare, CompareQuery, QueryRequestV0, QueryResponse, StringMatchQuery } from '../query';
-import { delay, waitFor } from '../utils';
-import { clean, disconnectPeers, DocumentStoreInterface, documentStoreShard, getPeer, shardStoreShard } from './utils';
-import { generateUUID } from '../id';
-import { ACLV1 } from '../acl';
-import { P2PTrust } from '../trust';
+import { waitFor } from '../utils';
+import { disconnectPeers, DocumentStoreInterface, documentStoreShard, getPeer, shardStoreShard } from './utils';
+
 
 
 
