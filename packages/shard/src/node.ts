@@ -8,6 +8,7 @@ import { Constructor, deserialize, serialize } from '@dao-xyz/borsh';
 import { EncodedQueryResponse, QueryRequestV0, QueryResponse } from './query';
 import { Message } from 'ipfs-core-types/types/src/pubsub'
 import { Peer } from './peer';
+import { PublicKey } from './key';
 
 export interface IPFSInstanceExtended extends IPFSInstance {
     libp2p: any
@@ -112,12 +113,22 @@ export class AnyPeer {
         await this.node.pubsub.subscribe(this.replicationTopic, async (msg: any) => {
             try {
                 let shard = deserialize(msg.data, Shard);
+
+                // check if enough memory 
                 if (shard.shardSize.toNumber() > this.options.replicationCapacity) {
                     console.log(`Can not replicate shard size ${shard.shardSize.toNumber()} with peer capacity ${this.options.replicationCapacity}`)
                     return;
                 }
-                this.options.replicationCapacity -= shard.shardSize.toNumber();
                 await shard.init(this);
+
+                // check if is trusted,
+                if (!shard.trust.isTrusted(PublicKey.from(this.orbitDB.identity))) {
+                    //if not no point replicating
+                    console.log(`Can not replicate since not trusted`)
+                    return;
+                }
+
+                this.options.replicationCapacity -= shard.shardSize.toNumber();
                 await shard.replicate();
 
             } catch (error) {

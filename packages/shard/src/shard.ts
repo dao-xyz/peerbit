@@ -321,7 +321,7 @@ export class Shard<T extends DBInterface> {
 
         await this.trust.create(from, this);
         await this.interface.init(this);
-        await this.loadStores();
+        await this.loadMetaStores();
 
         if (parent) {
             this.parentShardCID = parent.cid;
@@ -342,11 +342,11 @@ export class Shard<T extends DBInterface> {
         this.memoryRemoved = undefined;
     }
 
-    async loadStores() {
+    async loadMetaStores() {
         //this.blocks = await this.newStore(this.address ? this.address : this.getDBName('blocks')) //await db.feed(this.getDBName('blocks'), this.chain.defaultOptions);
         //await Promise.all(this.dbs.map(db => db.newStore(this)));
 
-        await this.interface.load();
+        await this.interface.load(); // TODO we should just try to predict DB addresses, no need to LOAD them into memory
 
         this._peers = await new BinaryKeyValueStoreOptions<Peer>({ objectType: Peer.name }).newStore(this.peersAddress ? this.peersAddress : this.getDBName("peers"), this.peer.orbitDB, this.peer.options.defaultOptions, this.peer.options.behaviours);
         onReplicationMark(this._peers);
@@ -372,6 +372,13 @@ export class Shard<T extends DBInterface> {
 
     get queryTopic(): string {
         return this.cluster;
+    }
+
+    get peers(): BinaryKeyValueStore<Peer> {
+        if (!this._peers) {
+            throw new Error("Peers not loaded");
+        }
+        return this._peers;
     }
 
     async loadPeers(waitForReplicationEventsCount: number = 0) {
@@ -624,7 +631,6 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterfac
         let shard = (await this.db.load(index + 1)).get(index.toString())[0]
         await shard.init(this.db._shard.peer);
         await shard.loadPeers(options.expectedPeerReplicationEvents);
-        await shard.interface.load();
         return shard;
     }
 

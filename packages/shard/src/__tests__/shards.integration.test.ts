@@ -11,6 +11,7 @@ import { generateUUID } from '../id';
 import { createOrbitDBInstance, ServerOptions } from '../node';
 import { P2PTrust } from '../trust';
 import { PublicKey } from '../key';
+import { delay, waitFor } from '../utils';
 
 
 
@@ -275,12 +276,24 @@ describe('cluster', () => {
     describe('ondemand-sharding', () => {
         test('subscribe, request', async () => {
             let peer = await getPeer();
-            await peer.subscribeForReplication();
-
             let peer2 = await getPeer();
-            let l0 = await shardStoreShard();
-            await l0.init(peer2)
-            await l0.requestReplicate();
+            await peer2.subscribeForReplication();
+
+            let l0a = await shardStoreShard();
+            await l0a.init(peer);
+            await l0a.trust.addTrust(PublicKey.from(peer2.orbitDB.identity));
+
+            let l0b = await shardStoreShard(l0a.id);
+            await l0b.init(peer2)
+
+            expect(Object.keys(l0a.peers.all)).toHaveLength(0);
+            await waitFor(() => Object.keys(l0b.trust.trustDB.all).length == 1)// add some delay because trust db is not synchronous
+            await l0a.requestReplicate();
+            await waitFor(() => Object.keys(l0a.peers.all).length == 1) // add some delay because replication might take some time and is not synchronous
+            expect(Object.keys(l0a.peers.all)).toHaveLength(1);
+            await disconnectPeers([peer, peer2]);
+
+
         })
     })
     // TODO: Autosharding on new data
