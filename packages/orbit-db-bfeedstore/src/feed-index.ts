@@ -11,7 +11,7 @@ export class FeedIndex<T> {
     this.clazz = clazz;
   }
 
-  get(key?: any, fullOp?: boolean): T | LogEntry<T>[] {
+  get(key?: any, fullOp?: boolean): (T | LogEntry<T>)[] {
     if (key) {
       return
     }
