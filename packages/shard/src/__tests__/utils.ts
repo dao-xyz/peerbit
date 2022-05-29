@@ -104,8 +104,8 @@ export class FeedStoreInterface extends DBInterface {
         await this.db.init(shard);
     }
 
-    async load(): Promise<FeedStore<string>> {
-        return this.db.load();
+    async load(): Promise<void> {
+        await this.db.load();
     }
 
 
@@ -152,8 +152,8 @@ export class DocumentStoreInterface<T> extends DBInterface {
         await this.db.init(shard);
     }
 
-    async load(waitForReplicationEventsCount = 0): Promise<BinaryDocumentStore<T>> {
-        return this.db.load(waitForReplicationEventsCount);
+    async load(waitForReplicationEventsCount = 0): Promise<void> {
+        await this.db.load(waitForReplicationEventsCount);
     }
 
 

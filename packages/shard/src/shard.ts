@@ -140,7 +140,7 @@ export class DBInterface {
         throw new Error("Not implemented")
     }
 
-    async load(): Promise<Store<any, any>> {
+    async load(): Promise<void> {
         throw new Error("Not implemented")
     }
 
@@ -195,7 +195,7 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
         return this.db;
     }
 
-    async load(waitForReplicationEventsCount: number = 0): Promise<B> {
+    async load(waitForReplicationEventsCount: number = 0): Promise<void> {
         if (!this._shard) {
             throw new Error("Not initialized")
         }
@@ -206,7 +206,6 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
         }
         await this.db.load();
         await waitForReplicationEvents(this.db, waitForReplicationEventsCount);
-        return this.db;
     }
 
     getDBName(): string {
@@ -630,8 +629,8 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterfac
     }
 
 
-    async load(waitForReplicationEventsCount = 0): Promise<BinaryDocumentStore<Shard<any>>> {
-        return this.db.load(waitForReplicationEventsCount);
+    async load(waitForReplicationEventsCount = 0): Promise<void> {
+        await this.db.load(waitForReplicationEventsCount);
     }
 
 
@@ -642,7 +641,8 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterfac
 
     async loadShard(index: number, options: { expectedPeerReplicationEvents?: number } = { expectedPeerReplicationEvents: 0 }): Promise<Shard<T>> {
         // Get the latest shard that have non empty peer
-        let shard = (await this.db.load(index + 1)).get(index.toString())[0]
+        await this.db.load(index + 1);
+        let shard = this.db.db.get(index.toString())[0]
         await shard.init(this.db._shard.peer);
         await shard.loadPeers(options.expectedPeerReplicationEvents);
         return shard;
