@@ -1,6 +1,6 @@
-import { field, variant } from "@dao-xyz/borsh";
+import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
-import { AnyPeer } from "./node";
+import { AnyPeer, IPFSInstanceExtended } from "./node";
 import { Shard } from "./shard";
 import { PublicKey } from "./key";
 import { BinaryDocumentStoreOptions, waitForReplicationEvents } from "./stores";
@@ -38,6 +38,7 @@ export class P2PTrust {
 
     trustDB?: BinaryDocumentStore<P2PTrustRelation>
     shard?: Shard<any>
+    cid?: string;
 
     constructor(props?: {
         rootTrust: PublicKey
@@ -58,6 +59,7 @@ export class P2PTrust {
         this.trustAddress = this.trustDB.address.toString()
     }
 
+
     async loadTrust(waitForReplicationEventsCount: number = 0) {
         this.trustDB = await new BinaryDocumentStoreOptions<P2PTrustRelation>({
             indexBy: TRUSTEE_KEY,
@@ -73,6 +75,36 @@ export class P2PTrust {
             trustee
         }));
     }
+
+    async save(node: IPFSInstanceExtended): Promise<string> {
+        if (!this.trustAddress || !this.rootTrust) {
+            throw new Error("Not initialized");
+        }
+
+        let arr = serialize(this);
+        let addResult = await node.add(arr)
+        let pinResult = await node.pin.add(addResult.cid)
+        this.cid = pinResult.toString();
+        return this.cid;
+    }
+
+
+    static async loadFromCID(cid: string, node: IPFSInstanceExtended): Promise<P2PTrust> {
+        let arr = await node.cat(cid);
+        for await (const obj of arr) {
+            let der = deserialize(Buffer.from(obj), P2PTrust);
+            der.cid = cid;
+            return der;
+        }
+    }
+
+    get replicationTopic() {
+        if (!this.cid) {
+            throw new Error("Not initialized, replication topic requires known cid");
+        }
+        return this.cid + '_' + 'replication'
+    }
+
 
     /**
      * Follow trust path back to trust root.

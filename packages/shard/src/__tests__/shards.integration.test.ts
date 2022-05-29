@@ -273,14 +273,19 @@ describe('cluster', () => {
         });
     })
 
+    /*    HOW TO WE WORK WITH REPLICATION TOPICS ???
+   
+           WHILE PARNET
+       SUBSCRICE ?
+    */
     describe('ondemand-sharding', () => {
         test('subscribe, request', async () => {
             let peer = await getPeer();
             let peer2 = await getPeer();
-            await peer2.subscribeForReplication();
 
             let l0a = await shardStoreShard();
             await l0a.init(peer);
+
             await l0a.trust.addTrust(PublicKey.from(peer2.orbitDB.identity));
 
             let l0b = await shardStoreShard(l0a.id);
@@ -288,7 +293,13 @@ describe('cluster', () => {
 
             expect(Object.keys(l0a.peers.all)).toHaveLength(0);
             await waitFor(() => Object.keys(l0b.trust.trustDB.all).length == 1)// add some delay because trust db is not synchronous
+
+            // Replication step
+            await peer2.subscribeForReplication(l0a.trust);
+            await delay(1000); // Pubsub is flaky, wait some time before requesting shard
             await l0a.requestReplicate();
+            //  --------------
+
             await waitFor(() => Object.keys(l0a.peers.all).length == 1) // add some delay because replication might take some time and is not synchronous
             expect(Object.keys(l0a.peers.all)).toHaveLength(1);
             await disconnectPeers([peer, peer2]);

@@ -452,26 +452,7 @@ export class Shard<T extends DBInterface> {
          return added; */
     }
 
-    async requestReplicate(): Promise<void> {
-        /*   let shardCounter = await this.chain.getShardCounter();
-          if (shardCounter.value < this.index.toNumber()) {
-              throw new Error(`Expecting shard counter to be less than the new index ${shardCounter} !< ${this.index}`)
-          } */
 
-        if (Object.keys(this._peers.all).length == 0) {
-            // Send message that we need peers for this shard
-            // The recieved of the message should be the DB that contains this shard,
-            let thisSerialized = serialize(this);
-            await this.peer.node.pubsub.publish(this.peer.replicationTopic, thisSerialized);
-        }
-
-        await waitFor(() => Object.keys(this._peers.all).length > 0)
-
-        if (Object.keys(this._peers.all).length == 0) {
-            throw new Error("Fail to perform sharding");
-        }
-
-    }
 
     async removeAndFreeMemory(amount: number, remove: () => Promise<string>): Promise<void> {
         let rem = await remove();
@@ -479,6 +460,10 @@ export class Shard<T extends DBInterface> {
             await this.memoryRemoved.inc(amount);
 
         }
+    }
+
+    get replicationTopic(): string {
+        return this.id + "_replication"
     }
 
     public async addPeer() {
@@ -506,6 +491,27 @@ export class Shard<T extends DBInterface> {
             // Connect to all parent peers, we could do better (cherry pick), but ok for now
             await Promise.all(Object.values(parentPeers.all).filter(peer => !isSelfDial(peer)).map((peer) => this.peer.node.swarm.connect(peer.addresses[0])))
         }
+    }
+
+    async requestReplicate(): Promise<void> {
+        /*   let shardCounter = await this.chain.getShardCounter();
+          if (shardCounter.value < this.index.toNumber()) {
+              throw new Error(`Expecting shard counter to be less than the new index ${shardCounter} !< ${this.index}`)
+          } */
+
+        if (Object.keys(this._peers.all).length == 0) {
+            // Send message that we need peers for this shard
+            // The recieved of the message should be the DB that contains this shard,
+            let ser = serialize(this);
+            await this.peer.node.pubsub.publish(this.trust.replicationTopic, ser);
+        }
+
+        await waitFor(() => Object.keys(this._peers.all).length > 0)
+
+        if (Object.keys(this._peers.all).length == 0) {
+            throw new Error("Fail to perform sharding");
+        }
+
     }
 
 
@@ -555,6 +561,11 @@ export class Shard<T extends DBInterface> {
         return this.interface.initialized && !!this.peersAddress && !!this.memoryAddedAddress && !!this.memoryRemovedAddress
     };
 
+
+
+    getDBName(name: string): string {
+        return this.id + '-' + name;
+    }
     async save(node: IPFSInstanceExtended): Promise<string> {
         if (!this.initialized) {
             throw new Error("Not initialized");
@@ -564,6 +575,9 @@ export class Shard<T extends DBInterface> {
         let addResult = await node.add(arr)
         let pinResult = await node.pin.add(addResult.cid)
         this.cid = pinResult.toString();
+
+        await this.trust.save(node);
+
         return this.cid;
     }
 
@@ -571,14 +585,14 @@ export class Shard<T extends DBInterface> {
     static async loadFromCID<T extends DBInterface>(cid: string, node: IPFSInstanceExtended) {
         let arr = await node.cat(cid);
         for await (const obj of arr) {
-            return deserialize<Shard<T>>(Buffer.from(obj), Shard)
+            let der = deserialize<Shard<T>>(Buffer.from(obj), Shard);
+            der.cid = cid;
+            return der;
 
         }
     }
 
-    getDBName(name: string): string {
-        return this.id + '-' + name;
-    }
+
     static get recursiveStoreOption() {
         return new BinaryDocumentStoreOptions<Shard<any>>({
             objectType: Shard.name,

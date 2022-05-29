@@ -9,6 +9,7 @@ import { EncodedQueryResponse, QueryRequestV0, QueryResponse } from './query';
 import { Message } from 'ipfs-core-types/types/src/pubsub'
 import { Peer } from './peer';
 import { PublicKey } from './key';
+import { P2PTrust } from './trust';
 
 export interface IPFSInstanceExtended extends IPFSInstance {
     libp2p: any
@@ -89,9 +90,6 @@ export class AnyPeer {
     }
 
 
-    get replicationTopic(): string {
-        return this.rootAddress + "-" + "sharding";
-    }
 
     async query<T>(topic: string, query: QueryRequestV0, clazz: Constructor<T>, responseHandler: (response: QueryResponse<T>) => void, maxAggregationTime: number = 30 * 1000) {
         // send query and wait for replies in a generator like behaviour
@@ -109,8 +107,8 @@ export class AnyPeer {
           }, maxAggregationTime); */
     }
 
-    async subscribeForReplication(): Promise<void> {
-        await this.node.pubsub.subscribe(this.replicationTopic, async (msg: any) => {
+    async subscribeForReplication(trust: P2PTrust): Promise<void> {
+        await this.node.pubsub.subscribe(trust.replicationTopic, async (msg: any) => {
             try {
                 let shard = deserialize(msg.data, Shard);
 
