@@ -39,7 +39,6 @@ export class P2PTrust extends DBInterface {
     @field({ type: SingleDBInterface })
     db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>
 
-    shard?: Shard<any>
     cid?: string;
 
     constructor(props?: {
@@ -132,38 +131,49 @@ export class P2PTrust extends DBInterface {
         /**
          * TODO: Currently very inefficient
          */
-        if (!this.db) {
-            throw new Error("Not initalized")
+        return isTrusted(this.rootTrust, trustee, this.db);
+    }
+
+
+
+}
+
+export const isTrusted = (rootTrust: PublicKey, trustee: PublicKey, db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>): boolean => {
+
+    /**
+     * TODO: Currently very inefficient
+     */
+    if (!db) {
+        throw new Error("Not initalized")
+    }
+    if (trustee.equals(rootTrust)) {
+        return true;
+    }
+    let currentTrustee = trustee;
+    let visited = new Set<string>();
+    while (true) {
+        let trust = db.db.index.get(currentTrustee.toString(), true) as LogEntry<P2PTrustRelation>;
+        if (!trust) {
+            return false;
         }
-        if (trustee.equals(this.rootTrust)) {
+
+        // TODO: could be multiple but we just follow one path for now
+        if (currentTrustee == trust.payload.value.trustee) {
+            return false;
+        }
+
+        // Assumed message is signed
+        let truster = PublicKey.from(trust.identity);
+
+        if (truster.equals(rootTrust)) {
             return true;
         }
-        let currentTrustee = trustee;
-        let visited = new Set<string>();
-        while (true) {
-            let trust = this.db.db.index.get(currentTrustee.toString(), true) as LogEntry<P2PTrustRelation>;
-            if (!trust) {
-                return false;
-            }
-
-            // TODO: could be multiple but we just follow one path for now
-            if (currentTrustee == trust.payload.value.trustee) {
-                return false;
-            }
-
-            // Assumed message is signed
-            let truster = PublicKey.from(trust.identity);
-
-            if (truster.equals(this.rootTrust)) {
-                return true;
-            }
-            let key = truster.toString();
-            if (visited.has(key)) {
-                return false; // we are in a loop, abort
-            }
-            visited.add(key);
-            currentTrustee = truster; // move upwards in trust tree
+        let key = truster.toString();
+        if (visited.has(key)) {
+            return false; // we are in a loop, abort
         }
+        visited.add(key);
+        currentTrustee = truster; // move upwards in trust tree
     }
 }
 
