@@ -169,7 +169,6 @@ export const getTargetPath = (start: PublicKey, target: (key: PublicKey) => bool
     const visited = new Set();
     while (true) {
         if (target(current)) {
-            path.reverse();
             return path;
         }
         let trust = db.db.index.get(current.toString(), true) as LogEntry<P2PTrustRelation>;
