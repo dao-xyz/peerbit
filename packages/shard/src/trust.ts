@@ -1,10 +1,13 @@
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
-import { AnyPeer, IPFSInstanceExtended } from "./node";
+import { IPFSInstanceExtended } from "./node";
 import { Shard } from "./shard";
+import { DBInterface, SingleDBInterface } from "./interface";
+
 import { PublicKey } from "./key";
-import { BinaryDocumentStoreOptions, waitForReplicationEvents } from "./stores";
+import { BinaryDocumentStoreOptions } from "./stores";
 export const TRUSTEE_KEY = 'trustee';
+
 @variant(0)
 export class P2PTrustRelation {
 
@@ -28,56 +31,65 @@ export class P2PTrustRelation {
 
 
 @variant(0) // We prepend with 0 if we in the future would have an other trust setup
-export class P2PTrust {
+export class P2PTrust extends DBInterface {
 
     @field({ type: PublicKey })
     rootTrust: PublicKey
 
-    @field({ type: 'String' })
-    trustAddress: string;
+    @field({ type: SingleDBInterface })
+    db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>
 
-    trustDB?: BinaryDocumentStore<P2PTrustRelation>
     shard?: Shard<any>
     cid?: string;
 
     constructor(props?: {
         rootTrust: PublicKey
-        trustCircleAddress: string;
+        db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>;
     } | {
         rootTrust: PublicKey
     }) {
+        super();
         if (props) {
             Object.assign(this, props)
         }
+        if (!this.db) {
+            this.db = new SingleDBInterface({
+                name: 'trust',
+                storeOptions: new BinaryDocumentStoreOptions({
+                    indexBy: TRUSTEE_KEY,
+                    objectType: P2PTrustRelation.name
+                })
+            })
+        }
     }
-    async create(peer: AnyPeer, shard: Shard<any>) {
 
-        // TODO: this is ugly but ok for now
-        peer.options.behaviours.typeMap[P2PTrustRelation.name] = P2PTrustRelation;
-        this.shard = shard;
-        await this.loadTrust();
-        this.trustAddress = this.trustDB.address.toString()
+    get initialized(): boolean {
+        return this.db.initialized
+    }
+
+    close() {
+        this.db.close();
+    }
+
+    async init(shard: Shard<any>) {
+        shard.peer.options.behaviours.typeMap[P2PTrustRelation.name] = P2PTrustRelation;
+        await this.db.init(shard);
     }
 
 
-    async loadTrust(waitForReplicationEventsCount: number = 0) {
-        this.trustDB = await new BinaryDocumentStoreOptions<P2PTrustRelation>({
-            indexBy: TRUSTEE_KEY,
-            objectType: P2PTrustRelation.name
-        }).newStore(this.trustAddress ? this.trustAddress : this.shard.getDBName("trust"), this.shard.peer.orbitDB, this.shard.peer.options.defaultOptions, this.shard.peer.options.behaviours)
-        this.trustDB.load();
-        await waitForReplicationEvents(this.trustDB, waitForReplicationEventsCount);
-        return this.trustDB;
+    async load(waitForReplicationEventsCount = 0): Promise<void> {
+        await this.db.load(waitForReplicationEventsCount);
     }
+
 
     async addTrust(trustee: PublicKey) {
-        await this.trustDB.put(new P2PTrustRelation({
+        await this.db.db.put(new P2PTrustRelation({
             trustee
         }));
     }
 
     async save(node: IPFSInstanceExtended): Promise<string> {
-        if (!this.trustAddress || !this.rootTrust) {
+        if (!this.db.initialized || !this.rootTrust) {
             throw new Error("Not initialized");
         }
 
@@ -120,7 +132,7 @@ export class P2PTrust {
         /**
          * TODO: Currently very inefficient
          */
-        if (!this.trustDB) {
+        if (!this.db) {
             throw new Error("Not initalized")
         }
         if (trustee.equals(this.rootTrust)) {
@@ -129,7 +141,7 @@ export class P2PTrust {
         let currentTrustee = trustee;
         let visited = new Set<string>();
         while (true) {
-            let trust = this.trustDB.index.get(currentTrustee.toString(), true) as LogEntry<P2PTrustRelation>;
+            let trust = this.db.db.index.get(currentTrustee.toString(), true) as LogEntry<P2PTrustRelation>;
             if (!trust) {
                 return false;
             }

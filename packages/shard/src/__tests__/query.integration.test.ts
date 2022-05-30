@@ -1,6 +1,6 @@
 
 import { Shard, AnyPeer } from '../index';
-import { SingleDBInterface, TypedBehaviours } from '../shard';
+import { TypedBehaviours } from '../shard';
 import { Constructor, field, option, variant } from '@dao-xyz/borsh';
 import BN from 'bn.js';
 import { Compare, CompareQuery, QueryRequestV0, QueryResponse, StringMatchQuery } from '../query';

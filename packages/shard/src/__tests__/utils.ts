@@ -4,13 +4,14 @@ import { TypedBehaviours } from '..';
 import { generateUUID } from '../id';
 import * as IPFS from 'ipfs';
 import { AnyPeer, createOrbitDBInstance, IPFSInstanceExtended, ServerOptions } from '../node';
-import { SingleDBInterface, DBInterface, RecursiveShardDBInterface, Shard } from '../shard';
+import { SingleDBInterface, DBInterface, RecursiveShardDBInterface } from '../interface';
 import FeedStore from 'orbit-db-feedstore';
 import { BinaryDocumentStoreOptions, FeedStoreOptions } from '../stores';
 import BN from 'bn.js';
 import { Constructor, field, variant } from '@dao-xyz/borsh';
 import { QueryRequestV0 } from '../query';
 import { BinaryDocumentStore } from '@dao-xyz/orbit-db-bdocstore';
+import { Shard } from '../shard';
 
 
 

@@ -89,8 +89,8 @@ describe('cluster', () => {
             await l0.trust.addTrust(newTrustee);
 
             await l0.init(peer2);
-            let trust = await l0.trust.loadTrust(1);
-            expect(Object.values(trust.all)).toHaveLength(1);
+            await l0.trust.load(1);
+            expect(Object.values(l0.trust.db.db.all)).toHaveLength(1);
 
         })
 
@@ -114,7 +114,7 @@ describe('cluster', () => {
 
                 // now check if peer3 is trusted from peer perspective
                 await l0.init(peer);
-                await l0.trust.loadTrust(2);
+                await l0.trust.load(2);
                 expect(l0.trust.isTrusted(peer3Key));
             })
 
@@ -133,7 +133,7 @@ describe('cluster', () => {
 
                 // now check if peer3 is trusted from peer perspective
                 //  await l0.init(peer);
-                await l0.trust.loadTrust(1);
+                await l0.trust.load(1);
                 expect(l0.trust.rootTrust.address).toEqual(peer.orbitDB.identity.publicKey);
                 expect(l0.trust.isTrusted(peer3Key)).toBeFalsy();
             })
@@ -292,7 +292,7 @@ describe('cluster', () => {
             await l0b.init(peer2)
 
             expect(Object.keys(l0a.peers.all)).toHaveLength(0);
-            await waitFor(() => Object.keys(l0b.trust.trustDB.all).length == 1)// add some delay because trust db is not synchronous
+            await waitFor(() => Object.keys(l0b.trust.db.db.all).length == 1)// add some delay because trust db is not synchronous
 
             // Replication step
             await peer2.subscribeForReplication(l0a.trust);
