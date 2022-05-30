@@ -128,9 +128,6 @@ export type TypedBehaviours = {
 export class Shard<T extends DBInterface> {
 
     @field({ type: 'String' })
-    id: string
-
-    @field({ type: 'String' })
     cluster: string
 
     @field({ type: P2PTrust })
@@ -164,7 +161,6 @@ export class Shard<T extends DBInterface> {
 
     cid: string;
     constructor(props?: {
-        id: string
         cluster: string
         interface: T
         shardSize: BN
@@ -190,10 +186,6 @@ export class Shard<T extends DBInterface> {
 
         if (!this.shardIndex) {
             this.shardIndex = new BN(0);
-        }
-
-        if (!this.id) {
-            this.id = generateUUID();
         }
 
     }
@@ -357,16 +349,13 @@ export class Shard<T extends DBInterface> {
         }
     }
 
-    get replicationTopic(): string {
-        return this.id + "_replication"
-    }
-
     public async addPeer() {
 
         let thisPeer = new Peer({
+            key: PublicKey.from(this.peer.orbitDB.identity),
             addresses: (await this.peer.node.id()).addresses.map(x => x.toString())
         });
-        await this._peers.set(this.id, thisPeer);
+        await this._peers.set(thisPeer.key.toString(), thisPeer);
 
         // Connect to parent shard, and connects to its peers 
 
@@ -459,8 +448,9 @@ export class Shard<T extends DBInterface> {
 
 
     getDBName(name: string): string {
-        return this.id + '-' + name;
+        return this.parentShardCID ? this.parentShardCID : '_' + '-' + name;
     }
+
     async save(node: IPFSInstanceExtended): Promise<string> {
         if (!this.initialized) {
             throw new Error("Not initialized");

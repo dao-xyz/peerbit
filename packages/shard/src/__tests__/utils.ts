@@ -177,8 +177,7 @@ export const documentStoreShard = async <T>(clazz: Constructor<T>, indexBy: stri
     })
 })
 
-export const shardStoreShard = async <T extends DBInterface>(id?: string) => new Shard<RecursiveShardDBInterface<T>>({
-    id,
+export const shardStoreShard = async <T extends DBInterface>() => new Shard<RecursiveShardDBInterface<T>>({
     cluster: 'x',
     shardSize: new BN(500 * 1000),
     interface: new RecursiveShardDBInterface({

@@ -239,7 +239,7 @@ describe('cluster', () => {
     })
 
 
-    describe('presharding', () => {
+    /* describe('presharding', () => {
 
         test('nested block store', async () => {
 
@@ -263,7 +263,7 @@ describe('cluster', () => {
 
 
             // --- Load assert
-            let l0b = await shardStoreShard<FeedStoreInterface>(l0.id);
+            let l0b = await Shard.loadFromCID<FeedStoreInterface>(l0.cid, peer2.node);
             await l0b.init(peer2)
             await l0b.interface.db.load(1);
             expect(Object.keys(l0.interface.db.db._index._index).length).toEqual(1);
@@ -271,7 +271,7 @@ describe('cluster', () => {
             expect(Object.keys(feedStoreLoaded.interface.db.db._index._index).length).toEqual(1);
             await disconnectPeers(peers);
         });
-    })
+    }) */
 
     /*    HOW TO WE WORK WITH REPLICATION TOPICS ???
    
@@ -288,14 +288,14 @@ describe('cluster', () => {
 
             await l0a.trust.addTrust(PublicKey.from(peer2.orbitDB.identity));
 
-            let l0b = await shardStoreShard(l0a.id);
+            let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
             await l0b.init(peer2)
 
             expect(Object.keys(l0a.peers.all)).toHaveLength(0);
             await waitFor(() => Object.keys(l0b.trust.db.db.all).length == 1)// add some delay because trust db is not synchronous
 
             // Replication step
-            await peer2.subscribeForReplication(l0a.trust);
+            await peer2.subscribeForReplication(l0b.trust);
             await delay(1000); // Pubsub is flaky, wait some time before requesting shard
             await l0a.requestReplicate();
             //  --------------
