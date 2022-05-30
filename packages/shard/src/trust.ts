@@ -17,10 +17,15 @@ export class P2PTrustRelation {
     @field({ type: PublicKey })
     [TRUSTEE_KEY]: PublicKey  // the key to trust
 
+
+    truster: PublicKey // will be set manually, upon deserialization from the oplog
+
     /* @field({ type: 'String' }) 
     signature: string */ // Dont need this because its going to be signed anyway (bc orbitdb)
 
-    constructor(props?: P2PTrustRelation) {
+    constructor(props?: {
+        [TRUSTEE_KEY]: PublicKey
+    }) {
         if (props) {
             Object.assign(this, props)
         }
@@ -131,14 +136,14 @@ export class P2PTrust extends DBInterface {
         /**
          * TODO: Currently very inefficient
          */
-        return getTrustPath(trustee, this.rootTrust, this.db)?.length > 0;
+        return !!getTrustPath(trustee, this.rootTrust, this.db);
     }
 
 
 
 }
 
-export const getTrustPath = (start: PublicKey, end: PublicKey, db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>): PublicKey[] => {
+export const getTrustPath = (start: PublicKey, end: PublicKey, db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>): P2PTrustRelation[] => {
     return getTargetPath(start, (key) => end.equals(key), db)
 }
 
@@ -150,7 +155,7 @@ export const getTrustPath = (start: PublicKey, end: PublicKey, db: SingleDBInter
  * @param db 
  * @returns 
  */
-export const getTargetPath = (start: PublicKey, target: (key: PublicKey) => boolean, db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>, visited = new Set<string>()): PublicKey[] => {
+export const getTargetPath = (start: PublicKey, target: (key: PublicKey) => boolean, db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>, fullOp: boolean = false): P2PTrustRelation[] => {
 
     /**
      * TODO: Currently very inefficient
@@ -159,8 +164,9 @@ export const getTargetPath = (start: PublicKey, target: (key: PublicKey) => bool
         throw new Error("Not initalized")
     }
 
-    let path = [start];
+    let path = [];
     let current = start;
+    const visited = new Set();
     while (true) {
         if (target(current)) {
             path.reverse();
@@ -178,6 +184,8 @@ export const getTargetPath = (start: PublicKey, target: (key: PublicKey) => bool
 
         // Assumed message is signed
         let truster = PublicKey.from(trust.identity);
+        let trustRelation = trust.payload.value;
+        trustRelation.truster = truster;
         let key = truster.toString();
         if (visited.has(key)) {
             return undefined; // we are in a loop, abort
@@ -185,7 +193,7 @@ export const getTargetPath = (start: PublicKey, target: (key: PublicKey) => bool
 
         visited.add(key);
         current = truster; // move upwards in trust tree
-        path.push(truster);
+        path.push(trustRelation);
 
     }
 }
