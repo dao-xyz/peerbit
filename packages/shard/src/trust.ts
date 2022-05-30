@@ -131,14 +131,14 @@ export class P2PTrust extends DBInterface {
         /**
          * TODO: Currently very inefficient
          */
-        return isTrusted(this.rootTrust, trustee, this.db);
+        return getTrustPath(this.rootTrust, trustee, this.db)?.length > 0;
     }
 
 
 
 }
 
-export const isTrusted = (rootTrust: PublicKey, trustee: PublicKey, db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>): boolean => {
+export const getTrustPath = (from: PublicKey, to: PublicKey, db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>): PublicKey[] => {
 
     /**
      * TODO: Currently very inefficient
@@ -146,32 +146,38 @@ export const isTrusted = (rootTrust: PublicKey, trustee: PublicKey, db: SingleDB
     if (!db) {
         throw new Error("Not initalized")
     }
-    if (trustee.equals(rootTrust)) {
-        return true;
+    if (from.equals(to)) {
+        return [from];
     }
-    let currentTrustee = trustee;
+    let currentTrustee = to;
     let visited = new Set<string>();
+    let path = [];
     while (true) {
         let trust = db.db.index.get(currentTrustee.toString(), true) as LogEntry<P2PTrustRelation>;
         if (!trust) {
-            return false;
+            return undefined; // no path
         }
 
         // TODO: could be multiple but we just follow one path for now
         if (currentTrustee == trust.payload.value.trustee) {
-            return false;
+            return undefined; // no path
         }
 
         // Assumed message is signed
         let truster = PublicKey.from(trust.identity);
+        path.push(currentTrustee);
 
-        if (truster.equals(rootTrust)) {
-            return true;
+        if (truster.equals(from)) {
+            path.reverse();
+            return path;
+
         }
+
         let key = truster.toString();
         if (visited.has(key)) {
-            return false; // we are in a loop, abort
+            return undefined; // we are in a loop, abort
         }
+
         visited.add(key);
         currentTrustee = truster; // move upwards in trust tree
     }
