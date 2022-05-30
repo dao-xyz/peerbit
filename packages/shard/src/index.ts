@@ -6,3 +6,4 @@ export * from './id';
 export * from './key';
 export * from './trust';
 export * from './utils';
+export * from './interface';
