@@ -131,14 +131,26 @@ export class P2PTrust extends DBInterface {
         /**
          * TODO: Currently very inefficient
          */
-        return getTrustPath(this.rootTrust, trustee, this.db)?.length > 0;
+        return getTrustPath(trustee, this.rootTrust, this.db)?.length > 0;
     }
 
 
 
 }
 
-export const getTrustPath = (from: PublicKey, to: PublicKey, db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>): PublicKey[] => {
+export const getTrustPath = (start: PublicKey, end: PublicKey, db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>): PublicKey[] => {
+    return getTargetPath(start, (key) => end.equals(key), db)
+}
+
+
+/**
+ * Get path, to target.
+ * @param start 
+ * @param target 
+ * @param db 
+ * @returns 
+ */
+export const getTargetPath = (start: PublicKey, target: (key: PublicKey) => boolean, db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>, visited = new Set<string>()): PublicKey[] => {
 
     /**
      * TODO: Currently very inefficient
@@ -146,40 +158,35 @@ export const getTrustPath = (from: PublicKey, to: PublicKey, db: SingleDBInterfa
     if (!db) {
         throw new Error("Not initalized")
     }
-    if (from.equals(to)) {
-        return [from];
-    }
-    let currentTrustee = to;
-    let visited = new Set<string>();
-    let path = [];
+
+    let path = [start];
+    let current = start;
     while (true) {
-        let trust = db.db.index.get(currentTrustee.toString(), true) as LogEntry<P2PTrustRelation>;
+        if (target(current)) {
+            path.reverse();
+            return path;
+        }
+        let trust = db.db.index.get(current.toString(), true) as LogEntry<P2PTrustRelation>;
         if (!trust) {
             return undefined; // no path
         }
 
         // TODO: could be multiple but we just follow one path for now
-        if (currentTrustee == trust.payload.value.trustee) {
+        if (current == trust.payload.value.trustee) {
             return undefined; // no path
         }
 
         // Assumed message is signed
         let truster = PublicKey.from(trust.identity);
-        path.push(currentTrustee);
-
-        if (truster.equals(from)) {
-            path.reverse();
-            return path;
-
-        }
-
         let key = truster.toString();
         if (visited.has(key)) {
             return undefined; // we are in a loop, abort
         }
 
         visited.add(key);
-        currentTrustee = truster; // move upwards in trust tree
+        current = truster; // move upwards in trust tree
+        path.push(truster);
+
     }
 }
 

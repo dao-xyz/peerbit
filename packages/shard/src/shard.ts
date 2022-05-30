@@ -232,6 +232,7 @@ export class Shard<T extends DBInterface> {
         this._peers = undefined;
         //this.dbs.forEach(db => { db.db = undefined });
         this.interface.close();
+        this.trust?.close();
         this.memoryAdded = undefined;
         this.memoryRemoved = undefined;
     }
