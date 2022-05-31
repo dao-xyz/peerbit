@@ -37,7 +37,8 @@
         "dotenv": "^15.0.0",
         "ipfs": "^0.60.2",
         "mz": "^2.7.0",
-        "yaml": "^1.10.2"
+        "yaml": "^1.10.2",
+        "ipfs-core-types": "^0.10.3"
     },
     "dependencies": {
         "@dao-xyz/borsh": "^2.0.2",
@@ -49,7 +50,6 @@
         "bs58": "^4.0.1",
         "buffer": "^6.0.3",
         "crypto-browserify": "^3.12.0",
-        "ipfs-core-types": "^0.10.3",
         "orbit-db": "^0.28.4",
         "orbit-db-access-controllers": "^0.3.2",
         "orbit-db-docstore": "^1.12.0",

@@ -7,7 +7,6 @@ import bs58 from 'bs58';
 
 
 import AccessControllers from 'orbit-db-access-controllers';
-import AccessController from 'orbit-db-access-controllers/src/access-controller-interface';
 import KeyValueStore from 'orbit-db-kvstore';
 export const CONTRACT_ACCESS_CONTROLLER = 'contract-access-controller';
 import OrbitDB from 'orbit-db';
