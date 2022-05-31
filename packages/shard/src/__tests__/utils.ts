@@ -3,7 +3,7 @@ import { Identity } from 'orbit-db-identity-provider';
 import { TypedBehaviours } from '..';
 import { generateUUID } from '../id';
 import * as IPFS from 'ipfs';
-import { AnyPeer, createOrbitDBInstance, IPFSInstanceExtended, ServerOptions } from '../node';
+import { AnyPeer, IPFSInstanceExtended, ServerOptions } from '../node';
 import { SingleDBInterface, DBInterface, RecursiveShardDBInterface } from '../interface';
 import FeedStore from 'orbit-db-feedstore';
 import { BinaryDocumentStoreOptions, FeedStoreOptions } from '../stores';
@@ -12,6 +12,8 @@ import { Constructor, field, variant } from '@dao-xyz/borsh';
 import { QueryRequestV0 } from '../query';
 import { BinaryDocumentStore } from '@dao-xyz/orbit-db-bdocstore';
 import { Shard } from '../shard';
+import { IPFS as IPFSInstance } from 'ipfs-core-types'
+import OrbitDB from 'orbit-db';
 
 
 
@@ -31,6 +33,11 @@ const testBehaviours: TypedBehaviours = {
 
     typeMap: {}
 }
+export const createOrbitDBInstance = (node: IPFSInstance | any, id: string, identity?: Identity) => OrbitDB.createInstance(node,
+    {
+        identity: identity,
+        directory: './orbit-db/' + id
+    })
 
 export const getPeer = async (rootAddress: string = 'root', behaviours: TypedBehaviours = testBehaviours, identity?: Identity, peerCapacity: number = 1000 * 1000 * 1000): Promise<AnyPeer> => {
     let id = generateUUID();
@@ -38,7 +45,7 @@ export const getPeer = async (rootAddress: string = 'root', behaviours: TypedBeh
     const peer = new AnyPeer(id);
     let options = new ServerOptions({
         behaviours,
-        id,
+        directoryId: id,
         replicationCapacity: peerCapacity
     });
     let node = await createIPFSNode(false, './ipfs/' + id + '/');

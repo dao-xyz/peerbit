@@ -1,52 +1,9 @@
 
 import { Shard, AnyPeer } from '../index';
-import Identities from 'orbit-db-identity-provider';
-import { Keypair } from '@solana/web3.js';
-import { SolanaIdentityProvider } from '../identity';
-import FeedStore from 'orbit-db-feedstore';
-import { FeedStoreOptions } from '../stores';
-import { BN } from 'bn.js';
-import { clean, createIPFSNode, FeedStoreInterface, feedStoreShard, getPeer, shardStoreShard } from './utils';
-import { generateUUID } from '../id';
-import { createOrbitDBInstance, ServerOptions } from '../node';
+import { FeedStoreInterface, feedStoreShard, getPeer, shardStoreShard } from './utils';
 import { P2PTrust } from '../trust';
 import { PublicKey } from '../key';
 import { delay, waitFor } from '../utils';
-
-
-
-
-
-
-const getPeersSameIdentity = async (amount: number = 1, peerCapacity: number): Promise<AnyPeer[]> => {
-    let ids = Array(amount).fill(0).map((_) => generateUUID());
-    for (const id in ids) {
-        await clean(id);
-    }
-
-    Identities.addIdentityProvider(SolanaIdentityProvider)
-    let keypair = Keypair.generate();
-    const rootIdentity = await Identities.createIdentity({ type: 'solana', wallet: keypair.publicKey, keypair: keypair })
-    const peers = await Promise.all(ids.map(async (id) => {
-
-        let node = await createIPFSNode(false, id);
-        let orbitDB = await createOrbitDBInstance(node, id, rootIdentity);
-        const peer = new AnyPeer(id);
-        let options = new ServerOptions({
-            behaviours: {
-                typeMap: {}
-            },
-            id,
-            replicationCapacity: peerCapacity
-        });
-
-        await peer.create({ rootAddress: 'root', options, orbitDB });
-        return peer;
-    }));
-
-    return peers;
-}
-
 
 
 const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {

@@ -10,6 +10,7 @@ import { Message } from 'ipfs-core-types/types/src/pubsub'
 import { Peer } from './peer';
 import { PublicKey } from './key';
 import { P2PTrust } from './trust';
+import { generateUUID } from './id';
 
 export interface IPFSInstanceExtended extends IPFSInstance {
     libp2p: any
@@ -25,7 +26,7 @@ export class ServerOptions {
     replicationCapacity: number;
 
     constructor(options: {
-        id: string;
+        directoryId?: string;
         behaviours: TypedBehaviours
         replicationCapacity: number;
     }) {
@@ -48,7 +49,7 @@ export class ServerOptions {
                 type: CONTRACT_ACCESS_CONTROLLER
             } as any,
             replicate: true,
-            directory: './orbit-db-stores/' + options.id
+            directory: './orbit-db-stores/' + options.directoryId ? options.directoryId : generateUUID()
         }
 
     }
@@ -57,11 +58,6 @@ export class ServerOptions {
 }
 
 
-export const createOrbitDBInstance = (node: IPFSInstance | any, id: string, identity?: Identity) => OrbitDB.createInstance(node,
-    {
-        identity: identity,
-        directory: './orbit-db/' + id
-    })
 
 export class AnyPeer {
 
