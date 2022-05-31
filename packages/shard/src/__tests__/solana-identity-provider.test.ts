@@ -1,9 +1,9 @@
 
-import { AnyPeer } from '../../index';
+import { AnyPeer } from '../index';
 import * as ipfs from 'ipfs';
 import fs from 'fs';
 import Identities from 'orbit-db-identity-provider';
-import { SolanaIdentityProvider } from '../solana-identity-provider';
+import { SolanaIdentityProvider } from '../identity';
 import { Keypair } from '@solana/web3.js';
 
 describe('node', () => {

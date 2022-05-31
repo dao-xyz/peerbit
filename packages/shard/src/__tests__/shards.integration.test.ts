@@ -2,7 +2,7 @@
 import { Shard, AnyPeer } from '../index';
 import Identities from 'orbit-db-identity-provider';
 import { Keypair } from '@solana/web3.js';
-import { SolanaIdentityProvider } from '../identity-providers/solana-identity-provider';
+import { SolanaIdentityProvider } from '../identity';
 import FeedStore from 'orbit-db-feedstore';
 import { FeedStoreOptions } from '../stores';
 import { BN } from 'bn.js';
