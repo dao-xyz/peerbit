@@ -10,7 +10,7 @@ import AccessControllers from 'orbit-db-access-controllers';
 import KeyValueStore from 'orbit-db-kvstore';
 export const CONTRACT_ACCESS_CONTROLLER = 'contract-access-controller';
 import OrbitDB from 'orbit-db';
-const AccessController = require("orbit-db-access-controllers/src/access-controller-interface");
+import AccessController from "orbit-db-access-controllers/src/access-controller-interface";
 /* import { Trust } from '@dao-xyz/orbit-trust'; */
 class ContractAccessController extends AccessController {
     /*   trustProvider?: Trust; */
