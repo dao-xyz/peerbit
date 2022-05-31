@@ -49,7 +49,7 @@ export class ServerOptions {
                 type: CONTRACT_ACCESS_CONTROLLER
             } as any,
             replicate: true,
-            directory: './orbit-db-stores/' + options.directoryId ? options.directoryId : generateUUID()
+            directory: './orbit-db-stores/' + (options.directoryId ? options.directoryId : generateUUID())
         }
 
     }
