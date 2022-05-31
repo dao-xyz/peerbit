@@ -481,7 +481,7 @@ export class Shard<T extends DBInterface> {
     static get recursiveStoreOption() {
         return new BinaryDocumentStoreOptions<Shard<any>>({
             objectType: Shard.name,
-            indexBy: 'id'
+            indexBy: 'cid'
         })
 
     }

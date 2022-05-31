@@ -191,7 +191,7 @@ export const shardStoreShard = async <T extends DBInterface>() => new Shard<Recu
         db: new SingleDBInterface({
             name: 'shards',
             storeOptions: new BinaryDocumentStoreOptions<Shard<T>>({
-                indexBy: 'id',
+                indexBy: 'cid',
                 objectType: Shard.name
             })
         })
