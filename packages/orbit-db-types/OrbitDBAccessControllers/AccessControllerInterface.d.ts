@@ -16,37 +16,37 @@ declare module "orbit-db-access-controllers/src/access-controller-interface" {
             Every AC needs to have a 'Factory' method
             that creates an instance of the AccessController
         */
-        static create (orbitdb: OrbitDB, options: any): Promise<AccessController>
+        static create(orbitdb: OrbitDB, options: any): Promise<AccessController>
 
         /* Return the type for this controller */
-        static get type (): string
+        static get type(): string
 
         /*
             Return the type for this controller
             NOTE! This is the only property of the interface that
             shouldn't be overridden in the inherited Access Controller
         */
-        get type (): string
+        get type(): string
 
         /* Each Access Controller has some address to anchor to */
-        get address (): string
+        get address(): string
 
         /*
             Called by the databases (the log) to see if entry should
             be allowed in the database. Return true if the entry is allowed,
             false is not allowed
         */
-        canAppend (entry: LogEntry<any>, identityProvider: IdentityProvider): Promise<boolean>
+        canAppend(entry: LogEntry<any>, identityProvider: IdentityProvider): Promise<boolean>
 
         /* Add and remove access */
-        grant (access: string, identity: any): Promise<any>
-        revoke (access: string, identity: any): Promise<any>
+        grant(access: string, identity: any): Promise<any>
+        revoke(access: string, identity: any): Promise<any>
 
         /* AC creation and loading */
-        load (address: string): Promise<any>
+        load(address: string): Promise<any>
         /* Returns AC manifest parameters object */
-        save (): Promise<any>
+        save(): Promise<any>
         /* Called when the database for this AC gets closed */
-        close (): Promise<void>
+        close(): Promise<void>
     }
 }

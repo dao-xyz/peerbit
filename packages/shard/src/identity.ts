@@ -1,5 +1,5 @@
 import IdentityProvider from "orbit-db-identity-provider/src/identity-provider-interface";
-import { Keypair, PublicKey, sendAndConfirmRawTransaction } from '@solana/web3.js';
+import { Keypair, PublicKey } from '@solana/web3.js';
 import { Identity, IdentityProviderType } from "orbit-db-identity-provider";
 import nacl from "tweetnacl";
 import bs58 from 'bs58';
@@ -10,6 +10,7 @@ import AccessControllers from 'orbit-db-access-controllers';
 import KeyValueStore from 'orbit-db-kvstore';
 export const CONTRACT_ACCESS_CONTROLLER = 'contract-access-controller';
 import OrbitDB from 'orbit-db';
+const AccessController = require("orbit-db-access-controllers/src/access-controller-interface");
 /* import { Trust } from '@dao-xyz/orbit-trust'; */
 class ContractAccessController extends AccessController {
     /*   trustProvider?: Trust; */
