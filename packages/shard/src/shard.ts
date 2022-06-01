@@ -186,7 +186,7 @@ export class Shard<T extends DBInterface> {
 
     }
 
-    async init(from: AnyPeer, parent?: Shard<any>): Promise<Shard<T>> {
+    async init(from: AnyPeer, parentShardCID?: string): Promise<Shard<T>> {
         // TODO: this is ugly but ok for now
         from.options.behaviours.typeMap[Peer.name] = Peer;
 
@@ -205,8 +205,8 @@ export class Shard<T extends DBInterface> {
         await this.interface.init(this);
         await this.loadMetaStores();
 
-        if (parent) {
-            this.parentShardCID = parent.cid;
+        if (parentShardCID) {
+            this.parentShardCID = parentShardCID;
         }
 
         if (!isInitialized) {

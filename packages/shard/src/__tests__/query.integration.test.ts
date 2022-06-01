@@ -75,7 +75,7 @@ const documentDbTestSetup = async<T>(clazz: Constructor<T>, indexBy: string, sha
     await l0.replicate();
 
     // Create Feed store
-    let documentStore = await (await documentStoreShard(clazz, indexBy)).init(peer, l0);
+    let documentStore = await (await documentStoreShard(clazz, indexBy)).init(peer, l0.cid);
     await documentStore.replicate();
 
 

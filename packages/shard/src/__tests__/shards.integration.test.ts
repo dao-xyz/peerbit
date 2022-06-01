@@ -128,7 +128,7 @@ describe('cluster', () => {
 
             expect(await isInSwarm(peer, peer2)).toBeFalsy();
 
-            let feedStore = await (await feedStoreShard()).init(peer2, l0); // <-- This should trigger a swarm connection from peer to peer2
+            let feedStore = await (await feedStoreShard()).init(peer2, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
             await feedStore.replicate();
 
             expect(await isInSwarm(peer, peer2)).toBeTruthy();
@@ -146,7 +146,7 @@ describe('cluster', () => {
             await l0.replicate();
 
             // Create Feed store
-            let feedStore = await (await feedStoreShard()).init(peer, l0);
+            let feedStore = await (await feedStoreShard()).init(peer, l0.cid);
             await feedStore.replicate();
             await feedStore.interface.db.db.add("hello");
             await l0.interface.db.db.put(feedStore);
@@ -173,7 +173,7 @@ describe('cluster', () => {
             await l0.replicate();
 
             // Create Feed store
-            let l1 = await (await feedStoreShard()).init(peer, l0);
+            let l1 = await (await feedStoreShard()).init(peer, l0.cid);
             await l0.interface.db.db.put(l1);
 
             // --- Load assert, from another peer
