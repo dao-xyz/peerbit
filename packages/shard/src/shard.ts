@@ -15,14 +15,10 @@ import { AnyPeer, IPFSInstanceExtended } from "./node";
 import { Peer } from "./peer";
 import { PublicKey } from "./key";
 import { P2PTrust } from "./trust";
-import { DBInterface, onReplicationMark, SingleDBInterface } from "./interface";
+import { DBInterface, onReplicationMark } from "./interface";
 
 export const SHARD_INDEX = 0;
 const MAX_SHARD_SIZE = 1024 * 500 * 1000;
-
-
-export const SHARD_CHAIN_ID_FIELD = "id";
-export const SHARD_NAME_FIELD = "name";
 
 // io
 
@@ -448,7 +444,7 @@ export class Shard<T extends DBInterface> {
 
 
     getDBName(name: string): string {
-        return this.parentShardCID ? this.parentShardCID : '_' + '-' + name;
+        return this.parentShardCID ? this.parentShardCID : '-' + '-' + name;
     }
 
     async save(node: IPFSInstanceExtended): Promise<string> {

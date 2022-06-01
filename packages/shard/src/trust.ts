@@ -118,7 +118,7 @@ export class P2PTrust extends DBInterface {
         if (!this.cid) {
             throw new Error("Not initialized, replication topic requires known cid");
         }
-        return this.cid + '_' + 'replication'
+        return this.cid + '-' + 'replication'
     }
 
 
