@@ -41,8 +41,7 @@ export class DocumentIndex<T> {
       } else if (handled[key] !== true) {
         handled[key] = true
         if (item.payload.op === 'PUT') {
-          item.payload.value = this.deserializeOrPass(item.payload.value)
-          this._index[key] = item
+          this._index[key] = this.deserializeOrItem(item)
         } else if (item.payload.op === 'DEL') {
           delete this._index[key]
         }
@@ -62,6 +61,14 @@ export class DocumentIndex<T> {
   }
   deserializeOrPass(value: string | T): T {
     return typeof value === 'string' ? deserialize(bs58.decode(value), this.clazz) : value
+  }
+  deserializeOrItem(item: LogEntry<T | string>): LogEntry<T> {
+    if (typeof item.payload.value !== 'string')
+      return item as LogEntry<T>
+
+    const newItem = { ...item, payload: { ...item.payload } };
+    newItem.payload.value = this.deserializeOrPass(newItem.payload.value)
+    return newItem as LogEntry<T>;
   }
 
 }
