@@ -76,6 +76,7 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
 
     async init(shard: Shard<any>) {
         this._shard = shard;
+        this.db = undefined;
     }
 
 
