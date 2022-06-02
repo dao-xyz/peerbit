@@ -43,8 +43,7 @@ class DocumentIndex {
             else if (handled[key] !== true) {
                 handled[key] = true;
                 if (item.payload.op === 'PUT') {
-                    item.payload.value = this.deserializeOrPass(item.payload.value);
-                    this._index[key] = item;
+                    this._index[key] = this.deserializeOrItem(item);
                 }
                 else if (item.payload.op === 'DEL') {
                     delete this._index[key];
@@ -66,6 +65,13 @@ class DocumentIndex {
     }
     deserializeOrPass(value) {
         return typeof value === 'string' ? (0, borsh_1.deserialize)(bs58_1.default.decode(value), this.clazz) : value;
+    }
+    deserializeOrItem(item) {
+        if (typeof item.payload.value !== 'string')
+            return item;
+        const newItem = Object.assign(Object.assign({}, item), { payload: Object.assign({}, item.payload) });
+        newItem.payload.value = this.deserializeOrPass(newItem.payload.value);
+        return newItem;
     }
 }
 exports.DocumentIndex = DocumentIndex;

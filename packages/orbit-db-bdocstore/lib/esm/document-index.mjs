@@ -37,8 +37,7 @@ export class DocumentIndex {
             else if (handled[key] !== true) {
                 handled[key] = true;
                 if (item.payload.op === 'PUT') {
-                    item.payload.value = this.deserializeOrPass(item.payload.value);
-                    this._index[key] = item;
+                    this._index[key] = this.deserializeOrItem(item);
                 }
                 else if (item.payload.op === 'DEL') {
                     delete this._index[key];
@@ -60,6 +59,13 @@ export class DocumentIndex {
     }
     deserializeOrPass(value) {
         return typeof value === 'string' ? deserialize(bs58.decode(value), this.clazz) : value;
+    }
+    deserializeOrItem(item) {
+        if (typeof item.payload.value !== 'string')
+            return item;
+        const newItem = { ...item, payload: { ...item.payload } };
+        newItem.payload.value = this.deserializeOrPass(newItem.payload.value);
+        return newItem;
     }
 }
 //# sourceMappingURL=document-index.js.map

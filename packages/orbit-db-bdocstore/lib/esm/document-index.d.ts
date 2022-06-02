@@ -15,4 +15,5 @@ export declare class DocumentIndex<T> {
     } | T);
     updateIndex(oplog: any, onProgressCallback: any): void;
     deserializeOrPass(value: string | T): T;
+    deserializeOrItem(item: LogEntry<T | string>): LogEntry<T>;
 }
