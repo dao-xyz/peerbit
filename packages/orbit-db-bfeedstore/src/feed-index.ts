@@ -28,7 +28,7 @@ export class FeedIndex<T> {
       if (!handled.includes(item.hash)) {
         handled.push(item.hash)
         if (item.payload.op === 'ADD') {
-          item.payload.value = this.deserializeOrPass(item.payload.value)
+          item = this.deserializeOrItem(item)
           this._index[item.hash] = item
         } else if (item.payload.op === 'DEL') {
           delete this._index[item.payload.value]
@@ -40,6 +40,14 @@ export class FeedIndex<T> {
 
   deserializeOrPass(value: string | T): T {
     return typeof value === 'string' ? deserialize(bs58.decode(value), this.clazz) : value
+  }
+  deserializeOrItem(item: LogEntry<T | string>): LogEntry<T> {
+    if (typeof item.payload.value !== 'string')
+      return item as LogEntry<T>
+
+    const newItem = { ...item, payload: { ...item.payload } };
+    newItem.payload.value = this.deserializeOrPass(newItem.payload.value)
+    return newItem as LogEntry<T>;
   }
 
 }
