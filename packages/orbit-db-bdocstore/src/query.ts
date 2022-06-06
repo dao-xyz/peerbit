@@ -1,11 +1,35 @@
-import { Constructor, deserialize, field, variant, vec } from "@dao-xyz/borsh";
-import { generateUUID } from "./id";
+import { Constructor, deserialize, field, option, variant, vec } from "@dao-xyz/borsh";
 import bs58 from "bs58";
 import BN from "bn.js";
 import Store from "orbit-db-store";
 import DocumentStore from "orbit-db-docstore";
-import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
+import { BinaryDocumentStore } from "./document-store";
 import FeedStore from "orbit-db-feedstore";
+import { randomUUID } from "crypto";
+
+export enum SortDirection {
+    Ascending = 0,
+    Descending = 1
+}
+
+export class Sort {
+
+    @field({ type: vec('String') })
+    fieldPath: string[]
+
+    @field({ type: 'u8' })
+    direction: SortDirection
+
+    constructor(opts: {
+        fieldPath: string[],
+        direction: SortDirection
+    }) {
+        if (opts) {
+            Object.assign(this, opts);
+        }
+    }
+}
+
 
 
 export class Query {
@@ -126,18 +150,31 @@ export class QueryRequestV0 {
     @field({ type: 'String' })
     id: string
 
+    @field({ type: option('u64') })
+    offset: BN | undefined;
+
+    @field({ type: option('u64') })
+    size: BN | undefined;
+
     @field({ type: vec(Query) })
     queries: Query[]
 
+    @field({ type: option(Sort) })
+    sort: Sort | undefined;
+
+
     constructor(obj?: {
-        id?: string,
+        id?: string
+        offset?: BN
+        size?: BN
         queries: Query[]
+        sort?: Sort
 
     }) {
         if (obj) {
             Object.assign(this, obj);
             if (!this.id) {
-                this.id = generateUUID();
+                this.id = randomUUID();
             }
         }
     }

@@ -1,9 +1,10 @@
 import Store from 'orbit-db-store';
 import { DocumentIndex } from './document-index.mjs';
 import pMap from 'p-map';
-import { serialize } from '@dao-xyz/borsh';
+import { deserialize, serialize } from '@dao-xyz/borsh';
 import bs58 from 'bs58';
 import { asString } from './utils.mjs';
+import { EncodedQueryResponse, Query, QueryRequestV0, QueryResponse, SortDirection } from './query.mjs';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdocstore';
 const defaultOptions = (options) => {
@@ -48,6 +49,73 @@ export class BinaryDocumentStore extends Store {
         return Object.keys(this._index._index)
             .map((e) => this._index.get(e, fullOp))
             .filter((doc) => mapper(getValue(doc)));
+    }
+    async queryAny(query, clazz, responseHandler, maxAggregationTime = 30 * 1000) {
+        // send query and wait for replies in a generator like behaviour
+        let responseTopic = query.getResponseTopic(this.queryTopic);
+        await this._ipfs.pubsub.subscribe(responseTopic, (msg) => {
+            const encoded = deserialize(Buffer.from(msg.data), EncodedQueryResponse);
+            let result = QueryResponse.from(encoded, clazz);
+            responseHandler(result);
+        });
+        await this._ipfs.pubsub.publish(this.queryTopic, serialize(query));
+    }
+    async subscribeToQueries() {
+        await this._ipfs.pubsub.subscribe(this.queryTopic, async (msg) => {
+            try {
+                let query = deserialize(Buffer.from(msg.data), QueryRequestV0);
+                let filters = query.queries;
+                let results = this.query(doc => filters.map(f => {
+                    if (f instanceof Query) {
+                        return f.apply(doc);
+                    }
+                    else {
+                        return f(doc);
+                    }
+                }).reduce((prev, current) => prev && current));
+                if (query.sort) {
+                    const resolveField = (obj) => {
+                        let v = obj;
+                        for (let i = 0; i < query.sort.fieldPath.length; i++) {
+                            v = v[query.sort.fieldPath[i]];
+                        }
+                        return v;
+                    };
+                    let direction = 1;
+                    if (query.sort.direction == SortDirection.Descending) {
+                        direction = -1;
+                    }
+                    results.sort((a, b) => {
+                        const af = resolveField(a);
+                        const bf = resolveField(b);
+                        if (af < bf) {
+                            return -direction;
+                        }
+                        else if (af > bf) {
+                            return direction;
+                        }
+                        return 0;
+                    });
+                }
+                if (query.offset) {
+                    results = results.slice(query.offset.toNumber());
+                }
+                if (query.size) {
+                    results = results.slice(0, query.size.toNumber());
+                }
+                let response = new EncodedQueryResponse({
+                    results: results.map(r => bs58.encode(serialize(r)))
+                });
+                let bytes = serialize(response);
+                await this._ipfs.pubsub.publish(query.getResponseTopic(this.queryTopic), bytes);
+            }
+            catch (error) {
+                console.error(error);
+            }
+        });
+    }
+    get queryTopic() {
+        return this.address + '/query';
     }
     batchPut(docs, onProgressCallback) {
         const mapper = (doc, idx) => {

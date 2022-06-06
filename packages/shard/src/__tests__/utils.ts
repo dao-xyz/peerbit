@@ -1,7 +1,6 @@
 import fs from 'mz/fs';
 import { Identity } from 'orbit-db-identity-provider';
 import { TypedBehaviours } from '..';
-import { generateUUID } from '../id';
 import * as IPFS from 'ipfs';
 import { AnyPeer, IPFSInstanceExtended, ServerOptions } from '../node';
 import { SingleDBInterface, DBInterface, RecursiveShardDBInterface } from '../interface';
@@ -9,13 +8,11 @@ import FeedStore from 'orbit-db-feedstore';
 import { BinaryDocumentStoreOptions, FeedStoreOptions } from '../stores';
 import BN from 'bn.js';
 import { Constructor, field, variant } from '@dao-xyz/borsh';
-import { QueryRequestV0 } from '../query';
 import { BinaryDocumentStore } from '@dao-xyz/orbit-db-bdocstore';
 import { Shard } from '../shard';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import OrbitDB from 'orbit-db';
-
-
+import { randomUUID } from 'crypto';
 
 export const clean = (id?: string) => {
     let suffix = id ? id + '/' : '';
@@ -40,7 +37,7 @@ export const createOrbitDBInstance = (node: IPFSInstance | any, id: string, iden
     })
 
 export const getPeer = async (rootAddress: string = 'root', behaviours: TypedBehaviours = testBehaviours, identity?: Identity, peerCapacity: number = 1000 * 1000 * 1000): Promise<AnyPeer> => {
-    let id = generateUUID();
+    let id = randomUUID();
     await clean(id);
     const peer = new AnyPeer(id);
     let options = new ServerOptions({
@@ -115,11 +112,6 @@ export class FeedStoreInterface extends DBInterface {
     async load(): Promise<void> {
         await this.db.load();
     }
-
-
-    async query(q: QueryRequestV0): Promise<string[]> {
-        return this.db.query(q);
-    }
 }
 
 export const feedStoreShard = async () => new Shard({
@@ -162,11 +154,6 @@ export class DocumentStoreInterface<T> extends DBInterface {
 
     async load(waitForReplicationEventsCount = 0): Promise<void> {
         await this.db.load(waitForReplicationEventsCount);
-    }
-
-
-    async query(q: QueryRequestV0): Promise<T[]> {
-        return this.db.query(q);
     }
 }
 

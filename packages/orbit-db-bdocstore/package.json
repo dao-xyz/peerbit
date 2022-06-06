@@ -37,6 +37,7 @@
     "orbit-db-store": "4.x"
   },
   "devDependencies": {
+    "ipfs": "^0.60.2",
     "@dao-xyz-types/orbit-db": "^0.0.9"
   }
 }

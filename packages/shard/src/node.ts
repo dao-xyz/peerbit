@@ -1,16 +1,13 @@
 
 import OrbitDB from 'orbit-db';
-import { Identity } from 'orbit-db-identity-provider';
 import { CONTRACT_ACCESS_CONTROLLER } from './identity';
 import { Shard, TypedBehaviours } from './shard';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
-import { Constructor, deserialize, serialize } from '@dao-xyz/borsh';
-import { EncodedQueryResponse, QueryRequestV0, QueryResponse } from './query';
-import { Message } from 'ipfs-core-types/types/src/pubsub'
 import { Peer } from './peer';
-import { PublicKey } from './key';
+import { randomUUID } from 'crypto';
 import { P2PTrust } from './trust';
-import { generateUUID } from './id';
+import { deserialize } from '@dao-xyz/borsh';
+import { PublicKey } from './key';
 
 export interface IPFSInstanceExtended extends IPFSInstance {
     libp2p: any
@@ -49,7 +46,7 @@ export class ServerOptions {
                 type: CONTRACT_ACCESS_CONTROLLER
             } as any,
             replicate: true,
-            directory: './orbit-db-stores/' + (options.directoryId ? options.directoryId : generateUUID())
+            directory: './orbit-db-stores/' + (options.directoryId ? options.directoryId : randomUUID())
         }
 
     }
@@ -85,24 +82,6 @@ export class AnyPeer {
         /*  if (this["onready"]) (this as any).onready(); */
     }
 
-
-
-    async query<T>(topic: string, query: QueryRequestV0, clazz: Constructor<T>, responseHandler: (response: QueryResponse<T>) => void, maxAggregationTime: number = 30 * 1000) {
-        // send query and wait for replies in a generator like behaviour
-        let responseTopic = query.getResponseTopic(topic);
-        await this.node.pubsub.subscribe(responseTopic, (msg: Message) => {
-            const encoded = deserialize(Buffer.from(msg.data), EncodedQueryResponse);
-            let result = QueryResponse.from(encoded, clazz);
-            responseHandler(result);
-        })
-        await this.node.pubsub.publish(topic, serialize(query));
-
-        // Unsubscrice after a while
-        /*   setTimeout(() => {
-              this.node.pubsub.unsubscribe(responseTopic);
-          }, maxAggregationTime); */
-    }
-
     async subscribeForReplication(trust: P2PTrust): Promise<void> {
         await this.node.pubsub.subscribe(trust.replicationTopic, async (msg: any) => {
             try {
@@ -131,7 +110,21 @@ export class AnyPeer {
         })
     }
 
-
+    /*   
+    async query<T>(topic: string, query: QueryRequestV0, clazz: Constructor<T>, responseHandler: (response: QueryResponse<T>) => void, maxAggregationTime: number = 30 * 1000) {
+        // send query and wait for replies in a generator like behaviour
+        let responseTopic = query.getResponseTopic(topic);
+        await this.node.pubsub.subscribe(responseTopic, (msg: Message) => {
+            const encoded = deserialize(Buffer.from(msg.data), EncodedQueryResponse);
+            let result = QueryResponse.from(encoded, clazz);
+            responseHandler(result);
+        })
+        await this.node.pubsub.publish(topic, serialize(query));
+    } 
+  
+    
+  
+  */
 
     async disconnect(): Promise<void> {
         try {

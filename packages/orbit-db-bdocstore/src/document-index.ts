@@ -5,9 +5,11 @@ import { asString, ToStringable } from "./utils";
 export class DocumentIndex<T> {
   _index: { [key: string]: { payload: Payload<T> } };
   clazz: Constructor<T>
+
   constructor() {
     this._index = {}
   }
+
   init(clazz: Constructor<T>) {
     this.clazz = clazz;
   }

@@ -6,7 +6,6 @@ declare module "orbit-db-store" {
     import { Identity } from "orbit-db-identity-provider";
     import { EventEmitter } from 'events';
     import * as elliptic from "elliptic";
-    import ipfs from "ipfs";
 
     export default class Store<T, X> {
 
@@ -33,7 +32,7 @@ declare module "orbit-db-store" {
         access: AccessController
         _index: X;
         options: any;
-
+        _ipfs: IPFS
 
         /**
          * Apparently not meant for outside usage

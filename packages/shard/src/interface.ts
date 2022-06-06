@@ -1,25 +1,11 @@
 
 
-import { Constructor, deserialize, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
-import OrbitDB from "orbit-db";
-import BN from 'bn.js';
+import { field, variant } from "@dao-xyz/borsh";
 import Store from "orbit-db-store";
-import CounterStore from "orbit-db-counterstore";
-import { BinaryKeyValueStore } from '@dao-xyz/orbit-db-bkvstore';
-import { BinaryDocumentStoreOptions, BinaryKeyValueStoreOptions, StoreOptions, waitForReplicationEvents } from "./stores";
-import { generateUUID } from "./id";
-import { Message } from 'ipfs-core-types/types/src/pubsub'
-import { EncodedQueryResponse, FilterQuery, query, Query, QueryRequestV0, QueryResponse, StringMatchQuery } from "./query";
+import { StoreOptions, waitForReplicationEvents } from "./stores";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
-import base58 from "bs58";
-import { waitFor } from "./utils";
-import { AnyPeer, IPFSInstanceExtended } from "./node";
-import { Peer } from "./peer";
-import { PublicKey } from "./key";
-import { P2PTrust } from "./trust";
 import { Shard } from "./shard";
 import * as events from 'events';
-
 export class DBInterface {
 
     get initialized(): boolean {
@@ -38,11 +24,6 @@ export class DBInterface {
     async load(): Promise<void> {
         throw new Error("Not implemented")
     }
-
-    async query(_query: QueryRequestV0): Promise<any[]> {
-        throw new Error("Not implemented")
-    }
-
 
 }
 
@@ -116,11 +97,6 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
         return !!this.db;
     }
 
-    async query(q: QueryRequestV0): Promise<T[]> {
-        return query(q, this.db)
-    }
-
-
 }
 
 
@@ -154,11 +130,6 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterfac
         await this.db.load(waitForReplicationEventsCount);
     }
 
-
-
-    async query(q: QueryRequestV0): Promise<Shard<any>[]> {
-        return this.db.query(q)
-    }
 
     async loadShard(index: number, options: { expectedPeerReplicationEvents?: number } = { expectedPeerReplicationEvents: 0 }): Promise<Shard<T>> {
         // Get the latest shard that have non empty peer

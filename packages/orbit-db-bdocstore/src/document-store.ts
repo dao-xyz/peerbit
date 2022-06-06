@@ -3,9 +3,12 @@ import { DocumentIndex } from './document-index'
 import pMap from 'p-map'
 import { IPFS as IPFSInstance } from 'ipfs';
 import { Identity } from 'orbit-db-identity-provider';
-import { Constructor, serialize } from '@dao-xyz/borsh';
+import { Constructor, deserialize, serialize } from '@dao-xyz/borsh';
 import bs58 from 'bs58';
 import { asString } from './utils';
+import { Message } from 'ipfs-core-types/types/src/pubsub'
+import { EncodedQueryResponse, Query, QueryRequestV0, QueryResponse, SortDirection } from './query';
+
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement)
 
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdocstore';
@@ -21,7 +24,7 @@ export class BinaryDocumentStore<T> extends Store<T, DocumentIndex<T>> {
     super(ipfs, id, dbname, defaultOptions(options))
     this._type = BINARY_DOCUMENT_STORE_TYPE;
     this._index.init(this.options.clazz);
-
+    ipfs.dag
   }
   public get index(): DocumentIndex<T> {
     return this._index;
@@ -56,6 +59,87 @@ export class BinaryDocumentStore<T> extends Store<T, DocumentIndex<T>> {
       .map((e) => this._index.get(e, fullOp))
       .filter((doc) => mapper(getValue(doc))) as T[] | { payload: Payload<T> }[]
   }
+
+
+  async queryAny(query: QueryRequestV0, clazz: Constructor<T>, responseHandler: (response: QueryResponse<T>) => void, maxAggregationTime: number = 30 * 1000) {
+    // send query and wait for replies in a generator like behaviour
+    let responseTopic = query.getResponseTopic(this.queryTopic);
+    await this._ipfs.pubsub.subscribe(responseTopic, (msg: Message) => {
+      const encoded = deserialize(Buffer.from(msg.data), EncodedQueryResponse);
+      let result = QueryResponse.from(encoded, clazz);
+      responseHandler(result);
+    })
+    await this._ipfs.pubsub.publish(this.queryTopic, serialize(query));
+  }
+
+  public async subscribeToQueries(): Promise<void> {
+    await this._ipfs.pubsub.subscribe(this.queryTopic, async (msg: Message) => {
+      try {
+        let query = deserialize(Buffer.from(msg.data), QueryRequestV0);
+        let filters: (Query | ((v: any) => boolean))[] = query.queries;
+        let results = this.query(
+          doc =>
+            filters.map(f => {
+              if (f instanceof Query) {
+                return f.apply(doc)
+              }
+              else {
+                return (f as ((v: any) => boolean))(doc)
+              }
+            }).reduce((prev, current) => prev && current)
+        )
+
+        if (query.sort) {
+          const resolveField = (obj: any) => {
+            let v = obj;
+            for (let i = 0; i < query.sort.fieldPath.length; i++) {
+              v = v[query.sort.fieldPath[i]]
+            }
+            return v
+          }
+          let direction = 1;
+          if (query.sort.direction == SortDirection.Descending) {
+            direction = -1;
+          }
+          results.sort((a, b) => {
+            const af = resolveField(a)
+            const bf = resolveField(b)
+            if (af < bf) {
+              return -direction;
+            }
+            else if (af > bf) {
+              return direction;
+            }
+            return 0;
+          })
+        }
+        if (query.offset) {
+          results = results.slice(query.offset.toNumber());
+        }
+
+        if (query.size) {
+          results = results.slice(0, query.size.toNumber());
+        }
+
+        let response = new EncodedQueryResponse({
+          results: results.map(r => bs58.encode(serialize(r)))
+        });
+
+        let bytes = serialize(response);
+        await this._ipfs.pubsub.publish(
+          query.getResponseTopic(this.queryTopic),
+          bytes
+        )
+      } catch (error) {
+        console.error(error)
+      }
+    })
+  }
+
+  get queryTopic() {
+    return this.address + '/query';
+  }
+
 
   public batchPut(docs: T[], onProgressCallback) {
     const mapper = (doc, idx) => {
