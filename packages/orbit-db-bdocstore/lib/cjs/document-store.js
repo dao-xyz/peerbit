@@ -35,6 +35,7 @@ class BinaryDocumentStore extends orbit_db_store_1.default {
         this._type = undefined;
         this._type = exports.BINARY_DOCUMENT_STORE_TYPE;
         this._index.init(this.options.clazz);
+        ipfs.dag;
     }
     get index() {
         return this._index;

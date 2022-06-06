@@ -20,6 +20,7 @@ export class BinaryDocumentStore extends Store {
         this._type = undefined;
         this._type = BINARY_DOCUMENT_STORE_TYPE;
         this._index.init(this.options.clazz);
+        ipfs.dag;
     }
     get index() {
         return this._index;
