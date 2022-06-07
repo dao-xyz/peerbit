@@ -12,7 +12,7 @@ import { BinaryDocumentStore } from '@dao-xyz/orbit-db-bdocstore';
 import { Shard } from '../shard';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import OrbitDB from 'orbit-db';
-import { randomUUID } from 'crypto';
+import { v4 as uuid } from 'uuid';
 
 export const clean = (id?: string) => {
     let suffix = id ? id + '/' : '';
@@ -37,7 +37,7 @@ export const createOrbitDBInstance = (node: IPFSInstance | any, id: string, iden
     })
 
 export const getPeer = async (rootAddress: string = 'root', behaviours: TypedBehaviours = testBehaviours, identity?: Identity, peerCapacity: number = 1000 * 1000 * 1000): Promise<AnyPeer> => {
-    let id = randomUUID();
+    let id = uuid();
     await clean(id);
     const peer = new AnyPeer(id);
     let options = new ServerOptions({

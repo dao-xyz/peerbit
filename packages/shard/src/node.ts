@@ -4,7 +4,7 @@ import { CONTRACT_ACCESS_CONTROLLER } from './identity';
 import { Shard, TypedBehaviours } from './shard';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import { Peer } from './peer';
-import { randomUUID } from 'crypto';
+import { v4 as uuid } from 'uuid';
 import { P2PTrust } from './trust';
 import { deserialize } from '@dao-xyz/borsh';
 import { PublicKey } from './key';
@@ -46,7 +46,7 @@ export class ServerOptions {
                 type: CONTRACT_ACCESS_CONTROLLER
             } as any,
             replicate: true,
-            directory: './orbit-db-stores/' + (options.directoryId ? options.directoryId : randomUUID())
+            directory: './orbit-db-stores/' + (options.directoryId ? options.directoryId : uuid())
         }
 
     }
