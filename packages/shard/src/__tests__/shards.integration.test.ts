@@ -157,7 +157,7 @@ describe('cluster', () => {
             await l0.init(peer2)
             await l0.interface.db.load(1);
             expect(Object.keys(l0.interface.db.db._index._index).length).toEqual(1);
-            let feedStoreLoaded = await l0.interface.loadShard(0);
+            let feedStoreLoaded = await l0.interface.loadShard(feedStore.cid);
             await feedStoreLoaded.interface.db.load(1);
             expect(Object.keys(feedStoreLoaded.interface.db.db._index._index).length).toEqual(1);
             await disconnectPeers([peer, peer2]);

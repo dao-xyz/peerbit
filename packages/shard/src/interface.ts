@@ -131,10 +131,9 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterfac
     }
 
 
-    async loadShard(index: number, options: { expectedPeerReplicationEvents?: number } = { expectedPeerReplicationEvents: 0 }): Promise<Shard<T>> {
+    async loadShard(cid: string, options: { expectedPeerReplicationEvents?: number } = { expectedPeerReplicationEvents: 0 }): Promise<Shard<T>> {
         // Get the latest shard that have non empty peer
-        await this.db.load(index + 1);
-        let shard = this.db.db.get(index.toString())[0]
+        let shard = this.db.db.get(cid)[0]
         await shard.init(this.db._shard.peer);
         await shard.loadPeers(options.expectedPeerReplicationEvents);
         return shard;
