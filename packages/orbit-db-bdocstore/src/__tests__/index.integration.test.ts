@@ -42,8 +42,6 @@ const documentDbTestSetup = async (): Promise<{
   // Create store
   let documentStoreCreator = await peer.orbitDB.open<BinaryDocumentStore<Document>>('store', { ...{ clazz: Document, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: 'id' } } as any)
   await documentStoreCreator.load();
-  await documentStoreCreator.subscribeToQueries();
-
   let documentStoreObserver = await observer.orbitDB.open<BinaryDocumentStore<Document>>(documentStoreCreator.address.toString(), { ...{ clazz: Document, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: 'id' } } as any)
 
   return {

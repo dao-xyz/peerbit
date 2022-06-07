@@ -1,13 +1,13 @@
 import Store from 'orbit-db-store'
 import { DocumentIndex } from './document-index'
 import pMap from 'p-map'
-import { IPFS as IPFSInstance } from 'ipfs';
 import { Identity } from 'orbit-db-identity-provider';
 import { Constructor, deserialize, serialize } from '@dao-xyz/borsh';
 import bs58 from 'bs58';
 import { asString } from './utils';
 import { Message } from 'ipfs-core-types/types/src/pubsub'
 import { EncodedQueryResponse, Query, QueryRequestV0, QueryResponse, SortDirection } from './query';
+import { IPFS as IPFSInstance } from "ipfs-core-types";
 
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement)
 
@@ -20,6 +20,7 @@ const defaultOptions = (options: IStoreOptions): any => {
 export class BinaryDocumentStore<T> extends Store<T, DocumentIndex<T>> {
 
   _type: string = undefined;
+  _subscribed: boolean = false
   constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IStoreOptions & { indexBy?: string, clazz: Constructor<T> }) {
     super(ipfs, id, dbname, defaultOptions(options))
     this._type = BINARY_DOCUMENT_STORE_TYPE;
@@ -72,7 +73,22 @@ export class BinaryDocumentStore<T> extends Store<T, DocumentIndex<T>> {
     await this._ipfs.pubsub.publish(this.queryTopic, serialize(query));
   }
 
-  public async subscribeToQueries(): Promise<void> {
+  public async load(amount?: number, opts?: {}): Promise<void> {
+    await super.load(amount, opts);
+    await this._subscribeToQueries();
+  }
+
+  public async close(): Promise<void> {
+    await this._ipfs.pubsub.unsubscribe(this.queryTopic);
+    this._subscribed = false;
+    await super.close();
+  }
+
+  async _subscribeToQueries(): Promise<void> {
+    if (this._subscribed) {
+      return
+    }
+
     await this._ipfs.pubsub.subscribe(this.queryTopic, async (msg: Message) => {
       try {
         let query = deserialize(Buffer.from(msg.data), QueryRequestV0);
@@ -134,6 +150,7 @@ export class BinaryDocumentStore<T> extends Store<T, DocumentIndex<T>> {
         console.error(error)
       }
     })
+    this._subscribed = true;
   }
 
   get queryTopic() {
