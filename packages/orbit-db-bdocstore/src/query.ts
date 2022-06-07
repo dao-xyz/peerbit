@@ -5,7 +5,7 @@ import Store from "orbit-db-store";
 import DocumentStore from "orbit-db-docstore";
 import { BinaryDocumentStore } from "./document-store";
 import FeedStore from "orbit-db-feedstore";
-import { randomUUID } from "crypto";
+import { v4 as uuid } from 'uuid';
 
 export enum SortDirection {
     Ascending = 0,
@@ -174,7 +174,7 @@ export class QueryRequestV0 {
         if (obj) {
             Object.assign(this, obj);
             if (!this.id) {
-                this.id = randomUUID();
+                this.id = uuid();
             }
         }
     }

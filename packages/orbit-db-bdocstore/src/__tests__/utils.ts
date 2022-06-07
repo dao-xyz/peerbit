@@ -3,7 +3,7 @@ import { Identity } from 'orbit-db-identity-provider';
 import * as IPFS from 'ipfs';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import OrbitDB from 'orbit-db';
-import { randomUUID } from 'crypto';
+import { v4 as uuid } from 'uuid';
 import { BINARY_DOCUMENT_STORE_TYPE, BinaryDocumentStore } from '../document-store';
 
 OrbitDB.addDatabaseType(BINARY_DOCUMENT_STORE_TYPE, BinaryDocumentStore as any)
@@ -33,7 +33,7 @@ export class Peer {
     orbitDB: OrbitDB
 }
 export const getPeer = async (): Promise<Peer> => {
-    let id = randomUUID();
+    let id = uuid();
     await clean(id);
     let node = await createIPFSNode(false, './ipfs/' + id + '/');
     let orbitDB = await createOrbitDBInstance(node, id);
