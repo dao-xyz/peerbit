@@ -18,6 +18,7 @@ export class BinaryDocumentStore extends Store {
     constructor(ipfs, id, dbname, options) {
         super(ipfs, id, dbname, defaultOptions(options));
         this._type = undefined;
+        this._subscribed = false;
         this._type = BINARY_DOCUMENT_STORE_TYPE;
         this._index.init(this.options.clazz);
         ipfs.dag;
@@ -61,7 +62,19 @@ export class BinaryDocumentStore extends Store {
         });
         await this._ipfs.pubsub.publish(this.queryTopic, serialize(query));
     }
-    async subscribeToQueries() {
+    async load(amount, opts) {
+        await super.load(amount, opts);
+        await this._subscribeToQueries();
+    }
+    async close() {
+        await this._ipfs.pubsub.unsubscribe(this.queryTopic);
+        this._subscribed = false;
+        await super.close();
+    }
+    async _subscribeToQueries() {
+        if (this._subscribed) {
+            return;
+        }
         await this._ipfs.pubsub.subscribe(this.queryTopic, async (msg) => {
             try {
                 let query = deserialize(Buffer.from(msg.data), QueryRequestV0);
@@ -114,6 +127,7 @@ export class BinaryDocumentStore extends Store {
                 console.error(error);
             }
         });
+        this._subscribed = true;
     }
     get queryTopic() {
         return this.address + '/query';

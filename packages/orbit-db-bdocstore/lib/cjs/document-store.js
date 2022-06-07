@@ -33,6 +33,7 @@ class BinaryDocumentStore extends orbit_db_store_1.default {
     constructor(ipfs, id, dbname, options) {
         super(ipfs, id, dbname, defaultOptions(options));
         this._type = undefined;
+        this._subscribed = false;
         this._type = exports.BINARY_DOCUMENT_STORE_TYPE;
         this._index.init(this.options.clazz);
         ipfs.dag;
@@ -78,8 +79,30 @@ class BinaryDocumentStore extends orbit_db_store_1.default {
             yield this._ipfs.pubsub.publish(this.queryTopic, (0, borsh_1.serialize)(query));
         });
     }
-    subscribeToQueries() {
+    load(amount, opts) {
+        const _super = Object.create(null, {
+            load: { get: () => super.load }
+        });
         return __awaiter(this, void 0, void 0, function* () {
+            yield _super.load.call(this, amount, opts);
+            yield this._subscribeToQueries();
+        });
+    }
+    close() {
+        const _super = Object.create(null, {
+            close: { get: () => super.close }
+        });
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this._ipfs.pubsub.unsubscribe(this.queryTopic);
+            this._subscribed = false;
+            yield _super.close.call(this);
+        });
+    }
+    _subscribeToQueries() {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (this._subscribed) {
+                return;
+            }
             yield this._ipfs.pubsub.subscribe(this.queryTopic, (msg) => __awaiter(this, void 0, void 0, function* () {
                 try {
                     let query = (0, borsh_1.deserialize)(Buffer.from(msg.data), query_1.QueryRequestV0);
@@ -132,6 +155,7 @@ class BinaryDocumentStore extends orbit_db_store_1.default {
                     console.error(error);
                 }
             }));
+            this._subscribed = true;
         });
     }
     get queryTopic() {
