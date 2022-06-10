@@ -154,6 +154,9 @@ export class BinaryDocumentStore<T> extends Store<T, DocumentIndex<T>> {
   }
 
   get queryTopic() {
+    if (!this.address) {
+      throw new Error("Not initialized");
+    }
     return this.address + '/query';
   }
 

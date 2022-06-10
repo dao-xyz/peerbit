@@ -121,8 +121,8 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterfac
         this.db.close();
     }
 
-    async init(shard: Shard<any>) {
-        await this.db.init(shard);
+    init(shard: Shard<any>) {
+        this.db.init(shard);
     }
 
 
