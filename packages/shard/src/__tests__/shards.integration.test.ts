@@ -1,10 +1,9 @@
 
 import { Shard, AnyPeer } from '../index';
-import { FeedStoreInterface, feedStoreShard, getPeer, shardStoreShard } from './utils';
+import { documentStoreShard, FeedStoreInterface, feedStoreShard, getPeer, shardStoreShard } from './utils';
 import { P2PTrust } from '../trust';
 import { PublicKey } from '../key';
 import { delay, waitFor } from '../utils';
-
 
 const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 
@@ -75,7 +74,7 @@ describe('cluster', () => {
                 expect(l0.trust.isTrusted(peer3Key));
             })
 
-            test('untrusteed by chain ', async () => {
+            test('untrusteed by chain', async () => {
 
                 let peer = await getPeer();
 
@@ -264,6 +263,30 @@ describe('cluster', () => {
 
         })
     })
+
+    describe('peer options', () => {
+        test('isServer=false no subscriptions on idle on shardStoreShard', async () => {
+            let peerNonServer = await getPeer(undefined, false);
+            let l0 = await shardStoreShard();
+            await l0.init(peerNonServer);
+            const subscriptions = await peerNonServer.node.pubsub.ls();
+            expect(subscriptions.length).toEqual(0); // non server should not have any subscriptions idle
+            await disconnectPeers([peerNonServer]);
+        })
+
+        test('isServer=false no subscriptions on idle on documentStoreShard', async () => {
+
+            class Document { }
+            let peerNonServer = await getPeer(undefined, false);
+            peerNonServer.options.behaviours.typeMap[Document.name] = Document;
+            let l0 = await documentStoreShard(Document, 'id');
+            await l0.init(peerNonServer);
+            const subscriptions = await peerNonServer.node.pubsub.ls();
+            expect(subscriptions.length).toEqual(0); // non server should not have any subscriptions idle
+            await disconnectPeers([peerNonServer]);
+        })
+    })
+
     // TODO: Autosharding on new data
     // TODO: Sharding if overflow
 

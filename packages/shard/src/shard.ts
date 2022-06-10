@@ -196,15 +196,18 @@ export class Shard<T extends DBInterface> {
             })
         }
 
-        await this.trust.init(this);
+
         await this.interface.init(this);
-        await this.loadMetaStores();
 
         if (parentShardCID) {
             this.parentShardCID = parentShardCID;
         }
 
-        if (!isInitialized) {
+        if (!isInitialized && this.peer.options.isServer) {
+            // only needed for write, not needed to be loaded automatically
+            await this.interface.load(); // TODO we should just try to predict DB addresses, no need to LOAD them into memory
+            await this.trust.init(this);
+            await this.loadMetaStores();
             await this.save(from.node);
         }
         return this;
@@ -223,17 +226,12 @@ export class Shard<T extends DBInterface> {
     async loadMetaStores() {
         //this.blocks = await this.newStore(this.address ? this.address : this.getDBName('blocks')) //await db.feed(this.getDBName('blocks'), this.chain.defaultOptions);
         //await Promise.all(this.dbs.map(db => db.newStore(this)));
-
-        await this.interface.load(); // TODO we should just try to predict DB addresses, no need to LOAD them into memory
-
         this._peers = await new BinaryKeyValueStoreOptions<Peer>({ objectType: Peer.name }).newStore(this.peersAddress ? this.peersAddress : this.getDBName("peers"), this.peer.orbitDB, this.peer.options.defaultOptions, this.peer.options.behaviours);
         onReplicationMark(this._peers);
-
         this.peersAddress = this._peers.address.toString();
         await this.loadMemorySize();
         this.memoryAddedAddress = this.memoryAdded.address.toString();
         this.memoryRemovedAddress = this.memoryRemoved.address.toString();
-
         await this.trust.load();
 
     }
@@ -377,14 +375,14 @@ export class Shard<T extends DBInterface> {
         }
 
         await task();
-        const cron = async () => {
-            while (this.peer.node.isOnline()) {
-                await task();
-                await delay(10000)
-            }
-
-        }
-        cron();
+        /*  const cron = async () => {
+             while (this.peer.node.isOnline()) {
+                 await task();
+                 await delay(10000)
+             }
+ 
+         }
+         cron(); */
     }
 
     async requestReplicate(): Promise<void> {
@@ -414,12 +412,14 @@ export class Shard<T extends DBInterface> {
 
         //let id = (await this.peer.node.id()).id;
 
-        await Promise.all([
-            this.loadPeers(),
-            this.interface.load(),
-            this.loadMemorySize()
-        ]);
+        /*  await Promise.all([
+             this.loadPeers(),
+             this.interface.load(),
+             this.loadMemorySize()
+         ]); */
+
         await this.addPeer();
+
         /* await this.peer.node.pubsub.subscribe(this.queryTopic, async (msg: Message) => {
             try {
                 let query = deserialize(Buffer.from(msg.data), QueryRequestV0);
@@ -449,11 +449,12 @@ export class Shard<T extends DBInterface> {
     }
 
     get initialized(): boolean {
-        return this.interface.initialized && !!this.peersAddress && !!this.memoryAddedAddress && !!this.memoryRemovedAddress
+        let metaStoresInitialized = !this.peer.options.isServer || (!!this.peersAddress && !!this.memoryAddedAddress && !!this.memoryRemovedAddress)
+        return this.interface.initialized && metaStoresInitialized;
     };
 
     getDBName(name: string): string {
-        return this.parentShardCID ? this.parentShardCID : '-' + '-' + name;
+        return (this.parentShardCID ? this.parentShardCID : '-') + '-' + name;
     }
 
     async save(node: IPFSInstanceExtended): Promise<string> {

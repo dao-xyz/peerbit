@@ -16,16 +16,18 @@ export interface IPFSInstanceExtended extends IPFSInstance {
 export const ROOT_CHAIN_SHARD_SIZE = 100;
 
 
-export class ServerOptions {
+export class PeerOptions {
 
     defaultOptions: ICreateOptions;
     behaviours: TypedBehaviours
     replicationCapacity: number;
+    isServer: boolean;
 
     constructor(options: {
         directoryId?: string;
-        behaviours: TypedBehaviours
+        behaviours: TypedBehaviours;
         replicationCapacity: number;
+        isServer: boolean;
     }) {
 
         Object.assign(this, options);
@@ -38,14 +40,14 @@ export class ServerOptions {
         // Static behaviours
         this.behaviours.typeMap[Shard.name] = Shard;
         this.behaviours.typeMap[Peer.name] = Peer;
-
+        this.isServer = options.isServer;
 
         this.defaultOptions = {
             accessController: {
                 //write: [this.orbitDB.identity.id],
                 type: CONTRACT_ACCESS_CONTROLLER
             } as any,
-            replicate: true,
+            replicate: this.isServer,
             directory: './orbit-db-stores/' + (options.directoryId ? options.directoryId : uuid())
         }
 
@@ -64,19 +66,19 @@ export class AnyPeer {
 
     public orbitDB: OrbitDB = undefined;
 
-    public options: ServerOptions;
+    public options: PeerOptions;
 
     public id?: string;
 
+    // to know whether we should treat the peer as long lasting or temporary with web restrictions
 
     constructor(id?: string) {
         this.id = id;
     }
 
-    async create(options: { rootAddress: string, orbitDB: OrbitDB, options: ServerOptions }): Promise<void> {
+    async create(options: { orbitDB: OrbitDB, options: PeerOptions }): Promise<void> {
         this.orbitDB = options.orbitDB;
         this.options = options.options;
-        this.rootAddress = options.rootAddress;
         this.node = options.orbitDB._ipfs;
 
         /*  if (this["onready"]) (this as any).onready(); */

@@ -2,7 +2,7 @@ import fs from 'mz/fs';
 import { Identity } from 'orbit-db-identity-provider';
 import { TypedBehaviours } from '..';
 import * as IPFS from 'ipfs';
-import { AnyPeer, IPFSInstanceExtended, ServerOptions } from '../node';
+import { AnyPeer, IPFSInstanceExtended, PeerOptions } from '../node';
 import { SingleDBInterface, DBInterface, RecursiveShardDBInterface } from '../interface';
 import FeedStore from 'orbit-db-feedstore';
 import { BinaryDocumentStoreOptions, FeedStoreOptions } from '../stores';
@@ -36,18 +36,19 @@ export const createOrbitDBInstance = (node: IPFSInstance | any, id: string, iden
         directory: './orbit-db/' + id
     })
 
-export const getPeer = async (rootAddress: string = 'root', behaviours: TypedBehaviours = testBehaviours, identity?: Identity, peerCapacity: number = 1000 * 1000 * 1000): Promise<AnyPeer> => {
+export const getPeer = async (identity?: Identity, isServer: boolean = true, peerCapacity: number = 1000 * 1000 * 1000): Promise<AnyPeer> => {
     let id = uuid();
     await clean(id);
     const peer = new AnyPeer(id);
-    let options = new ServerOptions({
-        behaviours,
+    let options = new PeerOptions({
+        behaviours: testBehaviours,
         directoryId: id,
-        replicationCapacity: peerCapacity
+        replicationCapacity: peerCapacity,
+        isServer
     });
     let node = await createIPFSNode(false, './ipfs/' + id + '/');
     let orbitDB = await createOrbitDBInstance(node, id, identity);
-    await peer.create({ rootAddress, options, orbitDB });
+    await peer.create({ options, orbitDB });
     return peer;
 }
 export const disconnectPeers = async (peers: AnyPeer[]): Promise<void> => {
@@ -105,8 +106,8 @@ export class FeedStoreInterface extends DBInterface {
         this.db.db = undefined;
     }
 
-    async init(shard: Shard<any>) {
-        await this.db.init(shard);
+    init(shard: Shard<any>) {
+        this.db.init(shard);
     }
 
     async load(): Promise<void> {
@@ -148,8 +149,8 @@ export class DocumentStoreInterface<T> extends DBInterface {
         this.db.close();
     }
 
-    async init(shard: Shard<any>) {
-        await this.db.init(shard);
+    init(shard: Shard<any>) {
+        this.db.init(shard);
     }
 
     async load(waitForReplicationEventsCount = 0): Promise<void> {

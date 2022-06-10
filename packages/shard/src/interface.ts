@@ -17,7 +17,7 @@ export class DBInterface {
 
     }
 
-    async init(_shard: Shard<any>) {
+    init(_shard: Shard<any>) {
         throw new Error("Not implemented")
     }
 
@@ -55,7 +55,7 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
         }
     }
 
-    async init(shard: Shard<any>) {
+    init(shard: Shard<any>) {
         this._shard = shard;
         this.db = undefined;
     }
