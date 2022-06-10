@@ -159,6 +159,9 @@ class BinaryDocumentStore extends orbit_db_store_1.default {
         });
     }
     get queryTopic() {
+        if (!this.address) {
+            throw new Error("Not initialized");
+        }
         return this.address + '/query';
     }
     batchPut(docs, onProgressCallback) {

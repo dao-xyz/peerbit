@@ -130,6 +130,9 @@ export class BinaryDocumentStore extends Store {
         this._subscribed = true;
     }
     get queryTopic() {
+        if (!this.address) {
+            throw new Error("Not initialized");
+        }
         return this.address + '/query';
     }
     batchPut(docs, onProgressCallback) {
