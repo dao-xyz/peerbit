@@ -58,7 +58,7 @@ export class P2PTrust extends DBInterface {
         }
         if (!this.db) {
             this.db = new SingleDBInterface({
-                name: 'trust',
+                name: '_trust',
                 storeOptions: new BinaryDocumentStoreOptions({
                     indexBy: TRUSTEE_KEY,
                     objectType: P2PTrustRelation.name
