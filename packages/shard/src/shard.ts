@@ -197,7 +197,7 @@ export class Shard<T extends DBInterface> {
         }
 
 
-        await this.interface.init(this);
+        this.interface.init(this);
 
         if (parentShardCID) {
             this.parentShardCID = parentShardCID;
