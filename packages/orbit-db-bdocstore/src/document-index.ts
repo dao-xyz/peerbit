@@ -59,6 +59,7 @@ export class DocumentIndex<T> {
         .reduce(reducer, {})
     } catch (error) {
       console.error(JSON.stringify(error))
+      throw error;
     }
   }
   deserializeOrPass(value: string | T): T {
