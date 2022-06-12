@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-bdocstore",
-  "version": "0.0.19",
+  "version": "0.0.20",
   "description": "Document Store for orbit-db with binary ser/der",
   "type": "module",
   "sideEffects": false,
