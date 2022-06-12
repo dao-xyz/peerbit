@@ -55,6 +55,7 @@ export class DocumentIndex {
         }
         catch (error) {
             console.error(JSON.stringify(error));
+            throw error;
         }
     }
     deserializeOrPass(value) {
