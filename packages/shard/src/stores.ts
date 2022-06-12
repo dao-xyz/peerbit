@@ -6,7 +6,7 @@
  */
 
 import { field, variant } from "@dao-xyz/borsh";
-import { BinaryDocumentStore, BINARY_DOCUMENT_STORE_TYPE } from "@dao-xyz/orbit-db-bdocstore";
+import { BinaryDocumentStore, DocumentStoreOptions, BINARY_DOCUMENT_STORE_TYPE } from "@dao-xyz/orbit-db-bdocstore";
 import { BinaryFeedStore, BINARY_FEED_STORE_TYPE } from "@dao-xyz/orbit-db-bfeedstore";
 import { BinaryKeyValueStore, BINARY_KEYVALUE_STORE_TYPE } from '@dao-xyz/orbit-db-bkvstore';
 import OrbitDB from "orbit-db";
@@ -76,7 +76,7 @@ export class BinaryDocumentStoreOptions<T> extends StoreOptions<BinaryDocumentSt
         if (!clazz) {
             throw new Error(`Undefined type: ${this.objectType}`);
         }
-        return orbitDB.open<BinaryDocumentStore<T>>(address, { ...defaultOptions, ...{ clazz, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: this.indexBy } } as any)
+        return orbitDB.open<BinaryDocumentStore<T>>(address, { ...defaultOptions, ...{ clazz, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: this.indexBy, subscribeToQueries: defaultOptions.replicate } } as DocumentStoreOptions<T>)
     }
 
     get identifier(): string {

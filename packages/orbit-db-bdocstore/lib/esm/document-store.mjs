@@ -19,8 +19,10 @@ export class BinaryDocumentStore extends Store {
         super(ipfs, id, dbname, defaultOptions(options));
         this._type = undefined;
         this._subscribed = false;
+        this.subscribeToQueries = false;
         this._type = BINARY_DOCUMENT_STORE_TYPE;
         this._index.init(this.options.clazz);
+        this.subscribeToQueries = options.subscribeToQueries;
         ipfs.dag;
     }
     get index() {
@@ -64,7 +66,9 @@ export class BinaryDocumentStore extends Store {
     }
     async load(amount, opts) {
         await super.load(amount, opts);
-        await this._subscribeToQueries();
+        if (this.subscribeToQueries) {
+            await this._subscribeToQueries();
+        }
     }
     async close() {
         await this._ipfs.pubsub.unsubscribe(this.queryTopic);

@@ -203,7 +203,7 @@ export class Shard<T extends DBInterface> {
             this.parentShardCID = parentShardCID;
         }
 
-        if (!isInitialized && this.peer.options.isServer) {
+        if (!isInitialized) {
             // only needed for write, not needed to be loaded automatically
             await this.interface.load(); // TODO we should just try to predict DB addresses, no need to LOAD them into memory
             await this.trust.init(this);
@@ -265,7 +265,10 @@ export class Shard<T extends DBInterface> {
 
         // Second argument 
         await this._peers.load();
-        await waitForReplicationEvents(this._peers, waitForReplicationEventsCount);
+        if (this.peer.options.isServer) {
+            await waitForReplicationEvents(this._peers, waitForReplicationEventsCount);
+
+        }
         return this._peers;
     }
 

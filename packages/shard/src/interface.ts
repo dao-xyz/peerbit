@@ -82,7 +82,9 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
 
         }
         await this.db.load();
-        await waitForReplicationEvents(this.db, waitForReplicationEventsCount);
+        if (this._shard.peer.options.isServer) {
+            await waitForReplicationEvents(this.db, waitForReplicationEventsCount);
+        }
     }
 
     getDBName(): string {

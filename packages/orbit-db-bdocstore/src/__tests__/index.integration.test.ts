@@ -1,7 +1,7 @@
 
 import { field, option, variant } from '@dao-xyz/borsh';
 import BN from 'bn.js';
-import { BinaryDocumentStore, BINARY_DOCUMENT_STORE_TYPE } from '../document-store';
+import { BinaryDocumentStore, BINARY_DOCUMENT_STORE_TYPE, DocumentStoreOptions } from '../document-store';
 import { Compare, CompareQuery, QueryRequestV0, QueryResponse, Sort, SortDirection, StringMatchQuery } from '../query';
 import { Peer, waitFor } from './utils';
 import { disconnectPeers, getPeer } from './utils';
@@ -40,9 +40,12 @@ const documentDbTestSetup = async (): Promise<{
   let observer = await getPeer();
 
   // Create store
-  let documentStoreCreator = await peer.orbitDB.open<BinaryDocumentStore<Document>>('store', { ...{ clazz: Document, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: 'id' } } as any)
+  let documentStoreCreator = await peer.orbitDB.open<BinaryDocumentStore<Document>>('store', { ...{ clazz: Document, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: 'id', subscribeToQueries: true } as DocumentStoreOptions<Document> })
   await documentStoreCreator.load();
-  let documentStoreObserver = await observer.orbitDB.open<BinaryDocumentStore<Document>>(documentStoreCreator.address.toString(), { ...{ clazz: Document, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: 'id' } } as any)
+  let documentStoreObserver = await observer.orbitDB.open<BinaryDocumentStore<Document>>(documentStoreCreator.address.toString(), { ...{ clazz: Document, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: 'id', subscribeToQueries: false, replicate: false } as DocumentStoreOptions<Document> })
+
+  expect(await peer.node.pubsub.ls()).toHaveLength(2); // replication and query topic
+  expect(await observer.node.pubsub.ls()).toHaveLength(0);
 
   return {
     creator: peer,

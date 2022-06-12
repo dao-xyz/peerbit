@@ -34,8 +34,10 @@ class BinaryDocumentStore extends orbit_db_store_1.default {
         super(ipfs, id, dbname, defaultOptions(options));
         this._type = undefined;
         this._subscribed = false;
+        this.subscribeToQueries = false;
         this._type = exports.BINARY_DOCUMENT_STORE_TYPE;
         this._index.init(this.options.clazz);
+        this.subscribeToQueries = options.subscribeToQueries;
         ipfs.dag;
     }
     get index() {
@@ -85,7 +87,9 @@ class BinaryDocumentStore extends orbit_db_store_1.default {
         });
         return __awaiter(this, void 0, void 0, function* () {
             yield _super.load.call(this, amount, opts);
-            yield this._subscribeToQueries();
+            if (this.subscribeToQueries) {
+                yield this._subscribeToQueries();
+            }
         });
     }
     close() {

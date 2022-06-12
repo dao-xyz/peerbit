@@ -6,13 +6,16 @@ import { Constructor } from '@dao-xyz/borsh';
 import { QueryRequestV0, QueryResponse } from './query';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
 export declare const BINARY_DOCUMENT_STORE_TYPE = "bdocstore";
+export declare type DocumentStoreOptions<T> = IStoreOptions & {
+    indexBy?: string;
+    clazz: Constructor<T>;
+    subscribeToQueries: boolean;
+};
 export declare class BinaryDocumentStore<T> extends Store<T, DocumentIndex<T>> {
     _type: string;
     _subscribed: boolean;
-    constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IStoreOptions & {
-        indexBy?: string;
-        clazz: Constructor<T>;
-    });
+    subscribeToQueries: boolean;
+    constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: DocumentStoreOptions<T>);
     get index(): DocumentIndex<T>;
     get(key: any, caseSensitive?: boolean): T[];
     query(mapper: ((doc: T) => boolean), options?: {

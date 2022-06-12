@@ -12,7 +12,8 @@ import { IPFS as IPFSInstance } from "ipfs-core-types";
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement)
 
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdocstore';
-const defaultOptions = (options: IStoreOptions): any => {
+export type DocumentStoreOptions<T> = IStoreOptions & { indexBy?: string, clazz: Constructor<T>, subscribeToQueries: boolean };
+const defaultOptions = (options: IStoreOptions): IStoreOptions => {
   if (!options["indexBy"]) Object.assign(options, { indexBy: '_id' })
   if (!options.Index) Object.assign(options, { Index: DocumentIndex })
   return options;
@@ -21,10 +22,12 @@ export class BinaryDocumentStore<T> extends Store<T, DocumentIndex<T>> {
 
   _type: string = undefined;
   _subscribed: boolean = false
-  constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IStoreOptions & { indexBy?: string, clazz: Constructor<T> }) {
+  subscribeToQueries = false;
+  constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: DocumentStoreOptions<T>) {
     super(ipfs, id, dbname, defaultOptions(options))
     this._type = BINARY_DOCUMENT_STORE_TYPE;
     this._index.init(this.options.clazz);
+    this.subscribeToQueries = options.subscribeToQueries;
     ipfs.dag
   }
   public get index(): DocumentIndex<T> {
@@ -75,7 +78,9 @@ export class BinaryDocumentStore<T> extends Store<T, DocumentIndex<T>> {
 
   public async load(amount?: number, opts?: {}): Promise<void> {
     await super.load(amount, opts);
-    await this._subscribeToQueries();
+    if (this.subscribeToQueries) {
+      await this._subscribeToQueries();
+    }
   }
 
   public async close(): Promise<void> {
