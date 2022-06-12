@@ -111,14 +111,14 @@ class BinaryDocumentStore extends orbit_db_store_1.default {
                 try {
                     let query = (0, borsh_1.deserialize)(Buffer.from(msg.data), query_1.QueryRequestV0);
                     let filters = query.queries;
-                    let results = this.query(doc => filters.map(f => {
+                    let results = this.query(doc => (filters === null || filters === void 0 ? void 0 : filters.length) > 0 ? filters.map(f => {
                         if (f instanceof query_1.Query) {
                             return f.apply(doc);
                         }
                         else {
                             return f(doc);
                         }
-                    }).reduce((prev, current) => prev && current));
+                    }).reduce((prev, current) => prev && current) : true);
                     if (query.sort) {
                         const resolveField = (obj) => {
                             let v = obj;

@@ -83,14 +83,14 @@ export class BinaryDocumentStore extends Store {
             try {
                 let query = deserialize(Buffer.from(msg.data), QueryRequestV0);
                 let filters = query.queries;
-                let results = this.query(doc => filters.map(f => {
+                let results = this.query(doc => (filters === null || filters === void 0 ? void 0 : filters.length) > 0 ? filters.map(f => {
                     if (f instanceof Query) {
                         return f.apply(doc);
                     }
                     else {
                         return f(doc);
                     }
-                }).reduce((prev, current) => prev && current));
+                }).reduce((prev, current) => prev && current) : true);
                 if (query.sort) {
                     const resolveField = (obj) => {
                         let v = obj;
