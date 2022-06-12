@@ -100,14 +100,14 @@ export class BinaryDocumentStore<T> extends Store<T, DocumentIndex<T>> {
         let filters: (Query | ((v: any) => boolean))[] = query.queries;
         let results = this.query(
           doc =>
-            filters.map(f => {
+            filters?.length > 0 ? filters.map(f => {
               if (f instanceof Query) {
                 return f.apply(doc)
               }
               else {
                 return (f as ((v: any) => boolean))(doc)
               }
-            }).reduce((prev, current) => prev && current)
+            }).reduce((prev, current) => prev && current) : true
         )
 
         if (query.sort) {

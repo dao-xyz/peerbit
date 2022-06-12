@@ -59,6 +59,44 @@ const documentDbTestSetup = async (): Promise<{
 
 describe('query', () => {
 
+  test('match all', async () => {
+
+    let {
+      creator,
+      observer,
+      documentStoreCreator,
+      documentStoreObserver
+    } = await documentDbTestSetup();
+
+    let blocks = documentStoreCreator;
+
+    let doc = new Document({
+      id: '1',
+      name: 'Hello world'
+    });
+    let doc2 = new Document({
+      id: '2',
+      name: 'Foo bar'
+    });
+    await blocks.put(doc);
+    await blocks.put(doc2);
+
+    let response: QueryResponse<Document> = undefined;
+
+    //await otherPeer.node.swarm.connect((await creatorPeer.node.id()).addresses[0].toString());
+    await documentStoreObserver.queryAny(new QueryRequestV0({
+      queries: []
+    }), Document, (r: QueryResponse<Document>) => {
+      response = r;
+    })
+    await waitFor(() => !!response);
+    expect(response.results).toHaveLength(2);
+    expect(response.results[0]).toMatchObject(doc);
+    expect(response.results[1]).toMatchObject(doc2);
+    await disconnectPeers([creator, observer]);
+
+  });
+
   test('string', async () => {
 
     let {
