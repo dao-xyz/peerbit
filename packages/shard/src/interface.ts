@@ -66,11 +66,40 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
             throw new Error("Not initialized")
         }
 
-        this.db = await this.storeOptions.newStore(this.address ? this.address : this.getDBName(), this._shard.peer.orbitDB, this._shard.peer.options.defaultOptions, this._shard.peer.options.behaviours);
+        this.db = await this.storeOptions.newStore(this.address ? this.address : this.getDBName(), this._shard.peer.orbitDB, this._shard.peer.options);
         onReplicationMark(this.db);
         this.address = this.db.address.toString();
         return this.db;
     }
+
+    async write(write: (obj: T) => Promise<any>, obj: T, unsubscribe: boolean = true): Promise<B> {
+        let topic = this.db.address.toString();
+        let subscribed = !!this._shard.peer.orbitDB._pubsub._subscriptions[topic];
+        let directConnectionsFromWrite = {};
+        if (!subscribed) {
+            await this._shard.peer.orbitDB._pubsub.subscribe(topic, this._shard.peer.orbitDB._onMessage.bind(this._shard.peer.orbitDB), (address: string, peer: any) => {
+                this._shard.peer.orbitDB._onPeerConnected(address, peer);
+                directConnectionsFromWrite[peer] = address;
+            })
+        }
+        await write(obj);
+        if (!subscribed && unsubscribe) {
+            // TODO: could cause sideeffects if there is another write that wants to access the topic
+            await this._shard.peer.orbitDB._pubsub.unsubscribe(topic);
+
+            const removeDirectConnect = e => {
+                this._shard.peer.orbitDB._directConnections[e].close()
+                delete this._shard.peer.orbitDB._directConnections[e]
+            }
+
+            // Close all direct connections to peers
+            Object.keys(directConnectionsFromWrite).forEach(removeDirectConnect)
+
+            // unbind?
+        }
+        return this.db
+    }
+
 
     async load(waitForReplicationEventsCount: number = 0): Promise<void> {
         if (!this._shard) {

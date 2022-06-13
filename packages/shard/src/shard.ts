@@ -226,7 +226,7 @@ export class Shard<T extends DBInterface> {
     async loadMetaStores() {
         //this.blocks = await this.newStore(this.address ? this.address : this.getDBName('blocks')) //await db.feed(this.getDBName('blocks'), this.chain.defaultOptions);
         //await Promise.all(this.dbs.map(db => db.newStore(this)));
-        this._peers = await new BinaryKeyValueStoreOptions<Peer>({ objectType: Peer.name }).newStore(this.peersAddress ? this.peersAddress : this.getDBName("peers"), this.peer.orbitDB, this.peer.options.defaultOptions, this.peer.options.behaviours);
+        this._peers = await new BinaryKeyValueStoreOptions<Peer>({ objectType: Peer.name }).newStore(this.peersAddress ? this.peersAddress : this.getDBName("peers"), this.peer.orbitDB, this.peer.options);
         onReplicationMark(this._peers);
         this.peersAddress = this._peers.address.toString();
         await this.loadMemorySize();
@@ -260,7 +260,7 @@ export class Shard<T extends DBInterface> {
 
     async loadPeers(waitForReplicationEventsCount: number = 0) {
         if (!this._peers) {
-            this._peers = await new BinaryKeyValueStoreOptions<Peer>({ objectType: Peer.name }).newStore(this.peersAddress ? this.peersAddress : this.getDBName("peers"), this.peer.orbitDB, this.peer.options.defaultOptions, this.peer.options.behaviours);
+            this._peers = await new BinaryKeyValueStoreOptions<Peer>({ objectType: Peer.name }).newStore(this.peersAddress ? this.peersAddress : this.getDBName("peers"), this.peer.orbitDB, this.peer.options);
         }
 
         // Second argument 

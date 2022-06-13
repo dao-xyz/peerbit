@@ -12,7 +12,7 @@ import { BinaryKeyValueStore, BINARY_KEYVALUE_STORE_TYPE } from '@dao-xyz/orbit-
 import OrbitDB from "orbit-db";
 import FeedStore from "orbit-db-feedstore";
 import Store from "orbit-db-store";
-import { TypedBehaviours } from "./shard";
+import { PeerOptions } from "./node";
 import { delay, waitFor } from "./utils";
 
 OrbitDB.addDatabaseType(BINARY_DOCUMENT_STORE_TYPE, BinaryDocumentStore as any)
@@ -25,9 +25,10 @@ export class StoreOptions<B extends Store<any, any>> {
 
     }
 
-    async newStore(_address: string, _orbitDB: OrbitDB, _defaultOptions: IStoreOptions, _behaviours: TypedBehaviours): Promise<B> {
+    async newStore(_address: string, _orbitDB: OrbitDB, _peerOptions: PeerOptions): Promise<B> {
         throw new Error("Not implemented")
     }
+
     get identifier(): string {
         throw new Error("Not implemented")
     }
@@ -42,9 +43,10 @@ export class FeedStoreOptions<T> extends StoreOptions<FeedStore<T>> {
         super();
     }
 
-    async newStore(address: string, orbitDB: OrbitDB, defaultOptions: IStoreOptions, _behaviours: TypedBehaviours): Promise<FeedStore<T>> {
-        return orbitDB.feed(address, defaultOptions)
+    async newStore(address: string, orbitDB: OrbitDB, peerOptions: PeerOptions): Promise<FeedStore<T>> {
+        return orbitDB.feed(address, peerOptions.defaultOptions)
     }
+
 
     get identifier(): string {
         return 'feed'
@@ -71,12 +73,12 @@ export class BinaryDocumentStoreOptions<T> extends StoreOptions<BinaryDocumentSt
             Object.assign(this, opts);
         }
     }
-    async newStore(address: string, orbitDB: OrbitDB, defaultOptions: IStoreOptions, behaviours: TypedBehaviours): Promise<BinaryDocumentStore<T>> {
-        let clazz = behaviours.typeMap[this.objectType];
+    async newStore(address: string, orbitDB: OrbitDB, peerOptions: PeerOptions): Promise<BinaryDocumentStore<T>> {
+        let clazz = peerOptions.behaviours.typeMap[this.objectType];
         if (!clazz) {
             throw new Error(`Undefined type: ${this.objectType}`);
         }
-        return orbitDB.open<BinaryDocumentStore<T>>(address, { ...defaultOptions, ...{ clazz, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: this.indexBy, subscribeToQueries: defaultOptions.replicate } } as DocumentStoreOptions<T>)
+        return orbitDB.open<BinaryDocumentStore<T>>(address, { ...peerOptions.defaultOptions, ...{ clazz, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: this.indexBy, subscribeToQueries: peerOptions.isServer } } as DocumentStoreOptions<T>)
     }
 
     get identifier(): string {
@@ -103,13 +105,13 @@ export class BinaryKeyValueStoreOptions<T> extends StoreOptions<BinaryKeyValueSt
             Object.assign(this, opts);
         }
     }
-    async newStore(address: string, orbitDB: OrbitDB, defaultOptions: IStoreOptions, behaviours: TypedBehaviours): Promise<BinaryKeyValueStore<T>> {
-        let clazz = behaviours.typeMap[this.objectType];
+    async newStore(address: string, orbitDB: OrbitDB, peerOptions: PeerOptions): Promise<BinaryKeyValueStore<T>> {
+        let clazz = peerOptions.behaviours.typeMap[this.objectType];
         if (!clazz) {
             throw new Error(`Undefined type: ${this.objectType}`);
         }
 
-        return orbitDB.open<BinaryKeyValueStore<T>>(address, { ...defaultOptions, ...{ clazz, create: true, type: BINARY_KEYVALUE_STORE_TYPE } } as any)
+        return orbitDB.open<BinaryKeyValueStore<T>>(address, { ...peerOptions.defaultOptions, ...{ clazz, create: true, type: BINARY_KEYVALUE_STORE_TYPE } } as any)
     }
 
     get identifier(): string {
@@ -135,13 +137,13 @@ export class BinaryFeedStoreOptions<T> extends StoreOptions<BinaryFeedStore<T>> 
             Object.assign(this, opts);
         }
     }
-    async newStore(address: string, orbitDB: OrbitDB, defaultOptions: IStoreOptions, behaviours: TypedBehaviours): Promise<BinaryFeedStore<T>> {
-        let clazz = behaviours.typeMap[this.objectType];
+    async newStore(address: string, orbitDB: OrbitDB, peerOptions: PeerOptions): Promise<BinaryFeedStore<T>> {
+        let clazz = peerOptions.behaviours.typeMap[this.objectType];
         if (!clazz) {
             throw new Error(`Undefined type: ${this.objectType}`);
         }
 
-        return orbitDB.open<BinaryFeedStore<T>>(address, { ...defaultOptions, ...{ clazz, create: true, type: BINARY_FEED_STORE_TYPE } } as any)
+        return orbitDB.open<BinaryFeedStore<T>>(address, { ...peerOptions.defaultOptions, ...{ clazz, create: true, type: BINARY_FEED_STORE_TYPE } } as any)
     }
 
     get identifier(): string {

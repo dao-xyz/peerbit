@@ -16,6 +16,15 @@ declare module 'orbit-db' {
     export class OrbitDB {
 
         _ipfs: IPFS;
+        _pubsub: {
+            _subscriptions: { [key: string]: any }
+            subscribe: (topic: string, onMessageCallback: (address: string, heads, peer) => void, onNewPeerCallback: (address: string, peer: any) => void, options = {}) => Promise<void>
+            unsubscribe: (hash: string) => Promise<void>
+
+        };
+        _onMessage(address: string, heads, peer): Promise<void>
+        _onPeerConnected(address: string, peer): Promise<void>
+        _directConnections: { [key: string]: { close(): void } }
 
         id: string;
         identity: Identity;

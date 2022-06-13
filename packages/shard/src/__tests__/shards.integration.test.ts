@@ -1,10 +1,11 @@
 
 import { Shard } from '../shard';
 import { AnyPeer } from '../node';
-import { documentStoreShard, FeedStoreInterface, feedStoreShard, getPeer, shardStoreShard } from './utils';
+import { DocumentStoreInterface, documentStoreShard, FeedStoreInterface, feedStoreShard, getPeer, shardStoreShard } from './utils';
 import { P2PTrust } from '../trust';
 import { PublicKey } from '../key';
 import { delay, waitFor } from '../utils';
+import { field } from '@dao-xyz/borsh';
 
 const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 
@@ -284,6 +285,44 @@ describe('cluster', () => {
             await l0.init(peerNonServer);
             const subscriptions = await peerNonServer.node.pubsub.ls();
             expect(subscriptions.length).toEqual(0); // non server should not have any subscriptions idle
+            await disconnectPeers([peerNonServer]);
+        })
+
+        test('isServer=false can write', async () => {
+
+            class Document {
+                @field({ type: 'String' })
+                id: string;
+                constructor(opts?: { id: string }) {
+                    if (opts) {
+                        this.id = opts.id;
+                    }
+
+                }
+            }
+
+            let peerServer = await getPeer(undefined, true);
+            peerServer.options.behaviours.typeMap[Document.name] = Document;
+            let l0 = await documentStoreShard(Document, 'id');
+            await l0.init(peerServer);
+
+            let peerNonServer = await getPeer(undefined, false);
+            peerNonServer.options.behaviours.typeMap[Document.name] = Document;
+            let l0Write = await Shard.loadFromCID<DocumentStoreInterface<Document>>(l0.cid, peerNonServer.node);
+            await l0Write.init(peerNonServer);
+
+            //await peerNonServer.orbitDB["_pubsub"].subscribe(l0Write.interface.db.address.toString(), peerNonServer.orbitDB["_onMessage"].bind(peerNonServer.orbitDB), peerNonServer.orbitDB["_onPeerConnected"].bind(peerNonServer.orbitDB))
+            let subscriptions = await peerNonServer.node.pubsub.ls();
+            expect(subscriptions.length).toEqual(0); // non server should not have any subscriptions idle
+            await delay(10000)
+            await l0Write.interface.db.write((x) => l0Write.interface.db.db.put(x), new Document({
+                id: 'hello'
+            }))
+
+            await waitFor(() => Object.keys(l0.interface.db.db.all).length > 0);
+            expect(Object.keys(l0.interface.db.db.all)).toHaveLength(1);
+            subscriptions = await peerNonServer.node.pubsub.ls();
+            expect(subscriptions.length).toEqual(0);  // non server should not have any subscriptions after write
             await disconnectPeers([peerNonServer]);
         })
     })
