@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/shard",
-    "version": "0.0.53",
+    "version": "0.0.54",
     "author": "dao-xyz.network",
     "repository": "https://github.com/@dao-xyz/dao-xyz-ts",
     "license": "Apache-2.0",
@@ -30,7 +30,7 @@
         "test:integration": "node ../node_modules/.bin/jest test -c  ../jest.config.integration.cjs --runInBand --forceExit"
     },
     "devDependencies": {
-        "@dao-xyz-types/orbit-db": "^0.0.11",
+        "@dao-xyz-types/orbit-db": "^0.0.12",
         "@types/bs58": "^4.0.1",
         "@types/ipfs": "https://github.com/lukas2005/types-ipfs.git",
         "@types/mz": "^2.7.4",
@@ -42,10 +42,10 @@
     },
     "dependencies": {
         "@dao-xyz/borsh": "^2.0.2",
-        "@dao-xyz/orbit-db-bdocstore": "^0.0.21",
-        "@dao-xyz/orbit-db-bfeedstore": "^0.0.7",
-        "@dao-xyz/orbit-db-bkvstore": "^0.0.14",
-        "@dao-xyz/orbit-db-pubsub": "^0.6.1",
+        "@dao-xyz/orbit-db-bdocstore": "^0.0.22",
+        "@dao-xyz/orbit-db-bfeedstore": "^0.0.8",
+        "@dao-xyz/orbit-db-bkvstore": "^0.0.15",
+        "@dao-xyz/orbit-db-pubsub": "^0.6.2",
         "@solana/web3.js": "^1.41.3",
         "bn.js": "^5.2.0",
         "bs58": "^4.0.1",

@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-bdocstore",
-  "version": "0.0.21",
+  "version": "0.0.22",
   "description": "Document Store for orbit-db with binary ser/der",
   "type": "module",
   "sideEffects": false,
@@ -38,7 +38,7 @@
     "orbit-db-store": "4.x"
   },
   "devDependencies": {
-    "@dao-xyz-types/orbit-db": "^0.0.11",
+    "@dao-xyz-types/orbit-db": "^0.0.12",
     "ipfs": "^0.60.2"
   }
 }
