@@ -53,6 +53,7 @@ declare module 'orbit-db' {
             keystore?: Keystore,
             cache?: Cache<any>,
             identity?: Identity
+            broker?: any,
         }): Promise<OrbitDB>
 
         create(name: string, type: TStoreType, options?: ICreateOptions): Promise<Store>;

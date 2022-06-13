@@ -1,7 +1,7 @@
 import fs from 'mz/fs';
 import { Identity } from 'orbit-db-identity-provider';
 import { TypedBehaviours } from '..';
-import * as IPFS from 'ipfs';
+import { create } from 'ipfs';
 import { AnyPeer, IPFSInstanceExtended, PeerOptions } from '../node';
 import { SingleDBInterface, DBInterface, RecursiveShardDBInterface } from '../interface';
 import FeedStore from 'orbit-db-feedstore';
@@ -14,6 +14,7 @@ import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import OrbitDB from 'orbit-db';
 import { v4 as uuid } from 'uuid';
 
+import PubSub from '@dao-xyz/orbit-db-pubsub'
 export const clean = (id?: string) => {
     let suffix = id ? id + '/' : '';
     try {
@@ -33,7 +34,8 @@ const testBehaviours: TypedBehaviours = {
 export const createOrbitDBInstance = (node: IPFSInstance | any, id: string, identity?: Identity) => OrbitDB.createInstance(node,
     {
         identity: identity,
-        directory: './orbit-db/' + id
+        directory: './orbit-db/' + id,
+        broker: PubSub
     })
 
 export const getPeer = async (identity?: Identity, isServer: boolean = true, peerCapacity: number = 1000 * 1000 * 1000): Promise<AnyPeer> => {
@@ -81,7 +83,7 @@ export const createIPFSNode = (local: boolean = false, repo: string = './ipfs'):
 
         },
     }
-    return IPFS.create(ipfsOptions)
+    return create(ipfsOptions)
 
 }
 

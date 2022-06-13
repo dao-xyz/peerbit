@@ -45,6 +45,7 @@
         "@dao-xyz/orbit-db-bdocstore": "^0.0.21",
         "@dao-xyz/orbit-db-bfeedstore": "^0.0.7",
         "@dao-xyz/orbit-db-bkvstore": "^0.0.14",
+        "@dao-xyz/orbit-db-pubsub": "^0.6.1",
         "@solana/web3.js": "^1.41.3",
         "bn.js": "^5.2.0",
         "bs58": "^4.0.1",

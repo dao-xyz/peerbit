@@ -1,5 +1,6 @@
 
-import { Shard, AnyPeer } from '../index';
+import { Shard } from '../shard';
+import { AnyPeer } from '../node';
 import { documentStoreShard, FeedStoreInterface, feedStoreShard, getPeer, shardStoreShard } from './utils';
 import { P2PTrust } from '../trust';
 import { PublicKey } from '../key';
