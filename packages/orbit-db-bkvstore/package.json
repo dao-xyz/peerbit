@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-bkvstore",
-  "version": "0.0.18",
+  "version": "0.0.19",
   "description": "Key Value Store for orbit-db with binary ser/der",
   "type": "module",
   "sideEffects": false,
@@ -31,7 +31,7 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^2.0.6",
-    "@dao-xyz/orbit-db-query-store": "^0.0.3"
+    "@dao-xyz/orbit-db-query-store": "^0.0.4"
   },
   "peerDependencies": {
     "orbit-db-store": "4.x"
