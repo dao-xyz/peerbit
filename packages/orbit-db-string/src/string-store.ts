@@ -6,6 +6,9 @@ import { QueryRequestV0, RangeCoordinate, RangeCoordinates, Result, ResultWithSo
 import { StringQueryRequest } from '@dao-xyz/bquery';
 import BN from 'bn.js';
 import { Range, RangeOptional } from './range';
+import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
+import { IQueryStoreOptions, StoreOptions } from '@dao-xyz/orbit-db-bstores';
+import OrbitDB from 'orbit-db';
 
 export const STRING_STORE_TYPE = 'stringstore';
 const findAllOccurrences = (str: string, substr: string): number[] => {
@@ -27,6 +30,23 @@ const defaultOptions = (options: IStoreOptions): any => {
   if (!options.Index) Object.assign(options, { Index: StringIndex })
   return options;
 }
+
+@variant([0, 3])
+export class StringStoreOptions extends StoreOptions<StringStore> {
+
+  constructor({ }) {
+    super();
+  }
+  async newStore(address: string, orbitDB: OrbitDB, typeMap: { [key: string]: Constructor<any> }, options: IQueryStoreOptions): Promise<StringStore> {
+    return orbitDB.open<StringStore>(address, { ...options, ...{ create: true, type: STRING_STORE_TYPE } } as IQueryStoreOptions)
+  }
+
+  get identifier(): string {
+    return STRING_STORE_TYPE
+  }
+}
+
+
 export class StringStore extends QueryStore<string, StringIndex> {
 
   _type: string = undefined;

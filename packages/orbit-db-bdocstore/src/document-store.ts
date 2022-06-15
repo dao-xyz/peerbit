@@ -51,8 +51,6 @@ export class BinaryDocumentStoreOptions<T> extends StoreOptions<BinaryDocumentSt
   get identifier(): string {
     return BINARY_DOCUMENT_STORE_TYPE
   }
-
-
 }
 
 
