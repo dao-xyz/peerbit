@@ -4,8 +4,11 @@
         "packages/orbit-db-bdocstore",
         "packages/orbit-db-bfeedstore",
         "packages/orbit-db-bkvstore",
+        "packages/orbit-db-query-store",
         "packages/orbit-db-types",
-        "packages/orbit-db-pubsub"
+        "packages/orbit-db-pubsub",
+        "packages/orbit-db-string",
+        "packages/bquery"
     ],
     "version": "independent",
     "npmClient": "yarn",

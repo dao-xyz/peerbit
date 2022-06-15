@@ -1,7 +1,7 @@
 {
-  "name": "@dao-xyz/orbit-db-bdocstore",
-  "version": "0.0.23",
-  "description": "Document Store for orbit-db with binary ser/der",
+  "name": "@dao-xyz/orbit-db-query-store",
+  "version": "0.0.1",
+  "description": "Query store",
   "type": "module",
   "sideEffects": false,
   "main": "lib/cjs/index.js",
@@ -32,7 +32,6 @@
   "dependencies": {
     "@dao-xyz/bquery": "^0.0.1",
     "@dao-xyz/borsh": "^2.0.5",
-    "@dao-xyz/orbit-db-query-store": "^0.0.1",
     "p-map": "~1.1.1",
     "uuid": "^8.3.2"
   },

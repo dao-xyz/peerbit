@@ -1,24 +1,23 @@
-import Store from 'orbit-db-store'
 import { DocumentIndex } from './document-index'
 import pMap from 'p-map'
 import { Identity } from 'orbit-db-identity-provider';
-import { Constructor, deserialize, serialize } from '@dao-xyz/borsh';
+import { Constructor, serialize } from '@dao-xyz/borsh';
 import bs58 from 'bs58';
 import { asString } from './utils';
-import { Message } from 'ipfs-core-types/types/src/pubsub'
-import { EncodedQueryResponse, Query, QueryRequestV0, QueryResponse, SortDirection } from './query';
+import { DocumentQueryRequest, FieldQuery, QueryRequestV0, Result, ResultWithSource, SortDirection } from '@dao-xyz/bquery';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
-
+import { QueryStore, QueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement)
 
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdocstore';
-export type DocumentStoreOptions<T> = IStoreOptions & { indexBy?: string, clazz: Constructor<T>, subscribeToQueries: boolean };
-const defaultOptions = (options: IStoreOptions): IStoreOptions => {
+export type DocumentStoreOptions<T> = IStoreOptions & QueryStoreOptions & { indexBy?: string, clazz: Constructor<T> };
+const defaultOptions = (options: IStoreOptions & { subscribeToQueries: boolean }): IStoreOptions & QueryStoreOptions => {
   if (!options["indexBy"]) Object.assign(options, { indexBy: '_id' })
   if (!options.Index) Object.assign(options, { Index: DocumentIndex })
-  return options;
+  return options as IStoreOptions & QueryStoreOptions
 }
-export class BinaryDocumentStore<T> extends Store<T, DocumentIndex<T>> {
+
+export class BinaryDocumentStore<T> extends QueryStore<T, DocumentIndex<T>> {
 
   _type: string = undefined;
   _subscribed: boolean = false
@@ -28,7 +27,6 @@ export class BinaryDocumentStore<T> extends Store<T, DocumentIndex<T>> {
     this._type = BINARY_DOCUMENT_STORE_TYPE;
     this._index.init(this.options.clazz);
     this.subscribeToQueries = options.subscribeToQueries;
-    ipfs.dag
   }
   public get index(): DocumentIndex<T> {
     return this._index;
@@ -55,115 +53,77 @@ export class BinaryDocumentStore<T> extends Store<T, DocumentIndex<T>> {
       .map(mapper)
   }
 
-  public query(mapper: ((doc: T) => boolean), options: { fullOp?: boolean } = {}): T[] | { payload: Payload<T> }[] {
-    // Whether we return the full operation data or just the db value
-    const fullOp = options.fullOp || false
-    const getValue: (value: T | { payload: Payload<T> }) => T = fullOp ? (value: { payload: Payload<T> }) => value.payload.value : (value: T) => value
-    return Object.keys(this._index._index)
-      .map((e) => this._index.get(e, fullOp))
-      .filter((doc) => mapper(getValue(doc))) as T[] | { payload: Payload<T> }[]
-  }
 
-
-  async queryAny(query: QueryRequestV0, clazz: Constructor<T>, responseHandler: (response: QueryResponse<T>) => void, maxAggregationTime: number = 30 * 1000) {
-    // send query and wait for replies in a generator like behaviour
-    let responseTopic = query.getResponseTopic(this.queryTopic);
-    await this._ipfs.pubsub.subscribe(responseTopic, (msg: Message) => {
-      const encoded = deserialize(Buffer.from(msg.data), EncodedQueryResponse);
-      let result = QueryResponse.from(encoded, clazz);
-      responseHandler(result);
-    })
-    await this._ipfs.pubsub.publish(this.queryTopic, serialize(query));
-  }
 
   public async load(amount?: number, opts?: {}): Promise<void> {
     await super.load(amount, opts);
-    if (this.subscribeToQueries) {
-      await this._subscribeToQueries();
-    }
   }
 
   public async close(): Promise<void> {
-    await this._ipfs.pubsub.unsubscribe(this.queryTopic);
-    this._subscribed = false;
     await super.close();
   }
 
-  async _subscribeToQueries(): Promise<void> {
-    if (this._subscribed) {
-      return
-    }
 
-    await this._ipfs.pubsub.subscribe(this.queryTopic, async (msg: Message) => {
-      try {
-        let query = deserialize(Buffer.from(msg.data), QueryRequestV0);
-        let filters: (Query | ((v: any) => boolean))[] = query.queries;
-        let results = this.query(
-          doc =>
-            filters?.length > 0 ? filters.map(f => {
-              if (f instanceof Query) {
-                return f.apply(doc)
-              }
-              else {
-                return (f as ((v: any) => boolean))(doc)
-              }
-            }).reduce((prev, current) => prev && current) : true
-        )
 
-        if (query.sort) {
-          const resolveField = (obj: any) => {
-            let v = obj;
-            for (let i = 0; i < query.sort.fieldPath.length; i++) {
-              v = v[query.sort.fieldPath[i]]
-            }
-            return v
-          }
-          let direction = 1;
-          if (query.sort.direction == SortDirection.Descending) {
-            direction = -1;
-          }
-          results.sort((a, b) => {
-            const af = resolveField(a)
-            const bf = resolveField(b)
-            if (af < bf) {
-              return -direction;
-            }
-            else if (af > bf) {
-              return direction;
-            }
-            return 0;
-          })
-        }
-        if (query.offset) {
-          results = results.slice(query.offset.toNumber());
-        }
-
-        if (query.size) {
-          results = results.slice(0, query.size.toNumber());
-        }
-
-        let response = new EncodedQueryResponse({
-          results: results.map(r => bs58.encode(serialize(r)))
-        });
-
-        let bytes = serialize(response);
-        await this._ipfs.pubsub.publish(
-          query.getResponseTopic(this.queryTopic),
-          bytes
-        )
-      } catch (error) {
-        console.error(error)
-      }
-    })
-    this._subscribed = true;
+  queryDocuments(mapper: ((doc: T) => boolean), options: { fullOp?: boolean } = {}): T[] | { payload: Payload<T> }[] {
+    // Whether we return the full operation data or just the db value
+    const fullOp = options.fullOp || false
+    const getValue: (value: T | { payload: Payload<T> }) => T = fullOp ? (value: { payload: Payload<T> }) => value.payload.value : (value: T) => value
+    return Object.keys(this.index._index)
+      .map((e) => this.index.get(e, fullOp))
+      .filter((doc) => mapper(getValue(doc))) as T[] | { payload: Payload<T> }[]
   }
 
-  get queryTopic() {
-    if (!this.address) {
-      throw new Error("Not initialized");
+  queryHandler(query: QueryRequestV0): Promise<Result[]> {
+    const documentQuery = query.type as DocumentQueryRequest;
+
+    let filters: (FieldQuery | ((v: any) => boolean))[] = documentQuery.queries;
+    let results = this.queryDocuments(
+      doc =>
+        filters?.length > 0 ? filters.map(f => {
+          if (f instanceof FieldQuery) {
+            return f.apply(doc)
+          }
+          else {
+            return (f as ((v: any) => boolean))(doc)
+          }
+        }).reduce((prev, current) => prev && current) : true
+    ) as T[];
+
+    if (documentQuery.sort) {
+      const resolveField = (obj: any) => {
+        let v = obj;
+        for (let i = 0; i < documentQuery.sort.fieldPath.length; i++) {
+          v = v[documentQuery.sort.fieldPath[i]]
+        }
+        return v
+      }
+      let direction = 1;
+      if (documentQuery.sort.direction == SortDirection.Descending) {
+        direction = -1;
+      }
+      results.sort((a, b) => {
+        const af = resolveField(a)
+        const bf = resolveField(b)
+        if (af < bf) {
+          return -direction;
+        }
+        else if (af > bf) {
+          return direction;
+        }
+        return 0;
+      })
+    }
+    if (documentQuery.offset) {
+      results = results.slice(documentQuery.offset.toNumber());
     }
 
-    return this.address + '/query';
+    if (documentQuery.size) {
+      results = results.slice(0, documentQuery.size.toNumber());
+    }
+    return Promise.resolve(results.map(r => new ResultWithSource({
+      source: r
+    })));
   }
 
 

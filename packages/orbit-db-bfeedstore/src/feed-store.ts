@@ -24,7 +24,6 @@ export class BinaryFeedStore<T> extends Store<T, FeedIndex<T>> {
     return this.del(hash, options)
   }
 
-
   add(data: T, options = {}) {
     return this._addOperation({
       op: 'ADD',
@@ -95,7 +94,7 @@ export class BinaryFeedStore<T> extends Store<T, FeedIndex<T>> {
     const operation = {
       op: 'DEL',
       key: null,
-      valuse: hash
+      value: hash
     }
     return this._addOperation(operation, options)
   }

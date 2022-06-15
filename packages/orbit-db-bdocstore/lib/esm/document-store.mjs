@@ -1,10 +1,10 @@
-import Store from 'orbit-db-store';
 import { DocumentIndex } from './document-index.mjs';
 import pMap from 'p-map';
-import { deserialize, serialize } from '@dao-xyz/borsh';
+import { serialize } from '@dao-xyz/borsh';
 import bs58 from 'bs58';
 import { asString } from './utils.mjs';
-import { EncodedQueryResponse, Query, QueryRequestV0, QueryResponse, SortDirection } from './query.mjs';
+import { FieldQuery, ResultWithSource, SortDirection } from '@dao-xyz/bquery';
+import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdocstore';
 const defaultOptions = (options) => {
@@ -14,7 +14,7 @@ const defaultOptions = (options) => {
         Object.assign(options, { Index: DocumentIndex });
     return options;
 };
-export class BinaryDocumentStore extends Store {
+export class BinaryDocumentStore extends QueryStore {
     constructor(ipfs, id, dbname, options) {
         super(ipfs, id, dbname, defaultOptions(options));
         this._type = undefined;
@@ -23,7 +23,6 @@ export class BinaryDocumentStore extends Store {
         this._type = BINARY_DOCUMENT_STORE_TYPE;
         this._index.init(this.options.clazz);
         this.subscribeToQueries = options.subscribeToQueries;
-        ipfs.dag;
     }
     get index() {
         return this._index;
@@ -46,98 +45,64 @@ export class BinaryDocumentStore extends Store {
             .filter(filter)
             .map(mapper);
     }
-    query(mapper, options = {}) {
+    async load(amount, opts) {
+        await super.load(amount, opts);
+    }
+    async close() {
+        await super.close();
+    }
+    queryDocuments(mapper, options = {}) {
         // Whether we return the full operation data or just the db value
         const fullOp = options.fullOp || false;
         const getValue = fullOp ? (value) => value.payload.value : (value) => value;
-        return Object.keys(this._index._index)
-            .map((e) => this._index.get(e, fullOp))
+        return Object.keys(this.index._index)
+            .map((e) => this.index.get(e, fullOp))
             .filter((doc) => mapper(getValue(doc)));
     }
-    async queryAny(query, clazz, responseHandler, maxAggregationTime = 30 * 1000) {
-        // send query and wait for replies in a generator like behaviour
-        let responseTopic = query.getResponseTopic(this.queryTopic);
-        await this._ipfs.pubsub.subscribe(responseTopic, (msg) => {
-            const encoded = deserialize(Buffer.from(msg.data), EncodedQueryResponse);
-            let result = QueryResponse.from(encoded, clazz);
-            responseHandler(result);
-        });
-        await this._ipfs.pubsub.publish(this.queryTopic, serialize(query));
-    }
-    async load(amount, opts) {
-        await super.load(amount, opts);
-        if (this.subscribeToQueries) {
-            await this._subscribeToQueries();
-        }
-    }
-    async close() {
-        await this._ipfs.pubsub.unsubscribe(this.queryTopic);
-        this._subscribed = false;
-        await super.close();
-    }
-    async _subscribeToQueries() {
-        if (this._subscribed) {
-            return;
-        }
-        await this._ipfs.pubsub.subscribe(this.queryTopic, async (msg) => {
-            try {
-                let query = deserialize(Buffer.from(msg.data), QueryRequestV0);
-                let filters = query.queries;
-                let results = this.query(doc => (filters === null || filters === void 0 ? void 0 : filters.length) > 0 ? filters.map(f => {
-                    if (f instanceof Query) {
-                        return f.apply(doc);
-                    }
-                    else {
-                        return f(doc);
-                    }
-                }).reduce((prev, current) => prev && current) : true);
-                if (query.sort) {
-                    const resolveField = (obj) => {
-                        let v = obj;
-                        for (let i = 0; i < query.sort.fieldPath.length; i++) {
-                            v = v[query.sort.fieldPath[i]];
-                        }
-                        return v;
-                    };
-                    let direction = 1;
-                    if (query.sort.direction == SortDirection.Descending) {
-                        direction = -1;
-                    }
-                    results.sort((a, b) => {
-                        const af = resolveField(a);
-                        const bf = resolveField(b);
-                        if (af < bf) {
-                            return -direction;
-                        }
-                        else if (af > bf) {
-                            return direction;
-                        }
-                        return 0;
-                    });
-                }
-                if (query.offset) {
-                    results = results.slice(query.offset.toNumber());
-                }
-                if (query.size) {
-                    results = results.slice(0, query.size.toNumber());
-                }
-                let response = new EncodedQueryResponse({
-                    results: results.map(r => bs58.encode(serialize(r)))
-                });
-                let bytes = serialize(response);
-                await this._ipfs.pubsub.publish(query.getResponseTopic(this.queryTopic), bytes);
+    queryHandler(query) {
+        const documentQuery = query.type;
+        let filters = documentQuery.queries;
+        let results = this.queryDocuments(doc => (filters === null || filters === void 0 ? void 0 : filters.length) > 0 ? filters.map(f => {
+            if (f instanceof FieldQuery) {
+                return f.apply(doc);
             }
-            catch (error) {
-                console.error(error);
+            else {
+                return f(doc);
             }
-        });
-        this._subscribed = true;
-    }
-    get queryTopic() {
-        if (!this.address) {
-            throw new Error("Not initialized");
+        }).reduce((prev, current) => prev && current) : true);
+        if (documentQuery.sort) {
+            const resolveField = (obj) => {
+                let v = obj;
+                for (let i = 0; i < documentQuery.sort.fieldPath.length; i++) {
+                    v = v[documentQuery.sort.fieldPath[i]];
+                }
+                return v;
+            };
+            let direction = 1;
+            if (documentQuery.sort.direction == SortDirection.Descending) {
+                direction = -1;
+            }
+            results.sort((a, b) => {
+                const af = resolveField(a);
+                const bf = resolveField(b);
+                if (af < bf) {
+                    return -direction;
+                }
+                else if (af > bf) {
+                    return direction;
+                }
+                return 0;
+            });
         }
-        return this.address + '/query';
+        if (documentQuery.offset) {
+            results = results.slice(documentQuery.offset.toNumber());
+        }
+        if (documentQuery.size) {
+            results = results.slice(0, documentQuery.size.toNumber());
+        }
+        return Promise.resolve(results.map(r => new ResultWithSource({
+            source: r
+        })));
     }
     batchPut(docs, onProgressCallback) {
         const mapper = (doc, idx) => {

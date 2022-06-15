@@ -13,13 +13,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BinaryDocumentStore = exports.BINARY_DOCUMENT_STORE_TYPE = void 0;
-const orbit_db_store_1 = __importDefault(require("orbit-db-store"));
 const document_index_1 = require("./document-index");
 const p_map_1 = __importDefault(require("p-map"));
 const borsh_1 = require("@dao-xyz/borsh");
 const bs58_1 = __importDefault(require("bs58"));
 const utils_1 = require("./utils");
-const query_1 = require("./query");
+const bquery_1 = require("@dao-xyz/bquery");
+const orbit_db_query_store_1 = require("@dao-xyz/orbit-db-query-store");
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
 exports.BINARY_DOCUMENT_STORE_TYPE = 'bdocstore';
 const defaultOptions = (options) => {
@@ -29,7 +29,7 @@ const defaultOptions = (options) => {
         Object.assign(options, { Index: document_index_1.DocumentIndex });
     return options;
 };
-class BinaryDocumentStore extends orbit_db_store_1.default {
+class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore {
     constructor(ipfs, id, dbname, options) {
         super(ipfs, id, dbname, defaultOptions(options));
         this._type = undefined;
@@ -38,7 +38,6 @@ class BinaryDocumentStore extends orbit_db_store_1.default {
         this._type = exports.BINARY_DOCUMENT_STORE_TYPE;
         this._index.init(this.options.clazz);
         this.subscribeToQueries = options.subscribeToQueries;
-        ipfs.dag;
     }
     get index() {
         return this._index;
@@ -61,35 +60,12 @@ class BinaryDocumentStore extends orbit_db_store_1.default {
             .filter(filter)
             .map(mapper);
     }
-    query(mapper, options = {}) {
-        // Whether we return the full operation data or just the db value
-        const fullOp = options.fullOp || false;
-        const getValue = fullOp ? (value) => value.payload.value : (value) => value;
-        return Object.keys(this._index._index)
-            .map((e) => this._index.get(e, fullOp))
-            .filter((doc) => mapper(getValue(doc)));
-    }
-    queryAny(query, clazz, responseHandler, maxAggregationTime = 30 * 1000) {
-        return __awaiter(this, void 0, void 0, function* () {
-            // send query and wait for replies in a generator like behaviour
-            let responseTopic = query.getResponseTopic(this.queryTopic);
-            yield this._ipfs.pubsub.subscribe(responseTopic, (msg) => {
-                const encoded = (0, borsh_1.deserialize)(Buffer.from(msg.data), query_1.EncodedQueryResponse);
-                let result = query_1.QueryResponse.from(encoded, clazz);
-                responseHandler(result);
-            });
-            yield this._ipfs.pubsub.publish(this.queryTopic, (0, borsh_1.serialize)(query));
-        });
-    }
     load(amount, opts) {
         const _super = Object.create(null, {
             load: { get: () => super.load }
         });
         return __awaiter(this, void 0, void 0, function* () {
             yield _super.load.call(this, amount, opts);
-            if (this.subscribeToQueries) {
-                yield this._subscribeToQueries();
-            }
         });
     }
     close() {
@@ -97,76 +73,61 @@ class BinaryDocumentStore extends orbit_db_store_1.default {
             close: { get: () => super.close }
         });
         return __awaiter(this, void 0, void 0, function* () {
-            yield this._ipfs.pubsub.unsubscribe(this.queryTopic);
-            this._subscribed = false;
             yield _super.close.call(this);
         });
     }
-    _subscribeToQueries() {
-        return __awaiter(this, void 0, void 0, function* () {
-            if (this._subscribed) {
-                return;
-            }
-            yield this._ipfs.pubsub.subscribe(this.queryTopic, (msg) => __awaiter(this, void 0, void 0, function* () {
-                try {
-                    let query = (0, borsh_1.deserialize)(Buffer.from(msg.data), query_1.QueryRequestV0);
-                    let filters = query.queries;
-                    let results = this.query(doc => (filters === null || filters === void 0 ? void 0 : filters.length) > 0 ? filters.map(f => {
-                        if (f instanceof query_1.Query) {
-                            return f.apply(doc);
-                        }
-                        else {
-                            return f(doc);
-                        }
-                    }).reduce((prev, current) => prev && current) : true);
-                    if (query.sort) {
-                        const resolveField = (obj) => {
-                            let v = obj;
-                            for (let i = 0; i < query.sort.fieldPath.length; i++) {
-                                v = v[query.sort.fieldPath[i]];
-                            }
-                            return v;
-                        };
-                        let direction = 1;
-                        if (query.sort.direction == query_1.SortDirection.Descending) {
-                            direction = -1;
-                        }
-                        results.sort((a, b) => {
-                            const af = resolveField(a);
-                            const bf = resolveField(b);
-                            if (af < bf) {
-                                return -direction;
-                            }
-                            else if (af > bf) {
-                                return direction;
-                            }
-                            return 0;
-                        });
-                    }
-                    if (query.offset) {
-                        results = results.slice(query.offset.toNumber());
-                    }
-                    if (query.size) {
-                        results = results.slice(0, query.size.toNumber());
-                    }
-                    let response = new query_1.EncodedQueryResponse({
-                        results: results.map(r => bs58_1.default.encode((0, borsh_1.serialize)(r)))
-                    });
-                    let bytes = (0, borsh_1.serialize)(response);
-                    yield this._ipfs.pubsub.publish(query.getResponseTopic(this.queryTopic), bytes);
-                }
-                catch (error) {
-                    console.error(error);
-                }
-            }));
-            this._subscribed = true;
-        });
+    queryDocuments(mapper, options = {}) {
+        // Whether we return the full operation data or just the db value
+        const fullOp = options.fullOp || false;
+        const getValue = fullOp ? (value) => value.payload.value : (value) => value;
+        return Object.keys(this.index._index)
+            .map((e) => this.index.get(e, fullOp))
+            .filter((doc) => mapper(getValue(doc)));
     }
-    get queryTopic() {
-        if (!this.address) {
-            throw new Error("Not initialized");
+    queryHandler(query) {
+        const documentQuery = query.type;
+        let filters = documentQuery.queries;
+        let results = this.queryDocuments(doc => (filters === null || filters === void 0 ? void 0 : filters.length) > 0 ? filters.map(f => {
+            if (f instanceof bquery_1.FieldQuery) {
+                return f.apply(doc);
+            }
+            else {
+                return f(doc);
+            }
+        }).reduce((prev, current) => prev && current) : true);
+        if (documentQuery.sort) {
+            const resolveField = (obj) => {
+                let v = obj;
+                for (let i = 0; i < documentQuery.sort.fieldPath.length; i++) {
+                    v = v[documentQuery.sort.fieldPath[i]];
+                }
+                return v;
+            };
+            let direction = 1;
+            if (documentQuery.sort.direction == bquery_1.SortDirection.Descending) {
+                direction = -1;
+            }
+            results.sort((a, b) => {
+                const af = resolveField(a);
+                const bf = resolveField(b);
+                if (af < bf) {
+                    return -direction;
+                }
+                else if (af > bf) {
+                    return direction;
+                }
+                return 0;
+            });
         }
-        return this.address + '/query';
+        if (documentQuery.offset) {
+            results = results.slice(documentQuery.offset.toNumber());
+        }
+        if (documentQuery.size) {
+            results = results.slice(0, documentQuery.size.toNumber());
+        }
+        return Promise.resolve(results.map(r => new bquery_1.ResultWithSource({
+            source: r
+        })));
     }
     batchPut(docs, onProgressCallback) {
         const mapper = (doc, idx) => {

@@ -1087,7 +1087,7 @@
     protobufjs "^6.11.2"
     uint8arrays "^3.0.0"
 
-"@dao-xyz/borsh@^2.0.2":
+"@dao-xyz/borsh@^2.0.5":
   version "2.0.5"
   resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-2.0.5.tgz#ec2bc59d57cadb85d0db09703a9fef745145be93"
   integrity sha512-ttPWeg3zOezHFD/mgyU75Gr09MSbGg6Xpx244SKrxIWDfSbE36tQXQ9f8qMoU0ijql4mi5uHw2HIEamh6FGWRA==
