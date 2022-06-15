@@ -1,15 +1,28 @@
-/// <reference types="orbit-db" />
 import { DocumentIndex } from './document-index';
 import { Identity } from 'orbit-db-identity-provider';
 import { Constructor } from '@dao-xyz/borsh';
 import { QueryRequestV0, Result } from '@dao-xyz/bquery';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
-import { QueryStore, QueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
+import { QueryStore } from '@dao-xyz/orbit-db-query-store';
+import { StoreOptions, IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores';
+import OrbitDB from 'orbit-db';
 export declare const BINARY_DOCUMENT_STORE_TYPE = "bdocstore";
-export declare type DocumentStoreOptions<T> = IStoreOptions & QueryStoreOptions & {
+export declare type DocumentStoreOptions<T> = IStoreOptions & IQueryStoreOptions & {
     indexBy?: string;
     clazz: Constructor<T>;
 };
+export declare class BinaryDocumentStoreOptions<T> extends StoreOptions<BinaryDocumentStore<T>> {
+    indexBy: string;
+    objectType: string;
+    constructor(opts: {
+        indexBy: string;
+        objectType: string;
+    });
+    newStore(address: string, orbitDB: OrbitDB, typeMap: {
+        [key: string]: Constructor<any>;
+    }, options: IQueryStoreOptions): Promise<BinaryDocumentStore<T>>;
+    get identifier(): string;
+}
 export declare class BinaryDocumentStore<T> extends QueryStore<T, DocumentIndex<T>> {
     _type: string;
     _subscribed: boolean;

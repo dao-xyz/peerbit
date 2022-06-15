@@ -1,11 +1,11 @@
 
 import { Shard } from '../shard';
 import { AnyPeer } from '../node';
-import { DocumentStoreInterface, documentStoreShard, FeedStoreInterface, feedStoreShard, getPeer, shardStoreShard } from './utils';
+import { BinaryFeedStoreInterface, DocumentStoreInterface, documentStoreShard, getPeer, shardStoreShard } from './utils';
 import { P2PTrust } from '../trust';
 import { PublicKey } from '../key';
 import { delay, waitFor } from '../utils';
-import { field } from '@dao-xyz/borsh';
+import { Document } from './utils';
 
 const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 
@@ -34,7 +34,7 @@ describe('cluster', () => {
         test('add trustee', async () => {
 
             let peer = await getPeer();
-            let l0 = await feedStoreShard();
+            let l0 = await documentStoreShard(Document);
             await l0.init(peer);
             expect(l0.cid).toBeDefined();
             expect(l0.trust).toBeInstanceOf(P2PTrust);
@@ -58,7 +58,7 @@ describe('cluster', () => {
 
                 let peer = await getPeer();
 
-                let l0 = await feedStoreShard();
+                let l0 = await documentStoreShard(Document);
                 await l0.init(peer);
 
                 let peer2 = await getPeer();
@@ -80,7 +80,7 @@ describe('cluster', () => {
 
                 let peer = await getPeer();
 
-                let l0 = await feedStoreShard();
+                let l0 = await documentStoreShard(Document);
                 await l0.init(peer);
 
                 let peer2 = await getPeer();
@@ -104,12 +104,12 @@ describe('cluster', () => {
         test('save load', async () => {
 
             let peer = await getPeer();
-            let l0 = await feedStoreShard();
+            let l0 = await documentStoreShard(Document);
             await l0.init(peer);
             expect(l0.cid).toBeDefined();
 
             let peer2 = await getPeer();
-            let loadedShard = await Shard.loadFromCID<FeedStoreInterface>(l0.cid, peer2.node);
+            let loadedShard = await Shard.loadFromCID<BinaryFeedStoreInterface>(l0.cid, peer2.node);
             expect(loadedShard.interface.db.address).toEqual(l0.interface.db.address);
         })
     })
@@ -129,7 +129,7 @@ describe('cluster', () => {
 
             expect(await isInSwarm(peer, peer2)).toBeFalsy();
 
-            let feedStore = await (await feedStoreShard()).init(peer2, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
+            let feedStore = await (await documentStoreShard(Document)).init(peer2, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
             await feedStore.replicate();
 
             expect(await isInSwarm(peer, peer2)).toBeTruthy();
@@ -142,25 +142,25 @@ describe('cluster', () => {
             let peer = await getPeer();
 
             // Create Root shard
-            let l0 = await shardStoreShard<FeedStoreInterface>();
+            let l0 = await shardStoreShard<DocumentStoreInterface<Document>>();
             await l0.init(peer)
             await l0.replicate();
 
             // Create Feed store
-            let feedStore = await (await feedStoreShard()).init(peer, l0.cid);
-            await feedStore.replicate();
-            await feedStore.interface.db.db.add("hello");
-            await l0.interface.db.db.put(feedStore);
+            let documentStore = await (await documentStoreShard(Document)).init(peer, l0.cid);
+            await documentStore.replicate();
+            await documentStore.interface.db.db.put(new Document({ id: 'hello' }));
+            await l0.interface.db.db.put(documentStore);
 
 
             // --- Load assert, from another peer
             let peer2 = await getPeer();
             await l0.init(peer2)
             await l0.interface.db.load(1);
-            expect(Object.keys(l0.interface.db.db._index._index).length).toEqual(1);
-            let feedStoreLoaded = await l0.interface.loadShard(feedStore.cid);
+            expect(Object.keys(l0.interface.db.db.index._index).length).toEqual(1);
+            let feedStoreLoaded = await l0.interface.loadShard(documentStore.cid);
             await feedStoreLoaded.interface.db.load(1);
-            expect(Object.keys(feedStoreLoaded.interface.db.db._index._index).length).toEqual(1);
+            expect(Object.keys(feedStoreLoaded.interface.db.db.index._index).length).toEqual(1);
             await disconnectPeers([peer, peer2]);
 
         })
@@ -174,7 +174,7 @@ describe('cluster', () => {
             await l0.replicate();
 
             // Create Feed store
-            let l1 = await (await feedStoreShard()).init(peer, l0.cid);
+            let l1 = await (await documentStoreShard(Document)).init(peer, l0.cid);
             await l0.interface.db.db.put(l1);
 
             // --- Load assert, from another peer
@@ -182,7 +182,7 @@ describe('cluster', () => {
             await l0.init(peer2)
             await l0.interface.db.load(1);
             await l0.replicate();
-            expect(Object.keys(l0.interface.db.db._index._index).length).toEqual(1);
+            expect(Object.keys(l0.interface.db.db.index._index).length).toEqual(1);
 
 
             // Drop 1 peer and make sure a third peer can access data
@@ -191,7 +191,7 @@ describe('cluster', () => {
             let peer3 = await getPeer();
             await l0.init(peer3)
             await l0.interface.db.load(1);
-            expect(Object.keys(l0.interface.db.db._index._index).length).toEqual(1);
+            expect(Object.keys(l0.interface.db.db.index._index).length).toEqual(1);
             await disconnectPeers([peer2, peer3]);
         })
     })
@@ -240,8 +240,8 @@ describe('cluster', () => {
         test('subscribe, request', async () => {
             let peer = await getPeer();
             let peer2 = await getPeer();
-
             let l0a = await shardStoreShard();
+
             await l0a.init(peer);
 
             await l0a.trust.addTrust(PublicKey.from(peer2.orbitDB.identity));
@@ -290,16 +290,7 @@ describe('cluster', () => {
 
         test('isServer=false can write', async () => {
 
-            class Document {
-                @field({ type: 'String' })
-                id: string;
-                constructor(opts?: { id: string }) {
-                    if (opts) {
-                        this.id = opts.id;
-                    }
 
-                }
-            }
 
             let peerServer = await getPeer(undefined, true);
             peerServer.options.behaviours.typeMap[Document.name] = Document;

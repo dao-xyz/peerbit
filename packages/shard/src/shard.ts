@@ -3,15 +3,16 @@ import OrbitDB from "orbit-db";
 import BN from 'bn.js';
 import Store from "orbit-db-store";
 import CounterStore from "orbit-db-counterstore";
-import { BinaryKeyValueStore } from '@dao-xyz/orbit-db-bkvstore';
-import { BinaryDocumentStoreOptions, BinaryKeyValueStoreOptions, StoreOptions, waitForReplicationEvents } from "./stores";
-import { delay, waitFor } from "./utils";
+import { BinaryKeyValueStore, BinaryKeyValueStoreOptions } from '@dao-xyz/orbit-db-bkvstore';
+/* import {  waitForReplicationEvents } from "./stores"; */
+import { delay, waitFor, waitForReplicationEvents } from "./utils";
 import { AnyPeer, IPFSInstanceExtended } from "./node";
 import { Peer } from "./peer";
 import { PublicKey } from "./key";
 import { P2PTrust } from "./trust";
 import { DBInterface, onReplicationMark } from "./interface";
-
+import { BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
+import { StoreOptions } from '@dao-xyz/orbit-db-bstores';
 export const SHARD_INDEX = 0;
 const MAX_SHARD_SIZE = 1024 * 500 * 1000;
 
@@ -226,7 +227,7 @@ export class Shard<T extends DBInterface> {
     async loadMetaStores() {
         //this.blocks = await this.newStore(this.address ? this.address : this.getDBName('blocks')) //await db.feed(this.getDBName('blocks'), this.chain.defaultOptions);
         //await Promise.all(this.dbs.map(db => db.newStore(this)));
-        this._peers = await new BinaryKeyValueStoreOptions<Peer>({ objectType: Peer.name }).newStore(this.peersAddress ? this.peersAddress : this.getDBName("peers"), this.peer.orbitDB, this.peer.options);
+        this._peers = await new BinaryKeyValueStoreOptions<Peer>({ objectType: Peer.name }).newStore(this.peersAddress ? this.peersAddress : this.getDBName("peers"), this.peer.orbitDB, this.peer.options.behaviours.typeMap, this.peer.options.defaultOptions);
         onReplicationMark(this._peers);
         this.peersAddress = this._peers.address.toString();
         await this.loadMemorySize();
@@ -260,7 +261,7 @@ export class Shard<T extends DBInterface> {
 
     async loadPeers(waitForReplicationEventsCount: number = 0) {
         if (!this._peers) {
-            this._peers = await new BinaryKeyValueStoreOptions<Peer>({ objectType: Peer.name }).newStore(this.peersAddress ? this.peersAddress : this.getDBName("peers"), this.peer.orbitDB, this.peer.options);
+            this._peers = await new BinaryKeyValueStoreOptions<Peer>({ objectType: Peer.name }).newStore(this.peersAddress ? this.peersAddress : this.getDBName("peers"), this.peer.orbitDB, this.peer.options.behaviours.typeMap, this.peer.options.defaultOptions);
         }
 
         // Second argument 

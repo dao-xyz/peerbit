@@ -1,7 +1,7 @@
 {
-  "name": "@dao-xyz/orbit-db-query-store",
-  "version": "0.0.3",
-  "description": "Query store",
+  "name": "@dao-xyz/orbit-db-bstores",
+  "version": "0.0.1",
+  "description": "Document Store for orbit-db with binary ser/der",
   "type": "module",
   "sideEffects": false,
   "main": "lib/cjs/index.js",
@@ -30,17 +30,6 @@
   "author": "dao.xyz",
   "license": "MIT",
   "dependencies": {
-    "@dao-xyz/borsh": "^2.0.6",
-    "@dao-xyz/bquery": "^0.0.3",
-    "@dao-xyz/orbit-db-bstores": "^0.0.1",
-    "p-map": "~1.1.1",
-    "uuid": "^8.3.2"
-  },
-  "peerDependencies": {
-    "orbit-db-store": "4.x"
-  },
-  "devDependencies": {
-    "@dao-xyz-types/orbit-db": "^0.0.13",
-    "ipfs": "^0.60.2"
+    "@dao-xyz/borsh": "^2.0.6"
   }
 }

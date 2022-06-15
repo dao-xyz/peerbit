@@ -4,9 +4,6 @@ import * as IPFS from 'ipfs';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import OrbitDB from 'orbit-db';
 import { v4 as uuid } from 'uuid';
-import { BINARY_DOCUMENT_STORE_TYPE, BinaryDocumentStore } from '../document-store';
-
-OrbitDB.addDatabaseType(BINARY_DOCUMENT_STORE_TYPE, BinaryDocumentStore as any)
 
 export const clean = (id?: string) => {
     let suffix = id ? id + '/' : '';

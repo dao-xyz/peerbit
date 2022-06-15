@@ -1,10 +1,11 @@
+export const x = 123
 /**
  * We have to provide all stores implementations in a sharded compatible form, so that
  * peers can replicate stores upon request (on demand).
  * This is why we are creating an serializable version of the store options.
  * (Store options are passed in the replication request)
  */
-
+/* 
 import { field, variant } from "@dao-xyz/borsh";
 import { BinaryDocumentStore, DocumentStoreOptions, BINARY_DOCUMENT_STORE_TYPE } from "@dao-xyz/orbit-db-bdocstore";
 import { BinaryFeedStore, BINARY_FEED_STORE_TYPE } from "@dao-xyz/orbit-db-bfeedstore";
@@ -32,8 +33,6 @@ export class StoreOptions<B extends Store<any, any>> {
     get identifier(): string {
         throw new Error("Not implemented")
     }
-
-
 }
 
 @variant(0)
@@ -105,7 +104,7 @@ export class BinaryKeyValueStoreOptions<T> extends StoreOptions<BinaryKeyValueSt
             Object.assign(this, opts);
         }
     }
-    async newStore(address: string, orbitDB: OrbitDB, peerOptions: PeerOptions): Promise<BinaryKeyValueStore<T>> {
+    async newStore(address: string, orbitDB: OrbitDB, options: PeerOptions): Promise<BinaryKeyValueStore<T>> {
         let clazz = peerOptions.behaviours.typeMap[this.objectType];
         if (!clazz) {
             throw new Error(`Undefined type: ${this.objectType}`);
@@ -152,30 +151,4 @@ export class BinaryFeedStoreOptions<T> extends StoreOptions<BinaryFeedStore<T>> 
 
 }
 
-const MAX_REPLICATION_WAIT_TIME = 15 * 1000;
-
-export const waitForReplicationEvents = async (store: Store<any, any>, waitForReplicationEventsCount: number) => {
-    /**
-     * This method is flaky
-     * First we check the progress of replicatoin
-     * then we check a custom replicated boolean, as the replicationStatus
-     * is not actually tracking whether the store is loaded
-     */
-
-    if (!waitForReplicationEventsCount)
-        return
-
-    await waitFor(() => !!store.replicationStatus && waitForReplicationEventsCount <= store.replicationStatus.max)
-
-    let startTime = +new Date;
-    while (store.replicationStatus.progress < store.replicationStatus.max) {
-        await delay(50);
-        if (+new Date - startTime > MAX_REPLICATION_WAIT_TIME) {
-            console.warn("Max replication time, aborting wait for")
-            return;
-        }
-    }
-
-    // await waitFor(() => store["replicated"])
-    return;
-}
+ */

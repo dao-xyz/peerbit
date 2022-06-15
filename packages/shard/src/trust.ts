@@ -1,11 +1,10 @@
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
-import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
+import { BinaryDocumentStore, BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
 import { IPFSInstanceExtended } from "./node";
 import { Shard } from "./shard";
 import { DBInterface, SingleDBInterface } from "./interface";
 
 import { PublicKey } from "./key";
-import { BinaryDocumentStoreOptions } from "./stores";
 export const TRUSTEE_KEY = 'trustee';
 
 @variant(0)
@@ -35,7 +34,7 @@ export class P2PTrustRelation {
 
 
 
-@variant(0) // We prepend with 0 if we in the future would have an other trust setup
+@variant(10) // We prepend with 0 if we in the future would have an other trust setup
 export class P2PTrust extends DBInterface {
 
     @field({ type: PublicKey })

@@ -4,13 +4,13 @@ import { deserialize, serialize } from '@dao-xyz/borsh';
 import { Message } from 'ipfs-core-types/types/src/pubsub'
 import { QueryRequestV0, QueryResponseV0, Result } from '@dao-xyz/bquery';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
+import { IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores';
 
-export type QueryStoreOptions = { subscribeToQueries: boolean };
 export class QueryStore<T, X> extends Store<T, X> {
 
   _subscribed: boolean = false
   subscribeToQueries = false;
-  constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IStoreOptions & QueryStoreOptions) {
+  constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IQueryStoreOptions) {
     super(ipfs, id, dbname, options)
     this.subscribeToQueries = options.subscribeToQueries;
   }

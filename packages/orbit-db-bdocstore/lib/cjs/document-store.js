@@ -1,4 +1,13 @@
 "use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -12,7 +21,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.BinaryDocumentStore = exports.BINARY_DOCUMENT_STORE_TYPE = void 0;
+exports.BinaryDocumentStore = exports.BinaryDocumentStoreOptions = exports.BINARY_DOCUMENT_STORE_TYPE = void 0;
 const document_index_1 = require("./document-index");
 const p_map_1 = __importDefault(require("p-map"));
 const borsh_1 = require("@dao-xyz/borsh");
@@ -20,6 +29,8 @@ const bs58_1 = __importDefault(require("bs58"));
 const utils_1 = require("./utils");
 const bquery_1 = require("@dao-xyz/bquery");
 const orbit_db_query_store_1 = require("@dao-xyz/orbit-db-query-store");
+const orbit_db_bstores_1 = require("@dao-xyz/orbit-db-bstores");
+const orbit_db_1 = __importDefault(require("orbit-db"));
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
 exports.BINARY_DOCUMENT_STORE_TYPE = 'bdocstore';
 const defaultOptions = (options) => {
@@ -29,6 +40,39 @@ const defaultOptions = (options) => {
         Object.assign(options, { Index: document_index_1.DocumentIndex });
     return options;
 };
+let BinaryDocumentStoreOptions = class BinaryDocumentStoreOptions extends orbit_db_bstores_1.StoreOptions {
+    constructor(opts) {
+        super();
+        if (opts) {
+            Object.assign(this, opts);
+        }
+    }
+    newStore(address, orbitDB, typeMap, options) {
+        return __awaiter(this, void 0, void 0, function* () {
+            let clazz = typeMap[this.objectType];
+            if (!clazz) {
+                throw new Error(`Undefined type: ${this.objectType}`);
+            }
+            return orbitDB.open(address, Object.assign(Object.assign({}, options), { clazz, create: true, type: exports.BINARY_DOCUMENT_STORE_TYPE, indexBy: this.indexBy }));
+        });
+    }
+    get identifier() {
+        return exports.BINARY_DOCUMENT_STORE_TYPE;
+    }
+};
+__decorate([
+    (0, borsh_1.field)({ type: 'String' }),
+    __metadata("design:type", String)
+], BinaryDocumentStoreOptions.prototype, "indexBy", void 0);
+__decorate([
+    (0, borsh_1.field)({ type: 'String' }),
+    __metadata("design:type", String)
+], BinaryDocumentStoreOptions.prototype, "objectType", void 0);
+BinaryDocumentStoreOptions = __decorate([
+    (0, borsh_1.variant)([0, 0]),
+    __metadata("design:paramtypes", [Object])
+], BinaryDocumentStoreOptions);
+exports.BinaryDocumentStoreOptions = BinaryDocumentStoreOptions;
 class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore {
     constructor(ipfs, id, dbname, options) {
         super(ipfs, id, dbname, defaultOptions(options));
@@ -177,4 +221,5 @@ class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore {
     }
 }
 exports.BinaryDocumentStore = BinaryDocumentStore;
+orbit_db_1.default.addDatabaseType(exports.BINARY_DOCUMENT_STORE_TYPE, BinaryDocumentStore);
 //# sourceMappingURL=document-store.js.map

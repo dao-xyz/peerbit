@@ -4,11 +4,11 @@ import { TypedBehaviours } from '..';
 import { create } from 'ipfs';
 import { AnyPeer, IPFSInstanceExtended, PeerOptions } from '../node';
 import { SingleDBInterface, DBInterface, RecursiveShardDBInterface } from '../interface';
-import FeedStore from 'orbit-db-feedstore';
-import { BinaryDocumentStoreOptions, FeedStoreOptions } from '../stores';
 import BN from 'bn.js';
 import { Constructor, field, variant } from '@dao-xyz/borsh';
-import { BinaryDocumentStore } from '@dao-xyz/orbit-db-bdocstore';
+import { BinaryDocumentStore, BinaryDocumentStoreOptions } from '@dao-xyz/orbit-db-bdocstore';
+import { BinaryFeedStoreOptions, BinaryFeedStore } from '@dao-xyz/orbit-db-bfeedstore';
+
 import { Shard } from '../shard';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import OrbitDB from 'orbit-db';
@@ -27,9 +27,23 @@ export const clean = (id?: string) => {
     }
 }
 
+export class Document {
+    @field({ type: 'String' })
+    id: string;
+    constructor(opts?: { id: string }) {
+        if (opts) {
+            this.id = opts.id;
+        }
+
+    }
+}
+
+
 const testBehaviours: TypedBehaviours = {
 
-    typeMap: {}
+    typeMap: {
+        [Document.name]: Document
+    }
 }
 export const createOrbitDBInstance = (node: IPFSInstance | any, id: string, identity?: Identity) => OrbitDB.createInstance(node,
     {
@@ -88,12 +102,12 @@ export const createIPFSNode = (local: boolean = false, repo: string = './ipfs'):
 }
 
 @variant(122)
-export class FeedStoreInterface extends DBInterface {
+export class BinaryFeedStoreInterface extends DBInterface {
 
     @field({ type: SingleDBInterface })
-    db: SingleDBInterface<string, FeedStore<string>>;
+    db: SingleDBInterface<Document, BinaryFeedStore<Document>>;
 
-    constructor(opts?: { db: SingleDBInterface<string, FeedStore<string>> }) {
+    constructor(opts?: { db: SingleDBInterface<Document, BinaryFeedStore<Document>> }) {
         super();
         if (opts) {
             Object.assign(this, opts);
@@ -117,13 +131,15 @@ export class FeedStoreInterface extends DBInterface {
     }
 }
 
-export const feedStoreShard = async () => new Shard({
+export const feedStoreShard = async<T>(clazz: Constructor<T>) => new Shard({
     cluster: 'x',
     shardSize: new BN(500 * 1000),
-    interface: new FeedStoreInterface({
+    interface: new BinaryFeedStoreInterface({
         db: new SingleDBInterface({
             name: 'feed',
-            storeOptions: new FeedStoreOptions()
+            storeOptions: new BinaryFeedStoreOptions({
+                objectType: clazz.name
+            })
         })
 
     }),

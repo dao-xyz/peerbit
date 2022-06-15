@@ -1,10 +1,21 @@
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
 import { DocumentIndex } from './document-index.mjs';
 import pMap from 'p-map';
-import { serialize } from '@dao-xyz/borsh';
+import { field, serialize, variant } from '@dao-xyz/borsh';
 import bs58 from 'bs58';
 import { asString } from './utils.mjs';
 import { FieldQuery, ResultWithSource, SortDirection } from '@dao-xyz/bquery';
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
+import { StoreOptions } from '@dao-xyz/orbit-db-bstores';
+import OrbitDB from 'orbit-db';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdocstore';
 const defaultOptions = (options) => {
@@ -14,6 +25,37 @@ const defaultOptions = (options) => {
         Object.assign(options, { Index: DocumentIndex });
     return options;
 };
+let BinaryDocumentStoreOptions = class BinaryDocumentStoreOptions extends StoreOptions {
+    constructor(opts) {
+        super();
+        if (opts) {
+            Object.assign(this, opts);
+        }
+    }
+    async newStore(address, orbitDB, typeMap, options) {
+        let clazz = typeMap[this.objectType];
+        if (!clazz) {
+            throw new Error(`Undefined type: ${this.objectType}`);
+        }
+        return orbitDB.open(address, { ...options, ...{ clazz, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: this.indexBy } });
+    }
+    get identifier() {
+        return BINARY_DOCUMENT_STORE_TYPE;
+    }
+};
+__decorate([
+    field({ type: 'String' }),
+    __metadata("design:type", String)
+], BinaryDocumentStoreOptions.prototype, "indexBy", void 0);
+__decorate([
+    field({ type: 'String' }),
+    __metadata("design:type", String)
+], BinaryDocumentStoreOptions.prototype, "objectType", void 0);
+BinaryDocumentStoreOptions = __decorate([
+    variant([0, 0]),
+    __metadata("design:paramtypes", [Object])
+], BinaryDocumentStoreOptions);
+export { BinaryDocumentStoreOptions };
 export class BinaryDocumentStore extends QueryStore {
     constructor(ipfs, id, dbname, options) {
         super(ipfs, id, dbname, defaultOptions(options));
@@ -151,4 +193,5 @@ export class BinaryDocumentStore extends QueryStore {
         }, options);
     }
 }
+OrbitDB.addDatabaseType(BINARY_DOCUMENT_STORE_TYPE, BinaryDocumentStore);
 //# sourceMappingURL=document-store.js.map

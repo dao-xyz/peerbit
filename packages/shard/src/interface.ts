@@ -2,10 +2,11 @@
 
 import { field, variant } from "@dao-xyz/borsh";
 import Store from "orbit-db-store";
-import { StoreOptions, waitForReplicationEvents } from "./stores";
+import { StoreOptions } from "@dao-xyz/orbit-db-bstores";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
 import { Shard } from "./shard";
 import * as events from 'events';
+import { waitForReplicationEvents } from "./utils";
 export class DBInterface {
 
     get initialized(): boolean {
@@ -66,7 +67,7 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
             throw new Error("Not initialized")
         }
 
-        this.db = await this.storeOptions.newStore(this.address ? this.address : this.getDBName(), this._shard.peer.orbitDB, this._shard.peer.options);
+        this.db = await this.storeOptions.newStore(this.address ? this.address : this.getDBName(), this._shard.peer.orbitDB, this._shard.peer.options.behaviours.typeMap, this._shard.peer.options.defaultOptions);
         onReplicationMark(this.db);
         this.address = this.db.address.toString();
         return this.db;

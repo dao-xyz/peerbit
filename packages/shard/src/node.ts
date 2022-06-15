@@ -8,6 +8,7 @@ import { v4 as uuid } from 'uuid';
 import { P2PTrust } from './trust';
 import { deserialize } from '@dao-xyz/borsh';
 import { PublicKey } from './key';
+import { IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores';
 
 export interface IPFSInstanceExtended extends IPFSInstance {
     libp2p: any
@@ -18,7 +19,7 @@ export const ROOT_CHAIN_SHARD_SIZE = 100;
 
 export class PeerOptions {
 
-    defaultOptions: ICreateOptions;
+    defaultOptions: IQueryStoreOptions;
     behaviours: TypedBehaviours
     replicationCapacity: number;
     isServer: boolean;
@@ -43,6 +44,7 @@ export class PeerOptions {
         this.isServer = options.isServer;
 
         this.defaultOptions = {
+            subscribeToQueries: this.isServer,
             accessController: {
                 //write: [this.orbitDB.identity.id],
                 type: CONTRACT_ACCESS_CONTROLLER
