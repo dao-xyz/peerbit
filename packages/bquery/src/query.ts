@@ -1,4 +1,4 @@
-import { Constructor, deserialize, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
+import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import { API as PubSubAPI, Message } from 'ipfs-core-types/src/pubsub';
 import { v4 as uuid } from 'uuid';
 import { QueryType } from "./query-type";
