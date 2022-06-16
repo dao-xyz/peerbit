@@ -1,13 +1,13 @@
 
 import { field, option, variant } from '@dao-xyz/borsh';
 import BN from 'bn.js';
-import { StringStore, STRING_STORE_TYPE } from '../string-store';
-import { QueryRequestV0, QueryResponseV0, ResultWithSource, ResultSource, StringQueryRequest, StringResultSource, StringMatchQuery, RangeCoordinate, RangeCoordinates } from '@dao-xyz/bquery';
+import { StringResultSource, StringStore, STRING_STORE_TYPE } from '../string-store';
+import { QueryRequestV0, QueryResponseV0, ResultWithSource, ResultSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates } from '@dao-xyz/bquery';
 import { Peer, waitFor } from './utils';
 import { disconnectPeers, getPeer } from './utils';
 import { query } from '@dao-xyz/bquery';
 
-@variant(211)
+@variant([1, 0])
 class Document extends ResultSource {
 
     @field({ type: 'String' })

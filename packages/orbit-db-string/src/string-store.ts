@@ -2,13 +2,14 @@ import { PayloadOperation, StringIndex } from './string-index'
 import { IPFS as IPFSInstance } from 'ipfs';
 import { Identity } from 'orbit-db-identity-provider';
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
-import { QueryRequestV0, RangeCoordinate, RangeCoordinates, Result, ResultWithSource, StringResultSource } from '@dao-xyz/bquery';
+import { QueryRequestV0, RangeCoordinate, RangeCoordinates, Result, ResultWithSource } from '@dao-xyz/bquery';
 import { StringQueryRequest } from '@dao-xyz/bquery';
 import BN from 'bn.js';
 import { Range, RangeOptional } from './range';
 import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
 import { IQueryStoreOptions, StoreOptions } from '@dao-xyz/orbit-db-bstores';
 import OrbitDB from 'orbit-db';
+import { ResultSource } from '@dao-xyz/bquery';
 
 export const STRING_STORE_TYPE = 'string_store';
 const findAllOccurrences = (str: string, substr: string): number[] => {
@@ -107,5 +108,22 @@ export class StringStore extends QueryStore<string, StringIndex> {
     })]);
   }
 }
+
+@variant([0, 2])
+export class StringResultSource extends ResultSource {
+
+  @field({ type: 'String' })
+  string: string
+
+  constructor(obj?: {
+    string: string;
+  }) {
+    super();
+    if (obj) {
+      Object.assign(this, obj);
+    }
+  }
+}
+
 OrbitDB.addDatabaseType(STRING_STORE_TYPE, StringStore as any)
 

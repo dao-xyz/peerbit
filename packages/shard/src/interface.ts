@@ -7,7 +7,10 @@ import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
 import { Shard } from "./shard";
 import * as events from 'events';
 import { waitForReplicationEvents } from "./utils";
-export class DBInterface {
+import { ResultSource } from "@dao-xyz/bquery";
+
+// Extends results source in order to be queried
+export class DBInterface extends ResultSource {
 
     get initialized(): boolean {
         throw new Error("Not implemented")

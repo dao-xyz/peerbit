@@ -82,22 +82,3 @@ export class StringQueryRequest extends QueryType {
     }
 
 }
-
-
-
-@variant(0)
-export class StringResultSource extends ResultSource {
-
-    @field({ type: 'String' })
-    string: string
-
-    constructor(obj?: {
-        string: string;
-    }) {
-        super();
-        if (obj) {
-            Object.assign(this, obj);
-        }
-    }
-}
-

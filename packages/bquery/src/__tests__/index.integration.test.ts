@@ -47,7 +47,7 @@ const waitFor = async (fn: () => boolean | Promise<boolean>, timeout: number = 6
 };
 
 
-@variant(4)
+@variant([1, 1])
 class NumberResult extends ResultSource {
   @field({ type: 'u32' })
   number: number

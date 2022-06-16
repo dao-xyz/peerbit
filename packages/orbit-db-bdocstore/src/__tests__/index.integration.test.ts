@@ -7,7 +7,7 @@ import { Peer, waitFor } from './utils';
 import { disconnectPeers, getPeer } from './utils';
 import { query } from '@dao-xyz/bquery';
 
-@variant(211)
+@variant([1, 0])
 class Document extends ResultSource {
 
   @field({ type: 'String' })
