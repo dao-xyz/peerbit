@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-query-store",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Query store",
   "type": "module",
   "sideEffects": false,
@@ -40,7 +40,7 @@
     "orbit-db-store": "4.x"
   },
   "devDependencies": {
-    "@dao-xyz-types/orbit-db": "^0.0.13",
+    "@dao-xyz-types/orbit-db": "^0.0.14",
     "ipfs": "^0.60.2"
   }
 }

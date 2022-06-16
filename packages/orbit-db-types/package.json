@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz-types/orbit-db",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "description": "Unofficial typings for orbit-db",
   "types": "index.d.ts",
   "keywords": [

@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-stringstore",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "description": "String store",
   "type": "module",
   "sideEffects": false,
@@ -32,12 +32,12 @@
   "dependencies": {
     "@dao-xyz/borsh": "^2.0.7",
     "@dao-xyz/bquery": "^0.0.4",
-    "@dao-xyz/orbit-db-query-store": "^0.0.5"
+    "@dao-xyz/orbit-db-query-store": "^0.0.6"
   },
   "peerDependencies": {
     "orbit-db-store": "4.x"
   },
   "devDependencies": {
-    "@dao-xyz-types/orbit-db": "^0.0.13"
+    "@dao-xyz-types/orbit-db": "^0.0.14"
   }
 }
