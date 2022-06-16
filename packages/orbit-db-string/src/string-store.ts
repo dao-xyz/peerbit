@@ -10,7 +10,7 @@ import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
 import { IQueryStoreOptions, StoreOptions } from '@dao-xyz/orbit-db-bstores';
 import OrbitDB from 'orbit-db';
 
-export const STRING_STORE_TYPE = 'stringstore';
+export const STRING_STORE_TYPE = 'string_store';
 const findAllOccurrences = (str: string, substr: string): number[] => {
   str = str.toLowerCase();
 
@@ -107,4 +107,5 @@ export class StringStore extends QueryStore<string, StringIndex> {
     })]);
   }
 }
+OrbitDB.addDatabaseType(STRING_STORE_TYPE, StringStore as any)
 

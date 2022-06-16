@@ -6,7 +6,7 @@ import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
 import bs58 from 'bs58';
 import OrbitDB from 'orbit-db';
 import { StoreOptions, IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores';
-export const BINARY_FEED_STORE_TYPE = 'bfeedstore';
+export const BINARY_FEED_STORE_TYPE = 'bfeed_store';
 
 
 @variant([0, 2])

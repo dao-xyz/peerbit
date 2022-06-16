@@ -12,7 +12,7 @@ import { StoreOptions, IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores'
 import OrbitDB from 'orbit-db';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement)
 
-export const BINARY_DOCUMENT_STORE_TYPE = 'bdocstore';
+export const BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
 export type DocumentStoreOptions<T> = IStoreOptions & IQueryStoreOptions & { indexBy?: string, clazz: Constructor<T> };
 const defaultOptions = (options: IStoreOptions & { subscribeToQueries: boolean }): IStoreOptions & IQueryStoreOptions => {
   if (!options["indexBy"]) Object.assign(options, { indexBy: '_id' })

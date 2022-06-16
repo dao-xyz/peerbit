@@ -4,7 +4,7 @@ import { KeyValueIndex } from './key-value-index';
 import bs58 from 'bs58';
 import OrbitDB from 'orbit-db';
 import { StoreOptions, IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores'
-export const BINARY_KEYVALUE_STORE_TYPE = 'bkvstore';
+export const BINARY_KEYVALUE_STORE_TYPE = 'bkv_store';
 
 const defaultOptions = (options: IStoreOptions): any => {
   if (!options.Index) Object.assign(options, { Index: KeyValueIndex })

@@ -32,7 +32,7 @@ const orbit_db_query_store_1 = require("@dao-xyz/orbit-db-query-store");
 const orbit_db_bstores_1 = require("@dao-xyz/orbit-db-bstores");
 const orbit_db_1 = __importDefault(require("orbit-db"));
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
-exports.BINARY_DOCUMENT_STORE_TYPE = 'bdocstore';
+exports.BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
 const defaultOptions = (options) => {
     if (!options["indexBy"])
         Object.assign(options, { indexBy: '_id' });
