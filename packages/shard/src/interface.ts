@@ -30,7 +30,7 @@ export class DBInterface {
 
 // Every interface has to have its own variant, else DBInterface can not be
 // used as a deserialization target.
-@variant(1)
+@variant([0, 1])
 export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
 
     @field({ type: 'String' })
@@ -132,7 +132,7 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
 }
 
 
-@variant(0)
+@variant([0, 0])
 export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterface {
 
     @field({ type: SingleDBInterface })

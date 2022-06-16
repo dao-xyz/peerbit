@@ -34,7 +34,7 @@ export class P2PTrustRelation {
 
 
 
-@variant(10) // We prepend with 0 if we in the future would have an other trust setup
+@variant([2, 0])
 export class P2PTrust extends DBInterface {
 
     @field({ type: PublicKey })

@@ -116,7 +116,7 @@ export type TypedBehaviours = {
 
 
 
-@variant(1)
+@variant([0, 0])
 export class Shard<T extends DBInterface> {
 
     @field({ type: 'String' })

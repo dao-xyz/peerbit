@@ -101,7 +101,7 @@ export const createIPFSNode = (local: boolean = false, repo: string = './ipfs'):
 
 }
 
-@variant(122)
+@variant([1, 0])
 export class BinaryFeedStoreInterface extends DBInterface {
 
     @field({ type: SingleDBInterface })
@@ -146,7 +146,7 @@ export const feedStoreShard = async<T>(clazz: Constructor<T>) => new Shard({
 })
 
 
-@variant(123)
+@variant([1, 1])
 export class DocumentStoreInterface<T> extends DBInterface {
 
     @field({ type: SingleDBInterface })
