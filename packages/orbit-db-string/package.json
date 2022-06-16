@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-stringstore",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "description": "String store",
   "type": "module",
   "sideEffects": false,
