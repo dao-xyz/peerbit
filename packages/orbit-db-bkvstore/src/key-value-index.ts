@@ -39,8 +39,6 @@ export class KeyValueIndex<T> {
       }
     }
   }
-  get size(): number {
-    return Object.keys(this._index._index).length
-  }
+
 }
 
