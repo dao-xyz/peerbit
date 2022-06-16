@@ -3,7 +3,7 @@ import Store from 'orbit-db-store';
 import { KeyValueIndex } from './key-value-index';
 import OrbitDB from 'orbit-db';
 import { StoreOptions, IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores';
-export declare const BINARY_KEYVALUE_STORE_TYPE = "bkvstore";
+export declare const BINARY_KEYVALUE_STORE_TYPE = "bkv_store";
 export declare class BinaryKeyValueStoreOptions<T> extends StoreOptions<BinaryKeyValueStore<T>> {
     objectType: string;
     constructor(opts: {

@@ -34,7 +34,7 @@ const defaultOptions = (options: IStoreOptions): any => {
 @variant([0, 3])
 export class StringStoreOptions extends StoreOptions<StringStore> {
 
-  constructor({ }) {
+  constructor() {
     super();
   }
   async newStore(address: string, orbitDB: OrbitDB, typeMap: { [key: string]: Constructor<any> }, options: IQueryStoreOptions): Promise<StringStore> {

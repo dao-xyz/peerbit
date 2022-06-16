@@ -28,7 +28,7 @@ const key_value_index_1 = require("./key-value-index");
 const bs58_1 = __importDefault(require("bs58"));
 const orbit_db_1 = __importDefault(require("orbit-db"));
 const orbit_db_bstores_1 = require("@dao-xyz/orbit-db-bstores");
-exports.BINARY_KEYVALUE_STORE_TYPE = 'bkvstore';
+exports.BINARY_KEYVALUE_STORE_TYPE = 'bkv_store';
 const defaultOptions = (options) => {
     if (!options.Index)
         Object.assign(options, { Index: key_value_index_1.KeyValueIndex });

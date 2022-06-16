@@ -17,7 +17,7 @@ import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 import { StoreOptions } from '@dao-xyz/orbit-db-bstores';
 import OrbitDB from 'orbit-db';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
-export const BINARY_DOCUMENT_STORE_TYPE = 'bdocstore';
+export const BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
 const defaultOptions = (options) => {
     if (!options["indexBy"])
         Object.assign(options, { indexBy: '_id' });
