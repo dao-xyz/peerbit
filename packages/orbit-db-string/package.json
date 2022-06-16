@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-stringstore",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "description": "String store",
   "type": "module",
   "sideEffects": false,
@@ -31,8 +31,8 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^2.0.7",
-    "@dao-xyz/bquery": "^0.0.3",
-    "@dao-xyz/orbit-db-query-store": "^0.0.4"
+    "@dao-xyz/bquery": "^0.0.4",
+    "@dao-xyz/orbit-db-query-store": "^0.0.5"
   },
   "peerDependencies": {
     "orbit-db-store": "4.x"
