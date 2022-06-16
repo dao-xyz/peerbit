@@ -2,7 +2,7 @@ import Store from 'orbit-db-store'
 import { Identity } from 'orbit-db-identity-provider';
 import { deserialize, serialize } from '@dao-xyz/borsh';
 import { Message } from 'ipfs-core-types/types/src/pubsub'
-import { QueryRequestV0, QueryResponseV0, Result } from '@dao-xyz/bquery';
+import { QueryRequestV0, QueryResponseV0, Result, query } from '@dao-xyz/bquery';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores';
 
@@ -58,6 +58,10 @@ export class QueryStore<T, X> extends Store<T, X> {
       }
     })
     this._subscribed = true;
+  }
+
+  public query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, maxAggregationTime?: number): Promise<void> {
+    return query(this._ipfs.pubsub, this.queryTopic, queryRequest, responseHandler, maxAggregationTime);
   }
 
   public get queryTopic() {
