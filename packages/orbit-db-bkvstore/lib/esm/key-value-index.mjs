@@ -33,8 +33,5 @@ export class KeyValueIndex {
             }
         }
     }
-    get size() {
-        return Object.keys(this._index._index).length;
-    }
 }
 //# sourceMappingURL=key-value-index.js.map
