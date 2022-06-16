@@ -55,7 +55,6 @@ declare module "orbit-db-store" {
          * @returns a `Promise` that resolves once complete
          */
         public load(amount?: number, opts = {}): Promise<void>;
-        public get all(): T[];
 
         protected _addOperation(data: any, options: { onProgressCallback?: (entry: any) => any, pin?: boolean }): Promise<string>;
         protected _addOperationBatch(data: any, batchOperation, lastOperation, onProgressCallback): Promise<any>

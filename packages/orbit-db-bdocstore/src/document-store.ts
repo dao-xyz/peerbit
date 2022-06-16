@@ -214,6 +214,10 @@ export class BinaryDocumentStore<T> extends QueryStore<T, DocumentIndex<T>> {
       value: null
     }, options)
   }
+
+  public get size(): number {
+    return Object.keys(this.index._index).length
+  }
 }
 
 OrbitDB.addDatabaseType(BINARY_DOCUMENT_STORE_TYPE, BinaryDocumentStore as any)

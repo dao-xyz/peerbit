@@ -219,6 +219,9 @@ class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore {
             value: null
         }, options);
     }
+    get size() {
+        return Object.keys(this.index._index).length;
+    }
 }
 exports.BinaryDocumentStore = BinaryDocumentStore;
 orbit_db_1.default.addDatabaseType(exports.BINARY_DOCUMENT_STORE_TYPE, BinaryDocumentStore);

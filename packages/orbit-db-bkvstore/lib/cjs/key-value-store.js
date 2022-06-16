@@ -92,6 +92,9 @@ class BinaryKeyValueStore extends orbit_db_store_1.default {
             value: null
         }, options);
     }
+    get size() {
+        return Object.keys(this._index._index).length;
+    }
 }
 exports.BinaryKeyValueStore = BinaryKeyValueStore;
 orbit_db_1.default.addDatabaseType(exports.BINARY_KEYVALUE_STORE_TYPE, BinaryKeyValueStore);

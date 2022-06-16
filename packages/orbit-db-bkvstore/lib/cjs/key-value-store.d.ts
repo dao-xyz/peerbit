@@ -23,4 +23,5 @@ export declare class BinaryKeyValueStore<T> extends Store<T, KeyValueIndex<T>> {
     set(key: string, data: T, options?: {}): Promise<string>;
     put(key: string, data: T, options?: {}): Promise<string>;
     del(key: string, options?: {}): Promise<string>;
+    get size(): number;
 }

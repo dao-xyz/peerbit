@@ -8,4 +8,5 @@ export declare class KeyValueIndex<T> {
     init(clazz: Constructor<T>): void;
     get(key: any): T;
     updateIndex(oplog: any): void;
+    get size(): number;
 }

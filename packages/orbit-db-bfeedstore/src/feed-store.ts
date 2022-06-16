@@ -132,6 +132,10 @@ export class BinaryFeedStore<T> extends Store<T, FeedIndex<T>> {
     }
     return this._addOperation(operation, options)
   }
+
+  public get size(): number {
+    return Object.keys(this._index._index).length
+  }
 }
 
 OrbitDB.addDatabaseType(BINARY_FEED_STORE_TYPE, BinaryFeedStore as any)

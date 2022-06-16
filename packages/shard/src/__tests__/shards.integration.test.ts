@@ -48,7 +48,7 @@ describe('cluster', () => {
 
             await l0.init(peer2);
             await l0.trust.load(1);
-            expect(Object.values(l0.trust.db.db.all)).toHaveLength(1);
+            expect(Object.values(l0.trust.db.db.size)).toHaveLength(1);
 
         })
 
@@ -249,8 +249,8 @@ describe('cluster', () => {
             let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
             await l0b.init(peer2)
 
-            expect(Object.keys(l0a.peers.all)).toHaveLength(0);
-            await waitFor(() => Object.keys(l0b.trust.db.db.all).length == 1)// add some delay because trust db is not synchronous
+            expect(l0a.peers.size).toHaveLength(0);
+            await waitFor(() => l0b.trust.db.db.size == 1)// add some delay because trust db is not synchronous
 
             // Replication step
             await peer2.subscribeForReplication(l0b.trust);
@@ -258,8 +258,8 @@ describe('cluster', () => {
             await l0a.requestReplicate();
             //  --------------
 
-            await waitFor(() => Object.keys(l0a.peers.all).length == 1) // add some delay because replication might take some time and is not synchronous
-            expect(Object.keys(l0a.peers.all)).toHaveLength(1);
+            await waitFor(() => l0a.peers.size == 1) // add some delay because replication might take some time and is not synchronous
+            expect(l0a.peers.size).toEqual(1);
             await disconnectPeers([peer, peer2]);
 
 
@@ -310,8 +310,8 @@ describe('cluster', () => {
                 id: 'hello'
             }))
 
-            await waitFor(() => Object.keys(l0.interface.db.db.all).length > 0);
-            expect(Object.keys(l0.interface.db.db.all)).toHaveLength(1);
+            await waitFor(() => l0.interface.db.db.size > 0);
+            expect(l0.interface.db.db.size).toEqual(1);
             subscriptions = await peerNonServer.node.pubsub.ls();
             expect(subscriptions.length).toEqual(0);  // non server should not have any subscriptions after write
             await disconnectPeers([peerNonServer]);

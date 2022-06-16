@@ -42,4 +42,5 @@ export declare class BinaryDocumentStore<T> extends QueryStore<T, DocumentIndex<
     put(doc: T, options?: {}): Promise<string>;
     putAll(docs: T[], options?: {}): Promise<string>;
     del(key: any, options?: {}): Promise<string>;
+    get size(): number;
 }

@@ -192,6 +192,9 @@ export class BinaryDocumentStore extends QueryStore {
             value: null
         }, options);
     }
+    get size() {
+        return Object.keys(this.index._index).length;
+    }
 }
 OrbitDB.addDatabaseType(BINARY_DOCUMENT_STORE_TYPE, BinaryDocumentStore);
 //# sourceMappingURL=document-store.js.map

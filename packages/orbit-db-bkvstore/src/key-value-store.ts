@@ -80,6 +80,10 @@ export class BinaryKeyValueStore<T> extends Store<T, KeyValueIndex<T>> {
       value: null
     }, options)
   }
+
+  public get size(): number {
+    return Object.keys(this._index._index).length
+  }
 }
 
 OrbitDB.addDatabaseType(BINARY_KEYVALUE_STORE_TYPE, BinaryKeyValueStore as any)

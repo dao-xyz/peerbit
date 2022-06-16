@@ -275,7 +275,7 @@ export class Shard<T extends DBInterface> {
 
     async isSupported(peersCount: number = 1) {
         await this.loadPeers(peersCount);
-        return Object.keys(this._peers.all).length >= peersCount
+        return this._peers.size >= peersCount
     }
 
     /* async loadDBs(): Promise<DB<any>[]> {
@@ -373,7 +373,7 @@ export class Shard<T extends DBInterface> {
                 }
 
                 // Connect to all parent peers, we could do better (cherry pick), but ok for now
-                await Promise.all(Object.values(parentPeers.all).filter(peer => !isSelfDial(peer)).map((peer) => this.peer.node.swarm.connect(peer.addresses[0])))
+                await Promise.all(Object.values(parentPeers._index._index).filter(peer => !isSelfDial(peer)).map((peer) => this.peer.node.swarm.connect(peer.addresses[0])))
             }
 
         }
@@ -395,16 +395,16 @@ export class Shard<T extends DBInterface> {
               throw new Error(`Expecting shard counter to be less than the new index ${shardCounter} !< ${this.index}`)
           } */
 
-        if (Object.keys(this._peers.all).length == 0) {
+        if (this._peers.size == 0) {
             // Send message that we need peers for this shard
             // The recieved of the message should be the DB that contains this shard,
             let ser = serialize(this);
             await this.peer.node.pubsub.publish(this.trust.replicationTopic, ser);
         }
 
-        await waitFor(() => Object.keys(this._peers.all).length > 0)
+        await waitFor(() => this._peers.size > 0)
 
-        if (Object.keys(this._peers.all).length == 0) {
+        if (this._peers.size == 0) {
             throw new Error("Fail to perform sharding");
         }
 

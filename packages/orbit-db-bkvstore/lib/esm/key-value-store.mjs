@@ -75,6 +75,9 @@ export class BinaryKeyValueStore extends Store {
             value: null
         }, options);
     }
+    get size() {
+        return Object.keys(this._index._index).length;
+    }
 }
 OrbitDB.addDatabaseType(BINARY_KEYVALUE_STORE_TYPE, BinaryKeyValueStore);
 //# sourceMappingURL=key-value-store.js.map
