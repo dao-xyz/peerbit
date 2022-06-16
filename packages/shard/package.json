@@ -41,7 +41,7 @@
         "yaml": "^1.10.2"
     },
     "dependencies": {
-        "@dao-xyz/borsh": "^2.0.6",
+        "@dao-xyz/borsh": "^2.0.7",
         "@dao-xyz/orbit-db-bdocstore": "^0.0.27",
         "@dao-xyz/orbit-db-bfeedstore": "^0.0.12",
         "@dao-xyz/orbit-db-bkvstore": "^0.0.19",
