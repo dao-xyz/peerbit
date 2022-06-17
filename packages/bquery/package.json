@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/bquery",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "Document Store for orbit-db with binary ser/der",
   "type": "module",
   "sideEffects": false,
