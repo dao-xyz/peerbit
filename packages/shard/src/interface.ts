@@ -10,6 +10,7 @@ import { waitForReplicationEvents } from "./utils";
 import { ResultSource } from "@dao-xyz/bquery";
 
 // Extends results source in order to be queried
+@variant([0, 0])
 export class DBInterface extends ResultSource {
 
     get initialized(): boolean {

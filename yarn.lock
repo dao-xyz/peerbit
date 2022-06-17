@@ -1087,10 +1087,10 @@
     protobufjs "^6.11.2"
     uint8arrays "^3.0.0"
 
-"@dao-xyz/borsh@^2.0.7":
-  version "2.0.7"
-  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-2.0.7.tgz#3f26e46b9dc0588a96a6a512c7a1b8211a786302"
-  integrity sha512-+O+9TlVIkmg6iOGORwNX8czyWCvS8rTGN7GA1cgsIfuPnddOwsI2ZFKBWvAGbhRlyTiarCTuXsWNlCKRCxyMEA==
+"@dao-xyz/borsh@^2.1.0":
+  version "2.1.0"
+  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-2.1.0.tgz#b34bb53d97fb33d0b1b3ca1b713dcfeeb7252865"
+  integrity sha512-H13ewwDZzFmZkdyp/vDM8PQd2eop5abhQC57YmR/2wTrmsdKRNUEa/hg15UsotggcxE4UIGTiU+M+XVfnqKODw==
   dependencies:
     bn.js "^5.2.0"
     bs58 "^4.0.0"

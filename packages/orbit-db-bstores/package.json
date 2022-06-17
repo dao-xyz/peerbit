@@ -30,6 +30,6 @@
   "author": "dao.xyz",
   "license": "MIT",
   "dependencies": {
-    "@dao-xyz/borsh": "^2.0.7"
+    "@dao-xyz/borsh": "^2.1.0"
   }
 }
