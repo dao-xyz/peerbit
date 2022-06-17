@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/shard",
-    "version": "0.0.69",
+    "version": "0.0.70",
     "author": "dao-xyz.network",
     "repository": "https://github.com/@dao-xyz/dao-xyz-ts",
     "license": "Apache-2.0",
@@ -42,9 +42,9 @@
     },
     "dependencies": {
         "@dao-xyz/borsh": "^2.1.1",
-        "@dao-xyz/orbit-db-bdocstore": "^0.0.34",
-        "@dao-xyz/orbit-db-bfeedstore": "^0.0.18",
-        "@dao-xyz/orbit-db-bkvstore": "^0.0.26",
+        "@dao-xyz/orbit-db-bdocstore": "^0.0.35",
+        "@dao-xyz/orbit-db-bfeedstore": "^0.0.19",
+        "@dao-xyz/orbit-db-bkvstore": "^0.0.27",
         "@dao-xyz/orbit-db-pubsub": "^0.6.3",
         "@solana/web3.js": "^1.41.3",
         "bn.js": "^5.2.0",

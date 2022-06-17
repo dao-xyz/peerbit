@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-bfeedstore",
-  "version": "0.0.18",
+  "version": "0.0.19",
   "description": "Feedstore Store for orbit-db with binary ser/der",
   "type": "module",
   "sideEffects": false,
@@ -31,7 +31,7 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^2.1.1",
-    "@dao-xyz/orbit-db-query-store": "^0.0.9"
+    "@dao-xyz/orbit-db-query-store": "^0.0.10"
   },
   "peerDependencies": {
     "orbit-db-store": "4.x"
