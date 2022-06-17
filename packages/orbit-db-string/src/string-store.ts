@@ -115,12 +115,12 @@ export class StringResultSource extends ResultSource {
   @field({ type: 'String' })
   string: string
 
-  constructor(obj?: {
+  constructor(prop?: {
     string: string;
   }) {
     super();
-    if (obj) {
-      Object.assign(this, obj);
+    if (prop) {
+      Object.assign(this, prop);
     }
   }
 }
