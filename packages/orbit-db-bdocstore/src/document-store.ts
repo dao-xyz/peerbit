@@ -4,7 +4,7 @@ import { Identity } from 'orbit-db-identity-provider';
 import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
 import bs58 from 'bs58';
 import { asString } from './utils';
-import { DocumentQueryRequest, FieldQuery, QueryRequestV0, Result, ResultWithSource, SortDirection } from '@dao-xyz/bquery';
+import { DocumentQueryRequest, FieldQuery, QueryRequestV0, Result, ResultSource, ResultWithSource, SortDirection } from '@dao-xyz/bquery';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 import { StoreOptions, IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores'
@@ -22,7 +22,7 @@ const defaultOptions = (options: IStoreOptions & { subscribeToQueries: boolean }
 
 
 @variant([0, 0])
-export class BinaryDocumentStoreOptions<T> extends StoreOptions<BinaryDocumentStore<T>> {
+export class BinaryDocumentStoreOptions<T extends ResultSource> extends StoreOptions<BinaryDocumentStore<T>> {
 
   @field({ type: 'String' })
   indexBy: string;
@@ -54,7 +54,7 @@ export class BinaryDocumentStoreOptions<T> extends StoreOptions<BinaryDocumentSt
 }
 
 
-export class BinaryDocumentStore<T> extends QueryStore<T, DocumentIndex<T>> {
+export class BinaryDocumentStore<T extends ResultSource> extends QueryStore<T, DocumentIndex<T>> {
 
   _type: string = undefined;
   _subscribed: boolean = false

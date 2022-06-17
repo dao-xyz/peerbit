@@ -1,7 +1,7 @@
 import { DocumentIndex } from './document-index';
 import { Identity } from 'orbit-db-identity-provider';
 import { Constructor } from '@dao-xyz/borsh';
-import { QueryRequestV0, Result } from '@dao-xyz/bquery';
+import { QueryRequestV0, Result, ResultSource } from '@dao-xyz/bquery';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 import { StoreOptions, IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores';
@@ -11,7 +11,7 @@ export declare type DocumentStoreOptions<T> = IStoreOptions & IQueryStoreOptions
     indexBy?: string;
     clazz: Constructor<T>;
 };
-export declare class BinaryDocumentStoreOptions<T> extends StoreOptions<BinaryDocumentStore<T>> {
+export declare class BinaryDocumentStoreOptions<T extends ResultSource> extends StoreOptions<BinaryDocumentStore<T>> {
     indexBy: string;
     objectType: string;
     constructor(opts: {
@@ -23,7 +23,7 @@ export declare class BinaryDocumentStoreOptions<T> extends StoreOptions<BinaryDo
     }, options: IQueryStoreOptions): Promise<BinaryDocumentStore<T>>;
     get identifier(): string;
 }
-export declare class BinaryDocumentStore<T> extends QueryStore<T, DocumentIndex<T>> {
+export declare class BinaryDocumentStore<T extends ResultSource> extends QueryStore<T, DocumentIndex<T>> {
     _type: string;
     _subscribed: boolean;
     subscribeToQueries: boolean;

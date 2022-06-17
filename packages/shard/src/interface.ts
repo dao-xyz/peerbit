@@ -142,7 +142,7 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterfac
     @field({ type: SingleDBInterface })
     db: SingleDBInterface<Shard<T>, BinaryDocumentStore<Shard<T>>>;
 
-    constructor(opts?: { db: SingleDBInterface<Shard<T>, BinaryDocumentStore<Shard<any>>> }) {
+    constructor(opts?: { db: SingleDBInterface<Shard<T>, BinaryDocumentStore<Shard<T>>> }) {
         super();
         if (opts) {
             Object.assign(this, opts);
