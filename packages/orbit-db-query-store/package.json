@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-query-store",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "Query store",
   "type": "module",
   "sideEffects": false,
@@ -31,8 +31,8 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^2.1.0",
-    "@dao-xyz/bquery": "^0.0.5",
-    "@dao-xyz/orbit-db-bstores": "^0.0.3",
+    "@dao-xyz/bquery": "^0.0.6",
+    "@dao-xyz/orbit-db-bstores": "^0.0.4",
     "p-map": "~1.1.1",
     "uuid": "^8.3.2"
   },
