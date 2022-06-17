@@ -109,7 +109,7 @@ export class StringStore extends QueryStore<string, StringIndex> {
   }
 }
 
-@variant([0, 1])
+@variant([0, 2])
 export class StringResultSource extends ResultSource {
 
   @field({ type: 'String' })

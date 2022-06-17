@@ -13,6 +13,7 @@ import { P2PTrust } from "./trust";
 import { DBInterface, onReplicationMark } from "./interface";
 import { BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
 import { StoreOptions } from '@dao-xyz/orbit-db-bstores';
+import { ResultSource } from '@dao-xyz/bquery';
 export const SHARD_INDEX = 0;
 const MAX_SHARD_SIZE = 1024 * 500 * 1000;
 
@@ -116,8 +117,8 @@ export type TypedBehaviours = {
 
 
 
-@variant(0)
-export class Shard<T extends DBInterface> {
+@variant([0, 0])
+export class Shard<T extends DBInterface> extends ResultSource {
 
     @field({ type: 'String' })
     cluster: string
@@ -171,7 +172,7 @@ export class Shard<T extends DBInterface> {
         trust?: P2PTrust
     }) {
 
-
+        super();
         if (props) {
             Object.assign(this, props);
         }
