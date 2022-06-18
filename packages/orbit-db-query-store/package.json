@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-query-store",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "description": "Query store",
   "type": "module",
   "sideEffects": false,
