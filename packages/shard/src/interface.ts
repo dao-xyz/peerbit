@@ -7,7 +7,10 @@ import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
 import { Shard } from "./shard";
 import * as events from 'events';
 import { waitForReplicationEvents } from "./utils";
-import { ResultSource } from "@dao-xyz/bquery";
+import { ResultSource, query } from "@dao-xyz/bquery";
+import { getQueryTopic } from "@dao-xyz/orbit-db-query-store";
+import { QueryRequestV0 } from "@dao-xyz/bquery";
+import { QueryResponseV0 } from "@dao-xyz/bquery";
 
 // Extends results source in order to be queried
 @variant([0, 1])
@@ -103,6 +106,13 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
             // unbind?
         }
         return this.db
+    }
+
+    async query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, maxAggregationTime?: number) {
+        if (!this.address) {
+            throw new Error("Can not query because DB address is unknown")
+        }
+        return query(this._shard.peer.node.pubsub, getQueryTopic(this.address), queryRequest, responseHandler, maxAggregationTime)
     }
 
 

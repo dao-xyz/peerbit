@@ -454,6 +454,9 @@ export class Shard<T extends DBInterface> extends ResultSource {
     }
 
     get initialized(): boolean {
+        if (!this.peer) {
+            return false;
+        }
         let metaStoresInitialized = !this.peer.options.isServer || (!!this.peersAddress && !!this.memoryAddedAddress && !!this.memoryRemovedAddress)
         return this.interface.initialized && metaStoresInitialized;
     };

@@ -6,6 +6,10 @@ import { QueryRequestV0, QueryResponseV0, Result, query } from '@dao-xyz/bquery'
 import { IPFS as IPFSInstance } from "ipfs-core-types";
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores';
 
+export const getQueryTopic = (dbAddress: string): string => {
+  return dbAddress + '/query';
+}
+
 export class QueryStore<T, X> extends Store<T, X> {
 
   _subscribed: boolean = false
@@ -64,14 +68,12 @@ export class QueryStore<T, X> extends Store<T, X> {
     return query(this._ipfs.pubsub, this.queryTopic, queryRequest, responseHandler, maxAggregationTime);
   }
 
-  public get queryTopic() {
+  public get queryTopic(): string {
     if (!this.address) {
       throw new Error("Not initialized");
     }
 
-    return this.address + '/query';
+    return getQueryTopic(this.address.toString());
   }
-
 }
-
 
