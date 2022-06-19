@@ -13,6 +13,7 @@ import { Shard } from '../shard';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import OrbitDB from 'orbit-db';
 import { v4 as uuid } from 'uuid';
+import { delay } from '../utils';
 
 import PubSub from '@dao-xyz/orbit-db-pubsub'
 export const clean = (id?: string) => {
@@ -68,9 +69,12 @@ export const getPeer = async (identity?: Identity, isServer: boolean = true, pee
     return peer;
 }
 export const disconnectPeers = async (peers: AnyPeer[]): Promise<void> => {
+    peers.forEach(peer => {
+        peer.node.libp2p.dialer.destroy();
+    });
+    //await Promise.all(peers.map(peer => peer.node.libp2p.dialer.destroy()));
     await Promise.all(peers.map(peer => peer.disconnect()));
     await Promise.all(peers.map(peer => peer.id ? clean(peer.id) : () => { }));
-
 }
 
 export const createIPFSNode = (local: boolean = false, repo: string = './ipfs'): Promise<IPFSInstanceExtended> => {
@@ -85,6 +89,9 @@ export const createIPFSNode = (local: boolean = false, repo: string = './ipfs'):
         }
     } : {
         relay: { enabled: true, hop: { enabled: true, active: true } },
+        /*  relay: { enabled: false, hop: { enabled: false, active: false } }, */
+        preload: { enabled: false },
+        offline: true,
         repo: repo,
         EXPERIMENTAL: { pubsub: true },
         config: {
@@ -118,12 +125,16 @@ export class BinaryFeedStoreInterface extends DBInterface {
         return !!this.db?.db && !!this.db._shard;
     }
 
+    get loaded(): boolean {
+        return this.db.loaded
+    }
+
     close() {
         this.db.db = undefined;
     }
 
-    init(shard: Shard<any>) {
-        this.db.init(shard);
+    async init(shard: Shard<any>): Promise<void> {
+        await this.db.init(shard);
     }
 
     async load(): Promise<void> {
@@ -163,12 +174,16 @@ export class DocumentStoreInterface<T> extends DBInterface {
         return this.db.initialized;
     }
 
+    get loaded(): boolean {
+        return this.db.loaded
+    }
+
     close() {
         this.db.close();
     }
 
-    init(shard: Shard<any>) {
-        this.db.init(shard);
+    async init(shard: Shard<any>): Promise<void> {
+        await this.db.init(shard);
     }
 
     async load(waitForReplicationEventsCount = 0): Promise<void> {

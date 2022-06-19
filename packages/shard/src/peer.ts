@@ -1,9 +1,10 @@
 import { field, variant, vec } from "@dao-xyz/borsh";
+import { ResultSource } from "@dao-xyz/bquery";
 import BN from "bn.js";
 import { PublicKey } from "./key";
 
-@variant(2)
-export class Peer {
+@variant([0, 3])
+export class Peer extends ResultSource {
 
     @field({ type: PublicKey })
     key: PublicKey
@@ -19,6 +20,7 @@ export class Peer {
         addresses: string[],
         timestamp: BN
     }) {
+        super();
         if (obj) {
             Object.assign(this, obj);
         }

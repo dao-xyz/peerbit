@@ -60,11 +60,8 @@ export class BinaryDocumentStore extends QueryStore {
     constructor(ipfs, id, dbname, options) {
         super(ipfs, id, dbname, defaultOptions(options));
         this._type = undefined;
-        this._subscribed = false;
-        this.subscribeToQueries = false;
         this._type = BINARY_DOCUMENT_STORE_TYPE;
         this._index.init(this.options.clazz);
-        this.subscribeToQueries = options.subscribeToQueries;
     }
     get index() {
         return this._index;

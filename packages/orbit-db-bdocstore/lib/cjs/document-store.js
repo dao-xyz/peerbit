@@ -77,11 +77,8 @@ class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore {
     constructor(ipfs, id, dbname, options) {
         super(ipfs, id, dbname, defaultOptions(options));
         this._type = undefined;
-        this._subscribed = false;
-        this.subscribeToQueries = false;
         this._type = exports.BINARY_DOCUMENT_STORE_TYPE;
         this._index.init(this.options.clazz);
-        this.subscribeToQueries = options.subscribeToQueries;
     }
     get index() {
         return this._index;

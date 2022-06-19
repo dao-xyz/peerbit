@@ -3,6 +3,7 @@ import { API as PubSubAPI, Message } from 'ipfs-core-types/src/pubsub';
 import { v4 as uuid } from 'uuid';
 import { QueryType } from "./query-type";
 import { Result } from "./result";
+import { delay } from "./utils";
 
 @variant(0)
 export class QueryRequestV0 {
@@ -62,7 +63,6 @@ export const query = async (pubsub: PubSubAPI, topic: string, query: QueryReques
         timeout: maxAggregationTime
     });
     await pubsub.publish(topic, serialize(query));
-    setTimeout(() => {
-        pubsub.unsubscribe(responseTopic);
-    }, maxAggregationTime);
+    await delay(maxAggregationTime);
+    await pubsub.unsubscribe(responseTopic);
 }

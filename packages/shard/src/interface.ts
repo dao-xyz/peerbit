@@ -20,12 +20,17 @@ export class DBInterface extends ResultSource {
         throw new Error("Not implemented")
     }
 
+
+    get loaded(): boolean {
+        throw new Error("Not implemented")
+    }
+
     close() {
         throw new Error("Not implemented")
 
     }
 
-    init(_shard: Shard<any>) {
+    async init(_shard: Shard<any>): Promise<void> {
         throw new Error("Not implemented")
     }
 
@@ -63,9 +68,12 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
         }
     }
 
-    init(shard: Shard<any>) {
+    async init(shard: Shard<any>): Promise<void> {
         this._shard = shard;
         this.db = undefined;
+        if (!this.address) {
+            this.address = (await this._shard.peer.orbitDB.determineAddress(this.getDBName(), this.storeOptions.identifier, this._shard.peer.options.defaultOptions)).toString();
+        }
     }
 
 
@@ -80,8 +88,15 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
         return this.db;
     }
 
+    /**
+     * Write to DB without fully loadung it
+     * @param write 
+     * @param obj 
+     * @param unsubscribe 
+     * @returns 
+     */
     async write(write: (obj: T) => Promise<any>, obj: T, unsubscribe: boolean = true): Promise<B> {
-        let topic = this.db.address.toString();
+        let topic = this.address.toString();
         let subscribed = !!this._shard.peer.orbitDB._pubsub._subscriptions[topic];
         let directConnectionsFromWrite = {};
         if (!subscribed) {
@@ -96,8 +111,12 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
             await this._shard.peer.orbitDB._pubsub.unsubscribe(topic);
 
             const removeDirectConnect = e => {
-                this._shard.peer.orbitDB._directConnections[e].close()
-                delete this._shard.peer.orbitDB._directConnections[e]
+                const conn = this._shard.peer.orbitDB._directConnections[e];
+                if (conn) {
+                    this._shard.peer.orbitDB._directConnections[e].close()
+                    delete this._shard.peer.orbitDB._directConnections[e]
+                }
+
             }
 
             // Close all direct connections to peers
@@ -117,13 +136,12 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
 
 
     async load(waitForReplicationEventsCount: number = 0): Promise<void> {
-        if (!this._shard) {
+        if (!this._shard || !this.initialized) {
             throw new Error("Not initialized")
         }
 
         if (!this.db) {
             await this.newStore() //await db.feed(this.getDBName('blocks'), this.chain.defaultOptions);
-
         }
         await this.db.load();
         if (this._shard.peer.options.isServer) {
@@ -140,6 +158,10 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
     }
 
     get initialized(): boolean {
+        return !!this.address;
+    }
+
+    get loaded(): boolean {
         return !!this.db;
     }
 
@@ -167,8 +189,8 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterfac
         this.db.close();
     }
 
-    init(shard: Shard<any>) {
-        this.db.init(shard);
+    async init(shard: Shard<any>): Promise<void> {
+        await this.db.init(shard);
     }
 
 
@@ -184,7 +206,9 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterfac
         await shard.loadPeers(options.expectedPeerReplicationEvents);
         return shard;
     }
-
+    get loaded(): boolean {
+        return !!this.db?.loaded;
+    }
 
 }
 

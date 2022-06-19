@@ -1,11 +1,13 @@
 
 import { Shard } from '../shard';
 import { AnyPeer } from '../node';
-import { BinaryFeedStoreInterface, DocumentStoreInterface, documentStoreShard, getPeer, shardStoreShard } from './utils';
+import { BinaryFeedStoreInterface, disconnectPeers, DocumentStoreInterface, documentStoreShard, getPeer, shardStoreShard } from './utils';
 import { P2PTrust } from '../trust';
 import { PublicKey } from '../key';
 import { delay, waitFor } from '../utils';
 import { Document } from './utils';
+import { Peer } from '../peer';
+import BN from 'bn.js';
 
 const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 
@@ -24,9 +26,9 @@ const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 }
 
 
-const disconnectPeers = async (peers: AnyPeer[]): Promise<void> => {
+/* const disconnectPeers = async (peers: AnyPeer[]): Promise<void> => {
     await Promise.all(peers.map(peer => peer.disconnect()));
-}
+} */
 
 
 describe('cluster', () => {
@@ -48,7 +50,7 @@ describe('cluster', () => {
 
             await l0.init(peer2);
             await l0.trust.load(1);
-            expect(Object.values(l0.trust.db.db.size)).toHaveLength(1);
+            expect(l0.trust.db.db.size).toEqual(1)
 
         })
 
@@ -123,7 +125,7 @@ describe('cluster', () => {
             let l0 = await shardStoreShard();
             await l0.init(peer)
             await l0.replicate();
-
+            const xyz = (l0.peers.address);
             // Create Feed store
             let peer2 = await getPeer();
 
@@ -175,6 +177,7 @@ describe('cluster', () => {
 
             // Create Feed store
             let l1 = await (await documentStoreShard(Document)).init(peer, l0.cid);
+            await l0.interface.db.load();
             await l0.interface.db.db.put(l1);
 
             // --- Load assert, from another peer
@@ -237,42 +240,90 @@ describe('cluster', () => {
        SUBSCRICE ?
     */
     describe('ondemand-sharding', () => {
-        test('subscribe, request', async () => {
+        /*  test('subscribe, request', async () => {
+             let peer = await getPeer();
+             let peer2 = await getPeer();
+             let l0a = await shardStoreShard();
+ 
+             await l0a.init(peer);
+ 
+             await l0a.trust.addTrust(PublicKey.from(peer2.orbitDB.identity));
+ 
+             let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
+             await l0b.init(peer2)
+ 
+             expect(await l0a.getRemotePeersSize()).toEqual(0)
+             await waitFor(() => l0b.trust.db.db.size == 1)// add some delay because trust db is not synchronous
+ 
+             // Replication step
+             await peer2.subscribeForReplication(l0b.trust);
+             await delay(1000); // Pubsub is flaky, wait some time before requesting shard
+             await l0a.requestReplicate();
+             //  --------------
+ 
+             await waitFor(() => l0a.peers.db.size == 1) // add some delay because replication might take some time and is not synchronous
+             expect(await l0a.getRemotePeersSize()).toEqual(1);
+             expect(l0a.peers.db.size).toEqual(1);
+             await disconnectPeers([peer, peer2]);
+ 
+ 
+         }) */
+        test('peer remote counter', async () => {
             let peer = await getPeer();
             let peer2 = await getPeer();
-            let l0a = await shardStoreShard();
 
+            let l0a = await shardStoreShard();
+            await l0a.init(peer);
+            let thisPeer = new Peer({
+                key: PublicKey.from(peer.orbitDB.identity),
+                addresses: (await peer.node.id()).addresses.map(x => x.toString()),
+                timestamp: new BN(+new Date)
+            });
+            await l0a.peers.load();
+            await l0a.peers.db.put(thisPeer);
+            await delay(10000);
+            let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
+            await l0b.init(peer2);
+            expect(await l0b.getRemotePeersSize()).toEqual(1);
+        })
+
+        test('subscribe, request', async () => {
+            let peer = await getPeer();
+            let l0a = await shardStoreShard();
             await l0a.init(peer);
 
+            let peer2 = await getPeer(undefined, false);
+
             await l0a.trust.addTrust(PublicKey.from(peer2.orbitDB.identity));
+            await waitFor(() => l0a.trust.db.db.size == 1)// add some delay because trust db is not synchronous
 
             let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
             await l0b.init(peer2)
 
-            expect(l0a.peers.size).toHaveLength(0);
-            await waitFor(() => l0b.trust.db.db.size == 1)// add some delay because trust db is not synchronous
+            expect(await l0a.getRemotePeersSize()).toEqual(0)
+            expect(await l0b.getRemotePeersSize()).toEqual(0)
 
-            // Replication step
-            await peer2.subscribeForReplication(l0b.trust);
+            expect(l0a.trust.rootTrust.equals(l0b.trust.rootTrust));            // Replication step
+            await peer.subscribeForReplication(l0a.trust);
             await delay(1000); // Pubsub is flaky, wait some time before requesting shard
-            await l0a.requestReplicate();
+            await l0b.requestReplicate();
             //  --------------
-
-            await waitFor(() => l0a.peers.size == 1) // add some delay because replication might take some time and is not synchronous
-            expect(l0a.peers.size).toEqual(1);
+            expect(await l0b.getRemotePeersSize()).toEqual(1)
+            // add some delay because replication might take some time and is not synchronous
             await disconnectPeers([peer, peer2]);
 
 
         })
+
     })
 
-    describe('peer options', () => {
+    describe('peer', () => {
         test('isServer=false no subscriptions on idle on shardStoreShard', async () => {
             let peerNonServer = await getPeer(undefined, false);
             let l0 = await shardStoreShard();
             await l0.init(peerNonServer);
             const subscriptions = await peerNonServer.node.pubsub.ls();
-            expect(subscriptions.length).toEqual(0); // non server should not have any subscriptions idle
+            expect(subscriptions.length).toEqual(0);  // non server should not have any subscriptions idle
             await disconnectPeers([peerNonServer]);
         })
 
@@ -296,6 +347,7 @@ describe('cluster', () => {
             peerServer.options.behaviours.typeMap[Document.name] = Document;
             let l0 = await documentStoreShard(Document, 'id');
             await l0.init(peerServer);
+            await l0.replicate();
 
             let peerNonServer = await getPeer(undefined, false);
             peerNonServer.options.behaviours.typeMap[Document.name] = Document;
@@ -306,12 +358,13 @@ describe('cluster', () => {
             let subscriptions = await peerNonServer.node.pubsub.ls();
             expect(subscriptions.length).toEqual(0); // non server should not have any subscriptions idle
             await delay(10000)
+            await l0Write.interface.db.load();
             await l0Write.interface.db.write((x) => l0Write.interface.db.db.put(x), new Document({
                 id: 'hello'
             }))
 
+            await l0.interface.db.load();
             await waitFor(() => l0.interface.db.db.size > 0);
-            expect(l0.interface.db.db.size).toEqual(1);
             subscriptions = await peerNonServer.node.pubsub.ls();
             expect(subscriptions.length).toEqual(0);  // non server should not have any subscriptions after write
             await disconnectPeers([peerNonServer]);

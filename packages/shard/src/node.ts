@@ -109,7 +109,8 @@ export class AnyPeer {
                 await shard.replicate();
 
             } catch (error) {
-                console.error('Invalid replication request');
+                console.error('Invalid replication request', error.toString());
+                throw error;
             }
         })
     }
@@ -135,7 +136,8 @@ export class AnyPeer {
             /*   await this.orbitDB.disconnect(); */
             /*  let p = (await this.node.pubsub.ls()).map(topic => this.node.pubsub.unsubscribe(topic))
              await Promise.all(p); */
-            await this.node.stop();
+            await this.orbitDB.disconnect();
+            // await this.node.stop();
             /*            
              */
         } catch (error) {

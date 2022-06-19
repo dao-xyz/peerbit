@@ -1,4 +1,25 @@
-export const x = 123
+import OrbitDB from "orbit-db";
+import { StoreOptions, IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores'
+import { Constructor, variant } from "@dao-xyz/borsh";
+import CounterStore from "orbit-db-counterstore";
+
+@variant([0, 4])
+export class CounterStoreOptions extends StoreOptions<CounterStore> {
+
+    constructor() {
+        super();
+    }
+
+    async newStore(address: string, orbitDB: OrbitDB, _typeMap: { [key: string]: Constructor<any> }, options: IQueryStoreOptions): Promise<CounterStore> {
+        return orbitDB.counter(address, options)
+    }
+
+
+    get identifier(): string {
+        return 'counter'
+    }
+}
+
 /**
  * We have to provide all stores implementations in a sharded compatible form, so that
  * peers can replicate stores upon request (on demand).

@@ -48,6 +48,7 @@ export class BinaryDocumentStoreOptions<T extends ResultSource> extends StoreOpt
     return orbitDB.open<BinaryDocumentStore<T>>(address, { ...options, ...{ clazz, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: this.indexBy } } as DocumentStoreOptions<T>)
   }
 
+
   get identifier(): string {
     return BINARY_DOCUMENT_STORE_TYPE
   }
@@ -57,13 +58,10 @@ export class BinaryDocumentStoreOptions<T extends ResultSource> extends StoreOpt
 export class BinaryDocumentStore<T extends ResultSource> extends QueryStore<T, DocumentIndex<T>> {
 
   _type: string = undefined;
-  _subscribed: boolean = false
-  subscribeToQueries = false;
   constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: DocumentStoreOptions<T>) {
     super(ipfs, id, dbname, defaultOptions(options))
     this._type = BINARY_DOCUMENT_STORE_TYPE;
     this._index.init(this.options.clazz);
-    this.subscribeToQueries = options.subscribeToQueries;
   }
   public get index(): DocumentIndex<T> {
     return this._index;

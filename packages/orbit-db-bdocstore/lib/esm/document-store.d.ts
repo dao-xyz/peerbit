@@ -25,8 +25,6 @@ export declare class BinaryDocumentStoreOptions<T extends ResultSource> extends 
 }
 export declare class BinaryDocumentStore<T extends ResultSource> extends QueryStore<T, DocumentIndex<T>> {
     _type: string;
-    _subscribed: boolean;
-    subscribeToQueries: boolean;
     constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: DocumentStoreOptions<T>);
     get index(): DocumentIndex<T>;
     get(key: any, caseSensitive?: boolean): T[];
