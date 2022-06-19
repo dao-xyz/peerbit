@@ -203,19 +203,21 @@ export class Shard<T extends DBInterface> extends ResultSource {
         await this._peers.init(this);
 
 
-        if (!this.memoryAdded || !this.memoryRemoved) {
+        if (!this.memoryAdded) {
             this.memoryAdded = new SingleDBInterface({
                 name: "_memoryAdded",
                 storeOptions: new CounterStoreOptions()
             });
-            await this.memoryAdded.init(this);
+        }
+        await this.memoryAdded.init(this);
 
+        if (!this.memoryRemoved) {
             this.memoryRemoved = new SingleDBInterface({
                 name: "_memoryRemoved",
                 storeOptions: new CounterStoreOptions()
             });
-            await this.memoryRemoved.init(this);
         }
+        await this.memoryRemoved.init(this);
 
         await this.interface.init(this);
 
