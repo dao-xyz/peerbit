@@ -89,7 +89,7 @@ export class AnyPeer {
     async subscribeForReplication(trust: P2PTrust): Promise<void> {
         await this.node.pubsub.subscribe(trust.replicationTopic, async (msg: any) => {
             try {
-                let shard = deserialize(msg.data, Shard);
+                let shard = deserialize(Buffer.from(msg.data), Shard);
 
                 // check if enough memory 
                 if (shard.shardSize.toNumber() > this.options.replicationCapacity) {
