@@ -65,11 +65,13 @@ describe('cluster', () => {
 
                 let peer2 = await getPeer();
                 let peer2Key = PublicKey.from(peer2.orbitDB.identity);
+                await l0.trust.load();
                 await l0.trust.addTrust(peer2Key);
 
                 await l0.init(peer2);
                 let peer3 = await getPeer();
                 let peer3Key = PublicKey.from(peer3.orbitDB.identity);
+                await l0.trust.load();
                 await l0.trust.addTrust(peer3Key);
 
                 // now check if peer3 is trusted from peer perspective

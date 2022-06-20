@@ -97,14 +97,17 @@ export class AnyPeer {
                     return;
                 }
                 await shard.init(this);
-
                 // check if is trusted,
-                if (!shard.trust.isTrusted(PublicKey.from(this.orbitDB.identity))) {
-                    //if not no point replicating
-                    console.log(`Can not replicate since not trusted`)
-                    return;
-                }
 
+                /*    
+                WE CAN NOT HAVE THIS CHECK; BECAUSE WE CAN NOT KNOW WHETHER WE HAVE LOADED THE TRUST DB FULLY (WE NEED TO WAIT TM)
+                
+                if (!shard.trust.isTrusted(PublicKey.from(this.orbitDB.identity))) { 
+                      //if not no point replicating
+                      console.log(`Can not replicate since not trusted`)
+                      return;
+                  }
+   */
                 this.options.replicationCapacity -= shard.shardSize.toNumber();
                 await shard.replicate();
 
