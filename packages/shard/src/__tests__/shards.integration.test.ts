@@ -133,7 +133,7 @@ describe('cluster', () => {
 
             let feedStore = await (await documentStoreShard(Document)).init(peer2, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
             await feedStore.replicate();
-
+            expect(feedStore.interface.db.address.endsWith(l0.cid + '-documents'));
             expect(await isInSwarm(peer, peer2)).toBeTruthy();
         })
     })

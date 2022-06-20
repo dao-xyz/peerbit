@@ -182,6 +182,10 @@ export class Shard<T extends DBInterface> extends ResultSource {
         from.options.behaviours.typeMap[Peer.name] = Peer;
         await this.close();
 
+        if (parentShardCID) {
+            this.parentShardCID = parentShardCID;
+        }
+
         this.peer = from;
 
         if (!this.trust) {
@@ -221,9 +225,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
         await this.interface.init(this);
 
-        if (parentShardCID) {
-            this.parentShardCID = parentShardCID;
-        }
+
 
         if (!this.cid) {
             // only needed for write, not needed to be loaded automatically
