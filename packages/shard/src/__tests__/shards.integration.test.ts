@@ -8,6 +8,7 @@ import { delay, waitFor } from '../utils';
 import { Document } from './utils';
 import { Peer } from '../peer';
 import BN from 'bn.js';
+import { env } from 'process';
 
 const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 
@@ -115,6 +116,7 @@ describe('cluster', () => {
             let peer2 = await getPeer();
             let loadedShard = await Shard.loadFromCID<BinaryFeedStoreInterface>(l0.cid, peer2.node);
             expect(loadedShard.interface.db.address).toEqual(l0.interface.db.address);
+            await disconnectPeers([peer]);
         })
     })
 
@@ -127,7 +129,6 @@ describe('cluster', () => {
             let l0 = await shardStoreShard();
             await l0.init(peer)
             await l0.replicate();
-            const xyz = (l0.peers.address);
             // Create Feed store
             let peer2 = await getPeer();
 
@@ -137,6 +138,7 @@ describe('cluster', () => {
             await feedStore.replicate();
             expect(feedStore.interface.db.address.endsWith(l0.cid + '-documents'));
             expect(await isInSwarm(peer, peer2)).toBeTruthy();
+            disconnectPeers([peer, peer2]);
         })
     })
 

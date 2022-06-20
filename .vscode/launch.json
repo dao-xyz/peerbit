@@ -18,7 +18,7 @@
             "windows": {
                 "program": "${workspaceFolder}/node_modules/jest/bin/jest"
             },
-            "smartStep": true
+            "smartStep": true,
         },
         {
             "name": "Launch Extension (development)",

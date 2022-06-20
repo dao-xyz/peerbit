@@ -140,7 +140,7 @@ export class AnyPeer {
             /*  let p = (await this.node.pubsub.ls()).map(topic => this.node.pubsub.unsubscribe(topic))
              await Promise.all(p); */
             await this.orbitDB.disconnect();
-            // await this.node.stop();
+            await this.node.stop();
             /*            
              */
         } catch (error) {

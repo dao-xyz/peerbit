@@ -54,6 +54,10 @@ export const createOrbitDBInstance = (node: IPFSInstance | any, id: string, iden
     })
 
 export const getPeer = async (identity?: Identity, isServer: boolean = true, peerCapacity: number = 1000 * 1000 * 1000): Promise<AnyPeer> => {
+    require('events').EventEmitter.prototype._maxListeners = 100;
+    require('events').defaultMaxListeners = 100;
+
+
     let id = uuid();
     await clean(id);
     const peer = new AnyPeer(id);
@@ -69,12 +73,9 @@ export const getPeer = async (identity?: Identity, isServer: boolean = true, pee
     return peer;
 }
 export const disconnectPeers = async (peers: AnyPeer[]): Promise<void> => {
-    peers.forEach(peer => {
-        peer.node.libp2p.dialer.destroy();
-    });
     //await Promise.all(peers.map(peer => peer.node.libp2p.dialer.destroy()));
     await Promise.all(peers.map(peer => peer.disconnect()));
-    await Promise.all(peers.map(peer => peer.id ? clean(peer.id) : () => { }));
+    // await Promise.all(peers.map(peer => peer.id ? clean(peer.id) : () => { }));
 }
 
 export const createIPFSNode = (local: boolean = false, repo: string = './ipfs'): Promise<IPFSInstanceExtended> => {
@@ -86,6 +87,10 @@ export const createIPFSNode = (local: boolean = false, repo: string = './ipfs'):
         config: {
             Bootstrap: [],
             Addresses: { Swarm: [] }
+        },
+        libp2p:
+        {
+            autoDial: false
         }
     } : {
         relay: { enabled: false, hop: { enabled: false, active: false } },
@@ -101,8 +106,11 @@ export const createIPFSNode = (local: boolean = false, repo: string = './ipfs'):
                     `/ip4/127.0.0.1/tcp/0/ws`
                 ]
             }
-
         },
+        libp2p:
+        {
+            autoDial: false
+        }
     }
     return create(ipfsOptions)
 

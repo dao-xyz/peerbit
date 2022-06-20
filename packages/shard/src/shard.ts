@@ -371,46 +371,43 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
     public async addPeer() {
 
-        // Connect to parent shard, and connects to its peers 
-        let parentPeers: Peer[] = [];
-        if (this.parentShardCID) {
-            let parentShard = await Shard.loadFromCID(this.parentShardCID, this.peer.node);
-            // TODO:  fix to work if parent is a cluster
-            await parentShard.init(this.peer);
-            await parentShard.peers.query(new QueryRequestV0({ type: new DocumentQueryRequest({ queries: [] }) }), (res) => {
-                parentPeers = res.results.map(r => (r as ResultWithSource).source as Peer);
-            }, 5000); // Expect at least 1 peer from parent
-
-        }
         if (!this._peers.db) {
             await this._peers.load();
         }
+        let thisPeer = new Peer({
+            key: PublicKey.from(this.peer.orbitDB.identity),
+            addresses: (await this.peer.node.id()).addresses.map(x => x.toString()),
+            timestamp: new BN(+new Date)
+        });
+        await this._peers.db.put(thisPeer);
 
-        const task = async () => {
-            let thisPeer = new Peer({
-                key: PublicKey.from(this.peer.orbitDB.identity),
-                addresses: (await this.peer.node.id()).addresses.map(x => x.toString()),
-                timestamp: new BN(+new Date)
-            });
-            await this._peers.db.put(thisPeer);
 
-            if (parentPeers?.length > 0) {
-                let thisAddressSet = new Set(thisPeer.addresses);
-                const isSelfDial = (other: Peer) => {
-                    for (const addr of other.addresses) {
-                        if (thisAddressSet.has(addr))
-                            return true;
+        // Connect to parent shard, and connects to its peers 
+        if (this.parentShardCID) {
+            let once = false;
+            let parentShard = await Shard.loadFromCID(this.parentShardCID, this.peer.node);
+            // TODO:  fix to work if parent is a cluster
+            await parentShard.init(this.peer);
+            parentShard.peers.query(new QueryRequestV0({ type: new DocumentQueryRequest({ queries: [] }) }), async (res) => {
+                const parentPeers = res.results.map(r => (r as ResultWithSource).source as Peer);
+                if (parentPeers?.length > 0) {
+                    let thisAddressSet = new Set(thisPeer.addresses);
+                    const isSelfDial = (other: Peer) => {
+                        for (const addr of other.addresses) {
+                            if (thisAddressSet.has(addr))
+                                return true;
+                        }
+                        return false;
                     }
-                    return false;
+
+                    // Connect to all parent peers, we could do better (cherry pick), but ok for now
+                    await Promise.all(parentPeers.filter(peer => !isSelfDial(peer)).map((peer) => this.peer.node.swarm.connect(peer.addresses[0])))
+                    once = true;
                 }
 
-                // Connect to all parent peers, we could do better (cherry pick), but ok for now
-                await Promise.all(parentPeers.filter(peer => !isSelfDial(peer)).map((peer) => this.peer.node.swarm.connect(peer.addresses[0])))
-            }
-
-        }
-
-        await task();
+            }, 5000); // Expect at least 1 peer from parent
+            await waitFor(() => once)
+        };
         /*  const cron = async () => {
              while (this.peer.node.isOnline()) {
                  await task();
