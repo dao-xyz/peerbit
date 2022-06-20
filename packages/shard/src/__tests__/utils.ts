@@ -88,7 +88,7 @@ export const createIPFSNode = (local: boolean = false, repo: string = './ipfs'):
             Addresses: { Swarm: [] }
         }
     } : {
-        relay: { enabled: true, hop: { enabled: true, active: true } },
+        relay: { enabled: false, hop: { enabled: false, active: false } },
         /*  relay: { enabled: false, hop: { enabled: false, active: false } }, */
         preload: { enabled: false },
         offline: true,

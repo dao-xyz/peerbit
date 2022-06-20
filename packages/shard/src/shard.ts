@@ -444,9 +444,12 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
         //let id = (await this.peer.node.id()).id;
 
-        await this.loadPeers();
+        /*  await Promise.all([
+            
+         ); */
         await this.interface.load();
         await this.loadMemorySize();
+        await this.loadPeers();
         await this.addPeer();
         const t = 123;
         /* await this.peer.node.pubsub.subscribe(this.queryTopic, async (msg: Message) => {

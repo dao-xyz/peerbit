@@ -341,8 +341,6 @@ describe('cluster', () => {
 
         test('isServer=false can write', async () => {
 
-
-
             let peerServer = await getPeer(undefined, true);
             peerServer.options.behaviours.typeMap[Document.name] = Document;
             let l0 = await documentStoreShard(Document, 'id');
