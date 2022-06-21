@@ -37,12 +37,12 @@
     "uuid": "^8.3.2"
   },
   "peerDependencies": {
-    "@dao-xyz/peer-test-utils": "^0.0.1",
-    "@dao-xyz/time": "^0.0.1",
     "orbit-db-store": "4.x"
   },
   "devDependencies": {
     "@dao-xyz-types/orbit-db": "^0.0.14",
-    "ipfs": "^0.62.3"
+    "ipfs": "^0.62.3",
+    "@dao-xyz/peer-test-utils": "^0.0.2",
+    "@dao-xyz/time": "^0.0.2"
   }
 }
