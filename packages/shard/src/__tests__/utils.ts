@@ -1,7 +1,7 @@
 import fs from 'mz/fs';
 import { Identity } from 'orbit-db-identity-provider';
 import { TypedBehaviours } from '..';
-import { create } from 'ipfs';
+import * as IPFS from 'ipfs';
 import { AnyPeer, IPFSInstanceExtended, PeerOptions } from '../node';
 import { SingleDBInterface, DBInterface, RecursiveShardDBInterface } from '../interface';
 import BN from 'bn.js';
@@ -112,7 +112,7 @@ export const createIPFSNode = (local: boolean = false, repo: string = './ipfs'):
             autoDial: false
         }
     }
-    return create(ipfsOptions)
+    return IPFS.create(ipfsOptions)
 
 }
 

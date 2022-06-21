@@ -17,7 +17,7 @@ module.exports = {
         // allow js in typescript
         allowJs: true,
       },
-      useESM: true,
+      /* useESM: true, */
     },
   },
 };

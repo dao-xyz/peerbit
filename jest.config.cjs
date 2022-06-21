@@ -1,22 +1,14 @@
 module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
-  roots: ["./packages/shard", "./packages/orbit-db-bstores", "./packages/orbit-db-query-store", "./packages/bquery", "./packages/orbit-db-string", "./packages/orbit-db-bfeedstore", "./packages/orbit-db-types", "./packages/orbit-db-bdocstore", "./packages/orbit-db-bkvstore"],
-  transform: {
-    '^.+\\.ts?$': 'ts-jest',
-  },
-  transformIgnorePatterns: [],
-  extensionsToTreatAsEsm: [".ts"],
-  testRegex: "/__tests__/.*\\.(test|spec)\\.ts$",
-  moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
-  testTimeout: 260000,
+  /* roots: ["./packages/shard"], */
+  extensionsToTreatAsEsm: ['.ts'],
   globals: {
-    "ts-jest": {
-      tsconfig: {
-        // allow js in typescript
-        allowJs: true,
-      },
+    'ts-jest': {
       useESM: true,
     },
+  },
+  moduleNameMapper: {
+    '^(\\.{1,2}/.*)\\.js$': '$1',
   },
 };

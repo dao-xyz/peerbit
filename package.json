@@ -29,7 +29,7 @@
         "build": "lerna run build",
         "redeploy": "solana program deploy /Users/admin/git/solchat/src/program/target/deploy/dao-xyz.so --program-id /Users/admin/kkk/westake-3.json",
         "start-with-test-validator": "start-server-and-test 'solana-test-validator --quiet' http://localhost:8899/health test:integration",
-        "test": "node ./node_modules/.bin/jest test  -c jest.config.unit.cjs --runInBand --forceExit",
+        "test": "node --experimental-vm-modules ./node_modules/.bin/jest test  -c jest.config.integration.cjs --runInBand --forceExit",
         "test:integration": "node ./node_modules/.bin/jest test -c jest.config.integration.cjs --runInBand --forceExit",
         "deploy": "yarn deploy:docs && yarn deploy:example",
         "deploy:docs": "yarn docs && gh-pages --dist docs --dotfiles",

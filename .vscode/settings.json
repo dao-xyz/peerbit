@@ -1,6 +1,11 @@
 {
     "editor.formatOnSave": true,
+    /* "jest.nodeEnv": {
+        "NODE_OPTIONS": "--experimental-vm-modules"
+    },
+    "jest.jestCommandLine": "node --experimental-vm-modules ./node_modules/.bin/jest",
+    "jest.enableCodeLens": true */
     "jest.nodeEnv": {
         "NODE_OPTIONS": "--experimental-vm-modules"
-    }
+    },
 }

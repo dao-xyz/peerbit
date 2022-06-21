@@ -41,6 +41,6 @@
   },
   "devDependencies": {
     "@dao-xyz-types/orbit-db": "^0.0.14",
-    "ipfs": "^0.62.3"
+    "ipfs": "^0.63.3"
   }
 }

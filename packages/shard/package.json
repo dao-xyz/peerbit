@@ -29,13 +29,29 @@
         "test:unit": "node ../../node_modules/.bin/jest test  -c  ../../jest.config.unit.cjs --runInBand --forceExit",
         "test:integration": "node ../node_modules/.bin/jest test -c  ../jest.config.integration.cjs --runInBand --forceExit"
     },
+    "jest": {
+        "extensionsToTreatAsEsm": [
+            ".ts"
+        ],
+        "globals": {
+            "ts-jest": {
+                "useESM": true,
+                "tsconfig": {
+                    "allowJs": true
+                }
+            }
+        },
+        "moduleNameMapper": {
+            "^(\\.{1,2}/.*)\\.js$": "$1"
+        }
+    },
     "devDependencies": {
         "@dao-xyz-types/orbit-db": "^0.0.14",
         "@types/bs58": "^4.0.1",
         "@types/ipfs": "https://github.com/lukas2005/types-ipfs.git",
         "@types/mz": "^2.7.4",
         "dotenv": "^15.0.0",
-        "ipfs": "^0.62.3",
+        "ipfs": "^0.63.3",
         "ipfs-core-types": "^0.10.3",
         "mz": "^2.7.0",
         "yaml": "^1.10.2"

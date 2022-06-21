@@ -7,18 +7,24 @@
         {
             "type": "node",
             "request": "launch",
-            "name": "Debug Tests",
-            "program": "${workspaceRoot}/node_modules/.bin/jest",
+            "name": "vscode-jest-tests",
+            "program": "${workspaceFolder}/node_modules/.bin/jest",
+            "runtimeArgs": [
+                "--experimental-vm-modules",
+                "--es-module-specifier-resolution=node"
+            ],
             "cwd": "${workspaceRoot}",
             "args": [
-                "--i",
-                "--config",
-                "jest.config.cjs",
+                "-c",
+                "jest.config.integration.cjs",
+                "--runInBand" /* ,
+                "--forceExit" */
             ],
+            "console": "integratedTerminal",
             "windows": {
                 "program": "${workspaceFolder}/node_modules/jest/bin/jest"
             },
-            "smartStep": true,
+            "internalConsoleOptions": "neverOpen"
         },
         {
             "name": "Launch Extension (development)",

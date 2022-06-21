@@ -34,6 +34,6 @@
     "uuid": "^8.3.2"
   },
   "devDependencies": {
-    "ipfs": "^0.62.3"
+    "ipfs": "^0.63.3"
   }
 }
