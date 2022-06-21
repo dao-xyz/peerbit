@@ -8,7 +8,7 @@ import BN from 'bn.js';
 import { Constructor, field, variant } from '@dao-xyz/borsh';
 import { BinaryDocumentStore, BinaryDocumentStoreOptions } from '@dao-xyz/orbit-db-bdocstore';
 import { BinaryFeedStoreOptions, BinaryFeedStore } from '@dao-xyz/orbit-db-bfeedstore';
-
+import { v4 as uuid } from 'uuid';
 import { Shard } from '../shard';
 import { getPeer as getPeerTest, getConnectedPeers as getConnectedPeersTest, Peer } from '@dao-xyz/peer-test-utils';
 export const getPeer = async (identity?: Identity, isServer?: boolean, peerCapacity?: number) => getPeerTest(identity).then((peer) => createAnyPeer(peer, isServer, peerCapacity));
@@ -82,6 +82,7 @@ export class BinaryFeedStoreInterface extends DBInterface {
 }
 
 export const feedStoreShard = async<T>(clazz: Constructor<T>) => new Shard({
+    id: uuid(),
     cluster: 'x',
     shardSize: new BN(500 * 1000),
     interface: new BinaryFeedStoreInterface({
@@ -131,6 +132,7 @@ export class DocumentStoreInterface<T> extends DBInterface {
 }
 
 export const documentStoreShard = async <T>(clazz: Constructor<T>, indexBy: string = 'id') => new Shard({
+    id: uuid(),
     cluster: 'x',
     shardSize: new BN(500 * 1000),
     interface: new DocumentStoreInterface<T>({
@@ -145,6 +147,7 @@ export const documentStoreShard = async <T>(clazz: Constructor<T>, indexBy: stri
 })
 
 export const shardStoreShard = async <T extends DBInterface>() => new Shard<RecursiveShardDBInterface<T>>({
+    id: uuid(),
     cluster: 'x',
     shardSize: new BN(500 * 1000),
     interface: new RecursiveShardDBInterface({

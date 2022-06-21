@@ -121,6 +121,9 @@ export type TypedBehaviours = {
 export class Shard<T extends DBInterface> extends ResultSource {
 
     @field({ type: 'String' })
+    id: string
+
+    @field({ type: 'String' })
     cluster: string
 
     @field({ type: P2PTrust })
@@ -149,6 +152,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
     cid: string;
     constructor(props?: {
+        id: string,
         cluster: string
         interface: T
         shardSize: BN
@@ -157,6 +161,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
         trust: P2PTrust
         shardIndex: BN
     } | {
+        id: string,
         cluster: string
         interface: T
         shardSize: BN
@@ -495,7 +500,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
     }; */
 
     getDBName(name: string): string {
-        return (this.parentShardCID ? this.parentShardCID : '-') + '-' + name;
+        return (this.parentShardCID ? this.parentShardCID : '-') + this.id + '-' + name;
     }
 
     async save(node: IPFSInstanceExtended): Promise<string> {
