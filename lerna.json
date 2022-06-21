@@ -9,6 +9,8 @@
         "packages/orbit-db-types",
         "packages/orbit-db-pubsub",
         "packages/orbit-db-string",
+        "packages/time",
+        "packages/peer-test-utils",
         "packages/bquery"
     ],
     "version": "independent",
