@@ -64,8 +64,8 @@ export class QueryStore<T, X> extends Store<T, X> {
     this._subscribed = true;
   }
 
-  public query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, maxAggregationTime?: number): Promise<void> {
-    return query(this._ipfs.pubsub, this.queryTopic, queryRequest, responseHandler, maxAggregationTime);
+  public query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0,) => void, waitForAmount?: number, maxAggregationTime?: number): Promise<void> {
+    return query(this._ipfs.pubsub, this.queryTopic, queryRequest, responseHandler, waitForAmount, maxAggregationTime);
   }
 
   public get queryTopic(): string {

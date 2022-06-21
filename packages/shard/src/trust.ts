@@ -77,6 +77,10 @@ export class P2PTrust extends DBInterface {
     async init(shard: Shard<any>): Promise<void> {
         shard.peer.options.behaviours.typeMap[P2PTrustRelation.name] = P2PTrustRelation;
         await this.db.init(shard);
+        if (!this.cid) {
+            await this.save(shard.peer.node);
+        }
+
     }
 
 

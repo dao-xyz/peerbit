@@ -1,33 +1,9 @@
 
-import { field, option, variant } from '@dao-xyz/borsh';
-import BN from 'bn.js';
 import { StringResultSource, StringStore, STRING_STORE_TYPE } from '../string-store';
-import { QueryRequestV0, QueryResponseV0, ResultWithSource, ResultSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates } from '@dao-xyz/bquery';
-import { Peer, waitFor } from './utils';
-import { disconnectPeers, getPeer } from './utils';
+import { QueryRequestV0, QueryResponseV0, ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates } from '@dao-xyz/bquery';
 import { query } from '@dao-xyz/bquery';
-
-@variant([1, 0])
-class Document extends ResultSource {
-
-    @field({ type: 'String' })
-    id: string;
-
-    @field({ type: option('String') })
-    name?: string;
-
-    @field({ type: option('u64') })
-    number?: BN;
-
-
-    constructor(opts?: Document) {
-        super();
-        if (opts) {
-            Object.assign(this, opts);
-        }
-    }
-}
-
+import { disconnectPeers, getConnectedPeers, Peer } from '@dao-xyz/peer-test-utils';
+import { waitFor } from '@dao-xyz/time';
 
 const storeTestSetup = async (): Promise<{
     creator: Peer,
@@ -37,8 +13,7 @@ const storeTestSetup = async (): Promise<{
 }> => {
 
 
-    let peer = await getPeer();
-    let observer = await getPeer();
+    let [peer, observer] = await getConnectedPeers(2);
 
     // Create store
     let storeCreator = await peer.orbitDB.open<StringStore>('store', { ...{ create: true, type: STRING_STORE_TYPE, subscribeToQueries: true } as IStoreOptions })

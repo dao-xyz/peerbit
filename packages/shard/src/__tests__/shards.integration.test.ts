@@ -1,14 +1,13 @@
 
 import { Shard } from '../shard';
-import { AnyPeer } from '../node';
-import { BinaryFeedStoreInterface, disconnectPeers, DocumentStoreInterface, documentStoreShard, getPeer, shardStoreShard } from './utils';
+import { AnyPeer, PeerOptions } from '../node';
+import { BinaryFeedStoreInterface, DocumentStoreInterface, Document, documentStoreShard, getPeer, shardStoreShard, getConnectedPeers } from './utils';
 import { P2PTrust } from '../trust';
 import { PublicKey } from '../key';
-import { delay, waitFor } from '../utils';
-import { Document } from './utils';
 import { Peer } from '../peer';
 import BN from 'bn.js';
-import { env } from 'process';
+import { connectPeers, disconnectPeers } from '@dao-xyz/peer-test-utils';
+import { delay, waitFor } from '@dao-xyz/time';
 
 const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 
@@ -108,32 +107,31 @@ describe('cluster', () => {
     describe('manifest', () => {
         test('save load', async () => {
 
-            let peer = await getPeer();
+            let [peer, peer2] = await getConnectedPeers(2);
+            let l1 = (await peer.node.id()).addresses[0];
+            await peer2.node.swarm.connect(l1)
+
             let l0 = await documentStoreShard(Document);
             await l0.init(peer);
             expect(l0.cid).toBeDefined();
-
-            let peer2 = await getPeer();
             let loadedShard = await Shard.loadFromCID<BinaryFeedStoreInterface>(l0.cid, peer2.node);
             expect(loadedShard.interface.db.address).toEqual(l0.interface.db.address);
-            await disconnectPeers([peer]);
+            await disconnectPeers([peer, peer2]);
         })
     })
 
     describe('recursive shard', () => {
         test('peer backward connect', async () => {
 
-            let peer = await getPeer();
+            let [peer, peer2] = await getConnectedPeers(2)
 
             // Create Root shard
             let l0 = await shardStoreShard();
             await l0.init(peer)
             await l0.replicate();
             // Create Feed store
-            let peer2 = await getPeer();
 
             expect(await isInSwarm(peer, peer2)).toBeFalsy();
-
             let feedStore = await (await documentStoreShard(Document)).init(peer2, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
             await feedStore.replicate();
             expect(feedStore.interface.db.address.endsWith(l0.cid + '-documents'));
@@ -145,7 +143,7 @@ describe('cluster', () => {
     describe('resiliance', () => {
         test('connect to remote', async () => {
 
-            let peer = await getPeer();
+            let [peer, peer2] = await getConnectedPeers(2);
 
             // Create Root shard
             let l0 = await shardStoreShard<DocumentStoreInterface<Document>>();
@@ -160,19 +158,18 @@ describe('cluster', () => {
 
 
             // --- Load assert, from another peer
-            let peer2 = await getPeer();
             await l0.init(peer2)
             await l0.interface.db.load(1);
             expect(Object.keys(l0.interface.db.db.index._index).length).toEqual(1);
             let feedStoreLoaded = await l0.interface.loadShard(documentStore.cid);
             await feedStoreLoaded.interface.db.load(1);
-            expect(Object.keys(feedStoreLoaded.interface.db.db.index._index).length).toEqual(1);
+            await waitFor(() => Object.keys(feedStoreLoaded.interface.db.db.index._index).length == 1)
             await disconnectPeers([peer, peer2]);
 
         })
 
         test('first peer drop, data still alive because 2nd peer is up', async () => {
-            let peer = await getPeer();
+            let [peer, peer2, peer3] = await getConnectedPeers(3);
 
             // Create Root shard
             let l0 = await shardStoreShard();
@@ -185,7 +182,6 @@ describe('cluster', () => {
             await l0.interface.db.db.put(l1);
 
             // --- Load assert, from another peer
-            let peer2 = await getPeer();
             await l0.init(peer2)
             await l0.interface.db.load(1);
             await l0.replicate();
@@ -195,7 +191,6 @@ describe('cluster', () => {
             // Drop 1 peer and make sure a third peer can access data
             await disconnectPeers([peer]);
 
-            let peer3 = await getPeer();
             await l0.init(peer3)
             await l0.interface.db.load(1);
             expect(Object.keys(l0.interface.db.db.index._index).length).toEqual(1);
@@ -273,8 +268,8 @@ describe('cluster', () => {
  
          }) */
         test('peer remote counter', async () => {
-            let peer = await getPeer();
-            let peer2 = await getPeer();
+            let [peer, peer2] = await getConnectedPeers(2);
+
 
             let l0a = await shardStoreShard();
             await l0a.init(peer);
@@ -285,19 +280,20 @@ describe('cluster', () => {
             });
             await l0a.peers.load();
             await l0a.peers.db.put(thisPeer);
-            await delay(10000);
             let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
             await l0b.init(peer2);
-            expect(await l0b.getRemotePeersSize()).toEqual(1);
+            expect(await l0b.getRemotePeersSize(true)).toEqual(1);
+            await disconnectPeers([peer, peer2]);
         })
 
         test('subscribe, request', async () => {
             let peer = await getPeer();
+            let peer2 = await getPeer(undefined, false);
+            await connectPeers(peer, peer2);
+
             let l0a = await shardStoreShard();
             await l0a.init(peer);
-
-            let peer2 = await getPeer(undefined, false);
-
+            await l0a.trust.load();
             await l0a.trust.addTrust(PublicKey.from(peer2.orbitDB.identity));
             await waitFor(() => l0a.trust.db.db.size == 1)// add some delay because trust db is not synchronous
 
@@ -309,7 +305,7 @@ describe('cluster', () => {
 
             expect(l0a.trust.rootTrust.equals(l0b.trust.rootTrust));            // Replication step
             await peer.subscribeForReplication(l0a.trust);
-            await delay(1000); // Pubsub is flaky, wait some time before requesting shard
+            await delay(3000); // Pubsub is flaky, wait some time before requesting shard
             await l0b.requestReplicate();
             //  --------------
             expect(await l0b.getRemotePeersSize()).toEqual(1)
@@ -346,12 +342,15 @@ describe('cluster', () => {
         test('isServer=false can write', async () => {
 
             let peerServer = await getPeer(undefined, true);
+            let peerNonServer = await getPeer(undefined, false);
+            await connectPeers(peerServer, peerNonServer)
+
             peerServer.options.behaviours.typeMap[Document.name] = Document;
             let l0 = await documentStoreShard(Document, 'id');
             await l0.init(peerServer);
             await l0.replicate();
 
-            let peerNonServer = await getPeer(undefined, false);
+
             peerNonServer.options.behaviours.typeMap[Document.name] = Document;
             let l0Write = await Shard.loadFromCID<DocumentStoreInterface<Document>>(l0.cid, peerNonServer.node);
             await l0Write.init(peerNonServer);
@@ -359,7 +358,7 @@ describe('cluster', () => {
             //await peerNonServer.orbitDB["_pubsub"].subscribe(l0Write.interface.db.address.toString(), peerNonServer.orbitDB["_onMessage"].bind(peerNonServer.orbitDB), peerNonServer.orbitDB["_onPeerConnected"].bind(peerNonServer.orbitDB))
             let subscriptions = await peerNonServer.node.pubsub.ls();
             expect(subscriptions.length).toEqual(0); // non server should not have any subscriptions idle
-            await delay(10000)
+            await delay(3000)
             await l0Write.interface.db.load();
             await l0Write.interface.db.write((x) => l0Write.interface.db.db.put(x), new Document({
                 id: 'hello'
@@ -369,7 +368,7 @@ describe('cluster', () => {
             await waitFor(() => l0.interface.db.db.size > 0);
             subscriptions = await peerNonServer.node.pubsub.ls();
             expect(subscriptions.length).toEqual(0);  // non server should not have any subscriptions after write
-            await disconnectPeers([peerNonServer]);
+            await disconnectPeers([peerServer, peerNonServer]);
         })
     })
 

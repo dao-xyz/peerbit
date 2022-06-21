@@ -10,24 +10,25 @@ import { BinaryDocumentStore, BinaryDocumentStoreOptions } from '@dao-xyz/orbit-
 import { BinaryFeedStoreOptions, BinaryFeedStore } from '@dao-xyz/orbit-db-bfeedstore';
 
 import { Shard } from '../shard';
-import { IPFS as IPFSInstance } from 'ipfs-core-types'
-import OrbitDB from 'orbit-db';
-import { v4 as uuid } from 'uuid';
-import { delay } from '../utils';
+import { getPeer as getPeerTest, getConnectedPeers as getConnectedPeersTest, Peer } from '@dao-xyz/peer-test-utils';
+export const getPeer = async (identity?: Identity, isServer?: boolean, peerCapacity?: number) => getPeerTest(identity).then((peer) => createAnyPeer(peer, isServer, peerCapacity));
+export const getConnectedPeers = async (amountOf: number, identity?: Identity, isServer?: boolean, peerCapacity?: number) => getConnectedPeersTest(amountOf, identity).then(peers => Promise.all(peers.map(peer => createAnyPeer(peer, isServer, peerCapacity))));
+const createAnyPeer = async (peer: Peer, isServer: boolean = true, peerCapacity: number = 1000 * 1000 * 1000): Promise<AnyPeer> => {
+    const anyPeer = new AnyPeer(peer.id);
+    let options = new PeerOptions({
+        behaviours: {
+            typeMap: {}
+        },
+        directoryId: peer.id,
+        replicationCapacity: peerCapacity,
+        isServer
+    });
 
-import PubSub from '@dao-xyz/orbit-db-pubsub'
-export const clean = (id?: string) => {
-    let suffix = id ? id + '/' : '';
-    try {
-        fs.rmSync('./ipfs/' + suffix, { recursive: true, force: true });
-        fs.rmSync('./orbitdb/' + suffix, { recursive: true, force: true });
-        fs.rmSync('./orbit-db/' + suffix, { recursive: true, force: true });
-        fs.rmSync('./orbit-db-stores/' + suffix, { recursive: true, force: true });
-    } catch (error) {
+    await anyPeer.create({ options, orbitDB: peer.orbitDB });
+    anyPeer.options.behaviours.typeMap[Document.name] = Document
+    return anyPeer;
 
-    }
 }
-
 export class Document {
     @field({ type: 'String' })
     id: string;
@@ -39,82 +40,12 @@ export class Document {
     }
 }
 
-
-const testBehaviours: TypedBehaviours = {
+/* const testBehaviours: TypedBehaviours = {
 
     typeMap: {
         [Document.name]: Document
     }
-}
-export const createOrbitDBInstance = (node: IPFSInstance | any, id: string, identity?: Identity) => OrbitDB.createInstance(node,
-    {
-        identity: identity,
-        directory: './orbit-db/' + id,
-        broker: PubSub
-    })
-
-export const getPeer = async (identity?: Identity, isServer: boolean = true, peerCapacity: number = 1000 * 1000 * 1000): Promise<AnyPeer> => {
-    require('events').EventEmitter.prototype._maxListeners = 100;
-    require('events').defaultMaxListeners = 100;
-
-
-    let id = uuid();
-    await clean(id);
-    const peer = new AnyPeer(id);
-    let options = new PeerOptions({
-        behaviours: testBehaviours,
-        directoryId: id,
-        replicationCapacity: peerCapacity,
-        isServer
-    });
-    let node = await createIPFSNode(false, './ipfs/' + id + '/');
-    let orbitDB = await createOrbitDBInstance(node, id, identity);
-    await peer.create({ options, orbitDB });
-    return peer;
-}
-export const disconnectPeers = async (peers: AnyPeer[]): Promise<void> => {
-    //await Promise.all(peers.map(peer => peer.node.libp2p.dialer.destroy()));
-    await Promise.all(peers.map(peer => peer.disconnect()));
-    // await Promise.all(peers.map(peer => peer.id ? clean(peer.id) : () => { }));
-}
-
-export const createIPFSNode = (local: boolean = false, repo: string = './ipfs'): Promise<IPFSInstanceExtended> => {
-    // Create IPFS instance
-    const ipfsOptions = local ? {
-        preload: { enabled: false },
-        repo: repo,
-        EXPERIMENTAL: { pubsub: true },
-        config: {
-            Bootstrap: [],
-            Addresses: { Swarm: [] }
-        },
-        libp2p:
-        {
-            autoDial: false
-        }
-    } : {
-        relay: { enabled: false, hop: { enabled: false, active: false } },
-        /*  relay: { enabled: false, hop: { enabled: false, active: false } }, */
-        preload: { enabled: false },
-        offline: true,
-        repo: repo,
-        EXPERIMENTAL: { pubsub: true },
-        config: {
-            Addresses: {
-                Swarm: [
-                    `/ip4/0.0.0.0/tcp/0`,
-                    `/ip4/127.0.0.1/tcp/0/ws`
-                ]
-            }
-        },
-        libp2p:
-        {
-            autoDial: false
-        }
-    }
-    return create(ipfsOptions)
-
-}
+} */
 
 @variant([1, 0])
 export class BinaryFeedStoreInterface extends DBInterface {

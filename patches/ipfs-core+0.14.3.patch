@@ -1,5 +1,5 @@
 diff --git a/node_modules/ipfs-core/cjs/src/components/libp2p.js b/node_modules/ipfs-core/cjs/src/components/libp2p.js
-index 68cb57c..75c5e05 100644
+index 68cb57c..ecd01c9 100644
 --- a/node_modules/ipfs-core/cjs/src/components/libp2p.js
 +++ b/node_modules/ipfs-core/cjs/src/components/libp2p.js
 @@ -16,7 +16,7 @@ var bootstrap = require('libp2p-bootstrap');
@@ -36,14 +36,14 @@ index 68cb57c..75c5e05 100644
      }
      return libp2pPubsubRouters.routers[router];
    };
-@@ -115,6 +115,7 @@ function getLibp2pOptions({options, config, datastore, keys, keychainConfig, pee
-       noAnnounce: get__default["default"](options, 'addresses.noAnnounce', get__default["default"](config, 'Addresses.NoAnnounce', []))
+@@ -89,6 +89,7 @@ function getLibp2pOptions({options, config, datastore, keys, keychainConfig, pee
      },
-     connectionManager: get__default["default"](options, 'connectionManager', {
-+      autoDial: options.libp2p?.autoDial !== undefined ? options.libp2p?.autoDial : true,
-       maxConnections: get__default["default"](options, 'config.Swarm.ConnMgr.HighWater', get__default["default"](config, 'Swarm.ConnMgr.HighWater')),
-       minConnections: get__default["default"](options, 'config.Swarm.ConnMgr.LowWater', get__default["default"](config, 'Swarm.ConnMgr.LowWater'))
-     }),
+     config: {
+       peerDiscovery: {
++        autoDial: options.autoDial !== undefined ? options.autoDial : true,
+         mdns: { enabled: get__default["default"](options, 'config.Discovery.MDNS.Enabled', get__default["default"](config, 'Discovery.MDNS.Enabled', true)) },
+         webRTCStar: { enabled: get__default["default"](options, 'config.Discovery.webRTCStar.Enabled', get__default["default"](config, 'Discovery.webRTCStar.Enabled', true)) },
+         bootstrap: { list: get__default["default"](options, 'config.Bootstrap', get__default["default"](config, 'Bootstrap', [])) }
 @@ -122,7 +123,7 @@ function getLibp2pOptions({options, config, datastore, keys, keychainConfig, pee
        datastore: keys,
        ...keychainConfig
@@ -53,8 +53,55 @@ index 68cb57c..75c5e05 100644
    };
    let constructorOptions = get__default["default"](options, 'libp2p', undefined);
    if (typeof constructorOptions === 'function') {
+diff --git a/node_modules/ipfs-core/cjs/src/components/network.js b/node_modules/ipfs-core/cjs/src/components/network.js
+index 060adee..fab1317 100644
+--- a/node_modules/ipfs-core/cjs/src/components/network.js
++++ b/node_modules/ipfs-core/cjs/src/components/network.js
+@@ -8,7 +8,7 @@ var multiaddr = require('multiaddr');
+ var errCode = require('err-code');
+ var blockStorage = require('../block-storage.js');
+ 
+-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
++function _interopDefaultLegacy(e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+ 
+ var errCode__default = /*#__PURE__*/_interopDefaultLegacy(errCode);
+ 
+@@ -20,13 +20,13 @@ class Network {
+     this.repo = repo;
+     this.blockstore = blockstore;
+   }
+-  static async start({peerId, repo, print, hashers, options}) {
++  static async start({ peerId, repo, print, hashers, options }) {
+     if (repo.closed) {
+       await repo.open();
+     }
+     const config = await repo.config.getAll();
+     const libp2p$1 = await libp2p.createLibp2p({
+-      options,
++      options: options.libp2p,
+       repo,
+       peerId,
+       multiaddrs: readAddrs(peerId, config),
+@@ -38,7 +38,7 @@ class Network {
+     }
+     await libp2p$1.start();
+     for (const ma of libp2p$1.multiaddrs) {
+-      print(`Swarm listening on ${ ma }/p2p/${ peerId.toB58String() }`);
++      print(`Swarm listening on ${ma}/p2p/${peerId.toB58String()}`);
+     }
+     const bitswap = ipfsBitswap.createBitswap(libp2p$1, repo.blocks, {
+       statsEnabled: true,
+@@ -68,7 +68,7 @@ const readAddrs = (peerId, config) => {
+     }
+     const maId = ma.getPeerId();
+     if (maId && maId !== peerIdStr) {
+-      ma = ma.encapsulate(`/p2p/${ peerIdStr }`);
++      ma = ma.encapsulate(`/p2p/${peerIdStr}`);
+     }
+     addrs.push(ma);
+   }
 diff --git a/node_modules/ipfs-core/cjs/src/components/storage.js b/node_modules/ipfs-core/cjs/src/components/storage.js
-index 80d9e34..60b312f 100644
+index 80d9e34..2606cf1 100644
 --- a/node_modules/ipfs-core/cjs/src/components/storage.js
 +++ b/node_modules/ipfs-core/cjs/src/components/storage.js
 @@ -14,7 +14,7 @@ var errors$1 = require('../errors.js');
@@ -93,6 +140,15 @@ index 80d9e34..60b312f 100644
    print('generating %s keypair...', algorithm);
    return PeerId__default["default"].create({
      keyType: algorithm,
+@@ -144,7 +144,7 @@ const configureRepo = async (repo, options) => {
+   }
+   const peerId = await PeerId__default["default"].createFromPrivKey(changed.Identity.PrivKey);
+   const libp2p$1 = await libp2p.createLibp2p({
+-    options: undefined,
++    options: options.libp2p,
+     multiaddrs: undefined,
+     peerId,
+     repo,
 @@ -167,7 +167,7 @@ const applyProfiles = (config, profiles$1) => {
    return (profiles$1 || []).reduce((config, name) => {
      const profile = profiles.profiles[name];

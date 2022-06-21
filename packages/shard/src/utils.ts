@@ -1,32 +1,6 @@
+import { delay, waitFor } from "@dao-xyz/time";
 import Store from "orbit-db-store";
 const MAX_REPLICATION_WAIT_TIME = 15 * 1000;
-
-export const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
-export const waitFor = async (fn: () => boolean, timeout: number = 60 * 1000) => {
-
-    let startTime = +new Date;
-    while (+new Date - startTime < timeout) {
-        if (fn()) {
-            return;
-        }
-        await delay(50);
-    }
-    throw new Error("Timed out")
-
-};
-export const waitForAsync = async (fn: () => Promise<boolean>, timeout: number = 60 * 1000) => {
-
-    let startTime = +new Date;
-    while (+new Date - startTime < timeout) {
-        if (await fn()) {
-            return;
-        }
-        await delay(50);
-    }
-    throw new Error("Timed out")
-
-};
-
 
 
 export const waitForReplicationEvents = async (store: Store<any, any>, waitForReplicationEventsCount: number) => {

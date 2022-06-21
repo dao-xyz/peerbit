@@ -127,11 +127,11 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
         return this.db
     }
 
-    async query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, maxAggregationTime?: number) {
+    async query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, waitForAmount?: number, maxAggregationTime?: number) {
         if (!this.address) {
             throw new Error("Can not query because DB address is unknown")
         }
-        return query(this._shard.peer.node.pubsub, getQueryTopic(this.address), queryRequest, responseHandler, maxAggregationTime)
+        return query(this._shard.peer.node.pubsub, getQueryTopic(this.address), queryRequest, responseHandler, waitForAmount, maxAggregationTime)
     }
 
 

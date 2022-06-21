@@ -1,6 +1,6 @@
 {
     "editor.formatOnSave": true,
-    "jest.nodeEnv": {
+    /*  "jest.nodeEnv": {
         "NODE_OPTIONS": "--experimental-vm-modules"
-    }
+    } */
 }

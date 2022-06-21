@@ -1,20 +1,19 @@
 import { Constructor, deserialize, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
 import OrbitDB from "orbit-db";
 import BN from 'bn.js';
-import Store from "orbit-db-store";
 import CounterStore from "orbit-db-counterstore";
-import { BinaryKeyValueStore, BinaryKeyValueStoreOptions } from '@dao-xyz/orbit-db-bkvstore';
 /* import {  waitForReplicationEvents } from "./stores"; */
-import { delay, waitFor, waitForAsync, waitForReplicationEvents } from "./utils";
+import { waitForReplicationEvents } from "./utils";
 import { AnyPeer, IPFSInstanceExtended } from "./node";
 import { Peer } from "./peer";
 import { PublicKey } from "./key";
 import { P2PTrust } from "./trust";
-import { DBInterface, onReplicationMark, SingleDBInterface } from "./interface";
+import { DBInterface, SingleDBInterface } from "./interface";
 import { BinaryDocumentStore, BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
 import { StoreOptions } from '@dao-xyz/orbit-db-bstores';
 import { DocumentQueryRequest, QueryRequestV0, ResultSource, ResultWithSource } from '@dao-xyz/bquery';
 import { CounterStoreOptions } from "./stores";
+import { waitFor, waitForAsync } from "@dao-xyz/time";
 export const SHARD_INDEX = 0;
 const MAX_SHARD_SIZE = 1024 * 500 * 1000;
 
@@ -273,12 +272,19 @@ export class Shard<T extends DBInterface> extends ResultSource {
         }
         return this._peers;
     }
-    async getRemotePeersSize(maxAggregationTime: number = 3000): Promise<number> {
+    async getRemotePeersSize(waitOnlyForOne: boolean = false, maxAggregationTime: number = 3000): Promise<number> {
         const db = this.peers;
         let size: number = undefined;
-        await db.query(new QueryRequestV0({
+        const queryPromise = db.query(new QueryRequestV0({
             type: new DocumentQueryRequest({ queries: [] }),
-        }), (resp) => { size = size ? Math.max(resp.results.length, size) : resp.results.length }, maxAggregationTime)
+        }), (resp) => { size = size ? Math.max(resp.results.length, size) : resp.results.length }, waitOnlyForOne ? 1 : undefined, maxAggregationTime)
+        if (waitOnlyForOne) {
+            await waitFor(() => size !== undefined, maxAggregationTime)
+            // will cause mem leak for a while (max aggregation time)
+        }
+        else {
+            await queryPromise;
+        }
         if (size == undefined) { // No peers
             size = 0;
         }
@@ -385,12 +391,14 @@ export class Shard<T extends DBInterface> extends ResultSource {
         // Connect to parent shard, and connects to its peers 
         if (this.parentShardCID) {
             let once = false;
-            let parentShard = await Shard.loadFromCID(this.parentShardCID, this.peer.node);
+            let parentShard = await Shard.loadFromCID(this.parentShardCID, this.peer.node); //WE CANT LOAD TS IF NOT CONNECTED
             // TODO:  fix to work if parent is a cluster
             await parentShard.init(this.peer);
-            parentShard.peers.query(new QueryRequestV0({ type: new DocumentQueryRequest({ queries: [] }) }), async (res) => {
+            let gotOne = false;
+            await parentShard.peers.query(new QueryRequestV0({ type: new DocumentQueryRequest({ queries: [] }) }), async (res) => {
                 const parentPeers = res.results.map(r => (r as ResultWithSource).source as Peer);
                 if (parentPeers?.length > 0) {
+                    gotOne = true;
                     let thisAddressSet = new Set(thisPeer.addresses);
                     const isSelfDial = (other: Peer) => {
                         for (const addr of other.addresses) {
@@ -405,8 +413,10 @@ export class Shard<T extends DBInterface> extends ResultSource {
                     once = true;
                 }
 
-            }, 5000); // Expect at least 1 peer from parent
-            await waitFor(() => once)
+            }, undefined, 5000); // Expect at least 1 peer from parent
+            if (!gotOne) {
+                throw new Error("Expected to find at least 1 parent peer, got 0")
+            }
         };
         /*  const cron = async () => {
              while (this.peer.node.isOnline()) {
@@ -446,7 +456,6 @@ export class Shard<T extends DBInterface> extends ResultSource {
          ); */
         await this.interface.load();
         await this.loadMemorySize();
-        await this.loadPeers();
         await this.addPeer();
         const t = 123;
         /* await this.peer.node.pubsub.subscribe(this.queryTopic, async (msg: Message) => {
@@ -495,9 +504,6 @@ export class Shard<T extends DBInterface> extends ResultSource {
         let addResult = await node.add(arr)
         let pinResult = await node.pin.add(addResult.cid)
         this.cid = pinResult.toString();
-
-        await this.trust.save(node);
-
         return this.cid;
     }
 

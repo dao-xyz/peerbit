@@ -2,13 +2,13 @@
 import OrbitDB from 'orbit-db';
 import { CONTRACT_ACCESS_CONTROLLER } from './identity';
 import { Shard, TypedBehaviours } from './shard';
-import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import { Peer } from './peer';
 import { v4 as uuid } from 'uuid';
 import { P2PTrust } from './trust';
 import { deserialize } from '@dao-xyz/borsh';
 import { PublicKey } from './key';
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores';
+import { IPFS as IPFSInstance } from 'ipfs-core-types'
 
 export interface IPFSInstanceExtended extends IPFSInstance {
     libp2p: any
@@ -70,7 +70,7 @@ export class AnyPeer {
 
     public options: PeerOptions;
 
-    public id?: string;
+    public id: string;
 
     // to know whether we should treat the peer as long lasting or temporary with web restrictions
 

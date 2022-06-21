@@ -3,9 +3,9 @@ import { field, option, variant } from '@dao-xyz/borsh';
 import BN from 'bn.js';
 import { BinaryDocumentStore, BINARY_DOCUMENT_STORE_TYPE, DocumentStoreOptions } from '../document-store';
 import { DocumentQueryRequest, Compare, FieldCompareQuery, QueryRequestV0, QueryResponseV0, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort, ResultSource } from '@dao-xyz/bquery';
-import { Peer, waitFor } from './utils';
-import { disconnectPeers, getPeer } from './utils';
 import { query } from '@dao-xyz/bquery';
+import { disconnectPeers, getPeer, Peer } from '@dao-xyz/peer-test-utils';
+import { waitFor } from '@dao-xyz/time';
 
 @variant([1, 0])
 class Document extends ResultSource {

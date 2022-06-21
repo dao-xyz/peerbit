@@ -7,17 +7,20 @@
         {
             "type": "node",
             "request": "launch",
-            "name": "Debug Tests",
+            "name": "vscode-jest-tests",
             "program": "${workspaceRoot}/node_modules/.bin/jest",
             "cwd": "${workspaceRoot}",
             "args": [
-                "--i",
-                "--config",
-                "jest.config.cjs",
+                "--runInBand",
+                "--forceExit",
+                "--detectOpenHandles",
+                "--colors",
+                "--verbose"
             ],
             "windows": {
                 "program": "${workspaceFolder}/node_modules/jest/bin/jest"
             },
+            "console": "integratedTerminal",
             "smartStep": true,
         },
         {
