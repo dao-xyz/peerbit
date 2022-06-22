@@ -7,17 +7,16 @@
 
 import { Constructor } from "@dao-xyz/borsh";
 import OrbitDB from "orbit-db";
-import Store from "orbit-db-store";
+import { IStoreOptions, Store, Index } from '@dao-xyz/orbit-db-store';
 
-export type IQueryStoreOptions = IStoreOptions & { subscribeToQueries: boolean };
 
-export class StoreOptions<B extends Store<any, any>> {
+export class BStoreOptions<B extends Store<any, any>> {
 
     constructor() {
 
     }
 
-    async newStore(_address: string, _orbitDB: OrbitDB, _typeMap: { [key: string]: Constructor<any> }, _options: IQueryStoreOptions): Promise<B> {
+    async newStore(_address: string, _orbitDB: OrbitDB, _typeMap: { [key: string]: Constructor<any> }, _options: IStoreOptions<any>): Promise<B> {
         throw new Error("Not implemented")
     }
 

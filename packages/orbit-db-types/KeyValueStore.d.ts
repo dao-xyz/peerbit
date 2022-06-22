@@ -1,7 +1,7 @@
 declare module "orbit-db-kvstore" {
-    import Store from "orbit-db-store";
+    import { Store } from '@dao-xyz/orbit-db-store';
 
-    export default class KeyValueStore<V> extends Store<V, any> {
+    export default class KeyValueStore<V> extends Store<any> {
         get(key: string): V;
 
         put(key: string, value: V, options?: {}): Promise<string>;

@@ -1,7 +1,7 @@
 declare module "orbit-db-counterstore" {
-    import Store from "orbit-db-store";
+    import { Store } from '@dao-xyz/orbit-db-store';
 
-    export default class CounterStore extends Store<number, any> {
+    export default class CounterStore extends Store<any, any> {
         value: number;
 
         inc(value?: number): Promise<string>;

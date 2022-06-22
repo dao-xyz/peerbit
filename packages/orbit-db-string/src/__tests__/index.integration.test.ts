@@ -4,6 +4,7 @@ import { QueryRequestV0, QueryResponseV0, ResultWithSource, StringQueryRequest, 
 import { query } from '@dao-xyz/bquery';
 import { disconnectPeers, getConnectedPeers, Peer } from '@dao-xyz/peer-test-utils';
 import { waitFor } from '@dao-xyz/time';
+import { IStoreOptions } from '@dao-xyz/orbit-db-store';
 
 const storeTestSetup = async (): Promise<{
     creator: Peer,
@@ -16,9 +17,9 @@ const storeTestSetup = async (): Promise<{
     let [peer, observer] = await getConnectedPeers(2);
 
     // Create store
-    let storeCreator = await peer.orbitDB.open<StringStore>('store', { ...{ create: true, type: STRING_STORE_TYPE, subscribeToQueries: true } as IStoreOptions })
+    let storeCreator = await peer.orbitDB.open<StringStore>('store', { ...{ create: true, type: STRING_STORE_TYPE, subscribeToQueries: true } })
     await storeCreator.load();
-    let storeObserver = await observer.orbitDB.open<StringStore>(storeCreator.address.toString(), { ...{ create: true, type: STRING_STORE_TYPE, subscribeToQueries: false, replicate: false } as IStoreOptions })
+    let storeObserver = await observer.orbitDB.open<StringStore>(storeCreator.address.toString(), { ...{ create: true, type: STRING_STORE_TYPE, subscribeToQueries: false, replicate: false } })
 
     expect(await peer.node.pubsub.ls()).toHaveLength(2); // replication and query topic
     expect(await observer.node.pubsub.ls()).toHaveLength(0);

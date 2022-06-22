@@ -8,18 +8,13 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 import { field, serialize, variant } from '@dao-xyz/borsh';
-import Store from 'orbit-db-store';
+import { Store } from '@dao-xyz/orbit-db-store';
 import { KeyValueIndex } from './key-value-index.mjs';
 import bs58 from 'bs58';
 import OrbitDB from 'orbit-db';
-import { StoreOptions } from '@dao-xyz/orbit-db-bstores';
+import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
 export const BINARY_KEYVALUE_STORE_TYPE = 'bkv_store';
-const defaultOptions = (options) => {
-    if (!options.Index)
-        Object.assign(options, { Index: KeyValueIndex });
-    return options;
-};
-let BinaryKeyValueStoreOptions = class BinaryKeyValueStoreOptions extends StoreOptions {
+let BinaryKeyValueStoreOptions = class BinaryKeyValueStoreOptions extends BStoreOptions {
     constructor(opts) {
         super();
         if (opts) {
@@ -46,11 +41,16 @@ BinaryKeyValueStoreOptions = __decorate([
     __metadata("design:paramtypes", [Object])
 ], BinaryKeyValueStoreOptions);
 export { BinaryKeyValueStoreOptions };
+const defaultOptions = (options) => {
+    if (!options.Index)
+        Object.assign(options, { Index: KeyValueIndex });
+    return options;
+};
 export class BinaryKeyValueStore extends Store {
     constructor(ipfs, id, dbname, options) {
         super(ipfs, id, dbname, defaultOptions(options));
         this._type = BINARY_KEYVALUE_STORE_TYPE;
-        this._index.init(this.options.clazz);
+        this._index.init(options.clazz);
     }
     /*  get all(): T[] {
        return this._index._index

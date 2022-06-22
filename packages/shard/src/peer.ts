@@ -15,10 +15,14 @@ export class Peer extends ResultSource {
     @field({ type: 'u64' })
     timestamp: BN
 
+    @field({ type: 'u64' })
+    memoryBudget: BN // how much memory left to space
+
     constructor(obj?: {
         key: PublicKey,
         addresses: string[],
-        timestamp: BN
+        timestamp: BN,
+        memoryBudget: BN
     }) {
         super();
         if (obj) {

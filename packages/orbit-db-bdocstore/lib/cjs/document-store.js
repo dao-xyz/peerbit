@@ -33,14 +33,7 @@ const orbit_db_bstores_1 = require("@dao-xyz/orbit-db-bstores");
 const orbit_db_1 = __importDefault(require("orbit-db"));
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
 exports.BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
-const defaultOptions = (options) => {
-    if (!options["indexBy"])
-        Object.assign(options, { indexBy: '_id' });
-    if (!options.Index)
-        Object.assign(options, { Index: document_index_1.DocumentIndex });
-    return options;
-};
-let BinaryDocumentStoreOptions = class BinaryDocumentStoreOptions extends orbit_db_bstores_1.StoreOptions {
+let BinaryDocumentStoreOptions = class BinaryDocumentStoreOptions extends orbit_db_bstores_1.BStoreOptions {
     constructor(opts) {
         super();
         if (opts) {
@@ -73,6 +66,13 @@ BinaryDocumentStoreOptions = __decorate([
     __metadata("design:paramtypes", [Object])
 ], BinaryDocumentStoreOptions);
 exports.BinaryDocumentStoreOptions = BinaryDocumentStoreOptions;
+const defaultOptions = (options) => {
+    if (!options["indexBy"])
+        Object.assign(options, { indexBy: '_id' });
+    if (!options.Index)
+        Object.assign(options, { Index: document_index_1.DocumentIndex });
+    return options;
+};
 class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore {
     constructor(ipfs, id, dbname, options) {
         super(ipfs, id, dbname, defaultOptions(options));

@@ -1,16 +1,18 @@
 import OrbitDB from "orbit-db";
-import { StoreOptions, IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores'
+import { BStoreOptions } from '@dao-xyz/orbit-db-bstores'
+import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store'
+
 import { Constructor, variant } from "@dao-xyz/borsh";
 import CounterStore from "orbit-db-counterstore";
 
 @variant([0, 4])
-export class CounterStoreOptions extends StoreOptions<CounterStore> {
+export class CounterStoreOptions extends BStoreOptions<CounterStore> {
 
     constructor() {
         super();
     }
 
-    async newStore(address: string, orbitDB: OrbitDB, _typeMap: { [key: string]: Constructor<any> }, options: IQueryStoreOptions): Promise<CounterStore> {
+    async newStore(address: string, orbitDB: OrbitDB, _typeMap: { [key: string]: Constructor<any> }, options: IQueryStoreOptions<any>): Promise<CounterStore> {
         return orbitDB.counter(address, options)
     }
 
@@ -33,7 +35,7 @@ import { BinaryFeedStore, BINARY_FEED_STORE_TYPE } from "@dao-xyz/orbit-db-bfeed
 import { BinaryKeyValueStore, BINARY_KEYVALUE_STORE_TYPE } from '@dao-xyz/orbit-db-bkvstore';
 import OrbitDB from "orbit-db";
 import FeedStore from "orbit-db-feedstore";
-import Store from "orbit-db-store";
+import { Store } from '@dao-xyz/orbit-db-store';
 import { PeerOptions } from "./node";
 import { delay, waitFor } from "./utils";
 

@@ -1,7 +1,7 @@
 /// <reference path="./DBOptions.d.ts" />
 /// <reference path="./LogEntry.d.ts" />
 declare module 'orbit-db' {
-    import Store from "orbit-db-store";
+    import { Store } from '@dao-xyz/orbit-db-store';
     import KeyValueStore from "orbit-db-kvstore";
     import FeedStore from "orbit-db-feedstore";
     import EventStore from "orbit-db-eventstore";

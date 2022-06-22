@@ -4,14 +4,19 @@ import { Constructor } from '@dao-xyz/borsh';
 import { QueryRequestV0, Result, ResultSource } from '@dao-xyz/bquery';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
-import { StoreOptions, IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores';
+import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
+import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
 import OrbitDB from 'orbit-db';
 export declare const BINARY_DOCUMENT_STORE_TYPE = "bdoc_store";
-export declare type DocumentStoreOptions<T> = IStoreOptions & IQueryStoreOptions & {
+export declare type DocumentStoreOptions<T> = IQueryStoreOptions<DocumentIndex<T>> & {
     indexBy?: string;
     clazz: Constructor<T>;
 };
-export declare class BinaryDocumentStoreOptions<T extends ResultSource> extends StoreOptions<BinaryDocumentStore<T>> {
+export declare type IBinaryDocumentStoreOptions<T> = IQueryStoreOptions<DocumentIndex<T>> & {
+    indexBy?: string;
+    clazz: Constructor<T>;
+};
+export declare class BinaryDocumentStoreOptions<T extends ResultSource> extends BStoreOptions<BinaryDocumentStore<T>> {
     indexBy: string;
     objectType: string;
     constructor(opts: {
@@ -20,12 +25,12 @@ export declare class BinaryDocumentStoreOptions<T extends ResultSource> extends 
     });
     newStore(address: string, orbitDB: OrbitDB, typeMap: {
         [key: string]: Constructor<any>;
-    }, options: IQueryStoreOptions): Promise<BinaryDocumentStore<T>>;
+    }, options: IBinaryDocumentStoreOptions<T>): Promise<BinaryDocumentStore<T>>;
     get identifier(): string;
 }
-export declare class BinaryDocumentStore<T extends ResultSource> extends QueryStore<T, DocumentIndex<T>> {
+export declare class BinaryDocumentStore<T extends ResultSource> extends QueryStore<DocumentIndex<T>, IBinaryDocumentStoreOptions<T>> {
     _type: string;
-    constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: DocumentStoreOptions<T>);
+    constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IBinaryDocumentStoreOptions<T>);
     get index(): DocumentIndex<T>;
     get(key: any, caseSensitive?: boolean): T[];
     load(amount?: number, opts?: {}): Promise<void>;
@@ -36,9 +41,9 @@ export declare class BinaryDocumentStore<T extends ResultSource> extends QuerySt
         payload: Payload<T>;
     }[];
     queryHandler(query: QueryRequestV0): Promise<Result[]>;
-    batchPut(docs: T[], onProgressCallback: any): Promise<any>;
-    put(doc: T, options?: {}): Promise<string>;
-    putAll(docs: T[], options?: {}): Promise<string>;
-    del(key: any, options?: {}): Promise<string>;
+    batchPut(docs: T[], onProgressCallback: any): Promise<import("ipfs-core-types/src/root").AddResult[]>;
+    put(doc: T, options?: {}): Promise<unknown>;
+    putAll(docs: T[], options?: {}): Promise<unknown>;
+    del(key: any, options?: {}): Promise<unknown>;
     get size(): number;
 }

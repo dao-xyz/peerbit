@@ -1,6 +1,7 @@
 {
     "packages": [
         "packages/shard",
+        "packages/orbit-db-store",
         "packages/orbit-db-bstores",
         "packages/orbit-db-bdocstore",
         "packages/orbit-db-bfeedstore",

@@ -1,7 +1,7 @@
 declare module "orbit-db-feedstore" {
-    import Store from "orbit-db-store";
+    import { Store } from '@dao-xyz/orbit-db-store';
 
-    export default class FeedStore<T> extends Store<T, any> {
+    export default class FeedStore<T> extends Store<any, any> {
         add(data: any): Promise<string>;
         get(hash: string): LogEntry<T>
 

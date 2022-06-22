@@ -38,6 +38,6 @@
     },
     "dependencies": {
         "@dao-xyz/time": "^0.0.2",
-        "orbit-db": "^0.28.4"
+        "orbit-db": "^0.28.6"
     }
 }

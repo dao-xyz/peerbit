@@ -14,18 +14,11 @@ import bs58 from 'bs58';
 import { asString } from './utils.mjs';
 import { FieldQuery, ResultWithSource, SortDirection } from '@dao-xyz/bquery';
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
-import { StoreOptions } from '@dao-xyz/orbit-db-bstores';
+import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
 import OrbitDB from 'orbit-db';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
-const defaultOptions = (options) => {
-    if (!options["indexBy"])
-        Object.assign(options, { indexBy: '_id' });
-    if (!options.Index)
-        Object.assign(options, { Index: DocumentIndex });
-    return options;
-};
-let BinaryDocumentStoreOptions = class BinaryDocumentStoreOptions extends StoreOptions {
+let BinaryDocumentStoreOptions = class BinaryDocumentStoreOptions extends BStoreOptions {
     constructor(opts) {
         super();
         if (opts) {
@@ -56,6 +49,13 @@ BinaryDocumentStoreOptions = __decorate([
     __metadata("design:paramtypes", [Object])
 ], BinaryDocumentStoreOptions);
 export { BinaryDocumentStoreOptions };
+const defaultOptions = (options) => {
+    if (!options["indexBy"])
+        Object.assign(options, { indexBy: '_id' });
+    if (!options.Index)
+        Object.assign(options, { Index: DocumentIndex });
+    return options;
+};
 export class BinaryDocumentStore extends QueryStore {
     constructor(ipfs, id, dbname, options) {
         super(ipfs, id, dbname, defaultOptions(options));

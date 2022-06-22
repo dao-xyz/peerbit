@@ -1,20 +1,20 @@
-import Store from 'orbit-db-store'
+import { IStoreOptions, Index, Store } from '@dao-xyz/orbit-db-store'
 import { Identity } from 'orbit-db-identity-provider';
 import { deserialize, serialize } from '@dao-xyz/borsh';
 import { Message } from 'ipfs-core-types/types/src/pubsub'
 import { QueryRequestV0, QueryResponseV0, Result, query } from '@dao-xyz/bquery';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
-import { IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores';
 
 export const getQueryTopic = (dbAddress: string): string => {
   return dbAddress + '/query';
 }
+export type IQueryStoreOptions<X extends Index> = IStoreOptions<X> & { subscribeToQueries: boolean };
 
-export class QueryStore<T, X> extends Store<T, X> {
+export class QueryStore<X extends Index, O extends IQueryStoreOptions<X>> extends Store<X, O> {
 
   _subscribed: boolean = false
   subscribeToQueries = false;
-  constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IQueryStoreOptions) {
+  constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: O) {
     super(ipfs, id, dbname, options)
     this.subscribeToQueries = options.subscribeToQueries;
   }

@@ -7,22 +7,18 @@ import { asString } from './utils';
 import { DocumentQueryRequest, FieldQuery, QueryRequestV0, Result, ResultSource, ResultWithSource, SortDirection } from '@dao-xyz/bquery';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
-import { StoreOptions, IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores'
-
+import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store'
+import { BStoreOptions } from '@dao-xyz/orbit-db-bstores'
 import OrbitDB from 'orbit-db';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement)
 
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
-export type DocumentStoreOptions<T> = IStoreOptions & IQueryStoreOptions & { indexBy?: string, clazz: Constructor<T> };
-const defaultOptions = (options: IStoreOptions & { subscribeToQueries: boolean }): IStoreOptions & IQueryStoreOptions => {
-  if (!options["indexBy"]) Object.assign(options, { indexBy: '_id' })
-  if (!options.Index) Object.assign(options, { Index: DocumentIndex })
-  return options as IStoreOptions & IQueryStoreOptions
-}
+export type DocumentStoreOptions<T> = IQueryStoreOptions<DocumentIndex<T>> & { indexBy?: string, clazz: Constructor<T> };
 
+export type IBinaryDocumentStoreOptions<T> = IQueryStoreOptions<DocumentIndex<T>> & { indexBy?: string, clazz: Constructor<T> };
 
 @variant([0, 0])
-export class BinaryDocumentStoreOptions<T extends ResultSource> extends StoreOptions<BinaryDocumentStore<T>> {
+export class BinaryDocumentStoreOptions<T extends ResultSource> extends BStoreOptions<BinaryDocumentStore<T>> {
 
   @field({ type: 'String' })
   indexBy: string;
@@ -40,7 +36,7 @@ export class BinaryDocumentStoreOptions<T extends ResultSource> extends StoreOpt
       Object.assign(this, opts);
     }
   }
-  async newStore(address: string, orbitDB: OrbitDB, typeMap: { [key: string]: Constructor<any> }, options: IQueryStoreOptions): Promise<BinaryDocumentStore<T>> {
+  async newStore(address: string, orbitDB: OrbitDB, typeMap: { [key: string]: Constructor<any> }, options: IBinaryDocumentStoreOptions<T>): Promise<BinaryDocumentStore<T>> {
     let clazz = typeMap[this.objectType];
     if (!clazz) {
       throw new Error(`Undefined type: ${this.objectType}`);
@@ -54,11 +50,16 @@ export class BinaryDocumentStoreOptions<T extends ResultSource> extends StoreOpt
   }
 }
 
+const defaultOptions = <T>(options: IBinaryDocumentStoreOptions<T>): IBinaryDocumentStoreOptions<T> => {
+  if (!options["indexBy"]) Object.assign(options, { indexBy: '_id' })
+  if (!options.Index) Object.assign(options, { Index: DocumentIndex })
+  return options
+}
 
-export class BinaryDocumentStore<T extends ResultSource> extends QueryStore<T, DocumentIndex<T>> {
+export class BinaryDocumentStore<T extends ResultSource> extends QueryStore<DocumentIndex<T>, IBinaryDocumentStoreOptions<T>> {
 
   _type: string = undefined;
-  constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: DocumentStoreOptions<T>) {
+  constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IBinaryDocumentStoreOptions<T>) {
     super(ipfs, id, dbname, defaultOptions(options))
     this._type = BINARY_DOCUMENT_STORE_TYPE;
     this._index.init(this.options.clazz);

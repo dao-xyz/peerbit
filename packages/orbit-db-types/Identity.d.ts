@@ -1,5 +1,5 @@
 declare module "orbit-db-identity-provider" {
-    import Store from 'orbit-db-store';
+    import { Store } from '@dao-xyz/orbit-db-store';
     import { Keystore } from 'orbit-db-keystore';
 
     export type IdentityProviderType = 'orbitdb' | 'ethereum' | 'solana' | string;
@@ -70,7 +70,7 @@ declare module "orbit-db-identity-provider" {
         readonly publicKey: string;
         readonly signatures: { id: string; publicKey: string };
         readonly type: IdentityProviderType;
-        readonly provider: Identities;
+        readonly provider: IdentityProvider;
 
         toJSON(): IdentityAsJson
     }

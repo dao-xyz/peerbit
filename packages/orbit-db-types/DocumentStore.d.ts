@@ -1,7 +1,7 @@
 declare module "orbit-db-docstore" {
-    import Store from "orbit-db-store";
+    import { Store } from '@dao-xyz/orbit-db-store';
 
-    export default class DocumentStore<T> extends Store<T, any> {
+    export default class DocumentStore<T> extends Store<any, any> {
 
         put(doc: T): Promise<string>;
         get(key: any): T;

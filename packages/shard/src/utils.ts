@@ -1,5 +1,5 @@
 import { delay, waitFor } from "@dao-xyz/time";
-import Store from "orbit-db-store";
+import { Store } from '@dao-xyz/orbit-db-store';
 const MAX_REPLICATION_WAIT_TIME = 15 * 1000;
 
 

@@ -1,0 +1,45 @@
+<html>
+  <head>
+    <meta charset="utf-8">
+  </head>
+  <body>
+    <h1>ipfs-log example</h1>
+    <pre id="output"></pre>
+
+    <script type="text/javascript" src="../../dist/ipfslog.min.js" charset="utf-8"></script>
+    <script type="text/javascript" src="../../node_modules/orbit-db-identity-provider/dist/index-browser.min.js" charset="utf-8"></script>
+    <script type="text/javascript" src="../../node_modules/ipfs/dist/index.min.js" charset="utf-8"></script>
+
+    <script type="text/javascript">
+      const dataPath = './ipfs-log/examples/browser/ipfs/browser.html'
+      const ipfs = new Ipfs({
+        repo: dataPath,
+        start: false,
+        EXPERIMENTAL: {
+          pubsub: true
+        },
+      })
+
+      ipfs.on('error', (e) => console.error(e))
+
+      ipfs.on('ready', async () => {
+        const identity = await Identities.createIdentity({ id: 'exampleUser' })
+        const outputElm = document.getElementById('output')
+
+        // When IPFS is ready, add some log entries
+        let log = new Log(ipfs, identity, { logId: 'example-log'})
+
+        await log.append('one')
+        const values = JSON.stringify(log.values, null, 2)
+        console.log('\n', values)
+        outputElm.innerHTML += values + '<br><br><hr>'
+
+        await log.append({ two: 'hello' })
+        const values2 = JSON.stringify(log.values, null, 2)
+        console.log('\n', values2)
+        outputElm.innerHTML += values2 + '<br><br>'
+      })
+
+    </script>
+  </body>
+</html>

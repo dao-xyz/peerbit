@@ -15,7 +15,9 @@
                 "--forceExit",
                 "--detectOpenHandles",
                 "--colors",
-                "--verbose"
+                "--verbose",
+                "-c",
+                "jest.config.integration.cjs"
             ],
             "windows": {
                 "program": "${workspaceFolder}/node_modules/jest/bin/jest"

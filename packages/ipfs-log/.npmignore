@@ -1,0 +1,17 @@
+benchmarks
+examples
+test
+lib
+ipfs
+.github
+.circleci
+.eslintignore
+.eslintrc
+webpack.config.js
+webpack.example.config.js
+webpack.tests.config.js
+dist/ipfslog.min.js.map
+docs
+
+Makefile
+circle.yml

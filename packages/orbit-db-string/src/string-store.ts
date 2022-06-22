@@ -7,7 +7,8 @@ import { StringQueryRequest } from '@dao-xyz/bquery';
 import BN from 'bn.js';
 import { Range, RangeOptional } from './range';
 import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
-import { IQueryStoreOptions, StoreOptions } from '@dao-xyz/orbit-db-bstores';
+import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
+import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
 import OrbitDB from 'orbit-db';
 import { ResultSource } from '@dao-xyz/bquery';
 
@@ -27,19 +28,16 @@ const findAllOccurrences = (str: string, substr: string): number[] => {
 }
 
 
-const defaultOptions = (options: IStoreOptions): any => {
-  if (!options.Index) Object.assign(options, { Index: StringIndex })
-  return options;
-}
+
 
 @variant([0, 3])
-export class StringStoreOptions extends StoreOptions<StringStore> {
+export class StringStoreOptions extends BStoreOptions<StringStore> {
 
   constructor() {
     super();
   }
-  async newStore(address: string, orbitDB: OrbitDB, typeMap: { [key: string]: Constructor<any> }, options: IQueryStoreOptions): Promise<StringStore> {
-    return orbitDB.open<StringStore>(address, { ...options, ...{ create: true, type: STRING_STORE_TYPE } } as IQueryStoreOptions)
+  async newStore(address: string, orbitDB: OrbitDB, typeMap: { [key: string]: Constructor<any> }, options: IQueryStoreOptions<StringIndex>): Promise<StringStore> {
+    return orbitDB.open<StringStore>(address, { ...options, ...{ create: true, type: STRING_STORE_TYPE } })
   }
 
   get identifier(): string {
@@ -47,11 +45,15 @@ export class StringStoreOptions extends StoreOptions<StringStore> {
   }
 }
 
+const defaultOptions = (options: IQueryStoreOptions<StringIndex>): any => {
+  if (!options.Index) Object.assign(options, { Index: StringIndex })
+  return options;
+}
 
-export class StringStore extends QueryStore<string, StringIndex> {
+export class StringStore extends QueryStore<StringIndex, IQueryStoreOptions<StringIndex>> {
 
   _type: string = undefined;
-  constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IStoreOptions) {
+  constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IQueryStoreOptions<StringIndex>) {
     super(ipfs, id, dbname, defaultOptions(options))
     this._type = STRING_STORE_TYPE;
   }

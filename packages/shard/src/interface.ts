@@ -1,8 +1,8 @@
 
 
 import { field, variant } from "@dao-xyz/borsh";
-import Store from "orbit-db-store";
-import { StoreOptions } from "@dao-xyz/orbit-db-bstores";
+import { Store } from '@dao-xyz/orbit-db-store';
+import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
 import { Shard } from "./shard";
 import * as events from 'events';
@@ -43,7 +43,7 @@ export class DBInterface extends ResultSource {
 // Every interface has to have its own variant, else DBInterface can not be
 // used as a deserialization target.
 @variant([0, 1])
-export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
+export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface {
 
     @field({ type: 'String' })
     name: string;
@@ -51,8 +51,8 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
     @field({ type: 'String' })
     address: string;
 
-    @field({ type: StoreOptions })
-    storeOptions: StoreOptions<B>;
+    @field({ type: BStoreOptions })
+    storeOptions: BStoreOptions<B>;
 
     db: B;
     _shard: Shard<any>
@@ -60,7 +60,7 @@ export class SingleDBInterface<T, B extends Store<T, any>> extends DBInterface {
     constructor(opts?: {
         name: string;
         address?: string;
-        storeOptions: StoreOptions<B>;
+        storeOptions: BStoreOptions<B>;
     }) {
         super();
         if (opts) {

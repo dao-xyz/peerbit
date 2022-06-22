@@ -1,16 +1,17 @@
-import Store from 'orbit-db-store'
+import { Store } from '@dao-xyz/orbit-db-store'
 import { FeedIndex } from './feed-index'
 import { IPFS as IPFSInstance } from 'ipfs';
 import { Identity } from 'orbit-db-identity-provider';
 import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
 import bs58 from 'bs58';
 import OrbitDB from 'orbit-db';
-import { StoreOptions, IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores';
 export const BINARY_FEED_STORE_TYPE = 'bfeed_store';
-
+import { BStoreOptions } from '@dao-xyz/orbit-db-bstores'
+import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store'
+export type IBinaryFeedStoreOptions<T> = IQueryStoreOptions<FeedIndex<T>> & { clazz: Constructor<T> };
 
 @variant([0, 2])
-export class BinaryFeedStoreOptions<T> extends StoreOptions<BinaryFeedStore<T>> {
+export class BinaryFeedStoreOptions<T> extends BStoreOptions<BinaryFeedStore<T>> {
 
 
   @field({ type: 'String' })
@@ -25,7 +26,7 @@ export class BinaryFeedStoreOptions<T> extends StoreOptions<BinaryFeedStore<T>> 
       Object.assign(this, opts);
     }
   }
-  async newStore(address: string, orbitDB: OrbitDB, typeMap: { [key: string]: Constructor<any> }, options: IQueryStoreOptions): Promise<BinaryFeedStore<T>> {
+  async newStore(address: string, orbitDB: OrbitDB, typeMap: { [key: string]: Constructor<any> }, options: IBinaryFeedStoreOptions<T>): Promise<BinaryFeedStore<T>> {
     let clazz = typeMap[this.objectType];
     if (!clazz) {
       throw new Error(`Undefined type: ${this.objectType}`);
@@ -40,17 +41,18 @@ export class BinaryFeedStoreOptions<T> extends StoreOptions<BinaryFeedStore<T>> 
 
 }
 
-const defaultOptions = (options: IStoreOptions): any => {
+
+const defaultOptions = <T>(options: IBinaryFeedStoreOptions<T>): any => {
   if (!options.Index) Object.assign(options, { Index: FeedIndex })
   return options;
 }
-export class BinaryFeedStore<T> extends Store<T, FeedIndex<T>> {
+export class BinaryFeedStore<T> extends Store<FeedIndex<T>, IBinaryFeedStoreOptions<T>> {
 
   _type: string = undefined;
-  constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IStoreOptions & { indexBy?: string, clazz: Constructor<T> }) {
+  constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IBinaryFeedStoreOptions<T>) {
     super(ipfs, id, dbname, defaultOptions(options))
     this._type = BINARY_FEED_STORE_TYPE;
-    this._index.init(this.options.clazz);
+    this._index.init(options.clazz);
 
   }
 

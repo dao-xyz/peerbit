@@ -34,7 +34,7 @@
     "@dao-xyz/orbit-db-query-store": "^0.0.16"
   },
   "peerDependencies": {
-    "orbit-db-store": "4.x"
+    "@dao-xyz/orbit-db-store": "0.x"
   },
   "devDependencies": {
     "@dao-xyz-types/orbit-db": "^0.0.14",

@@ -1,19 +1,19 @@
 import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
-import Store from 'orbit-db-store';
+import { Store } from '@dao-xyz/orbit-db-store';
 import { KeyValueIndex } from './key-value-index';
 import bs58 from 'bs58';
 import OrbitDB from 'orbit-db';
-import { StoreOptions, IQueryStoreOptions } from '@dao-xyz/orbit-db-bstores'
+import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store'
+import { BStoreOptions } from '@dao-xyz/orbit-db-bstores'
+export type IKeyValueStoreOptions<T> = IQueryStoreOptions<KeyValueIndex<T>> & { clazz: Constructor<T> }
+
 export const BINARY_KEYVALUE_STORE_TYPE = 'bkv_store';
 
-const defaultOptions = (options: IStoreOptions): any => {
-  if (!options.Index) Object.assign(options, { Index: KeyValueIndex })
-  return options;
-}
+
 
 
 @variant([0, 1])
-export class BinaryKeyValueStoreOptions<T> extends StoreOptions<BinaryKeyValueStore<T>> {
+export class BinaryKeyValueStoreOptions<T> extends BStoreOptions<BinaryKeyValueStore<T>> {
 
 
   @field({ type: 'String' })
@@ -28,7 +28,7 @@ export class BinaryKeyValueStoreOptions<T> extends StoreOptions<BinaryKeyValueSt
       Object.assign(this, opts);
     }
   }
-  async newStore(address: string, orbitDB: OrbitDB, typeMap: { [key: string]: Constructor<any> }, options: IQueryStoreOptions): Promise<BinaryKeyValueStore<T>> {
+  async newStore(address: string, orbitDB: OrbitDB, typeMap: { [key: string]: Constructor<any> }, options: IKeyValueStoreOptions<T>): Promise<BinaryKeyValueStore<T>> {
     let clazz = typeMap[this.objectType];
     if (!clazz) {
       throw new Error(`Undefined type: ${this.objectType}`);
@@ -42,15 +42,18 @@ export class BinaryKeyValueStoreOptions<T> extends StoreOptions<BinaryKeyValueSt
   }
 
 }
-
-export class BinaryKeyValueStore<T> extends Store<T, KeyValueIndex<T>> {
+const defaultOptions = <T>(options: IKeyValueStoreOptions<T>): any => {
+  if (!options.Index) Object.assign(options, { Index: KeyValueIndex })
+  return options;
+}
+export class BinaryKeyValueStore<T> extends Store<KeyValueIndex<T>, IKeyValueStoreOptions<T>> {
 
   _type: string;
 
-  constructor(ipfs, id, dbname, options: IStoreOptions & { clazz: Constructor<T> }) {
+  constructor(ipfs, id, dbname, options: IKeyValueStoreOptions<T>) {
     super(ipfs, id, dbname, defaultOptions(options))
     this._type = BINARY_KEYVALUE_STORE_TYPE;
-    this._index.init(this.options.clazz);
+    this._index.init(options.clazz);
   }
 
   /*  get all(): T[] {

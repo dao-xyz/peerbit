@@ -8,6 +8,8 @@ import { Peer } from '../peer';
 import BN from 'bn.js';
 import { connectPeers, disconnectPeers } from '@dao-xyz/peer-test-utils';
 import { delay, waitFor } from '@dao-xyz/time';
+import { Log } from 'ipfs-log';
+import { EntryIndex } from 'ipfs-log/src/entry-index';
 
 const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 
@@ -267,16 +269,42 @@ describe('cluster', () => {
  
  
          }) */
+
+        test('peer db max sized', async () => {
+
+            // test that peers db does not grow infinitly
+            let [peer] = await getConnectedPeers(1);
+            let l0a = await shardStoreShard();
+            await l0a.init(peer);
+            await l0a.replicate();
+            await delay(10000);
+            let log = l0a.peers.db["_oplog"];
+            const size = 3;
+            /*  const uniqueEntriesReducer = (res, acc) => {
+                 res[acc.hash] = acc
+                 return res
+             }
+             if (size > -1) {
+                 let tmp = log.values
+                 tmp = tmp.slice(-size)
+                 const x = EntryIndex;
+                 log._entryIndex = new EntryIndex(tmp.reduce(uniqueEntriesReducer, {}))
+                 log._headsIndex = Log.findHeads(tmp).reduce(uniqueEntriesReducer, {})
+                 log._length = log._entryIndex.length
+             } */
+
+            l0a.peers.db["_oplog"].cut(3);
+            expect(l0a.peers.db["_oplog"].values.length).toEqual(2);
+        })
         test('peer remote counter', async () => {
             let [peer, peer2] = await getConnectedPeers(2);
-
-
             let l0a = await shardStoreShard();
             await l0a.init(peer);
             let thisPeer = new Peer({
                 key: PublicKey.from(peer.orbitDB.identity),
                 addresses: (await peer.node.id()).addresses.map(x => x.toString()),
-                timestamp: new BN(+new Date)
+                timestamp: new BN(+new Date),
+                memoryBudget: new BN(1000)
             });
             await l0a.peers.load();
             await l0a.peers.db.put(thisPeer);
