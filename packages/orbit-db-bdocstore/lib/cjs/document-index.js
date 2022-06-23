@@ -1,4 +1,13 @@
 "use strict";
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -20,49 +29,49 @@ class DocumentIndex {
             ? this._index[stringKey]
             : this._index[stringKey] ? this._index[stringKey].payload.value : null;
     }
-    updateIndex(oplog, onProgressCallback) {
-        if (!this.clazz) {
-            throw new Error("Not initialized");
-        }
-        const reducer = (handled, item, idx) => {
-            let key = (0, utils_1.asString)(item.payload.key);
-            if (item.payload.op === 'PUTALL' && item.payload.docs[Symbol.iterator]) {
-                for (const doc of item.payload.docs) {
-                    if (doc && handled[doc.key] !== true) {
-                        handled[doc.key] = true;
-                        this._index[doc.key] = {
-                            payload: {
-                                op: 'PUT',
-                                key: (0, utils_1.asString)(doc.key),
-                                value: this.deserializeOrPass(doc.value)
-                            }
-                        };
+    updateIndex(oplog) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!this.clazz) {
+                throw new Error("Not initialized");
+            }
+            const reducer = (handled, item, idx) => {
+                let key = (0, utils_1.asString)(item.payload.key);
+                if (item.payload.op === 'PUTALL' && item.payload.docs[Symbol.iterator]) {
+                    for (const doc of item.payload.docs) {
+                        if (doc && handled[doc.key] !== true) {
+                            handled[doc.key] = true;
+                            this._index[doc.key] = {
+                                payload: {
+                                    op: 'PUT',
+                                    key: (0, utils_1.asString)(doc.key),
+                                    value: this.deserializeOrPass(doc.value)
+                                }
+                            };
+                        }
                     }
                 }
-            }
-            else if (handled[key] !== true) {
-                handled[key] = true;
-                if (item.payload.op === 'PUT') {
-                    this._index[key] = this.deserializeOrItem(item);
+                else if (handled[key] !== true) {
+                    handled[key] = true;
+                    if (item.payload.op === 'PUT') {
+                        this._index[key] = this.deserializeOrItem(item);
+                    }
+                    else if (item.payload.op === 'DEL') {
+                        delete this._index[key];
+                    }
                 }
-                else if (item.payload.op === 'DEL') {
-                    delete this._index[key];
-                }
+                return handled;
+            };
+            try {
+                oplog.values
+                    .slice()
+                    .reverse()
+                    .reduce(reducer, {});
             }
-            if (onProgressCallback)
-                onProgressCallback(item, idx);
-            return handled;
-        };
-        try {
-            oplog.values
-                .slice()
-                .reverse()
-                .reduce(reducer, {});
-        }
-        catch (error) {
-            console.error(JSON.stringify(error));
-            throw error;
-        }
+            catch (error) {
+                console.error(JSON.stringify(error));
+                throw error;
+            }
+        });
     }
     deserializeOrPass(value) {
         return typeof value === 'string' ? (0, borsh_1.deserialize)(bs58_1.default.decode(value), this.clazz) : value;

@@ -75,10 +75,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
       }
       await store.saveSnapshot()
       const storeFromSnapshot = await store.loadFromSnapshot()
-      assert.strictEqual(storeFromSnapshot.index.length, 10)
+      assert.strictEqual(storeFromSnapshot.index._index.length, 10)
 
       for (let i = 0; i < writes; i++) {
-        assert.strictEqual(storeFromSnapshot.index[i].payload.step, i)
+        assert.strictEqual(storeFromSnapshot.index._index[i].payload.step, i)
       }
     })
   })

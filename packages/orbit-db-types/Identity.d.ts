@@ -70,7 +70,7 @@ declare module "orbit-db-identity-provider" {
         readonly publicKey: string;
         readonly signatures: { id: string; publicKey: string };
         readonly type: IdentityProviderType;
-        readonly provider: IdentityProvider;
+        readonly provider: Identities;
 
         toJSON(): IdentityAsJson
     }

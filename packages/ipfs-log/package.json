@@ -1,10 +1,21 @@
 {
-  "name": "ipfs-log",
-  "version": "5.4.1",
+  "name": "@dao-xyz/ipfs-log",
+  "version": "5.5.0",
   "description": "Append-only log CRDT on IPFS",
-  "main": "src/log.js",
   "author": "Haad",
   "license": "MIT",
+  "main": "lib/cjs/index.js",
+  "module": "lib/esm/index.mjs",
+  "types": "lib/esm/index.d.ts",
+  "exports": {
+    "import": "./lib/esm/index.mjs",
+    "require": "./lib/cjs/index.js"
+  },
+  "files": [
+    "lib",
+    "src",
+    "LICENSE"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/orbitdb/ipfs-log"
@@ -43,7 +54,7 @@
     "fs-extra": "^10.0.0",
     "go-ipfs": "^0.10.0-rc1",
     "http-server": "^0.12.3",
-    "ipfs": "^0.58.2",
+    "ipfs": "^0.62.3",
     "ipfsd-ctl": "^10.0.3",
     "is-node": "^1.0.2",
     "jsdoc": "^3.6.6",
@@ -88,22 +99,18 @@
     "adam-palazzo"
   ],
   "scripts": {
-    "test": "TEST=all nyc mocha",
+    "clean": "shx rm -rf lib/*",
+    "build": "yarn clean && tsc -p tsconfig.json; tsc-esm -p tsconfig.json && tsc -p tsconfig.cjs.json",
+    "postbuild": "echo '{\"type\":\"commonjs\"}' | npx json > lib/cjs/package.json && echo '{\"type\":\"module\"} ' | npx json > lib/esm/package.json",
+    "test": "node ../../node_modules/.bin/jest test  -c  ../../jest.config.cjs --runInBand --forceExit",
+    "test:unit": "node ../../node_modules/.bin/jest test  -c  ../../jest.config.unit.cjs --runInBand --forceExit",
+    "test:integration": "node ../node_modules/.bin/jest test -c  ../jest.config.integration.cjs --runInBand --forceExit",
     "test:browser": "npm run build:tests && mocha-headless-chrome -t 360000 -f ./test/browser/index.html -a no-sandbox",
-    "build": "npm run build:es5 && npm run build:examples && npm run build:dist",
-    "build:docs": "jsdoc src/ -d docs --readme README.md",
-    "build:tests": "webpack --config webpack.tests.config.js --mode production",
-    "build:examples": "webpack --config webpack.example.config.js",
-    "build:dist": "webpack --config webpack.config.js --mode production",
-    "build:es5": "babel src --out-dir ./lib/es5/ --presets @babel/preset-env --plugins @babel/plugin-transform-runtime",
-    "lint": "standard",
-    "benchmark": "nyc benchmark-runner -r -b --baselineLimit 1000",
+    "benchmark": "nyc  --require ts-node/register benchmark-runner -r -b --baselineLimit 1000",
     "benchmark:stress": "benchmark-runner -r --grep stress",
     "examples": "http-server examples/browser"
   },
   "localMaintainers": [
-    "haad <haad@haja.io>",
-    "hajamark <mark@haja.io>",
-    "shamb0t <shams@haja.io>"
+    "dao.xyz"
   ]
 }

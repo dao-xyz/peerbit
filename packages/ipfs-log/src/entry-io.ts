@@ -5,22 +5,54 @@ import { IPFS } from 'ipfs-core-types/src/'
 
 const hasItems = arr => arr && arr.length > 0
 
-export interface EntryFetchOptions { length: number, exclude?: any[], shouldExclude?: (string) => boolean, timeout?: number, onProgressCallback?: (entry: Entry) => void, onStartProgressCallback?: any, concurrency?: number, delay?: number }
-interface EntryFetchStrictOptions { length: number, exclude: any[], shouldExclude?: (string) => boolean, timeout?: number, onProgressCallback?: (entry: Entry) => void, onStartProgressCallback?: any, concurrency: number, delay: number }
 
-export const strictFetchOptions = (options: EntryFetchOptions): EntryFetchStrictOptions => {
-  return {
-    length: -1,
-    exclude: [],
-    concurrency: 32,
-    delay: 0,
+export interface EntryFetchOptions { length?: number, timeout?: number, exclude?: any[], onProgressCallback?: (entry: Entry) => void, concurrency?: number }
+interface EntryFetchStrictOptions { length: number, timeout?: number, exclude: any[], onProgressCallback?: (entry: Entry) => void, concurrency: number }
+
+export interface EntryFetchAllOptions extends EntryFetchOptions { shouldExclude?: (string) => boolean, onStartProgressCallback?: any, delay?: number }
+interface EntryFetchAllStrictOptions extends EntryFetchStrictOptions { shouldExclude?: (string) => boolean, onStartProgressCallback?: any, delay: number }
+
+
+
+export const strictAllFetchOptions = (options: EntryFetchAllOptions): EntryFetchAllStrictOptions => {
+  const ret: EntryFetchAllStrictOptions = {
     ...options
+  } as any;
+  if (ret.length == undefined) {
+    ret.length = -1;
   }
+  if (ret.exclude == undefined) {
+    ret.exclude = [];
+  }
+  if (ret.concurrency == undefined) {
+    ret.concurrency = 32;
+  }
+  if (ret.delay == undefined) {
+    ret.delay = 0;
+  }
+  return ret;
 }
+export const strictFetchOptions = (options: EntryFetchOptions): EntryFetchStrictOptions => {
+  const ret: EntryFetchStrictOptions = {
+    ...options
+  } as any
+  if (ret.length == undefined) {
+    ret.length = -1;
+  }
+  if (ret.exclude == undefined) {
+    ret.exclude = [];
+  }
+  if (ret.concurrency == undefined) {
+    ret.concurrency = 32;
+  }
+  return ret;
+
+}
+
 
 export class EntryIO {
   // Fetch log graphs in parallel
-  static async fetchParallel(ipfs: IPFS, hashes: string | string[], options: EntryFetchOptions) {
+  static async fetchParallel(ipfs: IPFS, hashes: string | string[], options: EntryFetchAllOptions) {
     const fetchOne = async (hash) => EntryIO.fetchAll(ipfs, hash, strictFetchOptions(options))
     const concatArrays = (arr1, arr2) => arr1.concat(arr2)
     const flatten = (arr) => arr.reduce(concatArrays, [])
@@ -41,7 +73,7 @@ export class EntryIO {
    * @param {function(entry)} onProgressCallback Called when an entry was fetched
    * @returns {Promise<Array<Entry>>}
    */
-  static async fetchAll(ipfs: IPFS, hashes: string | string[], options: EntryFetchOptions) {
+  static async fetchAll(ipfs: IPFS, hashes: string | string[], options: EntryFetchAllOptions) {
     options = strictFetchOptions(options);
     const result = []
     const cache = {}
@@ -114,14 +146,14 @@ export class EntryIO {
               ? Math.min(result[result.length - 1].clock.time, minClock)
               : maxClock
 
-            const isLater = (result.length >= length && ts >= minClock)
+            const isLater = (result.length >= options.length && ts >= minClock)
             const calculateIndex = (idx) => maxClock - ts + ((idx + 1) * idx)
 
             // Add the entry to the results if
             // 1) we're fetching all entries
             // 2) results is not filled yet
             // the clock of the entry is later than current known minimum clock time
-            if ((length < 0 || result.length < length || isLater) && !shouldExclude(entry.hash) && !cache[entry.hash]) {
+            if ((options.length < 0 || result.length < options.length || isLater) && !shouldExclude(entry.hash) && !cache[entry.hash]) {
               result.push(entry)
               cache[entry.hash] = true
 
@@ -130,7 +162,7 @@ export class EntryIO {
               }
             }
 
-            if (length < 0) {
+            if (options.length < 0) {
               // If we're fetching all entries (length === -1), adds nexts and refs to the queue
               entry.next.forEach(addToLoadingQueue)
               if (entry.refs) entry.refs.forEach(addToLoadingQueue)
@@ -138,10 +170,10 @@ export class EntryIO {
               // If we're fetching entries up to certain length,
               // fetch the next if result is filled up, to make sure we "check"
               // the next entry if its clock is later than what we have in the result
-              if (result.length < length || ts > minClock || (ts === minClock && !cache[entry.hash] && !shouldExclude(entry.hash))) {
+              if (result.length < options.length || ts > minClock || (ts === minClock && !cache[entry.hash] && !shouldExclude(entry.hash))) {
                 entry.next.forEach(e => addToLoadingQueue(e, calculateIndex(0)))
               }
-              if (entry.refs && (result.length + entry.refs.length <= length)) {
+              if (entry.refs && (result.length + entry.refs.length <= options.length)) {
                 entry.refs.forEach((e, i) => addToLoadingQueue(e, calculateIndex(i)))
               }
             }

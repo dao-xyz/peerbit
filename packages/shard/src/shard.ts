@@ -213,7 +213,9 @@ export class Shard<T extends DBInterface> extends ResultSource {
             });
         }
 
-        await this.peers.init(this);
+        await this.peers.init(this, {
+            recycle: this.peer.options.peersRecycle
+        });
 
 
         if (!this.memoryAdded) {
@@ -382,24 +384,36 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
     public async startSupportPeer() {
 
+        // This method createsa continous job that performs two things. 
+        // 1. Pings the peers data base with peer statistics (such as memory left)
+        // 2. Dials parents 
+
+        let parentShard: Shard<any> | undefined = undefined;
+        if (this.parentShardCID) {
+            parentShard = await Shard.loadFromCID(this.parentShardCID, this.peer.node); //WE CANT LOAD TS IF NOT CONNECTED
+            // TODO:  fix to work if parent is a cluster
+            await parentShard.init(this.peer);
+
+        }
+
         if (!this.peers.db) {
             await this.peers.load();
         }
+        const controller = new AbortController();
+        this.peer.supportControllers.push(controller);
         const task = async () => {
+
             let thisPeer = new Peer({
                 key: PublicKey.from(this.peer.orbitDB.identity),
                 addresses: (await this.peer.node.id()).addresses.map(x => x.toString()),
                 timestamp: new BN(+new Date),
                 memoryBudget: new BN(this.peer.options.replicationCapacity)
             });
-            await this.peers.db.put(thisPeer);
+            if (this.peers.db)
+                await this.peers.db.put(thisPeer);
 
             // Connect to parent shard, and connects to its peers 
-            if (this.parentShardCID) {
-                let once = false;
-                let parentShard = await Shard.loadFromCID(this.parentShardCID, this.peer.node); //WE CANT LOAD TS IF NOT CONNECTED
-                // TODO:  fix to work if parent is a cluster
-                await parentShard.init(this.peer);
+            if (parentShard) {
                 let gotOne = false;
                 await parentShard.peers.query(new QueryRequestV0({ type: new DocumentQueryRequest({ queries: [] }) }), async (res) => {
                     const parentPeers = res.results.map(r => (r as ResultWithSource).source as Peer);
@@ -424,19 +438,29 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
                         // Connect to all parent peers, we could do better (cherry pick), but ok for now
                         await Promise.all(parentPeers.filter(peer => !isSelfDial(peer) && !isAlreadyDialed(peer)).map((peer) => this.peer.node.swarm.connect(peer.addresses[0])))
-                        once = true;
                     }
 
                 }, undefined, 5000); // Expect at least 1 peer from parent
                 if (!gotOne) {
                     console.error("Failed to swarm connect to parent");
+
                     //throw new Error("Expected to find at least 1 parent peer, got 0")
                 }
-            };
+            }
         }
+
+
+
         const cron = async () => {
-            while (this.peer.node.isOnline()) {
-                await task();
+            let stop = false;
+            let promise: Promise<any> = undefined;
+            controller.signal.addEventListener("abort", async () => {
+                stop = true;
+                await promise;
+            });
+            while (this.peer.node.isOnline() && !stop) {
+                promise = task();
+                await promise;
             }
         }
         cron();

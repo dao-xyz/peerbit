@@ -274,27 +274,13 @@ describe('cluster', () => {
 
             // test that peers db does not grow infinitly
             let [peer] = await getConnectedPeers(1);
+            peer.options.peersRecycle.maxOplogLength = 3;
+            peer.options.peersRecycle.cutOplogToLength = 3;
             let l0a = await shardStoreShard();
             await l0a.init(peer);
             await l0a.replicate();
-            await delay(10000);
-            let log = l0a.peers.db["_oplog"];
-            const size = 3;
-            /*  const uniqueEntriesReducer = (res, acc) => {
-                 res[acc.hash] = acc
-                 return res
-             }
-             if (size > -1) {
-                 let tmp = log.values
-                 tmp = tmp.slice(-size)
-                 const x = EntryIndex;
-                 log._entryIndex = new EntryIndex(tmp.reduce(uniqueEntriesReducer, {}))
-                 log._headsIndex = Log.findHeads(tmp).reduce(uniqueEntriesReducer, {})
-                 log._length = log._entryIndex.length
-             } */
-
-            l0a.peers.db["_oplog"].cut(3);
-            expect(l0a.peers.db["_oplog"].values.length).toEqual(2);
+            await delay(10000); // wait for fill up peer pings, but it will cut back to 3 because of the peer settings
+            expect(l0a.peers.db["_oplog"].values.length).toEqual(3);
         })
         test('peer remote counter', async () => {
             let [peer, peer2] = await getConnectedPeers(2);

@@ -17,17 +17,13 @@ export class StringIndex {
     return this._string;
   }
 
-  public updateIndex(oplog: any, onProgressCallback?: (item: StringLogEntry, ix: number) => void) {
-    this._string = applyOperations('', oplog.values, onProgressCallback);
+  async updateIndex(oplog) {
+    this._string = applyOperations('', oplog.values);
   }
 }
 
-export const applyOperations = (string: string, operations: StringLogEntry[], onProgressCallback?: (item: StringLogEntry, ix: number) => void): string => {
+export const applyOperations = (string: string, operations: StringLogEntry[]): string => {
   operations.reduce((handled, item: { hash: string, payload: PayloadOperation }, idx) => {
-
-    if (onProgressCallback) {
-      onProgressCallback(item, idx)
-    }
     if (!handled.includes(item.hash)) {
       handled.push(item.hash)
       string = applyOperation(string, item.payload);

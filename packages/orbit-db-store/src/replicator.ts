@@ -1,5 +1,6 @@
 import PQueue from 'p-queue'
-import Log from 'ipfs-log'
+
+import { Log } from '@dao-xyz/ipfs-log'
 import { IPFS } from 'ipfs-core-types/src/'
 import { Identity } from 'orbit-db-identity-provider'
 import AccessController from 'orbit-db-access-controllers/src/access-controller-interface'

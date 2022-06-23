@@ -7,12 +7,12 @@ import { LogIO } from './log-io'
 import * as LogError from './log-errors'
 import { LamportClock as Clock } from './lamport-clock'
 import * as Sorting from './log-sorting'
-const { LastWriteWins, NoZeroes } = Sorting
-import { AccessController } from './default-access-controller'
-import { EntryFetchOptions } from "./entry-io"
+import { EntryFetchAllOptions, EntryFetchOptions, strictFetchOptions } from "./entry-io"
 import { IPFS } from "ipfs-core-types/src/"
 import { Identity } from "orbit-db-identity-provider"
-const { isDefined, findUniques } = require('./utils')
+import { AccessController } from "./default-access-controller"
+const { LastWriteWins, NoZeroes } = Sorting
+import { isDefined, findUniques } from './utils'
 const randomId = () => new Date().getTime().toString()
 const getHash = e => e.hash
 const flatMap = (res, acc) => res.concat(acc)
@@ -23,6 +23,10 @@ const uniqueEntriesReducer = (res, acc) => {
   return res
 }
 
+export interface RecycleOptions {
+  maxOplogLength: number, // Max length of oplog before cutting
+  cutOplogToLength?: number, // When oplog shorter, cut to length
+}
 /**
  * @description
  * Log implements a G-Set CRDT and adds ordering.
@@ -52,6 +56,7 @@ export class Log extends GSet {
   // Set the length, we calculate the length manually internally
   _length: number
   _clock: Clock;
+  _recycle?: RecycleOptions
   joinConcurrency: number;
   /**
    * Create a new Log instance
@@ -67,7 +72,7 @@ export class Log extends GSet {
    * @return {Log} The log instance
    */
 
-  constructor(ipfs: IPFS, identity?: Identity, options: { logId?: string, access?: AccessController, entries?: Entry[], heads?: any, clock?: any, sortFn?: Sorting.ISortFunction, concurrency?: number } = {}) {
+  constructor(ipfs: IPFS, identity?: Identity, options: { logId?: string, entries?: Entry[], heads?: any, clock?: any, access?: AccessController, sortFn?: Sorting.ISortFunction, concurrency?: number, recycle?: RecycleOptions } = {}) {
     if (!isDefined(ipfs)) {
       throw LogError.IPFSNotDefinedError()
     }
@@ -75,7 +80,7 @@ export class Log extends GSet {
     if (!isDefined(identity)) {
       throw new Error('Identity is required')
     }
-    let { logId, access, entries, heads, clock, sortFn, concurrency } = options;
+    let { logId, access, entries, heads, clock, sortFn, concurrency, recycle } = options;
     if (!isDefined(access)) {
       access = new AccessController()
     }
@@ -129,6 +134,11 @@ export class Log extends GSet {
     this._clock = new Clock(this._identity.publicKey, maxTime)
 
     this.joinConcurrency = concurrency || 16
+
+    this._recycle = { ...recycle };
+    if (this._recycle.cutOplogToLength == undefined) {
+      this._recycle.cutOplogToLength = this._recycle.maxOplogLength;
+    }
   }
 
   /**
@@ -193,7 +203,7 @@ export class Log extends GSet {
    * Set the identity for the log
    * @param {Identity} [identity] The identity to be set
    */
-  setIdentity(identity) {
+  setIdentity(identity: Identity) {
     this._identity = identity
     // Find the latest clock from the heads
     const time = Math.max(this.clock.time, this.heads.reduce(maxClockTimeReducer, 0))
@@ -205,7 +215,7 @@ export class Log extends GSet {
    * @param {string} [hash] The hashes of the entry
    * @returns {Entry|undefined}
    */
-  get(hash) {
+  get(hash: string) {
     return this._entryIndex.get(hash)
   }
 
@@ -335,6 +345,10 @@ export class Log extends GSet {
     this._headsIndex[entry.hash] = entry
     // Update the length
     this._length++
+
+    if (this._recycle && this.length > this._recycle.maxOplogLength) {
+      this.cutLog(this._recycle.cutOplogToLength);
+    }
     return entry
   }
 
@@ -465,18 +479,28 @@ export class Log extends GSet {
 
     // Slice to the requested size
     if (size > -1) {
-      let tmp = this.values
-      tmp = tmp.slice(-size)
-      this._entryIndex = null
-      this._entryIndex = new EntryIndex(tmp.reduce(uniqueEntriesReducer, {}))
-      this._headsIndex = Log.findHeads(tmp).reduce(uniqueEntriesReducer, {})
-      this._length = this._entryIndex.length
+      this.cutLog(size);
     }
 
     // Find the latest clock from the heads
     const maxClock = Object.values(this._headsIndex).reduce(maxClockTimeReducer, 0)
     this._clock = new Clock(this.clock.id, Math.max(this.clock.time, maxClock))
     return this
+  }
+
+  /**
+   * Cut log to size
+   * @param size 
+   */
+  cutLog(size: number) {
+
+    // Slice to the requested size
+    let tmp = this.values
+    tmp = tmp.slice(-size)
+    this._entryIndex = null
+    this._entryIndex = new EntryIndex(tmp.reduce(uniqueEntriesReducer, {}))
+    this._headsIndex = Log.findHeads(tmp).reduce(uniqueEntriesReducer, {})
+    this._length = this._entryIndex.length
   }
 
   /**
@@ -521,7 +545,7 @@ export class Log extends GSet {
    * └─one
    *   └─three
    */
-  toString(payloadMapper) {
+  toString(payloadMapper?: (payload: any) => string) {
     return this.values
       .slice()
       .reverse()
@@ -552,7 +576,7 @@ export class Log extends GSet {
    * Get the log's multihash.
    * @returns {Promise<string>} Multihash of the Log as Base58 encoded string.
    */
-  toMultihash(options: {
+  toMultihash(options?: {
     format?: string;
   }) {
     return LogIO.toMultihash(this._storage, this, options)
@@ -572,11 +596,11 @@ export class Log extends GSet {
    * @returns {Promise<Log>}
    */
   static async fromMultihash(ipfs, identity, hash,
-    options: { access, sortFn } & EntryFetchOptions) {
+    options?: { access?: AccessController, sortFn?: Sorting.ISortFunction } & EntryFetchAllOptions) {
     // TODO: need to verify the entries with 'key'
     const { logId, entries, heads } = await LogIO.fromMultihash(ipfs, hash,
-      { length, exclude: options.exclude, shouldExclude: options.shouldExclude, timeout: options.timeout, onProgressCallback: options.onProgressCallback, concurrency: options.concurrency, sortFn: options.sortFn })
-    return new Log(ipfs, identity, { logId, access: options.access, entries, heads, sortFn: options.sortFn })
+      { length: options?.length, exclude: options?.exclude, shouldExclude: options?.shouldExclude, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback, concurrency: options?.concurrency, sortFn: options?.sortFn })
+    return new Log(ipfs, identity, { logId, access: options?.access, entries, heads, sortFn: options?.sortFn })
   }
 
   /**
@@ -593,7 +617,7 @@ export class Log extends GSet {
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise<Log>} New Log
    */
-  static async fromEntryHash(ipfs, identity, hash,
+  static async fromEntryHash(ipfs: IPFS, identity: Identity, hash: string,
     options: { logId?: any, access?: any, length?: number, exclude?: any[], shouldExclude?: any, timeout?: number, concurrency?: number, sortFn?: any, onProgressCallback?: any } = { length: -1, exclude: [] }) {
     // TODO: need to verify the entries with 'key'
     const { entries } = await LogIO.fromEntryHash(ipfs, hash,
@@ -613,12 +637,12 @@ export class Log extends GSet {
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise<Log>} New Log
    */
-  static async fromJSON(ipfs: IPFS, identity: Identity, json: string,
-    { access, length = -1, timeout, sortFn, onProgressCallback } = {}) {
+  static async fromJSON(ipfs: IPFS, identity: Identity, json: { [key: string]: any },
+    options?: { access?: AccessController, length?: number, timeout?: number, sortFn?: Sorting.ISortFunction, onProgressCallback?: (entry: Entry) => void }) {
     // TODO: need to verify the entries with 'key'
     const { logId, entries } = await LogIO.fromJSON(ipfs, json,
-      { length, timeout, onProgressCallback })
-    return new Log(ipfs, identity, { logId, access, entries, sortFn })
+      { length: options?.length, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback })
+    return new Log(ipfs, identity, { logId, entries, access: options?.access, sortFn: options?.sortFn })
   }
 
   /**
@@ -634,12 +658,12 @@ export class Log extends GSet {
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise<Log>} New Log
    */
-  static async fromEntry(ipfs: IPFS, identity: Identity, sourceEntries: Entry[],
-    { access, length = -1, exclude = [], timeout, concurrency, sortFn, onProgressCallback } = {}) {
+  static async fromEntry(ipfs: IPFS, identity: Identity, sourceEntries: Entry[], options: EntryFetchOptions & { access?: AccessController, sortFn?: Sorting.ISortFunction }) {
     // TODO: need to verify the entries with 'key'
+    options = strictFetchOptions(options);
     const { logId, entries } = await LogIO.fromEntry(ipfs, sourceEntries,
-      { length, exclude, timeout, concurrency, onProgressCallback })
-    return new Log(ipfs, identity, { logId, access, entries, sortFn })
+      { length: options.length, exclude: options.exclude, timeout: options.timeout, concurrency: options.concurrency, onProgressCallback: options.onProgressCallback })
+    return new Log(ipfs, identity, { logId, access: options.access, entries, sortFn: options.sortFn })
   }
 
   /**
@@ -651,7 +675,7 @@ export class Log extends GSet {
    * @param {Array<Entry>} entries Entries to search heads from
    * @returns {Array<Entry>}
    */
-  static findHeads(entries) {
+  static findHeads(entries: Entry[]) {
     const indexReducer = (res, entry, idx, arr) => {
       const addToResult = e => (res[e] = entry.hash)
       entry.next.forEach(addToResult)
@@ -660,9 +684,8 @@ export class Log extends GSet {
 
     const items = entries.reduce(indexReducer, {})
 
-    const exists = e => items[e.hash] === undefined
-    const compareIds = (a, b) => a.clock.id > b.clock.id
-
+    const exists = (e: Entry) => items[e.hash] === undefined
+    const compareIds = (a: Entry, b: Entry) => Clock.compare(a.clock, b.clock);
     return entries.filter(exists).sort(compareIds)
   }
 

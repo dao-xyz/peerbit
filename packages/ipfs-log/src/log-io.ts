@@ -1,6 +1,6 @@
 import { Entry } from './entry'
-import { EntryFetchOptions, EntryIO, strictFetchOptions } from './entry-io'
-import { LastWriteWins, NoZeroes } from './log-sorting'
+import { EntryFetchAllOptions, EntryIO, strictFetchOptions } from './entry-io'
+import { ISortFunction, LastWriteWins, NoZeroes } from './log-sorting'
 import * as LogError from './log-errors'
 const { isDefined, findUniques, difference, io } = require('./utils')
 
@@ -35,7 +35,7 @@ export class LogIO {
    * @param {Array<Entry>} options.exclude Entries to not fetch (cached)
    * @param {function(hash, entry, parent, depth)} options.onProgressCallback
    */
-  static async fromMultihash(ipfs, hash, options: EntryFetchOptions & { sortFn: any }) {
+  static async fromMultihash(ipfs, hash, options: EntryFetchAllOptions & { sortFn: any }) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(hash)) throw new Error(`Invalid hash: ${hash}`)
 
@@ -51,7 +51,7 @@ export class LogIO {
       strictFetchOptions(options))
 
     const logId = logData.id
-    const entries = length > -1 ? last(all.sort(sortFn), length) : all
+    const entries = options.length > -1 ? last(all.sort(sortFn), options.length) : all
     const heads = entries.filter(isHead)
     return { logId, entries, heads }
   }
@@ -66,19 +66,25 @@ export class LogIO {
    * @param {function(hash, entry, parent, depth)} options.onProgressCallback
    */
   static async fromEntryHash(ipfs, hash,
-    options: EntryFetchOptions & { sortFn: any }) {
+    options: EntryFetchAllOptions & { sortFn?: ISortFunction }) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(hash)) throw new Error("'hash' must be defined")
     // Convert input hash(s) to an array
     const hashes = Array.isArray(hash) ? hash : [hash]
     // Fetch given length, return size at least the given input entries
-    options.length = options.length > -1 ? Math.max(options.length, 1) : options.length
+    if (options.length > -1) {
+      options = {
+        ...options,
+        length: Math.max(options.length, 1)
+      }
+    }
+
     const all = await EntryIO.fetchParallel(ipfs, hashes,
       options)
     // Cap the result at the right size by taking the last n entries,
     // or if given length is -1, then take all
     options.sortFn = options.sortFn || NoZeroes(LastWriteWins)
-    const entries = length > -1 ? last(all.sort(options.sortFn), length) : all
+    const entries = options.length > -1 ? last(all.sort(options.sortFn), options.length) : all
     return { entries }
   }
 
@@ -91,7 +97,7 @@ export class LogIO {
    * @param {number} options.length How many entries to include
    * @param {function(hash, entry, parent, depth)} options.onProgressCallback
    **/
-  static async fromJSON(ipfs, json, options: { length: number, timeout?: number, concurrency?: number } = { length: -1 }) {
+  static async fromJSON(ipfs, json, options: EntryFetchAllOptions) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     const { id, heads } = json
     const headHashes = heads.map(e => e.hash)
@@ -109,8 +115,7 @@ export class LogIO {
    * @param {Array<Entry>} options.exclude Entries to not fetch (cached)
    * @param {function(hash, entry, parent, depth)} options.onProgressCallback
    */
-  static async fromEntry(ipfs, sourceEntries,
-    { length = -1, exclude = [], shouldExclude, timeout, concurrency, onProgressCallback }) {
+  static async fromEntry(ipfs, sourceEntries, options: EntryFetchAllOptions) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(sourceEntries)) throw new Error("'sourceEntries' must be defined")
 
@@ -124,21 +129,26 @@ export class LogIO {
     }
 
     // Fetch given length, return size at least the given input entries
-    length = length > -1 ? Math.max(length, sourceEntries.length) : length
+    if (options.length > -1) {
+      options = {
+        ...options,
+        length: Math.max(options.length, sourceEntries.length)
+      }
+    }
 
     // Make sure we pass hashes instead of objects to the fetcher function
     const hashes = sourceEntries.map(e => e.hash)
 
     // Fetch the entries
     const all = await EntryIO.fetchParallel(ipfs, hashes,
-      { length, exclude, shouldExclude, timeout, concurrency, onProgressCallback })
+      options)
 
     // Combine the fetches with the source entries and take only uniques
-    const combined = sourceEntries.concat(all).concat(exclude)
+    const combined = sourceEntries.concat(all).concat(options.exclude)
     const uniques = findUniques(combined, 'hash').sort(Entry.compare)
 
     // Cap the result at the right size by taking the last n entries
-    const sliced = uniques.slice(length > -1 ? -length : -uniques.length)
+    const sliced = uniques.slice(options.length > -1 ? -options.length : -uniques.length)
 
     // Make sure that the given input entries are present in the result
     // in order to not lose references

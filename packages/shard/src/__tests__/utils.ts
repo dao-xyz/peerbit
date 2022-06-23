@@ -21,7 +21,11 @@ const createAnyPeer = async (peer: Peer, isServer: boolean = true, peerCapacity:
         },
         directoryId: peer.id,
         replicationCapacity: peerCapacity,
-        isServer
+        isServer,
+        peersRecycle: {
+            maxOplogLength: 20,
+            cutOplogToLength: 10
+        }
     });
 
     await anyPeer.create({ options, orbitDB: peer.orbitDB });

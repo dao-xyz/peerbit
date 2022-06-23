@@ -18,7 +18,7 @@ export class FeedIndex<T> {
     return Object.keys(this._index).map((f) => this._index[f])
   }
 
-  updateIndex(oplog, onProgressCallback) {
+  async updateIndex(oplog) {
     if (!this.clazz) {
       throw new Error("Not initialized");
     }

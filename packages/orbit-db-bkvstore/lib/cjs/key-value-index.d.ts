@@ -7,5 +7,5 @@ export declare class KeyValueIndex<T> {
     constructor();
     init(clazz: Constructor<T>): void;
     get(key: any): T;
-    updateIndex(oplog: any): void;
+    updateIndex(oplog: any): Promise<void>;
 }

@@ -6,5 +6,3 @@ export const findUniques = (value, key) => {
   value.forEach(addToIndex)
   return Object.keys(uniques).map(get)
 }
-
-module.exports = findUniques

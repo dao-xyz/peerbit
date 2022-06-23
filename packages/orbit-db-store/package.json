@@ -37,7 +37,7 @@
   "author": "Haad",
   "license": "MIT",
   "dependencies": {
-    "ipfs-log": "^5.4.1",
+    "@dao-xyz/ipfs-log": "^5.5.0",
     "it-to-stream": "^1.0.0",
     "logplease": "^1.2.14",
     "p-each-series": "^2.1.0",

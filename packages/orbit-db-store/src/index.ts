@@ -23,25 +23,27 @@
   ```
 */
 
-export interface Index {
-
-  /*
-    @param id - unique identifier of this index, eg. a user id or a hash
-  */
+export class Index {
 
 
   /*
-    Returns the state of the datastore, ie. most up-to-date data
-    @return - current state
-  */
-  //get();
+     @param id - unique identifier of this index, eg. a user id or a hash
+   */
+  _index?: any;
+  id?: any;
+  constructor(id?: string) {
+    this.id = id
+    this._index = []
+  }
 
   /*
-    Applies operations to the Index and updates the state
-    @param oplog - the source operations log that called updateIndex
-    @param entries - operations that were added to the log
-  */
-  updateIndex(oplog, onProgressCallback?: any): Promise<void> | void;
+   Applies operations to the Index and updates the state
+   @param oplog - the source operations log that called updateIndex
+   @param entries - operations that were added to the log
+ */
+  async updateIndex(oplog) {
+    this._index = oplog.values
+  }
 }
 
 

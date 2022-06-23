@@ -1,11 +1,10 @@
 import { LamportClock as Clock } from './lamport-clock'
-const { isDefined, io } = require('./utils')
-import { stringify } from 'json-stringify-deterministic'
+import { isDefined, io } from './utils'
+import stringify from 'json-stringify-deterministic'
 import { IPFS } from 'ipfs-core-types/src/'
+import { Identity } from 'orbit-db-identity-provider'
 const IpfsNotDefinedError = () => new Error('Ipfs instance not defined')
-export const IPLD_LINKS = ['next', 'refs']
 const getWriteFormatForVersion = v => v === 0 ? 'dag-pb' : 'dag-cbor'
-export const getWriteFormat = e => Entry.isEntry(e) ? getWriteFormatForVersion(e.v) : getWriteFormatForVersion(e)
 
 /*
  * @description
@@ -24,6 +23,10 @@ export class Entry {
   v: number // To tag the version of this data structure
   clock: Clock
 
+  static IPLD_LINKS = ['next', 'refs']
+  static getWriteFormat = e => Entry.isEntry(e) ? getWriteFormatForVersion(e.v) : getWriteFormatForVersion(e)
+
+
   /**
    * Create an Entry
    * @param {IPFS} ipfs An IPFS instance
@@ -38,7 +41,7 @@ export class Entry {
    * console.log(entry)
    * // { hash: null, payload: "hello", next: [] }
    */
-  static async create(ipfs, identity, logId, data, next = [], clock, refs = [], pin) {
+  static async create(ipfs: IPFS, identity: Identity, logId: string, data: any, next: (Entry | string)[] = [], clock?: Clock, refs: Entry[] = [], pin?: boolean) {
     if (!isDefined(ipfs)) throw IpfsNotDefinedError()
     if (!isDefined(identity)) throw new Error('Identity is required, cannot create entry')
     if (!isDefined(logId)) throw new Error('Entry requires an id')
@@ -114,7 +117,7 @@ export class Entry {
 
     // // Ensure `entry` follows the correct format
     const e = Entry.toEntry(entry)
-    return io.write(ipfs, getWriteFormat(e.v), e, { links: IPLD_LINKS, pin })
+    return io.write(ipfs, Entry.getWriteFormat(e.v), e, { links: Entry.IPLD_LINKS, pin })
   }
 
   static toEntry(entry: Entry, { presigned = false, includeHash = false } = {}): Entry {
@@ -157,7 +160,7 @@ export class Entry {
   static async fromMultihash(ipfs, hash) {
     if (!ipfs) throw IpfsNotDefinedError()
     if (!hash) throw new Error(`Invalid hash: ${hash}`)
-    const e = await io.read(ipfs, hash, { links: IPLD_LINKS })
+    const e = await io.read(ipfs, hash, { links: Entry.IPLD_LINKS })
 
     const entry = Entry.toEntry(e)
     entry.hash = hash

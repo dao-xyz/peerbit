@@ -9,6 +9,7 @@ import { deserialize } from '@dao-xyz/borsh';
 import { PublicKey } from './key';
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
+import { RecycleOptions } from '@dao-xyz/ipfs-log';
 
 export interface IPFSInstanceExtended extends IPFSInstance {
     libp2p: any
@@ -23,12 +24,14 @@ export class PeerOptions {
     behaviours: TypedBehaviours
     replicationCapacity: number;
     isServer: boolean;
+    peersRecycle: RecycleOptions
 
     constructor(options: {
         directoryId?: string;
         behaviours: TypedBehaviours;
         replicationCapacity: number;
         isServer: boolean;
+        peersRecycle: RecycleOptions;
     }) {
 
         Object.assign(this, options);
@@ -42,6 +45,7 @@ export class PeerOptions {
         this.behaviours.typeMap[Shard.name] = Shard;
         this.behaviours.typeMap[Peer.name] = Peer;
         this.isServer = options.isServer;
+        this.peersRecycle = options.peersRecycle;
 
         this.defaultOptions = {
             subscribeToQueries: this.isServer,
@@ -71,6 +75,8 @@ export class AnyPeer {
     public options: PeerOptions;
 
     public id: string;
+
+    public supportControllers: AbortController[] = [];
 
     // to know whether we should treat the peer as long lasting or temporary with web restrictions
 
@@ -139,6 +145,9 @@ export class AnyPeer {
             /*   await this.orbitDB.disconnect(); */
             /*  let p = (await this.node.pubsub.ls()).map(topic => this.node.pubsub.unsubscribe(topic))
              await Promise.all(p); */
+            for (const controller of this.supportControllers) {
+                controller.abort();
+            }
             await this.orbitDB.disconnect();
             await this.node.stop();
             /*            

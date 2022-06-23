@@ -2,8 +2,7 @@ import path from 'path'
 import { EventEmitter } from 'events'
 import mapSeries from 'p-each-series'
 import PQueue from 'p-queue'
-import Log from 'ipfs-log'
-import Entry = Log.Entry
+import { Log, Entry, ISortFunction } from '@dao-xyz/ipfs-log'
 import { Index } from './index'
 import { Replicator } from './replicator'
 import { ReplicationInfo } from './replication-info'
@@ -13,6 +12,7 @@ import io from 'orbit-db-io'
 import { IPFS } from 'ipfs-core-types/src/'
 import { Identity } from 'orbit-db-identity-provider'
 import AccessController from 'orbit-db-access-controllers/src/access-controller-interface'
+import { RecycleOptions } from '@dao-xyz/ipfs-log'
 export type Constructor<T> = new (...args: any[]) => T;
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
 Logger.setLogLevel('ERROR')
@@ -78,19 +78,17 @@ export interface IStoreOptions<X extends Index> extends ICreateOptions, IOpenOpt
   referenceCount?: number,
   replicationConcurrency?: number,
   syncLocal?: boolean,
-  sortFn?: (any: any) => void
+  sortFn?: ISortFunction,
   cache?: any;
   accessController?: AccessController,
-  recycle?: {
-    maxOplogLength: number, // Max length of oplog before cutting
-    cutOplogToLength: number, // When oplog shorter, cut to length
-  }
+  recycle?: RecycleOptions
   onClose?: (store: Store<X, any>) => void
   onDrop?: (store: Store<X, any>) => void
   onLoad?: (store: Store<X, any>) => void
 
 }
 export const DefaultOptions: IStoreOptions<Index> = {
+  Index: Index,
   maxHistory: -1,
   fetchEntryTimeout: null,
   referenceCount: 32,
@@ -167,7 +165,7 @@ export class Store<X extends Index, O extends IStoreOptions<X>> {
     this.access = options.accessController || defaultAccess
 
     // Create the operations log
-    this._oplog = new Log(this._ipfs, this.identity, { logId: this.id, access: this.access, sortFn: this.options.sortFn })
+    this._oplog = new Log(this._ipfs, this.identity, { logId: this.id, access: this.access, sortFn: this.options.sortFn, recycle: this.options.recycle })
 
     // _addOperation and log-joins queue. Adding ops and joins to the queue
     // makes sure they get processed sequentially to avoid race conditions
@@ -262,6 +260,10 @@ export class Store<X extends Index, O extends IStoreOptions<X>> {
 
   get key() {
     return this._key
+  }
+
+  get index() {
+    return this._index;
   }
 
   /**
@@ -409,7 +411,8 @@ export class Store<X extends Index, O extends IStoreOptions<X>> {
       const identityProvider = this.identity.provider
       if (!identityProvider) throw new Error('Identity-provider is required, cannot verify entry')
 
-      const canAppend = await this.access.canAppend(head, identityProvider)
+      // TODO Fix types
+      const canAppend = await this.access.canAppend(head, identityProvider as any)
       if (!canAppend) {
         console.warn('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
         return Promise.resolve(null)

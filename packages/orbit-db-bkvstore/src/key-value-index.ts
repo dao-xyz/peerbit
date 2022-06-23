@@ -14,7 +14,7 @@ export class KeyValueIndex<T> {
     return this._index[key]
   }
 
-  updateIndex(oplog) {
+  async updateIndex(oplog) {
     if (!this.clazz) {
       throw new Error("Not initialized");
     }

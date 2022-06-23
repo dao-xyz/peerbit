@@ -13,7 +13,7 @@ export declare class DocumentIndex<T> {
     get(key: ToStringable, fullOp?: boolean): ({
         payload: Payload<T>;
     } | T);
-    updateIndex(oplog: any, onProgressCallback: any): void;
+    updateIndex(oplog: any): Promise<void>;
     deserializeOrPass(value: string | T): T;
     deserializeOrItem(item: LogEntry<T | string>): LogEntry<T>;
 }

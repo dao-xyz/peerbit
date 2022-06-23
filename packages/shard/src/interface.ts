@@ -1,7 +1,7 @@
 
 
 import { field, variant } from "@dao-xyz/borsh";
-import { Store } from '@dao-xyz/orbit-db-store';
+import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store';
 import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
 import { Shard } from "./shard";
@@ -56,6 +56,7 @@ export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface
 
     db: B;
     _shard: Shard<any>
+    _overrideOptions: IStoreOptions<any>
 
     constructor(opts?: {
         name: string;
@@ -68,11 +69,16 @@ export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface
         }
     }
 
-    async init(shard: Shard<any>): Promise<void> {
+    get options(): IStoreOptions<any> {
+        return this._overrideOptions ? { ...this._shard.peer.options.defaultOptions, ...this._overrideOptions } : this._shard.peer.options.defaultOptions
+    }
+
+    async init(shard: Shard<any>, overrideOptions?: IStoreOptions<any>): Promise<void> {
         this._shard = shard;
         this.db = undefined;
+        this._overrideOptions = overrideOptions;
         if (!this.address) {
-            this.address = (await this._shard.peer.orbitDB.determineAddress(this.getDBName(), this.storeOptions.identifier, this._shard.peer.options.defaultOptions)).toString();
+            this.address = (await this._shard.peer.orbitDB.determineAddress(this.getDBName(), this.storeOptions.identifier, this.options)).toString();
         }
     }
 
@@ -82,7 +88,7 @@ export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface
             throw new Error("Not initialized")
         }
 
-        this.db = await this.storeOptions.newStore(this.address ? this.address : this.getDBName(), this._shard.peer.orbitDB, this._shard.peer.options.behaviours.typeMap, this._shard.peer.options.defaultOptions);
+        this.db = await this.storeOptions.newStore(this.address ? this.address : this.getDBName(), this._shard.peer.orbitDB, this._shard.peer.options.behaviours.typeMap, this.options);
         onReplicationMark(this.db);
         this.address = this.db.address.toString();
         return this.db;

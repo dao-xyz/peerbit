@@ -1,11 +1,4 @@
-import { difference } from './difference'
-import { findUniques } from './find-uniques'
-import { isDefined } from './is-defined'
-import { io } from 'orbit-db-io'
-
-module.exports = {
-  difference,
-  findUniques,
-  isDefined,
-  io
-}
+export { difference } from './difference'
+export { findUniques } from './find-uniques'
+export { isDefined } from './is-defined'
+export const io = require('orbit-db-io')

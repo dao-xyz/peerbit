@@ -14,7 +14,7 @@ export class DocumentIndex {
             ? this._index[stringKey]
             : this._index[stringKey] ? this._index[stringKey].payload.value : null;
     }
-    updateIndex(oplog, onProgressCallback) {
+    async updateIndex(oplog) {
         if (!this.clazz) {
             throw new Error("Not initialized");
         }
@@ -43,8 +43,6 @@ export class DocumentIndex {
                     delete this._index[key];
                 }
             }
-            if (onProgressCallback)
-                onProgressCallback(item, idx);
             return handled;
         };
         try {
