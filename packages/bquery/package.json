@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/bquery",
-  "version": "0.0.17",
+  "version": "0.0.18",
   "description": "Document Store for orbit-db with binary ser/der",
   "type": "module",
   "sideEffects": false,
@@ -31,7 +31,7 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^2.1.3",
-    "@dao-xyz/peer-test-utils": "^0.0.8",
+    "@dao-xyz/peer-test-utils": "^0.0.9",
     "@dao-xyz/time": "^0.0.4",
     "uuid": "^8.3.2"
   },
