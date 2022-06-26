@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz-types/orbit-db",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "description": "Unofficial typings for orbit-db",
   "types": "index.d.ts",
   "keywords": [
@@ -17,7 +17,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@dao-xyz/orbit-db-store": "^0.0.1",
+    "@dao-xyz/orbit-db-store": "^0.0.2",
     "@types/elliptic": "^6.4.6",
     "@types/events": "^1.2.0",
     "@types/ipfs": "https://git@github.com/lukas2005/types-ipfs.git",
