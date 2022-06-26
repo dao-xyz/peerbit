@@ -118,7 +118,6 @@ export class AnyPeer {
                       return;
                   }
    */
-                this.options.replicationCapacity -= shard.shardSize.toNumber();
                 await shard.replicate();
 
             } catch (error) {
