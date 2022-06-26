@@ -14,22 +14,26 @@ export class QueryStore<X extends Index, O extends IQueryStoreOptions<X>> extend
 
   _subscribed: boolean = false
   subscribeToQueries = false;
+  _initializationPromise?: Promise<void>;
   constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: O) {
     super(ipfs, id, dbname, options)
     this.subscribeToQueries = options.subscribeToQueries;
+    if (this.subscribeToQueries) {
+      this._initializationPromise = this._subscribeToQueries();
+    }
   }
 
   public async close(): Promise<void> {
+    await this._initializationPromise;
     await this._ipfs.pubsub.unsubscribe(this.queryTopic);
     this._subscribed = false;
     await super.close();
   }
 
   public async load(amount?: number, opts?: {}): Promise<void> {
+    await this._initializationPromise;
     await super.load(amount, opts);
-    if (this.subscribeToQueries) {
-      await this._subscribeToQueries();
-    }
+    this._initializationPromise = this._subscribeToQueries();
   }
 
   async queryHandler(_query: QueryRequestV0): Promise<Result[]> {

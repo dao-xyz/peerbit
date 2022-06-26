@@ -1,5 +1,5 @@
 export const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
-export const waitFor = async (fn: () => boolean | Promise<boolean>, timeout: number = 60 * 1000) => {
+export const waitFor = async (fn: () => boolean | Promise<boolean>, timeout: number = 10 * 1000) => {
 
     let startTime = +new Date;
     while (+new Date - startTime < timeout) {
@@ -11,7 +11,7 @@ export const waitFor = async (fn: () => boolean | Promise<boolean>, timeout: num
     throw new Error("Timed out")
 
 };
-export const waitForAsync = async (fn: () => Promise<boolean>, timeout: number = 60 * 1000) => {
+export const waitForAsync = async (fn: () => Promise<boolean>, timeout: number = 10 * 1000) => {
 
     let startTime = +new Date;
     while (+new Date - startTime < timeout) {

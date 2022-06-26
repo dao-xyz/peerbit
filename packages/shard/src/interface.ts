@@ -149,7 +149,8 @@ export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface
         if (!this.db) {
             await this.newStore() //await db.feed(this.getDBName('blocks'), this.chain.defaultOptions);
         }
-        await this.db.load();
+        await this.db.load(undefined);
+
         if (this._shard.peer.options.isServer) {
             await waitForReplicationEvents(this.db, waitForReplicationEventsCount);
         }

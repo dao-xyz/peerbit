@@ -165,7 +165,7 @@ export class Store<X extends Index, O extends IStoreOptions<X>> {
     this.access = options.accessController || defaultAccess
 
     // Create the operations log
-    this._oplog = new Log(this._ipfs, this.identity, { logId: this.id, access: this.access, sortFn: this.options.sortFn, recycle: this.options.recycle })
+    this._oplog = new Log(this._ipfs, this.identity, this.logOptions)
 
     // _addOperation and log-joins queue. Adding ops and joins to the queue
     // makes sure they get processed sequentially to avoid race conditions
@@ -266,6 +266,10 @@ export class Store<X extends Index, O extends IStoreOptions<X>> {
     return this._index;
   }
 
+  get logOptions() {
+    return { logId: this.id, access: this.access, sortFn: this.options.sortFn, recycle: this.options.recycle };
+  }
+
   /**
    * Returns the database's current replication status information
    * @return {[Object]} [description]
@@ -341,7 +345,7 @@ export class Store<X extends Index, O extends IStoreOptions<X>> {
 
     // Reset
     this._index = new this.options.Index(this.address.root)
-    this._oplog = new Log(this._ipfs, this.identity, { logId: this.id, access: this.access, sortFn: this.options.sortFn })
+    this._oplog = new Log(this._ipfs, this.identity, this.logOptions)
     this._cache = this.options.cache
   }
 

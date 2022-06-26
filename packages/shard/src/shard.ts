@@ -15,6 +15,7 @@ import { IStoreOptions } from '@dao-xyz/orbit-db-store'
 import { DocumentQueryRequest, QueryRequestV0, ResultSource, ResultWithSource } from '@dao-xyz/bquery';
 import { CounterStoreOptions } from "./stores";
 import { waitFor, waitForAsync } from "@dao-xyz/time";
+import { delay } from "@dao-xyz/time";
 export const SHARD_INDEX = 0;
 const MAX_SHARD_SIZE = 1024 * 500 * 1000;
 
@@ -279,7 +280,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
     }
 
 
-    async getRemotePeersSize(waitOnlyForOne: boolean = false, maxAggregationTime: number = 3000): Promise<number> {
+    async getRemotePeersSize(waitOnlyForOne: boolean = false, maxAggregationTime: number = 10000): Promise<number> {
         const db = this.peers;
         let size: number = undefined;
         const queryPromise = db.query(new QueryRequestV0({
@@ -397,7 +398,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
         }
 
         if (!this.peers.db) {
-            await this.peers.load();
+            await this.peers.newStore();
         }
         const controller = new AbortController();
         this.peer.supportControllers.push(controller);
@@ -409,8 +410,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
                 timestamp: new BN(+new Date),
                 memoryBudget: new BN(this.peer.options.replicationCapacity)
             });
-            if (this.peers.db)
-                await this.peers.db.put(thisPeer);
+            await this.peers.db.put(thisPeer);
 
             // Connect to parent shard, and connects to its peers 
             if (parentShard) {
@@ -461,6 +461,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
             while (this.peer.node.isOnline() && !stop) {
                 promise = task();
                 await promise;
+                await delay(this.peer.options.peerHealtcheckInterval);
             }
         }
         cron();
@@ -496,8 +497,8 @@ export class Shard<T extends DBInterface> extends ResultSource {
         /*  await Promise.all([
             
          ); */
-        await this.interface.load();
-        await this.loadMemorySize();
+        /*   await this.interface.load();
+          await this.loadMemorySize(); */
         await this.startSupportPeer();
         const t = 123;
         /* await this.peer.node.pubsub.subscribe(this.queryTopic, async (msg: Message) => {

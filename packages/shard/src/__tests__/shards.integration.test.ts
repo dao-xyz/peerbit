@@ -7,7 +7,7 @@ import { PublicKey } from '../key';
 import { Peer } from '../peer';
 import BN from 'bn.js';
 import { connectPeers, disconnectPeers } from '@dao-xyz/peer-test-utils';
-import { delay, waitFor } from '@dao-xyz/time';
+import { delay, waitFor, waitForAsync } from '@dao-xyz/time';
 import { Log } from 'ipfs-log';
 import { EntryIndex } from 'ipfs-log/src/entry-index';
 
@@ -270,18 +270,32 @@ describe('cluster', () => {
  
          }) */
 
-        test('peer db max sized', async () => {
+        test('recycle peer db max sized', async () => {
 
             // test that peers db does not grow infinitly
             let [peer] = await getConnectedPeers(1);
-            peer.options.peersRecycle.maxOplogLength = 3;
-            peer.options.peersRecycle.cutOplogToLength = 3;
+            peer.options.peersRecycle.maxOplogLength = 2;
+            peer.options.peersRecycle.cutOplogToLength = 2;
             let l0a = await shardStoreShard();
             await l0a.init(peer);
             await l0a.replicate();
-            await delay(10000); // wait for fill up peer pings, but it will cut back to 3 because of the peer settings
+            await delay(peer.options.peerHealtcheckInterval * 4); // wait for fill up peer pings, but it will cut back to 3 because of the peer settings
             expect(l0a.peers.db["_oplog"].values.length).toEqual(3);
         })
+
+        test('peer healthcheck interval option', async () => {
+
+            // test that peers db does not grow infinitly
+            let [peer] = await getConnectedPeers(1);
+            let l0a = await shardStoreShard();
+            await l0a.init(peer);
+            await l0a.replicate();
+            let start = l0a.peers.db["_oplog"].values.length;
+            await delay(peer.options.peerHealtcheckInterval * 2 + 100); // wait for at least 2 healthchecks + a little extra for margin
+            let end = l0a.peers.db["_oplog"].values.length;
+            expect(end - start).toEqual(2);
+        })
+
         test('peer remote counter', async () => {
             let [peer, peer2] = await getConnectedPeers(2);
             let l0a = await shardStoreShard();
@@ -299,6 +313,57 @@ describe('cluster', () => {
             expect(await l0b.getRemotePeersSize(true)).toEqual(1);
             await disconnectPeers([peer, peer2]);
         })
+        test('peer counter from 1 replicator', async () => {
+            let [peer, peer2] = await getConnectedPeers(2);
+            let l0a = await shardStoreShard();
+            await l0a.init(peer);
+            await l0a.replicate();
+            let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
+            await l0b.init(peer2);
+            await delay(5000);
+            expect(await l0b.getRemotePeersSize()).toEqual(1);
+            await disconnectPeers([peer, peer2]);
+        })
+
+        test('peer counter from 2 replicators', async () => {
+            let [peer, peer2, peer3] = await getConnectedPeers(3);
+            let l0a = await shardStoreShard();
+            await l0a.init(peer);
+            await l0a.replicate();
+
+            let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
+            await l0b.init(peer2);
+            await l0b.replicate();
+            let l0c = await Shard.loadFromCID(l0a.cid, peer3.node);
+            await l0c.init(peer3);
+            await delay(1000);
+            expect(await l0c.getRemotePeersSize()).toEqual(2);
+            await disconnectPeers([peer, peer2, peer3]);
+        })
+
+        test('peer counter from 2 replicators, but one is offline', async () => {
+            let [peer, peer2, peer3] = await getConnectedPeers(3);
+            let l0a = await shardStoreShard();
+            await l0a.init(peer);
+            await l0a.replicate();
+
+            let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
+            await l0b.init(peer2);
+            await l0b.replicate();
+
+            let l0c = await Shard.loadFromCID(l0a.cid, peer3.node);
+            await l0c.init(peer3);
+            await delay(5000);
+
+
+            waitForAsync(async () => await l0c.getRemotePeersSize() == 2);
+            await disconnectPeers([peer2]);
+
+
+            await disconnectPeers([peer, peer3]);
+        })
+
+
 
         test('subscribe, request', async () => {
             let peer = await getPeer();
@@ -319,7 +384,7 @@ describe('cluster', () => {
 
             expect(l0a.trust.rootTrust.equals(l0b.trust.rootTrust));            // Replication step
             await peer.subscribeForReplication(l0a.trust);
-            await delay(3000); // Pubsub is flaky, wait some time before requesting shard
+            await delay(5000); // Pubsub is flaky, wait some time before requesting shard
             await l0b.requestReplicate();
             //  --------------
             expect(await l0b.getRemotePeersSize()).toEqual(1)
