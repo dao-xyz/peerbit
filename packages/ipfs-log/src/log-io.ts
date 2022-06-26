@@ -2,7 +2,10 @@ import { Entry } from './entry'
 import { EntryFetchAllOptions, EntryIO, strictFetchOptions } from './entry-io'
 import { ISortFunction, LastWriteWins, NoZeroes } from './log-sorting'
 import * as LogError from './log-errors'
-const { isDefined, findUniques, difference, io } = require('./utils')
+import * as io from 'orbit-db-io';
+import { isDefined } from './is-defined';
+import { findUniques } from './find-uniques';
+import { difference } from './difference';
 
 const IPLD_LINKS = ['heads']
 const last = (arr, n) => arr.slice(arr.length - Math.min(arr.length, n), arr.length)
