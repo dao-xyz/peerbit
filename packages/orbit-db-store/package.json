@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-store",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "Modified base class for orbit db stores for Typescript with CJS and ESM builds",
   "type": "module",
   "sideEffects": false,

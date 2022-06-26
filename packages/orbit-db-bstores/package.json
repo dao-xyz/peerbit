@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-bstores",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "description": "Document Store for orbit-db with binary ser/der",
   "type": "module",
   "sideEffects": false,
@@ -31,7 +31,7 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^2.1.3",
-    "@dao-xyz/orbit-db-store": "^0.0.7"
+    "@dao-xyz/orbit-db-store": "^0.0.8"
   },
   "gitHead": "62040f90296fad19bc5275a096e7523b28fae116"
 }
