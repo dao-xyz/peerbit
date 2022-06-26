@@ -12,7 +12,8 @@ import { IPFS } from "ipfs-core-types/src/"
 import { Identity } from "orbit-db-identity-provider"
 import { AccessController } from "./default-access-controller"
 const { LastWriteWins, NoZeroes } = Sorting
-import { isDefined, findUniques } from './utils'
+import { isDefined } from './is-defined'
+import { findUniques } from "./find-uniques"
 const randomId = () => new Date().getTime().toString()
 const getHash = e => e.hash
 const flatMap = (res, acc) => res.concat(acc)

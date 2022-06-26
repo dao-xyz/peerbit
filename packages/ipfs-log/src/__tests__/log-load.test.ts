@@ -5,7 +5,7 @@ import { LastWriteWins } from '../log-sorting'
 import bigLogString from './fixtures/big-log.fixture';
 import { Entry } from '../entry'
 import { Log } from '../log'
-import { io } from '../utils/index'
+export const io = require('orbit-db-io')
 const IdentityProvider = require('orbit-db-identity-provider')
 const Keystore = require('orbit-db-keystore')
 import { LogCreator } from './utils/log-creator'
