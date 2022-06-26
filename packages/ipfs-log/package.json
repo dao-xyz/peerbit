@@ -16,9 +16,8 @@
     "src",
     "LICENSE"
   ],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/orbitdb/ipfs-log"
+  "publishConfig": {
+    "access": "public"
   },
   "engines": {
     "node": ">=14.0.0"
@@ -112,5 +111,6 @@
   },
   "localMaintainers": [
     "dao.xyz"
-  ]
+  ],
+  "gitHead": "62040f90296fad19bc5275a096e7523b28fae116"
 }

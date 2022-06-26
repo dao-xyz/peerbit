@@ -41,5 +41,6 @@
   },
   "devDependencies": {
     "@dao-xyz-types/orbit-db": "^0.0.15"
-  }
+  },
+  "gitHead": "62040f90296fad19bc5275a096e7523b28fae116"
 }

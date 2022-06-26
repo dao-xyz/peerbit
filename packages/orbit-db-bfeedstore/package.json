@@ -40,5 +40,6 @@
     "@dao-xyz-types/orbit-db": "^0.0.15",
     "@dao-xyz/peer-test-utils": "^0.0.4",
     "@dao-xyz/time": "^0.0.3"
-  }
+  },
+  "gitHead": "62040f90296fad19bc5275a096e7523b28fae116"
 }
