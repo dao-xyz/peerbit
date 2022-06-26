@@ -1,7 +1,7 @@
 import assert from 'assert'
 import { Log } from '@dao-xyz/ipfs-log'
-const Cache = require('orbit-db-cache')
-const Keystore = require('orbit-db-keystore')
+import { default as Cache } from 'orbit-db-cache'
+const Keystore = require("orbit-db-keystore");
 import IdentityProvider from 'orbit-db-identity-provider'
 
 import {

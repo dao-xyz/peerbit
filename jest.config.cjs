@@ -6,8 +6,8 @@ module.exports = {
     '^.+\\.ts?$': 'ts-jest',
   },
   transformIgnorePatterns: [],
-  /*   extensionsToTreatAsEsm: [".ts"],
-   */
+  /*  extensionsToTreatAsEsm: [".ts"], */
+
   testRegex: "/__tests__/.*\\.(test|spec)\\.ts$",
   moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
   testTimeout: 260000,
@@ -17,7 +17,7 @@ module.exports = {
         // allow js in typescript
         allowJs: true,
       },
-      /* useESM: true, */
+      /*  useESM: true, */
     },
   },
 };

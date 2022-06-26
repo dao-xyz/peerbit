@@ -1,7 +1,7 @@
 import path from 'path'
 import { EventEmitter } from 'events'
 import mapSeries from 'p-each-series'
-import PQueue from 'p-queue'
+import { default as PQueue } from 'p-queue'
 import { Log, Entry, ISortFunction } from '@dao-xyz/ipfs-log'
 import { Index } from './store-index'
 import { Replicator } from './replicator'
@@ -120,7 +120,7 @@ export class Store<X extends Index, O extends IStoreOptions<X>> {
   _cache: any;
   access: AccessController;
   _oplog: Log;
-  _queue: PQueue;
+  _queue: PQueue<any, any>
   _index: X;
   _replicationStatus: ReplicationInfo;
   _stats: any;

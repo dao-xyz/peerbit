@@ -1,4 +1,4 @@
-import PQueue from 'p-queue'
+import { default as PQueue } from 'p-queue'
 
 import { Log } from '@dao-xyz/ipfs-log'
 import { IPFS } from 'ipfs-core-types/src/'
