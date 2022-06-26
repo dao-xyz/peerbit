@@ -3,7 +3,7 @@ import { EventEmitter } from 'events'
 import mapSeries from 'p-each-series'
 import PQueue from 'p-queue'
 import { Log, Entry, ISortFunction } from '@dao-xyz/ipfs-log'
-import { Index } from './index'
+import { Index } from './store-index'
 import { Replicator } from './replicator'
 import { ReplicationInfo } from './replication-info'
 
