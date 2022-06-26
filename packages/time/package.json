@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/time",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Time utils",
   "type": "module",
   "sideEffects": false,
