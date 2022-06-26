@@ -1,6 +1,6 @@
 import { LamportClock as Clock } from './lamport-clock'
 import { isDefined } from './is-defined'
-export const io = require('orbit-db-io')
+import * as io from 'orbit-db-io'
 import stringify from 'json-stringify-deterministic'
 import { IPFS } from 'ipfs-core-types/src/'
 import { Identity } from 'orbit-db-identity-provider'

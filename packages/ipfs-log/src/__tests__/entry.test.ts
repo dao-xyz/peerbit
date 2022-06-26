@@ -1,6 +1,5 @@
 import { AccessController } from '../default-access-controller'
 import { Entry } from '../entry'
-import { Log } from '../log'
 export const io = require('orbit-db-io')
 const assert = require('assert')
 const rmrf = require('rimraf')
