@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-store",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Modified base class for orbit db stores for Typescript with CJS and ESM builds",
   "type": "module",
   "sideEffects": false,
@@ -37,7 +37,7 @@
   "author": "Haad",
   "license": "MIT",
   "dependencies": {
-    "@dao-xyz/ipfs-log": "^5.5.3",
+    "@dao-xyz/ipfs-log": "^5.5.4",
     "it-to-stream": "^1.0.0",
     "logplease": "^1.2.14",
     "p-each-series": "^2.1.0",
