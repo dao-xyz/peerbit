@@ -320,7 +320,7 @@ describe('cluster', () => {
             await l0a.replicate();
             let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
             await l0b.init(peer2);
-            await delay(5000);
+            await delay(1000);
             expect(await l0b.getRemotePeersSize()).toEqual(1);
             await disconnectPeers([peer, peer2]);
         })
@@ -384,7 +384,7 @@ describe('cluster', () => {
             await delay(5000); // Pubsub is flaky, wait some time before requesting shard
             await l0b.requestReplicate();
             //  --------------
-            expect(await l0b.getRemotePeersSize()).toEqual(1)
+            expect(await l0b.getRemotePeersSize(true)).toEqual(1)
             // add some delay because replication might take some time and is not synchronous
             await disconnectPeers([peer, peer2]);
 

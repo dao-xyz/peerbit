@@ -17,6 +17,7 @@ export interface IPFSInstanceExtended extends IPFSInstance {
 
 export const ROOT_CHAIN_SHARD_SIZE = 100;
 const PEER_HEALTH_CHECK_INTERVAL = 2000;
+const EXPECTED_PING_DELAY = 10 * 1000; // expected pubsub hello ping delay (two way)
 
 
 export class PeerOptions {
@@ -27,6 +28,7 @@ export class PeerOptions {
     isServer: boolean;
     peersRecycle: RecycleOptions
     peerHealtcheckInterval: number = PEER_HEALTH_CHECK_INTERVAL;
+    expectedPingDelay: number = EXPECTED_PING_DELAY;
 
     constructor(options: {
         directoryId?: string;

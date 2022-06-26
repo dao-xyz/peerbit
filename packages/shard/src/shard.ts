@@ -286,14 +286,15 @@ export class Shard<T extends DBInterface> extends ResultSource {
         const queryPromise = db.query(new QueryRequestV0({
             type: new DocumentQueryRequest({
                 queries: [
-                    new FieldCompareQuery(
-                        {
-                            key: 'timestamp',
-                            compare: Compare.GreaterOrEqual,
-                            value: new BN(+new Date - this.peer.options.peerHealtcheckInterval)
+                    /*   new FieldCompareQuery(
+                          {
+                              key: 'timestamp',
+                              compare: Compare.GreaterOrEqual,
+                              value: new BN(+new Date - this.peer.options.peerHealtcheckInterval - this.peer.options.expectedPingDelay) // last offseate is for to compensate for expected IO delays
+  
+                          }
+                      ) */
 
-                        }
-                    )
                 ]
             }),
         }), (resp) => { size = size ? Math.max(resp.results.length, size) : resp.results.length }, waitOnlyForOne ? 1 : undefined, maxAggregationTime)
@@ -411,6 +412,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
         if (!this.peers.db) {
             await this.peers.newStore();
         }
+
         const controller = new AbortController();
         this.peer.supportControllers.push(controller);
         const task = async () => {
@@ -488,14 +490,15 @@ export class Shard<T extends DBInterface> extends ResultSource {
               throw new Error(`Expecting shard counter to be less than the new index ${shardCounter} !< ${this.index}`)
           } */
 
-        const currentPeersCount = async () => this.getRemotePeersSize()
-        if (await currentPeersCount() == 0) {
+        const currentPeersCount = async () => this.getRemotePeersSize(false, 5000)
+     /*    if (await currentPeersCount() == 0) */ {
             // Send message that we need peers for this shard
             // The recieved of the message should be the DB that contains this shard,
-            let ser = serialize(this);
-            await this.peer.node.pubsub.publish(this.trust.replicationTopic, ser);
+
         }
-        await waitForAsync(async () => await currentPeersCount() > 0)
+        let ser = serialize(this);
+        await this.peer.node.pubsub.publish(this.trust.replicationTopic, ser);
+        await waitForAsync(async () => await currentPeersCount() > 0, 60000)
 
     }
 
