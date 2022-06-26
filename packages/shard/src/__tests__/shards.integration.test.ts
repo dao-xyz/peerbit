@@ -354,12 +354,9 @@ describe('cluster', () => {
             let l0c = await Shard.loadFromCID(l0a.cid, peer3.node);
             await l0c.init(peer3);
             await delay(5000);
-
-
             waitForAsync(async () => await l0c.getRemotePeersSize() == 2);
             await disconnectPeers([peer2]);
-
-
+            waitForAsync(async () => await l0c.getRemotePeersSize() == 1);
             await disconnectPeers([peer, peer3]);
         })
 

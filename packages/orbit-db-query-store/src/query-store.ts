@@ -18,9 +18,8 @@ export class QueryStore<X extends Index, O extends IQueryStoreOptions<X>> extend
   constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: O) {
     super(ipfs, id, dbname, options)
     this.subscribeToQueries = options.subscribeToQueries;
-    if (this.subscribeToQueries) {
-      this._initializationPromise = this._subscribeToQueries();
-    }
+    this._initializationPromise = this._subscribeToQueries();
+
   }
 
   public async close(): Promise<void> {
@@ -41,7 +40,7 @@ export class QueryStore<X extends Index, O extends IQueryStoreOptions<X>> extend
   }
 
   async _subscribeToQueries(): Promise<void> {
-    if (this._subscribed) {
+    if (this._subscribed || !this.subscribeToQueries) {
       return
     }
 

@@ -12,7 +12,7 @@ import { DBInterface, SingleDBInterface } from "./interface";
 import { BinaryDocumentStore, BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
 import { IStoreOptions } from '@dao-xyz/orbit-db-store'
-import { DocumentQueryRequest, QueryRequestV0, ResultSource, ResultWithSource } from '@dao-xyz/bquery';
+import { Compare, DocumentQueryRequest, FieldCompareQuery, FieldQuery, QueryRequestV0, ResultSource, ResultWithSource } from '@dao-xyz/bquery';
 import { CounterStoreOptions } from "./stores";
 import { waitFor, waitForAsync } from "@dao-xyz/time";
 import { delay } from "@dao-xyz/time";
@@ -284,7 +284,18 @@ export class Shard<T extends DBInterface> extends ResultSource {
         const db = this.peers;
         let size: number = undefined;
         const queryPromise = db.query(new QueryRequestV0({
-            type: new DocumentQueryRequest({ queries: [] }),
+            type: new DocumentQueryRequest({
+                queries: [
+                    new FieldCompareQuery(
+                        {
+                            key: 'timestamp',
+                            compare: Compare.GreaterOrEqual,
+                            value: new BN(+new Date - this.peer.options.peerHealtcheckInterval)
+
+                        }
+                    )
+                ]
+            }),
         }), (resp) => { size = size ? Math.max(resp.results.length, size) : resp.results.length }, waitOnlyForOne ? 1 : undefined, maxAggregationTime)
         if (waitOnlyForOne) {
             await waitFor(() => size !== undefined, maxAggregationTime)
@@ -497,8 +508,8 @@ export class Shard<T extends DBInterface> extends ResultSource {
         /*  await Promise.all([
             
          ); */
-        /*   await this.interface.load();
-          await this.loadMemorySize(); */
+        await this.interface.load();
+        await this.loadMemorySize();
         await this.startSupportPeer();
         const t = 123;
         /* await this.peer.node.pubsub.subscribe(this.queryTopic, async (msg: Message) => {
