@@ -1,6 +1,7 @@
 import IdentityProvider from "orbit-db-identity-provider/src/identity-provider-interface";
+
 import { Keypair, PublicKey as SPublicKey } from '@solana/web3.js';
-import { Identity, IdentityProviderType } from "orbit-db-identity-provider";
+import Identities, { Identity, IdentityProviderType } from "orbit-db-identity-provider";
 import nacl from "tweetnacl";
 import bs58 from 'bs58';
 

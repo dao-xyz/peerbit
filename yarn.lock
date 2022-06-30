@@ -12793,7 +12793,7 @@ orbit-db-identity-provider@^0.4.0:
     path-browserify "^1.0.1"
     stream-browserify "^3.0.0"
 
-orbit-db-io@^1.0.1, orbit-db-io@^1.0.2:
+orbit-db-io@1.0.2, orbit-db-io@^1.0.1, orbit-db-io@^1.0.2:
   version "1.0.2"
   resolved "https://registry.yarnpkg.com/orbit-db-io/-/orbit-db-io-1.0.2.tgz#88cde30f9de8b9b99e74d264d4d33363abad4906"
   integrity sha512-+tz5Yt/tFoblnAeSTeb+7hVH4w1sKcieuUaUObDbYbWrMgMI8qJ+WN9O3PLgeuLUaN9TSkgb+UoSRUd+366qBA==

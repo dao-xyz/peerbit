@@ -34,10 +34,8 @@
     "@dao-xyz/bquery": "^0.0.19",
     "@dao-xyz/orbit-db-bstores": "^0.0.15",
     "p-map": "~1.1.1",
-    "uuid": "^8.3.2"
-  },
-  "peerDependencies": {
-    "@dao-xyz/orbit-db-store": "0.x"
+    "uuid": "^8.3.2",
+    "@dao-xyz/orbit-db-store": "^0.0.8"
   },
   "devDependencies": {
     "@dao-xyz-types/orbit-db": "^0.0.21",

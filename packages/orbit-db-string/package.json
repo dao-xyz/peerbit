@@ -34,10 +34,8 @@
     "@dao-xyz/bquery": "^0.0.19",
     "@dao-xyz/orbit-db-query-store": "^0.0.23",
     "@dao-xyz/peer-test-utils": "^0.0.10",
-    "@dao-xyz/time": "^0.0.4"
-  },
-  "peerDependencies": {
-    "@dao-xyz/orbit-db-store": "0.x"
+    "@dao-xyz/time": "^0.0.4",
+    "@dao-xyz/orbit-db-store": "^0.0.8"
   },
   "devDependencies": {
     "@dao-xyz-types/orbit-db": "^0.0.21"
