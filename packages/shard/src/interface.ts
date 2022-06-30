@@ -70,7 +70,7 @@ export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface
     }
 
     get options(): IStoreOptions<any> {
-        return this._overrideOptions ? { ...this._shard.peer.options.defaultOptions, ...this._overrideOptions } : this._shard.peer.options.defaultOptions
+        return this._overrideOptions ? { ...this._shard.defaultStoreOptions, ...this._overrideOptions } : this._shard.defaultStoreOptions
     }
 
     async init(shard: Shard<any>, overrideOptions?: IStoreOptions<any>): Promise<void> {
@@ -149,7 +149,7 @@ export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface
         if (!this.db) {
             await this.newStore() //await db.feed(this.getDBName('blocks'), this.chain.defaultOptions);
         }
-        await this.db.load(undefined);
+        await this.db.load(waitForReplicationEventsCount);
 
         if (this._shard.peer.options.isServer) {
             await waitForReplicationEvents(this.db, waitForReplicationEventsCount);
@@ -206,11 +206,10 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterfac
     }
 
 
-    async loadShard(cid: string, options: { expectedPeerReplicationEvents?: number } = { expectedPeerReplicationEvents: 0 }): Promise<Shard<T>> {
+    async loadShard(cid: string): Promise<Shard<T>> {
         // Get the latest shard that have non empty peer
         let shard = this.db.db.get(cid)[0]
         await shard.init(this.db._shard.peer);
-        await shard.loadPeers(options.expectedPeerReplicationEvents);
         return shard;
     }
     get loaded(): boolean {

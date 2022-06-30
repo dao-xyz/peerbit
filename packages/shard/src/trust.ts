@@ -90,6 +90,9 @@ export class P2PTrust extends DBInterface {
 
 
     async addTrust(trustee: PublicKey) {
+        if (!this.db.db) {
+            await this.db.load();
+        }
         await this.db.db.put(new P2PTrustRelation({
             trustee
         }));
@@ -132,9 +135,10 @@ export class P2PTrust extends DBInterface {
      * Root trust A trust B trust C
      * C is trusted by Root
      * @param trustee 
+     * @param truster, the truster "root", if undefined defaults to the root trust
      * @returns true, if trusted
      */
-    isTrusted(trustee: PublicKey): boolean {
+    isTrusted(trustee: PublicKey, truster: PublicKey = this.rootTrust): boolean {
 
         /**
          * TODO: Currently very inefficient

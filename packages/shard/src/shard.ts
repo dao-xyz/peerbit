@@ -3,19 +3,20 @@ import OrbitDB from "orbit-db";
 import BN from 'bn.js';
 import CounterStore from "orbit-db-counterstore";
 /* import {  waitForReplicationEvents } from "./stores"; */
-import { waitForReplicationEvents } from "./utils";
 import { AnyPeer, IPFSInstanceExtended } from "./node";
-import { Peer } from "./peer";
 import { PublicKey } from "./key";
 import { P2PTrust } from "./trust";
 import { DBInterface, SingleDBInterface } from "./interface";
-import { BinaryDocumentStore, BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
+import { BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
 import { IStoreOptions } from '@dao-xyz/orbit-db-store'
-import { Compare, DocumentQueryRequest, FieldCompareQuery, FieldQuery, QueryRequestV0, ResultSource, ResultWithSource } from '@dao-xyz/bquery';
+import { ResultSource } from '@dao-xyz/bquery';
 import { CounterStoreOptions } from "./stores";
-import { waitFor, waitForAsync } from "@dao-xyz/time";
+import { waitForAsync } from "@dao-xyz/time";
 import { delay } from "@dao-xyz/time";
+import { PeerInfo, ShardPeerInfo } from "./peer";
+import { IQueryStoreOptions } from "@dao-xyz/orbit-db-query-store";
+import { TRUST_REGION_ACCESS_CONTROLLER } from "./identity";
 export const SHARD_INDEX = 0;
 const MAX_SHARD_SIZE = 1024 * 500 * 1000;
 
@@ -143,19 +144,24 @@ export class Shard<T extends DBInterface> extends ResultSource {
     @field({ type: SingleDBInterface })
     memoryRemoved: SingleDBInterface<number, CounterStore>;
 
-    @field({ type: SingleDBInterface })
-    peers: SingleDBInterface<Peer, BinaryDocumentStore<Peer>>
-
-
+    /*     @field({ type: SingleDBInterface })
+        peers: SingleDBInterface<Peer, BinaryDocumentStore<Peer>>
+    
+     */
     @field({ type: option('String') })
     parentShardCID: string | undefined; // one of the shards in the parent cluster
 
     @field({ type: 'u64' })
     shardIndex: BN // 0, 1, 2... this index will change the IFPS hash of this shard serialized. This means we can iterate shards without actually saving them in a DB
 
+    shardPeerInfo: ShardPeerInfo | undefined;
+
     peer: AnyPeer;
 
     cid: string;
+
+    defaultStoreOptions: IQueryStoreOptions<any>;
+
     constructor(props?: {
         id: string,
         cluster: string
@@ -188,14 +194,26 @@ export class Shard<T extends DBInterface> extends ResultSource {
     async init(from: AnyPeer, parentShardCID?: string): Promise<Shard<T>> {
         // TODO: this is ugly but ok for now
 
-        from.options.behaviours.typeMap[Peer.name] = Peer;
+
+
         await this.close();
+        this.peer = from;
+
+        this.defaultStoreOptions = {
+            subscribeToQueries: this.peer.options.isServer,
+            accessController: {
+                //write: [this.orbitDB.identity.id],
+                /*  trustRegionResolver: () => this.trust, */
+                type: TRUST_REGION_ACCESS_CONTROLLER
+            } as any,
+            replicate: this.peer.options.isServer,
+            directory: this.peer.options.storeDirectory
+        }
 
         if (parentShardCID) {
             this.parentShardCID = parentShardCID;
         }
 
-        this.peer = from;
 
         if (!this.trust) {
             this.trust = new P2PTrust({
@@ -204,7 +222,13 @@ export class Shard<T extends DBInterface> extends ResultSource {
         }
         await this.trust.init(this);
 
-        if (!this.peers) {
+        if (this.peer.options.isServer) {
+            this.peer.node.pubsub.subscribe(this.getQueryTopic('peer'), () => { })
+        }
+        if (!this.shardPeerInfo) {
+            this.shardPeerInfo = new ShardPeerInfo(this);
+        }
+        /* if (!this.peers) {
             this.peers = new SingleDBInterface({
                 name: "_peers",
                 storeOptions: new BinaryDocumentStoreOptions({
@@ -216,7 +240,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
         await this.peers.init(this, {
             recycle: this.peer.options.peersRecycle
-        });
+        }); */
 
 
         if (!this.memoryAdded) {
@@ -248,7 +272,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
     async close() {
 
-        this.peers?.close();
+        this.shardPeerInfo?.close();
         //this.dbs.forEach(db => { db.db = undefined });
         this.interface.close();
         this.trust?.close();
@@ -275,25 +299,25 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
     }
 
-    get queryTopic(): string {
-        return this.cluster;
+    getQueryTopic(topic: string): string {
+        return this.id + "-" + this.cluster + "-" + topic;
     }
 
 
-    async getRemotePeersSize(waitOnlyForOne: boolean = false, maxAggregationTime: number = 10000): Promise<number> {
+    /* async getRemotePeersSize(waitOnlyForOne: boolean = false, maxAggregationTime: number = 10000): Promise<number> {
         const db = this.peers;
         let size: number = undefined;
         const queryPromise = db.query(new QueryRequestV0({
             type: new DocumentQueryRequest({
                 queries: [
-                    /*   new FieldCompareQuery(
-                          {
-                              key: 'timestamp',
-                              compare: Compare.GreaterOrEqual,
-                              value: new BN(+new Date - this.peer.options.peerHealtcheckInterval - this.peer.options.expectedPingDelay) // last offseate is for to compensate for expected IO delays
-  
-                          }
-                      ) */
+                    new FieldCompareQuery(
+                        {
+                            key: 'timestamp',
+                            compare: Compare.GreaterOrEqual,
+                            value: new BN(+new Date - this.peer.options.peerHealtcheckInterval - this.peer.options.expectedPingDelay) // last offseate is for to compensate for expected IO delays
+
+                        }
+                    )
 
                 ]
             }),
@@ -309,26 +333,26 @@ export class Shard<T extends DBInterface> extends ResultSource {
             size = 0;
         }
         return size;
-    }
+    } */
 
-    async loadPeers(waitForReplicationEventsCount: number = 0) {
-        if (!this.peers.db) {
-            await this.peers.newStore();
-        }
+    /*  async loadPeers(waitForReplicationEventsCount: number = 0) {
+         if (!this.peers.db) {
+             await this.peers.newStore();
+         }
+ 
+         // Second argument 
+         await this.peers.load();
+         if (this.peer.options.isServer) {
+             await waitForReplicationEvents(this.peers.db, waitForReplicationEventsCount);
+ 
+         }
+         return this.peers;
+     } */
 
-        // Second argument 
-        await this.peers.load();
-        if (this.peer.options.isServer) {
-            await waitForReplicationEvents(this.peers.db, waitForReplicationEventsCount);
-
-        }
-        return this.peers;
-    }
-
-    async isSupported(peersCount: number = 1) {
-        await this.loadPeers(peersCount);
-        return this.peers.db.size >= peersCount
-    }
+    /*  async isSupported(peersCount: number = 1) {
+         await this.loadPeers(peersCount);
+         return this.peers.db.size >= peersCount
+     } */
 
     /* async loadDBs(): Promise<DB<any>[]> {
         await Promise.all(this.dbs.map(db => db.load(this)))
@@ -409,56 +433,55 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
         }
 
-        if (!this.peers.db) {
+
+        /* if (!this.peers.db) {
             await this.peers.newStore();
-        }
+        } */
 
         const controller = new AbortController();
         this.peer.supportControllers.push(controller);
         const task = async () => {
 
-            let thisPeer = new Peer({
-                key: PublicKey.from(this.peer.orbitDB.identity),
-                addresses: (await this.peer.node.id()).addresses.map(x => x.toString()),
-                timestamp: new BN(+new Date),
-                memoryBudget: new BN(this.peer.options.replicationCapacity)
-            });
-            await this.peers.db.put(thisPeer);
+            /*  let thisPeer = new Peer({
+                 key: PublicKey.from(this.peer.orbitDB.identity),
+                 addresses: (await this.peer.node.id()).addresses.map(x => x.toString()),
+                 timestamp: new BN(+new Date),
+                 memoryBudget: new BN(this.peer.options.replicationCapacity)
+             });
+             await this.peers.db.put(thisPeer); */
+            await this.shardPeerInfo.emitHealthcheck();
 
             // Connect to parent shard, and connects to its peers 
             if (parentShard) {
-                let gotOne = false;
-                await parentShard.peers.query(new QueryRequestV0({ type: new DocumentQueryRequest({ queries: [] }) }), async (res) => {
-                    const parentPeers = res.results.map(r => (r as ResultWithSource).source as Peer);
-                    if (parentPeers?.length > 0) {
-                        gotOne = true;
-                        let thisAddressSet = new Set(thisPeer.addresses);
-                        const isSelfDial = (peer: Peer) => {
-                            for (const addr of peer.addresses) {
-                                if (thisAddressSet.has(addr))
-                                    return true;
-                            }
-                            return false;
-                        }
-                        const myAddresses = new Set((await this.peer.node.swarm.addrs()).map(x => x.addrs).flat(1).map(x => x.toString()));
-                        const isAlreadyDialed = (peer: Peer) => {
-                            for (const addr of peer.addresses) {
-                                if (myAddresses.has(addr))
-                                    return true;
-                            }
-                            return false;
-                        }
-
-                        // Connect to all parent peers, we could do better (cherry pick), but ok for now
-                        await Promise.all(parentPeers.filter(peer => !isSelfDial(peer) && !isAlreadyDialed(peer)).map((peer) => this.peer.node.swarm.connect(peer.addresses[0])))
-                    }
-
-                }, undefined, 5000); // Expect at least 1 peer from parent
-                if (!gotOne) {
+                let parentPeers = await parentShard.shardPeerInfo.getPeers()
+                if (parentPeers.length == 0) {
                     console.error("Failed to swarm connect to parent");
-
                     //throw new Error("Expected to find at least 1 parent peer, got 0")
                 }
+                let myAddresses = (await this.peer.node.id()).addresses.map(x => x.toString());
+                if (parentPeers?.length > 0) {
+                    let thisAddressSet = new Set(myAddresses);
+                    const isSelfDial = (peer: PeerInfo) => {
+                        for (const addr of peer.addresses) {
+                            if (thisAddressSet.has(addr))
+                                return true;
+                        }
+                        return false;
+                    }
+                    const mySwarmAddresses = new Set((await this.peer.node.swarm.addrs()).map(x => x.addrs).flat(1).map(x => x.toString()));
+                    const isAlreadyDialed = (peer: PeerInfo) => {
+                        for (const addr of peer.addresses) {
+                            if (mySwarmAddresses.has(addr))
+                                return true;
+                        }
+                        return false;
+                    }
+
+                    // Connect to all parent peers, we could do better (cherry pick), but ok for now
+                    await Promise.all(parentPeers.filter(peer => !isSelfDial(peer) && !isAlreadyDialed(peer)).map((peer) => this.peer.node.swarm.connect(peer.addresses[0])))
+                }
+
+
             }
         }
 
@@ -490,7 +513,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
               throw new Error(`Expecting shard counter to be less than the new index ${shardCounter} !< ${this.index}`)
           } */
 
-        const currentPeersCount = async () => this.getRemotePeersSize(false, 5000)
+        const currentPeersCount = async () => (await this.shardPeerInfo.getPeers()).length
      /*    if (await currentPeersCount() == 0) */ {
             // Send message that we need peers for this shard
             // The recieved of the message should be the DB that contains this shard,
@@ -552,7 +575,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
     }; */
 
     getDBName(name: string): string {
-        return (this.parentShardCID ? this.parentShardCID : '-') + this.id + '-' + name;
+        return (this.parentShardCID ? this.parentShardCID : '') + '-' + this.id + '-' + name;
     }
 
     async save(node: IPFSInstanceExtended): Promise<string> {

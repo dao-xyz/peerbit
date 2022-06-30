@@ -98,6 +98,8 @@ class IPFSPubsub {
 
     // Get the topic. Compat with ipfs js 62 and 63
     topicId = message.topic ? message.topic : message.topicIDs[0]
+
+    // TODO fix inefficient code
     try {
       content = JSON.parse(Buffer.from(message.data).toString())
     } catch {

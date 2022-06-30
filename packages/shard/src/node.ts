@@ -1,8 +1,7 @@
 
 import OrbitDB from 'orbit-db';
-import { CONTRACT_ACCESS_CONTROLLER } from './identity';
+import { TRUST_REGION_ACCESS_CONTROLLER } from './identity';
 import { Shard, TypedBehaviours } from './shard';
-import { Peer } from './peer';
 import { v4 as uuid } from 'uuid';
 import { P2PTrust } from './trust';
 import { deserialize } from '@dao-xyz/borsh';
@@ -22,13 +21,13 @@ const EXPECTED_PING_DELAY = 10 * 1000; // expected pubsub hello ping delay (two 
 
 export class PeerOptions {
 
-    defaultOptions: IQueryStoreOptions<any>;
     behaviours: TypedBehaviours
     replicationCapacity: number;
     isServer: boolean;
     peersRecycle: RecycleOptions
     peerHealtcheckInterval: number = PEER_HEALTH_CHECK_INTERVAL;
     expectedPingDelay: number = EXPECTED_PING_DELAY;
+    storeDirectory: string;
 
     constructor(options: {
         directoryId?: string;
@@ -47,20 +46,9 @@ export class PeerOptions {
 
         // Static behaviours
         this.behaviours.typeMap[Shard.name] = Shard;
-        this.behaviours.typeMap[Peer.name] = Peer;
         this.isServer = options.isServer;
         this.peersRecycle = options.peersRecycle;
-
-        this.defaultOptions = {
-            subscribeToQueries: this.isServer,
-            accessController: {
-                //write: [this.orbitDB.identity.id],
-                type: CONTRACT_ACCESS_CONTROLLER
-            } as any,
-            replicate: this.isServer,
-            directory: './orbit-db-stores/' + (options.directoryId ? options.directoryId : uuid())
-        }
-
+        this.storeDirectory = './orbit-db-stores/' + (options.directoryId ? options.directoryId : uuid());
     }
 
 
