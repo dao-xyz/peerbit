@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-store",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "Modified base class for orbit db stores for Typescript with CJS and ESM builds",
   "type": "module",
   "sideEffects": false,
@@ -40,11 +40,11 @@
     "@dao-xyz/ipfs-log": "^5.5.5",
     "it-to-stream": "^1.0.0",
     "logplease": "^1.2.14",
+    "orbit-db-io": "1.0.2",
     "p-each-series": "^2.1.0",
     "p-map": "^4.0.0",
     "p-queue": "^6.6.2",
-    "readable-stream": "~3.6.0",
-    "orbit-db-io": "1.0.2"
+    "readable-stream": "~3.6.0"
   },
   "devDependencies": {
     "go-ipfs": "^0.9.1",
