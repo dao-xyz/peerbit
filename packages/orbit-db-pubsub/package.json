@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-pubsub",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "Message propagation module for orbit-db",
   "main": "index.js",
   "homepage": "https://github.com/orbitdb/orbit-db-pubsub",
