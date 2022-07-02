@@ -68,7 +68,11 @@ export class AnyPeer {
 
     public id: string;
 
-    public supportControllers: AbortController[] = [];
+    public supportJobs: {
+        shardCID: string,
+        connectingToParentShardCID?: string
+        controller: AbortController
+    }[] = [];
 
     // to know whether we should treat the peer as long lasting or temporary with web restrictions
 
@@ -136,8 +140,8 @@ export class AnyPeer {
             /*   await this.orbitDB.disconnect(); */
             /*  let p = (await this.node.pubsub.ls()).map(topic => this.node.pubsub.unsubscribe(topic))
              await Promise.all(p); */
-            for (const controller of this.supportControllers) {
-                controller.abort();
+            for (const jobs of this.supportJobs) {
+                jobs.controller.abort();
             }
             await this.orbitDB.disconnect();
             await this.node.stop();

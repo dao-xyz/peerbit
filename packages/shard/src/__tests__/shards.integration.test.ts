@@ -136,8 +136,52 @@ describe('cluster', () => {
             let feedStore = await (await documentStoreShard(Document)).init(peer2, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
             await feedStore.replicate();
             expect(feedStore.interface.db.address.endsWith(l0.cid + '-documents'));
-            expect(await isInSwarm(peer, peer2)).toBeTruthy();
+            await waitForAsync(async () => await isInSwarm(peer, peer2))
             disconnectPeers([peer, peer2]);
+        })
+
+
+        test('backward connect filter unique', async () => {
+
+            let [peer, peer2] = await getConnectedPeers(2)
+
+            // Create Root shard
+            let l0 = await shardStoreShard();
+            await l0.init(peer)
+            await l0.replicate();
+            // Create Feed store
+
+            expect(await isInSwarm(peer, peer2)).toBeFalsy();
+            let feedStore1 = await (await documentStoreShard(Document)).init(peer2, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
+            await feedStore1.replicate();
+            let feedStore2 = await (await documentStoreShard(Document)).init(peer2, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
+            await feedStore2.replicate();
+
+            await waitForAsync(async () => await isInSwarm(peer, peer2))
+            expect(peer2.supportJobs).toHaveLength(2);
+            expect(peer2.supportJobs.filter(x => x.connectingToParentShardCID)).toHaveLength(1);
+            expect(peer2.supportJobs.filter(x => x.connectingToParentShardCID)[0].connectingToParentShardCID).toEqual(l0.cid);
+            disconnectPeers([peer, peer2]);
+        })
+
+        test('backward connect no job is same peer', async () => {
+
+            let [peer] = await getConnectedPeers(2)
+
+            // Create Root shard
+            let l0 = await shardStoreShard();
+            await l0.init(peer)
+            await l0.replicate();
+            // Create Feed store
+
+            let feedStore1 = await (await documentStoreShard(Document)).init(peer, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
+            await feedStore1.replicate();
+            let feedStore2 = await (await documentStoreShard(Document)).init(peer, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
+            await feedStore2.replicate();
+
+            expect(peer.supportJobs).toHaveLength(3);
+            expect(peer.supportJobs.filter(x => x.connectingToParentShardCID)).toHaveLength(0);
+            disconnectPeers([peer]);
         })
     })
 
@@ -416,6 +460,7 @@ describe('cluster', () => {
             await disconnectPeers([peerNonServer]);
         })
 
+
         test('isServer=false can write', async () => {
 
             let peerServer = await getPeer(undefined, true);
@@ -446,6 +491,25 @@ describe('cluster', () => {
             subscriptions = await peerNonServer.node.pubsub.ls();
             expect(subscriptions.length).toEqual(0);  // non server should not have any subscriptions after write
             await disconnectPeers([peerServer, peerNonServer]);
+        })
+
+        test('query subscription are combined', async () => {
+
+            let [peer] = await getConnectedPeers(2)
+
+            // Create Root shard
+
+            let l0 = await shardStoreShard();
+            await l0.init(peer)
+            await l0.replicate();
+            // Create 2 feed stores
+            let feedStore1 = await (await documentStoreShard(Document)).init(peer, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
+            await feedStore1.replicate();
+            let feedStore2 = await (await documentStoreShard(Document)).init(peer, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
+            await feedStore2.replicate();
+            const subscriptions = await peer.node.pubsub.ls();
+            expect(subscriptions.filter(x => x.endsWith("/query"))).toHaveLength(1);
+            disconnectPeers([peer]);
         })
     })
 

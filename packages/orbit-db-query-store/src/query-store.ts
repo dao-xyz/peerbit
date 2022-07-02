@@ -5,19 +5,22 @@ import { Message } from 'ipfs-core-types/types/src/pubsub'
 import { QueryRequestV0, QueryResponseV0, Result, query } from '@dao-xyz/bquery';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
 
-export const getQueryTopic = (dbAddress: string): string => {
-  return dbAddress + '/query';
+export const getQueryTopic = (region: string): string => {
+  return region + '/query';
 }
-export type IQueryStoreOptions<X extends Index> = IStoreOptions<X> & { subscribeToQueries: boolean };
+export type IQueryStoreOptions<X extends Index> = IStoreOptions<X> & { subscribeToQueries: boolean, queryRegion: string };
 
 export class QueryStore<X extends Index, O extends IQueryStoreOptions<X>> extends Store<X, O> {
 
   _subscribed: boolean = false
   subscribeToQueries = false;
+  queryRegion: string;
+
   _initializationPromise?: Promise<void>;
   constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: O) {
     super(ipfs, id, dbname, options)
     this.subscribeToQueries = options.subscribeToQueries;
+    this.queryRegion = options.queryRegion;
     this._initializationPromise = this._subscribeToQueries();
 
   }
@@ -76,7 +79,7 @@ export class QueryStore<X extends Index, O extends IQueryStoreOptions<X>> extend
       throw new Error("Not initialized");
     }
 
-    return getQueryTopic(this.address.toString());
+    return getQueryTopic(this.queryRegion);
   }
 }
 

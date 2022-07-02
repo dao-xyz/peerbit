@@ -138,11 +138,11 @@ export class Shard<T extends DBInterface> extends ResultSource {
     @field({ type: DBInterface })
     interface: T; // the actual data dbs, all governed by the shard
 
-    @field({ type: SingleDBInterface })
+    /* @field({ type: SingleDBInterface })
     memoryAdded: SingleDBInterface<number, CounterStore>;
 
     @field({ type: SingleDBInterface })
-    memoryRemoved: SingleDBInterface<number, CounterStore>;
+    memoryRemoved: SingleDBInterface<number, CounterStore>; */
 
     /*     @field({ type: SingleDBInterface })
         peers: SingleDBInterface<Peer, BinaryDocumentStore<Peer>>
@@ -201,6 +201,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
         this.defaultStoreOptions = {
             subscribeToQueries: this.peer.options.isServer,
+            queryRegion: 'world',
             accessController: {
                 //write: [this.orbitDB.identity.id],
                 /*  trustRegionResolver: () => this.trust, */
@@ -242,22 +243,22 @@ export class Shard<T extends DBInterface> extends ResultSource {
             recycle: this.peer.options.peersRecycle
         }); */
 
-
-        if (!this.memoryAdded) {
-            this.memoryAdded = new SingleDBInterface({
-                name: "_memoryAdded",
-                storeOptions: new CounterStoreOptions()
-            });
-        }
-        await this.memoryAdded.init(this);
-
-        if (!this.memoryRemoved) {
-            this.memoryRemoved = new SingleDBInterface({
-                name: "_memoryRemoved",
-                storeOptions: new CounterStoreOptions()
-            });
-        }
-        await this.memoryRemoved.init(this);
+        /* 
+                if (!this.memoryAdded) {
+                    this.memoryAdded = new SingleDBInterface({
+                        name: "_memoryAdded",
+                        storeOptions: new CounterStoreOptions()
+                    });
+                }
+                await this.memoryAdded.init(this);
+        
+                if (!this.memoryRemoved) {
+                    this.memoryRemoved = new SingleDBInterface({
+                        name: "_memoryRemoved",
+                        storeOptions: new CounterStoreOptions()
+                    });
+                }
+                await this.memoryRemoved.init(this); */
 
         await this.interface.init(this);
 
@@ -275,9 +276,9 @@ export class Shard<T extends DBInterface> extends ResultSource {
         this.shardPeerInfo?.close();
         //this.dbs.forEach(db => { db.db = undefined });
         this.interface.close();
-        this.trust?.close();
+        this.trust?.close();/* 
         this.memoryAdded?.close();
-        this.memoryAdded?.close();
+        this.memoryAdded?.close(); */
     }
 
     //this.blocks = await this.newStore(this.address ? this.address : this.getDBName('blocks')) //await db.feed(this.getDBName('blocks'), this.chain.defaultOptions);
@@ -293,12 +294,12 @@ export class Shard<T extends DBInterface> extends ResultSource {
     } */
 
 
-    async loadMemorySize() {
-        await this.memoryAdded.load();
-        await this.memoryRemoved.load();
-
-    }
-
+    /*  async loadMemorySize() {
+         await this.memoryAdded.load();
+         await this.memoryRemoved.load();
+ 
+     }
+  */
     getQueryTopic(topic: string): string {
         return this.id + "-" + this.cluster + "-" + topic;
     }
@@ -377,10 +378,10 @@ export class Shard<T extends DBInterface> extends ResultSource {
             throw new Error("Block too large");
         }
 
-        if (!this.memoryAdded.db) {
-            await this.loadMemorySize();
-        }
-
+        /*  if (!this.memoryAdded.db) {
+             await this.loadMemorySize();
+         }
+  */
         if (!this.interface.loaded) {
             await this.interface.load();
         }
@@ -392,32 +393,26 @@ export class Shard<T extends DBInterface> extends ResultSource {
         // However though, we will not overshoot greatly 
 
         // Improvement: Make this synchronized across peers
-        if (this.memoryAdded.db.value - this.memoryRemoved.db.value + sizeBytes > this.shardSize.toNumber()) {
-            console.log('Max shard size achieved, request new shard');
-            throw new Error("Please perform sharding for chain: " + this.cluster)
-            /*  if (requestSharding) {
-                 await Shard.requestReplicatedShard(new Shard({
-                     index: this.index.addn(1),
-                     shardChainName: this.chain.shardChainName,
-                     defaultOptions: this.chain.defaultOptions
-                 }), db);
-                 await this.addBlock(block, sizeBytes, db, requestSharding);
-             } */
-        }
-        await this.memoryAdded.db.inc(sizeBytes);
+        // TODOadd proper memory check
+        /*   if (this.memoryAdded.db.value - this.memoryRemoved.db.value + sizeBytes > this.shardSize.toNumber()) {
+              console.log('Max shard size achieved, request new shard');
+              throw new Error("Please perform sharding for chain: " + this.cluster)
+              
+          }
+          await this.memoryAdded.db.inc(sizeBytes); */
         /*  let added = await this.blocks.add(block);
          return added; */
     }
 
 
 
-    async removeAndFreeMemory(amount: number, remove: () => Promise<string>): Promise<void> {
+    /* async removeAndFreeMemory(amount: number, remove: () => Promise<string>): Promise<void> {
         let rem = await remove();
         if (rem) {
             await this.memoryRemoved.db.inc(amount);
 
         }
-    }
+    } */
 
     public async startSupportPeer() {
 
@@ -438,21 +433,22 @@ export class Shard<T extends DBInterface> extends ResultSource {
             await this.peers.newStore();
         } */
 
+        const peerIsSupportingParent = !!this.parentShardCID && this.peer.supportJobs.find((job) => job.shardCID === this.parentShardCID)
+        const connectToParentShard = !peerIsSupportingParent && !!parentShard && !this.peer.supportJobs.find((job) => job.connectingToParentShardCID == this.parentShardCID)
         const controller = new AbortController();
-        this.peer.supportControllers.push(controller);
-        const task = async () => {
+        const newJob = {
+            shardCID: this.shardPeerInfo._shard.cid,
+            controller,
+            connectingToParentShardCID: connectToParentShard ? this.parentShardCID : undefined
+        }
 
-            /*  let thisPeer = new Peer({
-                 key: PublicKey.from(this.peer.orbitDB.identity),
-                 addresses: (await this.peer.node.id()).addresses.map(x => x.toString()),
-                 timestamp: new BN(+new Date),
-                 memoryBudget: new BN(this.peer.options.replicationCapacity)
-             });
-             await this.peers.db.put(thisPeer); */
+        this.peer.supportJobs.push(newJob);
+
+        const task = async () => {
             await this.shardPeerInfo.emitHealthcheck();
 
             // Connect to parent shard, and connects to its peers 
-            if (parentShard) {
+            if (connectToParentShard) {
                 let parentPeers = await parentShard.shardPeerInfo.getPeers()
                 if (parentPeers.length == 0) {
                     console.error("Failed to swarm connect to parent");
@@ -478,14 +474,14 @@ export class Shard<T extends DBInterface> extends ResultSource {
                     }
 
                     // Connect to all parent peers, we could do better (cherry pick), but ok for now
-                    await Promise.all(parentPeers.filter(peer => !isSelfDial(peer) && !isAlreadyDialed(peer)).map((peer) => this.peer.node.swarm.connect(peer.addresses[0])))
+                    const connectPromises = parentPeers.filter(peer => !isSelfDial(peer) && !isAlreadyDialed(peer)).map((peer) => this.peer.node.swarm.connect(peer.addresses[0]));
+                    await Promise.all(connectPromises)
+                    const x = 123;
                 }
 
 
             }
         }
-
-
 
         const cron = async () => {
             let stop = false;
@@ -535,9 +531,8 @@ export class Shard<T extends DBInterface> extends ResultSource {
             
          ); */
         await this.interface.load();
-        await this.loadMemorySize();
+        /*      await this.loadMemorySize(); */
         await this.startSupportPeer();
-        const t = 123;
         /* await this.peer.node.pubsub.subscribe(this.queryTopic, async (msg: Message) => {
             try {
                 let query = deserialize(Buffer.from(msg.data), QueryRequestV0);
