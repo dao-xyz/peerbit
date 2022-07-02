@@ -4,7 +4,7 @@ import { field, variant } from "@dao-xyz/borsh";
 import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store';
 import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
-import { Shard } from "./shard";
+import { DEFAULT_QUERY_REGION, Shard } from "./shard";
 import * as events from 'events';
 import { waitForReplicationEvents } from "./utils";
 import { ResultSource, query } from "@dao-xyz/bquery";
@@ -133,11 +133,11 @@ export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface
         return this.db
     }
 
-    async query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, waitForAmount?: number, maxAggregationTime?: number) {
+    async query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, region: string = DEFAULT_QUERY_REGION, waitForAmount?: number, maxAggregationTime?: number) {
         if (!this.address) {
             throw new Error("Can not query because DB address is unknown")
         }
-        return query(this._shard.peer.node.pubsub, getQueryTopic(this.address), queryRequest, responseHandler, waitForAmount, maxAggregationTime)
+        return query(this._shard.peer.node.pubsub, getQueryTopic(region), queryRequest, responseHandler, waitForAmount, maxAggregationTime)
     }
 
 

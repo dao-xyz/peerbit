@@ -75,7 +75,7 @@ export class QueryStore<X extends Index, O extends IQueryStoreOptions<X>> extend
   }
 
   public get queryTopic(): string {
-    if (!this.address) {
+    if (!this.address || !this.queryRegion) {
       throw new Error("Not initialized");
     }
 

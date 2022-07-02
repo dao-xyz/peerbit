@@ -19,6 +19,7 @@ import { IQueryStoreOptions } from "@dao-xyz/orbit-db-query-store";
 import { TRUST_REGION_ACCESS_CONTROLLER } from "./identity";
 export const SHARD_INDEX = 0;
 const MAX_SHARD_SIZE = 1024 * 500 * 1000;
+export const DEFAULT_QUERY_REGION = 'world';
 
 // io
 
@@ -201,7 +202,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
         this.defaultStoreOptions = {
             subscribeToQueries: this.peer.options.isServer,
-            queryRegion: 'world',
+            queryRegion: DEFAULT_QUERY_REGION,
             accessController: {
                 //write: [this.orbitDB.identity.id],
                 /*  trustRegionResolver: () => this.trust, */
