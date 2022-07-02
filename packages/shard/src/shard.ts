@@ -1,17 +1,14 @@
 import { Constructor, deserialize, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
 import OrbitDB from "orbit-db";
 import BN from 'bn.js';
-import CounterStore from "orbit-db-counterstore";
-/* import {  waitForReplicationEvents } from "./stores"; */
 import { AnyPeer, IPFSInstanceExtended } from "./node";
 import { PublicKey } from "./key";
 import { P2PTrust } from "./trust";
-import { DBInterface, SingleDBInterface } from "./interface";
+import { DBInterface } from "./interface";
 import { BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
 import { IStoreOptions } from '@dao-xyz/orbit-db-store'
 import { ResultSource } from '@dao-xyz/bquery';
-import { CounterStoreOptions } from "./stores";
 import { waitForAsync } from "@dao-xyz/time";
 import { delay } from "@dao-xyz/time";
 import { PeerInfo, ShardPeerInfo } from "./peer";
@@ -50,43 +47,11 @@ export class ReplicationRequest {
 
 
 
-// data
-
-
-
-
-
-
-/* abstract class XYZStoreBuilder<T extends XYZStore> {
-    newOrLoad(name: string, chain: ShardChain<T>): Promise<T> {
-        throw new Error("Not implemented")
-    }
-}
-
-abstract class XYZStore extends Store {
-    load(): Promise<void> {
-        throw new Error("Not implemented")
-    }
-}
-
-export class FeedXYZSore extends XYZStore 
-{
-    
-}
- */
 
 
 export type StoreBuilder<B> = (name: string, defaultOptions: IStoreOptions<any>, orbitdDB: OrbitDB) => Promise<B>
 
-// patch behaviours in a big MAP ? 
-// type -> 
-/* 
-{
-    - query() => 
-    - new => 
-    - 
-} 
-*/
+
 export type Behaviours<St> = {
     newStore: StoreBuilder<St>
 }
@@ -96,29 +61,6 @@ export type TypedBehaviours = {
         [key: string]: Constructor<any>
     }
 };
-
-
-/* const waitForReplicationEvents = async (waitForReplicationEventsCount: number, storeEvents: { on: (event: string, cb: () => void) => void }) => {
-    if (waitForReplicationEventsCount <= 0)
-        return;
-
-    let replications = 0;
-    storeEvents.on('replicated', () => {
-        replications += 1;
-    });
-
-    let startTime = +new Date;
-    while (+new Date - startTime < MAX_REPLICATION_WAIT_TIME && replications != waitForReplicationEventsCount) {
-        await delay(30);
-    }
-    if (replications < waitForReplicationEventsCount) {
-        // Could potentially be an issue where replication events already happened before this call, 
-        // hence we just warn if result is not the expected
-        console.warn("Failed to find all replication events");
-    }
-} */
-
-
 
 
 @variant([0, 0])
@@ -201,7 +143,6 @@ export class Shard<T extends DBInterface> extends ResultSource {
         this.peer = from;
 
         this.defaultStoreOptions = {
-            subscribeToQueries: this.peer.options.isServer,
             queryRegion: DEFAULT_QUERY_REGION,
             accessController: {
                 //write: [this.orbitDB.identity.id],
@@ -224,9 +165,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
         }
         await this.trust.init(this);
 
-        if (this.peer.options.isServer) {
-            this.peer.node.pubsub.subscribe(this.getQueryTopic('peer'), () => { })
-        }
+
         if (!this.shardPeerInfo) {
             this.shardPeerInfo = new ShardPeerInfo(this);
         }
@@ -269,6 +208,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
             // only needed for write, not needed to be loaded automatically
             await this.save(from.node);
         }
+
         return this;
     }
 

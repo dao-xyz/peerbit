@@ -1,6 +1,7 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh";
 import BN from 'bn.js';
-import { QueryType } from "./query-type";
+import { ContextMatchQuery } from "./context";
+import { MultipleQueriesType, Query, QueryType } from "./query-interface";
 
 export enum SortDirection {
     Ascending = 0,
@@ -26,8 +27,8 @@ export class FieldSort {
 }
 
 
-
-export class FieldQuery {
+@variant(1)
+export class FieldQuery extends Query {
 
     public apply(doc: any): boolean {
         throw new Error("Not implemented")
@@ -140,7 +141,7 @@ export class FieldCompareQuery extends FieldQuery {
 
 
 @variant(0)
-export class DocumentQueryRequest extends QueryType {
+export class DocumentQueryRequest extends MultipleQueriesType {
 
     @field({ type: option('u64') })
     offset: BN | undefined;
@@ -148,16 +149,13 @@ export class DocumentQueryRequest extends QueryType {
     @field({ type: option('u64') })
     size: BN | undefined;
 
-    @field({ type: vec(FieldQuery) })
-    queries: FieldQuery[]
-
     @field({ type: option(FieldSort) })
     sort: FieldSort | undefined;
 
     constructor(obj?: {
         offset?: BN
         size?: BN
-        queries: FieldQuery[]
+        queries: Query[]
         sort?: FieldSort
 
     }) {

@@ -4,7 +4,7 @@ import { Identity } from 'orbit-db-identity-provider';
 import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
 import bs58 from 'bs58';
 import { asString } from './utils';
-import { DocumentQueryRequest, FieldQuery, QueryRequestV0, Result, ResultSource, ResultWithSource, SortDirection } from '@dao-xyz/bquery';
+import { DocumentQueryRequest, FieldQuery, Query, QueryRequestV0, Result, ResultSource, ResultWithSource, SortDirection } from '@dao-xyz/bquery';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store'
@@ -113,7 +113,7 @@ export class BinaryDocumentStore<T extends ResultSource> extends QueryStore<Docu
   queryHandler(query: QueryRequestV0): Promise<Result[]> {
     const documentQuery = query.type as DocumentQueryRequest;
 
-    let filters: (FieldQuery | ((v: any) => boolean))[] = documentQuery.queries;
+    let filters: FieldQuery[] = documentQuery.queries.filter(q => q instanceof FieldQuery) as any;
     let results = this.queryDocuments(
       doc =>
         filters?.length > 0 ? filters.map(f => {
@@ -121,7 +121,7 @@ export class BinaryDocumentStore<T extends ResultSource> extends QueryStore<Docu
             return f.apply(doc)
           }
           else {
-            return (f as ((v: any) => boolean))(doc)
+            throw new Error("Unsupported query type")
           }
         }).reduce((prev, current) => prev && current) : true
     ) as T[];

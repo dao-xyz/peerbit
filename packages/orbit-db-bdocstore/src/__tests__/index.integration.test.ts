@@ -4,7 +4,7 @@ import BN from 'bn.js';
 import { BinaryDocumentStore, BINARY_DOCUMENT_STORE_TYPE, DocumentStoreOptions } from '../document-store';
 import { DocumentQueryRequest, Compare, FieldCompareQuery, QueryRequestV0, QueryResponseV0, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort, ResultSource } from '@dao-xyz/bquery';
 import { query } from '@dao-xyz/bquery';
-import { disconnectPeers, getPeer, Peer } from '@dao-xyz/peer-test-utils';
+import { disconnectPeers, getConnectedPeers, getPeer, Peer } from '@dao-xyz/peer-test-utils';
 import { waitFor } from '@dao-xyz/time';
 
 @variant([1, 0])
@@ -37,13 +37,12 @@ const documentDbTestSetup = async (): Promise<{
 }> => {
 
 
-  let peer = await getPeer();
-  let observer = await getPeer();
+  let [peer, observer] = await getConnectedPeers(2);
 
   // Create store
-  let documentStoreCreator = await peer.orbitDB.open<BinaryDocumentStore<Document>>('store', { ...{ clazz: Document, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: 'id', subscribeToQueries: true } as DocumentStoreOptions<Document> })
+  let documentStoreCreator = await peer.orbitDB.open<BinaryDocumentStore<Document>>('store', { ...{ clazz: Document, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: 'id', subscribeToQueries: true, queryRegion: 'world' } as DocumentStoreOptions<Document> })
   await documentStoreCreator.load();
-  let documentStoreObserver = await observer.orbitDB.open<BinaryDocumentStore<Document>>(documentStoreCreator.address.toString(), { ...{ clazz: Document, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: 'id', subscribeToQueries: false, replicate: false } as DocumentStoreOptions<Document> })
+  let documentStoreObserver = await observer.orbitDB.open<BinaryDocumentStore<Document>>(documentStoreCreator.address.toString(), { ...{ clazz: Document, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: 'id', subscribeToQueries: false, queryRegion: 'world', replicate: false } as DocumentStoreOptions<Document> })
 
   expect(await peer.node.pubsub.ls()).toHaveLength(2); // replication and query topic
   expect(await observer.node.pubsub.ls()).toHaveLength(0);

@@ -1,11 +1,12 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh";
 import { ResultCoordinates, ResultSource } from "./result";
 import BN from 'bn.js';
-import { QueryType } from "./query-type";
+import { MultipleQueriesType, Query, QueryType } from "./query-interface";
+import { ContextMatchQuery } from "./context";
 
 
-@variant(0)
-export class StringMatchQuery {
+@variant(2)
+export class StringMatchQuery extends Query {
 
     @field({ type: 'String' })
     value: string
@@ -17,6 +18,7 @@ export class StringMatchQuery {
         value: string
         exactMatch: boolean
     }) {
+        super();
         if (opts) {
             Object.assign(this, opts);
         }
@@ -67,13 +69,12 @@ export class RangeCoordinates extends ResultCoordinates {
 
 
 @variant(1)
-export class StringQueryRequest extends QueryType {
+export class StringQueryRequest extends MultipleQueriesType {
 
-    @field({ type: vec(StringMatchQuery) })
-    queries: StringMatchQuery[];
+
 
     constructor(obj?: {
-        queries: StringMatchQuery[]
+        queries: Query[]
     }) {
         super();
         if (obj) {

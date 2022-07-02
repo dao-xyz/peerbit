@@ -4,10 +4,11 @@ import { v4 as uuid } from 'uuid';
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import { Message } from "ipfs-core-types/src/pubsub";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
-import { DocumentQueryRequest } from "../document-query";
+import { DocumentQueryRequest, FieldStringMatchQuery } from "../document-query";
 import { ResultSource, ResultWithSource } from "../result";
 import { delay, waitFor } from "@dao-xyz/time";
 import { disconnectPeers, getConnectedPeers } from '@dao-xyz/peer-test-utils';
+import { ContextMatchQuery, ShardMatchQuery } from '../context';
 
 @variant([1, 1])
 class NumberResult extends ResultSource {
@@ -29,7 +30,7 @@ describe('query', () => {
 
     const topic = uuid();
     await a.node.pubsub.subscribe(topic, (msg: Message) => {
-      let request = deserialize(Buffer.from(msg.data), QueryRequestV0);
+      let request = deserialize(Buffer.from(msg.data), QueryRequestV0); // deserialize, so we now this works, even though we will not analyse the query
       a.node.pubsub.publish(request.getResponseTopic(topic), serialize(new QueryResponseV0({
         results: [new ResultWithSource({
           source: new NumberResult({ number: 123 })
@@ -41,7 +42,13 @@ describe('query', () => {
     let results = [];
     await query(b.node.pubsub, topic, new QueryRequestV0({
       type: new DocumentQueryRequest({
-        queries: []
+        queries: [new FieldStringMatchQuery({
+          key: 'a',
+          value: 'b'
+        }), new ShardMatchQuery({
+          cid: 'a'
+        })
+        ]
       })
     }), (resp) => {
       expect(resp.results[0]).toBeInstanceOf(ResultWithSource);

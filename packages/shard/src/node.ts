@@ -119,21 +119,7 @@ export class AnyPeer {
         })
     }
 
-    /*   
-    async query<T>(topic: string, query: QueryRequestV0, clazz: Constructor<T>, responseHandler: (response: QueryResponse<T>) => void, maxAggregationTime: number = 30 * 1000) {
-        // send query and wait for replies in a generator like behaviour
-        let responseTopic = query.getResponseTopic(topic);
-        await this.node.pubsub.subscribe(responseTopic, (msg: Message) => {
-            const encoded = deserialize(Buffer.from(msg.data), EncodedQueryResponse);
-            let result = QueryResponse.from(encoded, clazz);
-            responseHandler(result);
-        })
-        await this.node.pubsub.publish(topic, serialize(query));
-    } 
-  
-    
-  
-  */
+
 
     async disconnect(): Promise<void> {
         try {

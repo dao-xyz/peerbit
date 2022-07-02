@@ -127,13 +127,13 @@ class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore {
     }
     queryHandler(query) {
         const documentQuery = query.type;
-        let filters = documentQuery.queries;
+        let filters = documentQuery.queries.filter(q => q instanceof bquery_1.FieldQuery);
         let results = this.queryDocuments(doc => (filters === null || filters === void 0 ? void 0 : filters.length) > 0 ? filters.map(f => {
             if (f instanceof bquery_1.FieldQuery) {
                 return f.apply(doc);
             }
             else {
-                return f(doc);
+                throw new Error("Unsupported query type");
             }
         }).reduce((prev, current) => prev && current) : true);
         if (documentQuery.sort) {

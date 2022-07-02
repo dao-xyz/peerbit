@@ -20,6 +20,7 @@ export class BStoreOptions<B extends Store<any, any>> {
         throw new Error("Not implemented")
     }
 
+
     get identifier(): string {
         throw new Error("Not implemented")
     }

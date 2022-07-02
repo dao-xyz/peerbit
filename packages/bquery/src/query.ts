@@ -1,7 +1,7 @@
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import { API as PubSubAPI, Message } from 'ipfs-core-types/src/pubsub';
 import { v4 as uuid } from 'uuid';
-import { QueryType } from "./query-type";
+import { QueryType } from "./query-interface";
 import { Result } from "./result";
 import { delay, waitFor } from "@dao-xyz/time";
 @variant(0)

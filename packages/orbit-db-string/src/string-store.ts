@@ -2,7 +2,7 @@ import { PayloadOperation, StringIndex } from './string-index'
 import { IPFS as IPFSInstance } from 'ipfs';
 import { Identity } from 'orbit-db-identity-provider';
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
-import { QueryRequestV0, RangeCoordinate, RangeCoordinates, Result, ResultWithSource } from '@dao-xyz/bquery';
+import { QueryRequestV0, RangeCoordinate, RangeCoordinates, Result, ResultWithSource, StringMatchQuery } from '@dao-xyz/bquery';
 import { StringQueryRequest } from '@dao-xyz/bquery';
 import BN from 'bn.js';
 import { Range, RangeOptional } from './range';
@@ -87,13 +87,16 @@ export class StringStore extends QueryStore<StringIndex, IQueryStoreOptions<Stri
       })])
     }
     let ranges = stringQuery.queries.map(query => {
-      const occurances = findAllOccurrences(query.preprocess(content), query.preprocess(query.value));
-      return occurances.map(ix => {
-        return new RangeCoordinate({
-          offset: new BN(ix),
-          length: new BN(query.value.length)
+      if (query instanceof StringMatchQuery) {
+        const occurances = findAllOccurrences(query.preprocess(content), query.preprocess(query.value));
+        return occurances.map(ix => {
+          return new RangeCoordinate({
+            offset: new BN(ix),
+            length: new BN(query.value.length)
+          })
         })
-      })
+      }
+      return []
     }).flat(1);
 
     if (ranges.length == 0) {

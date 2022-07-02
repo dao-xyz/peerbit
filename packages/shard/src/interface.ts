@@ -8,7 +8,7 @@ import { DEFAULT_QUERY_REGION, Shard } from "./shard";
 import * as events from 'events';
 import { waitForReplicationEvents } from "./utils";
 import { ResultSource, query } from "@dao-xyz/bquery";
-import { getQueryTopic } from "@dao-xyz/orbit-db-query-store";
+import { getQueryTopic, QueryStore } from "@dao-xyz/orbit-db-query-store";
 import { QueryRequestV0 } from "@dao-xyz/bquery";
 import { QueryResponseV0 } from "@dao-xyz/bquery";
 
@@ -90,6 +90,12 @@ export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface
 
         this.db = await this.storeOptions.newStore(this.address ? this.address : this.getDBName(), this._shard.peer.orbitDB, this._shard.peer.options.behaviours.typeMap, this.options);
         onReplicationMark(this.db);
+
+        if (this._shard.peer.options.isServer && this.db instanceof QueryStore) {
+            await this.db.subscribeToQueries({
+                cid: this._shard.cid
+            })
+        }
         this.address = this.db.address.toString();
         return this.db;
     }
