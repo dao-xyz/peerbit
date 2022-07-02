@@ -91,7 +91,6 @@ export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface
         this.db = await this.storeOptions.newStore(this.address ? this.address : this.getDBName(), this._shard.peer.orbitDB, this._shard.peer.options.behaviours.typeMap, this.options);
         onReplicationMark(this.db);
         this.address = this.db.address.toString();
-        await this._initStore();
         return this.db;
     }
 
@@ -110,13 +109,6 @@ export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface
         }
     }
 
-    async _initStore() {
-        if (this._shard.peer.options.isServer && this.db instanceof QueryStore) {
-            await this.db.subscribeToQueries({
-                cid: this._shard.cid
-            })
-        }
-    }
 
     /**
      * Write to DB without fully loadung it

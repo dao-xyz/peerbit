@@ -2,32 +2,31 @@ import { IStoreOptions, Index, Store } from '@dao-xyz/orbit-db-store'
 import { Identity } from 'orbit-db-identity-provider';
 import { deserialize, serialize } from '@dao-xyz/borsh';
 import { Message } from 'ipfs-core-types/types/src/pubsub'
-import { QueryRequestV0, QueryResponseV0, Result, query, MultipleQueriesType, ShardMatchQuery } from '@dao-xyz/bquery';
+import { QueryRequestV0, QueryResponseV0, Result, query, MultipleQueriesType, StoreAddressMatchQuery } from '@dao-xyz/bquery';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
 
 export const getQueryTopic = (region: string): string => {
   return region + '/query';
 }
-export type IQueryStoreOptions<X extends Index> = IStoreOptions<X> & { queryRegion: string };
+export type IQueryStoreOptions<X extends Index> = IStoreOptions<X> & { queryRegion: string, subscribeToQueries: boolean };
 
 export class QueryStore<X extends Index, O extends IQueryStoreOptions<X>> extends Store<X, O> {
 
   _subscribed: boolean = false
   queryRegion: string;
-  context: { cid: string };
-
+  subscribeToQueries: boolean;
   _initializationPromise?: Promise<void>;
+
   constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: O) {
     super(ipfs, id, dbname, options)
     this.queryRegion = options.queryRegion;
+    this.subscribeToQueries = options.subscribeToQueries;
+    if (this.subscribeToQueries) {
+      this._subscribeToQueries();
+    }
   }
 
-  public async subscribeToQueries(context: { cid: string }) {
-    await this._initializationPromise;
-    this.context = context;
-    this._initializationPromise = this._subscribeToQueries();
-    await this._initializationPromise
-  }
+
 
   public async close(): Promise<void> {
     await this._initializationPromise;
@@ -45,23 +44,20 @@ export class QueryStore<X extends Index, O extends IQueryStoreOptions<X>> extend
   }
 
   async _subscribeToQueries(): Promise<void> {
-    if (!this.context.cid) {
-      throw new Error("Not initialized");
-    }
-
+    this._initializationPromise = null;
     if (this._subscribed) {
       return
     }
 
-    await this._ipfs.pubsub.subscribe(this.queryTopic, async (msg: Message) => {
+    this._initializationPromise = this._ipfs.pubsub.subscribe(this.queryTopic, async (msg: Message) => {
       try {
         // TODO try catch deserialize parse to properly handle migrations (prevent old clients to break)
         let query = deserialize(Buffer.from(msg.data), QueryRequestV0);
         if (query.type instanceof MultipleQueriesType) {
           // Handle context queries
           for (const q of query.type.queries) {
-            if (q instanceof ShardMatchQuery) {
-              if (q.cid != this.context.cid) {
+            if (q instanceof StoreAddressMatchQuery) {
+              if (q.address != this.address.toString()) {
                 // This query is not for me!
                 return;
               }
@@ -93,6 +89,7 @@ export class QueryStore<X extends Index, O extends IQueryStoreOptions<X>> extend
         console.error(error)
       }
     })
+    await this._initializationPromise;
     this._subscribed = true;
   }
 

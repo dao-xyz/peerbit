@@ -7,17 +7,17 @@ export class ContextMatchQuery extends Query {
 }
 
 @variant(0)
-export class ShardMatchQuery extends ContextMatchQuery {
+export class StoreAddressMatchQuery extends ContextMatchQuery {
 
     @field({ type: 'String' })
-    cid: string
+    address: string
 
     constructor(opts?: {
-        cid: string
+        address: string
     }) {
         super();
         if (opts) {
-            this.cid = opts.cid;
+            this.address = opts.address;
         }
     }
 }

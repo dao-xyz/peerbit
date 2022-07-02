@@ -8,7 +8,7 @@ import { DocumentQueryRequest, FieldStringMatchQuery } from "../document-query";
 import { ResultSource, ResultWithSource } from "../result";
 import { delay, waitFor } from "@dao-xyz/time";
 import { disconnectPeers, getConnectedPeers } from '@dao-xyz/peer-test-utils';
-import { ContextMatchQuery, ShardMatchQuery } from '../context';
+import { StoreAddressMatchQuery } from '../context';
 
 @variant([1, 1])
 class NumberResult extends ResultSource {
@@ -45,8 +45,8 @@ describe('query', () => {
         queries: [new FieldStringMatchQuery({
           key: 'a',
           value: 'b'
-        }), new ShardMatchQuery({
-          cid: 'a'
+        }), new StoreAddressMatchQuery({
+          address: 'a'
         })
         ]
       })

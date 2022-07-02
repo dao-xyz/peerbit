@@ -1,11 +1,10 @@
 
 import { StringResultSource, StringStore, STRING_STORE_TYPE } from '../string-store';
-import { QueryRequestV0, QueryResponseV0, ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates, ShardMatchQuery } from '@dao-xyz/bquery';
+import { QueryRequestV0, QueryResponseV0, ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates, StoreAddressMatchQuery } from '@dao-xyz/bquery';
 import { query } from '@dao-xyz/bquery';
 import { disconnectPeers, getConnectedPeers, Peer } from '@dao-xyz/peer-test-utils';
 import { waitFor } from '@dao-xyz/time';
 
-const TEST_CONTEXT_CID = 'cid';
 const storeTestSetup = async (): Promise<{
     creator: Peer,
     observer: Peer,
@@ -17,13 +16,9 @@ const storeTestSetup = async (): Promise<{
     let [peer, observer] = await getConnectedPeers(2);
 
     // Create store
-    let storeCreator = await peer.orbitDB.open<StringStore>('store', { ...{ create: true, type: STRING_STORE_TYPE, queryRegion: 'world' } })
+    let storeCreator = await peer.orbitDB.open<StringStore>('store', { ...{ create: true, type: STRING_STORE_TYPE, queryRegion: 'world', subscribeToQueries: true } })
     await storeCreator.load();
-    await storeCreator.subscribeToQueries(
-        {
-            cid: TEST_CONTEXT_CID
-        }
-    );
+    await storeCreator._initializationPromise;
     let storeObserver = await observer.orbitDB.open<StringStore>(storeCreator.address.toString(), { ...{ create: true, type: STRING_STORE_TYPE, queryRegion: 'world', replicate: false } })
 
     expect(await peer.node.pubsub.ls()).toHaveLength(2); // replication and query topic
@@ -57,15 +52,14 @@ describe('query', () => {
         await query(observer.node.pubsub, blocks.queryTopic, new QueryRequestV0({
             type: new StringQueryRequest({
                 queries: [
-                    new ShardMatchQuery({
-                        cid: TEST_CONTEXT_CID
+                    new StoreAddressMatchQuery({
+                        address: blocks.address.toString()
                     })
                 ]
             })
         }), (r: QueryResponseV0) => {
             response = r;
-        })
-        await waitFor(() => !!response);
+        }, 1)
         expect(response.results).toHaveLength(1);
         expect(((response.results[0]) as ResultWithSource)).toMatchObject(new ResultWithSource({
             source: new StringResultSource({
@@ -96,8 +90,7 @@ describe('query', () => {
             })
         }), (r: QueryResponseV0) => {
             response = r;
-        })
-        await waitFor(() => !!response);
+        }, 1)
         expect(response.results).toHaveLength(1);
         expect(((response.results[0]) as ResultWithSource)).toMatchObject(new ResultWithSource({
             source: new StringResultSource({
@@ -136,8 +129,7 @@ describe('query', () => {
             })
         }), (r: QueryResponseV0) => {
             response = r;
-        })
-        await waitFor(() => !!response);
+        }, 1)
         expect(response.results).toHaveLength(1);
         let result = ((response.results[0]) as ResultWithSource);
         expect(result.source).toMatchObject(new StringResultSource({

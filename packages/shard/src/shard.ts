@@ -144,6 +144,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
         this.defaultStoreOptions = {
             queryRegion: DEFAULT_QUERY_REGION,
+            subscribeToQueries: this.peer.options.isServer,
             accessController: {
                 //write: [this.orbitDB.identity.id],
                 /*  trustRegionResolver: () => this.trust, */
