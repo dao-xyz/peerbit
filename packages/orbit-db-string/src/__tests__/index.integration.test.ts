@@ -1,11 +1,11 @@
 
 import { StringResultSource, StringStore, STRING_STORE_TYPE } from '../string-store';
-import { QueryRequestV0, QueryResponseV0, ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates } from '@dao-xyz/bquery';
+import { QueryRequestV0, QueryResponseV0, ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates, ShardMatchQuery } from '@dao-xyz/bquery';
 import { query } from '@dao-xyz/bquery';
 import { disconnectPeers, getConnectedPeers, Peer } from '@dao-xyz/peer-test-utils';
 import { waitFor } from '@dao-xyz/time';
-import { IStoreOptions } from '@dao-xyz/orbit-db-store';
 
+const TEST_CONTEXT_CID = 'cid';
 const storeTestSetup = async (): Promise<{
     creator: Peer,
     observer: Peer,
@@ -17,9 +17,14 @@ const storeTestSetup = async (): Promise<{
     let [peer, observer] = await getConnectedPeers(2);
 
     // Create store
-    let storeCreator = await peer.orbitDB.open<StringStore>('store', { ...{ create: true, type: STRING_STORE_TYPE, subscribeToQueries: true } })
+    let storeCreator = await peer.orbitDB.open<StringStore>('store', { ...{ create: true, type: STRING_STORE_TYPE, queryRegion: 'world' } })
     await storeCreator.load();
-    let storeObserver = await observer.orbitDB.open<StringStore>(storeCreator.address.toString(), { ...{ create: true, type: STRING_STORE_TYPE, subscribeToQueries: false, replicate: false } })
+    await storeCreator.subscribeToQueries(
+        {
+            cid: TEST_CONTEXT_CID
+        }
+    );
+    let storeObserver = await observer.orbitDB.open<StringStore>(storeCreator.address.toString(), { ...{ create: true, type: STRING_STORE_TYPE, queryRegion: 'world', replicate: false } })
 
     expect(await peer.node.pubsub.ls()).toHaveLength(2); // replication and query topic
     expect(await observer.node.pubsub.ls()).toHaveLength(0);
@@ -35,6 +40,42 @@ const storeTestSetup = async (): Promise<{
 
 
 describe('query', () => {
+
+    test('only context', async () => {
+        let {
+            creator,
+            observer,
+            storeCreator
+        } = await storeTestSetup();
+
+        let blocks = storeCreator;
+        await blocks.add('hello', { offset: 0 });
+        await blocks.add('world', { offset: 'hello '.length });
+
+        let response: QueryResponseV0 = undefined;
+
+        await query(observer.node.pubsub, blocks.queryTopic, new QueryRequestV0({
+            type: new StringQueryRequest({
+                queries: [
+                    new ShardMatchQuery({
+                        cid: TEST_CONTEXT_CID
+                    })
+                ]
+            })
+        }), (r: QueryResponseV0) => {
+            response = r;
+        })
+        await waitFor(() => !!response);
+        expect(response.results).toHaveLength(1);
+        expect(((response.results[0]) as ResultWithSource)).toMatchObject(new ResultWithSource({
+            source: new StringResultSource({
+                string: 'hello world'
+            }),
+            coordinates: undefined //  because we are matching without any specific query
+        }));
+        await disconnectPeers([creator, observer]);
+
+    });
 
     test('match all', async () => {
         let {
@@ -90,7 +131,8 @@ describe('query', () => {
                 new StringMatchQuery({
                     exactMatch: true,
                     value: 'orld'
-                })]
+                }),
+                ]
             })
         }), (r: QueryResponseV0) => {
             response = r;

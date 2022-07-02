@@ -79,24 +79,23 @@ export class StringStore extends QueryStore<StringIndex, IQueryStoreOptions<Stri
     const stringQuery = query.type as StringQueryRequest;
 
     const content = this._index.string;
-    if (stringQuery.queries.length == 0) {
+    const relaventQueries = stringQuery.queries.filter(x => x instanceof StringMatchQuery) as StringMatchQuery[]
+    if (relaventQueries.length == 0) {
       return Promise.resolve([new ResultWithSource({
         source: new StringResultSource({
           string: content
         })
       })])
     }
-    let ranges = stringQuery.queries.map(query => {
-      if (query instanceof StringMatchQuery) {
-        const occurances = findAllOccurrences(query.preprocess(content), query.preprocess(query.value));
-        return occurances.map(ix => {
-          return new RangeCoordinate({
-            offset: new BN(ix),
-            length: new BN(query.value.length)
-          })
+    let ranges = relaventQueries.map(query => {
+      const occurances = findAllOccurrences(query.preprocess(content), query.preprocess(query.value));
+      return occurances.map(ix => {
+        return new RangeCoordinate({
+          offset: new BN(ix),
+          length: new BN(query.value.length)
         })
-      }
-      return []
+      })
+
     }).flat(1);
 
     if (ranges.length == 0) {

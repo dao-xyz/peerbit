@@ -26,6 +26,7 @@ export class QueryStore<X extends Index, O extends IQueryStoreOptions<X>> extend
     await this._initializationPromise;
     this.context = context;
     this._initializationPromise = this._subscribeToQueries();
+    await this._initializationPromise
   }
 
   public async close(): Promise<void> {
@@ -54,6 +55,7 @@ export class QueryStore<X extends Index, O extends IQueryStoreOptions<X>> extend
 
     await this._ipfs.pubsub.subscribe(this.queryTopic, async (msg: Message) => {
       try {
+        // TODO try catch deserialize parse to properly handle migrations (prevent old clients to break)
         let query = deserialize(Buffer.from(msg.data), QueryRequestV0);
         if (query.type instanceof MultipleQueriesType) {
           // Handle context queries

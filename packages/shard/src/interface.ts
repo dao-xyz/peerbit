@@ -90,14 +90,32 @@ export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface
 
         this.db = await this.storeOptions.newStore(this.address ? this.address : this.getDBName(), this._shard.peer.orbitDB, this._shard.peer.options.behaviours.typeMap, this.options);
         onReplicationMark(this.db);
+        this.address = this.db.address.toString();
+        await this._initStore();
+        return this.db;
+    }
 
+    async load(waitForReplicationEventsCount: number = 0): Promise<void> {
+        if (!this._shard || !this.initialized) {
+            throw new Error("Not initialized")
+        }
+
+        if (!this.db) {
+            await this.newStore() //await db.feed(this.getDBName('blocks'), this.chain.defaultOptions);
+        }
+        await this.db.load(waitForReplicationEventsCount);
+
+        if (this._shard.peer.options.isServer) {
+            await waitForReplicationEvents(this.db, waitForReplicationEventsCount);
+        }
+    }
+
+    async _initStore() {
         if (this._shard.peer.options.isServer && this.db instanceof QueryStore) {
             await this.db.subscribeToQueries({
                 cid: this._shard.cid
             })
         }
-        this.address = this.db.address.toString();
-        return this.db;
     }
 
     /**
@@ -147,20 +165,7 @@ export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface
     }
 
 
-    async load(waitForReplicationEventsCount: number = 0): Promise<void> {
-        if (!this._shard || !this.initialized) {
-            throw new Error("Not initialized")
-        }
 
-        if (!this.db) {
-            await this.newStore() //await db.feed(this.getDBName('blocks'), this.chain.defaultOptions);
-        }
-        await this.db.load(waitForReplicationEventsCount);
-
-        if (this._shard.peer.options.isServer) {
-            await waitForReplicationEvents(this.db, waitForReplicationEventsCount);
-        }
-    }
 
     getDBName(): string {
         return this._shard.getDBName(this.name);
