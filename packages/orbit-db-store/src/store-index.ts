@@ -23,25 +23,27 @@
   ```
 */
 
-export class Index {
+import { Entry, Log } from "@dao-xyz/ipfs-log";
+
+export class Index<T> {
 
 
-    /*
-       @param id - unique identifier of this index, eg. a user id or a hash
-     */
-    _index?: any;
-    id?: any;
-    constructor(id?: string) {
-        this.id = id
-        this._index = []
-    }
-
-    /*
-     Applies operations to the Index and updates the state
-     @param oplog - the source operations log that called updateIndex
-     @param entries - operations that were added to the log
+  /*
+     @param id - unique identifier of this index, eg. a user id or a hash
    */
-    async updateIndex(oplog) {
-        this._index = oplog.values
-    }
+  _index?: any;
+  id?: any;
+  constructor(id?: string) {
+    this.id = id
+    this._index = []
+  }
+
+  /*
+   Applies operations to the Index and updates the state
+   @param oplog - the source operations log that called updateIndex
+   @param entries - operations that were added to the log
+ */
+  async updateIndex(oplog: Log<Entry<T>>) {
+    this._index = oplog.values
+  }
 }

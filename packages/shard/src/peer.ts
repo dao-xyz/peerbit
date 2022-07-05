@@ -4,7 +4,9 @@ import { PublicKey } from "./key";
 import { Shard } from "./shard";
 import { Message } from 'ipfs-core-types/types/src/pubsub'
 import { delay } from "@dao-xyz/time";
+import { createHash } from "crypto";
 
+export const EMIT_HEALTHCHECK_INTERVAL = 5000;
 
 
 @variant("check")
@@ -53,6 +55,14 @@ export class ShardPeerInfo {
     }
 
 
+    async getShardPeerInfo(): Promise<PeerInfo> {
+        return new PeerInfo({
+            key: PublicKey.from(this._shard.peer.orbitDB.identity),
+            addresses: (await this._shard.peer.node.id()).addresses.map(x => x.toString()),
+            memoryBudget: new BN(this._shard.peer.options.replicationCapacity)
+        })
+    }
+
     /**
      * 
      * Start to "support" the shard
@@ -60,11 +70,7 @@ export class ShardPeerInfo {
      */
     async emitHealthcheck(): Promise<void> {
         if (this._shard.peer.options.isServer) {
-            this._shard.peer.node.pubsub.publish(this.peerHealthTopic, serialize(new PeerInfo({
-                key: PublicKey.from(this._shard.peer.orbitDB.identity),
-                addresses: (await this._shard.peer.node.id()).addresses.map(x => x.toString()),
-                memoryBudget: new BN(this._shard.peer.options.replicationCapacity)
-            })))
+            this._shard.peer.node.pubsub.publish(this.peerHealthTopic, serialize(await this.getShardPeerInfo()))
         }
     }
     get peerHealthTopic(): string {
@@ -72,7 +78,7 @@ export class ShardPeerInfo {
     }
 
 
-    async getPeers(maxAggregationTime: number = 5 * 1000): Promise<PeerInfo[]> {
+    async getPeers(): Promise<PeerInfo[]> {
         let peers: Map<string, PeerInfo> = new Map();
         const ids = new Set();
         await this._shard.peer.node.pubsub.subscribe(this.peerHealthTopic, (message: Message) => {
@@ -80,8 +86,47 @@ export class ShardPeerInfo {
             peers.set(p.key.toString(), p); // TODO check verify responses are valid
         })
 
-        await delay(maxAggregationTime);
+        await delay(EMIT_HEALTHCHECK_INTERVAL + 3000); // add some extra padding to make sure all nodes have emitted
         return [...peers.values()]
+    }
+
+    /**
+     * An intentionally imperfect leader rotation routine
+     * @param slot, some time measure
+     * @returns 
+     */
+    async isLeader(slot: number): Promise<boolean> {
+        // Hash the time, and find the closest peer id to this hash
+        const h = (h: string) => createHash('sha1').update(h).digest('hex');
+        const slotHash = h(slot.toString())
+
+
+        const hashToPeer: Map<string, PeerInfo> = new Map();
+        const peers: PeerInfo[] = [...await this.getPeers()];
+        if (peers.length == 0) {
+            return false;
+        }
+
+        const peerHashed: string[] = [];
+        peers.forEach((peer) => {
+            const peerHash = h(peer.key.toString());
+            hashToPeer.set(peerHash, peer);
+            peerHashed.push(peerHash);
+        })
+        peerHashed.push(slotHash);
+        // TODO make more efficient
+        peerHashed.sort((a, b) => a.localeCompare(b)) // sort is needed, since "getPeers" order is not deterministic
+        let slotIndex = peerHashed.findIndex(x => x === slotHash);
+        // we only step forward 1 step (ignoring that step backward 1 could be 'closer')
+        // This does not matter, we only have to make sure all nodes running the code comes to somewhat the 
+        // same conclusion
+        let nextIndex = slotIndex + 1;
+        if (nextIndex >= peerHashed.length)
+            nextIndex = 0;
+        return hashToPeer.get(peerHashed[nextIndex]).key.equals(PublicKey.from(this._shard.peer.orbitDB.identity))
+
+        // better alg, 
+        // convert slot into hash, find most "probable peer" 
     }
 
     close(): Promise<void> {

@@ -158,7 +158,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       test('creates default public AccessController if not defined', async () => {
         const log = new Log(ipfs, testIdentity)
-        const anyoneCanAppend = await log._access.canAppend('any')
+        const anyoneCanAppend = await log._access.canAppend('any' as any, undefined)
         assert.notStrictEqual(log._access, undefined)
         assert.strictEqual(anyoneCanAppend, true)
       })

@@ -29,7 +29,8 @@ export class DocumentIndex {
                                 op: 'PUT',
                                 key: asString(doc.key),
                                 value: this.deserializeOrPass(doc.value)
-                            }
+                            },
+                            identity: item.identity
                         };
                     }
                 }

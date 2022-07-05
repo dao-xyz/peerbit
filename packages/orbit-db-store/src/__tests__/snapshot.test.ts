@@ -1,7 +1,7 @@
 import assert from 'assert'
 
 import { default as Cache } from 'orbit-db-cache'
-import { Keystore } from 'orbit-db-keystore'
+const Keystore = require('orbit-db-keystore');
 import IdentityProvider from 'orbit-db-identity-provider'
 import { Store, DefaultOptions } from '../store'
 

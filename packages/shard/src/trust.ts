@@ -1,10 +1,11 @@
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
-import { BinaryDocumentStore, BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
+import { BinaryDocumentStore, BinaryDocumentStoreOptions, LogEntry } from "@dao-xyz/orbit-db-bdocstore";
 import { IPFSInstanceExtended } from "./node";
 import { Shard } from "./shard";
 import { DBInterface, SingleDBInterface } from "./interface";
 
 import { PublicKey } from "./key";
+import { IStoreOptions } from "@dao-xyz/orbit-db-store";
 export const TRUSTEE_KEY = 'trustee';
 
 @variant(0)
@@ -74,11 +75,11 @@ export class P2PTrust extends DBInterface {
         this.db.close();
     }
 
-    async init(shard: Shard<any>): Promise<void> {
-        shard.peer.options.behaviours.typeMap[P2PTrustRelation.name] = P2PTrustRelation;
-        await this.db.init(shard);
+    async init(peer, _dbNameResolver: (name: string) => string, options: IStoreOptions<any, any>): Promise<void> {
+        peer.options.behaviours.typeMap[P2PTrustRelation.name] = P2PTrustRelation;
+        await this.db.init(peer, _dbNameResolver, options);
         if (!this.cid) {
-            await this.save(shard.peer.node);
+            await this.save(peer.node);
         }
 
     }

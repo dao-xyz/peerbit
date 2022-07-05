@@ -425,7 +425,7 @@ describe('cluster', () => {
             expect(await l0b.shardPeerInfo.getPeers()).toHaveLength(0)
 
             expect(l0a.trust.rootTrust.equals(l0b.trust.rootTrust));            // Replication step
-            await peer.subscribeForReplication(l0a.trust);
+            await Shard.subscribeForReplication(peer, l0a.trust);
             await delay(5000); // Pubsub is flaky, wait some time before requesting shard
             await l0b.requestReplicate();
             //  --------------
@@ -439,60 +439,120 @@ describe('cluster', () => {
     })
 
     describe('peer', () => {
-        test('isServer=false no subscriptions on idle on shardStoreShard', async () => {
-            let peerNonServer = await getPeer(undefined, false);
-            let l0 = await shardStoreShard();
-            await l0.init(peerNonServer);
-            const subscriptions = await peerNonServer.node.pubsub.ls();
-            expect(subscriptions.length).toEqual(0);  // non server should not have any subscriptions idle
-            await disconnectPeers([peerNonServer]);
+        describe('options', () => {
+            test('isServer=false no subscriptions on idle on shardStoreShard', async () => {
+                let peerNonServer = await getPeer(undefined, false);
+                let l0 = await shardStoreShard();
+                await l0.init(peerNonServer);
+                const subscriptions = await peerNonServer.node.pubsub.ls();
+                expect(subscriptions.length).toEqual(0);  // non server should not have any subscriptions idle
+                await disconnectPeers([peerNonServer]);
+            })
+
+            test('isServer=false no subscriptions on idle on documentStoreShard', async () => {
+
+                class Document { }
+                let peerNonServer = await getPeer(undefined, false);
+                peerNonServer.options.behaviours.typeMap[Document.name] = Document;
+                let l0 = await documentStoreShard(Document, 'id');
+                await l0.init(peerNonServer);
+                const subscriptions = await peerNonServer.node.pubsub.ls();
+                expect(subscriptions.length).toEqual(0); // non server should not have any subscriptions idle
+                await disconnectPeers([peerNonServer]);
+            })
+
+
+            test('isServer=false can write', async () => {
+
+                let peerServer = await getPeer(undefined, true);
+                let peerNonServer = await getPeer(undefined, false);
+                await connectPeers(peerServer, peerNonServer)
+
+                peerServer.options.behaviours.typeMap[Document.name] = Document;
+                let l0 = await documentStoreShard(Document, 'id');
+                await l0.init(peerServer);
+                await l0.replicate();
+
+
+                peerNonServer.options.behaviours.typeMap[Document.name] = Document;
+                let l0Write = await Shard.loadFromCID<DocumentStoreInterface<Document>>(l0.cid, peerNonServer.node);
+                await l0Write.init(peerNonServer);
+
+                //await peerNonServer.orbitDB["_pubsub"].subscribe(l0Write.interface.db.address.toString(), peerNonServer.orbitDB["_onMessage"].bind(peerNonServer.orbitDB), peerNonServer.orbitDB["_onPeerConnected"].bind(peerNonServer.orbitDB))
+                let subscriptions = await peerNonServer.node.pubsub.ls();
+                expect(subscriptions.length).toEqual(0); // non server should not have any subscriptions idle
+                await delay(3000)
+                await l0Write.interface.db.load();
+                await l0Write.interface.db.write((x) => l0Write.interface.db.db.put(x), new Document({
+                    id: 'hello'
+                }))
+
+                await l0.interface.db.load();
+                await waitFor(() => l0.interface.db.db.size > 0);
+                subscriptions = await peerNonServer.node.pubsub.ls();
+                expect(subscriptions.length).toEqual(0);  // non server should not have any subscriptions after write
+                await disconnectPeers([peerServer, peerNonServer]);
+            })
+        });
+        describe('leader', () => {
+            test('no leader, since no peers', async () => {
+
+                let [peer] = await getConnectedPeers(1)
+
+                // Create Root shard
+
+                let l0 = await shardStoreShard();
+                await l0.init(peer)
+
+                let isLeader = await l0.shardPeerInfo.isLeader(0);
+                expect(isLeader).toBeFalsy();
+                disconnectPeers([peer]);
+            })
+
+            test('always leader, since 1 peer', async () => {
+
+                let [peer] = await getConnectedPeers(1)
+
+                // Create Root shard
+                let l0 = await shardStoreShard();
+                await l0.init(peer)
+                await l0.replicate();
+
+                for (let time = 0; time < 3; time++) {
+                    let isLeader = await l0.shardPeerInfo.isLeader(time);
+                    expect(isLeader).toBeTruthy();
+                }
+                disconnectPeers([peer]);
+            })
+
+            test('1 leader if two peers', async () => {
+
+                let [peer, peer2] = await getConnectedPeers(2)
+
+                // Create Root shard
+                let l0a = await shardStoreShard();
+                await l0a.init(peer)
+                await l0a.replicate();
+
+                let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
+                await l0b.init(peer2)
+                await l0b.replicate();
+                let isLeaderA = await l0a.shardPeerInfo.isLeader(123);
+                let isLeaderB = await l0b.shardPeerInfo.isLeader(123);
+
+                expect(typeof isLeaderA).toEqual('boolean');
+                expect(typeof isLeaderB).toEqual('boolean');
+                expect(isLeaderA).toEqual(!isLeaderB);
+
+                disconnectPeers([peer, peer2]);
+            })
+
         })
 
-        test('isServer=false no subscriptions on idle on documentStoreShard', async () => {
 
-            class Document { }
-            let peerNonServer = await getPeer(undefined, false);
-            peerNonServer.options.behaviours.typeMap[Document.name] = Document;
-            let l0 = await documentStoreShard(Document, 'id');
-            await l0.init(peerNonServer);
-            const subscriptions = await peerNonServer.node.pubsub.ls();
-            expect(subscriptions.length).toEqual(0); // non server should not have any subscriptions idle
-            await disconnectPeers([peerNonServer]);
-        })
+    })
 
-
-        test('isServer=false can write', async () => {
-
-            let peerServer = await getPeer(undefined, true);
-            let peerNonServer = await getPeer(undefined, false);
-            await connectPeers(peerServer, peerNonServer)
-
-            peerServer.options.behaviours.typeMap[Document.name] = Document;
-            let l0 = await documentStoreShard(Document, 'id');
-            await l0.init(peerServer);
-            await l0.replicate();
-
-
-            peerNonServer.options.behaviours.typeMap[Document.name] = Document;
-            let l0Write = await Shard.loadFromCID<DocumentStoreInterface<Document>>(l0.cid, peerNonServer.node);
-            await l0Write.init(peerNonServer);
-
-            //await peerNonServer.orbitDB["_pubsub"].subscribe(l0Write.interface.db.address.toString(), peerNonServer.orbitDB["_onMessage"].bind(peerNonServer.orbitDB), peerNonServer.orbitDB["_onPeerConnected"].bind(peerNonServer.orbitDB))
-            let subscriptions = await peerNonServer.node.pubsub.ls();
-            expect(subscriptions.length).toEqual(0); // non server should not have any subscriptions idle
-            await delay(3000)
-            await l0Write.interface.db.load();
-            await l0Write.interface.db.write((x) => l0Write.interface.db.db.put(x), new Document({
-                id: 'hello'
-            }))
-
-            await l0.interface.db.load();
-            await waitFor(() => l0.interface.db.db.size > 0);
-            subscriptions = await peerNonServer.node.pubsub.ls();
-            expect(subscriptions.length).toEqual(0);  // non server should not have any subscriptions after write
-            await disconnectPeers([peerServer, peerNonServer]);
-        })
-
+    describe('query', () => {
         test('query subscription are combined', async () => {
 
             let [peer] = await getConnectedPeers(2)

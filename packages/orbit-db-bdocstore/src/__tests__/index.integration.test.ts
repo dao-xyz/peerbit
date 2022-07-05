@@ -60,6 +60,7 @@ const documentDbTestSetup = async (): Promise<{
 describe('query', () => {
 
   test('match all', async () => {
+    const xx = 123;
     let {
       creator,
       observer,
@@ -88,8 +89,7 @@ describe('query', () => {
       })
     }), (r: QueryResponseV0) => {
       response = r;
-    })
-    await waitFor(() => !!response);
+    }, 1)
     expect(response.results).toHaveLength(2);
     expect(((response.results[0]) as ResultWithSource).source).toMatchObject(doc);
     expect(((response.results[1]) as ResultWithSource).source).toMatchObject(doc2);
@@ -130,8 +130,7 @@ describe('query', () => {
       })
     }), (r: QueryResponseV0) => {
       response = r;
-    })
-    await waitFor(() => !!response);
+    }, 1)
     expect(response.results).toHaveLength(1);
     expect(((response.results[0]) as ResultWithSource).source).toMatchObject(doc);
 
@@ -182,8 +181,7 @@ describe('query', () => {
     }),
       (r: QueryResponseV0) => {
         response = r;
-      })
-    await waitFor(() => !!response);
+      }, 1)
     expect(response.results).toHaveLength(1);
     expect(((response.results[0]) as ResultWithSource).source).toMatchObject(doc2);
 
@@ -242,8 +240,7 @@ describe('query', () => {
         })
       }), (r: QueryResponseV0) => {
         response = r;
-      })
-      await waitFor(() => !!response);
+      }, 1)
       expect(response.results).toHaveLength(2);
       expect(((response.results[0] as ResultWithSource).source as Document).id).toEqual(doc2.id);
       expect(((response.results[1] as ResultWithSource).source as Document).id).toEqual(doc3.id);
@@ -302,8 +299,7 @@ describe('query', () => {
         })
       }), (r: QueryResponseV0) => {
         response = r;
-      })
-      await waitFor(() => !!response);
+      }, 1)
       expect(response.results).toHaveLength(2);
       expect(((response.results[0] as ResultWithSource).source as Document).id).toEqual(doc2.id);
       expect(((response.results[1] as ResultWithSource).source as Document).id).toEqual(doc.id);
@@ -356,8 +352,7 @@ describe('query', () => {
         })
       }), (r: QueryResponseV0) => {
         response = r;
-      })
-      await waitFor(() => !!response);
+      }, 1)
       expect(response.results).toHaveLength(1);
       expect(((response.results[0] as ResultWithSource).source as Document).number.toNumber()).toEqual(2);
       await disconnectPeers([creator, observer]);
@@ -405,8 +400,7 @@ describe('query', () => {
         })
       }), (r: QueryResponseV0) => {
         response = r;
-      })
-      await waitFor(() => !!response);
+      }, 1)
       expect(response.results).toHaveLength(1);
       expect(((response.results[0] as ResultWithSource).source as Document).number.toNumber()).toEqual(3);
       await disconnectPeers([creator, observer]);
@@ -453,8 +447,7 @@ describe('query', () => {
         })
       }), (r: QueryResponseV0) => {
         response = r;
-      })
-      await waitFor(() => !!response);
+      }, 1)
       response.results.sort((a, b) => ((a as ResultWithSource).source as Document).number.cmp(((b as ResultWithSource).source as Document).number));
       expect(response.results).toHaveLength(2);
       expect(((response.results[0] as ResultWithSource).source as Document).number.toNumber()).toEqual(2);
@@ -503,8 +496,7 @@ describe('query', () => {
         })
       }), (r: QueryResponseV0) => {
         response = r;
-      })
-      await waitFor(() => !!response);
+      }, 1)
       expect(response.results).toHaveLength(1);
       expect(((response.results[0] as ResultWithSource).source as Document).number.toNumber()).toEqual(1);
       await disconnectPeers([creator, observer]);
@@ -551,8 +543,7 @@ describe('query', () => {
         })
       }), (r: QueryResponseV0) => {
         response = r;
-      })
-      await waitFor(() => !!response);
+      }, 1)
       response.results.sort((a, b) => ((a as ResultWithSource).source as Document).number.cmp(((b as ResultWithSource).source as Document).number));
       expect(response.results).toHaveLength(2);
       expect(((response.results[0] as ResultWithSource).source as Document).number.toNumber()).toEqual(1);

@@ -11,6 +11,7 @@ import { BinaryFeedStoreOptions, BinaryFeedStore } from '@dao-xyz/orbit-db-bfeed
 import { v4 as uuid } from 'uuid';
 import { Shard } from '../shard';
 import { getPeer as getPeerTest, getConnectedPeers as getConnectedPeersTest, Peer } from '@dao-xyz/peer-test-utils';
+import { IStoreOptions } from '@dao-xyz/orbit-db-store';
 export const getPeer = async (identity?: Identity, isServer?: boolean, peerCapacity?: number) => getPeerTest(identity).then((peer) => createAnyPeer(peer, isServer, peerCapacity));
 export const getConnectedPeers = async (amountOf: number, identity?: Identity, isServer?: boolean, peerCapacity?: number) => getConnectedPeersTest(amountOf, identity).then(peers => Promise.all(peers.map(peer => createAnyPeer(peer, isServer, peerCapacity))));
 const createAnyPeer = async (peer: Peer, isServer: boolean = true, peerCapacity: number = 1000 * 1000 * 1000): Promise<AnyPeer> => {
@@ -21,11 +22,7 @@ const createAnyPeer = async (peer: Peer, isServer: boolean = true, peerCapacity:
         },
         directoryId: peer.id,
         replicationCapacity: peerCapacity,
-        isServer,
-        peersRecycle: {
-            maxOplogLength: 20,
-            cutOplogToLength: 10
-        }
+        isServer
     });
 
     await anyPeer.create({ options, orbitDB: peer.orbitDB });
@@ -65,7 +62,7 @@ export class BinaryFeedStoreInterface extends DBInterface {
     }
 
     get initialized(): boolean {
-        return !!this.db?.db && !!this.db._shard;
+        return !!this.db?.db && !!this.db._peer;
     }
 
     get loaded(): boolean {
@@ -76,8 +73,8 @@ export class BinaryFeedStoreInterface extends DBInterface {
         this.db.db = undefined;
     }
 
-    async init(shard: Shard<any>): Promise<void> {
-        await this.db.init(shard);
+    async init(peer: AnyPeer, dbNameResolver: (name: string) => string, options: IStoreOptions<Document, any>): Promise<void> {
+        await this.db.init(peer, dbNameResolver, options);
     }
 
     async load(): Promise<void> {
@@ -126,8 +123,8 @@ export class DocumentStoreInterface<T> extends DBInterface {
         this.db.close();
     }
 
-    async init(shard: Shard<any>): Promise<void> {
-        await this.db.init(shard);
+    async init(peer: AnyPeer, dbNameResolver: (name: string) => string, options: IStoreOptions<T, any>): Promise<void> {
+        await this.db.init(peer, dbNameResolver, options);
     }
 
     async load(waitForReplicationEventsCount = 0): Promise<void> {

@@ -11,6 +11,7 @@ import { ResultSource, query } from "@dao-xyz/bquery";
 import { getQueryTopic, QueryStore } from "@dao-xyz/orbit-db-query-store";
 import { QueryRequestV0 } from "@dao-xyz/bquery";
 import { QueryResponseV0 } from "@dao-xyz/bquery";
+import { AnyPeer } from "./node";
 
 // Extends results source in order to be queried
 @variant([0, 1])
@@ -30,7 +31,7 @@ export class DBInterface extends ResultSource {
 
     }
 
-    async init(_shard: Shard<any>): Promise<void> {
+    async init(_peer: AnyPeer, _dbNameResolver: (name: string) => string, _options: IStoreOptions<any, any>): Promise<void> {
         throw new Error("Not implemented")
     }
 
@@ -43,7 +44,7 @@ export class DBInterface extends ResultSource {
 // Every interface has to have its own variant, else DBInterface can not be
 // used as a deserialization target.
 @variant([0, 1])
-export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface {
+export class SingleDBInterface<T, B extends Store<T, any, any>> extends DBInterface {
 
     @field({ type: 'String' })
     name: string;
@@ -55,8 +56,9 @@ export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface
     storeOptions: BStoreOptions<B>;
 
     db: B;
-    _shard: Shard<any>
-    _overrideOptions: IStoreOptions<any>
+    _peer: AnyPeer
+    _options: IStoreOptions<T, any>
+    _dbNameResolver: (key: string) => string;
 
     constructor(opts?: {
         name: string;
@@ -69,33 +71,33 @@ export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface
         }
     }
 
-    get options(): IStoreOptions<any> {
-        return this._overrideOptions ? { ...this._shard.defaultStoreOptions, ...this._overrideOptions } : this._shard.defaultStoreOptions
+    get options(): IStoreOptions<T, any> {
+        return this._options;
     }
 
-    async init(shard: Shard<any>, overrideOptions?: IStoreOptions<any>): Promise<void> {
-        this._shard = shard;
+    async init(peer: AnyPeer, dbNameResolver: (name: string) => string, options: IStoreOptions<T, any>): Promise<void> {
         this.db = undefined;
-        this._overrideOptions = overrideOptions;
+        this._options = options;
+        this._dbNameResolver = dbNameResolver;
+        this._peer = peer;
         if (!this.address) {
-            this.address = (await this._shard.peer.orbitDB.determineAddress(this.getDBName(), this.storeOptions.identifier, this.options)).toString();
+            this.address = (await this._peer.orbitDB.determineAddress(this.getDBName(), this.storeOptions.identifier, this.options)).toString();
         }
     }
 
 
     async newStore(): Promise<B> {
-        if (!this._shard) {
+        if (!this._peer) {
             throw new Error("Not initialized")
         }
 
-        this.db = await this.storeOptions.newStore(this.address ? this.address : this.getDBName(), this._shard.peer.orbitDB, this._shard.peer.options.behaviours.typeMap, this.options);
-        onReplicationMark(this.db);
+        this.db = await this.storeOptions.newStore(this.address ? this.address : this.getDBName(), this._peer.orbitDB, this._peer.options.behaviours.typeMap, this.options);
         this.address = this.db.address.toString();
         return this.db;
     }
 
     async load(waitForReplicationEventsCount: number = 0): Promise<void> {
-        if (!this._shard || !this.initialized) {
+        if (!this._peer || !this.initialized) {
             throw new Error("Not initialized")
         }
 
@@ -104,7 +106,7 @@ export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface
         }
         await this.db.load(waitForReplicationEventsCount);
 
-        if (this._shard.peer.options.isServer) {
+        if (this._peer.options.isServer) {
             await waitForReplicationEvents(this.db, waitForReplicationEventsCount);
         }
     }
@@ -119,24 +121,24 @@ export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface
      */
     async write(write: (obj: T) => Promise<any>, obj: T, unsubscribe: boolean = true): Promise<B> {
         let topic = this.address.toString();
-        let subscribed = !!this._shard.peer.orbitDB._pubsub._subscriptions[topic];
+        let subscribed = !!this._peer.orbitDB._pubsub._subscriptions[topic];
         let directConnectionsFromWrite = {};
         if (!subscribed) {
-            await this._shard.peer.orbitDB._pubsub.subscribe(topic, this._shard.peer.orbitDB._onMessage.bind(this._shard.peer.orbitDB), (address: string, peer: any) => {
-                this._shard.peer.orbitDB._onPeerConnected(address, peer);
+            await this._peer.orbitDB._pubsub.subscribe(topic, this._peer.orbitDB._onMessage.bind(this._peer.orbitDB), (address: string, peer: any) => {
+                this._peer.orbitDB._onPeerConnected(address, peer);
                 directConnectionsFromWrite[peer] = address;
             })
         }
         await write(obj);
         if (!subscribed && unsubscribe) {
             // TODO: could cause sideeffects if there is another write that wants to access the topic
-            await this._shard.peer.orbitDB._pubsub.unsubscribe(topic);
+            await this._peer.orbitDB._pubsub.unsubscribe(topic);
 
             const removeDirectConnect = e => {
-                const conn = this._shard.peer.orbitDB._directConnections[e];
+                const conn = this._peer.orbitDB._directConnections[e];
                 if (conn) {
-                    this._shard.peer.orbitDB._directConnections[e].close()
-                    delete this._shard.peer.orbitDB._directConnections[e]
+                    this._peer.orbitDB._directConnections[e].close()
+                    delete this._peer.orbitDB._directConnections[e]
                 }
 
             }
@@ -153,18 +155,18 @@ export class SingleDBInterface<T, B extends Store<any, any>> extends DBInterface
         if (!this.address) {
             throw new Error("Can not query because DB address is unknown")
         }
-        return query(this._shard.peer.node.pubsub, getQueryTopic(region), queryRequest, responseHandler, waitForAmount, maxAggregationTime)
+        return query(this._peer.node.pubsub, getQueryTopic(region), queryRequest, responseHandler, waitForAmount, maxAggregationTime)
     }
 
 
 
 
     getDBName(): string {
-        return this._shard.getDBName(this.name);
+        return this._dbNameResolver(this.name);
     }
     close() {
         this.db = undefined;
-        this._shard = undefined;
+        this._peer = undefined;
     }
 
     get initialized(): boolean {
@@ -199,8 +201,8 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterfac
         this.db.close();
     }
 
-    async init(shard: Shard<any>): Promise<void> {
-        await this.db.init(shard);
+    async init(peer: AnyPeer, dbNameResolver: (name: string) => string, options: IStoreOptions<Shard<T>, any>): Promise<void> {
+        await this.db.init(peer, dbNameResolver, options);
     }
 
 
@@ -212,7 +214,7 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterfac
     async loadShard(cid: string): Promise<Shard<T>> {
         // Get the latest shard that have non empty peer
         let shard = this.db.db.get(cid)[0]
-        await shard.init(this.db._shard.peer);
+        await shard.init(this.db._peer);
         return shard;
     }
     get loaded(): boolean {
@@ -221,6 +223,3 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends DBInterfac
 
 }
 
-export const onReplicationMark = (store: Store<any, any>) => store.events.on('replicated', () => {
-    store["replicated"] = true // replicated once
-});

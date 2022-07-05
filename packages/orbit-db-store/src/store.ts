@@ -10,9 +10,10 @@ import { ReplicationInfo } from './replication-info'
 import Logger from 'logplease'
 import io from 'orbit-db-io'
 import { IPFS } from 'ipfs-core-types/src/'
-import { Identity } from 'orbit-db-identity-provider'
-import AccessController from 'orbit-db-access-controllers/src/access-controller-interface'
+import Identities, { Identity } from 'orbit-db-identity-provider'
+import { AccessController } from '@dao-xyz/ipfs-log'
 import { RecycleOptions } from '@dao-xyz/ipfs-log'
+import OrbitDBAccessController from 'orbit-db-access-controllers/src/orbitdb-access-controller'
 export type Constructor<T> = new (...args: any[]) => T;
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
 Logger.setLogLevel('ERROR')
@@ -71,23 +72,23 @@ interface IOpenOptions {
 }
 
 
-export interface IStoreOptions<X extends Index> extends ICreateOptions, IOpenOptions {
+export interface IStoreOptions<T, X extends Index<T>> extends ICreateOptions, IOpenOptions {
   Index?: Constructor<X>,
   maxHistory?: number,
   fetchEntryTimeout?: number,
   referenceCount?: number,
   replicationConcurrency?: number,
   syncLocal?: boolean,
-  sortFn?: ISortFunction,
+  sortFn?: ISortFunction<any>,
   cache?: any;
-  accessController?: AccessController,
+  accessController?: OrbitDBAccessController<T>,
   recycle?: RecycleOptions
-  onClose?: (store: Store<X, any>) => void
-  onDrop?: (store: Store<X, any>) => void
-  onLoad?: (store: Store<X, any>) => void
+  onClose?: (store: Store<T, X, any>) => void
+  onDrop?: (store: Store<T, X, any>) => void
+  onLoad?: (store: Store<T, X, any>) => void
 
 }
-export const DefaultOptions: IStoreOptions<Index> = {
+export const DefaultOptions: IStoreOptions<any, Index<any>> = {
   Index: Index,
   maxHistory: -1,
   fetchEntryTimeout: null,
@@ -102,7 +103,7 @@ export interface Address {
   toString(): string;
 };
 
-export class Store<X extends Index, O extends IStoreOptions<X>> {
+export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
 
   options: O;
   _type: string;
@@ -118,8 +119,8 @@ export class Store<X extends Index, O extends IStoreOptions<X>> {
   manifestPath: string;
   _ipfs: IPFS;
   _cache: any;
-  access: AccessController;
-  _oplog: Log;
+  access: OrbitDBAccessController<T>;
+  _oplog: Log<any>;
   _queue: PQueue<any, any>
   _index: X;
   _replicationStatus: ReplicationInfo;
@@ -160,8 +161,13 @@ export class Store<X extends Index, O extends IStoreOptions<X>> {
 
     // Access mapping
     const defaultAccess = {
-      canAppend: (entry) => (entry.identity.publicKey === identity.publicKey)
-    } as any as AccessController;
+      canAppend: (entry: Entry<T>, identityProvider: Identities) => (entry.identity.publicKey === identity.publicKey),
+      type: undefined,
+      address: undefined,
+      close: undefined,
+      load: undefined,
+      save: undefined
+    } as OrbitDBAccessController<T>;
     this.access = options.accessController || defaultAccess
 
     // Create the operations log

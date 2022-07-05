@@ -239,7 +239,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       test('onProgress callback is fired for each entry', async () => {
-        const items1: Entry[] = []
+        const items1: Entry<string>[] = []
         const amount = 100
         for (let i = 1; i <= amount; i++) {
           const prev1 = last(items1)
@@ -263,9 +263,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'X' })
         const log2 = new Log(ipfs, testIdentity2, { logId: 'X' })
         const log3 = new Log(ipfs, testIdentity3, { logId: 'X' })
-        const items1: Entry[] = []
-        const items2: Entry[] = []
-        const items3: Entry[] = []
+        const items1: Entry<string>[] = []
+        const items2: Entry<string>[] = []
+        const items3: Entry<string>[] = []
         const amount = 100
         for (let i = 1; i <= amount; i++) {
           const prev1 = last(items1)
@@ -289,7 +289,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       test('throws an error if trying to create a log from a hash of an entry', async () => {
-        const items1: Entry[] = []
+        const items1: Entry<string>[] = []
         const amount = 5
         for (let i = 1; i <= amount; i++) {
           const prev1 = last(items1)
@@ -310,9 +310,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'X' })
         const log2 = new Log(ipfs, testIdentity2, { logId: 'X' })
         const log3 = new Log(ipfs, testIdentity3, { logId: 'X' })
-        const items1: Entry[] = []
-        const items2: Entry[] = []
-        const items3: Entry[] = []
+        const items1: Entry<string>[] = []
+        const items2: Entry<string>[] = []
+        const items3: Entry<string>[] = []
         const amount = 10
         for (let i = 1; i <= amount; i++) {
           const prev1 = last(items1)
@@ -343,9 +343,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'X' })
         const log2 = new Log(ipfs, testIdentity2, { logId: 'X' })
         const log3 = new Log(ipfs, testIdentity3, { logId: 'X' })
-        const items1: Entry[] = []
-        const items2: Entry[] = []
-        const items3: Entry[] = []
+        const items1: Entry<string>[] = []
+        const items2: Entry<string>[] = []
+        const items3: Entry<string>[] = []
         const amount = 10
         for (let i = 1; i <= amount; i++) {
           const prev1 = last(items1)
@@ -376,9 +376,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'X' })
         const log2 = new Log(ipfs, testIdentity2, { logId: 'X' })
         const log3 = new Log(ipfs, testIdentity4, { logId: 'X' })
-        const items1: Entry[] = []
-        const items2: Entry[] = []
-        const items3: Entry[] = []
+        const items1: Entry<string>[] = []
+        const items2: Entry<string>[] = []
+        const items3: Entry<string>[] = []
         const amount = 10
         for (let i = 1; i <= amount; i++) {
           const prev1 = last(items1)
@@ -799,9 +799,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       describe('fetches a log', () => {
         const amount = 100
-        let items1: Entry[] = []
-        let items2: Entry[] = []
-        let items3: Entry[] = []
+        let items1: Entry<string>[] = []
+        let items2: Entry<string>[] = []
+        let items3: Entry<string>[] = []
         let log1, log2, log3
 
         beforeEach(async () => {

@@ -11,13 +11,12 @@ import { IStoreOptions } from '@dao-xyz/orbit-db-store'
 import { ResultSource } from '@dao-xyz/bquery';
 import { waitForAsync } from "@dao-xyz/time";
 import { delay } from "@dao-xyz/time";
-import { PeerInfo, ShardPeerInfo } from "./peer";
+import { EMIT_HEALTHCHECK_INTERVAL, PeerInfo, ShardPeerInfo } from "./peer";
 import { IQueryStoreOptions } from "@dao-xyz/orbit-db-query-store";
 import { TRUST_REGION_ACCESS_CONTROLLER } from "./identity";
 export const SHARD_INDEX = 0;
 const MAX_SHARD_SIZE = 1024 * 500 * 1000;
 export const DEFAULT_QUERY_REGION = 'world';
-
 // io
 
 
@@ -49,7 +48,7 @@ export class ReplicationRequest {
 
 
 
-export type StoreBuilder<B> = (name: string, defaultOptions: IStoreOptions<any>, orbitdDB: OrbitDB) => Promise<B>
+export type StoreBuilder<B> = (name: string, defaultOptions: IStoreOptions<any, any>, orbitdDB: OrbitDB) => Promise<B>
 
 
 export type Behaviours<St> = {
@@ -103,7 +102,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
     cid: string;
 
-    defaultStoreOptions: IQueryStoreOptions<any>;
+    defaultStoreOptions: IQueryStoreOptions<any, any>;
 
     constructor(props?: {
         id: string,
@@ -164,7 +163,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
                 rootTrust: PublicKey.from(from.orbitDB.identity),
             })
         }
-        await this.trust.init(this);
+        await this.trust.init(this.peer, (name) => this.getDBName(name), this.defaultStoreOptions);
 
 
         if (!this.shardPeerInfo) {
@@ -201,7 +200,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
                 }
                 await this.memoryRemoved.init(this); */
 
-        await this.interface.init(this);
+        await this.interface.init(this.peer, (key: string) => this.getDBName(key), this.defaultStoreOptions);
 
 
 
@@ -418,24 +417,24 @@ export class Shard<T extends DBInterface> extends ResultSource {
                     // Connect to all parent peers, we could do better (cherry pick), but ok for now
                     const connectPromises = parentPeers.filter(peer => !isSelfDial(peer) && !isAlreadyDialed(peer)).map((peer) => this.peer.node.swarm.connect(peer.addresses[0]));
                     await Promise.all(connectPromises)
-                    const x = 123;
                 }
-
-
             }
         }
 
         const cron = async () => {
             let stop = false;
             let promise: Promise<any> = undefined;
+            let delayStopper: () => void | undefined = undefined;
             controller.signal.addEventListener("abort", async () => {
                 stop = true;
+                if (delayStopper)
+                    delayStopper();
                 await promise;
             });
             while (this.peer.node.isOnline() && !stop) {
                 promise = task();
                 await promise;
-                await delay(this.peer.options.peerHealtcheckInterval);
+                await delay(EMIT_HEALTHCHECK_INTERVAL, (stopper) => { delayStopper = stopper }); // some delay
             }
         }
         cron();
@@ -444,6 +443,36 @@ export class Shard<T extends DBInterface> extends ResultSource {
         // ??? 
     }
  */
+    static async subscribeForReplication(me: AnyPeer, trust: P2PTrust): Promise<void> {
+        await me.node.pubsub.subscribe(trust.replicationTopic, async (msg: any) => {
+            try {
+                let shard = deserialize(Buffer.from(msg.data), Shard);
+
+                // check if enough memory 
+                if (shard.shardSize.toNumber() > me.options.replicationCapacity) {
+                    console.log(`Can not replicate shard size ${shard.shardSize.toNumber()} with peer capacity ${me.options.replicationCapacity}`)
+                    return;
+                }
+                await shard.init(me);
+                // check if is trusted,
+
+                /*    
+                WE CAN NOT HAVE THIS CHECK; BECAUSE WE CAN NOT KNOW WHETHER WE HAVE LOADED THE TRUST DB FULLY (WE NEED TO WAIT TM)
+                
+                if (!shard.trust.isTrusted(PublicKey.from(this.orbitDB.identity))) { 
+                      //if not no point replicating
+                      console.log(`Can not replicate since not trusted`)
+                      return;
+                  }
+                 */
+                await shard.replicate();
+
+            } catch (error) {
+                console.error('Invalid replication request', error.toString());
+                throw error;
+            }
+        })
+    }
 
     async requestReplicate(): Promise<void> {
         /*   let shardCounter = await this.chain.getShardCounter();
@@ -533,6 +562,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
             return der;
 
         }
+
     }
 
 
@@ -543,6 +573,8 @@ export class Shard<T extends DBInterface> extends ResultSource {
         })
 
     }
+
+
 }
 
 

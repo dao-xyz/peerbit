@@ -11,7 +11,7 @@ const flatMap = (res, val) => res.concat(val)
 const defaultConcurrency = 32
 
 interface Store {
-  _oplog: Log;
+  _oplog: Log<any>;
   _ipfs: IPFS;
   identity: Identity;
   id: string;

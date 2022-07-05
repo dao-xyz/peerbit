@@ -1,6 +1,16 @@
 import { Constructor, deserialize } from "@dao-xyz/borsh";
 import bs58 from 'bs58';
 
+
+interface Payload<T> {
+  op?: string;
+  key?: string;
+  value: T
+}
+
+interface LogEntry<T> {
+  payload: Payload<T>
+}
 export class FeedIndex<T> {
   _index: { [key: string]: LogEntry<T> };
   clazz: Constructor<T>

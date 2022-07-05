@@ -1,38 +1,34 @@
+import Identities from "orbit-db-identity-provider";
 
 declare module "orbit-db-access-controllers/src/orbitdb-access-controller" {
     import AccessController from "orbit-db-access-controllers/src/access-controller-interface"
     import OrbitDB from "orbit-db"
+    import { AccessController } from '@dao-xyz/ipfs-log';
 
-    export default class OrbitDBAccessController extends AccessController {
-        constructor (orbitdb: OrbitDB, options: any)
+    export default class OrbitDBAccessController<T> implements AccessController<T> {
+        constructor(orbitdb: OrbitDB, options: any)
 
         // Returns the type of the access controller
-        static get type (): string
+        static get type(): string
 
         // Returns the address of the OrbitDB used as the AC
-        get address (): string
+        get address(): string?;
 
         // Return true if entry is allowed to be added to the database
-        canAppend (entry: LogEntry<any>, identityProvider: any): Promise<boolean>
+        close?(): Promise<void>;
 
-        get capabilities (): {[key: string]: Set<any>}
-        get (capability: string): Set<any>
+        load?(address: string): Promise<void>;
 
-        close (): Promise<void>
+        canAppend?(entry: Entry<T>, identityProvider: Identities): Promise<void>;
 
-        load (address: string): Promise<void>
+        save?(): Promise<{ address: string }>;
 
-        save(): Promise<{ address: string }>
-
-        grant (capability: string, key: string): Promise<void>
-
-        revoke (capability: string, key: string): Promise<void>
-
-        /* Private methods */
-        _onUpdate (): void
+        /*       grant(capability: string, key: string): Promise<void>
+      
+              revoke(capability: string, key: string): Promise<void> */
 
         /* Factory */
-        static create (orbitdb: OrbitDB, options: any): Promise<OrbitDBAccessController>
+        static create(orbitdb: OrbitDB, options: any): Promise<OrbitDBAccessController>
     }
 
 }

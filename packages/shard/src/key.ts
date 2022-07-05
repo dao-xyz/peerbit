@@ -1,4 +1,5 @@
 import { field } from "@dao-xyz/borsh";
+import { IdentityAsJson } from "orbit-db-identity-provider";
 
 export class PublicKey {
     @field({ type: 'String' })
@@ -23,7 +24,7 @@ export class PublicKey {
         return this.type + "/" + this.address;
     }
 
-    static from(identity: IdentityJson): PublicKey {
+    static from(identity: IdentityAsJson): PublicKey {
         return new PublicKey({
             type: identity.type,
             address: identity.publicKey

@@ -1,4 +1,4 @@
-import { DocumentIndex } from './document-index'
+import { DocumentIndex, LogEntry } from './document-index'
 import pMap from 'p-map'
 import { Identity } from 'orbit-db-identity-provider';
 import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
@@ -13,9 +13,9 @@ import OrbitDB from 'orbit-db';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement)
 
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
-export type DocumentStoreOptions<T> = IQueryStoreOptions<DocumentIndex<T>> & { indexBy?: string, clazz: Constructor<T> };
+export type DocumentStoreOptions<T> = IQueryStoreOptions<T, DocumentIndex<T>> & { indexBy?: string, clazz: Constructor<T> };
 
-export type IBinaryDocumentStoreOptions<T> = IQueryStoreOptions<DocumentIndex<T>> & { indexBy?: string, clazz: Constructor<T> };
+export type IBinaryDocumentStoreOptions<T> = IQueryStoreOptions<T, DocumentIndex<T>> & { indexBy?: string, clazz: Constructor<T> };
 
 @variant([0, 0])
 export class BinaryDocumentStoreOptions<T extends ResultSource> extends BStoreOptions<BinaryDocumentStore<T>> {
@@ -56,7 +56,7 @@ const defaultOptions = <T>(options: IBinaryDocumentStoreOptions<T>): IBinaryDocu
   return options
 }
 
-export class BinaryDocumentStore<T extends ResultSource> extends QueryStore<DocumentIndex<T>, IBinaryDocumentStoreOptions<T>> {
+export class BinaryDocumentStore<T extends ResultSource> extends QueryStore<T, DocumentIndex<T>, IBinaryDocumentStoreOptions<T>> {
 
   _type: string = undefined;
   constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IBinaryDocumentStoreOptions<T>) {
@@ -101,13 +101,13 @@ export class BinaryDocumentStore<T extends ResultSource> extends QueryStore<Docu
 
 
 
-  queryDocuments(mapper: ((doc: T) => boolean), options: { fullOp?: boolean } = {}): T[] | { payload: Payload<T> }[] {
+  queryDocuments(mapper: ((doc: T) => boolean), options: { fullOp?: boolean } = {}): T[] | LogEntry<T>[] {
     // Whether we return the full operation data or just the db value
     const fullOp = options.fullOp || false
-    const getValue: (value: T | { payload: Payload<T> }) => T = fullOp ? (value: { payload: Payload<T> }) => value.payload.value : (value: T) => value
+    const getValue: (value: T | LogEntry<T>) => T = fullOp ? (value: LogEntry<T>) => value.payload.value : (value: T) => value
     return Object.keys(this.index._index)
       .map((e) => this.index.get(e, fullOp))
-      .filter((doc) => mapper(getValue(doc))) as T[] | { payload: Payload<T> }[]
+      .filter((doc) => mapper(getValue(doc))) as T[] | LogEntry<T>[]
   }
 
   queryHandler(query: QueryRequestV0): Promise<Result[]> {

@@ -1,15 +1,11 @@
 import fs from 'mz/fs';
 import { Identity } from 'orbit-db-identity-provider';
-import { create } from 'ipfs';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import OrbitDB from 'orbit-db';
 import { v4 as uuid } from 'uuid';
 import PubSub from '@dao-xyz/orbit-db-pubsub'
-
-export interface IPFSInstanceExtended extends IPFSInstance {
-    libp2p: any
-}
-
+import Ctl, { Controller } from 'ipfsd-ctl'
+import * as ipfs from 'ipfs';
 
 export const clean = (id?: string) => {
     let suffix = id ? id + '/' : '';
@@ -32,7 +28,7 @@ export const createOrbitDBInstance = (node: IPFSInstance | any, id: string, iden
 
 export interface Peer {
     id: string
-    node: IPFSInstanceExtended
+    node: IPFSInstance
     orbitDB: OrbitDB,
     disconnect: () => Promise<void>
 }
@@ -43,17 +39,19 @@ export const getPeer = async (identity?: Identity): Promise<Peer> => {
     let id = uuid();
     await clean(id);
 
-    let node = await createIPFSNode('./ipfs/' + id + '/');
+    let controller = await createIPFSNode('./ipfs/' + id + '/');
+    let node = await controller.api;
+    /*     let node = await createIPFSNode('./ipfs/' + id + '/');
+     */
     let orbitDB = await createOrbitDBInstance(node, id, identity);
-
     return {
         id,
-        node,
+        node: node,
         orbitDB,
         disconnect: async () => {
             try {
                 await orbitDB.disconnect();
-                await node.stop();
+                await controller.stop();
             } catch (error) {
 
             }
@@ -76,8 +74,10 @@ export const getConnectedPeers = async (numberOf: number, identity?: Identity): 
 }
 
 export const connectPeers = async (a: Peer, b: Peer): Promise<void> => {
-    let addr = (await a.node.id()).addresses[0];
-    await b.node.swarm.connect(addr);
+    let addrA = (await a.node.id()).addresses[0];
+    await b.node.swarm.connect(addrA);
+    let addrB = (await b.node.id()).addresses[0];
+    await a.node.swarm.connect(addrB);
 }
 
 
@@ -88,28 +88,38 @@ export const disconnectPeers = async (peers: Peer[]): Promise<void> => {
     await Promise.all(peers.map(peer => peer.id ? clean(peer.id) : () => { }));
 }
 
-export const createIPFSNode = (repo: string = './ipfs'): Promise<IPFSInstanceExtended> => {
+export const createIPFSNode = (repo: string = './ipfs'): Promise<Controller> => {
     // Create IPFS instance
     const ipfsOptions = {
         relay: { enabled: false, hop: { enabled: false, active: false } },
-        /*  relay: { enabled: false, hop: { enabled: false, active: false } }, */
         preload: { enabled: false },
-        offline: true,
         repo: repo,
         EXPERIMENTAL: { pubsub: true },
         config: {
             Addresses: {
                 Swarm: [
-                    `/ip4/0.0.0.0/tcp/0`/* ,
-                    `/ip4/127.0.0.1/tcp/0/ws` */
-                ]
-            }
+                    `/ip4/0.0.0.0/tcp/0`
+                ],
+                Bootstrap: []
+            },
         },
         libp2p:
         {
             autoDial: false
         }
     }
-    return create(ipfsOptions)
+
+    try {
+        const ipfsd = Ctl.createController({
+            type: 'proc',
+            test: true,
+            disposable: true,
+            ipfsModule: ipfs,
+            ipfsOptions: ipfsOptions as any
+        })
+        return ipfsd
+    } catch (err) {
+        throw new Error(err)
+    }
 
 }

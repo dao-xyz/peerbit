@@ -12,7 +12,7 @@ export class CounterStoreOptions extends BStoreOptions<CounterStore> {
         super();
     }
 
-    async newStore(address: string, orbitDB: OrbitDB, _typeMap: { [key: string]: Constructor<any> }, options: IQueryStoreOptions<any>): Promise<CounterStore> {
+    async newStore(address: string, orbitDB: OrbitDB, _typeMap: { [key: string]: Constructor<any> }, options: IQueryStoreOptions<any, any>): Promise<CounterStore> {
         return orbitDB.counter(address, options)
     }
 

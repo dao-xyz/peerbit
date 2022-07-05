@@ -38,7 +38,7 @@ export class LogIO {
    * @param {Array<Entry>} options.exclude Entries to not fetch (cached)
    * @param {function(hash, entry, parent, depth)} options.onProgressCallback
    */
-  static async fromMultihash(ipfs, hash, options: EntryFetchAllOptions & { sortFn: any }) {
+  static async fromMultihash<T>(ipfs, hash, options: EntryFetchAllOptions<T> & { sortFn: any }) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(hash)) throw new Error(`Invalid hash: ${hash}`)
 
@@ -68,8 +68,8 @@ export class LogIO {
    * @param {Array<Entry>} options.exclude Entries to not fetch (cached)
    * @param {function(hash, entry, parent, depth)} options.onProgressCallback
    */
-  static async fromEntryHash(ipfs, hash,
-    options: EntryFetchAllOptions & { sortFn?: ISortFunction }) {
+  static async fromEntryHash<T>(ipfs, hash,
+    options: EntryFetchAllOptions<T> & { sortFn?: ISortFunction<T> }) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(hash)) throw new Error("'hash' must be defined")
     // Convert input hash(s) to an array
@@ -100,7 +100,7 @@ export class LogIO {
    * @param {number} options.length How many entries to include
    * @param {function(hash, entry, parent, depth)} options.onProgressCallback
    **/
-  static async fromJSON(ipfs, json, options: EntryFetchAllOptions) {
+  static async fromJSON<T>(ipfs, json, options: EntryFetchAllOptions<T>) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     const { id, heads } = json
     const headHashes = heads.map(e => e.hash)
@@ -118,7 +118,7 @@ export class LogIO {
    * @param {Array<Entry>} options.exclude Entries to not fetch (cached)
    * @param {function(hash, entry, parent, depth)} options.onProgressCallback
    */
-  static async fromEntry(ipfs, sourceEntries, options: EntryFetchAllOptions) {
+  static async fromEntry<T>(ipfs, sourceEntries, options: EntryFetchAllOptions<T>) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(sourceEntries)) throw new Error("'sourceEntries' must be defined")
 

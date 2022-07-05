@@ -169,7 +169,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     test('throws an error if entry doesn\'t have append access', async () => {
-      const denyAccess = { canAppend: () => false } as any as AccessController
+      const denyAccess = { canAppend: (_, __) => false } as AccessController<any>
       const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
       const log2 = new Log(ipfs, testIdentity2, { logId: 'A', access: denyAccess })
 
@@ -187,8 +187,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     test('throws an error upon join if entry doesn\'t have append access', async () => {
       const testACL = {
-        canAppend: (entry) => entry.identity.id !== testIdentity2.id
-      } as any as AccessController;
+        canAppend: (entry, _) => entry.identity.id !== testIdentity2.id
+      } as AccessController<string>;
       const log1 = new Log(ipfs, testIdentity, { logId: 'A', access: testACL })
       const log2 = new Log(ipfs, testIdentity2, { logId: 'A' })
 

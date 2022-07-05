@@ -24,8 +24,6 @@ export class PeerOptions {
     behaviours: TypedBehaviours
     replicationCapacity: number;
     isServer: boolean;
-    peersRecycle: RecycleOptions
-    peerHealtcheckInterval: number = PEER_HEALTH_CHECK_INTERVAL;
     expectedPingDelay: number = EXPECTED_PING_DELAY;
     storeDirectory: string;
 
@@ -34,9 +32,7 @@ export class PeerOptions {
         behaviours: TypedBehaviours;
         replicationCapacity: number;
         isServer: boolean;
-        peersRecycle: RecycleOptions;
     }) {
-
         Object.assign(this, options);
         this.replicationCapacity = options.replicationCapacity;
         this.behaviours = options.behaviours;
@@ -47,25 +43,17 @@ export class PeerOptions {
         // Static behaviours
         this.behaviours.typeMap[Shard.name] = Shard;
         this.isServer = options.isServer;
-        this.peersRecycle = options.peersRecycle;
         this.storeDirectory = './orbit-db-stores/' + (options.directoryId ? options.directoryId : uuid());
     }
-
-
 }
 
 
 
 export class AnyPeer {
 
-    public rootAddress: string;
-
     public node: IPFSInstanceExtended = undefined;
-
     public orbitDB: OrbitDB = undefined;
-
     public options: PeerOptions;
-
     public id: string;
 
     public supportJobs: {
@@ -84,42 +72,7 @@ export class AnyPeer {
         this.orbitDB = options.orbitDB;
         this.options = options.options;
         this.node = options.orbitDB._ipfs;
-
-        /*  if (this["onready"]) (this as any).onready(); */
     }
-
-    async subscribeForReplication(trust: P2PTrust): Promise<void> {
-        await this.node.pubsub.subscribe(trust.replicationTopic, async (msg: any) => {
-            try {
-                let shard = deserialize(Buffer.from(msg.data), Shard);
-
-                // check if enough memory 
-                if (shard.shardSize.toNumber() > this.options.replicationCapacity) {
-                    console.log(`Can not replicate shard size ${shard.shardSize.toNumber()} with peer capacity ${this.options.replicationCapacity}`)
-                    return;
-                }
-                await shard.init(this);
-                // check if is trusted,
-
-                /*    
-                WE CAN NOT HAVE THIS CHECK; BECAUSE WE CAN NOT KNOW WHETHER WE HAVE LOADED THE TRUST DB FULLY (WE NEED TO WAIT TM)
-                
-                if (!shard.trust.isTrusted(PublicKey.from(this.orbitDB.identity))) { 
-                      //if not no point replicating
-                      console.log(`Can not replicate since not trusted`)
-                      return;
-                  }
-   */
-                await shard.replicate();
-
-            } catch (error) {
-                console.error('Invalid replication request', error.toString());
-                throw error;
-            }
-        })
-    }
-
-
 
     async disconnect(): Promise<void> {
         try {
@@ -136,14 +89,6 @@ export class AnyPeer {
         } catch (error) {
 
         }
-        /*  
-        /*  try {
-             let p = (await this.node.pubsub.ls()).map(topic => this.node.pubsub.unsubscribe(topic))
-             await Promise.all(p);
-         } catch (error) {
- 
-         } */
-        /*    */
     }
 }
 

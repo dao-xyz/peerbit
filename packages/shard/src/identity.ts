@@ -13,6 +13,8 @@ import OrbitDB from 'orbit-db';
 import AccessController from "orbit-db-access-controllers/src/access-controller-interface";
 import { P2PTrust } from "./trust";
 import { PublicKey } from "./key";
+import { Entry } from "@dao-xyz/ipfs-log";
+import { LogEntry } from "@dao-xyz/orbit-db-bdocstore";
 /* import { Trust } from '@dao-xyz/orbit-trust'; */
 
 export const CONTRACT_ACCESS_CONTROLLER = 'contract-access-controller';
@@ -27,7 +29,7 @@ export class ContractAccessController extends AccessController {
 
     static get type() { return CONTRACT_ACCESS_CONTROLLER } // Return the type for this controller
 
-    async canAppend(entry: LogEntry<any>, identityProvider: any) {
+    async canAppend(entry: Entry<any>, identityProvider: any) {
         // logic to determine if entry can be added, for example:
         /*  if (entry.payload === "hello world" && entry.identity.id === identity.id && identityProvider.verifyIdentity(entry.identity))
            return true */
@@ -71,7 +73,7 @@ export class ContractAccessController extends AccessController {
              this.contract = new this.web3.eth.Contract(this.abi, this.contractAddress) */
     }
 
-    static async create(_orbitdb: OrbitDB, options: {/*  trustProvider: Trust */ }) {
+    static async create(_orbitdb: OrbitDB, options: {/*´  trustProvider: Trust */ }) {
         return new ContractAccessController({/*  trustProvider: options.trustProvider */ })
     }
 }
@@ -97,7 +99,7 @@ export class TrustRegionAccessController extends AccessController {
 
     static get type() { return TRUST_REGION_ACCESS_CONTROLLER } // Return the type for this controller
 
-    async canAppend(entry: LogEntry<any>, identityProvider: any) {
+    async canAppend(entry: LogEntry<any>, identityProvider: Identities) {
         // logic to determine if entry can be added, for example:
         /*  if (entry.payload === "hello world" && entry.identity.id === identity.id && identityProvider.verifyIdentity(entry.identity))
            return true */
@@ -144,7 +146,7 @@ export class TrustRegionAccessController extends AccessController {
              this.contract = new this.web3.eth.Contract(this.abi, this.contractAddress) */
     }
 
-    static async create(_orbitdb: OrbitDB, options: { /* trustRegionResolver?: () => P2PTrust  */ }) {
+    static async create(_orbitdb: OrbitDB, options: { trustRegionResolver?: () => P2PTrust }) {
         return new TrustRegionAccessController({/*  trustRegionResolver: options.trustRegionResolver *//*  trustProvider: options.trustProvider */ })
     }
 }

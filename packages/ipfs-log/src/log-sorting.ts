@@ -1,7 +1,7 @@
 import { Entry } from './entry'
 import { LamportClock as Clock } from './lamport-clock'
 
-export type ISortFunction = (a: Entry, b: Entry, resolveConflict?: (a: Entry, b: Entry) => number) => number;
+export type ISortFunction<T> = (a: Entry<T>, b: Entry<T>, resolveConflict?: (a: Entry<T>, b: Entry<T>) => number) => number;
 /**
  * Sort two entries as Last-Write-Wins (LWW).
  *
@@ -12,7 +12,7 @@ export type ISortFunction = (a: Entry, b: Entry, resolveConflict?: (a: Entry, b:
  * @param {Entry} b Second entry
  * @returns {number} 1 if a is latest, -1 if b is latest
  */
-export const LastWriteWins: ISortFunction = (a, b) => {
+export const LastWriteWins: ISortFunction<any> = (a: Entry<any>, b: Entry<any>) => {
   // Ultimate conflict resolution (take the first/left arg)
   const First = (a, b) => a
   // Sort two entries by their clock id, if the same always take the first
@@ -31,7 +31,7 @@ export const LastWriteWins: ISortFunction = (a, b) => {
  * @param {Entry} b Second entry
  * @returns {number} 1 if a is latest, -1 if b is latest
  */
-export const SortByEntryHash: ISortFunction = (a, b) => {
+export const SortByEntryHash: ISortFunction<any> = (a, b) => {
   // Ultimate conflict resolution (compare hashes)
   const compareHash = (a, b) => a.hash < b.hash ? -1 : 1
   // Sort two entries by their clock id, if the same then compare hashes
@@ -50,7 +50,7 @@ export const SortByEntryHash: ISortFunction = (a, b) => {
  * @param {function(a, b)} resolveConflict A function to call if entries are concurrent (happened at the same time). The function should take in two entries and return 1 if the first entry should be chosen and -1 if the second entry should be chosen.
  * @returns {number} 1 if a is greater, -1 if b is greater
  */
-export const SortByClocks: ISortFunction = (a, b, resolveConflict) => {
+export const SortByClocks: ISortFunction<any> = (a: Entry<any>, b: Entry<any>, resolveConflict) => {
   // Compare the clocks
   const diff = Clock.compare(a.clock, b.clock)
   // If the clocks are concurrent, use the provided
@@ -65,7 +65,7 @@ export const SortByClocks: ISortFunction = (a, b, resolveConflict) => {
  * @param {function(a, b)} resolveConflict A function to call if the clocks ids are the same. The function should take in two entries and return 1 if the first entry should be chosen and -1 if the second entry should be chosen.
  * @returns {number} 1 if a is greater, -1 if b is greater
  */
-export const SortByClockId: ISortFunction = (a, b, resolveConflict) => {
+export const SortByClockId: ISortFunction<any> = (a, b, resolveConflict) => {
   // Sort by ID if clocks are concurrent,
   // take the entry with a "greater" clock id
   return a.clock.id === b.clock.id
@@ -79,10 +79,10 @@ export const SortByClockId: ISortFunction = (a, b, resolveConflict) => {
  * @returns {function(a, b)} 1 if a is greater, -1 if b is greater
  * @throws {Error} if func ever returns 0
  */
-export const NoZeroes = (func: ISortFunction) => {
+export const NoZeroes = (func: ISortFunction<any>) => {
   const msg = `Your log's tiebreaker function, ${func.name}, has returned zero and therefore cannot be`
 
-  const comparator = (a: Entry, b: Entry) => {
+  const comparator = (a: Entry<any>, b: Entry<any>) => {
     // Validate by calling the function
     const result = func(a, b)
     if (result === 0) { throw Error(msg) }

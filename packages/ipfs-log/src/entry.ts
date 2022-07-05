@@ -3,7 +3,7 @@ import { isDefined } from './is-defined'
 import * as io from 'orbit-db-io'
 import stringify from 'json-stringify-deterministic'
 import { IPFS } from 'ipfs-core-types/src/'
-import { Identity } from 'orbit-db-identity-provider'
+import { Identity, IdentityAsJson } from 'orbit-db-identity-provider'
 const IpfsNotDefinedError = () => new Error('Ipfs instance not defined')
 const getWriteFormatForVersion = v => v === 0 ? 'dag-pb' : 'dag-cbor'
 
@@ -11,16 +11,18 @@ const getWriteFormatForVersion = v => v === 0 ? 'dag-pb' : 'dag-cbor'
  * @description
  * An ipfs-log entry
  */
-export class Entry {
+
+
+export class Entry<T>{
 
   sig?: string;
-  identity?: any;
+  identity?: IdentityAsJson;
   key?: string;
   hash?: string // "zd...Foo", we'll set the hash after persisting the entry
   id: any // For determining a unique chain
   payload: any // Can be any JSON.stringifyable data
-  next?: Entry[] // Array of hashes
-  refs?: Entry[]
+  next?: Entry<T>[] // Array of hashes
+  refs?: Entry<T>[]
   v: number // To tag the version of this data structure
   clock: Clock
 
@@ -42,7 +44,7 @@ export class Entry {
    * console.log(entry)
    * // { hash: null, payload: "hello", next: [] }
    */
-  static async create(ipfs: IPFS, identity: Identity, logId: string, data: any, next: (Entry | string)[] = [], clock?: Clock, refs: Entry[] = [], pin?: boolean) {
+  static async create<T>(ipfs: IPFS, identity: Identity, logId: string, data: any, next: (Entry<T> | string)[] = [], clock?: Clock, refs: Entry<T>[] = [], pin?: boolean) {
     if (!isDefined(ipfs)) throw IpfsNotDefinedError()
     if (!isDefined(identity)) throw new Error('Identity is required, cannot create entry')
     if (!isDefined(logId)) throw new Error('Entry requires an id')
@@ -53,7 +55,7 @@ export class Entry {
     const toEntry = (e) => e.hash ? e.hash : e
     const nexts = next.filter(isDefined).map(toEntry)
 
-    const entry: Entry = {
+    const entry: Entry<T> = {
       hash: null, // "zd...Foo", we'll set the hash after persisting the entry
       id: logId, // For determining a unique chain
       payload: data, // Can be any JSON.stringifyable data
@@ -112,7 +114,7 @@ export class Entry {
    * // "Qm...Foo"
    * @deprecated
    */
-  static async toMultihash(ipfs: IPFS, entry: Entry, pin = false) {
+  static async toMultihash<T>(ipfs: IPFS, entry: Entry<T>, pin = false) {
     if (!ipfs) throw IpfsNotDefinedError()
     if (!Entry.isEntry(entry)) throw new Error('Invalid object format, cannot generate entry hash')
 
@@ -121,8 +123,8 @@ export class Entry {
     return io.write(ipfs, Entry.getWriteFormat(e.v), e, { links: Entry.IPLD_LINKS, pin })
   }
 
-  static toEntry(entry: Entry, { presigned = false, includeHash = false } = {}): Entry {
-    const e: Entry = {
+  static toEntry<T>(entry: Entry<T>, { presigned = false, includeHash = false } = {}): Entry<T> {
+    const e: Entry<T> = {
       hash: includeHash ? entry.hash : null,
       id: entry.id,
       payload: entry.payload,
@@ -223,8 +225,8 @@ export class Entry {
    * @param {Array<Entry>} values Entries to search parents from
    * @returns {Array<Entry>}
    */
-  static findChildren(entry: Entry, values: Entry[]) {
-    let stack: Entry[] = []
+  static findChildren<T>(entry: Entry<T>, values: Entry<T>[]) {
+    let stack: Entry<T>[] = []
     let parent = values.find((e) => Entry.isParent(entry, e))
     let prev = entry
     while (parent) {

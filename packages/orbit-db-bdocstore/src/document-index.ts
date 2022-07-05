@@ -1,9 +1,17 @@
 import { Constructor, deserialize } from "@dao-xyz/borsh";
 import bs58 from 'bs58';
+import { IdentityAsJson } from "orbit-db-identity-provider";
 import { asString, ToStringable } from "./utils";
 
+export interface LogEntry<T> { identity: IdentityAsJson, payload: Payload<T> }
+export interface Payload<T> {
+  op?: string;
+  key?: string;
+  value: T
+}
+
 export class DocumentIndex<T> {
-  _index: { [key: string]: { payload: Payload<T> } };
+  _index: { [key: string]: LogEntry<T> };
   clazz: Constructor<T>
 
   constructor() {
@@ -14,7 +22,7 @@ export class DocumentIndex<T> {
     this.clazz = clazz;
   }
 
-  get(key: ToStringable, fullOp = false): ({ payload: Payload<T> } | T) {
+  get(key: ToStringable, fullOp = false): (LogEntry<T> | T) {
     let stringKey = asString(key);
     return fullOp
       ? this._index[stringKey]
@@ -36,7 +44,8 @@ export class DocumentIndex<T> {
                 op: 'PUT',
                 key: asString(doc.key),
                 value: this.deserializeOrPass(doc.value)
-              }
+              },
+              identity: item.identity
             }
           }
         }

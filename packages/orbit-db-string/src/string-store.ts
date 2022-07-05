@@ -28,6 +28,7 @@ const findAllOccurrences = (str: string, substr: string): number[] => {
 }
 
 
+export type IStringStoreOptions = IQueryStoreOptions<string, StringIndex>;
 
 
 @variant([0, 3])
@@ -36,7 +37,7 @@ export class StringStoreOptions extends BStoreOptions<StringStore> {
   constructor() {
     super();
   }
-  async newStore(address: string, orbitDB: OrbitDB, typeMap: { [key: string]: Constructor<any> }, options: IQueryStoreOptions<StringIndex>): Promise<StringStore> {
+  async newStore(address: string, orbitDB: OrbitDB, typeMap: { [key: string]: Constructor<any> }, options: IStringStoreOptions): Promise<StringStore> {
     return orbitDB.open<StringStore>(address, { ...options, ...{ create: true, type: STRING_STORE_TYPE } })
   }
 
@@ -45,15 +46,15 @@ export class StringStoreOptions extends BStoreOptions<StringStore> {
   }
 }
 
-const defaultOptions = (options: IQueryStoreOptions<StringIndex>): any => {
+const defaultOptions = (options: IStringStoreOptions): any => {
   if (!options.Index) Object.assign(options, { Index: StringIndex })
   return options;
 }
 
-export class StringStore extends QueryStore<StringIndex, IQueryStoreOptions<StringIndex>> {
+export class StringStore extends QueryStore<string, StringIndex, IStringStoreOptions> {
 
   _type: string = undefined;
-  constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IQueryStoreOptions<StringIndex>) {
+  constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IStringStoreOptions) {
     super(ipfs, id, dbname, defaultOptions(options))
     this._type = STRING_STORE_TYPE;
   }

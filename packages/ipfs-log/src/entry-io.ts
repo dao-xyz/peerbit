@@ -6,16 +6,16 @@ import { IPFS } from 'ipfs-core-types/src/'
 const hasItems = arr => arr && arr.length > 0
 
 
-export interface EntryFetchOptions { length?: number, timeout?: number, exclude?: any[], onProgressCallback?: (entry: Entry) => void, concurrency?: number }
-interface EntryFetchStrictOptions { length: number, timeout?: number, exclude: any[], onProgressCallback?: (entry: Entry) => void, concurrency: number }
+export interface EntryFetchOptions<T> { length?: number, timeout?: number, exclude?: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency?: number }
+interface EntryFetchStrictOptions<T> { length: number, timeout?: number, exclude: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency: number }
 
-export interface EntryFetchAllOptions extends EntryFetchOptions { shouldExclude?: (string) => boolean, onStartProgressCallback?: any, delay?: number }
-interface EntryFetchAllStrictOptions extends EntryFetchStrictOptions { shouldExclude?: (string) => boolean, onStartProgressCallback?: any, delay: number }
+export interface EntryFetchAllOptions<T> extends EntryFetchOptions<T> { shouldExclude?: (string) => boolean, onStartProgressCallback?: any, delay?: number }
+interface EntryFetchAllStrictOptions<T> extends EntryFetchStrictOptions<T> { shouldExclude?: (string) => boolean, onStartProgressCallback?: any, delay: number }
 
 
 
-export const strictAllFetchOptions = (options: EntryFetchAllOptions): EntryFetchAllStrictOptions => {
-  const ret: EntryFetchAllStrictOptions = {
+export const strictAllFetchOptions = <T>(options: EntryFetchAllOptions<T>): EntryFetchAllStrictOptions<T> => {
+  const ret: EntryFetchAllStrictOptions<T> = {
     ...options
   } as any;
   if (ret.length == undefined) {
@@ -32,8 +32,8 @@ export const strictAllFetchOptions = (options: EntryFetchAllOptions): EntryFetch
   }
   return ret;
 }
-export const strictFetchOptions = (options: EntryFetchOptions): EntryFetchStrictOptions => {
-  const ret: EntryFetchStrictOptions = {
+export const strictFetchOptions = <T>(options: EntryFetchOptions<T>): EntryFetchStrictOptions<T> => {
+  const ret: EntryFetchStrictOptions<T> = {
     ...options
   } as any
   if (ret.length == undefined) {
@@ -52,7 +52,7 @@ export const strictFetchOptions = (options: EntryFetchOptions): EntryFetchStrict
 
 export class EntryIO {
   // Fetch log graphs in parallel
-  static async fetchParallel(ipfs: IPFS, hashes: string | string[], options: EntryFetchAllOptions) {
+  static async fetchParallel<T>(ipfs: IPFS, hashes: string | string[], options: EntryFetchAllOptions<T>) {
     const fetchOne = async (hash) => EntryIO.fetchAll(ipfs, hash, strictFetchOptions(options))
     const concatArrays = (arr1, arr2) => arr1.concat(arr2)
     const flatten = (arr) => arr.reduce(concatArrays, [])
@@ -73,7 +73,7 @@ export class EntryIO {
    * @param {function(entry)} onProgressCallback Called when an entry was fetched
    * @returns {Promise<Array<Entry>>}
    */
-  static async fetchAll(ipfs: IPFS, hashes: string | string[], options: EntryFetchAllOptions) {
+  static async fetchAll<T>(ipfs: IPFS, hashes: string | string[], options: EntryFetchAllOptions<T>) {
     options = strictFetchOptions(options);
     const result = []
     const cache = {}

@@ -1,4 +1,4 @@
-import { AccessController } from '../default-access-controller'
+import { DefaultAccessController } from '../default-access-controller'
 import { Entry } from '../entry'
 export const io = require('orbit-db-io')
 const assert = require('assert')
@@ -24,7 +24,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
   describe('Entry (' + IPFS + ')', function () {
     jest.setTimeout(config.timeout)
 
-    const testACL = new AccessController()
+    const testACL = new DefaultAccessController<string>()
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
 
     let keystore, signingKeystore

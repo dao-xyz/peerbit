@@ -11,8 +11,8 @@
             "program": "${workspaceRoot}/node_modules/.bin/jest",
             "cwd": "${workspaceRoot}",
             "args": [
-                "--runInBand",
                 "--forceExit",
+                "--runInBand",
                 "--colors",
                 "--verbose",
                 "-c",
