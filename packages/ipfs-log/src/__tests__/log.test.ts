@@ -5,7 +5,7 @@ const rmrf = require('rimraf')
 const { CID } = require('multiformats/cid')
 const { base58btc } = require('multiformats/bases/base58')
 import { LamportClock as Clock } from '../lamport-clock'
-import { Entry } from '../entry'
+import { Entry } from '../signable'
 import { Log } from '../log'
 const IdentityProvider = require('orbit-db-identity-provider')
 const Keystore = require('orbit-db-keystore')
@@ -101,9 +101,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       test('sets items if given as params', async () => {
-        const one = await Entry.create(ipfs, testIdentity, 'A', 'entryA', [], new Clock('A', 0))
-        const two = await Entry.create(ipfs, testIdentity, 'A', 'entryB', [], new Clock('B', 0))
-        const three = await Entry.create(ipfs, testIdentity, 'A', 'entryC', [], new Clock('C', 0))
+        const one = await Entry.create(ipfs, testIdentity, 'A', 'entryA', [], new Clock({ id: 'A', time: 0 }))
+        const two = await Entry.create(ipfs, testIdentity, 'A', 'entryB', [], new Clock({ id: 'B', time: 0 }))
+        const three = await Entry.create(ipfs, testIdentity, 'A', 'entryC', [], new Clock({ id: 'C', time: 0 }))
         const log = new Log(ipfs, testIdentity,
           { logId: 'A', entries: [one, two, three] })
         assert.strictEqual(log.length, 3)
@@ -244,7 +244,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           payload: 'one',
           next: [],
           v: 1,
-          clock: new Clock(testIdentity.publicKey, 1),
+          clock: new Clock({ id: testIdentity.publicKey, time: 1 }),
           key: testIdentity.toJSON()
         }
 
@@ -480,9 +480,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
             { sortFn: FirstWriteWins })
           assert.strictEqual(res.length, 3)
           assert.strictEqual(res.heads.length, 3)
-          assert.strictEqual(res.heads[2].payload, 'one')
-          assert.strictEqual(res.heads[1].payload, 'two') // order is determined by the identity's publicKey
-          assert.strictEqual(res.heads[0].payload, 'three')
+          assert.strictEqual(Buffer.from(res.heads[2].payload).toString(), 'one')
+          assert.strictEqual(Buffer.from(res.heads[1].payload).toString(), 'two') // order is determined by the identity's publicKey
+          assert.strictEqual(Buffer.from(res.heads[0].payload).toString(), 'three')
         })
 
         test('creates a log from ipfs CID up to a size limit', async () => {

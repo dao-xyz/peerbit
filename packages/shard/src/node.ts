@@ -5,7 +5,7 @@ import { Shard, TypedBehaviours } from './shard';
 import { v4 as uuid } from 'uuid';
 import { P2PTrust } from './trust';
 import { deserialize } from '@dao-xyz/borsh';
-import { PublicKey } from './key';
+import { PublicKey } from "@dao-xyz/identity";
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import { RecycleOptions } from '@dao-xyz/ipfs-log';

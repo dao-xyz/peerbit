@@ -4,7 +4,7 @@ import { IPFSInstanceExtended } from "./node";
 import { Shard } from "./shard";
 import { DBInterface, SingleDBInterface } from "./interface";
 
-import { PublicKey } from "./key";
+import { PublicKey } from "@dao-xyz/identity";
 import { IStoreOptions } from "@dao-xyz/orbit-db-store";
 export const TRUSTEE_KEY = 'trustee';
 

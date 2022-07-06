@@ -1,17 +1,16 @@
-import * as IPFS from 'ipfs';
 import { query, QueryRequestV0, QueryResponseV0 } from "../query"
-import { v4 as uuid } from 'uuid';
-import { IPFS as IPFSInstance } from 'ipfs-core-types';
+import { v4 as uuid } from 'uuid';;
 import { Message } from "ipfs-core-types/src/pubsub";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { DocumentQueryRequest, FieldStringMatchQuery } from "../document-query";
-import { ResultSource, ResultWithSource } from "../result";
+import { ResultWithSource } from "../result";
 import { delay, waitFor } from "@dao-xyz/time";
 import { disconnectPeers, getConnectedPeers } from '@dao-xyz/peer-test-utils';
 import { StoreAddressMatchQuery } from '../context';
+import { BPayload } from '@dao-xyz/bgenerics';
 
 @variant([1, 1])
-class NumberResult extends ResultSource {
+class NumberResult extends BPayload {
   @field({ type: 'u32' })
   number: number
   constructor(opts?: { number: number }) {

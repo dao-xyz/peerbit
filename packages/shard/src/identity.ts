@@ -12,7 +12,7 @@ import KeyValueStore from 'orbit-db-kvstore';
 import OrbitDB from 'orbit-db';
 import AccessController from "orbit-db-access-controllers/src/access-controller-interface";
 import { P2PTrust } from "./trust";
-import { PublicKey } from "./key";
+import { PublicKey } from "@dao-xyz/identity";
 import { Entry } from "@dao-xyz/ipfs-log";
 import { LogEntry } from "@dao-xyz/orbit-db-bdocstore";
 /* import { Trust } from '@dao-xyz/orbit-trust'; */

@@ -1,4 +1,4 @@
-import { Entry } from './entry'
+import { Entry } from './signable'
 import { EntryFetchAllOptions, EntryIO, strictFetchOptions } from './entry-io'
 import { ISortFunction, LastWriteWins, NoZeroes } from './log-sorting'
 import * as LogError from './log-errors'
@@ -38,7 +38,7 @@ export class LogIO {
    * @param {Array<Entry>} options.exclude Entries to not fetch (cached)
    * @param {function(hash, entry, parent, depth)} options.onProgressCallback
    */
-  static async fromMultihash<T>(ipfs, hash, options: EntryFetchAllOptions<T> & { sortFn: any }) {
+  static async fromMultihash<T>(ipfs, hash, options: EntryFetchAllOptions & { sortFn: any }) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(hash)) throw new Error(`Invalid hash: ${hash}`)
 
@@ -68,8 +68,8 @@ export class LogIO {
    * @param {Array<Entry>} options.exclude Entries to not fetch (cached)
    * @param {function(hash, entry, parent, depth)} options.onProgressCallback
    */
-  static async fromEntryHash<T>(ipfs, hash,
-    options: EntryFetchAllOptions<T> & { sortFn?: ISortFunction<T> }) {
+  static async fromEntryHash(ipfs, hash,
+    options: EntryFetchAllOptions & { sortFn?: ISortFunction }) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(hash)) throw new Error("'hash' must be defined")
     // Convert input hash(s) to an array
@@ -100,7 +100,7 @@ export class LogIO {
    * @param {number} options.length How many entries to include
    * @param {function(hash, entry, parent, depth)} options.onProgressCallback
    **/
-  static async fromJSON<T>(ipfs, json, options: EntryFetchAllOptions<T>) {
+  static async fromJSON<T>(ipfs, json, options: EntryFetchAllOptions) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     const { id, heads } = json
     const headHashes = heads.map(e => e.hash)
@@ -118,7 +118,7 @@ export class LogIO {
    * @param {Array<Entry>} options.exclude Entries to not fetch (cached)
    * @param {function(hash, entry, parent, depth)} options.onProgressCallback
    */
-  static async fromEntry<T>(ipfs, sourceEntries, options: EntryFetchAllOptions<T>) {
+  static async fromEntry<T>(ipfs, sourceEntries, options: EntryFetchAllOptions) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(sourceEntries)) throw new Error("'sourceEntries' must be defined")
 

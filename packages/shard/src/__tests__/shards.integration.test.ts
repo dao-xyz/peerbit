@@ -3,7 +3,7 @@ import { Shard } from '../shard';
 import { AnyPeer, PeerOptions } from '../node';
 import { BinaryFeedStoreInterface, DocumentStoreInterface, Document, documentStoreShard, getPeer, shardStoreShard, getConnectedPeers } from './utils';
 import { P2PTrust } from '../trust';
-import { PublicKey } from '../key';
+import { PublicKey } from "@dao-xyz/identity";
 import { connectPeers, disconnectPeers } from '@dao-xyz/peer-test-utils';
 import { delay, waitFor, waitForAsync } from '@dao-xyz/time';
 

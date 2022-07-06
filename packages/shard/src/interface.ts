@@ -7,15 +7,16 @@ import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
 import { DEFAULT_QUERY_REGION, Shard } from "./shard";
 import * as events from 'events';
 import { waitForReplicationEvents } from "./utils";
-import { ResultSource, query } from "@dao-xyz/bquery";
+import { query } from "@dao-xyz/bquery";
 import { getQueryTopic, QueryStore } from "@dao-xyz/orbit-db-query-store";
 import { QueryRequestV0 } from "@dao-xyz/bquery";
 import { QueryResponseV0 } from "@dao-xyz/bquery";
 import { AnyPeer } from "./node";
+import { BPayload } from '@dao-xyz/bgenerics';
 
 // Extends results source in order to be queried
 @variant([0, 1])
-export class DBInterface extends ResultSource {
+export class DBInterface extends BPayload {
 
     get initialized(): boolean {
         throw new Error("Not implemented")

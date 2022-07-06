@@ -2,7 +2,7 @@ const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { LamportClock as Clock } from '../lamport-clock'
-import { Entry } from '../entry'
+import { Entry } from '../signable'
 import { Log } from '../log'
 const IdentityProvider = require('orbit-db-identity-provider')
 const Keystore = require('orbit-db-keystore')
@@ -67,9 +67,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       test('joins logs', async () => {
-        const items1: Entry<string>[] = []
-        const items2: Entry<string>[] = []
-        const items3: Entry<string>[] = []
+        const items1: Entry[] = []
+        const items2: Entry[] = []
+        const items3: Entry[] = []
         const amount = 100
         for (let i = 1; i <= amount; i++) {
           const prev1 = last(items1)
@@ -318,19 +318,19 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.deepStrictEqual(log4.clock.time, 8)
 
         const expectedData = [
-          { payload: 'helloA1', id: 'X', clock: new Clock(testIdentity.publicKey, 1) },
-          { payload: 'helloB1', id: 'X', clock: new Clock(testIdentity2.publicKey, 1) },
-          { payload: 'helloD1', id: 'X', clock: new Clock(testIdentity4.publicKey, 1) },
-          { payload: 'helloA2', id: 'X', clock: new Clock(testIdentity.publicKey, 2) },
-          { payload: 'helloB2', id: 'X', clock: new Clock(testIdentity2.publicKey, 2) },
-          { payload: 'helloD2', id: 'X', clock: new Clock(testIdentity4.publicKey, 2) },
-          { payload: 'helloC1', id: 'X', clock: new Clock(testIdentity3.publicKey, 3) },
-          { payload: 'helloC2', id: 'X', clock: new Clock(testIdentity3.publicKey, 4) },
-          { payload: 'helloD3', id: 'X', clock: new Clock(testIdentity4.publicKey, 5) },
-          { payload: 'helloD4', id: 'X', clock: new Clock(testIdentity4.publicKey, 6) },
-          { payload: 'helloA5', id: 'X', clock: new Clock(testIdentity.publicKey, 7) },
-          { payload: 'helloD5', id: 'X', clock: new Clock(testIdentity4.publicKey, 7) },
-          { payload: 'helloD6', id: 'X', clock: new Clock(testIdentity4.publicKey, 8) }
+          { payload: 'helloA1', id: 'X', clock: new Clock({ id: testIdentity.publicKey, time: 1 }) },
+          { payload: 'helloB1', id: 'X', clock: new Clock({ id: testIdentity2.publicKey, time: 1 }) },
+          { payload: 'helloD1', id: 'X', clock: new Clock({ id: testIdentity4.publicKey, time: 1 }) },
+          { payload: 'helloA2', id: 'X', clock: new Clock({ id: testIdentity.publicKey, time: 2 }) },
+          { payload: 'helloB2', id: 'X', clock: new Clock({ id: testIdentity2.publicKey, time: 2 }) },
+          { payload: 'helloD2', id: 'X', clock: new Clock({ id: testIdentity4.publicKey, time: 2 }) },
+          { payload: 'helloC1', id: 'X', clock: new Clock({ id: testIdentity3.publicKey, time: 3 }) },
+          { payload: 'helloC2', id: 'X', clock: new Clock({ id: testIdentity3.publicKey, time: 4 }) },
+          { payload: 'helloD3', id: 'X', clock: new Clock({ id: testIdentity4.publicKey, time: 5 }) },
+          { payload: 'helloD4', id: 'X', clock: new Clock({ id: testIdentity4.publicKey, time: 6 }) },
+          { payload: 'helloA5', id: 'X', clock: new Clock({ id: testIdentity.publicKey, time: 7 }) },
+          { payload: 'helloD5', id: 'X', clock: new Clock({ id: testIdentity4.publicKey, time: 7 }) },
+          { payload: 'helloD6', id: 'X', clock: new Clock({ id: testIdentity4.publicKey, time: 8 }) }
         ]
 
         const transformed = log4.values.map((e) => {

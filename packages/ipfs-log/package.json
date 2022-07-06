@@ -29,6 +29,8 @@
     "crdt"
   ],
   "dependencies": {
+    "bn.js": "^5.2.1",
+    "@dao-xyz/borsh": "^2.1.3",
     "json-stringify-deterministic": "^1.0.1",
     "multihashing-async": "^2.0.1",
     "orbit-db-identity-provider": "^0.3.1",

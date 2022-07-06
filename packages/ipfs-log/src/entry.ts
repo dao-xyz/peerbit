@@ -62,7 +62,7 @@ export class Entry<T>{
       next: nexts, // Array of hashes
       refs: refs,
       v: 2, // To tag the version of this data structure
-      clock: clock || new Clock(identity.publicKey)
+      clock: clock || new Clock({ id: identity.publicKey })
     }
 
     const signature = await identity.provider.sign(identity, Entry.toBuffer(entry))
@@ -136,7 +136,7 @@ export class Entry<T>{
       e.refs = entry.refs // added in v2
     }
     e.v = entry.v
-    e.clock = new Clock(entry.clock.id, entry.clock.time)
+    e.clock = new Clock({ id: entry.clock.id, time: entry.clock.time })
 
     if (presigned) {
       return e // don't include key/sig information

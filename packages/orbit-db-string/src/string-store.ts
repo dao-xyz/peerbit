@@ -10,7 +10,7 @@ import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
 import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
 import OrbitDB from 'orbit-db';
-import { ResultSource } from '@dao-xyz/bquery';
+import { BPayload } from '@dao-xyz/bgenerics';
 
 export const STRING_STORE_TYPE = 'string_store';
 const findAllOccurrences = (str: string, substr: string): number[] => {
@@ -115,7 +115,7 @@ export class StringStore extends QueryStore<string, StringIndex, IStringStoreOpt
 }
 
 @variant([0, 2])
-export class StringResultSource extends ResultSource {
+export class StringResultSource extends BPayload {
 
   @field({ type: 'String' })
   string: string

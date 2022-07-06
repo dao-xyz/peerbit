@@ -1,12 +1,12 @@
 import Identities from "orbit-db-identity-provider";
-import { Entry } from "./entry";
+import { Entry } from "./signable";
 
-export interface AccessController<T> {
-  canAppend(entry: Entry<T>, identityProvider: Identities): Promise<boolean> | boolean;
+export interface AccessController {
+  canAppend(entry: Entry, identityProvider: Identities): Promise<boolean> | boolean;
 }
 
-export class DefaultAccessController<T> implements AccessController<T>{
-  async canAppend(entry: Entry<T>, identityProvider: Identities): Promise<boolean> {
+export class DefaultAccessController implements AccessController {
+  async canAppend(entry: Entry, identityProvider: Identities): Promise<boolean> {
     return true
   }
 }

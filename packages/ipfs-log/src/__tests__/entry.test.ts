@@ -1,5 +1,5 @@
 import { DefaultAccessController } from '../default-access-controller'
-import { Entry } from '../entry'
+import { Entry } from '../signable'
 export const io = require('orbit-db-io')
 const assert = require('assert')
 const rmrf = require('rimraf')
@@ -24,7 +24,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
   describe('Entry (' + IPFS + ')', function () {
     jest.setTimeout(config.timeout)
 
-    const testACL = new DefaultAccessController<string>()
+    const testACL = new DefaultAccessController()
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
 
     let keystore, signingKeystore
@@ -53,40 +53,38 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     describe('create', () => {
       test('creates a an empty entry', async () => {
-        const expectedHash = 'zdpuAsPdzSyeux5mFsFV1y3WeHAShGNi4xo22cYBYWUdPtxVB'
+        const expectedHash = 'zdpuAs2iZUuNRTHLRFQ5Mp82wUNYEXshAmjfqwQWj99PvMSaA'
         const entry = await Entry.create(ipfs, testIdentity, 'A', 'hello')
         assert.strictEqual(entry.hash, expectedHash)
         assert.strictEqual(entry.id, 'A')
         assert.strictEqual(entry.clock.id, testIdentity.publicKey)
         assert.strictEqual(entry.clock.time, 0)
-        assert.strictEqual(entry.v, 2)
-        assert.strictEqual(entry.payload, 'hello')
+        assert.strictEqual(entry.payload.toString(), 'hello')
         assert.strictEqual(entry.next.length, 0)
         assert.strictEqual(entry.refs.length, 0)
       })
 
       test('creates a entry with payload', async () => {
-        const expectedHash = 'zdpuAyvJU3TS7LUdfRxwAnJorkz6NfpAWHGypsQEXLZxcCCRC'
+        const expectedHash = 'zdpuAwcWMMEvk5TFVuwKS5Ymd89jfNPxBTto8A2sobgsEPYGu'
         const payload = 'hello world'
         const entry = await Entry.create(ipfs, testIdentity, 'A', payload, [])
-        assert.strictEqual(entry.payload, payload)
+        assert.strictEqual(entry.payload.toString(), payload)
         assert.strictEqual(entry.id, 'A')
         assert.strictEqual(entry.clock.id, testIdentity.publicKey)
         assert.strictEqual(entry.clock.time, 0)
-        assert.strictEqual(entry.v, 2)
         assert.strictEqual(entry.next.length, 0)
         assert.strictEqual(entry.refs.length, 0)
         assert.strictEqual(entry.hash, expectedHash)
       })
 
       test('creates a entry with payload and next', async () => {
-        const expectedHash = 'zdpuAqsN9Py4EWSfrGYZS8tuokWuiTd9zhS8dhr9XpSGQajP2'
+        const expectedHash = 'zdpuB1b5DipCQSkCYbJJvqX8zH9KkMqA29pYW3xAst3WnBotx'
         const payload1 = 'hello world'
         const payload2 = 'hello again'
         const entry1 = await Entry.create(ipfs, testIdentity, 'A', payload1, [])
         entry1.clock.tick()
         const entry2 = await Entry.create(ipfs, testIdentity, 'A', payload2, [entry1], entry1.clock)
-        assert.strictEqual(entry2.payload, payload2)
+        assert.strictEqual(entry2.payload.toString(), payload2)
         assert.strictEqual(entry2.next.length, 1)
         assert.strictEqual(entry2.hash, expectedHash)
         assert.strictEqual(entry2.clock.id, testIdentity.publicKey)
@@ -211,7 +209,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     describe('fromMultihash', () => {
       test('creates a entry from ipfs hash', async () => {
-        const expectedHash = 'zdpuAnRGWKPkMHqumqdkRJtzbyW6qAGEiBRv61Zj3Ts4j9tQF'
+        const expectedHash = 'zdpuAvW6MgeAHbD5mKz17mpeqxodRvCU3tYWa5TEvQDSiexPP'
         const payload1 = 'hello world'
         const payload2 = 'hello again'
         const entry1 = await Entry.create(ipfs, testIdentity, 'A', payload1, [])
@@ -220,14 +218,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         assert.deepStrictEqual(entry2, final)
         assert.strictEqual(final.id, 'A')
-        assert.strictEqual(final.payload, payload2)
+        assert.strictEqual(Buffer.from(final.payload).toString(), payload2)
         assert.strictEqual(final.next.length, 1)
         assert.strictEqual(final.next[0], entry1.hash)
         assert.strictEqual(final.hash, expectedHash)
       })
 
       test('creates a entry from ipfs multihash of v0 entries', async () => {
-        const expectedHash = 'QmZ8va2fSjRufV1sD6x5mwi6E5GrSjXHx7RiKFVBzkiUNZ'
+        const expectedHash = 'QmUKMoRrmsYAzQg1nQiD7Fzgpo24zXky7jVJNcZGiSAdhc'
         const entry1Hash = await io.write(ipfs, 'dag-pb', Entry.toEntry(v0Entries.helloWorld))
         const entry2Hash = await io.write(ipfs, 'dag-pb', Entry.toEntry(v0Entries.helloAgain))
         const final = await Entry.fromMultihash(ipfs, entry2Hash)
@@ -237,7 +235,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(final.next.length, 1)
         assert.strictEqual(final.next[0], v0Entries.helloAgain.next[0])
         assert.strictEqual(final.next[0], entry1Hash)
-        assert.strictEqual(final.v, 0)
         assert.strictEqual(final.hash, entry2Hash)
         assert.strictEqual(final.hash, expectedHash)
       })
@@ -254,7 +251,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(final.next.length, 1)
         assert.strictEqual(final.next[0], e2.next[0])
         assert.strictEqual(final.next[0], entry1Hash)
-        assert.strictEqual(final.v, 1)
         assert.strictEqual(final.hash, entry2Hash)
         assert.strictEqual(entry2Hash, expectedHash)
       })
@@ -332,45 +328,45 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
     })
 
-    describe('isEntry', () => {
-      test('is an Entry', async () => {
-        const entry = await Entry.create(ipfs, testIdentity, 'A', 'hello', [])
-        assert.strictEqual(Entry.isEntry(entry), true)
-      })
-
-      test('is an Entry (v0)', async () => {
-        assert.strictEqual(Entry.isEntry(v0Entries.hello), true)
-      })
-
-      test('is not an Entry - no id', async () => {
-        const fakeEntry = { next: [], v: 1, hash: 'Foo', payload: 123, seq: 0 }
-        assert.strictEqual(Entry.isEntry(fakeEntry), false)
-      })
-
-      test('is not an Entry - no seq', async () => {
-        const fakeEntry = { next: [], v: 1, hash: 'Foo', payload: 123 }
-        assert.strictEqual(Entry.isEntry(fakeEntry), false)
-      })
-
-      test('is not an Entry - no next', async () => {
-        const fakeEntry = { id: 'A', v: 1, hash: 'Foo', payload: 123, seq: 0 }
-        assert.strictEqual(Entry.isEntry(fakeEntry), false)
-      })
-
-      test('is not an Entry - no version', async () => {
-        const fakeEntry = { id: 'A', next: [], payload: 123, seq: 0 }
-        assert.strictEqual(Entry.isEntry(fakeEntry), false)
-      })
-
-      test('is not an Entry - no hash', async () => {
-        const fakeEntry = { id: 'A', v: 1, next: [], payload: 123, seq: 0 }
-        assert.strictEqual(Entry.isEntry(fakeEntry), false)
-      })
-
-      test('is not an Entry - no payload', async () => {
-        const fakeEntry = { id: 'A', v: 1, next: [], hash: 'Foo', seq: 0 }
-        assert.strictEqual(Entry.isEntry(fakeEntry), false)
-      })
-    })
+    /*  describe('isEntry', () => {
+       test('is an Entry', async () => {
+         const entry = await Entry.create(ipfs, testIdentity, 'A', 'hello', [])
+         assert.strictEqual(Entry.isEntry(entry), true)
+       })
+ 
+       test('is an Entry (v0)', async () => {
+         assert.strictEqual(Entry.isEntry(v0Entries.hello), true)
+       })
+ 
+       test('is not an Entry - no id', async () => {
+         const fakeEntry = { next: [], v: 1, hash: 'Foo', payload: 123, seq: 0 }
+         assert.strictEqual(Entry.isEntry(fakeEntry), false)
+       })
+ 
+       test('is not an Entry - no seq', async () => {
+         const fakeEntry = { next: [], v: 1, hash: 'Foo', payload: 123 }
+         assert.strictEqual(Entry.isEntry(fakeEntry), false)
+       })
+ 
+       test('is not an Entry - no next', async () => {
+         const fakeEntry = { id: 'A', v: 1, hash: 'Foo', payload: 123, seq: 0 }
+         assert.strictEqual(Entry.isEntry(fakeEntry), false)
+       })
+ 
+       test('is not an Entry - no version', async () => {
+         const fakeEntry = { id: 'A', next: [], payload: 123, seq: 0 }
+         assert.strictEqual(Entry.isEntry(fakeEntry), false)
+       })
+ 
+       test('is not an Entry - no hash', async () => {
+         const fakeEntry = { id: 'A', v: 1, next: [], payload: 123, seq: 0 }
+         assert.strictEqual(Entry.isEntry(fakeEntry), false)
+       })
+ 
+       test('is not an Entry - no payload', async () => {
+         const fakeEntry = { id: 'A', v: 1, next: [], hash: 'Foo', seq: 0 }
+         assert.strictEqual(Entry.isEntry(fakeEntry), false)
+       })
+     }) */
   })
 })

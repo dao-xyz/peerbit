@@ -1,6 +1,6 @@
-import { field } from "@dao-xyz/borsh";
+import { field, variant } from "@dao-xyz/borsh";
 import { IdentityAsJson } from "orbit-db-identity-provider";
-
+import type { IdentityProviderType } from "orbit-db-identity-provider";
 export class PublicKey {
     @field({ type: 'String' })
     type: string;
@@ -31,6 +31,69 @@ export class PublicKey {
         })
     }
 }
+
+@variant(0)
+export class BSignatures {
+
+    @field({ type: 'String' })
+    id: string;
+
+    @field({ type: 'String' })
+    publicKey: string;
+
+    constructor(options?: {
+        id: string;
+        publicKey: string;
+    }) {
+        if (options) {
+            Object.assign(this, options);
+        }
+    }
+
+}
+
+@variant(0)
+export class BIdentity {
+    @field({ type: 'String' })
+    id: string;
+
+    @field({ type: 'String' })
+    publicKey: string;
+
+    @field({ type: BSignatures })
+    signatures: BSignatures;
+
+    @field({ type: 'String' })
+    type: IdentityProviderType;
+
+    constructor(options?: {
+        id: string;
+        publicKey: string;
+        signatures: BSignatures,
+        type: String;
+    }) {
+        if (options) {
+            Object.assign(this, options);
+        }
+    }
+
+    toIdentityJSON(): IdentityAsJson {
+        return this; // the same!
+    }
+
+    static from(identity: IdentityAsJson): BIdentity {
+        return new BIdentity({
+            id: identity.id,
+            publicKey: identity.publicKey,
+            signatures: new BSignatures({
+                id: identity.signatures.id,
+                publicKey: identity.signatures.publicKey
+            }),
+            type: identity.type
+        })
+    }
+}
+
 /* import { field, variant } from "@dao-xyz/borsh";
 
 

@@ -3,7 +3,7 @@ const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { LastWriteWins } from '../log-sorting'
 import bigLogString from './fixtures/big-log.fixture';
-import { Entry } from '../entry'
+import { Entry } from '../signable'
 import { Log } from '../log'
 export const io = require('orbit-db-io')
 const IdentityProvider = require('orbit-db-identity-provider')
@@ -239,7 +239,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       test('onProgress callback is fired for each entry', async () => {
-        const items1: Entry<string>[] = []
+        const items1: Entry[] = []
         const amount = 100
         for (let i = 1; i <= amount; i++) {
           const prev1 = last(items1)
@@ -263,9 +263,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'X' })
         const log2 = new Log(ipfs, testIdentity2, { logId: 'X' })
         const log3 = new Log(ipfs, testIdentity3, { logId: 'X' })
-        const items1: Entry<string>[] = []
-        const items2: Entry<string>[] = []
-        const items3: Entry<string>[] = []
+        const items1: Entry[] = []
+        const items2: Entry[] = []
+        const items3: Entry[] = []
         const amount = 100
         for (let i = 1; i <= amount; i++) {
           const prev1 = last(items1)
@@ -289,7 +289,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       test('throws an error if trying to create a log from a hash of an entry', async () => {
-        const items1: Entry<string>[] = []
+        const items1: Entry[] = []
         const amount = 5
         for (let i = 1; i <= amount; i++) {
           const prev1 = last(items1)
@@ -310,9 +310,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'X' })
         const log2 = new Log(ipfs, testIdentity2, { logId: 'X' })
         const log3 = new Log(ipfs, testIdentity3, { logId: 'X' })
-        const items1: Entry<string>[] = []
-        const items2: Entry<string>[] = []
-        const items3: Entry<string>[] = []
+        const items1: Entry[] = []
+        const items2: Entry[] = []
+        const items3: Entry[] = []
         const amount = 10
         for (let i = 1; i <= amount; i++) {
           const prev1 = last(items1)
@@ -343,9 +343,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'X' })
         const log2 = new Log(ipfs, testIdentity2, { logId: 'X' })
         const log3 = new Log(ipfs, testIdentity3, { logId: 'X' })
-        const items1: Entry<string>[] = []
-        const items2: Entry<string>[] = []
-        const items3: Entry<string>[] = []
+        const items1: Entry[] = []
+        const items2: Entry[] = []
+        const items3: Entry[] = []
         const amount = 10
         for (let i = 1; i <= amount; i++) {
           const prev1 = last(items1)
@@ -376,9 +376,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'X' })
         const log2 = new Log(ipfs, testIdentity2, { logId: 'X' })
         const log3 = new Log(ipfs, testIdentity4, { logId: 'X' })
-        const items1: Entry<string>[] = []
-        const items2: Entry<string>[] = []
-        const items3: Entry<string>[] = []
+        const items1: Entry[] = []
+        const items2: Entry[] = []
+        const items3: Entry[] = []
         const amount = 10
         for (let i = 1; i <= amount; i++) {
           const prev1 = last(items1)
@@ -799,9 +799,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       describe('fetches a log', () => {
         const amount = 100
-        let items1: Entry<string>[] = []
-        let items2: Entry<string>[] = []
-        let items3: Entry<string>[] = []
+        let items1: Entry[] = []
+        let items2: Entry[] = []
+        let items3: Entry[] = []
         let log1, log2, log3
 
         beforeEach(async () => {
@@ -869,40 +869,40 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
     })
 
-    describe('Backwards-compatibility v0', () => {
-      const entries = [v0Entries.hello, v0Entries.helloWorld, v0Entries.helloAgain]
-      beforeAll(async () => {
-        await Promise.all(entries.map(e => io.write(ipfs, Entry.getWriteFormat(e), Entry.toEntry(e), { links: Entry.IPLD_LINKS })))
-      })
+    /*  describe('Backwards-compatibility v0', () => {
+       const entries = [v0Entries.hello, v0Entries.helloWorld, v0Entries.helloAgain]
+       beforeAll(async () => {
+         await Promise.all(entries.map(e => io.write(ipfs, Entry.getWriteFormat(e), Entry.toEntry(e), { links: Entry.IPLD_LINKS })))
+       })
+ 
+       test('creates a log from v0 json', async () => {
+         const headHash = await io.write(ipfs, 'dag-pb', Entry.toEntry(v0Entries.helloAgain), { links: Entry.IPLD_LINKS })
+         const json = { id: 'A', heads: [headHash] }
+         json.heads = await Promise.all(json.heads.map(headHash => Entry.fromMultihash(ipfs, headHash)))
+         const log = await Log.fromJSON(ipfs, testIdentity, json, {})
+         assert.strictEqual(log.length, 2)
+       })
+ 
+       test('creates a log from v0 entry', async () => {
+         const log = await Log.fromEntry(ipfs, testIdentity, [Entry.toEntry(v0Entries.helloAgain, { includeHash: true })], {})
+         assert.strictEqual(log.length, 2)
+       })
+ 
+       test('creates a log from v0 entry hash', async () => {
+         const log = await Log.fromEntryHash(ipfs, testIdentity, v0Entries.helloAgain.hash, { logId: 'A' })
+         assert.strictEqual(log.length, 2)
+       })
+ 
+       test('creates a log from log hash of v0 entries', async () => {
+         const log1 = new Log(ipfs, testIdentity, { entries: entries })
+         const hash = await log1.toMultihash()
+         const log = await Log.fromMultihash(ipfs, testIdentity, hash, {})
+         assert.strictEqual(log.length, 3)
+         assert.strictEqual(log.heads.length, 2)
+       })
+     }) */
 
-      test('creates a log from v0 json', async () => {
-        const headHash = await io.write(ipfs, 'dag-pb', Entry.toEntry(v0Entries.helloAgain), { links: Entry.IPLD_LINKS })
-        const json = { id: 'A', heads: [headHash] }
-        json.heads = await Promise.all(json.heads.map(headHash => Entry.fromMultihash(ipfs, headHash)))
-        const log = await Log.fromJSON(ipfs, testIdentity, json, {})
-        assert.strictEqual(log.length, 2)
-      })
-
-      test('creates a log from v0 entry', async () => {
-        const log = await Log.fromEntry(ipfs, testIdentity, [Entry.toEntry(v0Entries.helloAgain, { includeHash: true })], {})
-        assert.strictEqual(log.length, 2)
-      })
-
-      test('creates a log from v0 entry hash', async () => {
-        const log = await Log.fromEntryHash(ipfs, testIdentity, v0Entries.helloAgain.hash, { logId: 'A' })
-        assert.strictEqual(log.length, 2)
-      })
-
-      test('creates a log from log hash of v0 entries', async () => {
-        const log1 = new Log(ipfs, testIdentity, { entries: entries })
-        const hash = await log1.toMultihash()
-        const log = await Log.fromMultihash(ipfs, testIdentity, hash, {})
-        assert.strictEqual(log.length, 3)
-        assert.strictEqual(log.heads.length, 2)
-      })
-    })
-
-    describe('Backwards-compatibility v1', () => {
+    /* describe('Backwards-compatibility v1', () => {
       beforeAll(async () => {
         await Promise.all(v1Entries.map(e => io.write(ipfs, Entry.getWriteFormat(e), Entry.toEntry(e), { links: Entry.IPLD_LINKS })))
       })
@@ -935,6 +935,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(log.length, 5)
         assert.deepStrictEqual(log.values, v1Entries.map(e => Entry.toEntry(e, { includeHash: true })))
       })
-    })
+    }) */
   })
 })

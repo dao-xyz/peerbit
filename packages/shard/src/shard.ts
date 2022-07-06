@@ -2,13 +2,13 @@ import { Constructor, deserialize, field, option, serialize, variant, vec } from
 import OrbitDB from "orbit-db";
 import BN from 'bn.js';
 import { AnyPeer, IPFSInstanceExtended } from "./node";
-import { PublicKey } from "./key";
+import { PublicKey } from "@dao-xyz/identity";
 import { P2PTrust } from "./trust";
 import { DBInterface } from "./interface";
 import { BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
 import { IStoreOptions } from '@dao-xyz/orbit-db-store'
-import { ResultSource } from '@dao-xyz/bquery';
+import { BPayload } from '@dao-xyz/bgenerics';
 import { waitForAsync } from "@dao-xyz/time";
 import { delay } from "@dao-xyz/time";
 import { EMIT_HEALTHCHECK_INTERVAL, PeerInfo, ShardPeerInfo } from "./peer";
@@ -63,7 +63,7 @@ export type TypedBehaviours = {
 
 
 @variant([0, 0])
-export class Shard<T extends DBInterface> extends ResultSource {
+export class Shard<T extends DBInterface> extends BPayload {
 
     @field({ type: 'String' })
     id: string

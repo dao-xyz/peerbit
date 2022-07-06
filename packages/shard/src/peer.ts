@@ -1,6 +1,6 @@
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import BN from "bn.js";
-import { PublicKey } from "./key";
+import { PublicKey } from "@dao-xyz/identity";
 import { Shard } from "./shard";
 import { Message } from 'ipfs-core-types/types/src/pubsub'
 import { delay } from "@dao-xyz/time";

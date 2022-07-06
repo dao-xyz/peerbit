@@ -1,0 +1,38 @@
+---
+version: 2.1
+
+orbs:
+  node: 'circleci/node@4.5.1'
+
+jobs:
+  test:
+    executor:
+      name: node/default
+      tag: 'lts'
+    steps:
+      - checkout
+      - run:
+          command: npm ci
+      - run:
+          command: npm run test
+
+  coverage:
+    executor:
+      name: node/default
+      tag: 'lts'
+    steps:
+      - checkout
+      - run:
+          command: npm ci
+      - run:
+          command: npm run coverage
+      - run:
+          command: npx nyc report --reporter=html
+      - store_artifacts:
+          path: coverage
+
+workflows:
+  test_my_app:
+    jobs:
+      - test
+      - coverage

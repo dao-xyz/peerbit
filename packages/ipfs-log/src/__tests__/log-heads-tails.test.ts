@@ -1,7 +1,7 @@
 const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
-import { Entry } from '../entry'
+import { Entry } from '../signable'
 import { Log } from '../log'
 const IdentityProvider = require('orbit-db-identity-provider')
 const Keystore = require('orbit-db-keystore')
