@@ -1,4 +1,4 @@
-import Identities from "orbit-db-identity-provider";
+import Identities from "@dao-xyz/orbit-db-identity-provider";
 
 declare module "orbit-db-access-controllers/src/orbitdb-access-controller" {
     import AccessController from "orbit-db-access-controllers/src/access-controller-interface"

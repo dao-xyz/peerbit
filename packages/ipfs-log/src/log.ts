@@ -8,7 +8,7 @@ import { LamportClock as Clock } from './lamport-clock'
 import * as Sorting from './log-sorting'
 import { EntryFetchAllOptions, EntryFetchOptions, strictFetchOptions } from "./entry-io"
 import { IPFS } from "ipfs-core-types/src/"
-import { Identity } from "orbit-db-identity-provider"
+import { Identity } from "@dao-xyz/orbit-db-identity-provider"
 import { AccessController, DefaultAccessController } from "./default-access-controller"
 const { LastWriteWins, NoZeroes } = Sorting
 import { isDefined } from './is-defined'

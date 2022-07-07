@@ -1,6 +1,6 @@
 import { Constructor, deserialize } from "@dao-xyz/borsh";
 import bs58 from 'bs58';
-import { IdentityAsJson } from "orbit-db-identity-provider";
+import { IdentityAsJson } from "@dao-xyz/orbit-db-identity-provider";
 import { asString, ToStringable } from "./utils";
 
 export interface LogEntry<T> { identity: IdentityAsJson, payload: Payload<T> }

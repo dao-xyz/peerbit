@@ -9,7 +9,7 @@ declare module 'orbit-db' {
     import CounterStore from "orbit-db-counterstore";
     import { Keystore } from "orbit-db-keystore";
     import Cache from "orbit-db-cache";
-    import { Identity } from "orbit-db-identity-provider";
+    import { Identity } from "@dao-xyz/orbit-db-identity-provider";
     import * as IPFS from "ipfs";
     import * as elliptic from "elliptic";
     import OrbitDBAddress from 'orbit-db'

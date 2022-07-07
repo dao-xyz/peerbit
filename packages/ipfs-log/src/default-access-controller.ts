@@ -1,4 +1,4 @@
-import Identities from "orbit-db-identity-provider";
+import { Identities } from "@dao-xyz/orbit-db-identity-provider";
 import { Entry } from "./entry";
 
 export interface AccessController<T> {
