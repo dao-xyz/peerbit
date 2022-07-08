@@ -39,7 +39,7 @@
     "dependencies": {
         "@dao-xyz/time": "^0.0.4",
         "ipfsd-ctl": "^12.0.0",
-        "orbit-db": "^0.28.6"
+        "@dao-xyz/orbit-db": "^0.29.0"
     },
     "gitHead": "62040f90296fad19bc5275a096e7523b28fae116"
 }

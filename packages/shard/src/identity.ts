@@ -1,18 +1,14 @@
 import IdentityProvider from "orbit-db-identity-provider/src/identity-provider-interface";
 
 import { Keypair, PublicKey as SPublicKey } from '@solana/web3.js';
-import Identities, { Identity, IdentityProviderType } from "@dao-xyz/orbit-db-identity-provider";
+import { Identities, Identity, IdentityProviderType } from "@dao-xyz/orbit-db-identity-provider";
 import nacl from "tweetnacl";
 import bs58 from 'bs58';
-
-
-
 import AccessControllers from 'orbit-db-access-controllers';
 import KeyValueStore from 'orbit-db-kvstore';
-import OrbitDB from 'orbit-db';
+import { OrbitDB } from '@dao-xyz/orbit-db';
 import AccessController from "orbit-db-access-controllers/src/access-controller-interface";
 import { P2PTrust } from "./trust";
-import { PublicKey } from "./key";
 import { Entry } from "@dao-xyz/ipfs-log";
 import { LogEntry } from "@dao-xyz/orbit-db-bdocstore";
 /* import { Trust } from '@dao-xyz/orbit-trust'; */
@@ -92,8 +88,6 @@ export class TrustRegionAccessController extends AccessController {
     constructor(options: { trustRegionResolver?: () => P2PTrust }) {
         super();
         /*    this.trustRegionResolver = options.trustRegionResolver; */
-
-
     }
 
 
@@ -110,10 +104,11 @@ export class TrustRegionAccessController extends AccessController {
         }
 
         // Verify message is trusted
-        let key = PublicKey.from(entry.identity);
+        /*         let key = PublicKey.from(entry.identity);
+         */
         /*  if (!this.trustRegionResolver().isTrusted(key)) {
-             return false
-         } */
+                    return false
+                } */
         return true;
     }
 

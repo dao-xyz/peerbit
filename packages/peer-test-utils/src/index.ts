@@ -1,7 +1,7 @@
 import fs from 'mz/fs';
-import { Identity } from 'orbit-db-identity-provider';
+import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
-import OrbitDB from 'orbit-db';
+import { OrbitDB } from '@dao-xyz/orbit-db';
 import { v4 as uuid } from 'uuid';
 import PubSub from '@dao-xyz/orbit-db-pubsub'
 import Ctl, { Controller } from 'ipfsd-ctl'

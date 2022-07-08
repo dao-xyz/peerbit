@@ -1,9 +1,7 @@
-import fs from 'mz/fs';
-import { Identity } from 'orbit-db-identity-provider';
-import { TypedBehaviours } from '..';
-import { create } from 'ipfs';
-import { AnyPeer, IPFSInstanceExtended, PeerOptions } from '../node';
-import { SingleDBInterface, DBInterface, RecursiveShardDBInterface } from '../interface';
+import { Identity } from '@dao-xyz/orbit-db-identity-provider';
+import { AnyPeer, PeerOptions } from '@dao-xyz/peer';
+import { RecursiveShardDBInterface } from '../interface';
+import { SingleDBInterface, DBInterface, } from '@dao-xyz/orbit-db-store-interface';
 import BN from 'bn.js';
 import { Constructor, field, variant } from '@dao-xyz/borsh';
 import { BinaryDocumentStore, BinaryDocumentStoreOptions } from '@dao-xyz/orbit-db-bdocstore';
@@ -17,16 +15,12 @@ export const getConnectedPeers = async (amountOf: number, identity?: Identity, i
 const createAnyPeer = async (peer: Peer, isServer: boolean = true, peerCapacity: number = 1000 * 1000 * 1000): Promise<AnyPeer> => {
     const anyPeer = new AnyPeer(peer.id);
     let options = new PeerOptions({
-        behaviours: {
-            typeMap: {}
-        },
         directoryId: peer.id,
         replicationCapacity: peerCapacity,
         isServer
     });
 
     await anyPeer.create({ options, orbitDB: peer.orbitDB });
-    anyPeer.options.behaviours.typeMap[Document.name] = Document
     return anyPeer;
 
 }
@@ -49,10 +43,10 @@ export class Document {
 } */
 
 @variant([1, 0])
-export class BinaryFeedStoreInterface extends DBInterface {
+export class BinaryFeedStoreInterface extends SingleDBInterface<Document, BinaryFeedStore<Document>> {
 
-    @field({ type: SingleDBInterface })
-    db: SingleDBInterface<Document, BinaryFeedStore<Document>>;
+    /* @field({ type: SingleDBInterface })
+    db: ;
 
     constructor(opts?: { db: SingleDBInterface<Document, BinaryFeedStore<Document>> }) {
         super();
@@ -73,13 +67,13 @@ export class BinaryFeedStoreInterface extends DBInterface {
         this.db.db = undefined;
     }
 
-    async init(peer: AnyPeer, dbNameResolver: (name: string) => string, options: IStoreOptions<Document, any>): Promise<void> {
-        await this.db.init(peer, dbNameResolver, options);
+    async init(peer: AnyPeer, options: IStoreOptions<Document, any>): Promise<void> {
+        await this.db.init(peer, options);
     }
 
     async load(): Promise<void> {
         await this.db.load();
-    }
+    } */
 }
 
 export const feedStoreShard = async<T>(clazz: Constructor<T>) => new Shard({
@@ -87,49 +81,46 @@ export const feedStoreShard = async<T>(clazz: Constructor<T>) => new Shard({
     cluster: 'x',
     shardSize: new BN(500 * 1000),
     interface: new BinaryFeedStoreInterface({
-        db: new SingleDBInterface({
-            name: 'feed',
-            storeOptions: new BinaryFeedStoreOptions({
-                objectType: clazz.name
-            })
+        name: 'feed',
+        storeOptions: new BinaryFeedStoreOptions({
+            objectType: clazz.name
         })
-
     }),
 })
 
 
 @variant([1, 1])
-export class DocumentStoreInterface<T> extends DBInterface {
+export class DocumentStoreInterface<T> extends SingleDBInterface<T, BinaryDocumentStore<T>> {
 
-    @field({ type: SingleDBInterface })
-    db: SingleDBInterface<T, BinaryDocumentStore<T>>;
-
-    constructor(opts?: { db: SingleDBInterface<T, BinaryDocumentStore<T>> }) {
-        super();
-        if (opts) {
-            Object.assign(this, opts);
-        }
-    }
-
-    get initialized(): boolean {
-        return this.db.initialized;
-    }
-
-    get loaded(): boolean {
-        return this.db.loaded
-    }
-
-    close() {
-        this.db.close();
-    }
-
-    async init(peer: AnyPeer, dbNameResolver: (name: string) => string, options: IStoreOptions<T, any>): Promise<void> {
-        await this.db.init(peer, dbNameResolver, options);
-    }
-
-    async load(waitForReplicationEventsCount = 0): Promise<void> {
-        await this.db.load(waitForReplicationEventsCount);
-    }
+    /*  @field({ type: SingleDBInterface })
+     db: SingleDBInterface<T, BinaryDocumentStore<T>>;
+ 
+     constructor(opts?: { db: SingleDBInterface<T, BinaryDocumentStore<T>> }) {
+         super();
+         if (opts) {
+             Object.assign(this, opts);
+         }
+     }
+ 
+     get initialized(): boolean {
+         return this.db.initialized;
+     }
+ 
+     get loaded(): boolean {
+         return this.db.loaded
+     }
+ 
+     close() {
+         this.db.close();
+     }
+ 
+     async init(peer: AnyPeer,  options: IStoreOptions<T, any>): Promise<void> {
+         await this.db.init(peer,  options);
+     }
+ 
+     async load(waitForReplicationEventsCount = 0): Promise<void> {
+         await this.db.load(waitForReplicationEventsCount);
+     } */
 }
 
 export const documentStoreShard = async <T>(clazz: Constructor<T>, indexBy: string = 'id') => new Shard({
@@ -137,27 +128,25 @@ export const documentStoreShard = async <T>(clazz: Constructor<T>, indexBy: stri
     cluster: 'x',
     shardSize: new BN(500 * 1000),
     interface: new DocumentStoreInterface<T>({
-        db: new SingleDBInterface({
-            name: 'documents',
-            storeOptions: new BinaryDocumentStoreOptions<T>({
-                indexBy,
-                objectType: clazz.name
-            })
-        })
-    })
+        name: 'documents',
+        storeOptions: new BinaryDocumentStoreOptions<T>({
+            indexBy,
+            objectType: clazz.name
+        }),
+    }),
+    storeOptions: {
+        typeMap: {
+            [clazz.name]: clazz
+        }
+    }
 })
+
 
 export const shardStoreShard = async <T extends DBInterface>() => new Shard<RecursiveShardDBInterface<T>>({
     id: uuid(),
     cluster: 'x',
     shardSize: new BN(500 * 1000),
     interface: new RecursiveShardDBInterface({
-        db: new SingleDBInterface({
-            name: 'shards',
-            storeOptions: new BinaryDocumentStoreOptions<Shard<T>>({
-                indexBy: 'cid',
-                objectType: Shard.name
-            })
-        })
+        name: 'shards'
     })
 })

@@ -11,7 +11,7 @@ import { field, serialize, variant } from '@dao-xyz/borsh';
 import { Store } from '@dao-xyz/orbit-db-store';
 import { KeyValueIndex } from './key-value-index.mjs';
 import bs58 from 'bs58';
-import OrbitDB from 'orbit-db';
+import { OrbitDB } from '@dao-xyz/orbit-db';
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
 export const BINARY_KEYVALUE_STORE_TYPE = 'bkv_store';
 let BinaryKeyValueStoreOptions = class BinaryKeyValueStoreOptions extends BStoreOptions {
@@ -21,8 +21,8 @@ let BinaryKeyValueStoreOptions = class BinaryKeyValueStoreOptions extends BStore
             Object.assign(this, opts);
         }
     }
-    async newStore(address, orbitDB, typeMap, options) {
-        let clazz = typeMap[this.objectType];
+    async newStore(address, orbitDB, options) {
+        let clazz = options.typeMap[this.objectType];
         if (!clazz) {
             throw new Error(`Undefined type: ${this.objectType}`);
         }

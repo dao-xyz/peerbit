@@ -6,15 +6,15 @@ import { Log, Entry, ISortFunction } from '@dao-xyz/ipfs-log'
 import { Index } from './store-index'
 import { Replicator } from './replicator'
 import { ReplicationInfo } from './replication-info'
-
 import Logger from 'logplease'
 import io from 'orbit-db-io'
 import { IPFS } from 'ipfs-core-types/src/'
-import Identities, { Identity } from 'orbit-db-identity-provider'
-import { AccessController } from '@dao-xyz/ipfs-log'
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { RecycleOptions } from '@dao-xyz/ipfs-log'
 import OrbitDBAccessController from 'orbit-db-access-controllers/src/orbitdb-access-controller'
+
 export type Constructor<T> = new (...args: any[]) => T;
+
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
 Logger.setLogLevel('ERROR')
 
@@ -34,6 +34,12 @@ interface ICreateOptions {
    * Replicate the database with peers, requires IPFS PubSub. (Default: true)
    */
   replicate?: boolean;
+
+
+  /**
+   * Name to name conditionend some external property
+   */
+  nameResolver: (name: string) => string
 }
 
 interface IOpenOptions {
@@ -82,7 +88,9 @@ export interface IStoreOptions<T, X extends Index<T>> extends ICreateOptions, IO
   sortFn?: ISortFunction<any>,
   cache?: any;
   accessController?: OrbitDBAccessController<T>,
-  recycle?: RecycleOptions
+  recycle?: RecycleOptions,
+  typeMap?: { [key: string]: Constructor<any> },
+  onlyObserver?: boolean,
   onClose?: (store: Store<T, X, any>) => void
   onDrop?: (store: Store<T, X, any>) => void
   onLoad?: (store: Store<T, X, any>) => void
@@ -95,7 +103,10 @@ export const DefaultOptions: IStoreOptions<any, Index<any>> = {
   referenceCount: 32,
   replicationConcurrency: 32,
   syncLocal: false,
-  sortFn: undefined
+  sortFn: undefined,
+  onlyObserver: false,
+  typeMap: {},
+  nameResolver: (name: string) => name
 }
 export interface Address {
   root: string;
@@ -160,15 +171,14 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     this._cache = options.cache
 
     // Access mapping
-    const defaultAccess = {
+    this.access = options.accessController || {
       canAppend: (entry: Entry<T>, identityProvider: Identities) => (entry.identity.publicKey === identity.publicKey),
       type: undefined,
       address: undefined,
       close: undefined,
       load: undefined,
       save: undefined
-    } as OrbitDBAccessController<T>;
-    this.access = options.accessController || defaultAccess
+    } as OrbitDBAccessController<T>
 
     // Create the operations log
     this._oplog = new Log(this._ipfs, this.identity, this.logOptions)

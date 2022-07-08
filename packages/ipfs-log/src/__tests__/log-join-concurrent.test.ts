@@ -3,7 +3,7 @@ const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
 import { SortByEntryHash } from '../log-sorting'
-const IdentityProvider = require('orbit-db-identity-provider')
+import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 
 // Test utils
 const {
@@ -26,7 +26,7 @@ Object.keys(testAPIs).forEach(IPFS => {
       rmrf.sync(signingKeysPath)
       await fs.copy(identityKeyFixtures(__dirname), identityKeysPath)
       await fs.copy(signingKeyFixtures(__dirname), signingKeysPath)
-      testIdentity = await IdentityProvider.createIdentity({ id: 'userA', identityKeysPath, signingKeysPath })
+      testIdentity = await Identities.createIdentity({ id: 'userA', identityKeysPath, signingKeysPath })
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })

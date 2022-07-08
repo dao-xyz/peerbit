@@ -1,4 +1,4 @@
-import { Identity, IdentityAsJson } from './identity';
+import { Identity, IdentitySerializable } from './identity';
 import { IdentityProvider } from './identity-provider-interface'
 const Keystore = require('orbit-db-keystore')
 const type = 'orbitdb'
@@ -49,7 +49,7 @@ export class OrbitDBIdentityProvider extends IdentityProvider {
     )
   }
 
-  static async verifyIdentity(identity: IdentityAsJson) {
+  static async verifyIdentity(identity: IdentitySerializable) {
     // Verify that identity was signed by the ID
     return OrbitDBIdentityProvider.verify(
       identity.signatures.publicKey,

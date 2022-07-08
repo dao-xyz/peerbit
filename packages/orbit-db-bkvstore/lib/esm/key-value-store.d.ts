@@ -1,7 +1,7 @@
 import { Constructor } from '@dao-xyz/borsh';
 import { Store } from '@dao-xyz/orbit-db-store';
 import { KeyValueIndex } from './key-value-index';
-import OrbitDB from 'orbit-db';
+import { OrbitDB } from '@dao-xyz/orbit-db';
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
 export declare type IKeyValueStoreOptions<T> = IQueryStoreOptions<T, KeyValueIndex<T>> & {
@@ -13,9 +13,7 @@ export declare class BinaryKeyValueStoreOptions<T> extends BStoreOptions<BinaryK
     constructor(opts: {
         objectType: string;
     });
-    newStore(address: string, orbitDB: OrbitDB, typeMap: {
-        [key: string]: Constructor<any>;
-    }, options: IKeyValueStoreOptions<T>): Promise<BinaryKeyValueStore<T>>;
+    newStore(address: string, orbitDB: OrbitDB, options: IKeyValueStoreOptions<T>): Promise<BinaryKeyValueStore<T>>;
     get identifier(): string;
 }
 export declare class BinaryKeyValueStore<T> extends Store<T, KeyValueIndex<T>, IKeyValueStoreOptions<T>> {

@@ -1,5 +1,5 @@
 import { Identities } from "../identities"
-import { Identity } from "../identity"
+import { Identity, Signatures } from "../identity"
 
 const assert = require('assert')
 const path = require('path')
@@ -155,7 +155,7 @@ describe('Identity Provider', function () {
       const idSignature = await savedKeysKeystore.sign(internalSigningKey, identity.id)
       const pubKeyIdSignature = await savedKeysKeystore.sign(externalSigningKey, identity.publicKey + idSignature)
       const expectedSignature = { id: idSignature, publicKey: pubKeyIdSignature }
-      assert.deepStrictEqual(identity.signatures, expectedSignature)
+      assert.deepStrictEqual({ ...identity.signatures }, expectedSignature)
     })
 
     afterAll(async () => {
@@ -249,7 +249,9 @@ describe('Identity Provider', function () {
 
     test('throws an error if private key is not found from keystore', async () => {
       // Remove the key from the keystore (we're using a mock storage in these tests)
-      const modifiedIdentity = new Identity('this id does not exist', identity.publicKey, '<sig>', identity.signatures, identity.type, identity.provider)
+      const modifiedIdentity = new Identity({
+        id: 'this id does not exist', publicKey: identity.publicKey, signatures: new Signatures({ id: '<sig>', publicKey: identity.signatures }), type: identity.type, provider: identity.provider
+      })
       let signature
       let err
       try {

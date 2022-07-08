@@ -2,7 +2,7 @@ import assert from 'assert'
 import { Store, DefaultOptions } from '../store'
 import { default as Cache } from 'orbit-db-cache'
 const Keystore = require("orbit-db-keystore");
-import IdentityProvider from 'orbit-db-identity-provider'
+import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 
 // Test utils
 import {
@@ -31,7 +31,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       cacheStore = await storage.createStore('cache')
       const cache = new Cache(cacheStore)
 
-      testIdentity = await IdentityProvider.createIdentity({ id: 'userA', keystore })
+      testIdentity = await Identities.createIdentity({ id: 'userA', keystore })
       ipfs = await startIpfs(IPFS, ipfsConfig.daemon1)
 
       const address = 'test-address'

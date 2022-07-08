@@ -5,8 +5,7 @@
  * (Store options are passed in the replication request)
  */
 
-import { Constructor } from "@dao-xyz/borsh";
-import OrbitDB from "orbit-db";
+import { OrbitDB } from "@dao-xyz/orbit-db";
 import { IStoreOptions, Store, Index } from '@dao-xyz/orbit-db-store';
 
 
@@ -16,7 +15,7 @@ export class BStoreOptions<B extends Store<any, any, any>> {
 
     }
 
-    async newStore(_address: string, _orbitDB: OrbitDB, _typeMap: { [key: string]: Constructor<any> }, _options: IStoreOptions<any, any>): Promise<B> {
+    async newStore(_address: string, _orbitDB: OrbitDB, _options: IStoreOptions<any, any>): Promise<B> {
         throw new Error("Not implemented")
     }
 

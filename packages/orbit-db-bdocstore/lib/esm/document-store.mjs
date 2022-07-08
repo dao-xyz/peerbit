@@ -15,7 +15,7 @@ import { asString } from './utils.mjs';
 import { FieldQuery, ResultWithSource, SortDirection } from '@dao-xyz/bquery';
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
-import OrbitDB from 'orbit-db';
+import { OrbitDB } from '@dao-xyz/orbit-db';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
 let BinaryDocumentStoreOptions = class BinaryDocumentStoreOptions extends BStoreOptions {
@@ -25,8 +25,8 @@ let BinaryDocumentStoreOptions = class BinaryDocumentStoreOptions extends BStore
             Object.assign(this, opts);
         }
     }
-    async newStore(address, orbitDB, typeMap, options) {
-        let clazz = typeMap[this.objectType];
+    async newStore(address, orbitDB, options) {
+        let clazz = options.typeMap[this.objectType];
         if (!clazz) {
             throw new Error(`Undefined type: ${this.objectType}`);
         }

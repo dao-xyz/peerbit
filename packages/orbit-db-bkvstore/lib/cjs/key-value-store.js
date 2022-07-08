@@ -26,7 +26,7 @@ const borsh_1 = require("@dao-xyz/borsh");
 const orbit_db_store_1 = require("@dao-xyz/orbit-db-store");
 const key_value_index_1 = require("./key-value-index");
 const bs58_1 = __importDefault(require("bs58"));
-const orbit_db_1 = __importDefault(require("orbit-db"));
+const orbit_db_1 = require("@dao-xyz/orbit-db");
 const orbit_db_bstores_1 = require("@dao-xyz/orbit-db-bstores");
 exports.BINARY_KEYVALUE_STORE_TYPE = 'bkv_store';
 let BinaryKeyValueStoreOptions = class BinaryKeyValueStoreOptions extends orbit_db_bstores_1.BStoreOptions {
@@ -36,9 +36,9 @@ let BinaryKeyValueStoreOptions = class BinaryKeyValueStoreOptions extends orbit_
             Object.assign(this, opts);
         }
     }
-    newStore(address, orbitDB, typeMap, options) {
+    newStore(address, orbitDB, options) {
         return __awaiter(this, void 0, void 0, function* () {
-            let clazz = typeMap[this.objectType];
+            let clazz = options.typeMap[this.objectType];
             if (!clazz) {
                 throw new Error(`Undefined type: ${this.objectType}`);
             }
@@ -97,5 +97,5 @@ class BinaryKeyValueStore extends orbit_db_store_1.Store {
     }
 }
 exports.BinaryKeyValueStore = BinaryKeyValueStore;
-orbit_db_1.default.addDatabaseType(exports.BINARY_KEYVALUE_STORE_TYPE, BinaryKeyValueStore);
+orbit_db_1.OrbitDB.addDatabaseType(exports.BINARY_KEYVALUE_STORE_TYPE, BinaryKeyValueStore);
 //# sourceMappingURL=key-value-store.js.map

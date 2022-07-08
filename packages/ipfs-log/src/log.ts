@@ -322,7 +322,6 @@ export class Log<T> extends GSet {
     const isNext = e => !nexts.includes(e)
     // Delete the heads from the refs
     const refs = Array.from(references).map(getHash).filter(isNext)
-    // @TODO: Split Entry.create into creating object, checking permission, signing and then posting to IPFS
     // Create the entry and add it to the internal cache
     const entry = await Entry.create(
       this._storage,
@@ -332,13 +331,14 @@ export class Log<T> extends GSet {
       nexts,
       this.clock,
       refs,
-      pin
+      pin,
+      async (e: Entry<T>) => {
+        const canAppend = await this._access.canAppend(e, this._identity.provider);
+        if (!canAppend) {
+          throw new Error(`Could not append entry, key "${this._identity.id}" is not allowed to write to the log`)
+        }
+      }
     )
-
-    const canAppend = await this._access.canAppend(entry, this._identity.provider)
-    if (!canAppend) {
-      throw new Error(`Could not append entry, key "${this._identity.id}" is not allowed to write to the log`)
-    }
 
     this._entryIndex.set(entry.hash, entry)
     nexts.forEach(e => (this._nextsIndex[e] = entry.hash))

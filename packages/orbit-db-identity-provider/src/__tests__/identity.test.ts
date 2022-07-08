@@ -1,4 +1,4 @@
-import { Identity } from "../identity"
+import { Identity, Signatures } from "../identity"
 
 const assert = require('assert')
 
@@ -10,10 +10,14 @@ describe('Identity', function () {
   const type = 'orbitdb'
   const provider = 'IdentityProviderInstance'
 
-  let identity
+  let identity: Identity
 
   beforeAll(async () => {
-    identity = new Identity(id, publicKey, idSignature, publicKeyAndIdSignature, type, provider as any)
+    identity = new Identity({
+      id, publicKey, signatures: new Signatures({
+        id: idSignature, publicKey: publicKeyAndIdSignature
+      }), type, provider: provider as any
+    })
   })
 
   test('has the correct id', async () => {
@@ -43,14 +47,14 @@ describe('Identity', function () {
       signatures: { id: idSignature, publicKey: publicKeyAndIdSignature },
       type: type
     }
-    assert.deepStrictEqual(identity.toJSON(), expected)
+    assert.deepStrictEqual(identity.toSerializable(), expected)
   })
 
   describe('Constructor inputs', () => {
     test('throws and error if id was not given in constructor', async () => {
       let err
       try {
-        identity = new Identity(undefined, undefined, undefined, undefined, undefined, undefined)
+        identity = new Identity({} as any)
       } catch (e) {
         err = e.toString()
       }
@@ -60,7 +64,7 @@ describe('Identity', function () {
     test('throws and error if publicKey was not given in constructor', async () => {
       let err
       try {
-        identity = new Identity('abc', undefined, undefined, undefined, undefined, undefined)
+        identity = new Identity({ id: 'abc' } as any)
       } catch (e) {
         err = e.toString()
       }
@@ -70,17 +74,23 @@ describe('Identity', function () {
     test('throws and error if identity signature was not given in constructor', async () => {
       let err
       try {
-        identity = new Identity('abc', publicKey, undefined, undefined, undefined, undefined)
+        identity = new Identity({
+          id: 'abc', publicKey
+        } as any)
       } catch (e) {
         err = e.toString()
       }
-      assert.strictEqual(err, 'Error: Signature of the id (idSignature) is required')
+      assert.strictEqual(err, 'Error: Signatures are required')
     })
 
     test('throws and error if identity signature was not given in constructor', async () => {
       let err
       try {
-        identity = new Identity('abc', publicKey, idSignature, undefined, undefined, undefined)
+        identity = new Identity({
+          id: 'abc', publicKey, signatures: new Signatures({
+            id: idSignature
+          } as any)
+        } as any)
       } catch (e) {
         err = e.toString()
       }
@@ -90,7 +100,12 @@ describe('Identity', function () {
     test('throws and error if identity provider was not given in constructor', async () => {
       let err
       try {
-        identity = new Identity('abc', publicKey, idSignature, publicKeyAndIdSignature, type, undefined)
+        identity = new Identity({
+          id: 'abc', publicKey, signatures: new Signatures({
+            id: idSignature,
+            publicKey: publicKeyAndIdSignature
+          }), type
+        } as any)
       } catch (e) {
         err = e.toString()
       }
@@ -100,7 +115,12 @@ describe('Identity', function () {
     test('throws and error if identity type was not given in constructor', async () => {
       let err
       try {
-        identity = new Identity('abc', publicKey, idSignature, publicKeyAndIdSignature, null, provider as any)
+        identity = new Identity({
+          id: 'abc', publicKey, signatures: new Signatures({
+            id: idSignature,
+            publicKey: publicKeyAndIdSignature
+          }), provider: provider as any
+        } as any)
       } catch (e) {
         err = e.toString()
       }

@@ -15,7 +15,7 @@ const Log = require('ipfs-log')
 Create a log. Each log gets a unique ID, which can be passed in the `options` as `logId`. Returns a `Log` instance.
 
 ```javascript
-const IdentityProvider = require('orbit-db-identity-provider')
+import { IdentityProvider } from '@dao-xyz/orbit-db-identity-provider'
 const identity = await IdentityProvider.createIdentity({ id: 'peerid' })
 const ipfs = new IPFS()
 const log = new Log(ipfs, identity, { logId: 'logid' })

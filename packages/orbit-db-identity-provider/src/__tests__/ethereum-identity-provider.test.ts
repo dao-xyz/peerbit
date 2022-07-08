@@ -1,6 +1,6 @@
 import { EthIdentityProvider } from "../ethereum-identity-provider"
 import { Identities } from "../identities"
-import { Identity } from "../identity"
+import { Identity, Signatures } from "../identity"
 
 const assert = require('assert')
 const path = require('path')
@@ -77,7 +77,11 @@ describe('Ethereum Identity Provider', function () {
     })
 
     test('ethereum identity with incorrect id does not verify', async () => {
-      const identity2 = new Identity('NotAnId', identity.publicKey, identity.signatures.id, identity.signatures.publicKey, identity.type, identity.provider)
+      const identity2 = new Identity({
+        ...identity.toSerializable(),
+        provider: identity.provider,
+        id: 'NotAnId',
+      })
       const verified = await Identities.verifyIdentity(identity2)
       assert.strictEqual(verified, false)
     })
@@ -100,7 +104,9 @@ describe('Ethereum Identity Provider', function () {
 
     test('throws an error if private key is not found from keystore', async () => {
       // Remove the key from the keystore (we're using a mock storage in these tests)
-      const modifiedIdentity = new Identity('this id does not exist', identity.publicKey, '<sig>', identity.signatures, identity.type, identity.provider)
+      const modifiedIdentity = new Identity({
+        id: 'this id does not exist', publicKey: identity.publicKey, signatures: new Signatures({ id: '<sig>', publicKey: identity.signatures }), type: identity.type, provider: identity.provider
+      })
       let signature
       let err
       try {

@@ -1,4 +1,4 @@
-import OrbitDB from "orbit-db";
+import { OrbitDB } from "@dao-xyz/orbit-db";
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores'
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store'
 
@@ -12,7 +12,7 @@ export class CounterStoreOptions extends BStoreOptions<CounterStore> {
         super();
     }
 
-    async newStore(address: string, orbitDB: OrbitDB, _typeMap: { [key: string]: Constructor<any> }, options: IQueryStoreOptions<any, any>): Promise<CounterStore> {
+    async newStore(address: string, orbitDB: OrbitDB, options: IQueryStoreOptions<any, any>): Promise<CounterStore> {
         return orbitDB.counter(address, options)
     }
 

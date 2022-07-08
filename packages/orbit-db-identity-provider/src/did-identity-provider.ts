@@ -2,7 +2,7 @@ import { IdentityProvider } from "./identity-provider-interface"
 
 const u8a = require('uint8arrays')
 import { DID } from 'dids'
-import { IdentityAsJson } from "./identity";
+import { IdentitySerializable } from "./identity";
 
 const TYPE = 'DID'
 export type DIDIdentityProviderOptions = { didProvider?: any };
@@ -44,7 +44,7 @@ export class DIDIdentityProvider extends IdentityProvider {
     }
   }
 
-  static async verifyIdentity(identity: IdentityAsJson) {
+  static async verifyIdentity(identity: IdentitySerializable) {
     if (!this.did) {
       throw new Error('The DID resolver must first be set with setDIDResolver()')
     }

@@ -1,6 +1,6 @@
 import { DocumentIndex, LogEntry } from './document-index'
 import pMap from 'p-map'
-import { Identity } from 'orbit-db-identity-provider';
+import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
 import bs58 from 'bs58';
 import { asString } from './utils';
@@ -9,7 +9,7 @@ import { IPFS as IPFSInstance } from "ipfs-core-types";
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store'
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores'
-import OrbitDB from 'orbit-db';
+import { OrbitDB } from '@dao-xyz/orbit-db';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement)
 
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
@@ -36,12 +36,12 @@ export class BinaryDocumentStoreOptions<T extends ResultSource> extends BStoreOp
       Object.assign(this, opts);
     }
   }
-  async newStore(address: string, orbitDB: OrbitDB, typeMap: { [key: string]: Constructor<any> }, options: IBinaryDocumentStoreOptions<T>): Promise<BinaryDocumentStore<T>> {
-    let clazz = typeMap[this.objectType];
+  async newStore(address: string, orbitDB: OrbitDB, options: IBinaryDocumentStoreOptions<T>): Promise<BinaryDocumentStore<T>> {
+    let clazz = options.typeMap[this.objectType];
     if (!clazz) {
       throw new Error(`Undefined type: ${this.objectType}`);
     }
-    return orbitDB.open<BinaryDocumentStore<T>>(address, { ...options, ...{ clazz, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: this.indexBy } } as DocumentStoreOptions<T>)
+    return orbitDB.open(address, { ...options, ...{ clazz, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: this.indexBy } } as DocumentStoreOptions<T>)
   }
 
 

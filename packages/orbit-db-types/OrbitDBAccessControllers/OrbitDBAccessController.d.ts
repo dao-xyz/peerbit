@@ -2,7 +2,7 @@ import Identities from "@dao-xyz/orbit-db-identity-provider";
 
 declare module "orbit-db-access-controllers/src/orbitdb-access-controller" {
     import AccessController from "orbit-db-access-controllers/src/access-controller-interface"
-    import OrbitDB from "orbit-db"
+    import { OrbitDB } from "@dao-xyz/orbit-db";
     import { AccessController } from '@dao-xyz/ipfs-log';
 
     export default class OrbitDBAccessController<T> implements AccessController<T> {

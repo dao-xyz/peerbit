@@ -16,10 +16,10 @@ const storeTestSetup = async (): Promise<{
     let [peer, observer] = await getConnectedPeers(2);
 
     // Create store
-    let storeCreator = await peer.orbitDB.open<StringStore>('store', { ...{ create: true, type: STRING_STORE_TYPE, queryRegion: 'world', subscribeToQueries: true } })
+    let storeCreator = await peer.orbitDB.open('store', { ...{ create: true, type: STRING_STORE_TYPE, queryRegion: 'world', subscribeToQueries: true } })
     await storeCreator.load();
     await storeCreator._initializationPromise;
-    let storeObserver = await observer.orbitDB.open<StringStore>(storeCreator.address.toString(), { ...{ create: true, type: STRING_STORE_TYPE, queryRegion: 'world', replicate: false } })
+    let storeObserver = await observer.orbitDB.open(storeCreator.address.toString(), { ...{ create: true, type: STRING_STORE_TYPE, queryRegion: 'world', replicate: false } })
 
     expect(await peer.node.pubsub.ls()).toHaveLength(2); // replication and query topic
     expect(await observer.node.pubsub.ls()).toHaveLength(0);

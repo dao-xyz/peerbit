@@ -1,27 +1,17 @@
 
-import OrbitDB from 'orbit-db';
-import { TRUST_REGION_ACCESS_CONTROLLER } from './identity';
-import { Shard, TypedBehaviours } from './shard';
+import { OrbitDB } from '@dao-xyz/orbit-db';
 import { v4 as uuid } from 'uuid';
-import { P2PTrust } from './trust';
-import { deserialize } from '@dao-xyz/borsh';
-import { PublicKey } from './key';
-import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
-import { RecycleOptions } from '@dao-xyz/ipfs-log';
 
-export interface IPFSInstanceExtended extends IPFSInstance {
-    libp2p: any
-}
 
 export const ROOT_CHAIN_SHARD_SIZE = 100;
-const PEER_HEALTH_CHECK_INTERVAL = 2000;
 const EXPECTED_PING_DELAY = 10 * 1000; // expected pubsub hello ping delay (two way)
+
+
 
 
 export class PeerOptions {
 
-    behaviours: TypedBehaviours
     replicationCapacity: number;
     isServer: boolean;
     expectedPingDelay: number = EXPECTED_PING_DELAY;
@@ -29,19 +19,15 @@ export class PeerOptions {
 
     constructor(options: {
         directoryId?: string;
-        behaviours: TypedBehaviours;
         replicationCapacity: number;
         isServer: boolean;
     }) {
         Object.assign(this, options);
         this.replicationCapacity = options.replicationCapacity;
-        this.behaviours = options.behaviours;
-        if (!this.behaviours) {
-            throw new Error("Expecting behaviours");
-        }
+
 
         // Static behaviours
-        this.behaviours.typeMap[Shard.name] = Shard;
+        //this.behaviours.typeMap[Shard.name] = Shard;
         this.isServer = options.isServer;
         this.storeDirectory = './orbit-db-stores/' + (options.directoryId ? options.directoryId : uuid());
     }
@@ -51,7 +37,6 @@ export class PeerOptions {
 
 export class AnyPeer {
 
-    public node: IPFSInstanceExtended = undefined;
     public orbitDB: OrbitDB = undefined;
     public options: PeerOptions;
     public id: string;
@@ -71,7 +56,10 @@ export class AnyPeer {
     async create(options: { orbitDB: OrbitDB, options: PeerOptions }): Promise<void> {
         this.orbitDB = options.orbitDB;
         this.options = options.options;
-        this.node = options.orbitDB._ipfs;
+
+    }
+    get node(): IPFSInstance {
+        return this.orbitDB._ipfs;
     }
 
     async disconnect(): Promise<void> {

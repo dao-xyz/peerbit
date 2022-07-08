@@ -40,9 +40,9 @@ const documentDbTestSetup = async (): Promise<{
   let [peer, observer] = await getConnectedPeers(2);
 
   // Create store
-  let documentStoreCreator = await peer.orbitDB.open<BinaryDocumentStore<Document>>('store', { ...{ clazz: Document, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: 'id', subscribeToQueries: true, queryRegion: 'world' } as DocumentStoreOptions<Document> })
+  let documentStoreCreator = await peer.orbitDB.open('store', { ...{ clazz: Document, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: 'id', subscribeToQueries: true, queryRegion: 'world' } as DocumentStoreOptions<Document> })
   await documentStoreCreator.load();
-  let documentStoreObserver = await observer.orbitDB.open<BinaryDocumentStore<Document>>(documentStoreCreator.address.toString(), { ...{ clazz: Document, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: 'id', subscribeToQueries: false, queryRegion: 'world', replicate: false } as DocumentStoreOptions<Document> })
+  let documentStoreObserver = await observer.orbitDB.open(documentStoreCreator.address.toString(), { ...{ clazz: Document, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: 'id', subscribeToQueries: false, queryRegion: 'world', replicate: false } as DocumentStoreOptions<Document> })
 
   expect(await peer.node.pubsub.ls()).toHaveLength(2); // replication and query topic
   expect(await observer.node.pubsub.ls()).toHaveLength(0);

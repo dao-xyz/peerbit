@@ -1,5 +1,5 @@
 import { Wallet, verifyMessage } from '@ethersproject/wallet'
-import { IdentityAsJson } from './identity';
+import { IdentitySerializable } from './identity';
 import { IdentityProvider } from './identity-provider-interface';
 const type = 'ethereum'
 
@@ -35,7 +35,7 @@ export class EthIdentityProvider extends IdentityProvider {
     return (signerAddress === publicKey)
   }
 
-  static async verifyIdentity(identity: IdentityAsJson) {
+  static async verifyIdentity(identity: IdentitySerializable) {
     // Verify that identity was signed by the id
     return EthIdentityProvider.verify(identity.signatures.publicKey, identity.publicKey + identity.signatures.id, identity.id)
   }

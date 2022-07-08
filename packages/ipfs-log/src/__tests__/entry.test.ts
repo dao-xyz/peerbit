@@ -5,7 +5,7 @@ const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
 
-const IdentityProvider = require('orbit-db-identity-provider')
+import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 import * as v0Entries from './fixtures/v0-entries.fixture'
 import * as v1Entries from './fixtures/v1-entries.fixture.json'
 const Keystore = require('orbit-db-keystore')
@@ -36,7 +36,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
 
-      testIdentity = await IdentityProvider.createIdentity({ id: 'userA', keystore, signingKeystore })
+      testIdentity = await Identities.createIdentity({ id: 'userA', keystore, signingKeystore })
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })
@@ -218,7 +218,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const entry2 = await Entry.create(ipfs, testIdentity, 'A', payload2, [entry1])
         const final = await Entry.fromMultihash(ipfs, entry2.hash)
 
-        assert.deepStrictEqual(entry2, final)
+        assert.deepStrictEqual({ ...entry2, identity: { ...entry2.identity, signatures: { ...entry2.identity.signatures } } }, final)
         assert.strictEqual(final.id, 'A')
         assert.strictEqual(final.payload, payload2)
         assert.strictEqual(final.next.length, 1)

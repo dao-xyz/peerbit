@@ -30,7 +30,7 @@ const utils_1 = require("./utils");
 const bquery_1 = require("@dao-xyz/bquery");
 const orbit_db_query_store_1 = require("@dao-xyz/orbit-db-query-store");
 const orbit_db_bstores_1 = require("@dao-xyz/orbit-db-bstores");
-const orbit_db_1 = __importDefault(require("orbit-db"));
+const orbit_db_1 = require("@dao-xyz/orbit-db");
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
 exports.BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
 let BinaryDocumentStoreOptions = class BinaryDocumentStoreOptions extends orbit_db_bstores_1.BStoreOptions {
@@ -40,9 +40,9 @@ let BinaryDocumentStoreOptions = class BinaryDocumentStoreOptions extends orbit_
             Object.assign(this, opts);
         }
     }
-    newStore(address, orbitDB, typeMap, options) {
+    newStore(address, orbitDB, options) {
         return __awaiter(this, void 0, void 0, function* () {
-            let clazz = typeMap[this.objectType];
+            let clazz = options.typeMap[this.objectType];
             if (!clazz) {
                 throw new Error(`Undefined type: ${this.objectType}`);
             }
@@ -221,5 +221,5 @@ class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore {
     }
 }
 exports.BinaryDocumentStore = BinaryDocumentStore;
-orbit_db_1.default.addDatabaseType(exports.BINARY_DOCUMENT_STORE_TYPE, BinaryDocumentStore);
+orbit_db_1.OrbitDB.addDatabaseType(exports.BINARY_DOCUMENT_STORE_TYPE, BinaryDocumentStore);
 //# sourceMappingURL=document-store.js.map

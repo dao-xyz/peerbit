@@ -1,6 +1,6 @@
 import { PayloadOperation, StringIndex } from './string-index'
 import { IPFS as IPFSInstance } from 'ipfs';
-import { Identity } from 'orbit-db-identity-provider';
+import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 import { QueryRequestV0, RangeCoordinate, RangeCoordinates, Result, ResultWithSource, StringMatchQuery } from '@dao-xyz/bquery';
 import { StringQueryRequest } from '@dao-xyz/bquery';
@@ -9,7 +9,7 @@ import { Range, RangeOptional } from './range';
 import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
 import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
-import OrbitDB from 'orbit-db';
+import { OrbitDB } from '@dao-xyz/orbit-db';
 import { ResultSource } from '@dao-xyz/bquery';
 
 export const STRING_STORE_TYPE = 'string_store';
@@ -37,8 +37,8 @@ export class StringStoreOptions extends BStoreOptions<StringStore> {
   constructor() {
     super();
   }
-  async newStore(address: string, orbitDB: OrbitDB, typeMap: { [key: string]: Constructor<any> }, options: IStringStoreOptions): Promise<StringStore> {
-    return orbitDB.open<StringStore>(address, { ...options, ...{ create: true, type: STRING_STORE_TYPE } })
+  async newStore(address: string, orbitDB: OrbitDB, options: IStringStoreOptions): Promise<StringStore> {
+    return orbitDB.open(address, { ...options, ...{ create: true, type: STRING_STORE_TYPE } })
   }
 
   get identifier(): string {

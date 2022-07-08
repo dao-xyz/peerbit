@@ -24,7 +24,7 @@
     "@types/elliptic": "^6.4.6",
     "@types/events": "^1.2.0",
     "@types/ipfs": "https://git@github.com/lukas2005/types-ipfs.git",
-    "orbit-db": "^0.28.6"
+    "@dao-xyz/orbit-db": "^0.29.0"
   },
   "gitHead": "62040f90296fad19bc5275a096e7523b28fae116"
 }

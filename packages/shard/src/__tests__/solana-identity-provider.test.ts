@@ -1,8 +1,8 @@
 
-import { AnyPeer } from '../index';
+import { AnyPeer } from '@dao-xyz/peer';
 import * as ipfs from 'ipfs';
 import fs from 'fs';
-import Identities from 'orbit-db-identity-provider';
+import { Identities } from '@dao-xyz/orbit-db-identity-provider';
 import { SolanaIdentityProvider } from '../identity';
 import { Keypair } from '@solana/web3.js';
 
@@ -12,8 +12,8 @@ describe('node', () => {
         fs.rmSync(root, { recursive: true, force: true });
         Identities.addIdentityProvider(SolanaIdentityProvider)
         let keypair = Keypair.generate();
-        const identity = await Identities.createIdentity({ type: 'solana', wallet: keypair.publicKey, keypair: keypair })
-        const blobby = new AnyPeer();
+        /*  const identity = await Identities.createIdentity({ type: 'solana', wallet: keypair.publicKey, keypair: keypair })
+         const blobby = new AnyPeer(); */
         /*   await blobby.create({
               local: false,
               repo: root,

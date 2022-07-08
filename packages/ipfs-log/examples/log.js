@@ -1,8 +1,7 @@
-'use strict'
 
 const IPFS = require('ipfs')
 const Log = require('../src/log')
-const IdentityProvider = require('orbit-db-identity-provider')
+import { IdentityProvider } from '@dao-xyz/orbit-db-identity-provider'
 const Keystore = require('orbit-db-keystore')
 
 const dataPath = './ipfs/examples/log'

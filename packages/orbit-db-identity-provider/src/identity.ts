@@ -1,92 +1,123 @@
 
 import { Identities } from "./identities";
-import { IdentityProvider } from "./identity-provider-interface";
 import { isDefined } from "./is-defined";
-
+import { variant, field } from '@dao-xyz/borsh';
 export type IdentityProviderType = 'orbitdb' | 'ethereum' | 'solana' | string;
 
-export interface IdentityAsJson {
+
+@variant(0)
+export class Signatures {
+
   id: string;
   publicKey: string;
-  signatures: {
-    id: string,
-    publicKey: string
-  };
-  type: IdentityProviderType;
-}
 
-export class Identity {
-  _id: string;
-  _publicKey: string;
-  _signatures: {
+  constructor(options?: {
     id: string;
     publicKey: string;
+  }) {
+    if (options) {
+      if (!isDefined(options.id)) {
+        throw new Error('Signature of the id (idSignature) is required')
+      }
+
+      if (!isDefined(options.publicKey)) {
+        throw new Error('Signature of (publicKey + idSignature) is required')
+      }
+      this.id = options.id;
+      this.publicKey = options.publicKey;
+    }
   }
+
+}
+
+@variant(0)
+export class IdentitySerializable {
+
+  @field({ type: 'String' })
+  id: string;
+
+  @field({ type: 'String' })
+  publicKey: string;
+
+  @field({ type: Signatures })
+  signatures: Signatures;
+
+  @field({ type: 'String' })
+  type: IdentityProviderType;
+
+}
+
+
+export class Identity {
+
+  _id: string;
+  _publicKey: string;
+  _signatures: Signatures;
   _type: string;
+
+
   _provider: Identities;
-  constructor(id: string, publicKey: string, idSignature: string, pubKeyIdSignature: string, type: string, provider: Identities) {
-    if (!isDefined(id)) {
-      throw new Error('Identity id is required')
-    }
+  constructor(options?: { id: string, publicKey: string, signatures: Signatures, type: string, provider: Identities }) {
+    if (options) {
+      if (!isDefined(options.id)) {
+        throw new Error('Identity id is required')
+      }
 
-    if (!isDefined(publicKey)) {
-      throw new Error('Invalid public key')
-    }
+      if (!isDefined(options.publicKey)) {
+        throw new Error('Invalid public key')
+      }
 
-    if (!isDefined(idSignature)) {
-      throw new Error('Signature of the id (idSignature) is required')
-    }
+      if (!isDefined(options.signatures)) {
+        throw new Error('Signatures are required')
+      }
 
-    if (!isDefined(pubKeyIdSignature)) {
-      throw new Error('Signature of (publicKey + idSignature) is required')
-    }
+      if (!isDefined(options.type)) {
+        throw new Error('Identity type is required')
+      }
 
-    if (!isDefined(type)) {
-      throw new Error('Identity type is required')
-    }
+      if (!isDefined(options.provider)) {
+        throw new Error('Identity provider is required')
+      }
 
-    if (!isDefined(provider)) {
-      throw new Error('Identity provider is required')
+      this._id = options.id
+      this._publicKey = options.publicKey
+      this._signatures = options.signatures
+      this._type = options.type
+      this._provider = options.provider
     }
-
-    this._id = id
-    this._publicKey = publicKey
-    this._signatures = Object.assign({}, { id: idSignature }, { publicKey: pubKeyIdSignature })
-    this._type = type
-    this._provider = provider
   }
 
   /**
   * This is only used as a fallback to the clock id when necessary
   * @return {string} public key hex encoded
   */
-  get id() {
+  get id(): string {
     return this._id
   }
 
-  get publicKey() {
+  get publicKey(): string {
     return this._publicKey
   }
 
-  get signatures() {
+  get signatures(): Signatures {
     return this._signatures
   }
 
-  get type() {
+  get type(): string {
     return this._type
   }
 
-  get provider() {
+  get provider(): Identities {
     return this._provider
   }
 
-  toJSON(): IdentityAsJson {
-    return {
-      id: this.id,
-      publicKey: this.publicKey,
-      signatures: this.signatures,
-      type: this.type
-    }
+  toSerializable(): IdentitySerializable {
+    const ser = new IdentitySerializable();
+    ser.id = this.id;
+    ser.publicKey = this.publicKey;
+    ser.signatures = new Signatures({ ...this.signatures });
+    ser.type = this.type;
+    return ser;
   }
 
   static isIdentity(identity) {
@@ -98,13 +129,19 @@ export class Identity {
       identity.type !== undefined
   }
 
-  static toJSON(identity) {
-    return {
+
+  /* static from(identity: IdentitySerializable): Identity {
+    return new Identity({
       id: identity.id,
       publicKey: identity.publicKey,
-      signatures: identity.signatures,
+      signatures: new Signatures({
+        id: identity.signatures.id,
+        publicKey: identity.signatures.publicKey
+      }),
       type: identity.type
-    }
-  }
+    })
+  } */
 }
+
+
 

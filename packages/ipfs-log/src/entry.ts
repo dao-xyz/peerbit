@@ -3,7 +3,7 @@ import { isDefined } from './is-defined'
 import * as io from 'orbit-db-io'
 import stringify from 'json-stringify-deterministic'
 import { IPFS } from 'ipfs-core-types/src/'
-import { Identity, IdentityAsJson } from 'orbit-db-identity-provider'
+import { Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider'
 const IpfsNotDefinedError = () => new Error('Ipfs instance not defined')
 const getWriteFormatForVersion = v => v === 0 ? 'dag-pb' : 'dag-cbor'
 
@@ -16,7 +16,7 @@ const getWriteFormatForVersion = v => v === 0 ? 'dag-pb' : 'dag-cbor'
 export class Entry<T>{
 
   sig?: string;
-  identity?: IdentityAsJson;
+  identity?: IdentitySerializable;
   key?: string;
   hash?: string // "zd...Foo", we'll set the hash after persisting the entry
   id: any // For determining a unique chain
@@ -44,7 +44,7 @@ export class Entry<T>{
    * console.log(entry)
    * // { hash: null, payload: "hello", next: [] }
    */
-  static async create<T>(ipfs: IPFS, identity: Identity, logId: string, data: any, next: (Entry<T> | string)[] = [], clock?: Clock, refs: Entry<T>[] = [], pin?: boolean) {
+  static async create<T>(ipfs: IPFS, identity: Identity, logId: string, data: any, next: (Entry<T> | string)[] = [], clock?: Clock, refs: Entry<T>[] = [], pin?: boolean, assertAllowed?: (entry: Entry<T>) => Promise<void>) {
     if (!isDefined(ipfs)) throw IpfsNotDefinedError()
     if (!isDefined(identity)) throw new Error('Identity is required, cannot create entry')
     if (!isDefined(logId)) throw new Error('Entry requires an id')
@@ -64,11 +64,17 @@ export class Entry<T>{
       v: 2, // To tag the version of this data structure
       clock: clock || new Clock(identity.publicKey)
     }
+    const identitySerializable = identity.toSerializable();
+
+    if (assertAllowed) {
+      entry.identity = identitySerializable
+      await assertAllowed(entry);
+      entry.identity = undefined;
+    }
 
     const signature = await identity.provider.sign(identity, Entry.toBuffer(entry))
-
     entry.key = identity.publicKey
-    entry.identity = identity.toJSON()
+    entry.identity = identitySerializable
     entry.sig = signature
     entry.hash = await Entry.toMultihash(ipfs, entry, pin)
 

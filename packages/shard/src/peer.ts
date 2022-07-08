@@ -1,10 +1,10 @@
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import BN from "bn.js";
-import { PublicKey } from "./key";
 import { Shard } from "./shard";
 import { Message } from 'ipfs-core-types/types/src/pubsub'
 import { delay } from "@dao-xyz/time";
 import { createHash } from "crypto";
+import { IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
 
 export const EMIT_HEALTHCHECK_INTERVAL = 5000;
 
@@ -27,8 +27,8 @@ export class PeerCheck {
 @variant("info")
 export class PeerInfo {
 
-    @field({ type: PublicKey })
-    key: PublicKey
+    @field({ type: IdentitySerializable })
+    key: IdentitySerializable
 
     @field({ type: vec('String') })
     addresses: string[] // address
@@ -37,7 +37,7 @@ export class PeerInfo {
     memoryBudget: BN
 
     constructor(obj?: {
-        key: PublicKey,
+        key: IdentitySerializable,
         addresses: string[],
         memoryBudget: BN
     }) {
@@ -57,7 +57,7 @@ export class ShardPeerInfo {
 
     async getShardPeerInfo(): Promise<PeerInfo> {
         return new PeerInfo({
-            key: PublicKey.from(this._shard.peer.orbitDB.identity),
+            key: this._shard.peer.orbitDB.identity.toSerializable(),
             addresses: (await this._shard.peer.node.id()).addresses.map(x => x.toString()),
             memoryBudget: new BN(this._shard.peer.options.replicationCapacity)
         })
@@ -119,11 +119,11 @@ export class ShardPeerInfo {
         let slotIndex = peerHashed.findIndex(x => x === slotHash);
         // we only step forward 1 step (ignoring that step backward 1 could be 'closer')
         // This does not matter, we only have to make sure all nodes running the code comes to somewhat the 
-        // same conclusion
+        // same conclusion (are running the same leader selection algorithm)
         let nextIndex = slotIndex + 1;
         if (nextIndex >= peerHashed.length)
             nextIndex = 0;
-        return hashToPeer.get(peerHashed[nextIndex]).key.equals(PublicKey.from(this._shard.peer.orbitDB.identity))
+        return hashToPeer.get(peerHashed[nextIndex]).key.id === this._shard.peer.orbitDB.identity.id
 
         // better alg, 
         // convert slot into hash, find most "probable peer" 

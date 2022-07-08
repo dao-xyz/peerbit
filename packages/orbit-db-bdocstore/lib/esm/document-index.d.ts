@@ -1,8 +1,8 @@
 import { Constructor } from "@dao-xyz/borsh";
-import { IdentityAsJson } from "@dao-xyz/orbit-db-identity-provider";
+import { IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
 import { ToStringable } from "./utils";
 export interface LogEntry<T> {
-    identity: IdentityAsJson;
+    identity: IdentitySerializable;
     payload: Payload<T>;
 }
 export interface Payload<T> {

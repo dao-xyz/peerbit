@@ -1,10 +1,10 @@
 import { Store } from '@dao-xyz/orbit-db-store'
 import { FeedIndex } from './feed-index'
 import { IPFS as IPFSInstance } from 'ipfs';
-import { Identity } from 'orbit-db-identity-provider';
+import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
 import bs58 from 'bs58';
-import OrbitDB from 'orbit-db';
+import { OrbitDB } from '@dao-xyz/orbit-db';
 export const BINARY_FEED_STORE_TYPE = 'bfeed_store';
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores'
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store'
@@ -26,13 +26,13 @@ export class BinaryFeedStoreOptions<T> extends BStoreOptions<BinaryFeedStore<T>>
       Object.assign(this, opts);
     }
   }
-  async newStore(address: string, orbitDB: OrbitDB, typeMap: { [key: string]: Constructor<any> }, options: IBinaryFeedStoreOptions<T>): Promise<BinaryFeedStore<T>> {
-    let clazz = typeMap[this.objectType];
+  async newStore(address: string, orbitDB: OrbitDB, options: IBinaryFeedStoreOptions<T>): Promise<BinaryFeedStore<T>> {
+    let clazz = options.typeMap[this.objectType];
     if (!clazz) {
       throw new Error(`Undefined type: ${this.objectType}`);
     }
 
-    return orbitDB.open<BinaryFeedStore<T>>(address, { ...options, ...{ clazz, create: true, type: BINARY_FEED_STORE_TYPE } } as any)
+    return orbitDB.open(address, { ...options, ...{ clazz, create: true, type: BINARY_FEED_STORE_TYPE } } as any)
   }
 
   get identifier(): string {

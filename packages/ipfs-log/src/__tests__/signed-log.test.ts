@@ -3,7 +3,7 @@ const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { AccessController } from '../default-access-controller'
 import { Log } from '../log'
-const IdentityProvider = require('orbit-db-identity-provider')
+import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 const Keystore = require('orbit-db-keystore')
 
 // Test utils
@@ -33,8 +33,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
 
-      testIdentity = await IdentityProvider.createIdentity({ id: 'userA', keystore, signingKeystore })
-      testIdentity2 = await IdentityProvider.createIdentity({ id: 'userB', keystore, signingKeystore })
+      testIdentity = await Identities.createIdentity({ id: 'userA', keystore, signingKeystore })
+      testIdentity2 = await Identities.createIdentity({ id: 'userB', keystore, signingKeystore })
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })
@@ -82,7 +82,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const log = new Log(ipfs, testIdentity, { logId: 'A' })
       await log.append('one')
       assert.notStrictEqual(log.values[0].sig, null)
-      assert.deepStrictEqual(log.values[0].identity, testIdentity.toJSON())
+      assert.deepStrictEqual(log.values[0].identity, testIdentity.toSerializable())
     })
 
     test('doesn\'t sign entries when identity is not defined', async () => {

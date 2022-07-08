@@ -37,11 +37,11 @@ The `Identity` object contains signatures proving possession of some external id
 
 ### Creating an identity
 ```js
-const Identities = require('orbit-db-identity-provider')
+const Identities = require('@dao-xyz/orbit-db-identity-provider')
 const options = { id: 'local-id'}
 const identity = await Identities.createIdentity(options)
 
-console.log(identity.toJSON())
+console.log(identity.toSerializable())
 // prints
 {
   id: '045757bffcc7a4f4cf94c0cf214b3d3547a62195a09588df36b74aff837b2fdc14551360a323bf9de2ac8fb2eda9bd1bae5de53577a8db41ee2b46b4bf8cd7be33',
@@ -66,7 +66,7 @@ Decentralized Identifiers (DID) is a common way to represent a digital identity.
 ```js
 const { Ed25519Provider } = require('key-did-provider-ed25519')
 const { default: KeyResolver } = require('key-did-resolver')
-const Identities = require('orbit-db-identity-provider')
+const Identities = require('@dao-xyz/orbit-db-identity-provider')
 Identities.DIDIdentityProvider.setDIDResolver(KeyResolver.getResolver())
 
 const seed = // 32 bytes of entropy (Uint8Array)
@@ -94,12 +94,12 @@ _Note: If you don't supply a `wallet`, a random one will be created for you._
 To create an identity using existing keys, you need to install `localstorage-level-migration`
 
 ```js
-const Identities = require('orbit-db-identity-provider')
+const Identities = require('@dao-xyz/orbit-db-identity-provider')
 const migrate = require('localstorage-level-migration')
 const options = { id: 'new-id', migrate: migrate('/path/to/keys') }
 const identity = await Identities.createIdentity(options)
 
-console.log(identity.toJSON())
+console.log(identity.toSerializable())
 // prints
 {
   id: '<new-id>',

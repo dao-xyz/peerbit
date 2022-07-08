@@ -2,7 +2,7 @@ import { default as PQueue } from 'p-queue'
 
 import { Log } from '@dao-xyz/ipfs-log'
 import { IPFS } from 'ipfs-core-types/src/'
-import { Identity } from 'orbit-db-identity-provider'
+import { Identity } from '@dao-xyz/orbit-db-identity-provider'
 import AccessController from 'orbit-db-access-controllers/src/access-controller-interface'
 
 const getNextAndRefsUnion = e => [...new Set([...e.next, ...e.refs])]

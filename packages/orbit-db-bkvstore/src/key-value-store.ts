@@ -2,7 +2,7 @@ import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
 import { Store } from '@dao-xyz/orbit-db-store';
 import { KeyValueIndex } from './key-value-index';
 import bs58 from 'bs58';
-import OrbitDB from 'orbit-db';
+import { OrbitDB } from '@dao-xyz/orbit-db';
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store'
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores'
 export type IKeyValueStoreOptions<T> = IQueryStoreOptions<T, KeyValueIndex<T>> & { clazz: Constructor<T> }
@@ -28,13 +28,13 @@ export class BinaryKeyValueStoreOptions<T> extends BStoreOptions<BinaryKeyValueS
       Object.assign(this, opts);
     }
   }
-  async newStore(address: string, orbitDB: OrbitDB, typeMap: { [key: string]: Constructor<any> }, options: IKeyValueStoreOptions<T>): Promise<BinaryKeyValueStore<T>> {
-    let clazz = typeMap[this.objectType];
+  async newStore(address: string, orbitDB: OrbitDB, options: IKeyValueStoreOptions<T>): Promise<BinaryKeyValueStore<T>> {
+    let clazz = options.typeMap[this.objectType];
     if (!clazz) {
       throw new Error(`Undefined type: ${this.objectType}`);
     }
 
-    return orbitDB.open<BinaryKeyValueStore<T>>(address, { ...options, ...{ clazz, create: true, type: BINARY_KEYVALUE_STORE_TYPE } } as any)
+    return orbitDB.open(address, { ...options, ...{ clazz, create: true, type: BINARY_KEYVALUE_STORE_TYPE } } as any)
   }
 
   get identifier(): string {

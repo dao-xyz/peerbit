@@ -1,6 +1,6 @@
 import { DIDIdentityProvider, DIDIdentityProviderOptions } from "./did-identity-provider"
 import { EthIdentityProvider, EthIdentityProviderOptions } from "./ethereum-identity-provider"
-import { Identity, IdentityAsJson } from "./identity"
+import { Identity, IdentitySerializable, Signatures } from "./identity"
 import { IdentityProvider } from "./identity-provider-interface"
 import { OrbitDBIdentityProvider } from "./orbit-db-identity-provider"
 
@@ -42,7 +42,7 @@ export class Identities {
 
   get signingKeystore() { return this._signingKeystore }
 
-  async sign(identity: IdentityAsJson, data) {
+  async sign(identity: IdentitySerializable, data) {
     const signingKey = await this.keystore.getKey(identity.id)
     if (!signingKey) {
       throw new Error('Private signing key not found from Keystore')
@@ -56,7 +56,7 @@ export class Identities {
     return this.keystore.verify(signature, publicKey, data, verifier)
   }
 
-  async createIdentity(options: { type?: string, keystore?: typeof Keystore, signingKeystore?: typeof Keystore, migrate?: (options: { targetStore: any, targetId: string }) => Promise<void> } & DIDIdentityProviderOptions & EthIdentityProviderOptions = {}) {
+  async createIdentity(options: { type?: string, keystore?: typeof Keystore, signingKeystore?: typeof Keystore, id?: string, migrate?: (options: { targetStore: any, targetId: string }) => Promise<void> } & DIDIdentityProviderOptions & EthIdentityProviderOptions = {}) {
     const keystore = options.keystore || this.keystore
     const type = options.type || defaultType
     const identityProvider = type === defaultType ? new OrbitDBIdentityProvider(options.signingKeystore || keystore) : new (getHandlerFor(type))(options as any)
@@ -67,7 +67,11 @@ export class Identities {
     }
     const { publicKey, idSignature } = await this.signId(id)
     const pubKeyIdSignature = await identityProvider.sign(publicKey + idSignature, options)
-    return new Identity(id, publicKey, idSignature, pubKeyIdSignature, type, this)
+    return new Identity({
+      id, publicKey, signatures: new Signatures({
+        id: idSignature, publicKey: pubKeyIdSignature
+      }), type, provider: this
+    })
   }
 
   async signId(id: string) {
@@ -78,7 +82,7 @@ export class Identities {
     return { publicKey, idSignature }
   }
 
-  async verifyIdentity(identity) {
+  async verifyIdentity(identity: IdentitySerializable) {
     if (!Identity.isIdentity(identity)) {
       return false
     }
@@ -101,9 +105,8 @@ export class Identities {
     const IdentityProvider = getHandlerFor(identity.type)
     const verified = await IdentityProvider.verifyIdentity(identity)
     if (verified) {
-      this._knownIdentities.set(identity.signatures.id, Identity.toJSON(identity))
+      this._knownIdentities.set(identity.signatures.id, identity)
     }
-
     return verified
   }
 

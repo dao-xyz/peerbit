@@ -1,4 +1,3 @@
-'use strict'
 
 const glob = require('glob')
 const webpack = require('webpack')

@@ -1,5 +1,5 @@
 import { IStoreOptions, Index, Store } from '@dao-xyz/orbit-db-store'
-import { Identity } from 'orbit-db-identity-provider';
+import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { deserialize, serialize } from '@dao-xyz/borsh';
 import { Message } from 'ipfs-core-types/types/src/pubsub'
 import { QueryRequestV0, QueryResponseV0, Result, query, MultipleQueriesType, StoreAddressMatchQuery } from '@dao-xyz/bquery';

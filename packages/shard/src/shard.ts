@@ -1,15 +1,15 @@
 import { Constructor, deserialize, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
-import OrbitDB from "orbit-db";
+import { OrbitDB } from "@dao-xyz/orbit-db";
 import BN from 'bn.js';
-import { AnyPeer, IPFSInstanceExtended } from "./node";
-import { PublicKey } from "./key";
+import { AnyPeer } from "@dao-xyz/peer";
 import { P2PTrust } from "./trust";
-import { DBInterface } from "./interface";
+import { DBInterface } from "@dao-xyz/orbit-db-store-interface";
 import { BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
 import { IStoreOptions } from '@dao-xyz/orbit-db-store'
 import { ResultSource } from '@dao-xyz/bquery';
 import { waitForAsync } from "@dao-xyz/time";
+import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import { delay } from "@dao-xyz/time";
 import { EMIT_HEALTHCHECK_INTERVAL, PeerInfo, ShardPeerInfo } from "./peer";
 import { IQueryStoreOptions } from "@dao-xyz/orbit-db-query-store";
@@ -44,10 +44,6 @@ export class ReplicationRequest {
 
 }
 
-
-
-
-
 export type StoreBuilder<B> = (name: string, defaultOptions: IStoreOptions<any, any>, orbitdDB: OrbitDB) => Promise<B>
 
 
@@ -55,11 +51,6 @@ export type Behaviours<St> = {
     newStore: StoreBuilder<St>
 }
 
-export type TypedBehaviours = {
-    typeMap: {
-        [key: string]: Constructor<any>
-    }
-};
 
 
 @variant([0, 0])
@@ -102,7 +93,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
     cid: string;
 
-    defaultStoreOptions: IQueryStoreOptions<any, any>;
+    storeOptions: IQueryStoreOptions<any, any>;
 
     constructor(props?: {
         id: string,
@@ -113,6 +104,10 @@ export class Shard<T extends DBInterface> extends ResultSource {
         parentShardCID: string
         trust: P2PTrust
         shardIndex: BN
+        storeOptions?: {
+            typeMap: { [key: string]: Constructor<any> }
+        };
+
     } | {
         id: string,
         cluster: string
@@ -120,17 +115,37 @@ export class Shard<T extends DBInterface> extends ResultSource {
         shardSize: BN
         shardIndex?: BN
         trust?: P2PTrust
+        storeOptions?: {
+            typeMap: { [key: string]: Constructor<any> }
+        };
     }) {
 
         super();
         if (props) {
-            Object.assign(this, props);
+            Object.assign(this, props); // TODO fix types, storeOPtions are only partially intialized at best
         }
 
         if (!this.shardIndex) {
             this.shardIndex = new BN(0);
         }
 
+    }
+    get defaultStoreOptions(): IQueryStoreOptions<T, any> {
+        if (!this.peer) {
+            throw new Error("Not initialized")
+        }
+        return {
+            queryRegion: DEFAULT_QUERY_REGION,
+            subscribeToQueries: this.peer.options.isServer,
+            accessController: {
+
+                type: TRUST_REGION_ACCESS_CONTROLLER
+            } as any,
+            replicate: this.peer.options.isServer,
+            directory: this.peer.options.storeDirectory,
+            typeMap: {},
+            nameResolver: (name: string) => this.getDBName(name)
+        }
     }
 
     async init(from: AnyPeer, parentShardCID?: string): Promise<Shard<T>> {
@@ -140,18 +155,8 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
         await this.close();
         this.peer = from;
+        this.storeOptions = { ...this.defaultStoreOptions, ...this.storeOptions };
 
-        this.defaultStoreOptions = {
-            queryRegion: DEFAULT_QUERY_REGION,
-            subscribeToQueries: this.peer.options.isServer,
-            accessController: {
-                //write: [this.orbitDB.identity.id],
-                /*  trustRegionResolver: () => this.trust, */
-                type: TRUST_REGION_ACCESS_CONTROLLER
-            } as any,
-            replicate: this.peer.options.isServer,
-            directory: this.peer.options.storeDirectory
-        }
 
         if (parentShardCID) {
             this.parentShardCID = parentShardCID;
@@ -160,10 +165,10 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
         if (!this.trust) {
             this.trust = new P2PTrust({
-                rootTrust: PublicKey.from(from.orbitDB.identity),
+                rootTrust: from.orbitDB.identity.toSerializable(),
             })
         }
-        await this.trust.init(this.peer, (name) => this.getDBName(name), this.defaultStoreOptions);
+        await this.trust.init(this.peer.orbitDB, this.storeOptions);
 
 
         if (!this.shardPeerInfo) {
@@ -200,7 +205,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
                 }
                 await this.memoryRemoved.init(this); */
 
-        await this.interface.init(this.peer, (key: string) => this.getDBName(key), this.defaultStoreOptions);
+        await this.interface.init(this.peer.orbitDB, this.storeOptions);
 
 
 
@@ -334,7 +339,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
         // However though, we will not overshoot greatly 
 
         // Improvement: Make this synchronized across peers
-        // TODOadd proper memory check
+        // TODO add proper memory check
         /*   if (this.memoryAdded.db.value - this.memoryRemoved.db.value + sizeBytes > this.shardSize.toNumber()) {
               console.log('Max shard size achieved, request new shard');
               throw new Error("Please perform sharding for chain: " + this.cluster)
@@ -544,7 +549,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
         return (this.parentShardCID ? this.parentShardCID : '') + '-' + this.id + '-' + name;
     }
 
-    async save(node: IPFSInstanceExtended): Promise<string> {
+    async save(node: IPFSInstance): Promise<string> {
 
         let arr = serialize(this);
         let addResult = await node.add(arr)
@@ -554,11 +559,12 @@ export class Shard<T extends DBInterface> extends ResultSource {
     }
 
 
-    static async loadFromCID<T extends DBInterface>(cid: string, node: IPFSInstanceExtended) {
+    static async loadFromCID<T extends DBInterface>(cid: string, node: IPFSInstance, typeMap?: { [key: string]: Constructor<any> }) {
         let arr = await node.cat(cid);
         for await (const obj of arr) {
             let der = deserialize<Shard<T>>(Buffer.from(obj), Shard);
             der.cid = cid;
+            der.storeOptions = { typeMap } as any; // TODO ugly typings
             return der;
 
         }

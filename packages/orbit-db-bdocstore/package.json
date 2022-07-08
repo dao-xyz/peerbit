@@ -34,6 +34,7 @@
     "@dao-xyz/bquery": "^0.0.22",
     "@dao-xyz/orbit-db-query-store": "^0.0.29",
     "@dao-xyz/orbit-db-store": "^0.0.9",
+    "@dao-xyz/orbit-db": "^0.29.0",
     "p-map": "~1.1.1",
     "uuid": "^8.3.2"
   },

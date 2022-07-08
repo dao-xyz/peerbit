@@ -5,7 +5,7 @@ const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
 const Keystore = require('orbit-db-keystore')
-const IdentityProvider = require('orbit-db-identity-provider')
+import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 
 // Test utils
 const {
@@ -42,10 +42,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
         return Object.assign({}, defaultOptions, { id: user, keystore, signingKeystore })
       })
 
-      testIdentity = await IdentityProvider.createIdentity(options[0])
-      testIdentity2 = await IdentityProvider.createIdentity(options[1])
-      testIdentity3 = await IdentityProvider.createIdentity(options[2])
-      testIdentity4 = await IdentityProvider.createIdentity(options[3])
+      testIdentity = await Identities.createIdentity(options[0])
+      testIdentity2 = await Identities.createIdentity(options[1])
+      testIdentity3 = await Identities.createIdentity(options[2])
+      testIdentity4 = await Identities.createIdentity(options[3])
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })

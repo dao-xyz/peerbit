@@ -1,4 +1,3 @@
-'use strict'
 
 const pSeries = require('p-series')
 const PeerMonitor = require('ipfs-pubsub-peer-monitor')

@@ -1,12 +1,12 @@
 import { DocumentIndex, LogEntry } from './document-index';
-import { Identity } from 'orbit-db-identity-provider';
+import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { Constructor } from '@dao-xyz/borsh';
 import { QueryRequestV0, Result, ResultSource } from '@dao-xyz/bquery';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
-import OrbitDB from 'orbit-db';
+import { OrbitDB } from '@dao-xyz/orbit-db';
 export declare const BINARY_DOCUMENT_STORE_TYPE = "bdoc_store";
 export declare type DocumentStoreOptions<T> = IQueryStoreOptions<T, DocumentIndex<T>> & {
     indexBy?: string;
@@ -23,9 +23,7 @@ export declare class BinaryDocumentStoreOptions<T extends ResultSource> extends 
         indexBy: string;
         objectType: string;
     });
-    newStore(address: string, orbitDB: OrbitDB, typeMap: {
-        [key: string]: Constructor<any>;
-    }, options: IBinaryDocumentStoreOptions<T>): Promise<BinaryDocumentStore<T>>;
+    newStore(address: string, orbitDB: OrbitDB, options: IBinaryDocumentStoreOptions<T>): Promise<BinaryDocumentStore<T>>;
     get identifier(): string;
 }
 export declare class BinaryDocumentStore<T extends ResultSource> extends QueryStore<T, DocumentIndex<T>, IBinaryDocumentStoreOptions<T>> {
