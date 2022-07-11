@@ -43,5 +43,5 @@
     "@dao-xyz/orbit-db-bdocstore": "^0.0.54",
     "ipfs": "^0.62.3"
   },
-  "gitHead": "057af76aa01f7a51c012329ee620828512d22e74"
+  "gitHead": "d10b89ef1a120a58e1a7e92aadcc2bb536a37e3e"
 }
