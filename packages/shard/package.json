@@ -51,7 +51,6 @@
         "@dao-xyz/orbit-db-identity-provider": "^0.5.4",
         "@dao-xyz/orbit-db-pubsub": "^0.6.8",
         "@dao-xyz/orbit-db-store-interface": "^0.0.5",
-        "@dao-xyz/peer": "^0.0.1",
         "@dao-xyz/time": "^0.0.8",
         "@solana/web3.js": "^1.41.3",
         "bn.js": "^5.2.0",

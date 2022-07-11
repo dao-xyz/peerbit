@@ -1,6 +1,6 @@
 {
     "private": true,
-    "name": "@dao-xyz/web3-orbit",
+    "name": "@dao-xyz/shorbit",
     "author": "dao.xyz",
     "repository": "https://github.com/@dao-xyz/sdk",
     "license": "Apache-2.0",
