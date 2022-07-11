@@ -1,0 +1,160 @@
+diff --git a/node_modules/ipfs-core/cjs/src/components/libp2p.js b/node_modules/ipfs-core/cjs/src/components/libp2p.js
+index 68cb57c..ecd01c9 100644
+--- a/node_modules/ipfs-core/cjs/src/components/libp2p.js
++++ b/node_modules/ipfs-core/cjs/src/components/libp2p.js
+@@ -16,7 +16,7 @@ var bootstrap = require('libp2p-bootstrap');
+ var Libp2p = require('libp2p');
+ var ipns = require('ipns');
+ 
+-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
++function _interopDefaultLegacy(e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+ 
+ function _interopNamespace(e) {
+   if (e && e.__esModule) return e;
+@@ -46,8 +46,8 @@ var Libp2p__default = /*#__PURE__*/_interopDefaultLegacy(Libp2p);
+ var ipns__namespace = /*#__PURE__*/_interopNamespace(ipns);
+ 
+ const mergeOptions = mergeOpts__default["default"].bind({ ignoreUndefined: true });
+-function createLibp2p({options = {}, peerId, multiaddrs = [], repo, keychainConfig = {}, config = {}}) {
+-  const {datastore, keys} = repo;
++function createLibp2p({ options = {}, peerId, multiaddrs = [], repo, keychainConfig = {}, config = {} }) {
++  const { datastore, keys } = repo;
+   const libp2pOptions = getLibp2pOptions({
+     options,
+     config,
+@@ -68,11 +68,11 @@ function createLibp2p({options = {}, peerId, multiaddrs = [], repo, keychainConf
+   }
+   return Libp2p__default["default"].create(libp2pOptions);
+ }
+-function getLibp2pOptions({options, config, datastore, keys, keychainConfig, peerId, multiaddrs}) {
++function getLibp2pOptions({ options, config, datastore, keys, keychainConfig, peerId, multiaddrs }) {
+   const getPubsubRouter = () => {
+     const router = get__default["default"](config, 'Pubsub.Router') || 'gossipsub';
+     if (!libp2pPubsubRouters.routers[router]) {
+-      throw errCode__default["default"](new Error(`Router unavailable. Configure libp2p.modules.pubsub to use the ${ router } router.`), 'ERR_NOT_SUPPORTED');
++      throw errCode__default["default"](new Error(`Router unavailable. Configure libp2p.modules.pubsub to use the ${router} router.`), 'ERR_NOT_SUPPORTED');
+     }
+     return libp2pPubsubRouters.routers[router];
+   };
+@@ -89,6 +89,7 @@ function getLibp2pOptions({options, config, datastore, keys, keychainConfig, pee
+     },
+     config: {
+       peerDiscovery: {
++        autoDial: options.autoDial !== undefined ? options.autoDial : true,
+         mdns: { enabled: get__default["default"](options, 'config.Discovery.MDNS.Enabled', get__default["default"](config, 'Discovery.MDNS.Enabled', true)) },
+         webRTCStar: { enabled: get__default["default"](options, 'config.Discovery.webRTCStar.Enabled', get__default["default"](config, 'Discovery.webRTCStar.Enabled', true)) },
+         bootstrap: { list: get__default["default"](options, 'config.Bootstrap', get__default["default"](config, 'Bootstrap', [])) }
+@@ -122,7 +123,7 @@ function getLibp2pOptions({options, config, datastore, keys, keychainConfig, pee
+       datastore: keys,
+       ...keychainConfig
+     },
+-    host: { agentVersion: `js-ipfs/${ version.ipfsCore }` }
++    host: { agentVersion: `js-ipfs/${version.ipfsCore}` }
+   };
+   let constructorOptions = get__default["default"](options, 'libp2p', undefined);
+   if (typeof constructorOptions === 'function') {
+diff --git a/node_modules/ipfs-core/cjs/src/components/network.js b/node_modules/ipfs-core/cjs/src/components/network.js
+index 060adee..fab1317 100644
+--- a/node_modules/ipfs-core/cjs/src/components/network.js
++++ b/node_modules/ipfs-core/cjs/src/components/network.js
+@@ -8,7 +8,7 @@ var multiaddr = require('multiaddr');
+ var errCode = require('err-code');
+ var blockStorage = require('../block-storage.js');
+ 
+-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
++function _interopDefaultLegacy(e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+ 
+ var errCode__default = /*#__PURE__*/_interopDefaultLegacy(errCode);
+ 
+@@ -20,13 +20,13 @@ class Network {
+     this.repo = repo;
+     this.blockstore = blockstore;
+   }
+-  static async start({peerId, repo, print, hashers, options}) {
++  static async start({ peerId, repo, print, hashers, options }) {
+     if (repo.closed) {
+       await repo.open();
+     }
+     const config = await repo.config.getAll();
+     const libp2p$1 = await libp2p.createLibp2p({
+-      options,
++      options: options.libp2p,
+       repo,
+       peerId,
+       multiaddrs: readAddrs(peerId, config),
+@@ -38,7 +38,7 @@ class Network {
+     }
+     await libp2p$1.start();
+     for (const ma of libp2p$1.multiaddrs) {
+-      print(`Swarm listening on ${ ma }/p2p/${ peerId.toB58String() }`);
++      print(`Swarm listening on ${ma}/p2p/${peerId.toB58String()}`);
+     }
+     const bitswap = ipfsBitswap.createBitswap(libp2p$1, repo.blocks, {
+       statsEnabled: true,
+@@ -68,7 +68,7 @@ const readAddrs = (peerId, config) => {
+     }
+     const maId = ma.getPeerId();
+     if (maId && maId !== peerIdStr) {
+-      ma = ma.encapsulate(`/p2p/${ peerIdStr }`);
++      ma = ma.encapsulate(`/p2p/${peerIdStr}`);
+     }
+     addrs.push(ma);
+   }
+diff --git a/node_modules/ipfs-core/cjs/src/components/storage.js b/node_modules/ipfs-core/cjs/src/components/storage.js
+index 80d9e34..2606cf1 100644
+--- a/node_modules/ipfs-core/cjs/src/components/storage.js
++++ b/node_modules/ipfs-core/cjs/src/components/storage.js
+@@ -14,7 +14,7 @@ var errors$1 = require('../errors.js');
+ var libp2p = require('./libp2p.js');
+ var errors = require('ipfs-repo/errors');
+ 
+-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
++function _interopDefaultLegacy(e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+ 
+ var debug__default = /*#__PURE__*/_interopDefaultLegacy(debug);
+ var getDefaultConfig__default = /*#__PURE__*/_interopDefaultLegacy(getDefaultConfig);
+@@ -43,7 +43,7 @@ class Storage {
+       autoMigrate: repoAutoMigrate,
+       onMigrationProgress: onMigrationProgress
+     }) : inputRepo;
+-    const {peerId, keychain, isNew} = await loadRepo(print, repo$1, options);
++    const { peerId, keychain, isNew } = await loadRepo(print, repo$1, options);
+     return new Storage(peerId, keychain, repo$1, print, isNew);
+   }
+ }
+@@ -99,7 +99,7 @@ const initRepo = async (print, repo, options) => {
+     }
+   }
+   const libp2p$1 = await libp2p.createLibp2p({
+-    options: undefined,
++    options: options.libp2p,
+     multiaddrs: undefined,
+     peerId,
+     repo,
+@@ -119,7 +119,7 @@ const decodePeerId = peerId => {
+   log('using user-supplied private-key');
+   return typeof peerId === 'object' ? peerId : PeerId__default["default"].createFromPrivKey(fromString.fromString(peerId, 'base64pad'));
+ };
+-const initPeerId = (print, {algorithm = 'Ed25519', bits = 2048}) => {
++const initPeerId = (print, { algorithm = 'Ed25519', bits = 2048 }) => {
+   print('generating %s keypair...', algorithm);
+   return PeerId__default["default"].create({
+     keyType: algorithm,
+@@ -144,7 +144,7 @@ const configureRepo = async (repo, options) => {
+   }
+   const peerId = await PeerId__default["default"].createFromPrivKey(changed.Identity.PrivKey);
+   const libp2p$1 = await libp2p.createLibp2p({
+-    options: undefined,
++    options: options.libp2p,
+     multiaddrs: undefined,
+     peerId,
+     repo,
+@@ -167,7 +167,7 @@ const applyProfiles = (config, profiles$1) => {
+   return (profiles$1 || []).reduce((config, name) => {
+     const profile = profiles.profiles[name];
+     if (!profile) {
+-      throw new Error(`Could not find profile with name '${ name }'`);
++      throw new Error(`Could not find profile with name '${name}'`);
+     }
+     log('applying profile %s', name);
+     return profile.transform(config);

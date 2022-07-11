@@ -1,0 +1,296 @@
+<html>
+  <head>
+    <meta charset="utf-8">
+    <link href="https://fonts.googleapis.com/css?family=Tajawal" rel="stylesheet">
+
+    <style type="text/css">
+      body {
+        font-family: 'Tajawal', sans-serif;
+        margin: 0;
+        padding: 0em 4em;
+        line-height: 1.1;
+      }
+
+      h1 {
+        font-size: 3em;
+        text-transform: uppercase;
+        margin: 0;
+      }
+
+      h2 {
+        font-size: 1em;
+        text-transform: uppercase;
+        margin: 0;
+        color: rgba(0, 0, 0, 0.5);
+      }
+
+      span {
+        font-size: 0.7em;
+      }
+
+      #parameters {
+        margin: 2em 0em;
+        margin-top: 0.75em;
+      }
+
+      #output-load, #output-create {
+        margin: 0;
+      }
+
+      #log {
+        margin: 2em 0em;
+      }
+
+      #output-create {
+        padding-top: 0.25em;
+      }
+
+      #startButton {
+        margin: 0em 1em;
+        font-weight: 700;
+        padding: 0.25em 2em;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="parameters">
+      <span>Log Length</span>
+      <input type="text" name="" id="countInput" value="100">
+      <span>References Depth</span>
+      <input type="text" name="" id="refCountInput" value="32">
+      <span>Parallelism</span>
+      <input type="text" name="" id="concurrencyInput" value="64">
+      <span>Latency (ms)</span>
+      <input type="text" name="" id="delayInput" value="0">
+      <span>In-Memory</span>
+      <input type="checkbox" name="" id="useMemStoreInput" checked>
+      <button id="startButton">Load!</button>
+    </div>
+    <h1>ipfs-log</h1>
+    <h2>loading visualization</h2>
+    <a href="https://github.com/orbitdb/ipfs-log">https://github.com/orbitdb/ipfs-log</a>
+    <div id="log">
+      <svg id="log-svg" width=10000 height=4 shape-rendering="optimizeSpeed">
+        <rect id="totalPercentage"></rect>
+        <g id="loadProgressPercentage"></g>
+        <rect id="createProgressPercentage"></rect>
+      </svg>
+    </div>
+    <pre id="output-create"></pre>
+    <pre id="output-load"></pre>
+    <script type="text/javascript" src="bundle.js" charset="utf-8"></script>
+    <script src="https://d3js.org/d3.v5.min.js"></script>
+
+    <script>
+      const outputLoadingElm = document.getElementById('output-load')
+      const outputElm = document.getElementById('output-create')
+      const logElm = document.getElementById('log')
+      /* Adjustable parameters */
+      const startButtonElm = document.getElementById('startButton')
+      const concurrencyElm = document.getElementById('concurrencyInput')
+      const countElm = document.getElementById('countInput')
+      const refCountElm = document.getElementById('refCountInput')
+      const delayElm = document.getElementById('delayInput')
+      const useMemStoreElm = document.getElementById('useMemStoreInput')
+      let concurrency = parseInt(concurrencyElm.value)
+      let count = parseInt(countElm.value)
+      let refCount = parseInt(refCountElm.value)
+      let delay = parseInt(delayElm.value)
+
+      let _ipfsObjectPut, _ipfsObjectGet
+
+      const ipfs = new Ipfs({
+        repo: './ipfs-log/examples/browser/loader-viz',
+        start: false,
+        EXPERIMENTAL: {
+          pubsub: true
+        },
+      })
+
+      ipfs.on('error', (e) => console.error(e))
+
+      ipfs.on('ready', async () => {
+        run()
+      })
+
+      let log
+
+      const sleep = (ms = 1000) => new Promise(resolve => setTimeout(resolve, ms))
+
+      const initMemStore = () => {
+        const memstore = new MemStore(ipfs)
+        if (!_ipfsObjectGet && !_ipfsObjectPut) {
+          _ipfsObjectGet = ipfs.object.get.bind(ipfs)
+          _ipfsObjectPut = ipfs.object.put.bind(ipfs)
+        }
+        ipfs.object.put = memstore.put.bind(memstore)
+        ipfs.object.get = memstore.get.bind(memstore)
+      }
+
+      const resetMemStore = () => {
+        if (_ipfsObjectGet && _ipfsObjectPut) {
+          ipfs.object.put = _ipfsObjectPut
+          ipfs.object.get = _ipfsObjectGet
+        }
+        _ipfsObjectGet = null
+        _ipfsObjectPut = null
+      }
+
+      const run = async () => {
+        const useMemStore = useMemStoreElm.checked
+        if (useMemStore) {
+          initMemStore()
+        } else {
+          resetMemStore()
+        }
+
+        startButtonElm.removeEventListener('click', run)
+        startButtonElm.disabled = true
+        await resetRendering()
+
+        concurrency = parseInt(concurrencyElm.value)
+        count = parseInt(countElm.value)
+        refCount = parseInt(refCountElm.value)
+        delay = parseInt(delayElm.value)
+
+        outputElm.innerHTML = `Creating a log... 0 / ${count}<br>`
+        outputLoadingElm.innerHTML = ""
+        await sleep(100)
+
+        window.onLogCreationStarted()
+
+        const st = new Date().getTime()
+        const identity = await IdentityProvider.createIdentity({ id: "example" })
+        log = new Log(ipfs, identity)
+
+        for (let i = 1; i < count + 1; i ++) {
+          const hash = await log.append('hello' + i, refCount)
+          if (i % 10 === 0) {
+            await onLogCreateUpdated(log, i, hash)
+          }
+        }
+
+        const lt2 = new Date().getTime()
+        setTimeout(() => {
+          outputElm.innerHTML = `Creating a log... ${count} / ${count} (${(lt2 - st)} ms)`
+        }, 100)
+
+        window.onLogCreated()
+
+        const lt1 = new Date().getTime()
+        const result = await EntryIO.fetchAll(
+          ipfs,
+          log.heads.map(e => e.hash),
+          {
+            length: -1,
+            exclude: [],
+            timeout: 20000,
+            onProgressCallback: window.onDataUpdated,
+            onStartProgressCallback: null,
+            concurrency,
+            delay
+          }
+        )
+        const et = new Date().getTime()
+        setTimeout(() => {
+          outputLoadingElm.innerHTML = "Loading a log...  " + result.length + " / " + log.length + " (" + (et - lt1) + " ms)<br>"
+          outputLoadingElm.innerHTML += "Duration: " + (et - st) + " ms<br>"
+          startButtonElm.addEventListener('click', run)
+          startButtonElm.disabled = false
+        }, 100)
+      }
+
+      /* Rendering */
+
+      let sizeY = 6
+      let sizeX = logElm.clientWidth / count
+      const margin = 0
+
+      let svgContainer
+      let data = Array(count).fill(0)
+
+      const resetRendering = async () => {
+        logLength = 0
+        data = []
+        const w = logElm.clientWidth
+
+        svgContainer = d3.select("#log-svg")
+          .attr("width", w)
+          .attr("height", sizeY)
+
+        svgContainer.select("#totalPercentage")
+          .attr("height", sizeY)
+          .attr("width", w)
+          .style("fill", "rgb(228, 228, 228)")
+
+        svgContainer.select("#loadProgressPercentage")
+          .selectAll("rect")
+          .remove()
+
+        return new Promise((resolve) => setTimeout(resolve, 0))
+      }
+
+      window.onresize = (event) => {
+        sizeX = logElm.clientWidth / count
+      }
+
+      let createProgressRenderInterval
+
+      let logLength = 0
+      window.onLogCreateUpdated = (log, progress, entry) => {
+        logLength = progress
+          outputElm.innerHTML = "Creating a log... " + logLength + " / " + count + "<br>"
+
+          svgContainer.select("#createProgressPercentage")
+            .attr("height", sizeY)
+            .attr("width", (logLength / (count / logElm.clientWidth)))
+            .style("fill", "rgba(164, 164, 164)")
+
+        return new Promise((resolve) => setTimeout(resolve, 0))
+      }
+
+      window.onLogCreationStarted = () => {
+        logLength = 0
+      }
+
+      let loadLength = 0
+      window.onDataUpdated = (hash, entry, resultLength, result, queue) => {
+        loadLength = resultLength
+        data[data.length - entry.clock.time] = 1
+
+        const w = logElm.clientWidth
+        count = parseInt(countElm.value)
+
+        svgContainer.select("#loadProgressPercentage")
+          .selectAll("rect")
+          .data(data)
+          .join(
+            enter => enter.append("rect")
+              .attr("x", (d, i) => i * (w / count))
+              .attr("width", (w / count))
+              .attr("height", sizeY)
+              .style("fill", "rgb(164, 164, 164)"),
+            update => update
+              .attr("x", (d, i) => i * (w / count))
+              .attr("width", (w / count))
+              .style("fill", d => d === 0 ? "rgb(164, 164, 164)" : "rgb(112, 228, 112)"),
+            exit => exit
+              .remove(),
+          )
+
+        outputLoadingElm.innerHTML = "Loading a log...  " + loadLength + " / " + count
+
+        return new Promise((resolve) => setTimeout(resolve, 0))
+      }
+
+      window.onLogCreated = () => {
+        svgContainer.select("#createProgressPercentage")
+          .attr("width", 0)
+          .attr("height", 0)
+
+        count = parseInt(countElm.value)
+        data = Array(count).fill(0)
+      }
+    </script>
+  </body>
+</html>

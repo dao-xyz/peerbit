@@ -1,0 +1,40 @@
+{
+  "name": "@dao-xyz/orbit-db-pubsub",
+  "version": "0.6.8",
+  "description": "Message propagation module for orbit-db",
+  "main": "index.js",
+  "homepage": "https://github.com/orbitdb/orbit-db-pubsub",
+  "bugs": "https://github.com/orbitdb/orbit-db-pubsub/issues",
+  "keywords": [
+    "orbitdb",
+    "orbit-db",
+    "pubsub"
+  ],
+  "files": [
+    "*"
+  ],
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "author": "Haad",
+  "contributors": [
+    "haadcode",
+    "mistakia",
+    "oed",
+    "RichardLitt",
+    "adam-palazzo"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "ipfs-pubsub-peer-monitor": "~0.0.5",
+    "logplease": "~1.2.14",
+    "p-series": "^1.1.0"
+  },
+  "localMaintainers": [
+    "dao.xyz"
+  ],
+  "gitHead": "d10b89ef1a120a58e1a7e92aadcc2bb536a37e3e"
+}

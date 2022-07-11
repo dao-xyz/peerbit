@@ -1,17 +1,24 @@
 import { Constructor } from "@dao-xyz/borsh";
-import { Payload } from "./Payload";
+import { IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
+import { Hashable } from "./utils";
+export interface LogEntry<T> {
+    identity: IdentitySerializable;
+    payload: Payload<T>;
+}
+export interface Payload<T> {
+    op?: string;
+    key?: string;
+    value: T;
+}
 export declare class DocumentIndex<T> {
     _index: {
-        [key: string]: {
-            payload: Payload;
-        };
+        [key: string]: LogEntry<T>;
     };
     clazz: Constructor<T>;
     constructor();
     init(clazz: Constructor<T>): void;
-    get(key: any, fullOp?: boolean): {
-        payload: Payload;
-    };
-    updateIndex(oplog: any, onProgressCallback: any): void;
+    get(key: Hashable, fullOp?: boolean): (LogEntry<T> | T);
+    updateIndex(oplog: any): Promise<void>;
     deserializeOrPass(value: string | T): T;
+    deserializeOrItem(item: LogEntry<T | string>): LogEntry<T>;
 }

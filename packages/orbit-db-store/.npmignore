@@ -1,0 +1,10 @@
+*sublime*
+node_modules/
+orbitdb/
+dist/*.min.js.map
+test
+conf
+Makefile
+.circleci
+.github/
+.nyc_output/

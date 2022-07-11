@@ -1,0 +1,127 @@
+{
+  "name": "@dao-xyz/orbit-db",
+  "version": "0.29.4",
+  "description": "Distributed p2p database on IPFS",
+  "author": "Haad",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/orbitdb/orbit-db"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "files": [
+    "src",
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "lib/cjs/index.js",
+  "module": "lib/esm/index.mjs",
+  "types": "lib/esm/index.d.ts",
+  "exports": {
+    "import": "./lib/esm/index.mjs",
+    "require": "./lib/cjs/index.js"
+  },
+  "dependencies": {
+    "@dao-xyz/orbit-db-identity-provider": "^0.5.4",
+    "@dao-xyz/orbit-db-store": "^0.0.13",
+    "ipfs-pubsub-1on1": "0.0.8",
+    "is-node": "^1.0.2",
+    "localstorage-down": "^0.6.7",
+    "logplease": "^1.2.14",
+    "multihashes": "~3.0.1",
+    "orbit-db-access-controllers": "^0.3.2",
+    "orbit-db-cache": "~0.3.0",
+    "orbit-db-counterstore": "^1.12.1",
+    "orbit-db-docstore": "~1.12.0",
+    "orbit-db-eventstore": "~1.12.0",
+    "orbit-db-feedstore": "~1.12.0",
+    "orbit-db-io": "^1.0.1",
+    "orbit-db-keystore": "~0.3.0",
+    "orbit-db-kvstore": "~1.12.0",
+    "orbit-db-pubsub": "~0.6.0",
+    "orbit-db-storage-adapter": "~0.5.3",
+    "orbit-db-store": "^4.3.4",
+    "wherearewe": "^1.0.2"
+  },
+  "devDependencies": {
+    "adm-zip": "^0.4.16",
+    "babel-cli": "^6.26.0",
+    "babel-core": "^6.26.0",
+    "babel-loader": "^8.1.0",
+    "babel-plugin-transform-runtime": "^6.23.0",
+    "babel-polyfill": "^6.26.0",
+    "babel-preset-env": "^1.7.0",
+    "chromium": "^3.0.3",
+    "cpy-cli": "^3.1.1",
+    "cross-env": "^7.0.2",
+    "eslint": "^6.8.0",
+    "fs-extra": "^9.0.1",
+    "ganache-cli": "^6.12.2",
+    "go-ipfs": "^0.9.1",
+    "ipfs": "^0.62.3",
+    "ipfsd-ctl": "^10.0.3",
+    "localstorage-level-migration": "~0.1.0",
+    "markdown-toc": "^1.2.0",
+    "mkdirp": "^1.0.4",
+    "node-pre-gyp": "^0.13.0",
+    "open-cli": "^6.0.1",
+    "orbit-db-test-utils": "^1.3.0",
+    "p-each-series": "^2.1.0",
+    "p-map": "^4.0.0",
+    "p-map-series": "^2.1.0",
+    "p-whilst": "^2.1.0",
+    "pify": "^5.0.0",
+    "puppeteer-core": "^13.4.0",
+    "remark-cli": "^8.0.1",
+    "remark-validate-links": "^10.0.2",
+    "rimraf": "^3.0.2",
+    "standard": "^14.3.4",
+    "validate-maintainers": "^1.2.2",
+    "web3": "^1.5.3",
+    "webpack": "^4.41.2",
+    "webpack-cli": "^3.3.10"
+  },
+  "scripts": {
+    "examples:eventlog": "node examples/eventlog.js",
+    "examples:keyvalue": "node examples/keyvalue.js",
+    "examples:browser": "open-cli examples/browser/browser.html",
+    "examples:browser-webpack": "open-cli examples/browser/browser-webpack-example/index.html",
+    "lint:docs": "remark -qf -u validate-links .",
+    "test:all": "npm run test:browser-multiple-tabs && npm run test",
+    "test": "cross-env TEST=all mocha --config test/.mocharc.js",
+    "test:browser-multiple-tabs": "npm run build:dist && cpy dist/orbitdb.min.js ./test/browser --rename=orbitdb.js && cpy node_modules/ipfs/index.min.js ./test/browser --rename=ipfs.js && cpy node_modules/orbit-db-identity-provider/dist/index-browser.min.js ./test/browser --rename=identities.js && cpy node_modules/ipfs-log/dist/ipfslog.min.js ./test/browser && mocha ./test/browser/concurrent.spec.js",
+    "clean": "shx rm -rf lib/*",
+    "build": "yarn clean && tsc -p tsconfig.json; tsc-esm -p tsconfig.json && tsc -p tsconfig.cjs.json",
+    "postbuild": "echo '{\"type\":\"commonjs\"}' | npx json > lib/cjs/package.json && echo '{\"type\":\"module\"} ' | npx json > lib/esm/package.json",
+    "build:examples": "webpack --config conf/webpack.example.config.js --sort-modules-by size",
+    "build:docs/toc": "markdown-toc --no-first1 -i README.md && markdown-toc --no-first1 -i API.md && markdown-toc --no-first1 -i GUIDE.md && markdown-toc --no-first1 -i CHANGELOG.md && markdown-toc --no-first1 -i FAQ.md "
+  },
+  "standard": {
+    "env": "mocha",
+    "ignore": [
+      "test/**",
+      "examples/**",
+      "benchmarks/**"
+    ]
+  },
+  "localMaintainers": [
+    "haad <haad@haja.io>",
+    "shamb0t <shams@haja.io>",
+    "hajamark <mark@haja.io>"
+  ],
+  "keywords": [
+    "crdt",
+    "database",
+    "decentralized",
+    "decentralised",
+    "distributed",
+    "ipfs",
+    "p2p",
+    "peer-to-peer"
+  ],
+  "gitHead": "d10b89ef1a120a58e1a7e92aadcc2bb536a37e3e"
+}

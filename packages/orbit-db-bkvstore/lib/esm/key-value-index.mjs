@@ -10,7 +10,7 @@ export class KeyValueIndex {
     get(key) {
         return this._index[key];
     }
-    updateIndex(oplog) {
+    async updateIndex(oplog) {
         if (!this.clazz) {
             throw new Error("Not initialized");
         }
