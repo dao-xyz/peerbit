@@ -32,11 +32,11 @@
     "devDependencies": {
         "@dao-xyz-types/orbit-db": "^0.0.29",
         "@types/ipfs": "https://github.com/lukas2005/types-ipfs.git",
-        "@types/mz": "^2.7.4",
-        "ipfs": "^0.62.3",
-        "ipfs-core-types": "^0.10.3"
+        "@types/mz": "^2.7.4"
     },
     "dependencies": {
+        "ipfs": "^0.62.3",
+        "ipfs-core-types": "^0.10.3",
         "@dao-xyz/orbit-db": "^0.29.7",
         "@dao-xyz/time": "^0.0.9",
         "ipfsd-ctl": "^12.0.0"
