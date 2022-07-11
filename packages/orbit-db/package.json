@@ -12,8 +12,9 @@
     "node": ">=16.0.0"
   },
   "files": [
+    "lib",
     "src",
-    "dist"
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"
