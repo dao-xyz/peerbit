@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peer-test-utils",
-    "version": "0.0.15",
+    "version": "0.0.16",
     "author": "dao-xyz.network",
     "repository": "https://github.com/@dao-xyz/dao-xyz-ts",
     "license": "Apache-2.0",
@@ -30,15 +30,15 @@
         "test:integration": "node ../node_modules/.bin/jest test -c  ../jest.config.integration.cjs --runInBand --forceExit"
     },
     "devDependencies": {
-        "@dao-xyz-types/orbit-db": "^0.0.26",
+        "@dao-xyz-types/orbit-db": "^0.0.27",
         "@types/ipfs": "https://github.com/lukas2005/types-ipfs.git",
         "@types/mz": "^2.7.4",
         "ipfs": "^0.62.3",
         "ipfs-core-types": "^0.10.3"
     },
     "dependencies": {
-        "@dao-xyz/orbit-db": "^0.29.4",
-        "@dao-xyz/time": "^0.0.8",
+        "@dao-xyz/orbit-db": "^0.29.5",
+        "@dao-xyz/time": "^0.0.9",
         "ipfsd-ctl": "^12.0.0"
     },
     "gitHead": "d10b89ef1a120a58e1a7e92aadcc2bb536a37e3e"
