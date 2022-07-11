@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz-types/orbit-db",
-  "version": "0.0.22",
+  "version": "0.0.23",
   "description": "Unofficial typings for orbit-db",
   "types": "index.d.ts",
   "keywords": [
@@ -17,14 +17,14 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@dao-xyz/orbit-db-store": "^0.0.9",
-    "@dao-xyz/ipfs-log": "^5.5.5"
+    "@dao-xyz/ipfs-log": "^5.5.5",
+    "@dao-xyz/orbit-db-store": "^0.0.9"
   },
   "dependencies": {
+    "@dao-xyz/orbit-db": "^0.29.1",
     "@types/elliptic": "^6.4.6",
     "@types/events": "^1.2.0",
-    "@types/ipfs": "https://git@github.com/lukas2005/types-ipfs.git",
-    "@dao-xyz/orbit-db": "^0.29.0"
+    "@types/ipfs": "https://git@github.com/lukas2005/types-ipfs.git"
   },
   "gitHead": "62040f90296fad19bc5275a096e7523b28fae116"
 }

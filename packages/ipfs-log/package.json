@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/ipfs-log",
-  "version": "5.5.5",
+  "version": "5.5.6",
   "description": "Append-only log CRDT on IPFS",
   "author": "Haad",
   "license": "MIT",
@@ -29,9 +29,9 @@
     "crdt"
   ],
   "dependencies": {
+    "@dao-xyz/orbit-db-identity-provider": "^0.5.1",
     "json-stringify-deterministic": "^1.0.1",
     "multihashing-async": "^2.0.1",
-    "@dao-xyz/orbit-db-identity-provider": "^0.5.0",
     "orbit-db-io": "^1.0.2",
     "p-do-whilst": "^1.1.0",
     "p-each-series": "^2.1.0",

@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-store-interface",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Interaces for orbit db stores, to enable smooth io",
   "type": "module",
   "sideEffects": false,
@@ -30,11 +30,11 @@
   "author": "dao.xyz",
   "license": "MIT",
   "dependencies": {
-    "@dao-xyz/bquery": "^0.0.22",
     "@dao-xyz/borsh": "^2.1.3",
+    "@dao-xyz/bquery": "^0.0.23",
     "@dao-xyz/peer": "^0.0.1",
-    "@dao-xyz/peer-test-utils": "^0.0.11",
-    "@dao-xyz/time": "^0.0.4",
+    "@dao-xyz/peer-test-utils": "^0.0.12",
+    "@dao-xyz/time": "^0.0.5",
     "uuid": "^8.3.2"
   },
   "devDependencies": {
