@@ -1,0 +1,10 @@
+141 error Error: Command failed with exit code 1: git add -- packages/orbit-db-identity-provider/package.json packages/time/package.json packages/orbit-db-pubsub/package.json packages/orbit-db-pubsub/package-lock.json packages/ipfs-log/package.json packages/orbit-db-store/package.json packages/orbit-db/package.json packages/orbit-db-bstores/package.json packages/orbit-db-types/package.json packages/peer-test-utils/package.json packages/bquery/package.json packages/orbit-db-store-interface/package.json packages/orbit-db-query-store/package.json packages/orbit-db-bfeedstore/package.json packages/orbit-db-bkvstore/package.json packages/orbit-db-string/package.json packages/orbit-db-bdocstore/package.json packages/orbit-db-trust-web/package.json packages/orbit-db-dynamic-access-controller/package.json packages/shard/package.json
+141 error The following paths are ignored by one of your .gitignore files:
+141 error packages/orbit-db
+141 error hint: Use -f if you really want to add them.
+141 error hint: Turn this message off by running
+141 error hint: "git config advice.addIgnoredFile false"
+141 error     at makeError (/Users/admin/git/web3-orbit/node_modules/execa/lib/error.js:60:11)
+141 error     at handlePromise (/Users/admin/git/web3-orbit/node_modules/execa/index.js:118:26)
+141 error     at processTicksAndRejections (node:internal/process/task_queues:96:5)
+141 error     at async Promise.all (index 0)
