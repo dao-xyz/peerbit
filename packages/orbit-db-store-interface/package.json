@@ -30,6 +30,7 @@
   "author": "dao.xyz",
   "license": "MIT",
   "dependencies": {
+    "@dao-xyz/bquery": "^0.0.22",
     "@dao-xyz/borsh": "^2.1.3",
     "@dao-xyz/peer": "^0.0.1",
     "@dao-xyz/peer-test-utils": "^0.0.11",

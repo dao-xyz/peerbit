@@ -5,7 +5,7 @@ import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store';
 import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
 import * as events from 'events';
 import { waitForReplicationEvents } from "./utils";
-import { ResultSource, query } from "@dao-xyz/bquery";
+import { ResultSource } from "@dao-xyz/bquery";
 import { OrbitDB } from "@dao-xyz/orbit-db";
 
 // Extends results source in order to be queried

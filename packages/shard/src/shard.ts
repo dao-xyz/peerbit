@@ -358,7 +358,9 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
     async replicate(peer: AnyPeer) {
         /// Shard counter might be wrong because someone else could request sharding at the same time
-
+        if (!v8) {
+            throw new Error("Can not replicate outside a Node environment");
+        }
         // check if enough memory 
         const usedHeap = v8.getHeapStatistics().used_heap_size;
         if (usedHeap > peer.options.heapSizeLimit) {
