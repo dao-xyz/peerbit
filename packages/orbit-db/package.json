@@ -15,6 +15,9 @@
     "src",
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "lib/cjs/index.js",
   "module": "lib/esm/index.mjs",
   "types": "lib/esm/index.d.ts",
@@ -119,5 +122,6 @@
     "ipfs",
     "p2p",
     "peer-to-peer"
-  ]
+  ],
+  "gitHead": "057af76aa01f7a51c012329ee620828512d22e74"
 }
