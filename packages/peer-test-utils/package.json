@@ -39,7 +39,7 @@
         "@dao-xyz/time": "^0.0.9",
         "ipfs": "^0.62.3",
         "ipfs-core-types": "^0.10.3",
-        "ipfsd-ctl": "^12.0.0"
+        "ipfsd-ctl": "^10.0.3"
     },
     "gitHead": "d10b89ef1a120a58e1a7e92aadcc2bb536a37e3e"
 }
