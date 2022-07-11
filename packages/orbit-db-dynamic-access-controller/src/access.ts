@@ -1,4 +1,4 @@
-import { field, variant, vec } from "@dao-xyz/borsh"
+import { field, option, variant, vec } from "@dao-xyz/borsh"
 import { serialize } from "@dao-xyz/borsh"
 import { AccessCondition } from "./condition"
 import bs58 from 'bs58';
@@ -17,7 +17,7 @@ export class AccessData {
 @variant(0)
 export class Access extends AccessData {
 
-    @field({ type: 'String' })
+    @field({ type: option('String') })
     id: string
 
     @field({ type: vec('u8') })
@@ -30,7 +30,6 @@ export class Access extends AccessData {
         super();
         if (options) {
             Object.assign(this, options);
-            this.setId();
         }
     }
 
@@ -39,11 +38,15 @@ export class Access extends AccessData {
         if (!this.accessTypes || !this.accessCondition) {
             throw new Error("Not initialized");
         }
-        return bs58.encode(Buffer.from(serialize(this)))
+        return bs58.encode(Buffer.from(serialize(new Access({
+            accessCondition: this.accessCondition,
+            accessTypes: this.accessTypes
+        }))))
     }
-    setId(): void {
-        this.id = undefined;
+
+    initialize(): Access {
         this.id = this.calculateId();
+        return this;
     }
 
     assertId() {

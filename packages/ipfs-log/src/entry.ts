@@ -72,7 +72,7 @@ export class Entry<T>{
       entry.identity = undefined;
     }
 
-    const signature = await identity.provider.sign(identity, Entry.toBuffer(entry))
+    const signature = await identity.provider.sign(identitySerializable, Entry.toBuffer(entry))
     entry.key = identity.publicKey
     entry.identity = identitySerializable
     entry.sig = signature

@@ -1,5 +1,4 @@
 
-import { AnyPeer } from '@dao-xyz/peer';
 import * as ipfs from 'ipfs';
 import fs from 'fs';
 

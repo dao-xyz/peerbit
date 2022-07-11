@@ -49,6 +49,7 @@
         "@dao-xyz/orbit-db-bkvstore": "^0.0.46",
         "@dao-xyz/orbit-db-pubsub": "^0.6.4",
         "@dao-xyz/orbit-db-store-interface": "^0.0.1",
+        "@dao-xyz/orbit-db-dynamic-access-controller": "^0.0.1",
         "@dao-xyz/time": "^0.0.4",
         "@solana/web3.js": "^1.41.3",
         "bn.js": "^5.2.0",

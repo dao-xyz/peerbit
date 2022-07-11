@@ -1,12 +1,11 @@
-import * as ipfs from 'ipfs';
-import { IPFS as IPFSInstance } from 'ipfs-core-types'
+
 // Can modify owned entries?
 // Can remove owned entries?
 // Can modify any entries?
 // Can remove any entries?
 
 // Relation with enc/dec?
-import { field, option, serialize, variant, vec } from "@dao-xyz/borsh";
+import { deserialize, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
 import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
 import { Entry } from '@dao-xyz/ipfs-log';
 import AccessController from "orbit-db-access-controllers/src/access-controller-interface";
@@ -16,7 +15,8 @@ import { OrbitDB } from '@dao-xyz/orbit-db';
 import { ACLInterface } from './acl-db';
 import { Access, AccessData } from './access';
 import { BinaryDocumentStoreOptions } from '@dao-xyz/orbit-db-bdocstore';
-
+import { P2PTrust } from "@dao-xyz/orbit-db-trust-web";
+import v8 from 'v8';
 
 
 
@@ -44,6 +44,143 @@ export class AccessRequest {
     }
 }
 
+export type AccessVerifier = (identity: IdentitySerializable) => Promise<boolean>
+
+
+
+
+export const DYNAMIC_ACCESS_CONTROLER = 'dynamic-access-controller';
+
+export class DynamicAccessController<T, B extends Store<T, any, any>> extends AccessController {
+
+    aclDB: ACLInterface;
+    _store: B;
+    _initializationPromise: Promise<void>;
+    _storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>;
+    _storeOptions: IStoreOptions<Access, any> & { trustResolver: () => P2PTrust };
+    _orbitDB: OrbitDB
+    _appendAll: boolean;
+    _heapSizeLimit: () => number;
+    _onMemoryExceeded: (entry: Entry<T>) => void;
+
+    @field({ type: 'String' })
+    name: string;
+
+    constructor(options?: { orbitDB: OrbitDB, name: string, heapSizeLimit: () => number, onMemoryExceeded: (entry: Entry<T>) => void, appendAll?: boolean, trustResolver: () => P2PTrust, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>, storeOptions: IStoreOptions<Access, any> }) {
+        super();
+        if (options) {
+            this._storeAccessCondition = options?.storeAccessCondition;
+            this.name = options?.name
+            if (!this.aclDB) {
+                this.aclDB = new ACLInterface({
+                    name: options.name + "_acl",
+                    storeOptions: new BinaryDocumentStoreOptions<Access>({
+                        indexBy: 'id',
+                        objectType: AccessData.name
+                    })
+                })
+            }
+            this._storeOptions = Object.assign({}, { typeMap: {}, trustResolver: options?.trustResolver }, options.storeOptions);
+            this._storeOptions.typeMap[AccessData.name] = AccessData;
+            this._orbitDB = options?.orbitDB;
+            this._appendAll = options.appendAll;
+            this._heapSizeLimit = options.heapSizeLimit;
+            this._onMemoryExceeded = options.onMemoryExceeded;
+        }
+    }
+
+    async load(cid: string): Promise<void> {
+        this._initializationPromise = new Promise(async (resolve, _reject) => {
+            let arr = await this._orbitDB._ipfs.cat(cid);
+            for await (const obj of arr) {
+                let der = deserialize(Buffer.from(obj), ACLInterface);
+                this.aclDB = der;
+                await this.aclDB.init(this._orbitDB, this._storeOptions);
+                await this.aclDB.load();
+            }
+            resolve();
+        })
+        await this._initializationPromise;
+
+
+    }
+
+    async save(): Promise<{ address: string }> {
+        if (!this.aclDB) {
+            throw new Error("Not initialized");
+        }
+        if (!this.aclDB.initialized) {
+            await this.aclDB.init(this._orbitDB, this._storeOptions);
+        }
+
+        let arr = serialize(this.aclDB);
+        let addResult = await this._orbitDB._ipfs.add(arr)
+        let pinResult = await this._orbitDB._ipfs.pin.add(addResult.cid)
+        return {
+            address: pinResult.toString()
+        };
+    }
+
+
+    setStore(store: B) {
+        this._store = store;
+    }
+
+
+    async canAppend(entry: Entry<any>, identityProvider: Identities) {
+        if (this._appendAll) {
+            return true;
+        }
+        await this._initializationPromise;
+
+        if (v8.getHeapStatistics().used_heap_size > this._heapSizeLimit()) {
+            if (this._onMemoryExceeded)
+                this._onMemoryExceeded(entry);
+            return false;
+        }
+
+
+        if (!identityProvider.verifyIdentity(entry.identity)) {
+            return false;
+        }
+
+        // Check whether it is trusted by trust web
+        if (await this._storeOptions.trustResolver().isTrusted(entry.identity)) {
+            return true;
+        }
+
+        if (await this.aclDB.allowed(entry)) {
+            return true; // Creator of entry does not own NFT or token, or publickey etc
+        }
+        return false;
+    }
+
+    get trust() {
+        return this._storeOptions.trustResolver();
+    }
+
+    async close() {
+        await this._initializationPromise;
+        await this.aclDB.close();
+    }
+
+    static get type() { return DYNAMIC_ACCESS_CONTROLER } // Return the type for this controller
+
+
+    static async create<T, B extends Store<T, any, any>>(orbitDB: OrbitDB, options: { name: string, appendAll?: boolean, heapSizeLimit: () => number, onMemoryExceeded: (entry: Entry<T>) => void, trustResolver: () => P2PTrust, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>, storeOptions: IStoreOptions<Access, any> }): Promise<DynamicAccessController<T, B>> {
+        const controller = new DynamicAccessController({ orbitDB, ...options })
+        return controller;
+    }
+}
+
+AccessControllers.addAccessController({ AccessController: DynamicAccessController })
+
+
+
+
+
+
+/* 
 @variant(0) // version
 export class SignedAccessRequest {
 
@@ -80,115 +217,4 @@ export class SignedAccessRequest {
         return identities.verify(this.signature, this.identity.publicKey, this.serializePresigned(), 'v1')
     }
 }
-
-export type AccessVerifier = (identity: IdentitySerializable) => Promise<boolean>
-
-
-
-
-export const DYNAMIC_ACCESS_CONTROLER = 'dynamic-access-controller';
-
-export class DynamicAccessController<T, B extends Store<T, any, any>> extends AccessController {
-
-    @field({ type: ACLInterface })
-    aclDB: ACLInterface;
-
-    _store: B;
-    _initializationPromise: Promise<void>;
-    _storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>;
-    _storeOptions: IStoreOptions<Access, any>;
-    _orbitDB: OrbitDB
-    constructor(options?: { orbitDB: OrbitDB, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>, storeOptions: IStoreOptions<Access, any> }) {
-        super();
-        this._storeAccessCondition = options?.storeAccessCondition;
-        if (!this.aclDB) {
-            this.aclDB = new ACLInterface({
-                name: 'acl',
-                storeOptions: new BinaryDocumentStoreOptions<Access>({
-                    indexBy: 'id',
-                    objectType: AccessData.name
-                })
-            })
-        }
-        this._storeOptions = options?.storeOptions;
-        this._storeOptions.typeMap[AccessData.name] = AccessData;
-        this._orbitDB = options?.orbitDB;
-    }
-
-    async load(_address: string): Promise<void> {
-
-
-        // ACL DB
-        this._initializationPromise = new Promise(async (resolve, reject) => {
-            await this.aclDB.init(this._orbitDB, this._storeOptions);
-            await this.aclDB.load();
-            resolve()
-        })
-        await this._initializationPromise;
-
-
-    }
-
-    setStore(store: B) {
-        this._store = store;
-    }
-
-    static get type() { return DYNAMIC_ACCESS_CONTROLER } // Return the type for this controller
-
-    async canAppend(entry: Entry<any>, identityProvider: Identities) {
-        await this._initializationPromise;
-        // logic to determine if entry can be added, for example:
-        /*  if (entry.payload === "hello world" && entry.identity.id === identity.id && identityProvider.verifyIdentity(entry.identity))
-           return true */
-
-        // Check identity
-        if (!identityProvider.verifyIdentity(entry.identity)) {
-            return false;
-        }
-
-        if (await !this.aclDB.allowed(entry)) {
-            return false; // Creator of entry does not own NFT or token, or publickey etc
-        }
-
-
-
-        // Verify message is trusted
-        /*         let key = PublicKey.from(entry.identity);
-         */
-        /*  if (!this.trustRegionResolver().isTrusted(key)) {
-                    return false
-                } */
-        return true;
-    }
-
-
-    /*  async load(address: string) {
-         await super.load(address); */
-    /*      if (address) {
-             try {
-                 if (address.indexOf('/ipfs') === 0) { address = address.split('/')[2] }
-                 const access = await io.read(this._ipfs, address)
-                 this.contractAddress = access.contractAddress
-                 this.abi = JSON.parse(access.abi)
-             } catch (e) {
-                 console.log('ContractAccessController.load ERROR:', e)
-             }
-         }
-         this.contract = new this.web3.eth.Contract(this.abi, this.contractAddress) */
-    /*  } */
-
-    async close() {
-        await this._initializationPromise;
-        await this.aclDB.close();
-    }
-
-    static async create<T, B extends Store<T, any, any>>(orbitDB: OrbitDB, options: { storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>, storeOptions: IStoreOptions<Access, any> }): Promise<DynamicAccessController<T, B>> {
-        return new DynamicAccessController({ orbitDB, ...options })
-    }
-}
-
-AccessControllers.addAccessController({ AccessController: DynamicAccessController })
-
-
-
-
+ */

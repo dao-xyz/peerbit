@@ -10,7 +10,7 @@ import Logger from 'logplease'
 import io from 'orbit-db-io'
 import { IPFS } from 'ipfs-core-types/src/'
 import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
-import { RecycleOptions } from '@dao-xyz/ipfs-log'
+import { RecycleOptions, AccessError } from '@dao-xyz/ipfs-log'
 import OrbitDBAccessController from 'orbit-db-access-controllers/src/orbitdb-access-controller'
 
 export type Constructor<T> = new (...args: any[]) => T;
@@ -37,9 +37,9 @@ interface ICreateOptions {
 
 
   /**
-   * Name to name conditionend some external property
+   * Name to name conditioned some external property
    */
-  nameResolver: (name: string) => string
+  nameResolver?: (name: string) => string
 }
 
 interface IOpenOptions {
@@ -224,8 +224,15 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
         const updateState = async () => {
           try {
             if (this._oplog && logs.length > 0) {
-              for (const log of logs) {
-                await this._oplog.join(log)
+              try {
+                for (const log of logs) {
+                  await this._oplog.join(log)
+                }
+              } catch (error) {
+                if (error instanceof AccessError) {
+                  logger.info(error.message);
+                  return;
+                }
               }
 
               // only store heads that has been verified and merges
@@ -244,7 +251,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
               this.events.emit('replicated', this.address.toString(), logs.length, this)
             }
           } catch (e) {
-            console.error(e)
+            throw e;
           }
         }
         await this._queue.add(updateState.bind(this))
@@ -434,7 +441,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
       // TODO Fix types
       const canAppend = await this.access.canAppend(head, identityProvider as any)
       if (!canAppend) {
-        console.warn('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
+        logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
         return Promise.resolve(null)
       }
 

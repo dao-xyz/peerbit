@@ -1,5 +1,5 @@
 {
-  "name": "@dao-xyz/orbit-db-dynamic-access-controller",
+  "name": "@dao-xyz/orbit-db-trust-web",
   "version": "0.0.1",
   "description": "Access controller that operates on a DB",
   "type": "module",
@@ -30,7 +30,6 @@
   "author": "dao.xyz",
   "license": "MIT",
   "dependencies": {
-    "@dao-xyz/orbit-db-trust-web": "^0.0.1",
     "@dao-xyz/borsh": "^2.1.3",
     "@dao-xyz/bquery": "^0.0.22",
     "@dao-xyz/orbit-db-bdocstore": "^0.0.54",

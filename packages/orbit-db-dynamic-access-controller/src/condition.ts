@@ -37,8 +37,15 @@ export class PublicKeyAccessCondition extends AccessCondition {
     @field({ type: 'String' })
     key: string
 
-    constructor() {
+    constructor(options?: {
+        type: string,
+        key: string
+    }) {
         super();
+        if (options) {
+            this.type = options.type;
+            this.key = options.key
+        }
     }
 
     async allowed(entry: Entry<any>): Promise<boolean> {

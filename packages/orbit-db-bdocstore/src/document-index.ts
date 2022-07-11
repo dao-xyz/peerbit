@@ -1,7 +1,7 @@
 import { Constructor, deserialize } from "@dao-xyz/borsh";
 import bs58 from 'bs58';
 import { IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
-import { asString, ToStringable } from "./utils";
+import { asString, Hashable } from "./utils";
 
 export interface LogEntry<T> { identity: IdentitySerializable, payload: Payload<T> }
 export interface Payload<T> {
@@ -22,7 +22,7 @@ export class DocumentIndex<T> {
     this.clazz = clazz;
   }
 
-  get(key: ToStringable, fullOp = false): (LogEntry<T> | T) {
+  get(key: Hashable, fullOp = false): (LogEntry<T> | T) {
     let stringKey = asString(key);
     return fullOp
       ? this._index[stringKey]

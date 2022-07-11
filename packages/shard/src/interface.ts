@@ -3,11 +3,11 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { IStoreOptions } from '@dao-xyz/orbit-db-store';
 import { BinaryDocumentStore, BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
-import { AnyPeer } from "@dao-xyz/peer";
 import { Shard } from "./shard";
 import { SingleDBInterface, DBInterface } from '@dao-xyz/orbit-db-store-interface';
 import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
 import { OrbitDB } from "@dao-xyz/orbit-db";
+import { AnyPeer } from "./peer";
 
 // Extends results source in order to be queried
 

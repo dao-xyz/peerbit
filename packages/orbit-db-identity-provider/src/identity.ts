@@ -1,7 +1,8 @@
 
 import { Identities } from "./identities";
 import { isDefined } from "./is-defined";
-import { variant, field } from '@dao-xyz/borsh';
+import { variant, field, serialize } from '@dao-xyz/borsh';
+import { createHash } from "crypto";
 export type IdentityProviderType = 'orbitdb' | 'ethereum' | 'solana' | string;
 
 
@@ -44,8 +45,43 @@ export class IdentitySerializable {
 
   @field({ type: 'String' })
   type: IdentityProviderType;
+  constructor(
+    options?: {
+      id: string,
+      publicKey: string,
+      signatures: Signatures,
+      type: string
+    }
+  ) {
+    if (options) {
 
+      this.id = options.id;
+      this.publicKey = options.publicKey;
+      this.signatures = options.signatures;
+      this.type = options.type;
+    }
+
+  }
+
+  public hashCode() {
+    return createHash('sha1').update(serialize(this)).digest('hex')
+  }
+
+  static from(identity: IdentitySerializable | any) {
+    if (identity instanceof IdentitySerializable)
+      return identity;
+    return new IdentitySerializable({
+      id: identity.id,
+      publicKey: identity.publicKey,
+      signatures: new Signatures({
+        id: identity.signatures.id,
+        publicKey: identity.signatures.publicKey
+      }),
+      type: identity.type
+    })
+  }
 }
+
 
 
 export class Identity {

@@ -13,6 +13,7 @@ import { AccessController, DefaultAccessController } from "./default-access-cont
 const { LastWriteWins, NoZeroes } = Sorting
 import { isDefined } from './is-defined'
 import { findUniques } from "./find-uniques"
+import { AccessError } from "./errors"
 const randomId = () => new Date().getTime().toString()
 const getHash = e => e.hash
 const flatMap = (res, acc) => res.concat(acc)
@@ -335,7 +336,7 @@ export class Log<T> extends GSet {
       async (e: Entry<T>) => {
         const canAppend = await this._access.canAppend(e, this._identity.provider);
         if (!canAppend) {
-          throw new Error(`Could not append entry, key "${this._identity.id}" is not allowed to write to the log`)
+          throw new AccessError(`Could not append entry, key "${this._identity.id}" is not allowed to write to the log`)
         }
       }
     )
@@ -439,7 +440,7 @@ export class Log<T> extends GSet {
     const permitted = async (entry: Entry<T>) => {
       const canAppend = await this._access.canAppend(entry, identityProvider)
       if (!canAppend) {
-        throw new Error(`Could not append entry, key "${entry.identity.id}" is not allowed to write to the log`)
+        throw new AccessError(`Could not append entry, key "${entry.identity.id}" is not allowed to write to the log`)
       }
     }
 

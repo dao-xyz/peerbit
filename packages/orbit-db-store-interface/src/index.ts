@@ -34,6 +34,10 @@ export class DBInterface extends ResultSource {
         throw new Error("Not implemented")
     }
 
+    clone(): DBInterface {
+        throw new Error("Not implemented")
+    }
+
 }
 
 // Every interface has to have its own variant, else DBInterface can not be
@@ -61,7 +65,9 @@ export abstract class SingleDBInterface<T, B extends Store<T, any, any>> extends
     }) {
         super();
         if (opts) {
-            Object.assign(this, opts);
+            this.name = opts.name;
+            this.address = opts.address;
+            this.storeOptions = opts.storeOptions;
         }
     }
 
@@ -94,12 +100,16 @@ export abstract class SingleDBInterface<T, B extends Store<T, any, any>> extends
             throw new Error("Not initialized")
         }
 
+        if (!this.options.replicate && waitForReplicationEventsCount > 0) {
+            throw new Error("Replicate is set to false, but loading expects replication events to happen")
+        }
+
         if (!this.db) {
             await this.newStore() //await db.feed(this.getDBName('blocks'), this.chain.defaultOptions);
         }
         await this.db.load(waitForReplicationEventsCount);
 
-        if (this.options.replicate) {
+        if (this.options.replicate && waitForReplicationEventsCount > 0) {
             await waitForReplicationEvents(this.db, waitForReplicationEventsCount);
         }
     }
@@ -165,6 +175,13 @@ export abstract class SingleDBInterface<T, B extends Store<T, any, any>> extends
 
     get loaded(): boolean {
         return !!this.db;
+    }
+
+    clone(): DBInterface {
+        return Reflect.construct(this.constructor, [{
+            name: this.name,
+            storeOptions: this.storeOptions
+        }])
     }
 
 }
