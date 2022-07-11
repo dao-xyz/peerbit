@@ -1,4 +1,4 @@
-import { OrbitDB } from "../OrbitDB"
+import { OrbitDB } from "../orbit-db"
 
 const assert = require('assert')
 const mapSeries = require('p-each-series')

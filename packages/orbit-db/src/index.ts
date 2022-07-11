@@ -1,4 +1,4 @@
 
-export * from './OrbitDB';
+export * from './orbit-db';
 
 

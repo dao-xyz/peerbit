@@ -2,7 +2,7 @@
 const assert = require('assert')
 const rmrf = require('rimraf')
 const path = require('path')
-const OrbitDB = require('../OrbitDB')
+const OrbitDB = require('../orbit-db')
 
 // Include test utilities
 const {

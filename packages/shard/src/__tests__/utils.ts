@@ -78,18 +78,7 @@ export class BinaryFeedStoreInterface extends SingleDBInterface<Document, Binary
     } */
 }
 
-export const feedStoreShard = async<T>(clazz: Constructor<T>, trust?: P2PTrust) => new Shard({
-    id: uuid(),
-    cluster: 'x',
-    resourceRequirements: new NoResourceRequirements(),
-    interface: new BinaryFeedStoreInterface({
-        name: 'feed',
-        storeOptions: new BinaryFeedStoreOptions({
-            objectType: clazz.name
-        })
-    }),
-    trust
-})
+
 
 
 @variant([1, 1])
@@ -103,7 +92,7 @@ export class DocumentStoreInterface extends SingleDBInterface<Document, BinaryDo
     }
 }
 
-export const documentStoreShard = async <T>(trust?: P2PTrust, indexBy: string = 'id') => new Shard({
+export const documentStoreShard = async (trust?: P2PTrust, indexBy: string = 'id') => new Shard({
     id: uuid(),
     cluster: 'x',
     resourceRequirements: new NoResourceRequirements(),

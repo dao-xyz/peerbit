@@ -2,7 +2,7 @@
 const assert = require('assert')
 const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
-const OrbitDB = require('../OrbitDB')
+const OrbitDB = require('../orbit-db')
 
 // Include test utilities
 const {

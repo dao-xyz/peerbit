@@ -1,6 +1,6 @@
 
 const assert = require('assert')
-const OrbitDB = require('../OrbitDB')
+const OrbitDB = require('../orbit-db')
 const rmrf = require('rimraf')
 const path = require('path')
 

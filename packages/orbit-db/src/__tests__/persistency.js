@@ -3,7 +3,7 @@ const assert = require('assert')
 const mapSeries = require('p-map-series')
 const rmrf = require('rimraf')
 const path = require('path')
-const OrbitDB = require('../OrbitDB')
+const OrbitDB = require('../orbit-db')
 const Cache = require('orbit-db-cache')
 
 const localdown = require('localstorage-down')
