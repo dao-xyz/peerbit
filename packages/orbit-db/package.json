@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db",
-  "version": "0.29.1",
+  "version": "0.29.2",
   "description": "Distributed p2p database on IPFS",
   "author": "Haad",
   "license": "MIT",
@@ -23,8 +23,8 @@
     "require": "./lib/cjs/index.js"
   },
   "dependencies": {
-    "@dao-xyz/orbit-db-identity-provider": "^0.5.1",
-    "@dao-xyz/orbit-db-store": "^0.0.10",
+    "@dao-xyz/orbit-db-identity-provider": "^0.5.2",
+    "@dao-xyz/orbit-db-store": "^0.0.11",
     "ipfs-pubsub-1on1": "0.0.8",
     "is-node": "^1.0.2",
     "localstorage-down": "^0.6.7",
