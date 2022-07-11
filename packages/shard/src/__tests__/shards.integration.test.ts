@@ -273,7 +273,7 @@ describe('cluster', () => {
         })
 
 
-        test('get peers', async () => {
+        test('request replicate', async () => {
             let peer = await getPeer();
             let peer2 = await getPeer(undefined, false);
             await connectPeers(peer, peer2);

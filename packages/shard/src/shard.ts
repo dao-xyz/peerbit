@@ -325,7 +325,20 @@ export class Shard<T extends DBInterface> extends ResultSource {
         })
     }
     _requestingReplicationPromise: Promise<void>;
-    async requestReplicate(shard: Shard<T> = this): Promise<void> {
+    async requestReplicate(shardIndex?: BN): Promise<void> {
+        let shard = this as Shard<T>;
+        if (shardIndex !== undefined) {
+            shard = new Shard<T>({
+                shardIndex,
+                id: this.id,
+                cluster: this.cluster,
+                parentShardCID: this.parentShardCID,
+                interface: this.interface.clone() as T,
+                resourceRequirements: this.resourceRequirements,
+                trust: this.trust
+            })
+            await shard.init(this.peer, this.parentShardCID);
+        }
         /*   let shardCounter = await this.chain.getShardCounter();
           if (shardCounter.value < this.index.toNumber()) {
               throw new Error(`Expecting shard counter to be less than the new index ${shardCounter} !< ${this.index}`)
@@ -335,24 +348,16 @@ export class Shard<T extends DBInterface> extends ResultSource {
             const currentPeersCount = async () => (await this.shardPeerInfo.getPeers()).length
             let ser = serialize(shard);
             await this.peer.node.pubsub.publish(this.trust.replicationTopic, ser);
-            await waitForAsync(async () => await currentPeersCount() > MIN_REPLICATION_AMOUNT, 60000)
+            await waitForAsync(async () => await currentPeersCount() >= MIN_REPLICATION_AMOUNT, 60000)
+            resolve();
         })
         await this._requestingReplicationPromise;
 
     }
 
     async requestNewShard(): Promise<void> {
-        const nextShard = new Shard<T>({
-            shardIndex: this.shardIndex.addn(1),
-            id: this.id,
-            cluster: this.cluster,
-            parentShardCID: this.parentShardCID,
-            interface: this.interface.clone() as T,
-            resourceRequirements: this.resourceRequirements,
-            trust: this.trust
-        })
-        await nextShard.init(this.peer, this.parentShardCID);
-        return this.requestReplicate(nextShard)
+
+        return this.requestReplicate(this.shardIndex.addn(1))
     }
 
 
