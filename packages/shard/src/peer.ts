@@ -93,7 +93,9 @@ export class AnyPeer {
                 }
             }
             else {
-                await from.close();
+                if (from != value.trust) { // Only close trust if different (instance wise)
+                    await from.close();
+                }
                 value.shards.push(shard)
             }
             this.trustWebs.set(hashCode, value)

@@ -81,8 +81,15 @@ export class Shard<T extends DBInterface> extends ResultSource {
     @field({ type: option('String') })
     parentShardCID: string | undefined; // one of the shards in the parent cluster
 
-    @field({ type: 'u64' })
-    shardIndex: BN // 0, 1, 2... this index will change the IFPS hash of this shard serialized. This means we can iterate shards without actually saving them in a DB
+    @field({
+        serialize: (value, writer) => {
+            writer.writeU64(value);
+        },
+        deserialize: (reader) => {
+            return reader.readU64().toNumber();
+        }
+    })
+    shardIndex: number // 0, 1, 2... this index will change the IFPS hash of this shard serialized. This means we can iterate shards without actually saving them in a DB
 
     shardPeerInfo: ShardPeerInfo | undefined;
 
@@ -100,13 +107,13 @@ export class Shard<T extends DBInterface> extends ResultSource {
         address: string
         parentShardCID: string
         trust: P2PTrust
-        shardIndex: BN
+        shardIndex: number
     } | {
         id: string,
         cluster: string
         interface: T
         resourceRequirements: ResourceRequirements
-        shardIndex?: BN
+        shardIndex?: number
         trust?: P2PTrust
 
     }) {
@@ -118,7 +125,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
         }
 
         if (!this.shardIndex) {
-            this.shardIndex = new BN(0);
+            this.shardIndex = 0;
         }
 
     }
@@ -203,15 +210,6 @@ export class Shard<T extends DBInterface> extends ResultSource {
         return this.id + "-" + this.cluster + "-" + topic;
     }
 
-
-    async makeSpace(sizeBytes: number): Promise<void> {
-        if (sizeBytes > MAX_SHARD_SIZE) {
-            throw new Error("Block too large");
-        }
-        if (!this.interface.loaded) {
-            await this.interface.load();
-        }
-    }
 
     public async startSupportPeer() {
 
@@ -326,19 +324,10 @@ export class Shard<T extends DBInterface> extends ResultSource {
         })
     }
     _requestingReplicationPromise: Promise<void>;
-    async requestReplicate(shardIndex?: BN): Promise<void> {
+    async requestReplicate(shardIndex?: number): Promise<void> {
         let shard = this as Shard<T>;
         if (shardIndex !== undefined) {
-            shard = new Shard<T>({
-                shardIndex,
-                id: this.id,
-                cluster: this.cluster,
-                parentShardCID: this.parentShardCID,
-                interface: this.interface.clone() as T,
-                resourceRequirements: this.resourceRequirements,
-                trust: this.trust
-            })
-            await shard.init(this.peer, this.parentShardCID);
+            shard = await this.createShardWithIndex(shardIndex);
         }
         /*   let shardCounter = await this.chain.getShardCounter();
           if (shardCounter.value < this.index.toNumber()) {
@@ -358,9 +347,22 @@ export class Shard<T extends DBInterface> extends ResultSource {
 
     async requestNewShard(): Promise<void> {
 
-        return this.requestReplicate(this.shardIndex.addn(1))
+        return this.requestReplicate(this.shardIndex + 1)
     }
 
+    async createShardWithIndex(shardIndex: number, peer: AnyPeer = this.peer): Promise<Shard<T>> {
+        const shard = new Shard<T>({
+            shardIndex,
+            id: this.id,
+            cluster: this.cluster,
+            parentShardCID: this.parentShardCID,
+            interface: this.interface.clone() as T,
+            resourceRequirements: this.resourceRequirements,
+            trust: this.trust,
+        })
+        await shard.init(peer, this.parentShardCID);
+        return shard;
+    }
 
     async replicate(peer: AnyPeer) {
         /// Shard counter might be wrong because someone else could request sharding at the same time
@@ -374,13 +376,17 @@ export class Shard<T extends DBInterface> extends ResultSource {
         }
 
         await this.init(peer);
-        await this.interface.load();
+        await this.load();
         await this.startSupportPeer();
 
     }
+    async load() {
+        await this.trust.load();
+        await this.interface.load();
+    }
 
     getDBName(name: string): string {
-        return (this.parentShardCID ? this.parentShardCID : '') + '-' + this.id + '-' + this.shardIndex.toNumber() + "-" + name;
+        return (this.parentShardCID ? this.parentShardCID : '') + '-' + this.id + '-' + this.shardIndex + "-" + name;
     }
 
     async save(node: IPFSInstance): Promise<string> {

@@ -497,24 +497,24 @@ describe('cluster', () => {
         // shard everything as soon as a peer runs out of memory, to let the peer still be alive
         // replication is only something that is invoked when a peer goes down or a new shard is created and reducancy is to be built
         test('memory runs out, will request sharding', async () => {
-            let [peer, peer2] = await getConnectedPeers(2)
+            let [peerLowMemory, peerSupporting, peerNew] = await getConnectedPeers(3)
 
             // Create Root shard
             let l0 = await shardStoreShard();
-            await l0.replicate(peer);
+            await l0.replicate(peerLowMemory);
+            await l0.trust.addTrust(peerSupporting.orbitDB.identity);
+            await l0.trust.addTrust(peerNew.orbitDB.identity);
 
             // Subscribe for replication for peer2
-            await Shard.subscribeForReplication(peer2, l0.trust);
+            await Shard.subscribeForReplication(peerSupporting, l0.trust);
 
             // Create store
-            let docStoreA = await (await documentStoreShard(l0.trust)).init(peer, l0.cid);
+            let docStoreA = await (await documentStoreShard(l0.trust)).init(peerLowMemory, l0.cid);
             await docStoreA.interface.load();
-            const usedHeap = v8.getHeapStatistics().used_heap_size;
-            peer.options.heapSizeLimit = usedHeap + 1;
 
             // add documents to docStore to trigger sharding
-            expect(peer2.supportJobs).toHaveLength(0);
-            peer.options.heapSizeLimit = v8.getHeapStatistics().used_heap_size + 100;
+            expect(peerSupporting.supportJobs).toHaveLength(0);
+            peerLowMemory.options.heapSizeLimit = v8.getHeapStatistics().used_heap_size + 100;
             /*   await expect(async () => {
                  
               }).rejects.toBeInstanceOf(AccessError); */
@@ -525,11 +525,18 @@ describe('cluster', () => {
             }).rejects.toBeInstanceOf(AccessError);
 
             // Check that peer2 started supporting a shard (indexed 1)
-            await waitFor(() => peer2.supportJobs.length == 1);
-            expect(peer2.supportJobs[0].shard.shardIndex.toNumber()).toEqual(1);
-            expect(peer2.supportJobs[0].shard.parentShardCID).toEqual(l0.cid);
-            expect(peer2.supportJobs[0].shard.trust).toEqual(l0.trust);
-            await disconnectPeers([peer]);
+            await waitFor(() => peerSupporting.supportJobs.length == 1);
+            expect(peerSupporting.supportJobs[0].shard.shardIndex).toEqual(1);
+            expect(peerSupporting.supportJobs[0].shard.parentShardCID).toEqual(l0.cid);
+            expect(peerSupporting.supportJobs[0].shard.trust).toEqual(l0.trust);
+
+            // try write some, and see shard picks up
+            let docStoreAWritable = await docStoreA.createShardWithIndex(1, peerNew);
+            await docStoreAWritable.load();
+            await waitFor(() => docStoreAWritable.trust.isTrusted(peerNew.orbitDB.identity));
+            await docStoreAWritable.interface.db.put(new Document({ id: 'new' }));
+            await waitFor(() => Object.keys((peerSupporting.supportJobs[0].shard.interface as DocumentStoreInterface).db.index._index).length == 1);
+            await disconnectPeers([peerLowMemory, peerSupporting, peerNew]);
         })
     })
 
