@@ -312,6 +312,7 @@ export class Shard<T extends DBInterface> extends ResultSource {
                       return;
                   }
                  */
+                shard.trust = await me.getCachedTrustOrSet(trust, shard) // this is necessary, else the shard with initialize with a new trust region
                 await shard.replicate(me);
 
             } catch (error) {

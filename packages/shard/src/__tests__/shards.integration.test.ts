@@ -528,7 +528,7 @@ describe('cluster', () => {
             await waitFor(() => peer2.supportJobs.length == 1);
             expect(peer2.supportJobs[0].shard.shardIndex.toNumber()).toEqual(1);
             expect(peer2.supportJobs[0].shard.parentShardCID).toEqual(l0.cid);
-
+            expect(peer2.supportJobs[0].shard.trust).toEqual(l0.trust);
             await disconnectPeers([peer]);
         })
     })
