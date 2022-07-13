@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-bdocstore",
-  "version": "0.0.63",
+  "version": "0.0.64",
   "description": "Document Store for orbit-db with binary ser/der",
   "type": "module",
   "sideEffects": false,
@@ -31,18 +31,18 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^2.1.4",
-    "@dao-xyz/bquery": "^0.0.31",
-    "@dao-xyz/bpayload": "^0.0.1",
-    "@dao-xyz/orbit-db": "^0.29.7",
-    "@dao-xyz/orbit-db-query-store": "^0.0.38",
-    "@dao-xyz/orbit-db-store": "^0.0.14",
+    "@dao-xyz/bpayload": "^0.0.2",
+    "@dao-xyz/bquery": "^0.0.32",
+    "@dao-xyz/orbit-db": "^0.29.8",
+    "@dao-xyz/orbit-db-query-store": "^0.0.39",
+    "@dao-xyz/orbit-db-store": "^0.0.15",
     "p-map": "~1.1.1",
     "uuid": "^8.3.2"
   },
   "devDependencies": {
-    "@dao-xyz-types/orbit-db": "^0.0.30",
-    "@dao-xyz/peer-test-utils": "^0.0.20",
-    "@dao-xyz/time": "^0.0.9",
+    "@dao-xyz-types/orbit-db": "^0.0.31",
+    "@dao-xyz/peer-test-utils": "^0.0.21",
+    "@dao-xyz/time": "^0.0.10",
     "ipfs": "^0.62.3"
   },
   "gitHead": "d10b89ef1a120a58e1a7e92aadcc2bb536a37e3e"

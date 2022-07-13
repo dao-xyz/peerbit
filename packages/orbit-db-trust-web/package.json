@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-trust-web",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "description": "Access controller that operates on a DB",
   "type": "module",
   "sideEffects": false,
@@ -31,15 +31,15 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^2.1.4",
-    "@dao-xyz/bquery": "^0.0.31",
-    "@dao-xyz/orbit-db-bdocstore": "^0.0.63",
-    "@dao-xyz/orbit-db-identity-provider": "^0.5.5",
-    "@dao-xyz/orbit-db-store-interface": "^0.0.10",
+    "@dao-xyz/bquery": "^0.0.32",
+    "@dao-xyz/orbit-db-bdocstore": "^0.0.64",
+    "@dao-xyz/orbit-db-identity-provider": "^0.5.6",
+    "@dao-xyz/orbit-db-store-interface": "^0.0.11",
     "p-map": "~1.1.1",
     "uuid": "^8.3.2"
   },
   "devDependencies": {
-    "@dao-xyz-types/orbit-db": "^0.0.30",
+    "@dao-xyz-types/orbit-db": "^0.0.31",
     "ipfs": "^0.62.3"
   },
   "gitHead": "d10b89ef1a120a58e1a7e92aadcc2bb536a37e3e"
