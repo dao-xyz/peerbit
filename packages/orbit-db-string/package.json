@@ -30,7 +30,7 @@
   "author": "dao.xyz",
   "license": "MIT",
   "dependencies": {
-    "@dao-xyz/borsh": "^2.1.3",
+    "@dao-xyz/borsh": "^2.1.4",
     "@dao-xyz/bquery": "^0.0.31",
     "@dao-xyz/orbit-db-query-store": "^0.0.38",
     "@dao-xyz/orbit-db-store": "^0.0.14",

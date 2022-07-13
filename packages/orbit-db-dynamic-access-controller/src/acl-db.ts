@@ -1,12 +1,21 @@
-import { field, option, variant } from '@dao-xyz/borsh';
+import { variant } from '@dao-xyz/borsh';
 import { Entry } from '@dao-xyz/ipfs-log';
 import { OrbitDB } from '@dao-xyz/orbit-db';
-import { BinaryDocumentStore, IBinaryDocumentStoreOptions } from '@dao-xyz/orbit-db-bdocstore';
+import { BinaryDocumentStore, BinaryDocumentStoreOptions } from '@dao-xyz/orbit-db-bdocstore';
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
+import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
 import { IStoreOptions } from '@dao-xyz/orbit-db-store';
 import { SingleDBInterface } from '@dao-xyz/orbit-db-store-interface';
 import { P2PTrust, TRUST_WEB_ACCESS_CONTROLLER } from '@dao-xyz/orbit-db-trust-web';
-import { Access, AccessType } from './access';
+import { Access, AccessData, AccessType } from './access';
+
+export type ACLInterfaceOptions = IQueryStoreOptions<Access, any> & {
+    trustResolver: () => P2PTrust, appendAll: boolean, subscribeToQueries: boolean,
+    cache: boolean,
+    create: boolean,
+    replicate: boolean,
+    directory: string
+};
 
 @variant([0, 2])
 export class ACLInterface extends SingleDBInterface<Access, BinaryDocumentStore<Access>>{
@@ -14,32 +23,34 @@ export class ACLInterface extends SingleDBInterface<Access, BinaryDocumentStore<
     constructor(opts?: {
         name: string;
         address?: string;
-        storeOptions: BStoreOptions<BinaryDocumentStore<Access>>
     }) {
-        super(opts);
-        if (opts) {
-            Object.assign(this, opts);
-        }
+        super({
+            ...opts, storeOptions: new BinaryDocumentStoreOptions<Access>({
+                indexBy: 'id',
+                objectType: AccessData.name
+            })
+        });
     }
 
-    async init(orbitDB: OrbitDB, options: IStoreOptions<Access, any> & { trustResolver: () => P2PTrust }): Promise<void> {
-
-        return await super.init(orbitDB, {
-            ...options, accessController: {
+    async init(orbitDB: OrbitDB, options: ACLInterfaceOptions): Promise<void> {
+        options = {
+            ...options,
+            queryRegion: undefined,// Prevent query region to be set (will fallback to db specific queries (not global))
+            accessController: {
                 type: TRUST_WEB_ACCESS_CONTROLLER,
                 trustResolver: options.trustResolver,
-                skipManifest: true
+                skipManifest: true,
+                appendAll: options.appendAll,
+                storeOptions: {
+                    subscribeToQueries: options.subscribeToQueries,
+                    cache: options.subscribeToQueries,
+                    create: options.create,
+                    replicate: options.replicate,
+                    directory: options.directory
+                }
             }
-        })
-    }
-
-
-    async load(waitForReplicationEventsCount?: number) {
-        await super.load(waitForReplicationEventsCount)
-    }
-
-    async close() {
-        await super.close();
+        }
+        return await super.init(orbitDB, options)
     }
 
     // allow anyone write to the ACL db, but assume entry is invalid until a verifier verifies

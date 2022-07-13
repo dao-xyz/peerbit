@@ -1,12 +1,14 @@
+import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
 import { getConnectedPeers, disconnectPeers } from '@dao-xyz/peer-test-utils'
 import { P2PTrust } from '..';
 
-const defaultStoreOptions = {
+const defaultStoreOptions: IQueryStoreOptions<any, any> = {
     nameResolver: (n) => n,
     cache: undefined,
     create: true,
     typeMap: {},
-    replicate: true
+    replicate: true,
+    subscribeToQueries: true
 };
 describe('isTrusted', () => {
 
@@ -24,7 +26,7 @@ describe('isTrusted', () => {
         let l0b = await P2PTrust.loadFromCID(l0a.cid, peer2.node)
         await l0b.init(peer2.orbitDB, defaultStoreOptions);
         await l0b.load(1);
-        // await delay(5000);
+
         let peer3Key = peer3.orbitDB.identity;
         await l0b.addTrust(peer3Key);
 

@@ -539,5 +539,4 @@ describe('cluster', () => {
             await disconnectPeers([peerLowMemory, peerSupporting, peerNew]);
         })
     })
-
 });

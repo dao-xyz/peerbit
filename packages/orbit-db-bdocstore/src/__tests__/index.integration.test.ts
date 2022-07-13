@@ -2,13 +2,14 @@
 import { field, option, variant } from '@dao-xyz/borsh';
 import BN from 'bn.js';
 import { BinaryDocumentStore, BINARY_DOCUMENT_STORE_TYPE, DocumentStoreOptions } from '../document-store';
-import { DocumentQueryRequest, Compare, FieldCompareQuery, QueryRequestV0, QueryResponseV0, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort, ResultSource } from '@dao-xyz/bquery';
+import { DocumentQueryRequest, Compare, FieldCompareQuery, QueryRequestV0, QueryResponseV0, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort } from '@dao-xyz/bquery';
 import { query } from '@dao-xyz/bquery';
 import { disconnectPeers, getConnectedPeers, getPeer, Peer } from '@dao-xyz/peer-test-utils';
 import { waitFor } from '@dao-xyz/time';
+import { BinaryPayload } from '@dao-xyz/bpayload';
 
-@variant([1, 0])
-class Document extends ResultSource {
+@variant("document")//@variant([1, 0])
+class Document extends BinaryPayload {
 
   @field({ type: 'String' })
   id: string;

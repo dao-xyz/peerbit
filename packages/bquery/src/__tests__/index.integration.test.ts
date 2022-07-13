@@ -5,13 +5,14 @@ import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import { Message } from "ipfs-core-types/src/pubsub";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { DocumentQueryRequest, FieldStringMatchQuery } from "../document-query";
-import { ResultSource, ResultWithSource } from "../result";
+import { ResultWithSource } from "../result";
 import { delay, waitFor } from "@dao-xyz/time";
 import { disconnectPeers, getConnectedPeers } from '@dao-xyz/peer-test-utils';
 import { StoreAddressMatchQuery } from '../context';
+import { BinaryPayload } from '@dao-xyz/bpayload';
 
-@variant([1, 1])
-class NumberResult extends ResultSource {
+@variant("number")//@variant([1, 1])
+class NumberResult extends BinaryPayload {
   @field({ type: 'u32' })
   number: number
   constructor(opts?: { number: number }) {

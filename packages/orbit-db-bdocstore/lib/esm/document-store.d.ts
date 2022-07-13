@@ -1,12 +1,13 @@
 import { DocumentIndex, LogEntry } from './document-index';
 import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { Constructor } from '@dao-xyz/borsh';
-import { QueryRequestV0, Result, ResultSource } from '@dao-xyz/bquery';
+import { QueryRequestV0, Result } from '@dao-xyz/bquery';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
 import { OrbitDB } from '@dao-xyz/orbit-db';
+import { BinaryPayload } from '@dao-xyz/bpayload';
 export declare const BINARY_DOCUMENT_STORE_TYPE = "bdoc_store";
 export declare type DocumentStoreOptions<T> = IQueryStoreOptions<T, DocumentIndex<T>> & {
     indexBy?: string;
@@ -16,7 +17,7 @@ export declare type IBinaryDocumentStoreOptions<T> = IQueryStoreOptions<T, Docum
     indexBy?: string;
     clazz: Constructor<T>;
 };
-export declare class BinaryDocumentStoreOptions<T extends ResultSource> extends BStoreOptions<BinaryDocumentStore<T>> {
+export declare class BinaryDocumentStoreOptions<T extends BinaryPayload> extends BStoreOptions<BinaryDocumentStore<T>> {
     indexBy: string;
     objectType: string;
     constructor(opts: {
@@ -26,7 +27,7 @@ export declare class BinaryDocumentStoreOptions<T extends ResultSource> extends 
     newStore(address: string, orbitDB: OrbitDB, options: IBinaryDocumentStoreOptions<T>): Promise<BinaryDocumentStore<T>>;
     get identifier(): string;
 }
-export declare class BinaryDocumentStore<T extends ResultSource> extends QueryStore<T, DocumentIndex<T>, IBinaryDocumentStoreOptions<T>> {
+export declare class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<T, DocumentIndex<T>, IBinaryDocumentStoreOptions<T>> {
     _type: string;
     constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IBinaryDocumentStoreOptions<T>);
     get index(): DocumentIndex<T>;

@@ -1,6 +1,7 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh"
 import { serialize } from "@dao-xyz/borsh"
 import { AccessCondition } from "./condition"
+import { BinaryPayload } from '@dao-xyz/bpayload';
 import bs58 from 'bs58';
 export enum AccessType {
     Admin = 0,
@@ -9,8 +10,10 @@ export enum AccessType {
     ModifySelf = 3, */
 }
 
-@variant(0)
-export class AccessData {
+
+
+@variant("access")
+export class AccessData extends BinaryPayload {
 
 }
 

@@ -3,7 +3,6 @@ import { StringResultSource, StringStore, STRING_STORE_TYPE } from '../string-st
 import { QueryRequestV0, QueryResponseV0, ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates, StoreAddressMatchQuery } from '@dao-xyz/bquery';
 import { query } from '@dao-xyz/bquery';
 import { disconnectPeers, getConnectedPeers, Peer } from '@dao-xyz/peer-test-utils';
-import { waitFor } from '@dao-xyz/time';
 
 const storeTestSetup = async (): Promise<{
     creator: Peer,

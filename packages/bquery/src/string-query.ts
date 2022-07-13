@@ -1,5 +1,5 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh";
-import { ResultCoordinates, ResultSource } from "./result";
+import { ResultCoordinates } from "./result";
 import BN from 'bn.js';
 import { MultipleQueriesType, Query, QueryType } from "./query-interface";
 import { ContextMatchQuery } from "./context";

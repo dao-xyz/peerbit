@@ -11,6 +11,7 @@ import AccessControllers from "orbit-db-access-controllers";
 import { Entry } from "@dao-xyz/ipfs-log";
 import bs58 from 'bs58';
 import { createHash } from "crypto";
+import { IQueryStoreOptions } from "@dao-xyz/orbit-db-query-store";
 const TRUSTEE_PROPERTY_KEY = 'trustee';
 @variant(0)
 export class P2PTrustRelation {
@@ -117,10 +118,12 @@ export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocument
 
 
 
-    async init(orbitDB: OrbitDB, options: IStoreOptions<any, any>): Promise<void> {
+    async init(orbitDB: OrbitDB, options: IQueryStoreOptions<any, any>): Promise<void> {
         options = { ...options };
-        options.typeMap[P2PTrustRelation.name] = P2PTrustRelation;
+        options.queryRegion = undefined,
+            options.typeMap[P2PTrustRelation.name] = P2PTrustRelation;
         options.accessController = {
+            ...options.accessController,
             type: TRUST_WEB_ACCESS_CONTROLLER,
             trustResolver: () => this,
             skipManifest: true
@@ -213,7 +216,8 @@ export const TRUST_WEB_ACCESS_CONTROLLER = 'trust-web-access-controller';
 
 export type TrustWebAccessControllerOptions = {
     trustResolver: () => P2PTrust;
-    skipManifest: true
+    skipManifest: true,
+    appendAll?: boolean
 };
 
 export class TrustWebAccessController extends AccessController {
@@ -221,12 +225,14 @@ export class TrustWebAccessController extends AccessController {
     // MAKE DISJOIN
     _trustResolver: () => P2PTrust
     _orbitDB: OrbitDB;
-
+    _appendAll: boolean;
     constructor(props?: TrustWebAccessControllerOptions & { orbitDB: OrbitDB }) {
         super();
         if (props) {
+            this._appendAll = props.appendAll;
             this._orbitDB = props.orbitDB;
             this._trustResolver = props.trustResolver;
+
         }
 
     }
@@ -236,6 +242,10 @@ export class TrustWebAccessController extends AccessController {
         if (!identityProvider.verifyIdentity(entry.identity)) {
             return false;
         }
+        if (this._appendAll) {
+            return true;
+        }
+
         return this._trustResolver().isTrusted(entry.identity)
     }
 

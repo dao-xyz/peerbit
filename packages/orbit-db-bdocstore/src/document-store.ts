@@ -4,12 +4,13 @@ import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
 import bs58 from 'bs58';
 import { asString } from './utils';
-import { DocumentQueryRequest, FieldQuery, Query, QueryRequestV0, Result, ResultSource, ResultWithSource, SortDirection } from '@dao-xyz/bquery';
+import { DocumentQueryRequest, FieldQuery, Query, QueryRequestV0, Result, ResultWithSource, SortDirection } from '@dao-xyz/bquery';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store'
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores'
 import { OrbitDB } from '@dao-xyz/orbit-db';
+import { BinaryPayload } from '@dao-xyz/bpayload';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement)
 
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
@@ -18,7 +19,7 @@ export type DocumentStoreOptions<T> = IQueryStoreOptions<T, DocumentIndex<T>> & 
 export type IBinaryDocumentStoreOptions<T> = IQueryStoreOptions<T, DocumentIndex<T>> & { indexBy?: string, clazz: Constructor<T> };
 
 @variant([0, 0])
-export class BinaryDocumentStoreOptions<T extends ResultSource> extends BStoreOptions<BinaryDocumentStore<T>> {
+export class BinaryDocumentStoreOptions<T extends BinaryPayload> extends BStoreOptions<BinaryDocumentStore<T>> {
 
   @field({ type: 'String' })
   indexBy: string;
@@ -56,7 +57,7 @@ const defaultOptions = <T>(options: IBinaryDocumentStoreOptions<T>): IBinaryDocu
   return options
 }
 
-export class BinaryDocumentStore<T extends ResultSource> extends QueryStore<T, DocumentIndex<T>, IBinaryDocumentStoreOptions<T>> {
+export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<T, DocumentIndex<T>, IBinaryDocumentStoreOptions<T>> {
 
   _type: string = undefined;
   constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IBinaryDocumentStoreOptions<T>) {

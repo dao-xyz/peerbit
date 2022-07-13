@@ -5,12 +5,13 @@ import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store';
 import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
 import * as events from 'events';
 import { waitForReplicationEvents } from "./utils";
-import { ResultSource } from "@dao-xyz/bquery";
+import { BinaryPayload } from "@dao-xyz/bpayload";
 import { OrbitDB } from "@dao-xyz/orbit-db";
 
 // Extends results source in order to be queried
-@variant([0, 1])
-export class DBInterface extends ResultSource {
+//@variant([0, 1])
+@variant("interface")
+export class DBInterface extends BinaryPayload {
 
     get initialized(): boolean {
         throw new Error("Not implemented")
@@ -43,7 +44,7 @@ export class DBInterface extends ResultSource {
 // Every interface has to have its own variant, else DBInterface can not be
 // used as a deserialization target.
 @variant([0, 0])
-export abstract class SingleDBInterface<T, B extends Store<T, any, any>> extends DBInterface {
+export abstract class SingleDBInterface<T, B extends Store<T, any, IStoreOptions<T, any>>> extends DBInterface {
 
     @field({ type: 'String' })
     name: string;

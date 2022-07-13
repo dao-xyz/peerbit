@@ -5,7 +5,6 @@ import { DBInterface } from "@dao-xyz/orbit-db-store-interface";
 import { BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
 import { IStoreOptions } from '@dao-xyz/orbit-db-store'
-import { ResultSource } from '@dao-xyz/bquery';
 import { waitForAsync } from "@dao-xyz/time";
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import { delay } from "@dao-xyz/time";
@@ -13,6 +12,7 @@ import { AnyPeer, EMIT_HEALTHCHECK_INTERVAL, PeerInfo, ShardPeerInfo } from "./p
 import { IQueryStoreOptions } from "@dao-xyz/orbit-db-query-store";
 import { DYNAMIC_ACCESS_CONTROLER } from "@dao-xyz/orbit-db-dynamic-access-controller";
 import { P2PTrust } from '@dao-xyz/orbit-db-trust-web'
+import { BinaryPayload } from '@dao-xyz/bpayload';
 
 export const SHARD_INDEX = 0;
 const MAX_SHARD_SIZE = 1024 * 500 * 1000;
@@ -60,8 +60,10 @@ export class ResourceRequirements { }
 @variant(0)
 export class NoResourceRequirements extends ResourceRequirements { }
 
-@variant([0, 0])
-export class Shard<T extends DBInterface> extends ResultSource {
+/* @variant([0, 0]) */
+
+@variant("shard")
+export class Shard<T extends DBInterface> extends BinaryPayload {
 
     @field({ type: 'String' })
     id: string
@@ -135,7 +137,6 @@ export class Shard<T extends DBInterface> extends ResultSource {
         }
         return {
             queryRegion: DEFAULT_QUERY_REGION,
-            subscribeToQueries: this.peer.options.isServer,
             accessController: {
                 type: DYNAMIC_ACCESS_CONTROLER,
                 trustResolver: () => this.trust,
@@ -149,8 +150,14 @@ export class Shard<T extends DBInterface> extends ResultSource {
                         this.requestNewShard();
                     }
                 },
-                appendAll: !this.peer.options.isServer // because, if we are not a "server" we don't care about our own ACL, we just want to append everything we write (we never replicate others)
+                appendAll: !this.peer.options.isServer, // because, if we are not a "server" we don't care about our own ACL, we just want to append everything we write (we never replicate others)
+                storeOptions: {
+                    subscribeToQueries: this.peer.options.isServer,
+                    replicate: this.peer.options.isServer,
+                    directory: this.peer.options.storeDirectory,
+                }
             } as any,
+            subscribeToQueries: this.peer.options.isServer,
             replicate: this.peer.options.isServer,
             directory: this.peer.options.storeDirectory,
             typeMap: {},

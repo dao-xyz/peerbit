@@ -8,12 +8,12 @@ import { IPFS as IPFSInstance } from "ipfs-core-types";
 export const getQueryTopic = (region: string): string => {
     return region + '/query';
 }
-export type IQueryStoreOptions<T, X extends Index<T>> = IStoreOptions<T, X> & { queryRegion: string, subscribeToQueries: boolean };
+export type IQueryStoreOptions<T, X extends Index<T>> = IStoreOptions<T, X> & { queryRegion?: string, subscribeToQueries: boolean };
 
 export class QueryStore<T, X extends Index<T>, O extends IQueryStoreOptions<T, X>> extends Store<T, X, O> {
 
     _subscribed: boolean = false
-    queryRegion: string;
+    queryRegion?: string;
     subscribeToQueries: boolean;
     _initializationPromise?: Promise<void>;
 
@@ -98,11 +98,14 @@ export class QueryStore<T, X extends Index<T>, O extends IQueryStoreOptions<T, X
     }
 
     public get queryTopic(): string {
-        if (!this.address || !this.queryRegion) {
+        if (!this.address) {
             throw new Error("Not initialized");
         }
-
-        return getQueryTopic(this.queryRegion);
+        if (this.queryRegion)
+            return getQueryTopic(this.queryRegion); // this store is accessed through some shared query group
+        else {
+            return getQueryTopic(this.address.toString()); // this tore is accessed by querying the store directly
+        }
     }
 }
 

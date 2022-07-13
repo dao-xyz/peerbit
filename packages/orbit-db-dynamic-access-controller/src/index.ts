@@ -10,15 +10,12 @@ import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-id
 import { Entry } from '@dao-xyz/ipfs-log';
 import AccessController from "orbit-db-access-controllers/src/access-controller-interface";
 import AccessControllers from 'orbit-db-access-controllers';
-import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store';
+import { Store } from '@dao-xyz/orbit-db-store';
 import { OrbitDB } from '@dao-xyz/orbit-db';
-import { ACLInterface } from './acl-db';
+import { ACLInterface, ACLInterfaceOptions } from './acl-db';
 import { Access, AccessData } from './access';
-import { BinaryDocumentStoreOptions } from '@dao-xyz/orbit-db-bdocstore';
 import { P2PTrust } from "@dao-xyz/orbit-db-trust-web";
 import v8 from 'v8';
-
-
 
 
 @variant(0)
@@ -57,7 +54,7 @@ export class DynamicAccessController<T, B extends Store<T, any, any>> extends Ac
     _store: B;
     _initializationPromise: Promise<void>;
     _storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>;
-    _storeOptions: IStoreOptions<Access, any> & { trustResolver: () => P2PTrust };
+    _storeOptions: ACLInterfaceOptions;
     _orbitDB: OrbitDB
     _appendAll: boolean;
     _heapSizeLimit: () => number;
@@ -66,21 +63,19 @@ export class DynamicAccessController<T, B extends Store<T, any, any>> extends Ac
     @field({ type: 'String' })
     name: string;
 
-    constructor(options?: { orbitDB: OrbitDB, name: string, heapSizeLimit: () => number, onMemoryExceeded: (entry: Entry<T>) => void, appendAll?: boolean, trustResolver: () => P2PTrust, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>, storeOptions: IStoreOptions<Access, any> }) {
+    constructor(options?: { orbitDB: OrbitDB, name: string, heapSizeLimit: () => number, onMemoryExceeded: (entry: Entry<T>) => void, appendAll?: boolean, trustResolver: () => P2PTrust, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>, storeOptions: ACLInterfaceOptions }) {
         super();
         if (options) {
             this._storeAccessCondition = options?.storeAccessCondition;
             this.name = options?.name
             if (!this.aclDB) {
                 this.aclDB = new ACLInterface({
-                    name: options.name + "_acl",
-                    storeOptions: new BinaryDocumentStoreOptions<Access>({
-                        indexBy: 'id',
-                        objectType: AccessData.name
-                    })
+                    name: options.name + "_acl"
+
                 })
             }
-            this._storeOptions = Object.assign({}, { typeMap: {}, trustResolver: options?.trustResolver }, options.storeOptions);
+            //subscribeToQueriies to not exist on store options
+            this._storeOptions = Object.assign({}, { typeMap: {}, appendAll: options.appendAll, trustResolver: options?.trustResolver }, options.storeOptions);
             this._storeOptions.typeMap[AccessData.name] = AccessData;
             this._orbitDB = options?.orbitDB;
             this._appendAll = options.appendAll;
@@ -128,21 +123,22 @@ export class DynamicAccessController<T, B extends Store<T, any, any>> extends Ac
 
 
     async canAppend(entry: Entry<any>, identityProvider: Identities) {
+        if (!identityProvider.verifyIdentity(entry.identity)) {
+            return false;
+        }
+
         if (this._appendAll) {
             return true;
         }
-        await this._initializationPromise;
 
-        if (v8.getHeapStatistics().used_heap_size > this._heapSizeLimit()) {
+        await this._initializationPromise;
+        const usedHeapSize = v8.getHeapStatistics().used_heap_size;
+        if (usedHeapSize > this._heapSizeLimit()) {
             if (this._onMemoryExceeded)
                 this._onMemoryExceeded(entry);
             return false;
         }
 
-
-        if (!identityProvider.verifyIdentity(entry.identity)) {
-            return false;
-        }
 
         // Check whether it is trusted by trust web
         if (await this._storeOptions.trustResolver().isTrusted(entry.identity)) {
@@ -167,7 +163,7 @@ export class DynamicAccessController<T, B extends Store<T, any, any>> extends Ac
     static get type() { return DYNAMIC_ACCESS_CONTROLER } // Return the type for this controller
 
 
-    static async create<T, B extends Store<T, any, any>>(orbitDB: OrbitDB, options: { name: string, appendAll?: boolean, heapSizeLimit: () => number, onMemoryExceeded: (entry: Entry<T>) => void, trustResolver: () => P2PTrust, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>, storeOptions: IStoreOptions<Access, any> }): Promise<DynamicAccessController<T, B>> {
+    static async create<T, B extends Store<T, any, any>>(orbitDB: OrbitDB, options: { name: string, appendAll?: boolean, heapSizeLimit: () => number, onMemoryExceeded: (entry: Entry<T>) => void, trustResolver: () => P2PTrust, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>, storeOptions: ACLInterfaceOptions }): Promise<DynamicAccessController<T, B>> {
         const controller = new DynamicAccessController({ orbitDB, ...options })
         return controller;
     }

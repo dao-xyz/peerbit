@@ -19,7 +19,7 @@ export class AccessCondition {
 }
 
 @variant([0, 0])
-export class NoAccessCondition extends AccessCondition {
+export class AnyAccessCondition extends AccessCondition {
     constructor() {
         super();
     }
