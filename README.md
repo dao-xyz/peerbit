@@ -10,7 +10,7 @@ This is a fork of OrbitDB where the codebase is ported to Typescript. Function w
 
 
 ## BDocstore [./packages/orbit-db-bdocstore](bdocstore)
-- Document store, but different from the "default" orbit-db implementaiton in the way serialization/deserialization is done. Support for queries across peers
+- Document store, but different from the "default" orbit-db implementation in the way serialization/deserialization is done. Support for queries across peers
 
 ## Shard [./packages/shard](shard)
 - Shard/Container for horizontally scaling databases. 
