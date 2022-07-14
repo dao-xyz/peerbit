@@ -28,4 +28,4 @@ This is a fork of OrbitDB where the codebase is ported to Typescript. Function w
 ## Shard [./packages/shard](shard)
 - Shard/Container for horizontally scaling databases. 
 - Leader and leader rotation routines for building functionality around leaders
-- Healthcheck/Redudancy diagnotics. Get info about a shard
+- Healthcheck/Redundancy diagnostics for shards.
