@@ -3,7 +3,7 @@ import { BinaryDocumentStore, BinaryDocumentStoreOptions, LogEntry } from "@dao-
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import { SingleDBInterface } from "@dao-xyz/orbit-db-store-interface";
 import { IStoreOptions, Store } from "@dao-xyz/orbit-db-store";
-import { Identities, Identity, IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
+import { Identities, Identity, IdentityProviderType, IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
 import { OrbitDB } from "@dao-xyz/orbit-db";
 import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
 import AccessController from "orbit-db-access-controllers/src/access-controller-interface";
@@ -12,15 +12,58 @@ import { Entry } from "@dao-xyz/ipfs-log";
 import bs58 from 'bs58';
 import { createHash } from "crypto";
 import { IQueryStoreOptions } from "@dao-xyz/orbit-db-query-store";
+import { BinaryPayload } from "@dao-xyz/bpayload";
 const TRUSTEE_PROPERTY_KEY = 'trustee';
+
+@variant("trust")
+export class TrustData extends BinaryPayload {
+}
+
 @variant(0)
-export class P2PTrustRelation {
+export class PublicKey extends TrustData {
+
+    @field({ type: 'String' })
+    id: string;
+
+    @field({ type: 'String' })
+    type: string;
+
+
+    constructor(properties?: {
+        id: string;
+        type: IdentityProviderType;
+    }) {
+        super();
+        if (properties) {
+            this.id = properties.id;
+            this.type = properties.type;
+        }
+    }
+
+    static from(identity: PublicKey | Identity | IdentitySerializable | { type: string, id: string }): PublicKey {
+        if (identity instanceof PublicKey)
+            return identity;
+        return new PublicKey({
+            id: identity.id,
+            type: identity.type
+        })
+    }
+
+    hashCode(): string {
+        return createHash('sha1').update(serialize(this)).digest('hex');
+    }
+}
+
+
+
+@variant(1)
+export class P2PTrustRelation extends TrustData {
 
     /*  @field({ type: PublicKey })
      truster: PublicKey  *///  Dont need this becaause its going to be signed with truster anyway (bc orbitdb)
 
-    @field({ type: IdentitySerializable })
-    [TRUSTEE_PROPERTY_KEY]: IdentitySerializable  // the key to trust
+    @field({ type: PublicKey })
+    [TRUSTEE_PROPERTY_KEY]: PublicKey  // the key to trust
 
 
     truster: IdentitySerializable // will be set manually, upon deserialization from the oplog
@@ -29,17 +72,15 @@ export class P2PTrustRelation {
     signature: string */ // Dont need this because its going to be signed anyway (bc orbitdb)
 
     constructor(props?: {
-        trustee: IdentitySerializable
+        [TRUSTEE_PROPERTY_KEY]: PublicKey
     }) {
+        super();
         if (props) {
-            Object.assign(this, props)
+            this[TRUSTEE_PROPERTY_KEY] = props[TRUSTEE_PROPERTY_KEY];
         }
     }
 
 }
-
-
-
 /**
  * Get path, to target.
  * @param start 
@@ -47,7 +88,7 @@ export class P2PTrustRelation {
  * @param db 
  * @returns 
  */
-export const getTargetPath = (start: IdentitySerializable, target: (key: IdentitySerializable) => boolean, db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>, fullOp: boolean = false): P2PTrustRelation[] => {
+export const getTargetPath = (start: PublicKey, target: (key: PublicKey) => boolean, db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>, fullOp: boolean = false): P2PTrustRelation[] => {
 
     /**
      * TODO: Currently very inefficient
@@ -63,7 +104,7 @@ export const getTargetPath = (start: IdentitySerializable, target: (key: Identit
         if (target(current)) {
             return path;
         }
-        let trust = db.db.index.get(IdentitySerializable.from(current).hashCode(), true) as LogEntry<P2PTrustRelation>;
+        let trust = db.db.index.get(PublicKey.from(current).hashCode(), true) as LogEntry<P2PTrustRelation>;
         if (!trust) {
             return undefined; // no path
         }
@@ -93,14 +134,14 @@ export const getTargetPath = (start: IdentitySerializable, target: (key: Identit
 @variant([2, 0])
 export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>
 {
-    @field({ type: IdentitySerializable })
-    rootTrust: IdentitySerializable
+    @field({ type: PublicKey })
+    rootTrust: PublicKey
 
     cid?: string;
 
     constructor(props?: {
         name?: string,
-        rootTrust: Identity | IdentitySerializable;
+        rootTrust: PublicKey | Identity | IdentitySerializable;
         address?: string;
         storeOptions?: BStoreOptions<BinaryDocumentStore<P2PTrustRelation>>;
     }) {
@@ -111,7 +152,7 @@ export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocument
             })
         });
         if (props) {
-            this.rootTrust = props.rootTrust instanceof IdentitySerializable ? props.rootTrust : props.rootTrust.toSerializable()
+            this.rootTrust = PublicKey.from(props.rootTrust);
         }
 
     }
@@ -136,10 +177,9 @@ export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocument
 
     }
 
-    async addTrust(trustee: IdentitySerializable | Identity) {
-        if (trustee instanceof Identity)
-            trustee = trustee.toSerializable();
+    async addTrust(trustee: PublicKey | Identity | IdentitySerializable) {
 
+        trustee = PublicKey.from(trustee);
         if (!this.db) {
             await this.load();
         }
@@ -191,12 +231,13 @@ export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocument
      * @param truster, the truster "root", if undefined defaults to the root trust
      * @returns true, if trusted
      */
-    isTrusted(trustee: IdentitySerializable | Identity, truster: IdentitySerializable = this.rootTrust): boolean {
+    isTrusted(trustee: PublicKey | Identity | IdentitySerializable, truster: PublicKey = this.rootTrust): boolean {
 
+        trustee = PublicKey.from(trustee);
         /**
          * TODO: Currently very inefficient
          */
-        return !!getTrustPath(trustee instanceof Identity ? trustee.toSerializable() : trustee, truster instanceof Identity ? truster.toSerializable() : truster, this);
+        return !!getTrustPath(trustee, truster, this);
     }
 
     hashCode(): string {
@@ -207,8 +248,8 @@ export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocument
 
 }
 
-export const getTrustPath = (start: IdentitySerializable, end: IdentitySerializable, db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>): P2PTrustRelation[] => {
-    return getTargetPath(start, (key) => end.publicKey === key.publicKey, db)
+export const getTrustPath = (start: PublicKey, end: PublicKey, db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>): P2PTrustRelation[] => {
+    return getTargetPath(start, (key) => end.id === key.id && end.type === key.type, db)
 }
 
 

@@ -36,20 +36,20 @@ describe('cluster', () => {
         test('add trustee', async () => {
 
             let [peer, peer2] = await getConnectedPeers(2);
-            let l0 = await documentStoreShard();
-            await l0.init(peer);
-            expect(l0.cid).toBeDefined();
-            expect(l0.trust).toBeInstanceOf(P2PTrust);
-            expect((l0.trust as P2PTrust).rootTrust).toBeDefined();
-            expect((l0.trust as P2PTrust).rootTrust.id === peer.orbitDB.identity.id)
+            let l0a = await documentStoreShard();
+            await l0a.init(peer);
+            expect(l0a.cid).toBeDefined();
+            expect(l0a.trust).toBeInstanceOf(P2PTrust);
+            expect((l0a.trust as P2PTrust).rootTrust).toBeDefined();
+            expect((l0a.trust as P2PTrust).rootTrust.id === peer.orbitDB.identity.id)
 
 
             let newTrustee = peer2.orbitDB.identity;
-            await l0.trust.addTrust(newTrustee);
-
-            await l0.init(peer2);
-            await l0.trust.load(1);
-            expect(l0.trust.db.size).toEqual(1)
+            await l0a.trust.addTrust(newTrustee);
+            const l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
+            await l0b.init(peer2);
+            await l0b.trust.load(1);
+            expect(l0b.trust.db.size).toEqual(1)
             await disconnectPeers([peer, peer2]);
 
 

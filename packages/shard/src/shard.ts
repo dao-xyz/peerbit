@@ -10,7 +10,6 @@ import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import { delay } from "@dao-xyz/time";
 import { AnyPeer, EMIT_HEALTHCHECK_INTERVAL, PeerInfo, ShardPeerInfo } from "./peer";
 import { IQueryStoreOptions } from "@dao-xyz/orbit-db-query-store";
-import { DYNAMIC_ACCESS_CONTROLER } from "@dao-xyz/orbit-db-dynamic-access-controller";
 import { P2PTrust } from '@dao-xyz/orbit-db-trust-web'
 import { BinaryPayload } from '@dao-xyz/bpayload';
 
@@ -22,6 +21,7 @@ import v8 from 'v8';
 import { MemoryLimitExceededError } from "./errors";
 import Logger from 'logplease';
 import { Entry } from "@dao-xyz/ipfs-log";
+import { DYNAMIC_ACCESS_CONTROLER } from "@dao-xyz/orbit-db-dynamic-access-controller";
 const logger = Logger.create('shard', { color: Logger.Colors.Blue })
 Logger.setLogLevel('ERROR')
 // io
