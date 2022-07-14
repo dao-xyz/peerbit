@@ -21,7 +21,7 @@ This is a fork of OrbitDB where the codebase is ported to Typescript. Function w
 ## BKVStore  [./packages/bfeedstore](bkvstore)
 - Same as BDocstore but for "key value store" (though docstore is superior in many aspects)
 
-## Dynamic Access Controller  [./packages/orbit-db-dynamic-acces-controller](dynamic acces controller)
+## Dynamic Access Controller  [./packages/orbit-db-dynamic-access-controller](dca)
 - "Chain agnostic" Access Controller
 
 
