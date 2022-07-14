@@ -35,7 +35,7 @@ export class PeerOptions {
     constructor(options: {
         directoryId?: string;
         heapSizeLimit: number;
-        isServer: boolean;
+        isServer: boolean
     }) {
         Object.assign(this, options);
         this.heapSizeLimit = options.heapSizeLimit;
@@ -134,7 +134,7 @@ export class AnyPeer {
                 jobs.controller.abort();
             }
             await this.orbitDB.disconnect();
-            await this.node.stop();
+
             /*            
              */
         } catch (error) {
