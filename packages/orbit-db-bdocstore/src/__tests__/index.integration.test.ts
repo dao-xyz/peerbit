@@ -61,7 +61,6 @@ const documentDbTestSetup = async (): Promise<{
 describe('query', () => {
 
   test('match all', async () => {
-    const xx = 123;
     let {
       creator,
       observer,
