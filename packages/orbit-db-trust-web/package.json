@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-trust-web",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "description": "Access controller that operates on a DB",
   "type": "module",
   "sideEffects": false,
