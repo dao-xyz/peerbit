@@ -1,9 +1,10 @@
 import IdentityProvider from "orbit-db-identity-provider/src/identity-provider-interface";
 
 import { Keypair, PublicKey as SPublicKey } from '@solana/web3.js';
-import { Identity, IdentityProviderType } from "@dao-xyz/orbit-db-identity-provider";
+import { Identity } from "@dao-xyz/orbit-db-identity-provider";
 import nacl from "tweetnacl";
 import bs58 from 'bs58';
+
 
 
 export class SolanaIdentityProvider extends IdentityProvider {
@@ -19,7 +20,7 @@ export class SolanaIdentityProvider extends IdentityProvider {
     }
 
     // Returns the type of the identity provider
-    static get type(): IdentityProviderType {
+    static get type(): string {
         return 'solana'
     }
 

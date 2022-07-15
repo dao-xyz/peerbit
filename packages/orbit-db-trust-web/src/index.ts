@@ -2,7 +2,7 @@ import { deserialize, field, option, serialize, variant } from "@dao-xyz/borsh";
 import { BinaryDocumentStore, BinaryDocumentStoreOptions, LogEntry } from "@dao-xyz/orbit-db-bdocstore";
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import { SingleDBInterface } from "@dao-xyz/orbit-db-store-interface";
-import { Identities, Identity, IdentityProviderType, IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
+import { Identities, Identity, IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
 import { OrbitDB } from "@dao-xyz/orbit-db";
 import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
 import AccessController from "orbit-db-access-controllers/src/access-controller-interface";

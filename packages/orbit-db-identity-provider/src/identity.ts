@@ -3,8 +3,6 @@ import { Identities } from "./identities";
 import { isDefined } from "./is-defined";
 import { variant, field, serialize } from '@dao-xyz/borsh';
 import { createHash } from "crypto";
-export type IdentityProviderType = 'orbitdb' | 'ethereum' | 'solana' | string;
-
 
 @variant(0)
 export class Signatures {
@@ -44,7 +42,8 @@ export class IdentitySerializable {
   signatures: Signatures;
 
   @field({ type: 'String' })
-  type: IdentityProviderType;
+  type: string;
+
   constructor(
     options?: {
       id: string,

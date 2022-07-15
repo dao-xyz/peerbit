@@ -1,8 +1,7 @@
 import { field, serialize, variant } from "@dao-xyz/borsh";
-import { IdentityProviderType } from "@dao-xyz/orbit-db-identity-provider";
 import { createHash } from "crypto";
 import { BinaryPayload } from "@dao-xyz/bpayload";
-
+export type IdentityProviderType = 'orbitdb' | 'ethereum' | 'solana' | string;
 
 @variant("trust")
 export class TrustData extends BinaryPayload {
