@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-identity-provider",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "description": "Identity provider for OrbitDB",
   "main": "lib/cjs/index.js",
   "module": "lib/esm/index.mjs",
