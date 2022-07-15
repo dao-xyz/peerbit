@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-trust-web",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "description": "Access controller that operates on a DB",
   "type": "module",
   "sideEffects": false,
@@ -32,10 +32,10 @@
   "dependencies": {
     "@dao-xyz/borsh": "^2.1.4",
     "@dao-xyz/bquery": "^0.0.33",
+    "@dao-xyz/identity": "^0.0.2",
     "@dao-xyz/orbit-db-bdocstore": "^0.0.65",
     "@dao-xyz/orbit-db-identity-provider": "^0.5.6",
     "@dao-xyz/orbit-db-store-interface": "^0.0.12",
-    "@dao-xyz/identity": "^0.0.1",
     "p-map": "~1.1.1",
     "uuid": "^8.3.2"
   },

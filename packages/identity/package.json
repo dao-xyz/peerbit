@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/identity",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Identity classes",
   "type": "module",
   "sideEffects": false,
@@ -32,6 +32,5 @@
   "dependencies": {
     "@dao-xyz/borsh": "^2.1.4",
     "@dao-xyz/bpayload": "^0.0.3"
-  },
-  "devDependencies": {}
+  }
 }
