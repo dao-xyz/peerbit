@@ -2,85 +2,18 @@ import { deserialize, field, option, serialize, variant } from "@dao-xyz/borsh";
 import { BinaryDocumentStore, BinaryDocumentStoreOptions, LogEntry } from "@dao-xyz/orbit-db-bdocstore";
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import { SingleDBInterface } from "@dao-xyz/orbit-db-store-interface";
-import { IStoreOptions, Store } from "@dao-xyz/orbit-db-store";
 import { Identities, Identity, IdentityProviderType, IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
 import { OrbitDB } from "@dao-xyz/orbit-db";
 import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
 import AccessController from "orbit-db-access-controllers/src/access-controller-interface";
 import AccessControllers from "orbit-db-access-controllers";
 import { Entry } from "@dao-xyz/ipfs-log";
-import bs58 from 'bs58';
 import { createHash } from "crypto";
 import { IQueryStoreOptions } from "@dao-xyz/orbit-db-query-store";
 import { BinaryPayload } from "@dao-xyz/bpayload";
-const TRUSTEE_PROPERTY_KEY = 'trustee';
-
-@variant("trust")
-export class TrustData extends BinaryPayload {
-}
-
-@variant(0)
-export class PublicKey extends TrustData {
-
-    @field({ type: 'String' })
-    id: string;
-
-    @field({ type: 'String' })
-    type: string;
+import { PublicKey, TrustData } from "@dao-xyz/identity";
 
 
-    constructor(properties?: {
-        id: string;
-        type: IdentityProviderType;
-    }) {
-        super();
-        if (properties) {
-            this.id = properties.id;
-            this.type = properties.type;
-        }
-    }
-
-    static from(identity: PublicKey | Identity | IdentitySerializable | { type: string, id: string }): PublicKey {
-        if (identity instanceof PublicKey)
-            return identity;
-        return new PublicKey({
-            id: identity.id,
-            type: identity.type
-        })
-    }
-
-    hashCode(): string {
-        return createHash('sha1').update(serialize(this)).digest('hex');
-    }
-}
-
-
-
-@variant(1)
-export class P2PTrustRelation extends TrustData {
-
-    /*  @field({ type: PublicKey })
-     truster: PublicKey  *///  Dont need this becaause its going to be signed with truster anyway (bc orbitdb)
-
-    @field({ type: PublicKey })
-    [TRUSTEE_PROPERTY_KEY]: PublicKey  // the key to trust
-
-
-    truster: IdentitySerializable // will be set manually, upon deserialization from the oplog
-
-    /* @field({ type: 'String' }) 
-    signature: string */ // Dont need this because its going to be signed anyway (bc orbitdb)
-
-    constructor(props?: {
-        [TRUSTEE_PROPERTY_KEY]: PublicKey
-    }) {
-        super();
-        if (props) {
-            this[TRUSTEE_PROPERTY_KEY] = props[TRUSTEE_PROPERTY_KEY];
-        }
-    }
-
-}
 /**
  * Get path, to target.
  * @param start 
@@ -131,6 +64,33 @@ export const getTargetPath = (start: PublicKey, target: (key: PublicKey) => bool
 }
 
 
+
+@variant(1)
+export class P2PTrustRelation extends TrustData {
+
+    /*  @field({ type: PublicKey })
+     truster: PublicKey  *///  Dont need this becaause its going to be signed with truster anyway (bc orbitdb)
+
+    @field({ type: PublicKey })
+    trustee: PublicKey  // the key to trust
+
+
+    truster: PublicKey // will be set manually, upon deserialization from the oplog
+
+    /* @field({ type: 'String' }) 
+    signature: string */ // Dont need this because its going to be signed anyway (bc orbitdb)
+
+    constructor(props?: {
+        trustee: PublicKey
+    }) {
+        super();
+        if (props) {
+            this.trustee = props.trustee;
+        }
+    }
+
+}
+
 @variant([2, 0])
 export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>
 {
@@ -147,7 +107,7 @@ export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocument
     }) {
         super({
             name: props?.name ? props?.name : '' + '_trust', address: props?.address, storeOptions: new BinaryDocumentStoreOptions({
-                indexBy: TRUSTEE_PROPERTY_KEY,
+                indexBy: 'trustee',
                 objectType: P2PTrustRelation.name
             })
         });

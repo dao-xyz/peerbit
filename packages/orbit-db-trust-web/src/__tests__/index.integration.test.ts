@@ -1,6 +1,7 @@
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
 import { getConnectedPeers, disconnectPeers } from '@dao-xyz/peer-test-utils'
-import { P2PTrust, PublicKey } from '..';
+import { P2PTrust } from '..';
+import { PublicKey } from '@dao-xyz/identity';
 
 const defaultStoreOptions: IQueryStoreOptions<any, any> = {
     nameResolver: (n) => n,
