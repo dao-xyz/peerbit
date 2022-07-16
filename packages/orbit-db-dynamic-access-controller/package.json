@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-dynamic-access-controller",
-  "version": "0.0.17",
+  "version": "0.0.18",
   "description": "Access controller that operates on a DB",
   "type": "module",
   "sideEffects": false,
