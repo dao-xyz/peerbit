@@ -104,7 +104,20 @@ export class OrbitDB {
       throw new Error('Offline mode requires passing an `id` in the options')
     }
 
-    const { id } = options.id || options.offline ? ({ id: options.id }) : await ipfs.id()
+    let id: string = undefined;
+    if (options.id || options.offline) {
+
+      id = options.id;
+    }
+    else {
+      const idFromIpfs: string | { tostring: () => string } = await ipfs.id();
+      if (typeof idFromIpfs !== 'string') {
+        id = idFromIpfs.toString(); //  ipfs 57+ seems to return an id object rather than id
+      }
+      else {
+        id = idFromIpfs
+      }
+    }
 
     if (!options.directory) { options.directory = './orbitdb' }
 
