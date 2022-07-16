@@ -1,6 +1,6 @@
 import { IdentityProvider } from "./identity-provider-interface"
 
-import u8a from 'uint8arrays'
+import * as u8a from 'uint8arrays'
 import { DID } from 'dids'
 import { IdentitySerializable } from "./identity";
 
