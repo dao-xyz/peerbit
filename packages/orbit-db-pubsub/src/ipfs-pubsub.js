@@ -2,7 +2,7 @@
 const pSeries = require('p-series')
 const PeerMonitor = require('ipfs-pubsub-peer-monitor')
 
-import Logger from 'logplease'
+const Logger = require('logplease');
 const logger = Logger.create("pubsub", { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 

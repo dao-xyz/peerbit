@@ -1,6 +1,6 @@
 import { IdentityProvider } from "./identity-provider-interface"
 
-const u8a = require('uint8arrays')
+import u8a from 'uint8arrays'
 import { DID } from 'dids'
 import { IdentitySerializable } from "./identity";
 
