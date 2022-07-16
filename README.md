@@ -13,7 +13,7 @@ This is a fork of OrbitDB where the codebase is ported to Typescript. Function w
 
 
 ## BDocstore [./packages/orbit-db-bdocstore](bdocstore)
-- Document store, but different from the "default" orbit-db implementation in the way serialization/deserialization is performed. In addition, this store also supports
+- Document store, but different from the "default" orbit-db implementation in the way serialization/deserialization is performed. In addition, this store supports querying. 
 
 ## BFeedStore  [./packages/bfeedstore](bfeedstore)
 - Same as BDocstore but for "feedstore" (though docstore is superior in many aspects)

@@ -40,5 +40,8 @@ export class PublicKey extends TrustData {
     hashCode(): string {
         return createHash('sha1').update(serialize(this)).digest('hex');
     }
+    toString() {
+        return this.type + '/' + this.id;
+    }
 }
 
