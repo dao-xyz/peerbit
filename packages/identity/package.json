@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/identity",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Identity classes",
   "type": "module",
   "sideEffects": false,
@@ -31,6 +31,6 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^2.1.4",
-    "@dao-xyz/bpayload": "^0.0.4"
+    "@dao-xyz/bpayload": "^0.0.5"
   }
 }
