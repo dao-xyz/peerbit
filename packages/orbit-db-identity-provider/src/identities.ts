@@ -3,11 +3,9 @@ import { EthIdentityProvider, EthIdentityProviderOptions } from "./ethereum-iden
 import { Identity, IdentitySerializable, Signatures } from "./identity"
 import { IdentityProvider } from "./identity-provider-interface"
 import { OrbitDBIdentityProvider } from "./orbit-db-identity-provider"
-
-const Keystore = require('orbit-db-keystore')
-
-const LRU = require('lru')
-const path = require('path')
+import Keystore from 'orbit-db-keystore'
+import LRU from 'lru'
+import path from 'path'
 
 const defaultType = 'orbitdb'
 const identityKeysPath = path.join('./orbitdb', 'identity', 'identitykeys')
@@ -115,7 +113,7 @@ export class Identities {
       return false
     }
 
-    const verifyIdSig = await Keystore.verify(
+    const verifyIdSig = await (Keystore as any).verify(
       identity.signatures.id,
       identity.publicKey,
       identity.id
@@ -129,11 +127,11 @@ export class Identities {
 
   static async createIdentity(options: { type?: string, identityKeysPath?: string, signingKeysPath?: string, keystore?: typeof Keystore, signingKeystore?: typeof Keystore, id?: string, migrate?: (options: { targetStore: any, targetId: string }) => Promise<void> } & DIDIdentityProviderOptions & EthIdentityProviderOptions = {}) {
     if (!options.keystore) {
-      options.keystore = new Keystore(options.identityKeysPath || identityKeysPath)
+      options.keystore = new (Keystore as any)(options.identityKeysPath || identityKeysPath)
     }
     if (!options.signingKeystore) {
       if (options.signingKeysPath) {
-        options.signingKeystore = new Keystore(options.signingKeysPath)
+        options.signingKeystore = new (Keystore as any)(options.signingKeysPath)
       } else {
         options.signingKeystore = options.keystore
       }
