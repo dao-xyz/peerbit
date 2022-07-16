@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/identity",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Identity classes",
   "type": "module",
   "sideEffects": false,
