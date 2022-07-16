@@ -110,7 +110,7 @@ export class OrbitDB {
       id = options.id;
     }
     else {
-      const idFromIpfs: string | { tostring: () => string } = await ipfs.id();
+      const idFromIpfs: string | { toString: () => string } = (await ipfs.id()).id;
       if (typeof idFromIpfs !== 'string') {
         id = idFromIpfs.toString(); //  ipfs 57+ seems to return an id object rather than id
       }
