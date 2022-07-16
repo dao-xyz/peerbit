@@ -17,11 +17,17 @@ export const SHARD_INDEX = 0;
 const MAX_SHARD_SIZE = 1024 * 500 * 1000;
 export const DEFAULT_QUERY_REGION = 'world';
 export const MIN_REPLICATION_AMOUNT = 1;
-const v8 = require('v8')
 import { MemoryLimitExceededError } from "./errors";
 import Logger from 'logplease';
 import { Entry } from "@dao-xyz/ipfs-log";
 import { DYNAMIC_ACCESS_CONTROLER } from "@dao-xyz/orbit-db-dynamic-access-controller";
+import isNode from 'is-node';
+
+let v8 = undefined;
+if (isNode) {
+    v8 = require('v8');
+}
+
 const logger = Logger.create('shard', { color: Logger.Colors.Blue })
 Logger.setLogLevel('ERROR')
 // io

@@ -15,9 +15,12 @@ import { OrbitDB } from '@dao-xyz/orbit-db';
 import { ACLInterface, ACLInterfaceOptions } from './acl-db';
 import { Access, AccessData } from './access';
 import { P2PTrust } from "@dao-xyz/orbit-db-trust-web";
-const v8 = require('v8')
 export * from './access';
-
+import isNode from 'is-node';
+let v8 = undefined;
+if (isNode) {
+    v8 = require('v8');
+}
 @variant(0)
 export class AccessRequest {
 

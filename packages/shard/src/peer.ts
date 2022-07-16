@@ -11,8 +11,11 @@ import { OrbitDB } from '@dao-xyz/orbit-db';
 import { v4 as uuid } from 'uuid';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import { P2PTrust } from "@dao-xyz/orbit-db-trust-web";
-const v8 = require('v8')
-
+import isNode from 'is-node';
+let v8 = undefined;
+if (isNode) {
+    v8 = require('v8');
+}
 export const ROOT_CHAIN_SHARD_SIZE = 100;
 const EXPECTED_PING_DELAY = 10 * 1000; // expected pubsub hello ping delay (two way)
 
