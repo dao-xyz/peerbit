@@ -6,7 +6,7 @@ import { QueryRequestV0, RangeCoordinate, RangeCoordinates, Result, ResultWithSo
 import { StringQueryRequest } from '@dao-xyz/bquery';
 import BN from 'bn.js';
 import { Range, RangeOptional } from './range';
-import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
+import { field, variant } from '@dao-xyz/borsh';
 import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
 import { OrbitDB } from '@dao-xyz/orbit-db';
