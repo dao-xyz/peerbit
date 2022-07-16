@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-stringstore",
-  "version": "0.0.61",
+  "version": "0.0.62",
   "description": "String store",
   "type": "module",
   "sideEffects": false,
@@ -31,14 +31,14 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^2.1.4",
-    "@dao-xyz/bquery": "^0.0.40",
-    "@dao-xyz/orbit-db-query-store": "^0.0.47",
+    "@dao-xyz/bquery": "^0.0.41",
+    "@dao-xyz/orbit-db-query-store": "^0.0.48",
     "@dao-xyz/orbit-db-store": "^0.0.20",
     "@dao-xyz/time": "^0.0.11"
   },
   "devDependencies": {
-    "@dao-xyz-types/orbit-db": "^0.0.38",
-    "@dao-xyz/peer-test-utils": "^0.0.29"
+    "@dao-xyz-types/orbit-db": "^0.0.39",
+    "@dao-xyz/peer-test-utils": "^0.0.30"
   },
   "gitHead": "d10b89ef1a120a58e1a7e92aadcc2bb536a37e3e"
 }

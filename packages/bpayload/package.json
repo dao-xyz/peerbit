@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/bpayload",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "description": "Class for unifying io patterns (der/ser)",
   "type": "module",
   "sideEffects": false,
@@ -35,7 +35,7 @@
     "uuid": "^8.3.2"
   },
   "devDependencies": {
-    "@dao-xyz/peer-test-utils": "^0.0.29",
+    "@dao-xyz/peer-test-utils": "^0.0.30",
     "ipfs": "^0.62.3"
   },
   "gitHead": "d10b89ef1a120a58e1a7e92aadcc2bb536a37e3e"
