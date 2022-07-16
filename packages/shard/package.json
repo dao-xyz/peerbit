@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/shard",
-    "version": "0.0.117",
+    "version": "0.0.118",
     "author": "dao-xyz.network",
     "repository": "https://github.com/@dao-xyz/dao-xyz-ts",
     "license": "Apache-2.0",
@@ -47,7 +47,7 @@
         "@dao-xyz/orbit-db-bdocstore": "^0.0.66",
         "@dao-xyz/orbit-db-bfeedstore": "^0.0.50",
         "@dao-xyz/orbit-db-bkvstore": "^0.0.58",
-        "@dao-xyz/orbit-db-dynamic-access-controller": "^0.0.16",
+        "@dao-xyz/orbit-db-dynamic-access-controller": "^0.0.17",
         "@dao-xyz/orbit-db-identity-provider": "^0.5.7",
         "@dao-xyz/orbit-db-pubsub": "^0.6.9",
         "@dao-xyz/orbit-db-store-interface": "^0.0.13",
