@@ -16149,7 +16149,7 @@ orbit-db-keystore@^1.0.0:
     reachdown "^1.1.0"
     safe-buffer "^5.2.1"
 
-orbit-db-keystore@~0.3.0, orbit-db-keystore@~0.3.5:
+orbit-db-keystore@~0.3.5:
   version "0.3.5"
   resolved "https://registry.yarnpkg.com/orbit-db-keystore/-/orbit-db-keystore-0.3.5.tgz#72e9f8cec58909d68b2d4cb8acaa0484ef581111"
   integrity sha512-oyu8BndnGnX+7tEHfkXBxiSPMSeztLweIUUY4OwyKysXaqd5CWvNDGT3tVZ4jq8dJ13LNmfQzdr20PjIRcBVig==

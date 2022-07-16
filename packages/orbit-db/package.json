@@ -41,7 +41,7 @@
     "orbit-db-eventstore": "~1.12.0",
     "orbit-db-feedstore": "~1.12.0",
     "orbit-db-io": "^1.0.1",
-    "orbit-db-keystore": "~0.3.0",
+    "orbit-db-keystore": "^1.0.0",
     "orbit-db-kvstore": "~1.12.0",
     "orbit-db-pubsub": "~0.6.0",
     "orbit-db-storage-adapter": "~0.5.3",
