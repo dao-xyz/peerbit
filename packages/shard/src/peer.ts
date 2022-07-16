@@ -7,15 +7,11 @@ import { IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
 
 export const EMIT_HEALTHCHECK_INTERVAL = 5000;
 
-import v8 from 'v8';
-
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { v4 as uuid } from 'uuid';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import { P2PTrust } from "@dao-xyz/orbit-db-trust-web";
-import { resolve } from "path";
-import { threadId } from "worker_threads";
-
+const v8 = require('v8')
 
 export const ROOT_CHAIN_SHARD_SIZE = 100;
 const EXPECTED_PING_DELAY = 10 * 1000; // expected pubsub hello ping delay (two way)
@@ -199,10 +195,11 @@ export class ShardPeerInfo {
 
 
     async getShardPeerInfo(): Promise<PeerInfo> {
+
         return new PeerInfo({
             key: this._shard.peer.orbitDB.identity.toSerializable(),
             addresses: (await this._shard.peer.node.id()).addresses.map(x => x.toString()),
-            memoryLeft: v8.getHeapStatistics().total_available_size //v8
+            memoryLeft: v8.getHeapStatistics().total_available_size//v8
         })
     }
 

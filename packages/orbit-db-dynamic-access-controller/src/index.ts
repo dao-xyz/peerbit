@@ -15,7 +15,7 @@ import { OrbitDB } from '@dao-xyz/orbit-db';
 import { ACLInterface, ACLInterfaceOptions } from './acl-db';
 import { Access, AccessData } from './access';
 import { P2PTrust } from "@dao-xyz/orbit-db-trust-web";
-import v8 from 'v8';
+const v8 = require('v8')
 export * from './access';
 
 @variant(0)

@@ -17,7 +17,7 @@ export const SHARD_INDEX = 0;
 const MAX_SHARD_SIZE = 1024 * 500 * 1000;
 export const DEFAULT_QUERY_REGION = 'world';
 export const MIN_REPLICATION_AMOUNT = 1;
-import v8 from 'v8';
+const v8 = require('v8')
 import { MemoryLimitExceededError } from "./errors";
 import Logger from 'logplease';
 import { Entry } from "@dao-xyz/ipfs-log";
