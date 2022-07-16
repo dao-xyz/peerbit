@@ -1,4 +1,4 @@
-const path = require('path')
+import path from 'path'
 import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store'
 import EventStore from 'orbit-db-eventstore'
 import FeedStore from 'orbit-db-feedstore'
@@ -6,16 +6,16 @@ import KeyValueStore from 'orbit-db-kvstore'
 import CounterStore from 'orbit-db-counterstore'
 import DocumentStore from 'orbit-db-docstore'
 import io from 'orbit-db-io'
-const Pubsub = require('orbit-db-pubsub')
-const Storage = require('orbit-db-storage-adapter')
+import Pubsub from 'orbit-db-pubsub'
+import Storage from 'orbit-db-storage-adapter'
 import { run as migrationRun } from './migrations';
-const Logger = require('logplease')
+import Logger from 'logplease'
 const logger = Logger.create('orbit-db')
 import { Identity, Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import AccessControllers from 'orbit-db-access-controllers'
 import Cache from 'orbit-db-cache'
-const Keystore = require('orbit-db-keystore')
+import Keystore from 'orbit-db-keystore'
 import { isDefined } from './is-defined'
 import { OrbitDBAddress } from './orbit-db-address'
 import { createDBManifest } from './db-manifest'
@@ -122,7 +122,7 @@ export class OrbitDB {
     if (!options.keystore) {
       const keystorePath = path.join(options.directory, id, '/keystore')
       const keyStorage = await options.storage.createStore(keystorePath)
-      options.keystore = new Keystore(keyStorage)
+      options.keystore = new (Keystore as any)(keyStorage) // TODO fix typings
     }
 
     if (!options.identity) {

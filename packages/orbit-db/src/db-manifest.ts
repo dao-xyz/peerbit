@@ -1,5 +1,5 @@
-const path = require('path')
-const io = require('orbit-db-io')
+import path from 'path'
+import io from 'orbit-db-io'
 
 // Creates a DB manifest file and saves it in IPFS
 export const createDBManifest = async (ipfs, name, type, accessControllerAddress, options) => {

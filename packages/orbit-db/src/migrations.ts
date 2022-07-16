@@ -1,10 +1,9 @@
 
-const path = require('path')
-const fs = require('./fs-shim')
+import path from 'path';
+import { fs } from './fs-shim'
 
-const Cache = require('orbit-db-cache')
-
-const Logger = require('logplease')
+import Cache from 'orbit-db-cache'
+import Logger from 'logplease'
 const logger = Logger.create('orbit-db')
 Logger.setLogLevel('ERROR')
 

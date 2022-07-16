@@ -1,5 +1,5 @@
-const path = require('path')
-const { CID } = require('multiformats/cid')
+import path from 'path'
+import { CID } from 'multiformats/cid'
 
 const notEmpty = e => e !== '' && e !== ' '
 

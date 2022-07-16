@@ -1,5 +1,5 @@
-const Channel = require('ipfs-pubsub-1on1')
-const Logger = require('logplease')
+import Channel from 'ipfs-pubsub-1on1'
+import Logger from 'logplease'
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
