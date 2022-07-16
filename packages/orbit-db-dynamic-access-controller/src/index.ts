@@ -5,8 +5,8 @@
 // Can remove any entries?
 
 // Relation with enc/dec?
-import { deserialize, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
-import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
+import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
+import { Identities, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
 import { Entry } from '@dao-xyz/ipfs-log';
 import AccessController from "orbit-db-access-controllers/src/access-controller-interface";
 import AccessControllers from 'orbit-db-access-controllers';
@@ -16,7 +16,7 @@ import { ACLInterface, ACLInterfaceOptions } from './acl-db';
 import { Access, AccessData } from './access';
 import { P2PTrust } from "@dao-xyz/orbit-db-trust-web";
 import v8 from 'v8';
-
+export * from './access';
 
 @variant(0)
 export class AccessRequest {
