@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-stringstore",
-  "version": "0.0.54",
+  "version": "0.0.55",
   "description": "String store",
   "type": "module",
   "sideEffects": false,
@@ -37,8 +37,8 @@
     "@dao-xyz/time": "^0.0.11"
   },
   "devDependencies": {
-    "@dao-xyz/peer-test-utils": "^0.0.23",
-    "@dao-xyz-types/orbit-db": "^0.0.32"
+    "@dao-xyz-types/orbit-db": "^0.0.32",
+    "@dao-xyz/peer-test-utils": "^0.0.23"
   },
   "gitHead": "d10b89ef1a120a58e1a7e92aadcc2bb536a37e3e"
 }
