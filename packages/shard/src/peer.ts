@@ -55,11 +55,12 @@ export class AnyPeer {
     public options: PeerOptions;
     public id: string;
 
-    public supportJobs: {
+    public supportJobs: Map<string, {
         shard: Shard<any>,
         connectingToParentShardCID?: string
         controller: AbortController
-    }[] = [];
+    }> = new Map();
+
 
     // trust regions that are currently replicated by the peer
     public trustWebs: Map<string, { trust: P2PTrust, shards: Shard<any>[] }> = new Map(); // key is the hash of P2PTrust
@@ -129,7 +130,7 @@ export class AnyPeer {
             /*   await this.orbitDB.disconnect(); */
             /*  let p = (await this.node.pubsub.ls()).map(topic => this.node.pubsub.unsubscribe(topic))
              await Promise.all(p); */
-            for (const jobs of this.supportJobs) {
+            for (const jobs of this.supportJobs.values()) {
                 jobs.controller.abort();
             }
             await this.orbitDB.disconnect();

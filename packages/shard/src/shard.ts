@@ -212,11 +212,7 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
 
         await this.peer?.removeAndCloseCachedTrust(this.trust, this);
         await this.shardPeerInfo?.close();
-        //this.dbs.forEach(db => { db.db = undefined });
         await this.interface.close();
-        /* this.trust?.close();
-        this.memoryAdded?.close();
-        this.memoryAdded?.close(); */
     }
 
     getQueryTopic(topic: string): string {
@@ -238,8 +234,10 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
 
         }
 
-        const peerIsSupportingParent = !!this.parentShardCID && this.peer.supportJobs.find((job) => job.shard.cid === this.parentShardCID)
-        const connectToParentShard = !peerIsSupportingParent && !!parentShard && !this.peer.supportJobs.find((job) => job.connectingToParentShardCID == this.parentShardCID)
+        const peerIsSupportingParent = !!this.parentShardCID && this.peer.supportJobs.has(this.parentShardCID)
+
+        // TODO make more efficient (this.peer.supportJobs.values()...)
+        const connectToParentShard = !peerIsSupportingParent && !!parentShard && ![...this.peer.supportJobs.values()].find((job) => job.connectingToParentShardCID == this.parentShardCID)
         const controller = new AbortController();
         const newJob = {
             shard: this.shardPeerInfo._shard,
@@ -247,7 +245,7 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
             connectingToParentShardCID: connectToParentShard ? this.parentShardCID : undefined
         }
 
-        this.peer.supportJobs.push(newJob);
+        this.peer.supportJobs.set(this.shardPeerInfo._shard.cid, newJob);
 
         const task = async () => {
             await this.shardPeerInfo.emitHealthcheck();
@@ -307,10 +305,13 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
         // ??? 
     }
  */
-    static async subscribeForReplication(me: AnyPeer, trust: P2PTrust): Promise<void> {
+    static async subscribeForReplication(me: AnyPeer, trust: P2PTrust, onReplication?: (shard: Shard<any>) => void): Promise<void> {
         await me.node.pubsub.subscribe(trust.replicationTopic, async (msg: any) => {
             try {
                 let shard = deserialize(Buffer.from(msg.data), Shard);
+                if (me.supportJobs.has(shard.cid)) {
+                    return; // Already replicated
+                }
 
                 // check if is trusted,
 
@@ -326,6 +327,9 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
                 shard.trust = await me.getCachedTrustOrSet(trust, shard) // this is necessary, else the shard with initialize with a new trust region
                 await shard.replicate(me);
 
+                if (onReplication)
+                    onReplication(shard);
+
             } catch (error) {
                 if (error instanceof MemoryLimitExceededError) {
                     logger.info(error.message);
@@ -336,16 +340,14 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
             }
         })
     }
+
     _requestingReplicationPromise: Promise<void>;
     async requestReplicate(shardIndex?: number): Promise<void> {
         let shard = this as Shard<T>;
         if (shardIndex !== undefined) {
             shard = await this.createShardWithIndex(shardIndex);
         }
-        /*   let shardCounter = await this.chain.getShardCounter();
-          if (shardCounter.value < this.index.toNumber()) {
-              throw new Error(`Expecting shard counter to be less than the new index ${shardCounter} !< ${this.index}`)
-          } */
+
         await this._requestingReplicationPromise;
         this._requestingReplicationPromise = new Promise(async (resolve, reject) => {
             const currentPeersCount = async () => (await this.shardPeerInfo.getPeers()).length
