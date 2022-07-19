@@ -28,9 +28,20 @@ export class PublicKey extends TrustData {
         }
     }
 
-    static from(identity: PublicKey | { type: string, id: string }): PublicKey {
+    static from(identity: PublicKey | { type: string, id: string } | string): PublicKey {
         if (identity instanceof PublicKey)
             return identity;
+        else if (typeof identity === 'string') {
+            const splitIndex = identity.indexOf("/")
+            if (splitIndex == -1) {
+                throw new Error("When parsing PublicKey from string, identity is expected to be in the form [CHAIN TYPE]/[PUBLICKEY], got: " + identity)
+            }
+            const type = identity.substring(0, splitIndex);
+            const id = identity.substring(splitIndex + 1);
+            return new PublicKey({
+                id, type
+            })
+        }
         return new PublicKey({
             id: identity.id,
             type: identity.type
