@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-dynamic-access-controller",
-  "version": "0.0.25",
+  "version": "0.0.26",
   "description": "Access controller that operates on a DB",
   "type": "module",
   "sideEffects": false,
@@ -31,11 +31,11 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^2.1.4",
-    "@dao-xyz/bquery": "^0.0.41",
-    "@dao-xyz/orbit-db-bdocstore": "^0.0.73",
+    "@dao-xyz/bquery": "^0.0.42",
+    "@dao-xyz/orbit-db-bdocstore": "^0.0.74",
     "@dao-xyz/orbit-db-identity-provider": "^0.5.10",
-    "@dao-xyz/orbit-db-store-interface": "^0.0.20",
-    "@dao-xyz/orbit-db-trust-web": "^0.0.23",
+    "@dao-xyz/orbit-db-store-interface": "^0.0.21",
+    "@dao-xyz/orbit-db-trust-web": "^0.0.24",
     "p-map": "~1.1.1",
     "uuid": "^8.3.2"
   },
