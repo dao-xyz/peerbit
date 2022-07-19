@@ -1,16 +1,11 @@
-import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
 import { getConnectedPeers, disconnectPeers } from '@dao-xyz/peer-test-utils'
 import { P2PTrust } from '..';
 import { PublicKey } from '@dao-xyz/identity';
 
-const defaultStoreOptions: IQueryStoreOptions<any, any> = {
-    nameResolver: (n) => n,
-    cache: undefined,
-    create: true,
-    typeMap: {},
-    replicate: true,
-    subscribeToQueries: true
-};
+const defaultStoreOptions = (l: P2PTrust, isServer: boolean = true, directory: string = undefined) => {
+    return l.getStoreOptions(isServer, directory)
+}
+
 describe('isTrusted', () => {
 
     test('trusted by chain', async () => {
@@ -19,13 +14,13 @@ describe('isTrusted', () => {
         const l0a = new P2PTrust({
             rootTrust: PublicKey.from(peer.orbitDB.identity)
         });
-        await l0a.init(peer.orbitDB, defaultStoreOptions);
+        await l0a.init(peer.orbitDB, defaultStoreOptions(l0a));
 
         let peer2Key = peer2.orbitDB.identity;
         await l0a.addTrust(peer2Key);
 
         let l0b = await P2PTrust.loadFromCID(l0a.cid, peer2.node)
-        await l0b.init(peer2.orbitDB, defaultStoreOptions);
+        await l0b.init(peer2.orbitDB, defaultStoreOptions(l0b));
         await l0b.load(1);
 
         let peer3Key = peer3.orbitDB.identity;
@@ -46,10 +41,10 @@ describe('isTrusted', () => {
             rootTrust: peer.orbitDB.identity
         });
 
-        await l0a.init(peer.orbitDB, defaultStoreOptions);
+        await l0a.init(peer.orbitDB, defaultStoreOptions(l0a));
 
         let l0b = await P2PTrust.loadFromCID(l0a.cid, peer2.node);
-        await l0b.init(peer2.orbitDB, defaultStoreOptions);
+        await l0b.init(peer2.orbitDB, defaultStoreOptions(l0b));
 
         let peer3Key = peer3.orbitDB.identity
 

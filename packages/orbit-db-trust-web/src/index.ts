@@ -10,10 +10,14 @@ import AccessControllers from "orbit-db-access-controllers";
 import { Entry } from "@dao-xyz/ipfs-log";
 import { createHash } from "crypto";
 import { IQueryStoreOptions } from "@dao-xyz/orbit-db-query-store";
-import { BinaryPayload } from "@dao-xyz/bpayload";
 import { PublicKey, TrustData } from "@dao-xyz/identity";
 
-
+import isNode from 'is-node';
+import { IStoreOptions } from "@dao-xyz/orbit-db-store";
+let v8 = undefined;
+if (isNode) {
+    v8 = require('v8');
+}
 /**
  * Get path, to target.
  * @param start 
@@ -117,24 +121,32 @@ export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocument
 
     }
 
+    getStoreOptions(replicate: boolean, directory?: string): IQueryStoreOptions<P2PTrustRelation, any> {
+        return {
+            subscribeToQueries: replicate,
+            replicate,
+            directory,
+            queryRegion: undefined,
+            typeMap: {
+                [P2PTrustRelation.name]: P2PTrustRelation
+            },
+            create: replicate,
+            cache: undefined,
+            nameResolver: (name: string) => name,
+            accessController: {
+                type: TRUST_WEB_ACCESS_CONTROLLER,
+                trustResolver: () => this,
+                skipManifest: true
+            } as TrustWebAccessControllerOptions
+        }
+    }
 
-
-    async init(orbitDB: OrbitDB, options: IQueryStoreOptions<any, any>): Promise<void> {
-        options = { ...options };
-        options.queryRegion = undefined,
-            options.typeMap[P2PTrustRelation.name] = P2PTrustRelation;
-        options.accessController = {
-            ...options.accessController,
-            type: TRUST_WEB_ACCESS_CONTROLLER,
-            trustResolver: () => this,
-            skipManifest: true
-        } as TrustWebAccessControllerOptions
-
-        await super.init(orbitDB, options);
+    async init(orbitDB: OrbitDB, options: IStoreOptions<any, any>): Promise<void> {
+        const storeOptions = this.getStoreOptions(options.replicate, options.directory);
+        await super.init(orbitDB, storeOptions);
         if (!this.cid) {
             await this.save(orbitDB._ipfs);
         }
-
     }
 
     async addTrust(trustee: PublicKey | Identity | IdentitySerializable) {

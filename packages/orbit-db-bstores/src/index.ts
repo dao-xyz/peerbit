@@ -6,7 +6,7 @@
  */
 
 import { OrbitDB } from "@dao-xyz/orbit-db";
-import { IStoreOptions, Store, Index } from '@dao-xyz/orbit-db-store';
+import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store';
 
 
 export class BStoreOptions<B extends Store<any, any, any>> {

@@ -1,4 +1,4 @@
-import { field, option, variant, vec } from "@dao-xyz/borsh";
+import { Constructor, field, option, variant, vec } from "@dao-xyz/borsh";
 import BN from 'bn.js';
 import { ContextMatchQuery } from "./context";
 import { MultipleQueriesType, Query, QueryType } from "./query-interface";
@@ -38,7 +38,6 @@ export class FieldQuery extends Query {
 @variant(0)
 export class FieldFilterQuery extends FieldQuery {
 
-
     @field({ type: 'String' })
     key: string
 
@@ -59,7 +58,6 @@ export class FieldFilterQuery extends FieldQuery {
 
 @variant(1)
 export class FieldStringMatchQuery extends FieldQuery {
-
 
     @field({ type: 'String' })
     key: string
@@ -138,6 +136,28 @@ export class FieldCompareQuery extends FieldQuery {
 
 
 
+@variant(3)
+export class ClassCompareQuery extends FieldQuery {
+
+    @field({ type: 'String' })
+    value: string
+
+    constructor(opts?: {
+        value: string
+    }) {
+        super();
+        if (opts) {
+            this.value = opts.value;
+        }
+    }
+
+    apply(doc: Constructor<any>): boolean {
+        return doc.constructor.name === this.value
+    }
+}
+
+
+
 
 
 @variant(0)
@@ -152,16 +172,21 @@ export class DocumentQueryRequest extends MultipleQueriesType {
     @field({ type: option(FieldSort) })
     sort: FieldSort | undefined;
 
-    constructor(obj?: {
+    constructor(props?: {
         offset?: BN
         size?: BN
         queries: Query[]
         sort?: FieldSort
 
     }) {
-        super();
-        if (obj) {
-            Object.assign(this, obj);
+        super({
+            queries: props?.queries
+        });
+
+        if (props) {
+            this.offset = props.offset;
+            this.size = props.size;
+            this.sort = props.sort;
         }
     }
 
