@@ -60,13 +60,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
       store.events.on('write', (address, entry, heads) => {
         assert.strictEqual(heads.length, 1)
         assert.strictEqual(address, 'test-address')
-        assert.strictEqual(entry.payload, data)
+        assert.strictEqual(entry.data.payload, data)
         assert.strictEqual(store.replicationStatus.progress, 1)
         assert.strictEqual(store.replicationStatus.max, 1)
         assert.strictEqual(store.address.root, store._index.id)
         assert.deepStrictEqual(store._index._index, heads)
         store._cache.get(store.localHeadsPath).then((localHeads) => {
-          assert.deepStrictEqual(localHeads[0].payload, data)
+          assert.deepStrictEqual(localHeads[0].data.payload, data)
           // TODO: Cache not returning LamportClock type for clock
           // assert.deepStrictEqual(localHeads, heads)
           store.events.removeAllListeners('write')
@@ -88,7 +88,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           assert.strictEqual(store.replicationStatus.max, writes)
           assert.strictEqual(store._index._index.length, writes)
           store._cache.get(store.localHeadsPath).then((localHeads) => {
-            assert.deepStrictEqual(localHeads[0].payload, store._index._index[2].payload)
+            assert.deepStrictEqual(localHeads[0].data.payload, store._index._index[2].data.payload)
             store.events.removeAllListeners('write')
             return Promise.resolve()
           })

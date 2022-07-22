@@ -3,7 +3,7 @@ declare module "orbit-db-feedstore" {
 
     export default class FeedStore<T> extends Store<any, any> {
         add(data: any): Promise<string>;
-        get(hash: string): LogEntry<T>
+        get(hash: string): LogEntry
 
         remove(hash: string): Promise<string>;
 
@@ -15,9 +15,9 @@ declare module "orbit-db-feedstore" {
             limit?: number,
             reverse?: boolean
         }): {
-            [Symbol.iterator](): Iterator<LogEntry<T>>,
-            next(): { value: LogEntry<T>, done: boolean },
-            collect(): LogEntry<T>[]
+            [Symbol.iterator](): Iterator<LogEntry>,
+            next(): { value: LogEntry, done: boolean },
+            collect(): LogEntry[]
         };
     }
 }

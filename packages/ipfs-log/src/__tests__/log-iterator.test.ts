@@ -5,6 +5,7 @@ import { Log } from '../log'
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 const Keystore = require('orbit-db-keystore')
 import { LogCreator } from './utils/log-creator'
+import { assertPayload } from './utils/assert'
 
 // Test utils
 const {
@@ -90,7 +91,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          assert.strictEqual(entry.payload, 'entry' + (67 - i++))
+          assertPayload(entry.payload, 'entry' + (67 - i++))
         }
       })
 
@@ -115,7 +116,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 1
         for (const entry of it) {
-          assert.strictEqual(entry.payload, 'entry' + (67 - i++))
+          assertPayload(entry.payload, 'entry' + (67 - i++))
         }
       })
 
@@ -129,7 +130,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         let i = 0
         let count = 0
         for (const entry of it) {
-          assert.strictEqual(entry.payload, 'entry' + (72 - i++))
+          assertPayload(entry.payload, 'entry' + (72 - i++))
           count++
         }
         assert.strictEqual(count, amount)
@@ -156,7 +157,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          assert.strictEqual(entry.payload, 'entry' + (79 - i++))
+          assertPayload(entry.payload, 'entry' + (79 - i++))
         }
       })
 
@@ -228,7 +229,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          assert.strictEqual(entry.payload, 'entry' + (100 - i++))
+          assertPayload(entry.payload, 'entry' + (100 - i++))
         }
       })
 
@@ -247,7 +248,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          assert.strictEqual(entry.payload, 'entry' + (100 - i++))
+          assertPayload(entry.payload, 'entry' + (100 - i++))
         }
       })
 
@@ -266,7 +267,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          assert.strictEqual(entry.payload, 'entry' + (66 - i++))
+          assertPayload(entry.payload, 'entry' + (66 - i++))
         }
       })
 
@@ -285,7 +286,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          assert.strictEqual(entry.payload, 'entry' + (67 - i++))
+          assertPayload(entry.payload, 'entry' + (67 - i++))
         }
       })
     })

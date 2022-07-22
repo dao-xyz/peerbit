@@ -1,8 +1,8 @@
-'use strict'
+import { OrbitDB } from "../orbit-db"
+import { EVENT_STORE_TYPE } from "./utils/stores/log/event-store"
 
 const assert = require('assert')
 const rmrf = require('rimraf')
-const OrbitDB = require('../src/OrbitDB')
 
 // Include test utilities
 const {
@@ -19,7 +19,7 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Replication Status (${API})`, function () {
     jest.setTimeout(config.timeout)
 
-    let ipfsd, ipfs, orbitdb1, orbitdb2, db, address
+    let ipfsd, ipfs, orbitdb1: OrbitDB, orbitdb2: OrbitDB, db
 
     beforeAll(async () => {
       rmrf.sync(dbPath1)
@@ -28,7 +28,7 @@ Object.keys(testAPIs).forEach(API => {
       ipfs = ipfsd.api
       orbitdb1 = await OrbitDB.createInstance(ipfs, { directory: dbPath1 })
       orbitdb2 = await OrbitDB.createInstance(ipfs, { directory: dbPath2 })
-      db = await orbitdb1.log('replication status tests')
+      db = await orbitdb1.create('replication status tests', EVENT_STORE_TYPE)
     })
 
     afterAll(async () => {
@@ -63,14 +63,14 @@ Object.keys(testAPIs).forEach(API => {
       await db.load()
       await db.add('hello2')
 
-      const db2 = await orbitdb2.log(db.address.toString(), { create: false })
+      const db2 = await orbitdb2.open(db.address.toString(), { type: EVENT_STORE_TYPE, create: false })
       await db2.sync(db._oplog.heads)
 
       return new Promise((resolve, reject) => {
         setTimeout(() => {
           try {
             assert.deepEqual(db2.replicationStatus, { progress: 2, max: 2 })
-            resolve()
+            resolve(true)
           } catch (e) {
             reject(e)
           }

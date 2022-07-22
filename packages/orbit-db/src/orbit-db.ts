@@ -1,10 +1,5 @@
 import path from 'path'
 import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store'
-import EventStore from 'orbit-db-eventstore'
-import FeedStore from 'orbit-db-feedstore'
-import KeyValueStore from 'orbit-db-kvstore'
-import CounterStore from 'orbit-db-counterstore'
-import DocumentStore from 'orbit-db-docstore'
 import io from 'orbit-db-io'
 import Pubsub from 'orbit-db-pubsub'
 import Storage from 'orbit-db-storage-adapter'
@@ -13,7 +8,7 @@ import Logger from 'logplease'
 const logger = Logger.create('orbit-db')
 import { Identity, Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
-import AccessControllers from 'orbit-db-access-controllers'
+import AccessControllers from 'orbit-db-access-controllers' // Fix fork
 import Cache from 'orbit-db-cache'
 import Keystore from 'orbit-db-keystore'
 import { isDefined } from './is-defined'
@@ -25,11 +20,7 @@ Logger.setLogLevel('ERROR')
 
 // Mapping for 'database type' -> Class
 const databaseTypes = {
-  counter: CounterStore,
-  eventlog: EventStore,
-  feed: FeedStore,
-  docstore: DocumentStore,
-  keyvalue: KeyValueStore
+
 }
 
 const defaultTimeout = 30000 // 30 seconds
@@ -85,11 +76,6 @@ export class OrbitDB {
   static get OrbitDBAddress() { return OrbitDBAddress }
 
   static get Store() { return Store }
-  static get EventStore() { return EventStore }
-  static get FeedStore() { return FeedStore }
-  static get KeyValueStore() { return KeyValueStore }
-  static get CounterStore() { return CounterStore }
-  static get DocumentStore() { return DocumentStore }
 
   get cache() { return this.caches[this.directory].cache }
 
@@ -155,43 +141,6 @@ export class OrbitDB {
     return new OrbitDB(ipfs, options.identity, finalOptions)
   }
 
-  /* Databases */
-  async feed(address, options = {}) {
-    options = Object.assign({ create: true, type: 'feed' }, options)
-    return this.open(address, options)
-  }
-
-  async log(address, options = {}) {
-    options = Object.assign({ create: true, type: 'eventlog' }, options)
-    return this.open(address, options)
-  }
-
-  async eventlog(address, options = {}) {
-    return this.log(address, options)
-  }
-
-  async keyvalue(address, options = {}) {
-    options = Object.assign({ create: true, type: 'keyvalue' }, options)
-    return this.open(address, options)
-  }
-
-  async kvstore(address, options = {}) {
-    return this.keyvalue(address, options)
-  }
-
-  async counter(address, options = {}) {
-    options = Object.assign({ create: true, type: 'counter' }, options)
-    return this.open(address, options)
-  }
-
-  async docs(address, options = {}) {
-    options = Object.assign({ create: true, type: 'docstore' }, options)
-    return this.open(address, options)
-  }
-
-  async docstore(address, options = {}) {
-    return this.docs(address, options)
-  }
 
   async disconnect() {
     // Close a direct connection and remove it from internal state
@@ -255,7 +204,7 @@ export class OrbitDB {
           create: options.create, replicate: options.replicate, directory: options.directory, nameResolver: options.nameResolver
         }, ...options.accessController
       };
-      accessController = await AccessControllersModule.resolve(this, options.accessControllerAddress, accessControllerOptions)
+      accessController = await AccessControllersModule.resolve(this as any, options.accessControllerAddress, accessControllerOptions)
     }
     const opts = Object.assign({ replicate: true }, options, {
       accessController: accessController,
@@ -373,7 +322,7 @@ export class OrbitDB {
 
     // Create an AccessController, use IPFS AC as the default
     options.accessController = Object.assign({}, { name: name, type: 'ipfs' }, options.accessController)
-    const accessControllerAddress = await AccessControllersModule.create(this, options.accessController.type, options.accessController || {})
+    const accessControllerAddress = await AccessControllersModule.create(this as any, options.accessController.type, options.accessController || {})
 
     // Save the manifest to IPFS
     const manifestHash = await createDBManifest(this._ipfs, name, type, accessControllerAddress, options)
@@ -393,7 +342,9 @@ export class OrbitDB {
   async create(name, type, options: {
     cache?: Cache<any>, directory?: string, accessController?: any,
     onlyHash?: boolean,
-    overwrite?: boolean
+    overwrite?: boolean,
+    create?: boolean,
+    replicationConcurrency?: number
   } = {}) {
     logger.debug('create()')
 

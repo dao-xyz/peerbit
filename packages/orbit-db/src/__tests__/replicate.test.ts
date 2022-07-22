@@ -2,7 +2,9 @@
 const assert = require('assert')
 const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
-const OrbitDB = require('../orbit-db')
+import { Store } from '@dao-xyz/orbit-db-store'
+import { OrbitDB } from '../orbit-db'
+import { EventStore, EVENT_STORE_TYPE } from './utils/stores/log/event-store'
 
 // Include test utilities
 const {
@@ -24,7 +26,7 @@ Object.keys(testAPIs).forEach(API => {
     jest.setTimeout(config.timeout * 2)
 
     let ipfsd1, ipfsd2, ipfs1, ipfs2
-    let orbitdb1, orbitdb2, db1, db2
+    let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore, db2: EventStore
 
     let timer
     let options
@@ -70,7 +72,7 @@ Object.keys(testAPIs).forEach(API => {
       }
 
       options = Object.assign({}, options, { directory: dbPath1 })
-      db1 = await orbitdb1.eventlog('replication-tests', options)
+      db1 = await orbitdb1.create('replication-tests', EVENT_STORE_TYPE, options)
     })
 
     afterEach(async () => {
@@ -96,7 +98,7 @@ Object.keys(testAPIs).forEach(API => {
       // Set 'sync' flag on. It'll prevent creating a new local database and rather
       // fetch the database from the network
       options = Object.assign({}, options, { directory: dbPath2, sync: true })
-      db2 = await orbitdb2.eventlog(db1.address.toString(), options)
+      db2 = await orbitdb2.create(db1.address.toString(), EVENT_STORE_TYPE, options)
 
       let finished = false
 
@@ -117,9 +119,9 @@ Object.keys(testAPIs).forEach(API => {
             clearInterval(timer)
             const entries = db2.iterator({ limit: -1 }).collect()
             assert.equal(entries.length, 1)
-            assert.equal(entries[0].payload.value, 'hello')
+            assert.equal(entries[0].data.payload.value, 'hello')
             assert.equal(replicatedEventCount, 1)
-            resolve()
+            resolve(true)
           }
         }, 100)
       })
@@ -130,7 +132,7 @@ Object.keys(testAPIs).forEach(API => {
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
 
       options = Object.assign({}, options, { directory: dbPath2, sync: true })
-      db2 = await orbitdb2.eventlog(db1.address.toString(), options)
+      db2 = await orbitdb2.create(db1.address.toString(), EVENT_STORE_TYPE, options)
 
       let finished = false
       const entryCount = 100
@@ -159,9 +161,9 @@ Object.keys(testAPIs).forEach(API => {
             clearInterval(timer)
             const entries = db2.iterator({ limit: -1 }).collect()
             assert.equal(entries.length, entryCount)
-            assert.equal(entries[0].payload.value, 'hello0')
-            assert.equal(entries[entries.length - 1].payload.value, 'hello99')
-            resolve()
+            assert.equal(entries[0].data.payload.value, 'hello0')
+            assert.equal(entries[entries.length - 1].data.payload.value, 'hello99')
+            resolve(true)
           }
         }, 100)
       })
@@ -172,7 +174,7 @@ Object.keys(testAPIs).forEach(API => {
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
 
       options = Object.assign({}, options, { directory: dbPath2, sync: true })
-      db2 = await orbitdb2.eventlog(db1.address.toString(), options)
+      db2 = await orbitdb2.create(db1.address.toString(), EVENT_STORE_TYPE, options)
 
       let finished = false
       const entryCount = 99
@@ -184,7 +186,7 @@ Object.keys(testAPIs).forEach(API => {
           if (!replicateSet.has(entry.hash)) {
             replicateSet.add(entry.hash)
           } else {
-            reject(new Error('Shouldn\'t have started replication twice for entry ' + entry.hash + '\n' + entry.payload.value))
+            reject(new Error('Shouldn\'t have started replication twice for entry ' + entry.hash + '\n' + entry.data.payload.value))
           }
         })
 
@@ -224,7 +226,7 @@ Object.keys(testAPIs).forEach(API => {
               assert.equal(db2._replicator._logs.length, 0)
               assert.equal(Object.keys(db2._replicator._fetching).length, 0)
 
-              resolve()
+              resolve(true)
             }
           }, 1000)
         } catch (e) {
@@ -267,7 +269,7 @@ Object.keys(testAPIs).forEach(API => {
           sync: true,
         }
 
-        db2 = await orbitdb2.eventlog(db1.address.toString(), options)
+        db2 = await orbitdb2.create(db1.address.toString(), EVENT_STORE_TYPE, options)
 
         // Test that none of the entries gets into the replication queue twice
         const replicateSet = new Set()
@@ -320,7 +322,7 @@ Object.keys(testAPIs).forEach(API => {
               assert.equal(db2._replicator._logs.length, 0)
               assert.equal(Object.keys(db2._replicator._fetching).length, 0)
 
-              resolve()
+              resolve(true)
             } catch (e) {
               reject(e)
             }
@@ -355,7 +357,7 @@ Object.keys(testAPIs).forEach(API => {
           sync: true,
         }
 
-        db2 = await orbitdb2.eventlog(db1.address.toString(), options)
+        db2 = await orbitdb2.create(db1.address.toString(), EVENT_STORE_TYPE, options)
         assert.equal(db1.address.toString(), db2.address.toString())
 
         // Test that none of the entries gets into the replication queue twice
@@ -402,7 +404,7 @@ Object.keys(testAPIs).forEach(API => {
               assert.equal(db2._replicator._logs.length, 0)
               assert.equal(Object.keys(db2._replicator._fetching).length, 0)
 
-              resolve()
+              resolve(true)
             }
           }, 500)
         } catch (e) {

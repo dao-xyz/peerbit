@@ -1,9 +1,8 @@
-'use strict'
+import { OrbitDB } from "../orbit-db"
 
 const assert = require('assert')
 const rmrf = require('rimraf')
 const path = require('path')
-const OrbitDB = require('../src/OrbitDB')
 
 // Include test utilities
 const {
@@ -20,12 +19,12 @@ const {
 const dbPath = './orbitdb/tests/write-permissions'
 
 Object.keys(testAPIs).forEach(API => {
-  describe(`orbit-db - Write Permissions (${API})`, function() {
+  describe(`orbit-db - Write Permissions (${API})`, function () {
     this.timeout(20000)
 
     let ipfsd, ipfs, orbitdb1, orbitdb2
 
-    before(async () => {
+    beforeAll(async () => {
       rmrf.sync(dbPath)
       ipfsd = await startIpfs(API, config.daemon1)
       ipfs = ipfsd.api
@@ -33,18 +32,18 @@ Object.keys(testAPIs).forEach(API => {
       orbitdb2 = await OrbitDB.createInstance(ipfs, { directory: path.join(dbPath, '2') })
     })
 
-    after(async () => {
-      if(orbitdb1)
+    afterAll(async () => {
+      if (orbitdb1)
         await orbitdb1.stop()
 
-      if(orbitdb2)
+      if (orbitdb2)
         await orbitdb2.stop()
 
       if (ipfsd)
         await stopIpfs(ipfsd)
     })
 
-    describe('allows multiple peers to write to the databases', function() {
+    describe('allows multiple peers to write to the databases', function () {
       databases.forEach(async (database) => {
         it(database.type + ' allows multiple writers', async () => {
           let options = {
@@ -73,7 +72,7 @@ Object.keys(testAPIs).forEach(API => {
       })
     })
 
-    describe('syncs databases', function() {
+    describe('syncs databases', function () {
       databases.forEach(async (database) => {
         it(database.type + ' syncs', async () => {
           let options = {
@@ -101,14 +100,14 @@ Object.keys(testAPIs).forEach(API => {
               assert.deepEqual(value, database.expectedValue)
               await db1.close()
               await db2.close()
-              resolve()
+              resolve(true)
             }, 300)
           })
         })
       })
     })
 
-    describe('syncs databases that anyone can write to', function() {
+    describe('syncs databases that anyone can write to', function () {
       databases.forEach(async (database) => {
         it(database.type + ' syncs', async () => {
           let options = {
@@ -133,14 +132,14 @@ Object.keys(testAPIs).forEach(API => {
               assert.deepEqual(value, database.expectedValue)
               await db1.close()
               await db2.close()
-              resolve()
+              resolve(true)
             }, 300)
           })
         })
       })
     })
 
-    describe('doesn\'t sync if peer is not allowed to write to the database', function() {
+    describe('doesn\'t sync if peer is not allowed to write to the database', function () {
       databases.forEach(async (database) => {
         it(database.type + ' doesn\'t sync', async () => {
 
@@ -183,7 +182,7 @@ Object.keys(testAPIs).forEach(API => {
               if (!err) {
                 reject(new Error('tryInsert should throw an err'))
               } else {
-                resolve()
+                resolve(true)
               }
             }, 300)
           })
@@ -191,7 +190,7 @@ Object.keys(testAPIs).forEach(API => {
       })
     })
 
-    describe('throws an error if peer is not allowed to write to the database', function() {
+    describe('throws an error if peer is not allowed to write to the database', function () {
       databases.forEach(async (database) => {
         it(database.type + ' throws an error', async () => {
           let options = {

@@ -3,6 +3,7 @@ const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { assertPayload } from './utils/assert'
 const Keystore = require('orbit-db-keystore')
 
 // Test utils
@@ -155,14 +156,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(result.length, amount * 2)
         assert.strictEqual(log1.length, amount)
         assert.strictEqual(log2.length, amount)
-        assert.strictEqual(result.values[0].payload, 'A1')
-        assert.strictEqual(result.values[1].payload, 'B1')
-        assert.strictEqual(result.values[2].payload, 'A2')
-        assert.strictEqual(result.values[3].payload, 'B2')
-        assert.strictEqual(result.values[99].payload, 'B50')
-        assert.strictEqual(result.values[100].payload, 'A51')
-        assert.strictEqual(result.values[198].payload, 'A100')
-        assert.strictEqual(result.values[199].payload, 'B100')
+        assertPayload(result.values[0].data.payload, 'A1')
+        assertPayload(result.values[1].data.payload, 'B1')
+        assertPayload(result.values[2].data.payload, 'A2')
+        assertPayload(result.values[3].data.payload, 'B2')
+        assertPayload(result.values[99].data.payload, 'B50')
+        assertPayload(result.values[100].data.payload, 'A51')
+        assertPayload(result.values[198].data.payload, 'A100')
+        assertPayload(result.values[199].data.payload, 'B100')
       })
     })
   })

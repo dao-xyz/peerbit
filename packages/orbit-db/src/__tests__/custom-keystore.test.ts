@@ -2,7 +2,7 @@
 const assert = require('assert')
 const rmrf = require('rimraf')
 const path = require('path')
-const OrbitDB = require('../orbit-db')
+import { OrbitDB } from '../orbit-db'
 const Identities = require('@dao-xyz/orbit-db-identity-provider')
 // Include test utilities
 const {

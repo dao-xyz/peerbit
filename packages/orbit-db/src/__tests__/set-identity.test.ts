@@ -1,10 +1,9 @@
-'use strict'
+import { Identities } from "@dao-xyz/orbit-db-identity-provider"
+import { OrbitDB } from "../orbit-db"
 
 const fs = require('fs')
 const assert = require('assert')
 const rmrf = require('rimraf')
-const OrbitDB = require('../src/OrbitDB')
-const Identities = require('@dao-xyz/orbit-db-identity-provider')
 const Keystore = require('orbit-db-keystore')
 const leveldown = require('leveldown')
 const storage = require('orbit-db-storage-adapter')(leveldown)
@@ -24,7 +23,7 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Set identities (${API})`, function () {
     jest.setTimeout(config.timeout)
 
-    let ipfsd, ipfs, orbitdb, keystore, options
+    let ipfsd, ipfs, orbitdb: OrbitDB, keystore, options
     let identity1, identity2
 
     beforeAll(async () => {

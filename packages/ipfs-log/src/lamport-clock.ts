@@ -1,6 +1,21 @@
+import { field, variant } from "@dao-xyz/borsh";
+
+@variant(0)
 export class LamportClock {
+
+  @field({ type: 'String' })
   id: string;
+
+  @field({
+    serialize: (value, writer) => {
+      writer.writeU64(value);
+    },
+    deserialize: (reader) => {
+      return reader.readU64().toNumber();
+    }
+  })
   time: number;
+
   constructor(id: string, time?: number) {
     this.id = id
     this.time = time || 0

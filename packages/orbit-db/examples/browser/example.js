@@ -1,5 +1,5 @@
 const creatures = [
-  '🐙', '🐷', '🐬', '🐞', 
+  '🐙', '🐷', '🐬', '🐞',
   '🐈', '🙉', '🐸', '🐓',
   '🐊', '🕷', '🐠', '🐘',
   '🐼', '🐰', '🐶', '🐥'
@@ -19,7 +19,7 @@ const readonlyCheckbox = document.getElementById("readonly")
 
 function handleError(e) {
   console.error(e.stack)
-  statusElm.innerHTML = e.message  
+  statusElm.innerHTML = e.message
 }
 
 const main = async (IPFS, ORBITDB) => {
@@ -48,7 +48,7 @@ const main = async (IPFS, ORBITDB) => {
   const ipfs = await Ipfs.create({
     repo: '/orbitdb/examples/browser/new/ipfs/0.33.1',
     start: true,
-    preload: { 
+    preload: {
       enabled: false
     },
     EXPERIMENTAL: {
@@ -92,9 +92,9 @@ const main = async (IPFS, ORBITDB) => {
     // Hook up to the load progress event and render the progress
     let maxTotal = 0, loaded = 0
     db.events.on('load.progress', (address, hash, entry, progress, total) => {
-      loaded ++
+      loaded++
       maxTotal = Math.max.apply(null, [maxTotal, progress, 0])
-      total = Math.max.apply(null, [progress, maxTotal, total, entry.clock.time, 0])
+      total = Math.max.apply(null, [progress, maxTotal, total, entry.data.clock.time, 0])
       statusElm.innerHTML = `Loading database... ${maxTotal} / ${total}`
     })
 
@@ -152,7 +152,7 @@ const main = async (IPFS, ORBITDB) => {
 
       db = await orbitdb.open(name, {
         // If database doesn't exist, create it
-        create: true, 
+        create: true,
         overwrite: true,
         // Load only the local version of the database, 
         // don't load the latest from the network yet
@@ -200,7 +200,7 @@ const main = async (IPFS, ORBITDB) => {
   }
 
   const update = async (db) => {
-    count ++
+    count++
 
     const time = new Date().toISOString()
     const idx = Math.floor(Math.random() * creatures.length)
@@ -264,11 +264,11 @@ const main = async (IPFS, ORBITDB) => {
       <div id="results">
         <div>
         ${result && Array.isArray(result) && result.length > 0 && db.type !== 'docstore' && db.type !== 'keyvalue'
-          ? result.slice().reverse().map((e) => e.payload.value).join('<br>\n')
-          : db.type === 'docstore'
-            ? JSON.stringify(result, null, 2)
-            : result ? result.toString().replace('"', '').replace('"', '') : result
-        }
+        ? result.slice().reverse().map((e) => e.payload.value).join('<br>\n')
+        : db.type === 'docstore'
+          ? JSON.stringify(result, null, 2)
+          : result ? result.toString().replace('"', '').replace('"', '') : result
+      }
         </div>
       </div>
     `

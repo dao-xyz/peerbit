@@ -3,7 +3,8 @@ const assert = require('assert')
 const mapSeries = require('p-map-series')
 const rmrf = require('rimraf')
 const path = require('path')
-const OrbitDB = require('../orbit-db')
+import { OrbitDB } from '../orbit-db'
+import { EventStore, EVENT_STORE_TYPE } from './utils/stores/log/event-store'
 const Cache = require('orbit-db-cache')
 
 const localdown = require('localstorage-down')
@@ -38,10 +39,10 @@ Object.keys(testAPIs).forEach(API => {
 
       const entryCount = 65
 
-      let ipfsd, ipfs, orbitdb1, db, address
+      let ipfsd, ipfs, orbitdb1: OrbitDB, db: EventStore, address
 
       beforeAll(async () => {
-        const options = Object.assign({}, test.orbitDBConfig)
+        const options: any = Object.assign({}, test.orbitDBConfig)
 
         if (test.type === "custom") {
           const customStorage = Storage(localdown)
@@ -71,7 +72,7 @@ Object.keys(testAPIs).forEach(API => {
           for (let i = 0; i < entryCount; i++)
             entryArr.push(i)
 
-          db = await orbitdb1.eventlog(dbName)
+          db = await orbitdb1.create(dbName, EVENT_STORE_TYPE)
           address = db.address.toString()
           await mapSeries(entryArr, (i) => db.add('hello' + i))
           await db.close()
@@ -82,42 +83,42 @@ Object.keys(testAPIs).forEach(API => {
           await db.drop()
         })
 
-        test('loads database from local cache', async () => {
-          db = await orbitdb1.eventlog(address)
+        it('loads database from local cache', async () => {
+          db = await orbitdb1.create(address, EVENT_STORE_TYPE)
           await db.load()
           const items = db.iterator({ limit: -1 }).collect()
           assert.equal(items.length, entryCount)
-          assert.equal(items[0].payload.value, 'hello0')
-          assert.equal(items[items.length - 1].payload.value, 'hello' + (entryCount - 1))
+          assert.equal(items[0].data.payload.value, 'hello0')
+          assert.equal(items[items.length - 1].data.payload.value, 'hello' + (entryCount - 1))
         })
 
-        test('loads database partially', async () => {
+        it('loads database partially', async () => {
           const amount = 33
-          db = await orbitdb1.eventlog(address)
+          db = await orbitdb1.create(address, EVENT_STORE_TYPE)
           await db.load(amount)
           const items = db.iterator({ limit: -1 }).collect()
           assert.equal(items.length, amount)
-          assert.equal(items[0].payload.value, 'hello' + (entryCount - amount))
-          assert.equal(items[1].payload.value, 'hello' + (entryCount - amount + 1))
-          assert.equal(items[items.length - 1].payload.value, 'hello' + (entryCount - 1))
+          assert.equal(items[0].data.payload.value, 'hello' + (entryCount - amount))
+          assert.equal(items[1].data.payload.value, 'hello' + (entryCount - amount + 1))
+          assert.equal(items[items.length - 1].data.payload.value, 'hello' + (entryCount - 1))
         })
 
-        test('load and close several times', async () => {
+        it('load and close several times', async () => {
           const amount = 8
           for (let i = 0; i < amount; i++) {
-            db = await orbitdb1.eventlog(address)
+            db = await orbitdb1.create(address, EVENT_STORE_TYPE)
             await db.load()
             const items = db.iterator({ limit: -1 }).collect()
             assert.equal(items.length, entryCount)
-            assert.equal(items[0].payload.value, 'hello0')
-            assert.equal(items[1].payload.value, 'hello1')
-            assert.equal(items[items.length - 1].payload.value, 'hello' + (entryCount - 1))
+            assert.equal(items[0].data.payload.value, 'hello0')
+            assert.equal(items[1].data.payload.value, 'hello1')
+            assert.equal(items[items.length - 1].data.payload.value, 'hello' + (entryCount - 1))
             await db.close()
           }
         })
 
-        test('closes database while loading', async () => {
-          db = await orbitdb1.eventlog(address, { replicationConcurrency: 1 })
+        it('closes database while loading', async () => {
+          db = await orbitdb1.create(EVENT_STORE_TYPE, address, { replicationConcurrency: 1 })
           return new Promise(async (resolve, reject) => {
             // don't wait for load to finish
             db.load()
@@ -127,42 +128,42 @@ Object.keys(testAPIs).forEach(API => {
                   reject(e)
                 } else {
                   assert.equal(db._cache.store, null)
-                  resolve()
+                  resolve(true)
                 }
               })
             await db.close()
           })
         })
 
-        test('load, add one, close - several times', async () => {
+        it('load, add one, close - several times', async () => {
           const amount = 8
           for (let i = 0; i < amount; i++) {
-            db = await orbitdb1.eventlog(address)
+            db = await orbitdb1.create(address, EVENT_STORE_TYPE)
             await db.load()
             await db.add('hello' + (entryCount + i))
             const items = db.iterator({ limit: -1 }).collect()
             assert.equal(items.length, entryCount + i + 1)
-            assert.equal(items[items.length - 1].payload.value, 'hello' + (entryCount + i))
+            assert.equal(items[items.length - 1].data.payload.value, 'hello' + (entryCount + i))
             await db.close()
           }
         })
 
-        test('loading a database emits \'ready\' event', async () => {
-          db = await orbitdb1.eventlog(address)
+        it('loading a database emits \'ready\' event', async () => {
+          db = await orbitdb1.create(address, EVENT_STORE_TYPE)
           return new Promise(async (resolve) => {
             db.events.on('ready', () => {
               const items = db.iterator({ limit: -1 }).collect()
               assert.equal(items.length, entryCount)
-              assert.equal(items[0].payload.value, 'hello0')
-              assert.equal(items[items.length - 1].payload.value, 'hello' + (entryCount - 1))
-              resolve()
+              assert.equal(items[0].data.payload.value, 'hello0')
+              assert.equal(items[items.length - 1].data.payload.value, 'hello' + (entryCount - 1))
+              resolve(true)
             })
             await db.load()
           })
         })
 
-        test('loading a database emits \'load.progress\' event', async () => {
-          db = await orbitdb1.eventlog(address)
+        it('loading a database emits \'load.progress\' event', async () => {
+          db = await orbitdb1.create(address, EVENT_STORE_TYPE)
           return new Promise(async (resolve, reject) => {
             let count = 0
             db.events.on('load.progress', (address, hash, entry) => {
@@ -179,7 +180,7 @@ Object.keys(testAPIs).forEach(API => {
 
                 if (progress === entryCount && count === entryCount) {
                   setTimeout(() => {
-                    resolve()
+                    resolve(true)
                   }, 200)
                 }
               } catch (e) {
@@ -193,8 +194,8 @@ Object.keys(testAPIs).forEach(API => {
       })
 
       describe('load from empty snapshot', function () {
-        test('loads database from an empty snapshot', async () => {
-          db = await orbitdb1.eventlog('empty-snapshot')
+        it('loads database from an empty snapshot', async () => {
+          db = await orbitdb1.create(EVENT_STORE_TYPE, 'empty-snapshot')
           address = db.address.toString()
           await db.saveSnapshot()
           await db.close()
@@ -214,7 +215,7 @@ Object.keys(testAPIs).forEach(API => {
           for (let i = 0; i < entryCount; i++)
             entryArr.push(i)
 
-          db = await orbitdb1.eventlog(dbName)
+          db = await orbitdb1.create(dbName, EVENT_STORE_TYPE)
           address = db.address.toString()
           await mapSeries(entryArr, (i) => db.add('hello' + i))
           await db.saveSnapshot()
@@ -226,35 +227,35 @@ Object.keys(testAPIs).forEach(API => {
           await db.drop()
         })
 
-        test('loads database from snapshot', async () => {
-          db = await orbitdb1.eventlog(address)
+        it('loads database from snapshot', async () => {
+          db = await orbitdb1.create(address, EVENT_STORE_TYPE)
           await db.loadFromSnapshot()
           const items = db.iterator({ limit: -1 }).collect()
           assert.equal(items.length, entryCount)
-          assert.equal(items[0].payload.value, 'hello0')
-          assert.equal(items[entryCount - 1].payload.value, 'hello' + (entryCount - 1))
+          assert.equal(items[0].data.payload.value, 'hello0')
+          assert.equal(items[entryCount - 1].data.payload.value, 'hello' + (entryCount - 1))
         })
 
-        test('load, add one and save snapshot several times', async () => {
+        it('load, add one and save snapshot several times', async () => {
           const amount = 4
           for (let i = 0; i < amount; i++) {
-            db = await orbitdb1.eventlog(address)
+            db = await orbitdb1.create(address, EVENT_STORE_TYPE)
             await db.loadFromSnapshot()
             await db.add('hello' + (entryCount + i))
             const items = db.iterator({ limit: -1 }).collect()
             assert.equal(items.length, entryCount + i + 1)
-            assert.equal(items[0].payload.value, 'hello0')
-            assert.equal(items[items.length - 1].payload.value, 'hello' + (entryCount + i))
+            assert.equal(items[0].data.payload.value, 'hello0')
+            assert.equal(items[items.length - 1].data.payload.value, 'hello' + (entryCount + i))
             await db.saveSnapshot()
             await db.close()
           }
         })
 
-        test('throws an error when trying to load a missing snapshot', async () => {
-          db = await orbitdb1.eventlog(address)
+        it('throws an error when trying to load a missing snapshot', async () => {
+          db = await orbitdb1.create(address, EVENT_STORE_TYPE)
           await db.drop()
           db = null
-          db = await orbitdb1.eventlog(address)
+          db = await orbitdb1.create(address, EVENT_STORE_TYPE)
 
           let err
           try {
@@ -265,22 +266,22 @@ Object.keys(testAPIs).forEach(API => {
           assert.equal(err, `Error: Snapshot for ${address} not found!`)
         })
 
-        test('loading a database emits \'ready\' event', async () => {
-          db = await orbitdb1.eventlog(address)
+        it('loading a database emits \'ready\' event', async () => {
+          db = await orbitdb1.create(address, EVENT_STORE_TYPE)
           return new Promise(async (resolve) => {
             db.events.on('ready', () => {
               const items = db.iterator({ limit: -1 }).collect()
               assert.equal(items.length, entryCount)
-              assert.equal(items[0].payload.value, 'hello0')
-              assert.equal(items[entryCount - 1].payload.value, 'hello' + (entryCount - 1))
-              resolve()
+              assert.equal(items[0].data.payload.value, 'hello0')
+              assert.equal(items[entryCount - 1].data.payload.value, 'hello' + (entryCount - 1))
+              resolve(true)
             })
             await db.loadFromSnapshot()
           })
         })
 
-        test('loading a database emits \'load.progress\' event', async () => {
-          db = await orbitdb1.eventlog(address)
+        it('loading a database emits \'load.progress\' event', async () => {
+          db = await orbitdb1.create(address, EVENT_STORE_TYPE)
           return new Promise(async (resolve, reject) => {
             let count = 0
             db.events.on('load.progress', (address, hash, entry) => {
@@ -295,7 +296,7 @@ Object.keys(testAPIs).forEach(API => {
                 assert.notEqual(hash, null)
                 assert.notEqual(entry, null)
                 if (progress === entryCount && count === entryCount) {
-                  resolve()
+                  resolve(true)
                 }
               } catch (e) {
                 reject(e)

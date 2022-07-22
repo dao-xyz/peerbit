@@ -2,7 +2,7 @@
 const assert = require('assert')
 const rmrf = require('rimraf')
 const path = require('path')
-const OrbitDB = require('../orbit-db')
+import { OrbitDB } from '../orbit-db'
 const CustomCache = require('orbit-db-cache')
 const localdown = require('localstorage-down')
 const storage = require("orbit-db-storage-adapter")(localdown)

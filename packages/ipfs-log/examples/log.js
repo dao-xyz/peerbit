@@ -31,14 +31,14 @@ ipfs.on('ready', async () => {
   const log3 = new Log(ipfs, identityC, { lodId: 'A' })
 
   try {
-    await log1.append('one')
-    await log1.append('two')
-    await log2.append('three')
+    await log.append(Buffer.from('one'))
+    await log.append(Buffer.from('two'))
+    await log.append(Buffer.from('three'))
     // Join the logs
     await log3.join(log1)
     await log3.join(log2)
     // Add one more
-    await log3.append('four')
+    await log.append(Buffer.from('four'))
     console.log(log3.values)
   } catch (e) {
     console.error(e)

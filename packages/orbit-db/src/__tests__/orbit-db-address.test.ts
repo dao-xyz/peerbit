@@ -1,9 +1,7 @@
-'use strict'
-
 const assert = require('assert')
 const rmrf = require('rimraf')
-const OrbitDB = require('../src/OrbitDB')
-const OrbitDBAddress = require('../src/orbit-db-address')
+import { OrbitDB } from "../orbit-db"
+import { OrbitDBAddress } from "../orbit-db-address"
 
 const dbPath = './orbitdb/tests/orbit-db-address'
 

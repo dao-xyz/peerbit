@@ -43,7 +43,7 @@ export class Index<T> {
    @param oplog - the source operations log that called updateIndex
    @param entries - operations that were added to the log
  */
-  async updateIndex(oplog: Log<Entry<T>>) {
+  async updateIndex(oplog: Log<Entry>) {
     this._index = oplog.values
   }
 }

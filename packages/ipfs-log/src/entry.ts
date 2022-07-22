@@ -1,11 +1,10 @@
 import { LamportClock as Clock } from './lamport-clock'
 import { isDefined } from './is-defined'
+import { variant, field, vec, option, serialize, deserialize } from '@dao-xyz/borsh';
 import * as io from 'orbit-db-io'
-import stringify from 'json-stringify-deterministic'
 import { IPFS } from 'ipfs-core-types/src/'
-import { Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider'
 const IpfsNotDefinedError = () => new Error('Ipfs instance not defined')
-const getWriteFormatForVersion = v => v === 0 ? 'dag-pb' : 'dag-cbor'
 
 /*
  * @description
@@ -13,23 +12,114 @@ const getWriteFormatForVersion = v => v === 0 ? 'dag-pb' : 'dag-cbor'
  */
 
 
-export class Entry<T>{
-
-  sig?: string;
-  identity?: IdentitySerializable;
-  key?: string;
+export interface EntrySerialized {
+  data: Uint8Array
   hash?: string // "zd...Foo", we'll set the hash after persisting the entry
-  id: any // For determining a unique chain
-  payload: any // Can be any JSON.stringifyable data
-  next?: Entry<T>[] // Array of hashes
-  refs?: Entry<T>[]
-  v: number // To tag the version of this data structure
+  next?: string[] | Entry[]
+  refs?: string[] // Array of hashes
+}
+
+@variant(0)
+export class EntryData {
+
+  @field({ type: 'String' })
+  id: string // For determining a unique chain
+
+  @field({
+    serialize: (obj: Uint8Array, writer) => {
+      writer.writeU32(obj.length);
+      for (let i = 0; i < obj.length; i++) {
+        writer.writeU8(obj[i])
+      }
+    },
+    deserialize: (reader) => {
+      const len = reader.readU32();
+      const arr = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        arr[i] = reader.readU8();
+      }
+      return arr;
+    }
+  })
+  payload: Uint8Array
+
+  @field({ type: Clock })
   clock: Clock
 
+  @field({ type: option(IdentitySerializable) })
+  identity?: IdentitySerializable;
+
+  @field({ type: option('String') })
+  key?: string;
+
+  @field({ type: option('String') })
+  sig?: string;
+
+  constructor(obj?: {
+    id: string // For determining a unique chain
+    payload: Uint8Array
+    clock: Clock
+    identity?: IdentitySerializable;
+    key?: string;
+    sig?: string;
+  }) {
+    if (obj) {
+      this.id = obj.id;
+      this.payload = obj.payload;
+      this.clock = obj.clock;
+      this.identity = obj.identity;
+      this.key = obj.key;
+      this.sig = obj.sig;
+    }
+  }
+
+  static from(arr: Uint8Array): EntryData {
+    return deserialize(Buffer.from(arr), EntryData)
+  }
+
+}
+
+@variant(0)
+export class Entry {
+
+  @field({ type: EntryData })
+  data: EntryData
+
+  @field({ type: option(vec('String')) })
+  next?: string[] | Entry[]
+
+  @field({ type: option(vec('String')) })
+  refs?: string[] // Array of hashes
+
+  hash?: string // "zd...Foo", we'll set the hash after persisting the entry
+
   static IPLD_LINKS = ['next', 'refs']
-  static getWriteFormat = e => Entry.isEntry(e) ? getWriteFormatForVersion(e.v) : getWriteFormatForVersion(e)
+  static getWriteFormat = () => "dag-cbor" // Only dag-cbor atm
 
 
+  constructor(obj?: {
+    data: EntryData
+    next?: string[] | Entry[]
+    refs?: string[] // Array of hashes
+    hash?: string // "zd...Foo", we'll set the hash after persisting the entry
+  }) {
+    if (obj) {
+      this.data = obj.data;
+      this.next = obj.next;
+      this.refs = obj.refs;
+      this.hash = obj.hash;
+    }
+  }
+
+
+  serialize(): EntrySerialized {
+    return {
+      data: serialize(this.data),
+      hash: this.hash,
+      next: this.next,
+      refs: this.refs
+    }
+  }
   /**
    * Create an Entry
    * @param {IPFS} ipfs An IPFS instance
@@ -44,7 +134,7 @@ export class Entry<T>{
    * console.log(entry)
    * // { hash: null, payload: "hello", next: [] }
    */
-  static async create<T>(ipfs: IPFS, identity: Identity, logId: string, data: any, next: (Entry<T> | string)[] = [], clock?: Clock, refs: Entry<T>[] = [], pin?: boolean, assertAllowed?: (entry: Entry<T>) => Promise<void>) {
+  static async create(ipfs: IPFS, identity: Identity, logId: string, data: Uint8Array, next: (Entry | string)[] = [], clock?: Clock, refs: string[] = [], pin?: boolean, assertAllowed?: (entry: Entry) => Promise<void>) {
     if (!isDefined(ipfs)) throw IpfsNotDefinedError()
     if (!isDefined(identity)) throw new Error('Identity is required, cannot create entry')
     if (!isDefined(logId)) throw new Error('Entry requires an id')
@@ -54,28 +144,28 @@ export class Entry<T>{
     // Clean the next objects and convert to hashes
     const toEntry = (e) => e.hash ? e.hash : e
     const nexts = next.filter(isDefined).map(toEntry)
-
-    const entry: Entry<T> = {
+    const entry: Entry = new Entry({
+      data: new EntryData({
+        id: logId, // For determining a unique chain
+        payload: data, // Can be any JSON.stringifyable data
+        clock: clock || new Clock(identity.publicKey),
+      }),
       hash: null, // "zd...Foo", we'll set the hash after persisting the entry
-      id: logId, // For determining a unique chain
-      payload: data, // Can be any JSON.stringifyable data
       next: nexts, // Array of hashes
       refs: refs,
-      v: 2, // To tag the version of this data structure
-      clock: clock || new Clock(identity.publicKey)
-    }
+    })
     const identitySerializable = identity.toSerializable();
 
     if (assertAllowed) {
-      entry.identity = identitySerializable
+      entry.data.identity = identitySerializable
       await assertAllowed(entry);
-      entry.identity = undefined;
+      entry.data.identity = undefined;
     }
 
     const signature = await identity.provider.sign(identitySerializable, Entry.toBuffer(entry))
-    entry.key = identity.publicKey
-    entry.identity = identitySerializable
-    entry.sig = signature
+    entry.data.key = identity.publicKey
+    entry.data.identity = identitySerializable
+    entry.data.sig = signature
     entry.hash = await Entry.toMultihash(ipfs, entry, pin)
 
     return entry
@@ -88,15 +178,15 @@ export class Entry<T>{
    * @param {Entry} entry The entry being verified
    * @return {Promise} A promise that resolves to a boolean value indicating if the signature is valid
    */
-  static async verify(identityProvider, entry) {
+  static async verify(identityProvider: Identities, entry: Entry) {
     if (!identityProvider) throw new Error('Identity-provider is required, cannot verify entry')
     if (!Entry.isEntry(entry)) throw new Error('Invalid Log entry')
-    if (!entry.key) throw new Error("Entry doesn't have a key")
-    if (!entry.sig) throw new Error("Entry doesn't have a signature")
+    if (!entry.data.key) throw new Error("Entry doesn't have a key")
+    if (!entry.data.sig) throw new Error("Entry doesn't have a signature")
 
-    const e = Entry.toEntry(entry, { presigned: true })
-    const verifier = entry.v < 1 ? 'v0' : 'v1'
-    return identityProvider.verify(entry.sig, entry.key, Entry.toBuffer(e), verifier)
+    const e = Entry.toEntryWithoutSignature(entry)
+    const verifier = 'v1'
+    return identityProvider.verify(entry.data.sig, entry.data.key, Entry.toBuffer(e), verifier)
   }
 
   /**
@@ -104,9 +194,8 @@ export class Entry<T>{
    * @param {Entry} entry The entry
    * @return {Buffer} The buffer
    */
-  static toBuffer(entry) {
-    const stringifiedEntry = entry.v === 0 ? JSON.stringify(entry) : stringify(entry)
-    return Buffer.from(stringifiedEntry)
+  static toBuffer(entry: Entry) {
+    return Buffer.from(serialize(entry))
   }
 
   /**
@@ -120,41 +209,45 @@ export class Entry<T>{
    * // "Qm...Foo"
    * @deprecated
    */
-  static async toMultihash<T>(ipfs: IPFS, entry: Entry<T>, pin = false) {
+  static async toMultihash(ipfs: IPFS, entry: Entry, pin = false) {
     if (!ipfs) throw IpfsNotDefinedError()
     if (!Entry.isEntry(entry)) throw new Error('Invalid object format, cannot generate entry hash')
 
-    // // Ensure `entry` follows the correct format
+    // Ensure `entry` follows the correct format
     const e = Entry.toEntry(entry)
-    return io.write(ipfs, Entry.getWriteFormat(e.v), e, { links: Entry.IPLD_LINKS, pin })
+    return io.write(ipfs, Entry.getWriteFormat(), e.serialize(), { links: Entry.IPLD_LINKS, pin })
   }
 
-  static toEntry<T>(entry: Entry<T>, { presigned = false, includeHash = false } = {}): Entry<T> {
-    const e: Entry<T> = {
-      hash: includeHash ? entry.hash : null,
-      id: entry.id,
-      payload: entry.payload,
-      next: entry.next
-    } as any
-
-    const v = entry.v
-    if (v > 1) {
-      e.refs = entry.refs // added in v2
-    }
-    e.v = entry.v
-    e.clock = new Clock(entry.clock.id, entry.clock.time)
-
-    if (presigned) {
-      return e // don't include key/sig information
-    }
-
-    e.key = entry.key
-    if (v > 0) {
-      e.identity = entry.identity // added in v1
-    }
-    e.sig = entry.sig
+  static toEntry(entry: Entry | EntrySerialized): Entry {
+    const e: Entry = new Entry({
+      hash: entry.hash,
+      data: entry.data instanceof Uint8Array ? EntryData.from(entry.data) : new EntryData({
+        ...entry.data,
+      }),
+      next: entry.next,
+      refs: entry.refs
+    })
     return e
   }
+
+  static toEntryWithoutSignature(entry: Entry | EntrySerialized): Entry {
+    const e: Entry = new Entry({
+      hash: entry.hash,
+      data: entry.data instanceof Uint8Array ? EntryData.from(entry.data) : new EntryData({
+        clock: entry.data.clock,
+        id: entry.data.id,
+        payload: entry.data.payload,
+        identity: undefined,
+        key: undefined,
+        sig: undefined
+      }),
+      next: entry.next,
+      refs: entry.refs
+    })
+    return e
+  }
+
+
 
   /**
    * Create an Entry from a hash.
@@ -169,7 +262,7 @@ export class Entry<T>{
   static async fromMultihash(ipfs, hash) {
     if (!ipfs) throw IpfsNotDefinedError()
     if (!hash) throw new Error(`Invalid hash: ${hash}`)
-    const e = await io.read(ipfs, hash, { links: Entry.IPLD_LINKS })
+    const e: EntrySerialized = await io.read(ipfs, hash, { links: Entry.IPLD_LINKS })
 
     const entry = Entry.toEntry(e)
     entry.hash = hash
@@ -182,14 +275,15 @@ export class Entry<T>{
    * @param {Entry} obj
    * @returns {boolean}
    */
-  static isEntry(obj) {
-    return obj && obj.id !== undefined &&
+  static isEntry(obj: any) {
+    if (!obj.data) {
+      return false
+    }
+    return obj && obj.data.id !== undefined &&
       obj.next !== undefined &&
-      obj.payload !== undefined &&
-      obj.v !== undefined &&
+      obj.data.payload !== undefined &&
       obj.hash !== undefined &&
-      obj.clock !== undefined &&
-      (obj.refs !== undefined || obj.v < 2) // 'refs' added in v2
+      obj.data.clock !== undefined && obj.refs !== undefined
   }
 
   /**
@@ -198,9 +292,9 @@ export class Entry<T>{
    * @param {Entry} b
    * @returns {number} 1 if a is greater, -1 is b is greater
    */
-  static compare(a, b) {
-    const distance = Clock.compare(a.clock, b.clock)
-    if (distance === 0) return a.clock.id < b.clock.id ? -1 : 1
+  static compare(a: Entry, b: Entry) {
+    const distance = Clock.compare(a.data.clock, b.data.clock)
+    if (distance === 0) return a.data.clock.id < b.data.clock.id ? -1 : 1
     return distance
   }
 
@@ -210,7 +304,7 @@ export class Entry<T>{
    * @param {Entry} b
    * @returns {boolean}
    */
-  static isEqual(a, b) {
+  static isEqual(a: Entry, b: Entry) {
     return a.hash === b.hash
   }
 
@@ -220,8 +314,8 @@ export class Entry<T>{
    * @param {Entry} entry2 The parent Entry
    * @returns {boolean}
    */
-  static isParent(entry1, entry2) {
-    return entry2.next.indexOf(entry1.hash) > -1
+  static isParent(entry1: Entry, entry2: Entry) {
+    return entry2.next.indexOf(entry1.hash as any) > -1 // TODO fix types
   }
 
   /**
@@ -231,8 +325,8 @@ export class Entry<T>{
    * @param {Array<Entry>} values Entries to search parents from
    * @returns {Array<Entry>}
    */
-  static findChildren<T>(entry: Entry<T>, values: Entry<T>[]) {
-    let stack: Entry<T>[] = []
+  static findChildren<T>(entry: Entry, values: Entry[]) {
+    let stack: Entry[] = []
     let parent = values.find((e) => Entry.isParent(entry, e))
     let prev = entry
     while (parent) {
@@ -240,7 +334,8 @@ export class Entry<T>{
       prev = parent
       parent = values.find((e) => Entry.isParent(prev, e))
     }
-    stack = stack.sort((a, b) => Clock.compare(a.clock, b.clock))
+    stack = stack.sort((a, b) => Clock.compare(a.data.clock, b.data.clock))
     return stack
   }
+
 }

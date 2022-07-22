@@ -15,10 +15,10 @@ import { isDefined } from './is-defined'
 import { findUniques } from "./find-uniques"
 import { AccessError } from "./errors"
 const randomId = () => new Date().getTime().toString()
-const getHash = e => e.hash
+const getHash = (e: Entry) => e.hash
 const flatMap = (res, acc) => res.concat(acc)
 const getNextPointers = entry => entry.next
-const maxClockTimeReducer = (res: number, acc): number => Math.max(res, acc.clock.time)
+const maxClockTimeReducer = (res: number, acc: Entry): number => Math.max(res, acc.data.clock.time)
 const uniqueEntriesReducer = (res, acc) => {
   res[acc.hash] = acc
   return res
@@ -28,7 +28,11 @@ export interface RecycleOptions {
   maxOplogLength: number, // Max length of oplog before cutting
   cutOplogToLength?: number, // When oplog shorter, cut to length
 }
-export type LogOptions<T> = { logId?: string, entries?: Entry<T>[], heads?: any, clock?: any, access?: AccessController<T>, sortFn?: Sorting.ISortFunction<T>, concurrency?: number, recycle?: RecycleOptions };
+export interface IOOptions<T> {
+  encoder: (data: T) => Uint8Array
+  decoder: (bytes: Uint8Array) => T
+}
+export type LogOptions<T> = { io?: IOOptions<T>, logId?: string, entries?: Entry[], heads?: any, clock?: any, access?: AccessController, sortFn?: Sorting.ISortFunction, concurrency?: number, recycle?: RecycleOptions };
 /**
  * @description
  * Log implements a G-Set CRDT and adds ordering.
@@ -38,19 +42,19 @@ export type LogOptions<T> = { logId?: string, entries?: Entry<T>[], heads?: any,
  * https://hal.inria.fr/inria-00555588
  */
 export class Log<T> extends GSet {
-  _sortFn: Sorting.ISortFunction<T>;
+  _sortFn: Sorting.ISortFunction;
   _storage: any;
   _id: any;
 
   // Access Controller
-  _access: AccessController<T>
+  _access: AccessController
   // Identity
 
   _identity: any
 
   // Add entries to the internal cache
   _entryIndex: EntryIndex
-  _headsIndex: { [key: string]: Entry<T> };
+  _headsIndex: { [key: string]: Entry };
 
   // Index of all next pointers in this log
   _nextsIndex: any
@@ -59,6 +63,8 @@ export class Log<T> extends GSet {
   _length: number
   _clock: Clock;
   _recycle?: RecycleOptions
+  _io: IOOptions<T>
+
   joinConcurrency: number;
   /**
    * Create a new Log instance
@@ -74,7 +80,7 @@ export class Log<T> extends GSet {
    * @return {Log} The log instance
    */
 
-  constructor(ipfs: IPFS, identity?: Identity, options: LogOptions<T> = {}) {
+  constructor(ipfs: IPFS, identity: Identity, options: LogOptions<T> = {}) {
     if (!isDefined(ipfs)) {
       throw LogError.IPFSNotDefinedError()
     }
@@ -82,7 +88,7 @@ export class Log<T> extends GSet {
     if (!isDefined(identity)) {
       throw new Error('Identity is required')
     }
-    let { logId, access, entries, heads, clock, sortFn, concurrency, recycle } = options;
+    let { logId, access, entries, heads, clock, sortFn, concurrency, recycle, io } = options;
     if (!isDefined(access)) {
       access = new DefaultAccessController()
     }
@@ -108,8 +114,12 @@ export class Log<T> extends GSet {
 
     // Access Controller
     this._access = access
+
     // Identity
     this._identity = identity
+
+    // encoder/decoder
+    this._io = io;
 
     // Add entries to the internal cache
     const uniqueEntries = (entries || []).reduce(uniqueEntriesReducer, {})
@@ -171,7 +181,7 @@ export class Log<T> extends GSet {
    * Returns the values in the log.
    * @returns {Array<Entry>}
    */
-  get values(): Entry<T>[] {
+  get values(): Entry[] {
     return Object.values(this.traverse(this.heads)).reverse()
   }
 
@@ -179,7 +189,7 @@ export class Log<T> extends GSet {
    * Returns an array of heads.
    * @returns {Array<Entry>}
    */
-  get heads(): Entry<T>[] {
+  get heads(): Entry[] {
     return Object.values(this._headsIndex).sort(this._sortFn).reverse()
   }
 
@@ -230,7 +240,7 @@ export class Log<T> extends GSet {
     return this._entryIndex.get(entry.hash || entry) !== undefined
   }
 
-  traverse(rootEntries: Entry<T>[], amount: number = -1, endHash?: string): { [key: string]: Entry<T> } {
+  traverse(rootEntries: Entry[], amount: number = -1, endHash?: string): { [key: string]: Entry } {
     // Sort the given given root entries and use as the starting stack
     let stack = rootEntries.sort(this._sortFn).reverse()
 
@@ -292,7 +302,27 @@ export class Log<T> extends GSet {
    * @param {Entry} entry Entry to add
    * @return {Log} New Log containing the appended value
    */
-  async append(data, pointerCount = 1, pin = false) {
+  async append(obj: T, pointerCount = 1, pin = false) {
+
+    let data: Uint8Array = undefined;
+    if (this._io?.encoder) {
+      data = this._io.encoder(obj);
+    }
+    else {
+      if (typeof obj === 'string') {
+        data = new Uint8Array(Buffer.from(obj))
+      }
+      else if (obj instanceof Uint8Array) {
+        data = obj as any as Uint8Array;
+
+      }
+      else {
+        throw new Error("Data is not Uint8Array and no encoder was provided")
+
+      }
+    }
+
+
     // Update the clock (find the latest clock)
     const newTime = Math.max(this.clock.time, this.heads.reduce(maxClockTimeReducer, 0)) + 1
     this._clock = new Clock(this.clock.id, newTime)
@@ -333,7 +363,7 @@ export class Log<T> extends GSet {
       this.clock,
       refs,
       pin,
-      async (e: Entry<T>) => {
+      async (e: Entry) => {
         const canAppend = await this._access.canAppend(e, this._identity.provider);
         if (!canAppend) {
           throw new AccessError(`Could not append entry, key "${this._identity.id}" is not allowed to write to the log`)
@@ -437,22 +467,22 @@ export class Log<T> extends GSet {
     const identityProvider = this._identity.provider
     // Verify if entries are allowed to be added to the log and throws if
     // there's an invalid entry
-    const permitted = async (entry: Entry<T>) => {
+    const permitted = async (entry: Entry) => {
       const canAppend = await this._access.canAppend(entry, identityProvider)
       if (!canAppend) {
-        throw new AccessError(`Could not append entry, key "${entry.identity.id}" is not allowed to write to the log`)
+        throw new AccessError(`Could not append entry, key "${entry.data.identity.id}" is not allowed to write to the log`)
       }
     }
 
     // Verify signature for each entry and throws if there's an invalid signature
-    const verify = async (entry) => {
+    const verify = async (entry: Entry) => {
       const isValid = await Entry.verify(identityProvider, entry)
-      const publicKey = entry.identity ? entry.identity.publicKey : entry.key
-      if (!isValid) throw new Error(`Could not validate signature "${entry.sig}" for entry "${entry.hash}" and key "${publicKey}"`)
+      const publicKey = entry.data.identity ? entry.data.identity.publicKey : entry.data.key
+      if (!isValid) throw new Error(`Could not validate signature "${entry.data.sig}" for entry "${entry.hash}" and key "${publicKey}"`)
     }
 
     const entriesToJoin = Object.values(newItems)
-    await pMap(entriesToJoin, async (e: Entry<T>) => {
+    await pMap(entriesToJoin, async (e: Entry) => {
       await permitted(e)
       await verify(e)
     }, { concurrency: this.joinConcurrency })
@@ -558,7 +588,7 @@ export class Log<T> extends GSet {
         padding = len > 1 ? padding.fill('  ') : padding
         padding = len > 0 ? padding.concat(['└─']) : padding
         /* istanbul ignore next */
-        return padding.join('') + (payloadMapper ? payloadMapper(e.payload) : e.payload)
+        return padding.join('') + (payloadMapper ? payloadMapper(e.data.payload) : e.data.payload)
       })
       .join('\n')
   }
@@ -598,11 +628,11 @@ export class Log<T> extends GSet {
    * @returns {Promise<Log>}
    */
   static async fromMultihash<T>(ipfs, identity, hash,
-    options?: { access?: AccessController<T>, sortFn?: Sorting.ISortFunction<T> } & EntryFetchAllOptions<T>) {
+    options?: { io?: IOOptions<T>, access?: AccessController, sortFn?: Sorting.ISortFunction } & EntryFetchAllOptions) {
     // TODO: need to verify the entries with 'key'
     const { logId, entries, heads } = await LogIO.fromMultihash(ipfs, hash,
       { length: options?.length, exclude: options?.exclude, shouldExclude: options?.shouldExclude, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback, concurrency: options?.concurrency, sortFn: options?.sortFn })
-    return new Log(ipfs, identity, { logId, access: options?.access, entries, heads, sortFn: options?.sortFn })
+    return new Log(ipfs, identity, { io: options?.io, logId, access: options?.access, entries, heads, sortFn: options?.sortFn })
   }
 
   /**
@@ -619,12 +649,12 @@ export class Log<T> extends GSet {
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise<Log>} New Log
    */
-  static async fromEntryHash(ipfs: IPFS, identity: Identity, hash: string,
-    options: { logId?: any, access?: any, length?: number, exclude?: any[], shouldExclude?: any, timeout?: number, concurrency?: number, sortFn?: any, onProgressCallback?: any } = { length: -1, exclude: [] }) {
+  static async fromEntryHash<T>(ipfs: IPFS, identity: Identity, hash: string,
+    options: { io?: IOOptions<T>, logId?: any, access?: any, length?: number, exclude?: any[], shouldExclude?: any, timeout?: number, concurrency?: number, sortFn?: any, onProgressCallback?: any } = { length: -1, exclude: [] }) {
     // TODO: need to verify the entries with 'key'
     const { entries } = await LogIO.fromEntryHash(ipfs, hash,
       { length: options.length, exclude: options.exclude, shouldExclude: options.shouldExclude, timeout: options.timeout, concurrency: options.concurrency, onProgressCallback: options.onProgressCallback })
-    return new Log(ipfs, identity, { logId: options.logId, access: options.access, entries, sortFn: options.sortFn })
+    return new Log(ipfs, identity, { io: options?.io, logId: options.logId, access: options.access, entries, sortFn: options.sortFn })
   }
 
   /**
@@ -640,11 +670,11 @@ export class Log<T> extends GSet {
    * @return {Promise<Log>} New Log
    */
   static async fromJSON<T>(ipfs: IPFS, identity: Identity, json: { [key: string]: any },
-    options?: { access?: AccessController<T>, length?: number, timeout?: number, sortFn?: Sorting.ISortFunction<T>, onProgressCallback?: (entry: Entry<T>) => void }) {
+    options?: { io?: IOOptions<T>, access?: AccessController, length?: number, timeout?: number, sortFn?: Sorting.ISortFunction, onProgressCallback?: (entry: Entry) => void }) {
     // TODO: need to verify the entries with 'key'
     const { logId, entries } = await LogIO.fromJSON(ipfs, json,
       { length: options?.length, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback })
-    return new Log(ipfs, identity, { logId, entries, access: options?.access, sortFn: options?.sortFn })
+    return new Log(ipfs, identity, { io: options?.io, logId, entries, access: options?.access, sortFn: options?.sortFn })
   }
 
   /**
@@ -660,12 +690,12 @@ export class Log<T> extends GSet {
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise<Log>} New Log
    */
-  static async fromEntry<T>(ipfs: IPFS, identity: Identity, sourceEntries: Entry<T>[], options: EntryFetchOptions<T> & { access?: AccessController<T>, sortFn?: Sorting.ISortFunction<T> }) {
+  static async fromEntry<T>(ipfs: IPFS, identity: Identity, sourceEntries: Entry[], options: EntryFetchOptions & { io?: IOOptions<T>, access?: AccessController, sortFn?: Sorting.ISortFunction }) {
     // TODO: need to verify the entries with 'key'
     options = strictFetchOptions(options);
     const { logId, entries } = await LogIO.fromEntry(ipfs, sourceEntries,
       { length: options.length, exclude: options.exclude, timeout: options.timeout, concurrency: options.concurrency, onProgressCallback: options.onProgressCallback })
-    return new Log(ipfs, identity, { logId, access: options.access, entries, sortFn: options.sortFn })
+    return new Log(ipfs, identity, { io: options?.io, logId, access: options.access, entries, sortFn: options.sortFn })
   }
 
   /**
@@ -677,7 +707,7 @@ export class Log<T> extends GSet {
    * @param {Array<Entry>} entries Entries to search heads from
    * @returns {Array<Entry>}
    */
-  static findHeads<T>(entries: Entry<T>[]) {
+  static findHeads(entries: Entry[]) {
     const indexReducer = (res, entry, idx, arr) => {
       const addToResult = e => (res[e] = entry.hash)
       entry.next.forEach(addToResult)
@@ -686,8 +716,8 @@ export class Log<T> extends GSet {
 
     const items = entries.reduce(indexReducer, {})
 
-    const exists = (e: Entry<T>) => items[e.hash] === undefined
-    const compareIds = (a: Entry<T>, b: Entry<T>) => Clock.compare(a.clock, b.clock);
+    const exists = (e: Entry) => items[e.hash] === undefined
+    const compareIds = (a: Entry, b: Entry) => Clock.compare(a.data.clock, b.data.clock);
     return entries.filter(exists).sort(compareIds)
   }
 
@@ -773,7 +803,7 @@ export class Log<T> extends GSet {
     while (stack.length > 0) {
       const hash = stack.shift()
       const entry = a.get(hash)
-      if (entry && !b.get(hash) && entry.id === b.id) {
+      if (entry && !b.get(hash) && entry.data.id === b.id) {
         res[entry.hash] = entry
         traversed[entry.hash] = true
         entry.next.concat(entry.refs).forEach(pushToStack)

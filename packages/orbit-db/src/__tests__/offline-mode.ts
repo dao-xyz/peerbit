@@ -1,15 +1,6 @@
-'use strict'
-
-const fs = require('fs')
-const path = require('path')
 const assert = require('assert')
-const mapSeries = require('p-map-series')
 const rmrf = require('rimraf')
-const OrbitDB = require('../src/OrbitDB')
-const Identities = require('@dao-xyz/orbit-db-identity-provider')
-const Keystore = require('orbit-db-keystore')
-const leveldown = require('leveldown')
-const storage = require('orbit-db-storage-adapter')(leveldown)
+import { OrbitDB } from "../orbit-db"
 
 // Include test utilities
 const {

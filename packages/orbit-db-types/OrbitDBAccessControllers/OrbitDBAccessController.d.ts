@@ -19,7 +19,7 @@ declare module "orbit-db-access-controllers/src/orbitdb-access-controller" {
 
         load?(address: string): Promise<void>;
 
-        canAppend?(entry: Entry<T>, identityProvider: Identities): Promise<void>;
+        canAppend?(entry: Entry, identityProvider: Identities): Promise<void>;
 
         save?(): Promise<{ address: string }>;
 

@@ -4,6 +4,7 @@ const fs = require('fs-extra')
 import { AccessController } from '../default-access-controller'
 import { Log } from '../log'
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { assertPayload } from './utils/assert'
 const Keystore = require('orbit-db-keystore')
 
 // Test utils
@@ -80,15 +81,15 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     test('entries contain an identity', async () => {
       const log = new Log(ipfs, testIdentity, { logId: 'A' })
-      await log.append('one')
-      assert.notStrictEqual(log.values[0].sig, null)
-      assert.deepStrictEqual(log.values[0].identity, testIdentity.toSerializable())
+      await log.append(Buffer.from('one'))
+      assert.notStrictEqual(log.values[0].data.sig, null)
+      assert.deepStrictEqual(log.values[0].data.identity, testIdentity.toSerializable())
     })
 
     test('doesn\'t sign entries when identity is not defined', async () => {
       let err
       try {
-        const log = new Log(ipfs) // eslint-disable-line no-unused-vars
+        const log = new Log(ipfs, undefined, undefined) // eslint-disable-line no-unused-vars
       } catch (e) {
         err = e
       }
@@ -101,9 +102,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       let err
       try {
-        await log1.append('one')
-        await log2.append('two')
-        await log2.append('three')
+        await log1.append(Buffer.from('one'))
+        await log2.append(Buffer.from('two'))
+        await log2.append(Buffer.from('three'))
         await log1.join(log2)
       } catch (e) {
         err = e.toString()
@@ -113,7 +114,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.strictEqual(err, undefined)
       assert.strictEqual(log1.id, 'A')
       assert.strictEqual(log1.values.length, 1)
-      assert.strictEqual(log1.values[0].payload, 'one')
+      assertPayload(log1.values[0].data.payload, 'one')
     })
 
     test('throws an error if log is signed but trying to merge with an entry that doesn\'t have public signing key', async () => {
@@ -122,9 +123,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       let err
       try {
-        await log1.append('one')
-        await log2.append('two')
-        delete log2.values[0].key
+        await log1.append(Buffer.from('one'))
+        await log2.append(Buffer.from('two'))
+        delete log2.values[0].data.key
         await log1.join(log2)
       } catch (e) {
         err = e.toString()
@@ -138,9 +139,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       let err
       try {
-        await log1.append('one')
-        await log2.append('two')
-        delete log2.values[0].sig
+        await log1.append(Buffer.from('one'))
+        await log2.append(Buffer.from('two'))
+        delete log2.values[0].data.sig
         await log1.join(log2)
       } catch (e) {
         err = e.toString()
@@ -154,29 +155,29 @@ Object.keys(testAPIs).forEach((IPFS) => {
       let err
 
       try {
-        await log1.append('one')
-        await log2.append('two')
-        log2.values[0].sig = log1.values[0].sig
+        await log1.append(Buffer.from('one'))
+        await log2.append(Buffer.from('two'))
+        log2.values[0].data.sig = log1.values[0].data.sig
         await log1.join(log2)
       } catch (e) {
         err = e.toString()
       }
 
       const entry = log2.values[0]
-      assert.strictEqual(err, `Error: Could not validate signature "${entry.sig}" for entry "${entry.hash}" and key "${entry.key}"`)
+      assert.strictEqual(err, `Error: Could not validate signature "${entry.data.sig}" for entry "${entry.hash}" and key "${entry.data.key}"`)
       assert.strictEqual(log1.values.length, 1)
-      assert.strictEqual(log1.values[0].payload, 'one')
+      assertPayload(log1.values[0].data.payload, 'one')
     })
 
     test('throws an error if entry doesn\'t have append access', async () => {
-      const denyAccess = { canAppend: (_, __) => false } as AccessController<any>
+      const denyAccess = { canAppend: (_, __) => false } as AccessController
       const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
       const log2 = new Log(ipfs, testIdentity2, { logId: 'A', access: denyAccess })
 
       let err
       try {
-        await log1.append('one')
-        await log2.append('two')
+        await log1.append(Buffer.from('one'))
+        await log2.append(Buffer.from('two'))
         await log1.join(log2)
       } catch (e) {
         err = e.toString()
@@ -187,15 +188,15 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     test('throws an error upon join if entry doesn\'t have append access', async () => {
       const testACL = {
-        canAppend: (entry, _) => entry.identity.id !== testIdentity2.id
-      } as AccessController<string>;
+        canAppend: (entry, _) => entry.data.identity.id !== testIdentity2.id
+      } as AccessController;
       const log1 = new Log(ipfs, testIdentity, { logId: 'A', access: testACL })
       const log2 = new Log(ipfs, testIdentity2, { logId: 'A' })
 
       let err
       try {
-        await log1.append('one')
-        await log2.append('two')
+        await log1.append(Buffer.from('one'))
+        await log2.append(Buffer.from('two'))
         await log1.join(log2)
       } catch (e) {
         err = e.toString()

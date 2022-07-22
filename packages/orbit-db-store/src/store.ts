@@ -2,7 +2,7 @@ import path from 'path'
 import { EventEmitter } from 'events'
 import mapSeries from 'p-each-series'
 import { default as PQueue } from 'p-queue'
-import { Log, Entry, ISortFunction } from '@dao-xyz/ipfs-log'
+import { Log, Entry, ISortFunction, IOOptions } from '@dao-xyz/ipfs-log'
 import { Index } from './store-index'
 import { Replicator } from './replicator'
 import { ReplicationInfo } from './replication-info'
@@ -12,6 +12,7 @@ import { IPFS } from 'ipfs-core-types/src/'
 import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { RecycleOptions, AccessError } from '@dao-xyz/ipfs-log'
 import OrbitDBAccessController from 'orbit-db-access-controllers/src/orbitdb-access-controller'
+import stringify from 'json-stringify-deterministic'
 
 export type Constructor<T> = new (...args: any[]) => T;
 
@@ -85,17 +86,27 @@ export interface IStoreOptions<T, X extends Index<T>> extends ICreateOptions, IO
   referenceCount?: number,
   replicationConcurrency?: number,
   syncLocal?: boolean,
-  sortFn?: ISortFunction<any>,
+  sortFn?: ISortFunction,
   cache?: any;
   accessController?: OrbitDBAccessController<T>,
   recycle?: RecycleOptions,
   typeMap?: { [key: string]: Constructor<any> },
   onlyObserver?: boolean,
-  onClose?: (store: Store<T, X, any>) => void
-  onDrop?: (store: Store<T, X, any>) => void
-  onLoad?: (store: Store<T, X, any>) => void
+  onClose?: (store: Store<T, X, any>) => void,
+  onDrop?: (store: Store<T, X, any>) => void,
+  onLoad?: (store: Store<T, X, any>) => void,
+  encyption?: {
+    encrypt: (arr: Uint8Array) => Uint8Array
+    decrypt: (arr: Uint8Array) => Uint8Array
+  },
+  io?: IOOptions<T>
 
 }
+export const JSON_ENCODER = {
+  encoder: (obj) => new Uint8Array(Buffer.from(stringify(obj))),
+  decoder: (obj) => JSON.parse(Buffer.from(obj).toString())
+};
+
 export const DefaultOptions: IStoreOptions<any, Index<any>> = {
   Index: Index,
   maxHistory: -1,
@@ -106,7 +117,8 @@ export const DefaultOptions: IStoreOptions<any, Index<any>> = {
   sortFn: undefined,
   onlyObserver: false,
   typeMap: {},
-  nameResolver: (name: string) => name
+  nameResolver: (name: string) => name,
+  io: JSON_ENCODER
 }
 export interface Address {
   root: string;
@@ -172,7 +184,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
 
     // Access mapping
     this.access = options.accessController || {
-      canAppend: (entry: Entry<T>, identityProvider: Identities) => (entry.identity.publicKey === identity.publicKey),
+      canAppend: (entry: Entry, _identityProvider: Identities) => (entry.data.identity.publicKey === identity.publicKey),
       type: undefined,
       address: undefined,
       close: undefined,
@@ -205,14 +217,14 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     try {
       const onReplicationQueued = async (entry) => {
         // Update the latest entry state (latest is the entry with largest clock time)
-        this._recalculateReplicationMax(entry.clock ? entry.clock.time : 0)
+        this._recalculateReplicationMax(entry.data.clock ? entry.data.clock.time : 0)
         this.events.emit('replicate', this.address.toString(), entry)
       }
 
       const onReplicationProgress = async (entry) => {
         const previousProgress = this.replicationStatus.progress
         const previousMax = this.replicationStatus.max
-        this._recalculateReplicationStatus(entry.clock.time)
+        this._recalculateReplicationStatus(entry.data.clock.time)
         if (this._oplog.length + 1 > this.replicationStatus.progress ||
           this.replicationStatus.progress > previousProgress ||
           this.replicationStatus.max > previousMax) {
@@ -290,7 +302,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
   }
 
   get logOptions() {
-    return { logId: this.id, access: this.access, sortFn: this.options.sortFn, recycle: this.options.recycle };
+    return { logId: this.id, io: this.options.io, access: this.access, sortFn: this.options.sortFn, recycle: this.options.recycle };
   }
 
   /**
@@ -396,13 +408,9 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
 
     // Load the log
     const log = await Log.fromEntryHash(this._ipfs, this.identity, heads.map(e => e.hash), {
-      logId: this.id,
-      access: this.access,
-      sortFn: this.options.sortFn,
+      ...this.logOptions,
       length: amount,
-      onProgressCallback: this._onLoadProgress.bind(this),
       timeout: fetchEntryTimeout,
-      concurrency: this.options.replicationConcurrency
     })
 
     this._oplog = log
@@ -415,7 +423,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     this.events.emit('ready', this.address.toString(), this._oplog.heads)
   }
 
-  async sync(heads) {
+  async sync(heads: Entry[]) {
     this._stats.syncRequestsReceieved += 1
     logger.debug(`Sync request #${this._stats.syncRequestsReceieved} ${heads.length}`)
     if (heads.length === 0) {
@@ -429,7 +437,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     // the log, it'll fetch it from the network instead from the disk.
     // return this._replicator.load(heads)
 
-    const saveToIpfs = async (head) => {
+    const saveToIpfs = async (head: Entry) => {
       if (!head) {
         console.warn("Warning: Given input entry was 'null'.")
         return Promise.resolve(null)
@@ -446,7 +454,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
       }
 
       const logEntry = Entry.toEntry(head)
-      const hash = await io.write(this._ipfs, Entry.getWriteFormat(logEntry), logEntry, { links: Entry.IPLD_LINKS, onlyHash: true })
+      const hash = await io.write(this._ipfs, Entry.getWriteFormat(), logEntry, { links: Entry.IPLD_LINKS, onlyHash: true })
 
       if (hash !== head.hash) {
         console.warn('"WARNING! Head hash didn\'t match the contents')
@@ -488,7 +496,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     return [snapshot]
   }
 
-  async loadFromSnapshot(onProgressCallback) {
+  async loadFromSnapshot() {
     if (this.options.onLoad) {
       await this.options.onLoad(this)
     }
@@ -557,7 +565,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
           await this.syncLocal()
         }
         const entry = await this._oplog.append(data, this.options.referenceCount, options.pin)
-        this._recalculateReplicationStatus(entry.clock.time)
+        this._recalculateReplicationStatus(entry.data.clock.time)
         await this._cache.set(this.localHeadsPath, [entry])
         await this._updateIndex()
         this.events.emit('write', this.address.toString(), entry, this._oplog.heads)
@@ -606,7 +614,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
 
   /* Loading progress callback */
   _onLoadProgress(entry) {
-    this._recalculateReplicationStatus(entry.clock.time)
+    this._recalculateReplicationStatus(entry.data.clock.time)
     this.events.emit('load.progress', this.address.toString(), entry.hash, entry, this.replicationStatus.progress, this.replicationStatus.max)
   }
 }

@@ -2,7 +2,7 @@
 const assert = require('assert')
 const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
-const OrbitDB = require('../orbit-db')
+import { OrbitDB } from '../orbit-db'
 
 // Include test utilities
 const {
@@ -95,7 +95,7 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     beforeEach(async () => {
-      let options = {}
+      let options: any = {}
       // Set write access for both clients
       options.write = [
         orbitdb1.identity.publicKey,
@@ -168,7 +168,7 @@ Object.keys(testAPIs).forEach(API => {
               assert.equal(result, entryCount)
               assert.equal(db._oplog.length, entryCount)
             })
-            resolve()
+            resolve(true)
           }
         }, 200)
       })

@@ -7,7 +7,9 @@ const rmrf = require('rimraf')
 const levelup = require('levelup')
 const leveldown = require('leveldown')
 const Zip = require('adm-zip')
-const OrbitDB = require('../orbit-db')
+import { Store } from '@dao-xyz/orbit-db-store'
+import { OrbitDB } from '../orbit-db'
+import { KeyValueStore } from './utils/stores/log/key-value-store'
 const OrbitDBAddress = require('../orbit-db-address')
 const Identities = require('@dao-xyz/orbit-db-identity-provider')
 const io = require('orbit-db-io')
@@ -108,7 +110,7 @@ Object.keys(testAPIs).forEach(API => {
       })
 
       describe('Success', function () {
-        let db
+        let db: KeyValueStore;
 
         beforeAll(async () => {
           db = await orbitdb.create('second', 'feed', { replicate: false })
@@ -132,14 +134,14 @@ Object.keys(testAPIs).forEach(API => {
 
         test('saves database manifest reference locally', async () => {
           const address = db.id
-          const manifestHash = address.spltest('/')[2]
+          const manifestHash = address.split('/')[2]
           await db._cache._store.open()
           const value = await db._cache.get(path.join(address, '/_manifest'))
           assert.equal(value, manifestHash)
         })
 
         test('saves database manifest file locally', async () => {
-          const manifestHash = db.id.spltest('/')[2]
+          const manifestHash = db.id.split('/')[2]
           const manifest = await io.read(ipfs, manifestHash)
           assert.notEqual(manifest, false)
           assert.equal(manifest.name, 'second')
@@ -297,7 +299,7 @@ Object.keys(testAPIs).forEach(API => {
       test('throws an error if trying to open a database with name only and \'create\' is not set to \'true\'', async () => {
         let err
         try {
-          db = await orbitdb.open('XXX', { create: false })
+          let db = await orbitdb.open('XXX', { create: false })
         } catch (e) {
           err = e.toString()
         }
@@ -307,7 +309,7 @@ Object.keys(testAPIs).forEach(API => {
       test('throws an error if trying to open a database with name only and \'create\' is not set to true', async () => {
         let err
         try {
-          db = await orbitdb.open('YYY', { create: true })
+          let db = await orbitdb.open('YYY', { create: true })
         } catch (e) {
           err = e.toString()
         }
@@ -385,8 +387,8 @@ Object.keys(testAPIs).forEach(API => {
         const res = db.iterator({ limit: -1 }).collect()
 
         assert.equal(res.length, 2)
-        assert.equal(res[0].payload.value, 'hello1')
-        assert.equal(res[1].payload.value, 'hello2')
+        assert.equal(res[0].data.payload.value, 'hello1')
+        assert.equal(res[1].data.payload.value, 'hello2')
         await db.drop()
         await db2.drop()
       })

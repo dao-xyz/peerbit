@@ -21,7 +21,7 @@ ipfs.on('ready', async () => {
   // When IPFS is ready, add some log entries
   const log = new Log(ipfs, identity, { logId: 'example-log' })
 
-  await log.append('one')
+  await log.append(Buffer.from('one'))
   const values = JSON.stringify(log.values, null, 2)
   console.log('\n', values)
   outputElm.innerHTML += values + '<br><br><hr>'

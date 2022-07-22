@@ -56,28 +56,28 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     describe('heads', () => {
       test('finds one head after one entry', async () => {
-        const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
+        const log1 = new Log<string>(ipfs, testIdentity, { logId: 'A' })
         await log1.append('helloA1')
         assert.strictEqual(log1.heads.length, 1)
       })
 
       test('finds one head after two entries', async () => {
-        const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
+        const log1 = new Log<string>(ipfs, testIdentity, { logId: 'A' })
         await log1.append('helloA1')
         await log1.append('helloA2')
         assert.strictEqual(log1.heads.length, 1)
       })
 
       test('log contains the head entry', async () => {
-        const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
+        const log1 = new Log<string>(ipfs, testIdentity, { logId: 'A' })
         await log1.append('helloA1')
         await log1.append('helloA2')
         assert.deepStrictEqual(log1.get(log1.heads[0].hash), log1.heads[0])
       })
 
       test('finds head after a join and append', async () => {
-        const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
-        const log2 = new Log(ipfs, testIdentity, { logId: 'A' })
+        const log1 = new Log<string>(ipfs, testIdentity, { logId: 'A' })
+        const log2 = new Log<string>(ipfs, testIdentity, { logId: 'A' })
 
         await log1.append('helloA1')
         await log1.append('helloA2')
@@ -92,8 +92,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       test('finds two heads after a join', async () => {
-        const log2 = new Log(ipfs, testIdentity, { logId: 'A' })
-        const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
+        const log2 = new Log<string>(ipfs, testIdentity, { logId: 'A' })
+        const log1 = new Log<string>(ipfs, testIdentity, { logId: 'A' })
 
         await log1.append('helloA1')
         await log1.append('helloA2')
@@ -265,9 +265,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log4.join(log3)
         assert.strictEqual(log4.tails.length, 3)
         assert.strictEqual(log4.tails[0].id, 'XX')
-        assert.strictEqual(log4.tails[0].clock.id, testIdentity3.publicKey)
-        assert.strictEqual(log4.tails[1].clock.id, testIdentity2.publicKey)
-        assert.strictEqual(log4.tails[2].clock.id, testIdentity.publicKey)
+        assert.strictEqual(log4.tails[0].data.clock.id, testIdentity3.publicKey)
+        assert.strictEqual(log4.tails[1].data.clock.id, testIdentity2.publicKey)
+        assert.strictEqual(log4.tails[2].data.clock.id, testIdentity.publicKey)
         assert.strictEqual(log4.clock.id, testIdentity4.publicKey)
       })
     })

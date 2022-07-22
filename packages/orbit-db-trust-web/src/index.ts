@@ -250,16 +250,16 @@ export class TrustWebAccessController extends AccessController {
 
     }
 
-    async canAppend(entry: Entry<any>, identityProvider: Identities): Promise<boolean> {
+    async canAppend(entry: Entry, identityProvider: Identities): Promise<boolean> {
 
-        if (!identityProvider.verifyIdentity(entry.identity)) {
+        if (!identityProvider.verifyIdentity(entry.data.identity)) {
             return false;
         }
         if (this._appendAll) {
             return true;
         }
 
-        return this._trustResolver().isTrusted(entry.identity)
+        return this._trustResolver().isTrusted(entry.data.identity)
     }
 
 

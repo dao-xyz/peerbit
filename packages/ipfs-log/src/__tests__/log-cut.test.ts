@@ -3,6 +3,7 @@ const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { assertPayload } from './utils/assert'
 const Keystore = require('orbit-db-keystore')
 
 // Test utils
@@ -53,7 +54,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await log.append('hello2')
       await log.append('hello3')
       assert.strictEqual(log.length, 1);
-      assert.strictEqual(log.values[0].payload, 'hello3');
+      assertPayload(log.values[0].data.payload, 'hello3');
     })
 
     test('cut back to cut length', async () => {
@@ -64,7 +65,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.strictEqual(log.length, 3);
       await log.append('hello4')
       assert.strictEqual(log.length, 1); // We exceed 'maxOplogLength' and cut back to 'cutOplogToLength'
-      assert.strictEqual(log.values[0].payload, 'hello4');
+      assertPayload(log.values[0].data.payload, 'hello4');
     })
   })
 })

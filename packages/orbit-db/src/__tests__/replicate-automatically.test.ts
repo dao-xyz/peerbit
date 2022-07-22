@@ -1,9 +1,9 @@
-'use strict'
-
+import { OrbitDB } from "../orbit-db"
+import { EventStore, EVENT_STORE_TYPE } from "./utils/stores/log/event-store"
+import { KeyValueStore, KEY_VALUE_STORE_TYPE } from "./utils/stores/log/key-value-store"
 const assert = require('assert')
 const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
-const OrbitDB = require('../src/OrbitDB')
 
 // Include test utilities
 const {
@@ -22,7 +22,7 @@ Object.keys(testAPIs).forEach(API => {
     jest.setTimeout(config.timeout)
 
     let ipfsd1, ipfsd2, ipfs1, ipfs2
-    let orbitdb1, orbitdb2, db1, db2, db3, db4
+    let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore, db2: EventStore, db3: KeyValueStore, db4: KeyValueStore
 
     beforeAll(async () => {
       rmrf.sync('./orbitdb')
@@ -35,7 +35,7 @@ Object.keys(testAPIs).forEach(API => {
       orbitdb1 = await OrbitDB.createInstance(ipfs1, { directory: dbPath1 })
       orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: dbPath2 })
 
-      let options = {}
+      let options: any = {}
       // Set write access for both clients
       options.write = [
         orbitdb1.identity.publicKey,
@@ -43,8 +43,8 @@ Object.keys(testAPIs).forEach(API => {
       ]
 
       options = Object.assign({}, options)
-      db1 = await orbitdb1.eventlog('replicate-automatically-tests', options)
-      db3 = await orbitdb1.keyvalue('replicate-automatically-tests-kv', options)
+      db1 = await orbitdb1.create('replicate-automatically-tests', EVENT_STORE_TYPE, options)
+      db3 = await orbitdb1.create('replicate-automatically-tests-kv', KEY_VALUE_STORE_TYPE, options)
     })
 
     afterAll(async () => {
@@ -84,8 +84,8 @@ Object.keys(testAPIs).forEach(API => {
       await mapSeries(entryArr, (i) => db1.add('hello' + i))
 
       // Open the second database
-      db2 = await orbitdb2.eventlog(db1.address.toString())
-      db4 = await orbitdb2.keyvalue(db3.address.toString())
+      db2 = await orbitdb2.create(db1.address.toString(), EVENT_STORE_TYPE)
+      db4 = await orbitdb2.create(db3.address.toString(), KEY_VALUE_STORE_TYPE)
 
       // Listen for the 'replicated' events and check that all the entries
       // were replicated to the second database
@@ -118,7 +118,7 @@ Object.keys(testAPIs).forEach(API => {
               const result2 = db2.iterator({ limit: -1 }).collect()
               assert.equal(result1.length, result2.length)
               assert.deepEqual(result1, result2)
-              resolve()
+              resolve(true)
             }
           }, 1000)
         } catch (e) {

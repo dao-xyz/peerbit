@@ -147,7 +147,7 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
                 type: DYNAMIC_ACCESS_CONTROLER,
                 trustResolver: () => this.trust,
                 heapSizeLimit: v8 ? () => Math.min(v8.getHeapStatistics().total_heap_size, this.peer.options.heapSizeLimit) : () => this.peer.options.heapSizeLimit,
-                onMemoryExceeded: (entry: Entry<any>) => {
+                onMemoryExceeded: (entry: Entry) => {
                     if (this._requestingReplicationPromise) {
                         // Already replicating
                         logger.info("Memory exceeded heap, but replication is already in process")

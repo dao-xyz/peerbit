@@ -81,7 +81,7 @@ Append an entry to the log. Returns a *Promise* that resolves to the latest `Ent
 
 ```javascript
 await log.append({ some: 'data' })
-await log.append('text'))
+await log.append(Buffer.from('text')))
 console.log(log.values)
 // [
 // { hash: 'zdpuArZdzymC6zRTMGd5xw4Dw2Q2VCYjuaHAekTSyXS1GmSKs',

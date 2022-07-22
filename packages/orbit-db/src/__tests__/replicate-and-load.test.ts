@@ -1,9 +1,10 @@
-'use strict'
+import { Store } from "@dao-xyz/orbit-db-store"
+import { OrbitDB } from "../orbit-db"
+import { EventStore, EVENT_STORE_TYPE } from "./utils/stores/log/event-store"
 
 const assert = require('assert')
 const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
-const OrbitDB = require('../src/OrbitDB')
 
 // Include test utilities
 const {
@@ -25,7 +26,7 @@ Object.keys(testAPIs).forEach(API => {
     jest.setTimeout(config.timeout)
 
     let ipfsd1, ipfsd2, ipfs1, ipfs2
-    let orbitdb1, orbitdb2
+    let orbitdb1: OrbitDB, orbitdb2: OrbitDB
 
     beforeAll(async () => {
       rmrf.sync(orbitdbPath1)
@@ -62,9 +63,9 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     describe('two peers', function () {
-      let db1, db2
+      let db1: EventStore, db2: EventStore
 
-      const openDatabases = async (options = {}) => {
+      const openDatabases = async (options: { write?: any[] } = {}) => {
         // Set write access for both clients
         options.write = [
           orbitdb1.identity.publicKey,
@@ -72,10 +73,10 @@ Object.keys(testAPIs).forEach(API => {
         ]
 
         options = Object.assign({}, options, { path: dbPath1, create: true })
-        db1 = await orbitdb1.eventlog('tests', options)
+        db1 = await orbitdb1.create(EVENT_STORE_TYPE, 'tests', options as any)
         // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
         options = Object.assign({}, options, { path: dbPath2 })
-        db2 = await orbitdb2.eventlog(db1.address.toString(), options)
+        db2 = await orbitdb2.create(EVENT_STORE_TYPE, db1.address.toString(), options as any)
       }
 
       beforeAll(async () => {
@@ -117,8 +118,8 @@ Object.keys(testAPIs).forEach(API => {
 
               const items = db2.iterator({ limit: -1 }).collect()
               assert.equal(items.length, entryCount)
-              assert.equal(items[0].payload.value, 'hello0')
-              assert.equal(items[items.length - 1].payload.value, 'hello99')
+              assert.equal(items[0].data.payload.value, 'hello0')
+              assert.equal(items[items.length - 1].data.payload.value, 'hello99')
 
               try {
 
@@ -137,10 +138,10 @@ Object.keys(testAPIs).forEach(API => {
 
                 // Open the database again (this time from the disk)
                 options = Object.assign({}, options, { path: dbPath1, create: false })
-                const db3 = await orbitdb1.eventlog(addr, options)
+                const db3 = await orbitdb1.create(EVENT_STORE_TYPE, addr, options)
                 // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
                 options = Object.assign({}, options, { path: dbPath2, localOnly: true })
-                const db4 = await orbitdb2.eventlog(addr, options)
+                const db4 = await orbitdb2.create(EVENT_STORE_TYPE, addr, options)
 
                 await db3.load()
                 await db4.load()
@@ -156,7 +157,7 @@ Object.keys(testAPIs).forEach(API => {
               } catch (e) {
                 reject(e)
               }
-              resolve()
+              resolve(true)
             }
           }, 1000)
         })

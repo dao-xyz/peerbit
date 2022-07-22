@@ -1,9 +1,7 @@
-
 const assert = require('assert')
 const rmrf = require('rimraf')
 const DocumentStore = require('orbit-db-docstore')
-const OrbitDB = require('../orbit-db')
-
+import { OrbitDB } from '../orbit-db'
 // Include test utilities
 const {
   config,

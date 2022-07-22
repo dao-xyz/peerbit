@@ -3,6 +3,7 @@ const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { assertPayload } from './utils/assert'
 const Keystore = require('orbit-db-keystore')
 
 // Test utils
@@ -47,7 +48,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     describe('append one', () => {
-      let log
+      let log: Log<string>
 
       beforeEach(async () => {
         log = new Log(ipfs, testIdentity, { logId: 'A' })
@@ -60,7 +61,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       test('added the correct values', async () => {
         log.values.forEach((entry) => {
-          assert.strictEqual(entry.payload, 'hello1')
+          assertPayload(entry.data.payload, 'hello1')
         })
       })
 
@@ -78,8 +79,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       test('updated the clocks correctly', async () => {
         log.values.forEach((entry) => {
-          assert.strictEqual(entry.clock.id, testIdentity.publicKey)
-          assert.strictEqual(entry.clock.time, 1)
+          assert.strictEqual(entry.data.clock.id, testIdentity.publicKey)
+          assert.strictEqual(entry.data.clock.time, 1)
         })
       })
     })
@@ -107,14 +108,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       test('added the correct values', async () => {
         log.values.forEach((entry, index) => {
-          assert.strictEqual(entry.payload, 'hello' + index)
+          assertPayload(entry.data.payload, 'hello' + index)
         })
       })
 
       test('updated the clocks correctly', async () => {
         log.values.forEach((entry, index) => {
-          assert.strictEqual(entry.clock.time, index + 1)
-          assert.strictEqual(entry.clock.id, testIdentity.publicKey)
+          assert.strictEqual(entry.data.clock.time, index + 1)
+          assert.strictEqual(entry.data.clock.id, testIdentity.publicKey)
         })
       })
 
