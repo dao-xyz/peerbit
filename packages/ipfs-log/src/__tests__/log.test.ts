@@ -3,8 +3,7 @@ const assert = require('assert')
 const rmrf = require('rimraf')
 const { CID } = require('multiformats/cid')
 const { base58btc } = require('multiformats/bases/base58')
-import { LamportClock as Clock } from '../lamport-clock'
-import { Entry } from '../entry'
+import { Entry, LamportClock as Clock } from '@dao-xyz/ipfs-log-entry';
 import { Log } from '../log'
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 const Keystore = require('orbit-db-keystore')

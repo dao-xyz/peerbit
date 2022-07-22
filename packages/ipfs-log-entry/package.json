@@ -1,10 +1,10 @@
 {
-  "name": "@dao-xyz/ipfs-log",
+  "name": "@dao-xyz/ipfs-log-entry",
   "version": "5.5.15",
-  "description": "Append-only log CRDT on IPFS",
+  "description": "Append-only log entry model",
+  "type": "module",
   "author": "Haad",
   "license": "MIT",
-  "type": "module",
   "main": "lib/cjs/index.js",
   "module": "lib/esm/index.mjs",
   "types": "lib/esm/index.d.ts",
@@ -32,14 +32,7 @@
   "dependencies": {
     "@dao-xyz/borsh": "^2.1.4",
     "@dao-xyz/orbit-db-identity-provider": "^0.5.10",
-    "@dao-xyz/ipfs-log-entry": "^5.5.15",
-    "json-stringify-deterministic": "^1.0.1",
-    "multihashing-async": "^2.0.1",
-    "orbit-db-io": "^1.0.2",
-    "p-do-whilst": "^1.1.0",
-    "p-each-series": "^2.1.0",
-    "p-map": "^4.0.0",
-    "p-whilst": "^2.1.0"
+    "orbit-db-io": "^1.0.2"
   },
   "devDependencies": {
     "@babel/cli": "^7.14.3",

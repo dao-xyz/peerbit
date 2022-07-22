@@ -1,5 +1,5 @@
 import { field } from "@dao-xyz/borsh";
-import { BinaryDocumentStore, BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
+import { BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
 import { disconnectPeers, getConnectedPeers, getPeer, Peer } from '@dao-xyz/peer-test-utils';
 import { DynamicAccessController, DYNAMIC_ACCESS_CONTROLER } from "..";
 import { Access, AccessType } from "../access";

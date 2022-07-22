@@ -1,6 +1,6 @@
 import pMap from 'p-map'
 import pDoWhilst from 'p-do-whilst'
-import { Entry } from './entry'
+import { Entry } from '@dao-xyz/ipfs-log-entry';
 import { IPFS } from 'ipfs-core-types/src/'
 
 const hasItems = arr => arr && arr.length > 0
@@ -199,6 +199,7 @@ export class EntryIO {
           reject(e)
         } finally {
           clearTimeout(timer)
+
         }
       })
     }

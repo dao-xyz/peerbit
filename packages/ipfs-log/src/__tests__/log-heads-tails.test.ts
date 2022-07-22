@@ -1,7 +1,7 @@
 const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
-import { Entry } from '../entry'
+import { Entry } from '@dao-xyz/ipfs-log-entry';
 import { Log } from '../log'
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 const Keystore = require('orbit-db-keystore')

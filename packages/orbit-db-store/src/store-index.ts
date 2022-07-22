@@ -23,7 +23,8 @@
   ```
 */
 
-import { Entry, Log } from "@dao-xyz/ipfs-log";
+import { Log } from "@dao-xyz/ipfs-log";
+import { Entry } from "@dao-xyz/ipfs-log-entry";
 
 export class Index<T> {
 

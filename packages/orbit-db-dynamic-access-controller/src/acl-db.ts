@@ -1,5 +1,5 @@
 import { variant } from '@dao-xyz/borsh';
-import { Entry } from '@dao-xyz/ipfs-log';
+import { Entry } from '@dao-xyz/ipfs-log-entry';
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { BinaryDocumentStore, BinaryDocumentStoreOptions } from '@dao-xyz/orbit-db-bdocstore';
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';

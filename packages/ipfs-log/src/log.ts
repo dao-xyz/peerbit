@@ -1,10 +1,9 @@
-import { Entry } from "./entry"
+import { Entry, LamportClock as Clock } from '@dao-xyz/ipfs-log-entry';
 import { EntryIndex } from "./entry-index"
 import pMap from 'p-map'
 import { GSet } from './g-set'
 import { LogIO } from './log-io'
 import * as LogError from './log-errors'
-import { LamportClock as Clock } from './lamport-clock'
 import * as Sorting from './log-sorting'
 import { EntryFetchAllOptions, EntryFetchOptions, strictFetchOptions } from "./entry-io"
 import { IPFS } from "ipfs-core-types/src/"

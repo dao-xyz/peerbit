@@ -1,8 +1,7 @@
 const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
-import { LamportClock as Clock } from '../lamport-clock'
-import { Entry } from '../entry'
+import { Entry, LamportClock as Clock } from '@dao-xyz/ipfs-log-entry';
 import { Log } from '../log'
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { assertPayload } from './utils/assert'

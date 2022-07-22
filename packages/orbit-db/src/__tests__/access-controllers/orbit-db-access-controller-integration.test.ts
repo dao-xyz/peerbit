@@ -1,11 +1,9 @@
-'use strict'
-
 const assert = require('assert')
 const rmrf = require('rimraf')
-const OrbitDB = require('../../src/OrbitDB.js')
-import { IdentityProvider } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities as IdentityProvider } from '@dao-xyz/orbit-db-identity-provider'
 const Keystore = require('orbit-db-keystore')
-const AccessControllers = require('orbit-db-access-controllers')
+import { AccessControllers } from '@dao-xyz/orbit-db-access-controllers';
+import { OrbitDB } from '../../orbit-db';
 const io = require('orbit-db-io')
 // Include test utilities
 const {
@@ -161,7 +159,7 @@ Object.keys(testAPIs).forEach(API => {
                   // Wait for the first user's db to replicate the update
                   db.events.once('replicated', () => {
                     // FIXME: timeout to get rid of the "libp2p node not started yet" errors
-                    setTimeout(() => resolve(), 1000)
+                    setTimeout(() => resolve(true), 1000)
                   })
                   // Try adding something again
                   await db2.add('hello!')

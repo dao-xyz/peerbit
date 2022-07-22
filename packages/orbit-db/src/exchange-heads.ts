@@ -1,7 +1,7 @@
 import Channel from 'ipfs-pubsub-1on1'
 import Logger from 'logplease'
 import { variant, field, vec, serialize, deserialize } from '@dao-xyz/borsh';
-import { Entry } from '@dao-xyz/ipfs-log'
+import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Message } from './message';
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')

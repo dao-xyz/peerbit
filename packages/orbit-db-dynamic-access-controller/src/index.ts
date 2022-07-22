@@ -7,9 +7,8 @@
 // Relation with enc/dec?
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { Identities, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
-import { Entry } from '@dao-xyz/ipfs-log';
-import AccessController from "orbit-db-access-controllers/src/access-controller-interface";
-import AccessControllers from 'orbit-db-access-controllers';
+import { Entry } from '@dao-xyz/ipfs-log-entry';
+import { AccessController, AccessControllers } from "@dao-xyz/orbit-db-access-controllers";
 import { Store } from '@dao-xyz/orbit-db-store';
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { ACLInterface, ACLInterfaceOptions } from './acl-db';

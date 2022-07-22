@@ -5,9 +5,9 @@ import { SingleDBInterface } from "@dao-xyz/orbit-db-store-interface";
 import { Identities, Identity, IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
 import { OrbitDB } from "@dao-xyz/orbit-db";
 import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
-import AccessController from "orbit-db-access-controllers/src/access-controller-interface";
-import AccessControllers from "orbit-db-access-controllers";
-import { Entry } from "@dao-xyz/ipfs-log";
+import { AccessController, AccessControllers } from "@dao-xyz/orbit-db-access-controllers";
+import { Entry } from "@dao-xyz/ipfs-log-entry";
+
 import { createHash } from "crypto";
 import { IQueryStoreOptions } from "@dao-xyz/orbit-db-query-store";
 import { PublicKey, TrustData } from "@dao-xyz/identity";

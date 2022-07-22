@@ -8,7 +8,7 @@ import Logger from 'logplease'
 const logger = Logger.create('orbit-db')
 import { Identity, Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
-import AccessControllers from 'orbit-db-access-controllers' // Fix fork
+import { AccessControllers } from '@dao-xyz/orbit-db-access-controllers' // Fix fork
 import Cache from 'orbit-db-cache'
 import Keystore from 'orbit-db-keystore'
 import { isDefined } from './is-defined'
@@ -204,7 +204,7 @@ export class OrbitDB {
           create: options.create, replicate: options.replicate, directory: options.directory, nameResolver: options.nameResolver
         }, ...options.accessController
       };
-      accessController = await AccessControllersModule.resolve(this as any, options.accessControllerAddress, accessControllerOptions)
+      accessController = await AccessControllersModule.resolve(this, options.accessControllerAddress, accessControllerOptions)
     }
     const opts = Object.assign({ replicate: true }, options, {
       accessController: accessController,
@@ -322,7 +322,7 @@ export class OrbitDB {
 
     // Create an AccessController, use IPFS AC as the default
     options.accessController = Object.assign({}, { name: name, type: 'ipfs' }, options.accessController)
-    const accessControllerAddress = await AccessControllersModule.create(this as any, options.accessController.type, options.accessController || {})
+    const accessControllerAddress = await AccessControllersModule.create(this, options.accessController.type, options.accessController || {})
 
     // Save the manifest to IPFS
     const manifestHash = await createDBManifest(this._ipfs, name, type, accessControllerAddress, options)

@@ -1,5 +1,5 @@
 import { DefaultAccessController } from '../default-access-controller'
-import { Entry } from '../entry'
+import { Entry } from '@dao-xyz/ipfs-log-entry';
 export const io = require('orbit-db-io')
 const assert = require('assert')
 const rmrf = require('rimraf')

@@ -1,5 +1,5 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Entry } from '@dao-xyz/ipfs-log';
+import { Entry } from '@dao-xyz/ipfs-log-entry';
 
 @variant(0)
 export class Network {

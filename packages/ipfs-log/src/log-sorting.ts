@@ -1,5 +1,5 @@
-import { Entry } from './entry'
-import { LamportClock as Clock } from './lamport-clock'
+import { Entry } from '@dao-xyz/ipfs-log-entry';
+import { LamportClock as Clock } from '@dao-xyz/ipfs-log-entry'
 
 export type ISortFunction = (a: Entry, b: Entry, resolveConflict?: (a: Entry, b: Entry) => number) => number;
 /**

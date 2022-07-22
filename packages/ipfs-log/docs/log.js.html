@@ -437,7 +437,7 @@ class Log extends GSet {
     // Verify signature for each entry and throws if there's an invalid signature
     const verify = async (entry) => {
       const isValid = await entry.data.verify(identityProvider, entry)
-      const publicKey = entry.data.identity ? entry.data.identity.publicKey : entry.key
+      const publicKey = entry.data.identity ? entry.data.identity.publicKey : entry.data.key
       if (!isValid) throw new Error(`Could not validate signature "${entry.sig}" for entry "${entry.hash}" and key "${publicKey}"`)
     }
 

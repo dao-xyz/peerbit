@@ -79,7 +79,7 @@ class Entry {
 
     const signature = await identity.provider.sign(identity, Entry.toBuffer(entry))
 
-    entry.key = identity.publicKey
+    entry.data.key = identity.publicKey
     entry.data.identity = identity.toSerializable()
     entry.sig = signature
     entry.hash = await Entry.toMultihash(ipfs, entry, pin)
@@ -97,12 +97,12 @@ class Entry {
   static async verify (identityProvider, entry) {
     if (!identityProvider) throw new Error('Identity-provider is required, cannot verify entry')
     if (!Entry.isEntry(entry)) throw new Error('Invalid Log entry')
-    if (!entry.key) throw new Error("Entry doesn't have a key")
+    if (!entry.data.key) throw new Error("Entry doesn't have a key")
     if (!entry.sig) throw new Error("Entry doesn't have a signature")
 
     const e = Entry.toEntry(entry, { presigned: true })
     const verifier = entry.data.v &lt; 1 ? 'v0' : 'v1'
-    return identityProvider.verify(entry.sig, entry.key, Entry.toBuffer(e), verifier)
+    return identityProvider.verify(entry.sig, entry.data.key, Entry.toBuffer(e), verifier)
   }
 
   /**
@@ -154,7 +154,7 @@ class Entry {
       return e // don't include key/sig information
     }
 
-    e.key = entry.key
+    e.key = entry.data.key
     if (v > 0) {
       e.identity = entry.data.identity // added in v1
     }

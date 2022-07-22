@@ -2,7 +2,8 @@ import path from 'path'
 import { EventEmitter } from 'events'
 import mapSeries from 'p-each-series'
 import { default as PQueue } from 'p-queue'
-import { Log, Entry, ISortFunction, IOOptions } from '@dao-xyz/ipfs-log'
+import { Log, ISortFunction, IOOptions, RecycleOptions, AccessError } from '@dao-xyz/ipfs-log'
+import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Index } from './store-index'
 import { Replicator } from './replicator'
 import { ReplicationInfo } from './replication-info'
@@ -10,9 +11,9 @@ import Logger from 'logplease'
 import io from 'orbit-db-io'
 import { IPFS } from 'ipfs-core-types/src/'
 import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
-import { RecycleOptions, AccessError } from '@dao-xyz/ipfs-log'
-import OrbitDBAccessController from 'orbit-db-access-controllers/src/orbitdb-access-controller'
+import { OrbitDBAccessController } from '@dao-xyz/orbit-db-access-controllers'
 import stringify from 'json-stringify-deterministic'
+import { AccessController } from '@dao-xyz/orbit-db-access-controllers'
 
 export type Constructor<T> = new (...args: any[]) => T;
 
@@ -88,7 +89,7 @@ export interface IStoreOptions<T, X extends Index<T>> extends ICreateOptions, IO
   syncLocal?: boolean,
   sortFn?: ISortFunction,
   cache?: any;
-  accessController?: OrbitDBAccessController<T>,
+  accessController?: { type: string, skipManifest?: boolean } & any,
   recycle?: RecycleOptions,
   typeMap?: { [key: string]: Constructor<any> },
   onlyObserver?: boolean,
@@ -142,7 +143,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
   manifestPath: string;
   _ipfs: IPFS;
   _cache: any;
-  access: OrbitDBAccessController<T>;
+  access: AccessController;
   _oplog: Log<any>;
   _queue: PQueue<any, any>
   _index: X;
@@ -190,7 +191,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
       close: undefined,
       load: undefined,
       save: undefined
-    } as OrbitDBAccessController<T>
+    } as any as OrbitDBAccessController // TODO fix types
 
     // Create the operations log
     this._oplog = new Log(this._ipfs, this.identity, this.logOptions)

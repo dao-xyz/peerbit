@@ -1,12 +1,9 @@
-'use strict'
-
 const assert = require('assert')
 const rmrf = require('rimraf')
-const OrbitDB = require('../../src/OrbitDB.js')
-import { IdentityProvider } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities as IdentityProvider } from '@dao-xyz/orbit-db-identity-provider'
 const Keystore = require('orbit-db-keystore')
-const OrbitDBAccessController = require('orbit-db-access-controllers/src/orbitdb-access-controller')
-const AccessControllers = require('orbit-db-access-controllers')
+import { AccessControllers, OrbitDBAccessController } from '@dao-xyz/orbit-db-access-controllers'
+import { OrbitDB } from '../../orbit-db'
 
 // Include test utilities
 const {
@@ -165,7 +162,7 @@ Object.keys(testAPIs).forEach(API => {
                 read: new Set(['ABCD', 'AXES']),
                 delete: new Set(['ABCD'])
               })
-              resolve()
+              resolve(true)
             } catch (e) {
               reject(e)
             }
@@ -288,7 +285,7 @@ Object.keys(testAPIs).forEach(API => {
                 read: new Set(['ABCD']),
                 write: new Set([id1.id])
               })
-              resolve()
+              resolve(true)
             } catch (e) {
               reject(e)
             }
@@ -315,7 +312,7 @@ Object.keys(testAPIs).forEach(API => {
         await accessController.grant('admin', id1.id)
         return new Promise((resolve) => {
           // Test that the access controller emits 'updated' after it was loaded
-          accessController.on('updated', () => resolve())
+          accessController.on('updated', () => resolve(true))
           accessController.load(accessController.address)
         })
       })

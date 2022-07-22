@@ -37,6 +37,7 @@
   "author": "Haad",
   "license": "MIT",
   "dependencies": {
+    "@dao-xyz/orbit-db-access-controllers": "^0.3.2",
     "@dao-xyz/ipfs-log": "^5.5.15",
     "it-to-stream": "^1.0.0",
     "logplease": "^1.2.14",

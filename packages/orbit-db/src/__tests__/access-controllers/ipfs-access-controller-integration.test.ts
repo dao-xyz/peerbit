@@ -1,9 +1,7 @@
-'use strict'
-
 const assert = require('assert')
 const rmrf = require('rimraf')
-const OrbitDB = require('../../src/OrbitDB.js')
-import { IdentityProvider } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities as IdentityProvider } from '@dao-xyz/orbit-db-identity-provider'
+import { OrbitDB } from '../../orbit-db'
 const Keystore = require('orbit-db-keystore')
 const AccessControllers = require('orbit-db-access-controllers')
 const io = require('orbit-db-io')

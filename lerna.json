@@ -2,6 +2,8 @@
     "packages": [
         "packages/shard",
         "packages/ipfs-log",
+        "packages/ipfs-log-entry",
+        "packages/orbit-db-access-controllers",
         "packages/orbit-db-store",
         "packages/orbit-db-bstores",
         "packages/orbit-db-bdocstore",

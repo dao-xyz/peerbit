@@ -1,5 +1,5 @@
 import { Identities } from "@dao-xyz/orbit-db-identity-provider";
-import { Entry } from "./entry";
+import { Entry } from '@dao-xyz/ipfs-log-entry';
 
 export interface AccessController {
   canAppend(entry: Entry, identityProvider: Identities): Promise<boolean> | boolean;

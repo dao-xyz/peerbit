@@ -3,7 +3,7 @@ const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { LastWriteWins } from '../log-sorting'
 import bigLogString from './fixtures/big-log.fixture';
-import { Entry } from '../entry'
+import { Entry } from '@dao-xyz/ipfs-log-entry';
 import { Log } from '../log'
 export const io = require('orbit-db-io')
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'

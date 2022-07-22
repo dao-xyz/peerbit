@@ -1,11 +1,9 @@
-'use strict'
-
 const assert = require('assert')
 const rmrf = require('rimraf')
-const OrbitDB = require('../../src/OrbitDB.js')
-import { IdentityProvider } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities as IdentityProvider } from '@dao-xyz/orbit-db-identity-provider'
+import { OrbitDB } from '../../orbit-db'
+import { IPFSAccessController } from '@dao-xyz/orbit-db-access-controllers';
 const Keystore = require('orbit-db-keystore')
-const IPFSAccessController = require('orbit-db-access-controllers/src/ipfs-access-controller')
 const AccessControllers = require('orbit-db-access-controllers')
 
 // Include test utilities
