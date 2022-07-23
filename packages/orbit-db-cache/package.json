@@ -1,0 +1,74 @@
+{
+  "name": "@dao-xyz/orbit-db-cache",
+  "version": "0.4.0",
+  "description": "Local cache for orbit-db",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "lib/cjs/index.js",
+  "module": "lib/esm/index.mjs",
+  "types": "lib/esm/index.d.ts",
+  "exports": {
+    "import": "./lib/esm/index.mjs",
+    "require": "./lib/cjs/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/orbitdb/orbit-db-cache.git"
+  },
+  "homepage": "https://github.com/orbitdb/orbit-db-cache",
+  "bugs": "https://github.com/orbitdb/orbit-db-cache/issues",
+  "scripts": {
+    "clean": "shx rm -rf lib/*",
+    "build": "yarn clean && tsc -p tsconfig.json; tsc-esm -p tsconfig.json && tsc -p tsconfig.cjs.json",
+    "postbuild": "echo '{\"type\":\"commonjs\"}' | npx json > lib/cjs/package.json && echo '{\"type\":\"module\"} ' | npx json > lib/esm/package.json",
+    "test": "node ../../node_modules/.bin/jest test  -c  ../../jest.config.cjs --runInBand --forceExit",
+    "test:unit": "node ../../node_modules/.bin/jest test  -c  ../../jest.config.unit.cjs --runInBand --forceExit",
+    "test:integration": "node ../node_modules/.bin/jest test -c  ../jest.config.integration.cjs --runInBand --forceExit"
+  },
+  "author": "Haad",
+  "contributors": [
+    "adam-palazzo",
+    "mistakia",
+    "RichardLitt",
+    "thiagodelgado111"
+  ],
+  "standard": {
+    "env": [
+      "mocha"
+    ]
+  },
+  "license": "MIT",
+  "dependencies": {
+    "bs58": "^5.0.0",
+    "@dao-xyz/borsh": "^2.1.4",
+    "logplease": "~1.2.15"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.5.5",
+    "@babel/plugin-syntax-object-rest-spread": "^7.2.0",
+    "@babel/plugin-transform-modules-commonjs": "^7.5.0",
+    "@babel/plugin-transform-runtime": "^7.5.5",
+    "@babel/preset-env": "^7.5.5",
+    "@babel/runtime": "^7.5.5",
+    "babel-loader": "^8.2.2",
+    "fruitdown": "^1.0.2",
+    "jsondown": "^1.0.0",
+    "localstorage-down": "^0.6.7",
+    "memdown": "^6.0.0",
+    "mocha": "^8.4.0",
+    "mocha-headless-chrome": "^3.1.0",
+    "orbit-db-storage-adapter": "^0.6.0",
+    "orbit-db-test-utils": "^1.0.2",
+    "sqlite3": "^5.0.2",
+    "standard": "^16.0.3",
+    "webpack": "^4.39.0",
+    "webpack-cli": "^3.3.6"
+  },
+  "localMaintainers": [
+    "haad <haad@haja.io>",
+    "shamb0t <shams@haja.io>",
+    "hajamark <mark@haja.io>"
+  ]
+}

@@ -1,34 +1,35 @@
+import { Log } from "@dao-xyz/ipfs-log";
 import { JSON_ENCODER } from "@dao-xyz/orbit-db-store";
 import { Store } from "@dao-xyz/orbit-db-store"
-import { OrbitDB } from "../../../../orbit-db";
+import { OrbitDB } from "../../../orbit-db";
 
 
 // TODO: generalize the Iterator functions and spin to its own module
 export const EVENT_STORE_TYPE = 'event';
-export class EventIndex {
-    _index: any;
+export class EventIndex<T> {
+    _index: Log<T>;
     constructor() {
         this._index = null
     }
 
     get() {
-        return this._index ? this._index.values : []
+        return this._index ? this._index.payloadsDecoded : []
     }
 
-    updateIndex(oplog) {
+    async updateIndex(oplog, entries?: []) {
         this._index = oplog
     }
 }
 
-export class EventStore extends Store<any, any, any> {
+export class EventStore<T> extends Store<T, EventIndex<T>, any> {
     constructor(ipfs, id, dbname, options: any = {}) {
         if (options.Index === undefined) Object.assign(options, { Index: EventIndex })
         if (options.io === undefined) Object.assign(options, { io: JSON_ENCODER })
         super(ipfs, id, dbname, options)
         this._type = EVENT_STORE_TYPE;
-        this.events.on("log.op.ADD", (address, hash, payload) => {
-            this.events.emit("db.append", payload.value)
-        })
+        /*  this.events.on("log.op.ADD", (address, hash, payload) => {
+             this.events.emit("db.append", payload.value)
+         }) */
     }
 
     add(data, options = {}) {
@@ -50,7 +51,7 @@ export class EventStore extends Store<any, any, any> {
                 return this
             },
             next() {
-                let item = { value: null, done: true }
+                let item: { value?: T, done: boolean } = { value: null, done: true }
                 if (currentIndex < messages.length) {
                     item = { value: messages[currentIndex], done: false }
                     currentIndex++
@@ -68,7 +69,7 @@ export class EventStore extends Store<any, any, any> {
 
         const amount = opts.limit ? (opts.limit > -1 ? opts.limit : this._index.get().length) : 1 // Return 1 if no limit is provided
         const events = this._index.get().slice()
-        let result = []
+        let result: T[] = []
 
         if (opts.gt || opts.gte) {
             // Greater than case

@@ -1,6 +1,6 @@
 import { Store } from "@dao-xyz/orbit-db-store"
 import { OrbitDB } from "../orbit-db"
-import { EventStore, EVENT_STORE_TYPE } from "./utils/stores/log/event-store"
+import { EventStore, EVENT_STORE_TYPE } from "./utils/stores/event-store"
 
 const assert = require('assert')
 const mapSeries = require('p-each-series')
@@ -63,7 +63,7 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     describe('two peers', function () {
-      let db1: EventStore, db2: EventStore
+      let db1: EventStore<string>, db2: EventStore<string>
 
       const openDatabases = async (options: { write?: any[] } = {}) => {
         // Set write access for both clients
@@ -73,10 +73,10 @@ Object.keys(testAPIs).forEach(API => {
         ]
 
         options = Object.assign({}, options, { path: dbPath1, create: true })
-        db1 = await orbitdb1.create(EVENT_STORE_TYPE, 'tests', options as any)
+        db1 = await orbitdb1.create('tests', EVENT_STORE_TYPE, options as any)
         // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
-        options = Object.assign({}, options, { path: dbPath2 })
-        db2 = await orbitdb2.create(EVENT_STORE_TYPE, db1.address.toString(), options as any)
+        options = Object.assign({}, options, { path: dbPath2, type: EVENT_STORE_TYPE, create: true })
+        db2 = await orbitdb2.open(db1.address.toString(), options as any)
       }
 
       beforeAll(async () => {
@@ -99,7 +99,7 @@ Object.keys(testAPIs).forEach(API => {
         }
       })
 
-      test('replicates database of 100 entries and loads it from the disk', async () => {
+      it('replicates database of 100 entries and loads it from the disk', async () => {
         const entryCount = 100
         const entryArr = []
         let timer
@@ -118,8 +118,8 @@ Object.keys(testAPIs).forEach(API => {
 
               const items = db2.iterator({ limit: -1 }).collect()
               assert.equal(items.length, entryCount)
-              assert.equal(items[0].data.payload.value, 'hello0')
-              assert.equal(items[items.length - 1].data.payload.value, 'hello99')
+              assert.equal(items[0], 'hello0')
+              assert.equal(items[items.length - 1], 'hello99')
 
               try {
 

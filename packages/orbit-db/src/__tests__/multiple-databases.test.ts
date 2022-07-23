@@ -134,7 +134,7 @@ Object.keys(testAPIs).forEach(API => {
         await db.drop()
     })
 
-    test('replicates multiple open databases', async () => {
+    it('replicates multiple open databases', async () => {
       const entryCount = 32
       const entryArr = []
 

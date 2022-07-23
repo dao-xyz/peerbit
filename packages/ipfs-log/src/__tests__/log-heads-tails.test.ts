@@ -55,27 +55,27 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     describe('heads', () => {
-      test('finds one head after one entry', async () => {
+      it('finds one head after one entry', async () => {
         const log1 = new Log<string>(ipfs, testIdentity, { logId: 'A' })
         await log1.append('helloA1')
         assert.strictEqual(log1.heads.length, 1)
       })
 
-      test('finds one head after two entries', async () => {
+      it('finds one head after two entries', async () => {
         const log1 = new Log<string>(ipfs, testIdentity, { logId: 'A' })
         await log1.append('helloA1')
         await log1.append('helloA2')
         assert.strictEqual(log1.heads.length, 1)
       })
 
-      test('log contains the head entry', async () => {
+      it('log contains the head entry', async () => {
         const log1 = new Log<string>(ipfs, testIdentity, { logId: 'A' })
         await log1.append('helloA1')
         await log1.append('helloA2')
         assert.deepStrictEqual(log1.get(log1.heads[0].hash), log1.heads[0])
       })
 
-      test('finds head after a join and append', async () => {
+      it('finds head after a join and append', async () => {
         const log1 = new Log<string>(ipfs, testIdentity, { logId: 'A' })
         const log2 = new Log<string>(ipfs, testIdentity, { logId: 'A' })
 
@@ -91,7 +91,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.deepStrictEqual(log2.heads[0].hash, expectedHead.hash)
       })
 
-      test('finds two heads after a join', async () => {
+      it('finds two heads after a join', async () => {
         const log2 = new Log<string>(ipfs, testIdentity, { logId: 'A' })
         const log1 = new Log<string>(ipfs, testIdentity, { logId: 'A' })
 
@@ -111,7 +111,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(heads[1].hash, expectedHead1.hash)
       })
 
-      test('finds two heads after two joins', async () => {
+      it('finds two heads after two joins', async () => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
         const log2 = new Log(ipfs, testIdentity, { logId: 'A' })
 
@@ -138,7 +138,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(heads[1].hash, expectedHead2.hash)
       })
 
-      test('finds two heads after three joins', async () => {
+      it('finds two heads after three joins', async () => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
         const log2 = new Log(ipfs, testIdentity, { logId: 'A' })
         const log3 = new Log(ipfs, testIdentity, { logId: 'A' })
@@ -164,7 +164,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(heads[1].hash, expectedHead2.hash)
       })
 
-      test('finds three heads after three joins', async () => {
+      it('finds three heads after three joins', async () => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
         const log2 = new Log(ipfs, testIdentity, { logId: 'A' })
         const log3 = new Log(ipfs, testIdentity, { logId: 'A' })
@@ -194,19 +194,19 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     describe('tails', () => {
-      test('returns a tail', async () => {
+      it('returns a tail', async () => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
         await log1.append('helloA1')
         assert.strictEqual(log1.tails.length, 1)
       })
 
-      test('tail is a Entry', async () => {
+      it('tail is a Entry', async () => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
         await log1.append('helloA1')
         assert.strictEqual(Entry.isEntry(log1.tails[0]), true)
       })
 
-      test('returns tail entries', async () => {
+      it('returns tail entries', async () => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
         const log2 = new Log(ipfs, testIdentity, { logId: 'A' })
         await log1.append('helloA1')
@@ -217,7 +217,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(Entry.isEntry(log1.tails[1]), true)
       })
 
-      test('returns tail hashes', async () => {
+      it('returns tail hashes', async () => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
         const log2 = new Log(ipfs, testIdentity, { logId: 'A' })
         await log1.append('helloA1')
@@ -228,7 +228,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(log1.tailHashes.length, 2)
       })
 
-      test('returns no tail hashes if all entries point to empty nexts', async () => {
+      it('returns no tail hashes if all entries point to empty nexts', async () => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
         const log2 = new Log(ipfs, testIdentity, { logId: 'A' })
         await log1.append('helloA1')
@@ -237,7 +237,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(log1.tailHashes.length, 0)
       })
 
-      test('returns tails after loading a partial log', async () => {
+      it('returns tails after loading a partial log', async () => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
         const log2 = new Log(ipfs, testIdentity2, { logId: 'A' })
         await log1.append('helloA1')
@@ -252,7 +252,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(log4.tails[1].hash, log4.values[1].hash)
       })
 
-      test('returns tails sorted by public key', async () => {
+      it('returns tails sorted by public key', async () => {
         const log1 = new Log(ipfs, testIdentity, { logId: 'XX' })
         const log2 = new Log(ipfs, testIdentity2, { logId: 'XX' })
         const log3 = new Log(ipfs, testIdentity3, { logId: 'XX' })

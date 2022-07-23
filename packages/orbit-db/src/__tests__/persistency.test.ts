@@ -4,8 +4,8 @@ const mapSeries = require('p-map-series')
 const rmrf = require('rimraf')
 const path = require('path')
 import { OrbitDB } from '../orbit-db'
-import { EventStore, EVENT_STORE_TYPE } from './utils/stores/log/event-store'
-const Cache = require('orbit-db-cache')
+import { EventStore, EVENT_STORE_TYPE } from './utils/stores/event-store'
+const Cache = require('@dao-xyz/orbit-db-cache')
 
 const localdown = require('localstorage-down')
 const Storage = require('orbit-db-storage-adapter')
@@ -127,7 +127,7 @@ Object.keys(testAPIs).forEach(API => {
                 if (e.toString() !== 'ReadError: Database is not open') {
                   reject(e)
                 } else {
-                  assert.equal(db._cache.store, null)
+                  assert.equal(db._cache._store, null)
                   resolve(true)
                 }
               })

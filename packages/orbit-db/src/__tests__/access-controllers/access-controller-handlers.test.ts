@@ -66,7 +66,7 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     describe('isSupported', function () {
-      test('supports default access controllers', () => {
+      it('supports default access controllers', () => {
         assert.strictEqual(AccessControllers.isSupported('ipfs'), true)
         assert.strictEqual(AccessControllers.isSupported('orbitdb'), true)
       })

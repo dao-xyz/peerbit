@@ -60,7 +60,7 @@ const documentDbTestSetup = async (): Promise<{
 
 describe('query', () => {
 
-  test('match all', async () => {
+  it('match all', async () => {
     let {
       creator,
       observer,
@@ -97,7 +97,7 @@ describe('query', () => {
 
   });
 
-  test('string', async () => {
+  it('string', async () => {
 
     let {
       creator,
@@ -138,7 +138,7 @@ describe('query', () => {
 
   });
 
-  test('offset size', async () => {
+  it('offset size', async () => {
 
     let {
       creator,
@@ -190,7 +190,7 @@ describe('query', () => {
   });
 
   describe('sort', () => {
-    test('sort offset ascending', async () => {
+    it('sort offset ascending', async () => {
 
       let {
         creator,
@@ -249,7 +249,7 @@ describe('query', () => {
     });
 
 
-    test('sort offset descending', async () => {
+    it('sort offset descending', async () => {
 
       let {
         creator,
@@ -311,7 +311,7 @@ describe('query', () => {
 
 
   describe('number', () => {
-    test('equal', async () => {
+    it('equal', async () => {
 
       let {
         creator,
@@ -359,7 +359,7 @@ describe('query', () => {
     });
 
 
-    test('gt', async () => {
+    it('gt', async () => {
 
       let {
         creator,
@@ -406,7 +406,7 @@ describe('query', () => {
       await disconnectPeers([creator, observer]);
     });
 
-    test('gte', async () => {
+    it('gte', async () => {
 
       let {
         creator,
@@ -455,7 +455,7 @@ describe('query', () => {
       await disconnectPeers([creator, observer]);
     });
 
-    test('lt', async () => {
+    it('lt', async () => {
 
       let {
         creator,
@@ -502,7 +502,7 @@ describe('query', () => {
       await disconnectPeers([creator, observer]);
     });
 
-    test('lte', async () => {
+    it('lte', async () => {
 
       let {
         creator,

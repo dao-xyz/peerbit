@@ -1,6 +1,7 @@
+import { Log } from "@dao-xyz/ipfs-log";
 import { JSON_ENCODER } from "@dao-xyz/orbit-db-store";
 import { Store } from "@dao-xyz/orbit-db-store"
-import { OrbitDB } from "../../../../orbit-db";
+import { OrbitDB } from "../../../orbit-db";
 
 
 export const KEY_VALUE_STORE_TYPE = 'keyvalue';
@@ -11,13 +12,12 @@ export class KeyValueIndex {
         this._index = {}
     }
 
-    get(key) {
+    get(key: string) {
         return this._index[key]
     }
 
-    updateIndex(oplog) {
-        const values = oplog.values
-
+    updateIndex(oplog: Log<any>) {
+        const values = oplog.payloadsDecoded
         const handled = {}
         for (let i = values.length - 1; i >= 0; i--) {
             const item = values[i]

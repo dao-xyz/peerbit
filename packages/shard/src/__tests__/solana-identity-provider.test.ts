@@ -6,7 +6,7 @@ import { SolanaIdentityProvider } from '../identity';
 import { Keypair } from '@solana/web3.js';
 
 describe('node', () => {
-    test('keypair signer', async () => {
+    it('keypair signer', async () => {
         let root = './ipfs';
         fs.rmSync(root, { recursive: true, force: true });
         Identities.addIdentityProvider(SolanaIdentityProvider)

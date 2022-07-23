@@ -2,9 +2,9 @@
 const assert = require('assert')
 const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
-import { Store } from '@dao-xyz/orbit-db-store'
+import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { OrbitDB } from '../orbit-db'
-import { EventStore, EVENT_STORE_TYPE } from './utils/stores/log/event-store'
+import { EventStore, EVENT_STORE_TYPE } from './utils/stores/event-store'
 
 // Include test utilities
 const {
@@ -26,7 +26,7 @@ Object.keys(testAPIs).forEach(API => {
     jest.setTimeout(config.timeout * 2)
 
     let ipfsd1, ipfsd2, ipfs1, ipfs2
-    let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore, db2: EventStore
+    let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore<string>, db2: EventStore<string>
 
     let timer
     let options
@@ -92,19 +92,19 @@ Object.keys(testAPIs).forEach(API => {
         await orbitdb2.stop()
     })
 
-    test('replicates database of 1 entry', async () => {
+    it('replicates database of 1 entry', async () => {
       console.log("Waiting for peers to connect")
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
       // Set 'sync' flag on. It'll prevent creating a new local database and rather
       // fetch the database from the network
-      options = Object.assign({}, options, { directory: dbPath2, sync: true })
-      db2 = await orbitdb2.create(db1.address.toString(), EVENT_STORE_TYPE, options)
+      options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true })
+      db2 = await orbitdb2.open(db1.address.toString(), options)
 
       let finished = false
 
       await db1.add('hello')
 
-      return new Promise(resolve => {
+      await new Promise((resolve, reject) => {
         let replicatedEventCount = 0
         db2.events.on('replicated', (address, length) => {
           replicatedEventCount++
@@ -117,31 +117,36 @@ Object.keys(testAPIs).forEach(API => {
         timer = setInterval(() => {
           if (finished) {
             clearInterval(timer)
-            const entries = db2.iterator({ limit: -1 }).collect()
-            assert.equal(entries.length, 1)
-            assert.equal(entries[0].data.payload.value, 'hello')
-            assert.equal(replicatedEventCount, 1)
+            const entries: string[] = db2.iterator({ limit: -1 }).collect()
+            try {
+              assert.equal(entries.length, 1)
+              assert.equal(entries[0], 'hello')
+              assert.equal(replicatedEventCount, 1)
+            } catch (error) {
+              reject(error)
+            }
             resolve(true)
           }
         }, 100)
       })
     })
 
-    test('replicates database of 100 entries', async () => {
+    it('replicates database of 100 entries', async () => {
       console.log("Waiting for peers to connect")
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
 
-      options = Object.assign({}, options, { directory: dbPath2, sync: true })
-      db2 = await orbitdb2.create(db1.address.toString(), EVENT_STORE_TYPE, options)
+      options = Object.assign({}, options, { type: EVENT_STORE_TYPE, create: true, directory: dbPath2, sync: true })
+      db2 = await orbitdb2.open(db1.address.toString(), options)
 
       let finished = false
       const entryCount = 100
-      const entryArr = []
+      const entryArr: number[] = []
 
-      for (let i = 0; i < entryCount; i++)
+      for (let i = 0; i < entryCount; i++) {
         entryArr.push(i)
+      }
 
-      return new Promise(async (resolve, reject) => {
+      await new Promise(async (resolve, reject) => {
         db2.events.on('replicated', () => {
           // Once db2 has finished replication, make sure it has all elements
           // and process to the asserts below
@@ -160,21 +165,25 @@ Object.keys(testAPIs).forEach(API => {
           if (finished) {
             clearInterval(timer)
             const entries = db2.iterator({ limit: -1 }).collect()
-            assert.equal(entries.length, entryCount)
-            assert.equal(entries[0].data.payload.value, 'hello0')
-            assert.equal(entries[entries.length - 1].data.payload.value, 'hello99')
-            resolve(true)
+            try {
+              assert.equal(entries.length, entryCount)
+              assert.equal(entries[0], 'hello0')
+              assert.equal(entries[entries.length - 1], 'hello99')
+              resolve(true)
+            } catch (error) {
+              reject(error)
+            }
           }
         }, 100)
       })
     })
 
-    test('emits correct replication info', async () => {
+    it('emits correct replication info', async () => {
       console.log("Waiting for peers to connect")
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
 
-      options = Object.assign({}, options, { directory: dbPath2, sync: true })
-      db2 = await orbitdb2.create(db1.address.toString(), EVENT_STORE_TYPE, options)
+      options = Object.assign({}, options, { type: EVENT_STORE_TYPE, create: true, directory: dbPath2, sync: true })
+      db2 = await orbitdb2.open(db1.address.toString(), options)
 
       let finished = false
       const entryCount = 99
@@ -243,8 +252,8 @@ Object.keys(testAPIs).forEach(API => {
       })
     })
 
-    test('emits correct replication info on fresh replication', async () => {
-      return new Promise(async (resolve, reject) => {
+    it('emits correct replication info on fresh replication', async () => {
+      await new Promise(async (resolve, reject) => {
         let finished = false
         const entryCount = 512
 
@@ -267,9 +276,11 @@ Object.keys(testAPIs).forEach(API => {
           directory: dbPath2,
           overwrite: true,
           sync: true,
+          create: true,
+          type: EVENT_STORE_TYPE
         }
 
-        db2 = await orbitdb2.create(db1.address.toString(), EVENT_STORE_TYPE, options)
+        db2 = await orbitdb2.open(db1.address.toString(), options)
 
         // Test that none of the entries gets into the replication queue twice
         const replicateSet = new Set()
@@ -331,8 +342,8 @@ Object.keys(testAPIs).forEach(API => {
       })
     })
 
-    test('emits correct replication info in two-way replication', async () => {
-      return new Promise(async (resolve, reject) => {
+    it('emits correct replication info in two-way replication', async () => {
+      await new Promise(async (resolve, reject) => {
         console.log("Waiting for peers to connect")
         await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
 
@@ -355,9 +366,11 @@ Object.keys(testAPIs).forEach(API => {
           directory: dbPath2 + '2',
           overwrite: true,
           sync: true,
+          create: true,
+          type: EVENT_STORE_TYPE
         }
 
-        db2 = await orbitdb2.create(db1.address.toString(), EVENT_STORE_TYPE, options)
+        db2 = await orbitdb2.open(db1.address.toString(), options)
         assert.equal(db1.address.toString(), db2.address.toString())
 
         // Test that none of the entries gets into the replication queue twice

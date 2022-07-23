@@ -78,26 +78,26 @@ Object.keys(testAPIs).forEach(API => {
         })
       })
 
-      test('creates an access controller', () => {
+      it('creates an access controller', () => {
         assert.notStrictEqual(accessController, null)
         assert.notStrictEqual(accessController, undefined)
       })
 
-      test('sets the controller type', () => {
+      it('sets the controller type', () => {
         assert.strictEqual(accessController.type, 'ipfs')
       })
 
-      test('has IPFS instance', async () => {
+      it('has IPFS instance', async () => {
         const peerId1 = await accessController._ipfs.id()
         const peerId2 = await ipfs1.id()
         assert.strictEqual(peerId1.id, peerId2.id)
       })
 
-      test('sets default capabilities', async () => {
+      it('sets default capabilities', async () => {
         assert.deepStrictEqual(accessController.write, [id1.id])
       })
 
-      test('allows owner to append after creation', async () => {
+      it('allows owner to append after creation', async () => {
         const mockEntry = {
           identity: id1,
           v: 1
@@ -120,7 +120,7 @@ Object.keys(testAPIs).forEach(API => {
         await accessController.load(manifest.address)
       })
 
-      test('has correct capabalities', async () => {
+      it('has correct capabalities', async () => {
         assert.deepStrictEqual(accessController.write, ['A', 'B', id1.id])
       })
     })

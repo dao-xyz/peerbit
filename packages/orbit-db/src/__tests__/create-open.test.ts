@@ -1,19 +1,15 @@
 
 const assert = require('assert')
-const mapSeries = require('p-map-series')
 const fs = require('fs-extra')
 const path = require('path')
 const rmrf = require('rimraf')
-const levelup = require('levelup')
-const leveldown = require('leveldown')
 const Zip = require('adm-zip')
-import { Store } from '@dao-xyz/orbit-db-store'
 import { OrbitDB } from '../orbit-db'
-import { KeyValueStore } from './utils/stores/log/key-value-store'
+import { KeyValueStore } from './utils/stores/key-value-store'
 const OrbitDBAddress = require('../orbit-db-address')
 const Identities = require('@dao-xyz/orbit-db-identity-provider')
-const io = require('orbit-db-io')
-
+import io from '@dao-xyz/orbit-db-io'
+import { FEED_STORE_TYPE } from './utils/stores'
 // Include test utilities
 const {
   config,
@@ -23,14 +19,14 @@ const {
 } = require('orbit-db-test-utils')
 
 const dbPath = path.join('./orbitdb', 'tests', 'create-open')
-const migrationFixturePath = path.join('./test', 'fixtures', 'migration', 'cache-schema-test')
-const ipfsFixturesDir = path.join('./test', 'fixtures', 'ipfs')
+const migrationFixturePath = path.join('./packages/orbit-db/src/__tests__', 'fixtures', 'migration', 'cache-schema-test')
+const ipfsFixturesDir = path.join('./packages/orbit-db/src/__tests__', 'fixtures', 'ipfs')
 
 Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Create & Open (${API})`, function () {
-    let ipfsFixtures = path.join('./test', 'fixtures', `${API}.zip`)
+    let ipfsFixtures = path.join('./packages/orbit-db/src/__tests__', 'fixtures', `${API}.zip`)
 
-    this.retries(1) // windows...
+    jest.retryTimes(1) // windows...
     jest.setTimeout(config.timeout)
 
     let ipfsd, ipfs, orbitdb, address
@@ -46,7 +42,7 @@ Object.keys(testAPIs).forEach(API => {
       ipfsd = await startIpfs(API, config.daemon1)
       ipfs = ipfsd.api
       const zip = new Zip(ipfsFixtures)
-      await zip.extractAllToAsync(path.join('./test', 'fixtures'), true)
+      await zip.extractAllToAsync(path.join('./packages/orbit-db/src/__tests__', 'fixtures'), true)
       await fs.copy(path.join(ipfsFixturesDir, 'blocks'), path.join(ipfsd.path, 'blocks'))
       await fs.copy(path.join(ipfsFixturesDir, 'datastore'), path.join(ipfsd.path, 'datastore'), { filter: filterFunc })
       orbitdb = await OrbitDB.createInstance(ipfs, { directory: dbPath })
@@ -64,31 +60,31 @@ Object.keys(testAPIs).forEach(API => {
 
     describe('Create', function () {
       describe('Errors', function () {
-        test('throws an error if given an invalid database type', async () => {
+        it('throws an error if given an invalid database type', async () => {
           let err
           try {
-            const db = await orbitdb.create('first', 'invalid-type')
+            await orbitdb.create('first', 'invalid-type')
           } catch (e) {
             err = e.toString()
           }
           assert.equal(err, 'Error: Invalid database type \'invalid-type\'')
         })
 
-        test('throws an error if given an address instead of name', async () => {
+        it('throws an error if given an address instead of name', async () => {
           let err
           try {
-            const db = await orbitdb.create('/orbitdb/Qmc9PMho3LwTXSaUXJ8WjeBZyXesAwUofdkGeadFXsqMzW/first', 'feed')
+            await orbitdb.create('/orbitdb/Qmc9PMho3LwTXSaUXJ8WjeBZyXesAwUofdkGeadFXsqMzW/first', FEED_STORE_TYPE)
           } catch (e) {
             err = e.toString()
           }
           assert.equal(err, 'Error: Given database name is an address. Please give only the name of the database!')
         })
 
-        test('throws an error if database already exists', async () => {
+        it('throws an error if database already exists', async () => {
           let err, db
           try {
-            db = await orbitdb.create('first', 'feed', { replicate: false })
-            const db2 = await orbitdb.create('first', 'feed', { replicate: false })
+            db = await orbitdb.create('first', FEED_STORE_TYPE, { replicate: false })
+            const db2 = await orbitdb.create('first', FEED_STORE_TYPE, { replicate: false })
           } catch (e) {
             err = e.toString()
           }
@@ -97,7 +93,7 @@ Object.keys(testAPIs).forEach(API => {
         })
 
 
-        test('throws an error if database type doesn\'t match', async () => {
+        it('throws an error if database type doesn\'t match', async () => {
           let err, log, kv
           try {
             log = await orbitdb.kvstore('keyvalue', { replicate: false })
@@ -113,26 +109,26 @@ Object.keys(testAPIs).forEach(API => {
         let db: KeyValueStore;
 
         beforeAll(async () => {
-          db = await orbitdb.create('second', 'feed', { replicate: false })
+          db = await orbitdb.create('second', FEED_STORE_TYPE, { replicate: false })
           localDataPath = path.join(dbPath, orbitdb.id, 'cache')
           await db.close()
         })
 
-        test('creates a feed database', async () => {
+        it('creates a feed database', async () => {
           assert.notEqual(db, null)
         })
 
-        test('database has the correct address', async () => {
+        it('database has the correct address', async () => {
           assert.equal(db.address.toString().indexOf('/orbitdb'), 0)
           assert.equal(db.address.toString().indexOf('zd'), 9)
           assert.equal(db.address.toString().indexOf('second'), 59)
         })
 
-        test('saves the database locally', async () => {
+        it('saves the database locally', async () => {
           assert.equal(fs.existsSync(localDataPath), true)
         })
 
-        test('saves database manifest reference locally', async () => {
+        it('saves database manifest reference locally', async () => {
           const address = db.id
           const manifestHash = address.split('/')[2]
           await db._cache._store.open()
@@ -140,24 +136,24 @@ Object.keys(testAPIs).forEach(API => {
           assert.equal(value, manifestHash)
         })
 
-        test('saves database manifest file locally', async () => {
+        it('saves database manifest file locally', async () => {
           const manifestHash = db.id.split('/')[2]
           const manifest = await io.read(ipfs, manifestHash)
           assert.notEqual(manifest, false)
           assert.equal(manifest.name, 'second')
-          assert.equal(manifest.type, 'feed')
+          assert.equal(manifest.type, FEED_STORE_TYPE)
           assert.notEqual(manifest.accessController, null)
           assert.equal(manifest.accessController.indexOf('/ipfs'), 0)
         })
 
-        test('can pass local database directory as an option', async () => {
+        it('can pass local database directory as an option', async () => {
           const dir = './orbitdb/tests/another-feed'
-          const db2 = await orbitdb.create('third', 'feed', { directory: dir })
+          const db2 = await orbitdb.create('third', FEED_STORE_TYPE, { directory: dir })
           assert.equal(fs.existsSync(dir), true)
           await db2.close()
         })
 
-        test('loads cache from previous version of orbit-db', async () => {
+        it('loads cache from previous version of orbit-db', async () => {
           const dbName = 'cache-schema-test'
 
           db = await orbitdb.create(dbName, 'keyvalue', { overwrite: true })
@@ -176,7 +172,7 @@ Object.keys(testAPIs).forEach(API => {
           assert.equal((await db.get('key')), 'value')
         })
 
-        test('loads cache from previous version of orbit-db with the directory option', async () => {
+        it('loads cache from previous version of orbit-db with the directory option', async () => {
           const dbName = 'cache-schema-test2'
           const directory = path.join(dbPath, "some-other-place")
 
@@ -200,13 +196,13 @@ Object.keys(testAPIs).forEach(API => {
             }
           })
 
-          test('creates an access controller and adds ourselves as writer by default', async () => {
-            db = await orbitdb.create('fourth', 'feed')
+          it('creates an access controller and adds ourselves as writer by default', async () => {
+            db = await orbitdb.create('fourth', FEED_STORE_TYPE)
             assert.deepEqual(db.access.write, [orbitdb.identity.id])
           })
 
-          test('creates an access controller and adds writers', async () => {
-            db = await orbitdb.create('fourth', 'feed', {
+          it('creates an access controller and adds writers', async () => {
+            db = await orbitdb.create('fourth', FEED_STORE_TYPE, {
               accessController: {
                 write: ['another-key', 'yet-another-key', orbitdb.identity.id]
               }
@@ -214,8 +210,8 @@ Object.keys(testAPIs).forEach(API => {
             assert.deepEqual(db.access.write, ['another-key', 'yet-another-key', orbitdb.identity.id])
           })
 
-          test('creates an access controller and doesn\'t add read access keys', async () => {
-            db = await orbitdb.create('seventh', 'feed', { read: ['one', 'two'] })
+          it('creates an access controller and doesn\'t add read access keys', async () => {
+            db = await orbitdb.create('seventh', FEED_STORE_TYPE, { read: ['one', 'two'] })
             assert.deepEqual(db.access.write, [orbitdb.identity.id])
           })
         })
@@ -234,16 +230,16 @@ Object.keys(testAPIs).forEach(API => {
             }
           })
 
-          test('creates a manifest with no meta field', async () => {
-            db = await orbitdb.create('no-meta', 'feed')
+          it('creates a manifest with no meta field', async () => {
+            db = await orbitdb.create('no-meta', FEED_STORE_TYPE)
             const manifest = await io.read(ipfs, db.address.root)
             assert.strictEqual(manifest.meta, undefined)
             assert.deepStrictEqual(Object.keys(manifest).filter(k => k === 'meta'), [])
           })
 
-          test('creates a manifest with a meta field', async () => {
+          it('creates a manifest with a meta field', async () => {
             const meta = { test: 123 }
-            db = await orbitdb.create('meta', 'feed', { meta })
+            db = await orbitdb.create('meta', FEED_STORE_TYPE, { meta })
             const manifest = await io.read(ipfs, db.address.root)
             assert.deepStrictEqual(manifest.meta, meta)
             assert.deepStrictEqual(Object.keys(manifest).filter(k => k === 'meta'), ['meta'])
@@ -254,7 +250,7 @@ Object.keys(testAPIs).forEach(API => {
 
     describe('determineAddress', function () {
       describe('Errors', function () {
-        test('throws an error if given an invalid database type', async () => {
+        it('throws an error if given an invalid database type', async () => {
           let err
           try {
             await orbitdb.determineAddress('first', 'invalid-type')
@@ -264,10 +260,10 @@ Object.keys(testAPIs).forEach(API => {
           assert.equal(err, 'Error: Invalid database type \'invalid-type\'')
         })
 
-        test('throws an error if given an address instead of name', async () => {
+        it('throws an error if given an address instead of name', async () => {
           let err
           try {
-            await orbitdb.determineAddress('/orbitdb/Qmc9PMho3LwTXSaUXJ8WjeBZyXesAwUofdkGeadFXsqMzW/first', 'feed')
+            await orbitdb.determineAddress('/orbitdb/Qmc9PMho3LwTXSaUXJ8WjeBZyXesAwUofdkGeadFXsqMzW/first', FEED_STORE_TYPE)
           } catch (e) {
             err = e.toString()
           }
@@ -277,16 +273,16 @@ Object.keys(testAPIs).forEach(API => {
 
       describe('Success', function () {
         beforeAll(async () => {
-          address = await orbitdb.determineAddress('third', 'feed', { replicate: false })
+          address = await orbitdb.determineAddress('third', FEED_STORE_TYPE, { replicate: false })
           localDataPath = path.join(dbPath, address.root, address.path)
         })
 
-        test('does not save the address locally', async () => {
+        it('does not save the address locally', async () => {
           assert.equal(fs.existsSync(localDataPath), false)
         })
 
-        test('returns the address that would have been created', async () => {
-          const db = await orbitdb.create('third', 'feed', { replicate: false })
+        it('returns the address that would have been created', async () => {
+          const db = await orbitdb.create('third', FEED_STORE_TYPE, { replicate: false })
           assert.equal(address.toString().indexOf('/orbitdb'), 0)
           assert.equal(address.toString().indexOf('zd'), 9)
           assert.equal(address.toString(), db.address.toString())
@@ -296,7 +292,7 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     describe('Open', function () {
-      test('throws an error if trying to open a database with name only and \'create\' is not set to \'true\'', async () => {
+      it('throws an error if trying to open a database with name only and \'create\' is not set to \'true\'', async () => {
         let err
         try {
           let db = await orbitdb.open('XXX', { create: false })
@@ -306,7 +302,7 @@ Object.keys(testAPIs).forEach(API => {
         assert.equal(err, "Error: 'options.create' set to 'false'. If you want to create a database, set 'options.create' to 'true'.")
       })
 
-      test('throws an error if trying to open a database with name only and \'create\' is not set to true', async () => {
+      it('throws an error if trying to open a database with name only and \'create\' is not set to true', async () => {
         let err
         try {
           let db = await orbitdb.open('YYY', { create: true })
@@ -316,17 +312,17 @@ Object.keys(testAPIs).forEach(API => {
         assert.equal(err, `Error: Database type not provided! Provide a type with 'options.type' (${OrbitDB.databaseTypes.join('|')})`)
       })
 
-      test('opens a database - name only', async () => {
-        const db = await orbitdb.open('abc', { create: true, type: 'feed', overwrite: true })
+      it('opens a database - name only', async () => {
+        const db = await orbitdb.open('abc', { create: true, type: FEED_STORE_TYPE, overwrite: true })
         assert.equal(db.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db.address.toString().indexOf('zd'), 9)
         assert.equal(db.address.toString().indexOf('abc'), 59)
         await db.drop()
       })
 
-      test('opens a database - with a different identity', async () => {
+      it('opens a database - with a different identity', async () => {
         const identity = await Identities.createIdentity({ id: 'test-id', keystore: orbitdb.keystore })
-        const db = await orbitdb.open('abc', { create: true, type: 'feed', overwrite: true, identity })
+        const db = await orbitdb.open('abc', { create: true, type: FEED_STORE_TYPE, overwrite: true, identity })
         assert.equal(db.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db.address.toString().indexOf('zd'), 9)
         assert.equal(db.address.toString().indexOf('abc'), 59)
@@ -334,9 +330,9 @@ Object.keys(testAPIs).forEach(API => {
         await db.drop()
       })
 
-      test('opens the same database - from an address', async () => {
+      it('opens the same database - from an address', async () => {
         const identity = await Identities.createIdentity({ id: 'test-id', keystore: orbitdb.keystore })
-        const db = await orbitdb.open('abc', { create: true, type: 'feed', overwrite: true, identity })
+        const db = await orbitdb.open('abc', { create: true, type: FEED_STORE_TYPE, overwrite: true, identity })
         const db2 = await orbitdb.open(db.address)
         assert.equal(db2.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db2.address.toString().indexOf('zd'), 9)
@@ -345,15 +341,15 @@ Object.keys(testAPIs).forEach(API => {
         await db2.drop()
       })
 
-      test('opens a database and adds the creator as the only writer', async () => {
-        const db = await orbitdb.open('abc', { create: true, type: 'feed', overwrite: true })
+      it('opens a database and adds the creator as the only writer', async () => {
+        const db = await orbitdb.open('abc', { create: true, type: FEED_STORE_TYPE, overwrite: true })
         assert.equal(db.access.write.length, 1)
         assert.equal(db.access.write[0], db.identity.id)
         await db.drop()
       })
 
-      test('doesn\'t open a database if we don\'t have it locally', async () => {
-        const db = await orbitdb.open('abcabc', { create: true, type: 'feed', overwrite: true })
+      it('doesn\'t open a database if we don\'t have it locally', async () => {
+        const db = await orbitdb.open('abcabc', { create: true, type: FEED_STORE_TYPE, overwrite: true })
         const address = new OrbitDBAddress(db.address.root.slice(0, -1) + 'A', 'non-existent')
         await db.drop()
         return new Promise((resolve, reject) => {
@@ -364,8 +360,8 @@ Object.keys(testAPIs).forEach(API => {
         })
       })
 
-      test('throws an error if trying to open a database locally and we don\'t have it', async () => {
-        const db = await orbitdb.open('abc', { create: true, type: 'feed', overwrite: true })
+      it('throws an error if trying to open a database locally and we don\'t have it', async () => {
+        const db = await orbitdb.open('abc', { create: true, type: FEED_STORE_TYPE, overwrite: true })
         const address = new OrbitDBAddress(db.address.root.slice(0, -1) + 'A', 'second')
         await db.drop()
         return orbitdb.open(address, { localOnly: true })
@@ -375,8 +371,8 @@ Object.keys(testAPIs).forEach(API => {
           })
       })
 
-      test('open the database and it has the added entries', async () => {
-        const db = await orbitdb.open('ZZZ', { create: true, type: 'feed' })
+      it('open the database and it has the added entries', async () => {
+        const db = await orbitdb.open('ZZZ', { create: true, type: FEED_STORE_TYPE })
         await db.add('hello1')
         await db.add('hello2')
         await db.close()
@@ -399,32 +395,32 @@ Object.keys(testAPIs).forEach(API => {
         if (orbitdb) await orbitdb.stop()
         orbitdb = await OrbitDB.createInstance(ipfs, { directory: dbPath })
       })
-      test('closes a custom store', async () => {
+      it('closes a custom store', async () => {
         const directory = path.join(dbPath, "custom-store")
-        const db = await orbitdb.open('xyz', { create: true, type: 'feed', directory })
+        const db = await orbitdb.open('xyz', { create: true, type: FEED_STORE_TYPE, directory })
         await db.close()
         assert.strictEqual(db._cache._store._db.status, 'closed')
       })
 
       it("close load close sets status to 'closed'", async () => {
         const directory = path.join(dbPath, "custom-store")
-        const db = await orbitdb.open('xyz', { create: true, type: 'feed', directory })
+        const db = await orbitdb.open('xyz', { create: true, type: FEED_STORE_TYPE, directory })
         await db.close()
         await db.load()
         await db.close()
         assert.strictEqual(db._cache._store._db.status, 'closed')
       })
 
-      test('successfully manages multiple caches', async () => {
+      it('successfully manages multiple caches', async () => {
         // Cleaning up cruft from other tests
         const directory = path.join(dbPath, "custom-store")
         const directory2 = path.join(dbPath, "custom-store2")
 
-        const db1 = await orbitdb.open('xyz1', { create: true, type: 'feed', })
-        const db2 = await orbitdb.open('xyz2', { create: true, type: 'feed', directory })
-        const db3 = await orbitdb.open('xyz3', { create: true, type: 'feed', directory })
-        const db4 = await orbitdb.open('xyz4', { create: true, type: 'feed', directory: directory2 })
-        const db5 = await orbitdb.open('xyz5', { create: true, type: 'feed', })
+        const db1 = await orbitdb.open('xyz1', { create: true, type: FEED_STORE_TYPE, })
+        const db2 = await orbitdb.open('xyz2', { create: true, type: FEED_STORE_TYPE, directory })
+        const db3 = await orbitdb.open('xyz3', { create: true, type: FEED_STORE_TYPE, directory })
+        const db4 = await orbitdb.open('xyz4', { create: true, type: FEED_STORE_TYPE, directory: directory2 })
+        const db5 = await orbitdb.open('xyz5', { create: true, type: FEED_STORE_TYPE, })
 
         await db1.close()
         await db2.close()

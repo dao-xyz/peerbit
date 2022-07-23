@@ -1,20 +1,22 @@
 import path from 'path'
 import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store'
-import io from 'orbit-db-io'
-import Pubsub from 'orbit-db-pubsub'
+import io from '@dao-xyz/orbit-db-io'
+import { PubSub } from '@dao-xyz/orbit-db-pubsub'
 import Storage from 'orbit-db-storage-adapter'
-import { run as migrationRun } from './migrations';
 import Logger from 'logplease'
 const logger = Logger.create('orbit-db')
 import { Identity, Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import { AccessControllers } from '@dao-xyz/orbit-db-access-controllers' // Fix fork
-import Cache from 'orbit-db-cache'
+import Cache from '@dao-xyz/orbit-db-cache'
 import Keystore from 'orbit-db-keystore'
 import { isDefined } from './is-defined'
 import { OrbitDBAddress } from './orbit-db-address'
 import { createDBManifest } from './db-manifest'
-import { exchangeHeads } from './exchange-heads'
+import { exchangeHeads, ExchangeHeadsMessage } from './exchange-heads'
+import { Entry } from '@dao-xyz/ipfs-log-entry'
+import { serialize, deserialize } from '@dao-xyz/borsh'
+import { Message } from './message'
 let AccessControllersModule = AccessControllers;
 Logger.setLogLevel('ERROR')
 
@@ -27,13 +29,13 @@ const defaultTimeout = 30000 // 30 seconds
 
 
 export type Storage = { createStore: (string) => any }
-export type CreateOptions = { AccessControllers?: any, cache?: Cache<any>, keystore?: typeof Keystore, peerId?: string, offline?: boolean, directory?: string, storage?: Storage, broker?: any };
+export type CreateOptions = { AccessControllers?: any, cache?: Cache, keystore?: typeof Keystore, peerId?: string, offline?: boolean, directory?: string, storage?: Storage, broker?: any };
 export type CreateInstanceOptions = CreateOptions & { identity?: Identity, id?: string };
 export class OrbitDB {
   _ipfs: IPFSInstance;
   identity: Identity;
   id: string;
-  _pubsub: any;
+  _pubsub: PubSub;
   _directConnections: any;
   directory: string;
   storage: Storage;
@@ -50,7 +52,7 @@ export class OrbitDB {
     this.id = options.peerId
     this._pubsub = !options.offline
       ? new (
-        options.broker ? options.broker : Pubsub
+        options.broker ? options.broker : PubSub
       )(this._ipfs, this.id)
       : null
     this.directory = options.directory || './orbitdb'
@@ -67,7 +69,7 @@ export class OrbitDB {
     AccessControllersModule = options.AccessControllers || AccessControllers
   }
 
-  static get Pubsub() { return Pubsub }
+  static get Pubsub() { return PubSub }
   static get Cache() { return Cache }
   static get Keystore() { return Keystore }
   static get Identities() { return Identities }
@@ -236,21 +238,35 @@ export class OrbitDB {
   }
 
   // Callback for local writes to the database. We the update to pubsub.
-  _onWrite(address, entry, heads) {
-    if (!heads) throw new Error("'heads' not defined")
-    if (this._pubsub) this._pubsub.publish(address, heads)
+  _onWrite(address: string, _entry: Entry, heads: Entry[]) {
+    if (!heads) {
+      throw new Error("'heads' not defined")
+    }
+    if (this._pubsub) {
+      this._pubsub.publish(address, serialize(new ExchangeHeadsMessage({
+        address,
+        heads
+      })))
+    }
   }
 
   // Callback for receiving a message from the network
-  async _onMessage(address, heads, peer) {
+  async _onMessage(address: string, data: Uint8Array, peer) {
     const store = this.stores[address]
     try {
-      logger.debug(`Received ${heads.length} heads for '${address}':\n`, JSON.stringify(heads.map(e => e.hash), null, 2))
-      if (store && heads) {
-        if (heads.length > 0) {
-          await store.sync(heads)
+      const msg = deserialize(Buffer.from(data), Message)
+      if (msg instanceof ExchangeHeadsMessage) {
+        const { address, heads } = msg
+        if (store && heads) {
+          if (heads.length > 0) {
+            await store.sync(heads)
+          }
+          store.events.emit('peer.exchanged', peer, address, heads)
         }
-        store.events.emit('peer.exchanged', peer, address, heads)
+        logger.debug(`Received ${heads.length} heads for '${address}':\n`, JSON.stringify(heads.map(e => e.hash), null, 2))
+      }
+      else {
+        throw new Error("Unexpected message")
       }
     } catch (e) {
       logger.error(e)
@@ -264,9 +280,7 @@ export class OrbitDB {
     const getStore = address => this.stores[address]
     const getDirectConnection = peer => this._directConnections[peer]
     const onChannelCreated = channel => { this._directConnections[channel._receiverID] = channel }
-
-    const onMessage = (address, heads) => this._onMessage(address, heads, peer)
-
+    const onMessage = (address: string, data: Uint8Array) => this._onMessage(address, data, peer)
     await exchangeHeads(
       this._ipfs,
       address,
@@ -340,7 +354,7 @@ export class OrbitDB {
     }
   */
   async create(name, type, options: {
-    cache?: Cache<any>, directory?: string, accessController?: any,
+    cache?: Cache, directory?: string, accessController?: any,
     onlyHash?: boolean,
     overwrite?: boolean,
     create?: boolean,
@@ -361,8 +375,6 @@ export class OrbitDB {
 
     if (haveDB && !options.overwrite) { throw new Error(`Database '${dbAddress}' already exists!`) }
 
-    await this._migrate(options, dbAddress)
-
     // Save the database locally
     await this._addManifestToCache(options.cache, dbAddress)
 
@@ -377,7 +389,7 @@ export class OrbitDB {
     return this._determineAddress(name, type, opts)
   }
 
-  async _requestCache(address: string, directory: string, existingCache?: Cache<any>) {
+  async _requestCache(address: string, directory: string, existingCache?: Cache) {
     const dir = directory || this.directory
     if (!this.caches[dir]) {
       const newCache = existingCache || await this._createCache(dir)
@@ -402,7 +414,7 @@ export class OrbitDB {
       }
    */
   async open(address, options: {
-    cache?: Cache<any>,
+    cache?: Cache,
     directory?: string,
     accessController?: any,
     onlyHash?: boolean,
@@ -505,15 +517,6 @@ export class OrbitDB {
     const addr = dbAddress.toString()
     const data = await cache.get(path.join(addr, '_manifest'))
     return data !== undefined && data !== null
-  }
-
-  /**
-   * Runs all migrations inside the src/migration folder
-   * @param Object options  Options to pass into the migration
-   * @param OrbitDBAddress dbAddress Address of database in OrbitDBAddress format
-   */
-  async _migrate(options, dbAddress) {
-    await migrationRun(this, options, dbAddress)
   }
 
   /**

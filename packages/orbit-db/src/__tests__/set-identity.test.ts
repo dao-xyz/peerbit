@@ -60,7 +60,7 @@ Object.keys(testAPIs).forEach(API => {
       options = Object.assign({}, options, { create: true, type: 'eventlog', overwrite: true })
     })
 
-    test('sets identity', async () => {
+    it('sets identity', async () => {
       const db = await orbitdb.open('abc', options)
       assert.equal(db.identity, orbitdb.identity)
       db.setIdentity(identity1)
@@ -68,7 +68,7 @@ Object.keys(testAPIs).forEach(API => {
       await db.close()
     })
 
-    test('writes with new identity with access', async () => {
+    it('writes with new identity with access', async () => {
       const db = await orbitdb.open('abc', options)
       assert.equal(db.identity, orbitdb.identity)
       db.setIdentity(identity1)
@@ -83,7 +83,7 @@ Object.keys(testAPIs).forEach(API => {
       await db.drop()
     })
 
-    test('cannot write with new identity without access', async () => {
+    it('cannot write with new identity without access', async () => {
       const db = await orbitdb.open('abc', options)
       assert.equal(db.identity, orbitdb.identity)
       db.setIdentity(identity2)

@@ -45,13 +45,13 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     describe('addDatabaseType', function () {
-      test('should have the correct custom type', async () => {
+      it('should have the correct custom type', async () => {
         OrbitDB.addDatabaseType(CustomStore.type, CustomStore)
         let store = await orbitdb.create(dbPath.replace(/^\.\//, ''), CustomStore.type)
         assert.equal(store._type, CustomStore.type)
       })
 
-      test('cannot be overwritten', async () => {
+      it('cannot be overwritten', async () => {
         try {
           OrbitDB.addDatabaseType(CustomStore.type, CustomStore)
           throw new Error('This should not run.')

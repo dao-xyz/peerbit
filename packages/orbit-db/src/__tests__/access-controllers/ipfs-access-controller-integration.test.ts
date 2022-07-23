@@ -4,7 +4,7 @@ import { Identities as IdentityProvider } from '@dao-xyz/orbit-db-identity-provi
 import { OrbitDB } from '../../orbit-db'
 const Keystore = require('orbit-db-keystore')
 const AccessControllers = require('orbit-db-access-controllers')
-const io = require('orbit-db-io')
+import io from '@dao-xyz/orbit-db-io'
 // Include test utilities
 const {
   config,
@@ -84,48 +84,48 @@ Object.keys(testAPIs).forEach(API => {
         await db2.load()
 
         dbManifest = await io.read(ipfs1, db.address.root)
-        const hash = dbManifest.accessController.spltest('/').pop()
+        const hash = dbManifest.accessController.split('/').pop()
         acManifest = await io.read(ipfs1, hash)
       })
 
-      test('has the correct access rights after creating the database', async () => {
+      it('has the correct access rights after creating the database', async () => {
         assert.deepStrictEqual(db.access.write, [id1.id])
       })
 
-      test('makes database use the correct access controller', async () => {
+      it('makes database use the correct access controller', async () => {
         const { address } = await db.access.save()
         assert.strictEqual(acManifest.params.address, address)
       })
 
-      test('saves database manifest file locally', async () => {
+      it('saves database manifest file locally', async () => {
         assert.notStrictEqual(dbManifest, null)
       })
 
-      test('saves access controller manifest file locally', async () => {
+      it('saves access controller manifest file locally', async () => {
         assert.notStrictEqual(acManifest, null)
       })
 
-      test('has correct type', async () => {
+      it('has correct type', async () => {
         assert.strictEqual(acManifest.type, 'ipfs')
       })
 
       describe('database manifest', () => {
-        test('has correct name', async () => {
+        it('has correct name', async () => {
           assert.strictEqual(dbManifest.name, 'AABB')
         })
 
-        test('has correct type', async () => {
+        it('has correct type', async () => {
           assert.strictEqual(dbManifest.type, 'feed')
         })
 
-        test('has correct address', async () => {
+        it('has correct address', async () => {
           assert.notStrictEqual(dbManifest.accessController, null)
           assert.strictEqual(dbManifest.accessController.indexOf('/ipfs'), 0)
         })
       })
 
       describe('access controls', () => {
-        test('allows to write if user has write access', async () => {
+        it('allows to write if user has write access', async () => {
           let err
           try {
             await db.add('hello?')
@@ -138,7 +138,7 @@ Object.keys(testAPIs).forEach(API => {
           assert.deepStrictEqual(res, ['hello?'])
         })
 
-        test('doesn\'t allow to write without write access', async () => {
+        it('doesn\'t allow to write without write access', async () => {
           let err
           try {
             await db2.add('hello!!')

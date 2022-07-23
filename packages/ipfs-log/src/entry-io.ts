@@ -90,13 +90,13 @@ export class EntryIO {
     const loadingQueueHasMore = () => Object.values(loadingQueue).find(hasItems) !== undefined
 
     // Add a multihash to the loading queue
-    const addToLoadingQueue = (e, idx) => {
-      if (!loadingCache[e] && !shouldExclude(e)) {
+    const addToLoadingQueue = (e: Entry | string, idx: number) => {
+      if (!loadingCache[e["hash"] || e] && !shouldExclude(e)) {
         if (!loadingQueue[idx]) loadingQueue[idx] = []
         if (!loadingQueue[idx].includes(e)) {
           loadingQueue[idx].push(e)
         }
-        loadingCache[e] = true
+        loadingCache[e["hash"] || e] = true
       }
     }
 
@@ -136,7 +136,7 @@ export class EntryIO {
           }, options.timeout)
           : null
 
-        const addToResults = (entry) => {
+        const addToResults = (entry: Entry) => {
           if (Entry.isEntry(entry) && !cache[entry.hash] && !shouldExclude(entry.hash)) {
             const ts = entry.data.clock.time
 

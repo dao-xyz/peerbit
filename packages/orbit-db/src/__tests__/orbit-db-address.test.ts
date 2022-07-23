@@ -34,7 +34,7 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     describe('Parse Address', () => {
-      test('throws an error if address is empty', () => {
+      it('throws an error if address is empty', () => {
         let err
         try {
           const result = OrbitDB.parseAddress('')
@@ -44,7 +44,7 @@ Object.keys(testAPIs).forEach(API => {
         assert.equal(err, 'Error: Not a valid OrbitDB address: ')
       })
 
-      test('parse address successfully', () => {
+      it('parse address successfully', () => {
         const address = '/orbitdb/zdpuAuK3BHpS7NvMBivynypqciYCuy2UW77XYBPUYRnLjnw13/first-database'
         const result = OrbitDB.parseAddress(address)
 
@@ -58,7 +58,7 @@ Object.keys(testAPIs).forEach(API => {
         assert.equal(result.toString().indexOf('zd'), 9)
       })
 
-      test('parse address with backslashes (win32) successfully', () => {
+      it('parse address with backslashes (win32) successfully', () => {
         const address = '\\orbitdb\\Qmdgwt7w4uBsw8LXduzCd18zfGXeTmBsiR8edQ1hSfzcJC\\first-database'
         const result = OrbitDB.parseAddress(address)
 
@@ -74,40 +74,40 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     describe('isValid Address', () => {
-      test('returns false for empty string', () => {
+      it('returns false for empty string', () => {
         const result = OrbitDB.isValidAddress('')
         assert.equal(result, false)
       })
 
-      test('validate address successfully', () => {
+      it('validate address successfully', () => {
         const address = '/orbitdb/zdpuAuK3BHpS7NvMBivynypqciYCuy2UW77XYBPUYRnLjnw13/first-database'
         const result = OrbitDB.isValidAddress(address)
 
         assert.equal(result, true)
       })
 
-      test('handle missing orbitdb prefix', () => {
+      it('handle missing orbitdb prefix', () => {
         const address = 'zdpuAuK3BHpS7NvMBivynypqciYCuy2UW77XYBPUYRnLjnw13/first-database'
         const result = OrbitDB.isValidAddress(address)
 
         assert.equal(result, true)
       })
 
-      test('handle missing db address name', () => {
+      it('handle missing db address name', () => {
         const address = '/orbitdb/zdpuAuK3BHpS7NvMBivynypqciYCuy2UW77XYBPUYRnLjnw13'
         const result = OrbitDB.isValidAddress(address)
 
         assert.equal(result, true)
       })
 
-      test('handle invalid multihash', () => {
+      it('handle invalid multihash', () => {
         const address = '/orbitdb/Qmdgwt7w4uBsw8LXduzCd18zfGXeTmBsiR8edQ1hSfzc/first-database'
         const result = OrbitDB.isValidAddress(address)
 
         assert.equal(result, false)
       })
 
-      test('validate address with backslashes (win32) successfully', () => {
+      it('validate address with backslashes (win32) successfully', () => {
         const address = '\\orbitdb\\Qmdgwt7w4uBsw8LXduzCd18zfGXeTmBsiR8edQ1hSfzcJC\\first-database'
         const result = OrbitDB.isValidAddress(address)
 

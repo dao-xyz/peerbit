@@ -103,31 +103,31 @@ Object.keys(testAPIs).forEach(API => {
           await db.close()
       })
 
-      test('open v0 orbitdb address', async () => {
+      it('open v0 orbitdb address', async () => {
         assert.notEqual(db, null)
       })
 
-      test('database has the correct v0 address', async () => {
+      it('database has the correct v0 address', async () => {
         assert.equal(db.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db.address.toString().indexOf('Qm'), 9)
         assert.equal(db.address.toString().indexOf('v0-db'), 56)
       })
 
-      test('has the correct type', async () => {
+      it('has the correct type', async () => {
         assert.equal(db.type, 'feed')
       })
 
-      test('database has the correct access-controller', async () => {
+      it('database has the correct access-controller', async () => {
         assert.equal(db.options.accessControllerAddress, '/ipfs/Qmc3S7aMSmH8oGmx7Zdp8UxVWcDyCq5o2H9qYFgT3GW6nM')
         assert.equal(db.access.type, 'legacy-ipfs')
         assert.strictEqual(db.access.write[0], '04b54f6ef529cd2dd2f9c6897a382c492222d42e57826269a38101ffe752aa07260ecd092a970d7eef08c4ddae2b7006ee25f07e4ab62fa5262ae3b51fdea29f78')
       })
 
-      test('load v0 orbitdb address', async () => {
+      it('load v0 orbitdb address', async () => {
         assert.equal(db.all.length, 3)
       })
 
-      test('allows migrated key to write', async () => {
+      it('allows migrated key to write', async () => {
         const hash = await db.add({ thing: 'new addition' })
         const newEntries = db.all.filter(e => e.v > 0)
         assert.equal(newEntries.length, 1)
@@ -159,38 +159,38 @@ Object.keys(testAPIs).forEach(API => {
           await db.close()
       })
 
-      test('open v1 orbitdb address', async () => {
+      it('open v1 orbitdb address', async () => {
         assert.notEqual(db, null)
       })
 
-      test('database has the correct v1 address', async () => {
+      it('database has the correct v1 address', async () => {
         assert.equal(db.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db.address.toString().indexOf('zd'), 9)
         assert.equal(db.address.toString().indexOf('v1-entries'), 59)
       })
 
-      test('has the correct type', async () => {
+      it('has the correct type', async () => {
         assert.equal(db.type, 'feed')
       })
 
-      test('database has the correct access-controller', async () => {
+      it('database has the correct access-controller', async () => {
         assert.equal(db.access.type, 'ipfs')
         assert.equal(db.options.accessControllerAddress, '/ipfs/zdpuAsYRtJLLLDibnmxWPzyRGJEqtjmJP27ppKWcLreNGGTFN')
         assert.strictEqual(db.access.write[0], '*')
       })
 
-      test('load v1 orbitdb address', async () => {
+      it('load v1 orbitdb address', async () => {
         assert.equal(db.all.length, 100)
       })
 
-      test('allows adding new entry', async () => {
+      it('allows adding new entry', async () => {
         const hash = await db.add('new entry')
         const newEntries = db.all.filter(e => e.v > 1)
         assert.equal(newEntries.length, 1)
         assert.strictEqual(newEntries[0].hash, hash)
       })
 
-      test('reopens db after adding new entry', async () => {
+      it('reopens db after adding new entry', async () => {
         await db.close()
         db = await orbitdb.open(v1Address, { directory: dbPath2 })
         assert.notEqual(db, null)

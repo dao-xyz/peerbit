@@ -1,6 +1,6 @@
 import assert from 'assert'
 import { Log } from '@dao-xyz/ipfs-log'
-import { default as Cache } from 'orbit-db-cache'
+import { default as Cache } from '@dao-xyz/orbit-db-cache'
 const Keystore = require("orbit-db-keystore");
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 
@@ -48,7 +48,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await keystore?.close()
     })
 
-    test('default options', async () => {
+    it('default options', async () => {
       assert.deepStrictEqual(replicator._logs, [])
     })
 
@@ -70,7 +70,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         expect(log2.values.length).toEqual(logLength)
       })
 
-      test('replicates all entries in the log', (done) => {
+      it('replicates all entries in the log', (done) => {
         let replicated = 0
         assert.strictEqual(log.id, log2.id)
 

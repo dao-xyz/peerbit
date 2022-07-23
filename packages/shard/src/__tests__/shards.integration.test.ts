@@ -33,7 +33,7 @@ const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 
 describe('cluster', () => {
     describe('trust', () => {
-        test('add trustee', async () => {
+        it('add trustee', async () => {
 
             let [peer, peer2] = await getConnectedPeers(2);
             let l0a = await documentStoreShard();
@@ -57,7 +57,7 @@ describe('cluster', () => {
     })
 
     describe('manifest', () => {
-        test('save load', async () => {
+        it('save load', async () => {
 
             let [peer, peer2] = await getConnectedPeers(2);
             let l1 = (await peer.node.id()).addresses[0];
@@ -73,7 +73,7 @@ describe('cluster', () => {
     })
 
     describe('recursive shard', () => {
-        test('peer backward connect', async () => {
+        it('peer backward connect', async () => {
 
             let [peer, peer2] = await getConnectedPeers(2)
 
@@ -91,7 +91,7 @@ describe('cluster', () => {
         })
 
 
-        test('backward connect filter unique', async () => {
+        it('backward connect filter unique', async () => {
 
             let [peer, peer2] = await getConnectedPeers(2)
 
@@ -113,7 +113,7 @@ describe('cluster', () => {
             disconnectPeers([peer, peer2]);
         })
 
-        test('backward connect no job is same peer', async () => {
+        it('backward connect no job is same peer', async () => {
 
             let [peer] = await getConnectedPeers(2)
 
@@ -134,7 +134,7 @@ describe('cluster', () => {
     })
 
     describe('resiliance', () => {
-        test('connect to remote', async () => {
+        it('connect to remote', async () => {
 
             let [peer, peer2] = await getConnectedPeers(2);
 
@@ -160,7 +160,7 @@ describe('cluster', () => {
 
         })
 
-        test('first peer drop, data still alive because 2nd peer is up', async () => {
+        it('first peer drop, data still alive because 2nd peer is up', async () => {
             let [peer, peer2, peer3] = await getConnectedPeers(3);
 
             // Create Root shard
@@ -192,7 +192,7 @@ describe('cluster', () => {
 
     /* describe('presharding', () => {
 
-        test('nested block store', async () => {
+        it('nested block store', async () => {
 
 
             let peers = await getPeersSameIdentity(2, 100000000);
@@ -230,7 +230,7 @@ describe('cluster', () => {
     */
     describe('peer', () => {
 
-        test('peer counter from 1 replicator', async () => {
+        it('peer counter from 1 replicator', async () => {
             let [peer, peer2] = await getConnectedPeers(2);
             let l0a = await shardStoreShard();
             await l0a.replicate(peer);
@@ -241,7 +241,7 @@ describe('cluster', () => {
             await disconnectPeers([peer, peer2]);
         })
 
-        test('peer counter from 2 replicators', async () => {
+        it('peer counter from 2 replicators', async () => {
             let [peer, peer2, peer3] = await getConnectedPeers(3);
             let l0a = await shardStoreShard();
             await l0a.replicate(peer);
@@ -255,7 +255,7 @@ describe('cluster', () => {
             await disconnectPeers([peer, peer2, peer3]);
         })
 
-        test('peer counter from 2 replicators, but one is offline', async () => {
+        it('peer counter from 2 replicators, but one is offline', async () => {
             let [peer, peer2, peer3] = await getConnectedPeers(3);
             let l0a = await shardStoreShard();
             await l0a.replicate(peer);
@@ -273,7 +273,7 @@ describe('cluster', () => {
         })
 
 
-        test('request replicate', async () => {
+        it('request replicate', async () => {
             let peer = await getPeer();
             let peer2 = await getPeer(undefined, false);
             await connectPeers(peer, peer2);
@@ -302,7 +302,7 @@ describe('cluster', () => {
             await disconnectPeers([peer, peer2]);
         })
 
-        test('trust web reuse closing shards', async () => {
+        it('trust web reuse closing shards', async () => {
             let peer = await getPeer();
             let l0a = await shardStoreShard();
             await l0a.init(peer);
@@ -324,7 +324,7 @@ describe('cluster', () => {
 
     describe('peer', () => {
         describe('options', () => {
-            test('isServer=false no subscriptions on idle on shardStoreShard', async () => {
+            it('isServer=false no subscriptions on idle on shardStoreShard', async () => {
                 let peerNonServer = await getPeer(undefined, false);
                 let l0 = await shardStoreShard();
                 await l0.init(peerNonServer);
@@ -333,7 +333,7 @@ describe('cluster', () => {
                 await disconnectPeers([peerNonServer]);
             })
 
-            test('isServer=false no subscriptions on idle on documentStoreShard', async () => {
+            it('isServer=false no subscriptions on idle on documentStoreShard', async () => {
 
                 let peerNonServer = await getPeer(undefined, false);
                 let l0 = await documentStoreShard();
@@ -344,7 +344,7 @@ describe('cluster', () => {
             })
 
 
-            test('isServer=false can write', async () => {
+            it('isServer=false can write', async () => {
 
                 let peerServer = await getPeer(undefined, true);
                 let peerNonServer = await getPeer(undefined, false);
@@ -375,7 +375,7 @@ describe('cluster', () => {
             })
         });
         describe('leader', () => {
-            test('no leader, since no peers', async () => {
+            it('no leader, since no peers', async () => {
 
                 let [peer] = await getConnectedPeers(1)
 
@@ -389,7 +389,7 @@ describe('cluster', () => {
                 disconnectPeers([peer]);
             })
 
-            test('always leader, since 1 peer', async () => {
+            it('always leader, since 1 peer', async () => {
 
                 let [peer] = await getConnectedPeers(1)
 
@@ -404,7 +404,7 @@ describe('cluster', () => {
                 await disconnectPeers([peer]);
             })
 
-            test('1 leader if two peers', async () => {
+            it('1 leader if two peers', async () => {
 
                 let [peer, peer2] = await getConnectedPeers(2)
 
@@ -430,7 +430,7 @@ describe('cluster', () => {
     })
 
     describe('query', () => {
-        test('query subscription are combined', async () => {
+        it('query subscription are combined', async () => {
 
             let [peer] = await getConnectedPeers(1)
 
@@ -454,7 +454,7 @@ describe('cluster', () => {
 
     describe('sharding', () => {
 
-        test('memory left peer info', async () => {
+        it('memory left peer info', async () => {
             let peer = await getPeer()
 
             // Create Root shard
@@ -472,7 +472,7 @@ describe('cluster', () => {
             disconnectPeers([peer]);
         })
 
-        test('memory runs out, prevent replicating', async () => {
+        it('memory runs out, prevent replicating', async () => {
             let peer = await getPeer()
 
             // Create Root shard
@@ -497,7 +497,7 @@ describe('cluster', () => {
         // alternative solution 
         // shard everything as soon as a peer runs out of memory, to let the peer still be alive
         // replication is only something that is invoked when a peer goes down or a new shard is created and reducancy is to be built
-        test('memory runs out, will request sharding', async () => {
+        it('memory runs out, will request sharding', async () => {
             let [peerLowMemory, peerSupporting, peerNew] = await getConnectedPeers(3)
 
             // Create Root shard

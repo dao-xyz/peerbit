@@ -33,22 +33,22 @@ describe('Ethereum Identity Provider', function () {
       identity = await Identities.createIdentity({ type, keystore, wallet })
     })
 
-    test('has the correct id', async () => {
+    it('has the correct id', async () => {
       assert.strictEqual(identity.id, wallet.address)
     })
 
-    test('created a key for id in keystore', async () => {
+    it('created a key for id in keystore', async () => {
       const key = await keystore.getKey(wallet.address)
       assert.notStrictEqual(key, undefined)
     })
 
-    test('has the correct public key', async () => {
+    it('has the correct public key', async () => {
       const signingKey = await keystore.getKey(wallet.address)
       assert.notStrictEqual(signingKey, undefined)
       assert.strictEqual(identity.publicKey, keystore.getPublic(signingKey))
     })
 
-    test('has a signature for the id', async () => {
+    it('has a signature for the id', async () => {
       const signingKey = await keystore.getKey(wallet.address)
       const idSignature = await keystore.sign(signingKey, wallet.address)
       const verifies = await Keystore.verify(idSignature, Buffer.from(signingKey.public.marshal()).toString('hex'), wallet.address)
@@ -56,7 +56,7 @@ describe('Ethereum Identity Provider', function () {
       assert.strictEqual(identity.signatures.id, idSignature)
     })
 
-    test('has a signature for the publicKey', async () => {
+    it('has a signature for the publicKey', async () => {
       const signingKey = await keystore.getKey(wallet.address)
       const idSignature = await keystore.sign(signingKey, wallet.address)
       const publicKeyAndIdSignature = await wallet.signMessage(identity.publicKey + idSignature)
@@ -71,12 +71,12 @@ describe('Ethereum Identity Provider', function () {
       identity = await Identities.createIdentity({ keystore, type })
     })
 
-    test('ethereum identity verifies', async () => {
+    it('ethereum identity verifies', async () => {
       const verified = await Identities.verifyIdentity(identity)
       assert.strictEqual(verified, true)
     })
 
-    test('ethereum identity with incorrect id does not verify', async () => {
+    it('ethereum identity with incorrect id does not verify', async () => {
       const identity2 = new Identity({
         ...identity.toSerializable(),
         provider: identity.provider,
@@ -95,14 +95,14 @@ describe('Ethereum Identity Provider', function () {
       identity = await Identities.createIdentity({ keystore, type })
     })
 
-    test('sign data', async () => {
+    it('sign data', async () => {
       const signingKey = await keystore.getKey(identity.id)
       const expectedSignature = await keystore.sign(signingKey, data)
       const signature = await identity.provider.sign(identity, data, keystore)
       assert.strictEqual(signature, expectedSignature)
     })
 
-    test('throws an error if private key is not found from keystore', async () => {
+    it('throws an error if private key is not found from keystore', async () => {
       // Remove the key from the keystore (we're using a mock storage in these tests)
       const modifiedIdentity = new Identity({
         id: 'this id does not exist', publicKey: identity.publicKey, signatures: new Signatures({ id: '<sig>', publicKey: identity.signatures }), type: identity.type, provider: identity.provider
@@ -128,12 +128,12 @@ describe('Ethereum Identity Provider', function () {
         signature = await identity.provider.sign(identity, data, keystore)
       })
 
-      test('verifies that the signature is valid', async () => {
+      it('verifies that the signature is valid', async () => {
         const verified = await identity.provider.verify(signature, identity.publicKey, data)
         assert.strictEqual(verified, true)
       })
 
-      test('doesn\'t verify invalid signature', async () => {
+      it('doesn\'t verify invalid signature', async () => {
         const verified = await identity.provider.verify('invalid', identity.publicKey, data)
         assert.strictEqual(verified, false)
       })

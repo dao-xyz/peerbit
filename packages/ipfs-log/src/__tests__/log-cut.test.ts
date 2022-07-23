@@ -48,7 +48,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
 
-    test('cut back to max oplog length', async () => {
+    it('cut back to max oplog length', async () => {
       const log = new Log(ipfs, testIdentity, { logId: 'A', recycle: { maxOplogLength: 1 } })
       await log.append('hello1')
       await log.append('hello2')
@@ -57,7 +57,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assertPayload(log.values[0].data.payload, 'hello3');
     })
 
-    test('cut back to cut length', async () => {
+    it('cut back to cut length', async () => {
       const log = new Log(ipfs, testIdentity, { logId: 'A', recycle: { maxOplogLength: 3, cutOplogToLength: 1 } })
       await log.append('hello1')
       await log.append('hello2')

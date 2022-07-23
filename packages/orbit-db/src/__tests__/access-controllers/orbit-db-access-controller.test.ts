@@ -75,33 +75,33 @@ Object.keys(testAPIs).forEach(API => {
         accessController = await OrbitDBAccessController.create(orbitdb1)
       })
 
-      test('creates an access controller', () => {
+      it('creates an access controller', () => {
         assert.notStrictEqual(accessController, null)
         assert.notStrictEqual(accessController, undefined)
       })
 
-      test('sets the controller type', () => {
+      it('sets the controller type', () => {
         assert.strictEqual(accessController.type, 'orbitdb')
       })
 
-      test('has OrbitDB instance', async () => {
+      it('has OrbitDB instance', async () => {
         assert.notStrictEqual(accessController._orbitdb, null)
         assert.strictEqual(accessController._orbitdb.id, orbitdb1.id)
       })
 
-      test('has IPFS instance', async () => {
+      it('has IPFS instance', async () => {
         const peerId1 = await accessController._orbitdb._ipfs.id()
         const peerId2 = await ipfs1.id()
         assert.strictEqual(peerId1.id, peerId2.id)
       })
 
-      test('sets default capabilities', async () => {
+      it('sets default capabilities', async () => {
         assert.deepStrictEqual(accessController.capabilities, {
           admin: new Set([id1.id])
         })
       })
 
-      test('allows owner to append after creation', async () => {
+      it('allows owner to append after creation', async () => {
         const mockEntry = {
           identity: id1
           // ...
@@ -120,12 +120,12 @@ Object.keys(testAPIs).forEach(API => {
         await accessController.load('testdb/add')
       })
 
-      test('loads the root access controller from IPFS', () => {
+      it('loads the root access controller from IPFS', () => {
         assert.strictEqual(accessController._db.access.type, 'ipfs')
         assert.deepStrictEqual(accessController._db.access.write, [id1.id])
       })
 
-      test('adds a capability', async () => {
+      it('adds a capability', async () => {
         try {
           await accessController.grant('write', id1.id)
         } catch (e) {
@@ -137,7 +137,7 @@ Object.keys(testAPIs).forEach(API => {
         })
       })
 
-      test('adds more capabilities', async () => {
+      it('adds more capabilities', async () => {
         try {
           await accessController.grant('read', 'ABCD')
           await accessController.grant('delete', 'ABCD')
@@ -152,7 +152,7 @@ Object.keys(testAPIs).forEach(API => {
         })
       })
 
-      test('emit \'updated\' event when a capability was added', async () => {
+      it('emit \'updated\' event when a capability was added', async () => {
         return new Promise((resolve, reject) => {
           accessController.on('updated', () => {
             try {
@@ -171,7 +171,7 @@ Object.keys(testAPIs).forEach(API => {
         })
       })
 
-      test('can append after acquiring capability', async () => {
+      it('can append after acquiring capability', async () => {
         try {
           await accessController.grant('write', id1.id)
           await accessController.grant('write', id2.id)
@@ -199,7 +199,7 @@ Object.keys(testAPIs).forEach(API => {
         await accessController.load('testdb/remove')
       })
 
-      test('removes a capability', async () => {
+      it('removes a capability', async () => {
         try {
           await accessController.grant('write', id1.id)
           await accessController.grant('write', 'AABB')
@@ -213,7 +213,7 @@ Object.keys(testAPIs).forEach(API => {
         })
       })
 
-      test('can remove the creator\'s write access', async () => {
+      it('can remove the creator\'s write access', async () => {
         try {
           await accessController.revoke('write', id1.id)
         } catch (e) {
@@ -224,7 +224,7 @@ Object.keys(testAPIs).forEach(API => {
         })
       })
 
-      test('can\'t remove the creator\'s admin access', async () => {
+      it('can\'t remove the creator\'s admin access', async () => {
         try {
           await accessController.revoke('admin', id1.id)
         } catch (e) {
@@ -235,7 +235,7 @@ Object.keys(testAPIs).forEach(API => {
         })
       })
 
-      test('removes more capabilities', async () => {
+      it('removes more capabilities', async () => {
         try {
           await accessController.grant('read', 'ABCD')
           await accessController.grant('delete', 'ABCD')
@@ -253,7 +253,7 @@ Object.keys(testAPIs).forEach(API => {
         })
       })
 
-      test('can\'t append after revoking capability', async () => {
+      it('can\'t append after revoking capability', async () => {
         try {
           await accessController.grant('write', id2.id)
           await accessController.revoke('write', id2.id)
@@ -272,7 +272,7 @@ Object.keys(testAPIs).forEach(API => {
         assert.strictEqual(noAppend, false)
       })
 
-      test('emits \'updated\' event when a capability was removed', async () => {
+      it('emits \'updated\' event when a capability was removed', async () => {
         await accessController.grant('admin', 'cats')
         await accessController.grant('admin', 'dogs')
 
@@ -317,13 +317,13 @@ Object.keys(testAPIs).forEach(API => {
         })
       })
 
-      test('has the correct database address for the internal db', async () => {
-        const addr = accessController._db.address.toString().spltest('/')
+      it('has the correct database address for the internal db', async () => {
+        const addr = accessController._db.address.toString().split('/')
         assert.strictEqual(addr[addr.length - 1], '_access')
         assert.strictEqual(addr[addr.length - 2], dbName)
       })
 
-      test('has correct capabalities', async () => {
+      it('has correct capabalities', async () => {
         assert.deepStrictEqual(accessController.get('admin'), new Set([id1.id]))
         assert.deepStrictEqual(accessController.get('write'), new Set(['A', 'B', 'C']))
         assert.deepStrictEqual(accessController.get('another'), new Set(['BB']))

@@ -7,7 +7,10 @@ import { createHash } from "crypto";
 @variant(0)
 export class Signatures {
 
+  @field({ type: 'String' })
   id: string;
+
+  @field({ type: 'String' })
   publicKey: string;
 
   constructor(options?: {

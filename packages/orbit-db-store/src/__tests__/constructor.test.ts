@@ -1,6 +1,6 @@
 import assert from 'assert'
 import { Store, DefaultOptions } from '../store'
-import { default as Cache } from 'orbit-db-cache'
+import { default as Cache } from '@dao-xyz/orbit-db-cache'
 const Keystore = require("orbit-db-keystore");
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 
@@ -48,7 +48,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await cacheStore?.close()
     })
 
-    test('creates a new Store instance', async () => {
+    it('creates a new Store instance', async () => {
       assert.strictEqual(typeof store.options, 'object')
       assert.strictEqual(typeof store._type, 'string')
       assert.strictEqual(typeof store.id, 'string')
@@ -66,7 +66,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.strictEqual(typeof store._loader, 'object')
     })
 
-    test('properly defines a cache', async () => {
+    it('properly defines a cache', async () => {
       assert.strictEqual(typeof storeWithCache._cache, 'object')
     })
   })

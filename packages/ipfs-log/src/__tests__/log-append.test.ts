@@ -55,29 +55,29 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log.append('hello1')
       })
 
-      test('added the correct amount of items', () => {
+      it('added the correct amount of items', () => {
         assert.strictEqual(log.length, 1)
       })
 
-      test('added the correct values', async () => {
+      it('added the correct values', async () => {
         log.values.forEach((entry) => {
           assertPayload(entry.data.payload, 'hello1')
         })
       })
 
-      test('added the correct amount of next pointers', async () => {
+      it('added the correct amount of next pointers', async () => {
         log.values.forEach((entry) => {
           assert.strictEqual(entry.next.length, 0)
         })
       })
 
-      test('has the correct heads', async () => {
+      it('has the correct heads', async () => {
         log.heads.forEach((head) => {
           assert.strictEqual(head.hash, log.values[0].hash)
         })
       })
 
-      test('updated the clocks correctly', async () => {
+      it('updated the clocks correctly', async () => {
         log.values.forEach((entry) => {
           assert.strictEqual(entry.data.clock.id, testIdentity.publicKey)
           assert.strictEqual(entry.data.clock.time, 1)
@@ -102,24 +102,24 @@ Object.keys(testAPIs).forEach((IPFS) => {
         }
       })
 
-      test('added the correct amount of items', () => {
+      it('added the correct amount of items', () => {
         assert.strictEqual(log.length, amount)
       })
 
-      test('added the correct values', async () => {
+      it('added the correct values', async () => {
         log.values.forEach((entry, index) => {
           assertPayload(entry.data.payload, 'hello' + index)
         })
       })
 
-      test('updated the clocks correctly', async () => {
+      it('updated the clocks correctly', async () => {
         log.values.forEach((entry, index) => {
           assert.strictEqual(entry.data.clock.time, index + 1)
           assert.strictEqual(entry.data.clock.id, testIdentity.publicKey)
         })
       })
 
-      test('added the correct amount of refs pointers', async () => {
+      it('added the correct amount of refs pointers', async () => {
         log.values.forEach((entry, index) => {
           assert.strictEqual(entry.refs.length, index > 0 ? Math.ceil(Math.log2(Math.min(nextPointerAmount, index))) : 0)
         })

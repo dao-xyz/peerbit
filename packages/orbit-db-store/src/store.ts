@@ -8,7 +8,9 @@ import { Index } from './store-index'
 import { Replicator } from './replicator'
 import { ReplicationInfo } from './replication-info'
 import Logger from 'logplease'
-import io from 'orbit-db-io'
+import io from '@dao-xyz/orbit-db-io'
+import Cache from '@dao-xyz/orbit-db-cache';
+import { variant, field, vec } from '@dao-xyz/borsh';
 import { IPFS } from 'ipfs-core-types/src/'
 import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { OrbitDBAccessController } from '@dao-xyz/orbit-db-access-controllers'
@@ -20,6 +22,20 @@ export type Constructor<T> = new (...args: any[]) => T;
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
 Logger.setLogLevel('ERROR')
 
+@variant(0)
+export class HeadsCache {
+
+  @field({ type: vec(Entry) })
+  heads: Entry[]
+
+  constructor(opts?: {
+    heads: Entry[]
+  }) {
+    if (opts) {
+      this.heads = opts.heads;
+    }
+  }
+}
 
 interface ICreateOptions {
   /**
@@ -142,7 +158,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
   queuePath: string;
   manifestPath: string;
   _ipfs: IPFS;
-  _cache: any;
+  _cache: Cache;
   access: AccessController;
   _oplog: Log<any>;
   _queue: PQueue<any, any>
@@ -216,13 +232,13 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     }
 
     try {
-      const onReplicationQueued = async (entry) => {
+      const onReplicationQueued = async (entry: Entry) => {
         // Update the latest entry state (latest is the entry with largest clock time)
         this._recalculateReplicationMax(entry.data.clock ? entry.data.clock.time : 0)
         this.events.emit('replicate', this.address.toString(), entry)
       }
 
-      const onReplicationProgress = async (entry) => {
+      const onReplicationProgress = async (entry: Entry) => {
         const previousProgress = this.replicationStatus.progress
         const previousMax = this.replicationStatus.max
         this._recalculateReplicationStatus(entry.data.clock.time)
@@ -250,7 +266,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
 
               // only store heads that has been verified and merges
               const heads = this._oplog.heads
-              await this._cache.set(this.remoteHeadsPath, heads)
+              await this._cache.setBinary(this.remoteHeadsPath, new HeadsCache({ heads }))
               logger.debug(`Saved heads ${heads.length} [${heads.map(e => e.hash).join(', ')}]`)
 
               // update the store's index after joining the logs
@@ -396,8 +412,8 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     if (this.options.onLoad) {
       await this.options.onLoad(this)
     }
-    const localHeads = await this._cache.get(this.localHeadsPath) || []
-    const remoteHeads = await this._cache.get(this.remoteHeadsPath) || []
+    const localHeads: Entry[] = (await this._cache.getBinary(this.localHeadsPath, HeadsCache))?.heads || []
+    const remoteHeads: Entry[] = (await this._cache.getBinary(this.remoteHeadsPath, HeadsCache))?.heads || []
     const heads = localHeads.concat(remoteHeads)
 
     if (heads.length > 0) {
@@ -405,13 +421,15 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     }
 
     // Update the replication status from the heads
-    heads.forEach(h => this._recalculateReplicationMax(h.clock.time))
+    heads.forEach(h => this._recalculateReplicationMax(h.data.clock.time))
 
     // Load the log
     const log = await Log.fromEntryHash(this._ipfs, this.identity, heads.map(e => e.hash), {
       ...this.logOptions,
       length: amount,
       timeout: fetchEntryTimeout,
+      onProgressCallback: this._onLoadProgress.bind(this),
+      concurrency: this.options.replicationConcurrency
     })
 
     this._oplog = log
@@ -455,7 +473,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
       }
 
       const logEntry = Entry.toEntry(head)
-      const hash = await io.write(this._ipfs, Entry.getWriteFormat(), logEntry, { links: Entry.IPLD_LINKS, onlyHash: true })
+      const hash = await io.write(this._ipfs, Entry.getWriteFormat(), logEntry.serialize(), { links: Entry.IPLD_LINKS }) ///, onlyHash: true
 
       if (hash !== head.hash) {
         console.warn('"WARNING! Head hash didn\'t match the contents')
@@ -476,7 +494,6 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
 
   async saveSnapshot() {
     const unfinished = this._replicator.unfinished
-
     const snapshotData = this._oplog.toSnapshot()
     const buf = Buffer.from(JSON.stringify({
       id: snapshotData.id,
@@ -506,10 +523,10 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
 
     const maxClock = (res, val) => Math.max(res, val.clock.time)
 
-    const queue = await this._cache.get(this.queuePath)
+    const queue = (await this._cache.getBinary(this.queuePath, HeadsCache))?.heads
     this.sync(queue || [])
 
-    const snapshot = await this._cache.get(this.snapshotPath)
+    const snapshot = await this._cache.get(this.snapshotPath) as any
 
     if (snapshot) {
       const chunks = []
@@ -541,13 +558,13 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     return this
   }
 
-  async _updateIndex() {
-    await this._index.updateIndex(this._oplog)
+  async _updateIndex(entries?: Entry[]) {
+    await this._index.updateIndex(this._oplog, entries);
   }
 
   async syncLocal() {
-    const localHeads = await this._cache.get(this.localHeadsPath) || []
-    const remoteHeads = await this._cache.get(this.remoteHeadsPath) || []
+    const localHeads = (await this._cache.getBinary(this.localHeadsPath, HeadsCache))?.heads || []
+    const remoteHeads = (await this._cache.getBinary(this.remoteHeadsPath, HeadsCache))?.heads || []
     const heads = localHeads.concat(remoteHeads)
     for (let i = 0; i < heads.length; i++) {
       const head = heads[i]
@@ -559,7 +576,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
   }
 
   async _addOperation(data, options: { onProgressCallback?: (any) => void, pin?: boolean } = {}) {
-    async function addOperation() {
+    const addOperation = async () => {
       if (this._oplog) {
         // check local cache for latest heads
         if (this.options.syncLocal) {
@@ -567,8 +584,8 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
         }
         const entry = await this._oplog.append(data, this.options.referenceCount, options.pin)
         this._recalculateReplicationStatus(entry.data.clock.time)
-        await this._cache.set(this.localHeadsPath, [entry])
-        await this._updateIndex()
+        await this._cache.setBinary(this.localHeadsPath, new HeadsCache({ heads: [entry] }))
+        await this._updateIndex([entry])
         this.events.emit('write', this.address.toString(), entry, this._oplog.heads)
         if (options?.onProgressCallback) options.onProgressCallback(entry)
         return entry.hash
@@ -581,15 +598,15 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     throw new Error('Not implemented!')
   }
 
-  _procEntry(entry) {
-    const { payload, hash } = entry
-    const { op } = payload
+  _procEntry(entry: Entry) {
+    const { data: { payload }, hash } = entry
+    /* const { op } = payload
     if (op) {
       this.events.emit(`log.op.${op}`, this.address.toString(), hash, payload)
     } else {
       this.events.emit('log.op.none', this.address.toString(), hash, payload)
     }
-    this.events.emit('log.op', op, this.address.toString(), hash, payload)
+    this.events.emit('log.op', op, this.address.toString(), hash, payload) */
   }
 
   /* Replication Status state updates */

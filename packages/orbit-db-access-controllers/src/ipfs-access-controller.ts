@@ -1,7 +1,7 @@
 import { AccessController } from './access-controller-interface'
 import { Entry } from '@dao-xyz/ipfs-log-entry';
-
-const io = require('orbit-db-io')
+import io from '@dao-xyz/orbit-db-io'
+import { Identities } from '@dao-xyz/orbit-db-identity-provider';
 
 const type = 'ipfs'
 
@@ -20,7 +20,7 @@ export class IPFSAccessController extends AccessController {
     return this._write
   }
 
-  async canAppend(entry: Entry, identityProvider) {
+  async canAppend(entry: Entry, identityProvider: Identities) {
     // Allow if access list contain the writer's publicKey or is '*'
     const key = entry.data.identity.id
     if (this.write.includes(key) || this.write.includes('*')) {
@@ -36,7 +36,10 @@ export class IPFSAccessController extends AccessController {
     if (address.indexOf('/ipfs') === 0) { address = address.split('/')[2] }
 
     try {
-      this._write = await io.read(this._ipfs, address)
+      this._write = (await io.read(this._ipfs, address) as any).write;
+      if (typeof this.write === 'string') {
+        this._write = JSON.parse(this._write);
+      }
     } catch (e) {
       console.log('IPFSAccessController.load ERROR:', e)
     }

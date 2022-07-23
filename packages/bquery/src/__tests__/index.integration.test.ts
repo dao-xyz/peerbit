@@ -24,7 +24,7 @@ class NumberResult extends BinaryPayload {
 
 describe('query', () => {
 
-  test('any', async () => {
+  it('any', async () => {
 
     const [a, b] = await getConnectedPeers(2);
 
@@ -62,7 +62,7 @@ describe('query', () => {
   })
 
 
-  test('timeout', async () => {
+  it('timeout', async () => {
     const [a, b] = await getConnectedPeers(2);
     let maxAggrergationTime = 2000;
 

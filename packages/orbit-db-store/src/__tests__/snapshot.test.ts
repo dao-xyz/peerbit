@@ -1,6 +1,6 @@
 import assert from 'assert'
 
-import { default as Cache } from 'orbit-db-cache'
+import { default as Cache } from '@dao-xyz/orbit-db-cache'
 const Keystore = require('orbit-db-keystore');
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { Store, DefaultOptions } from '../store'
@@ -54,7 +54,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await identityStore.open()
     })
 
-    test('Saves a local snapshot', async () => {
+    it('Saves a local snapshot', async () => {
       const writes = 10
 
       for (let i = 0; i < writes; i++) {
@@ -67,7 +67,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.strictEqual(snapshot[0].size > writes * 200, true)
     })
 
-    test('Successfully loads a saved snapshot', async () => {
+    it('Successfully loads a saved snapshot', async () => {
       const writes = 10
 
       for (let i = 0; i < writes; i++) {

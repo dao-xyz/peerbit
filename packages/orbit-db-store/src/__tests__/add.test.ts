@@ -2,7 +2,7 @@
 import assert from 'assert'
 import { Store, DefaultOptions } from '../store'
 
-import { default as Cache } from 'orbit-db-cache'
+import { default as Cache } from '@dao-xyz/orbit-db-cache'
 const Keystore = require("orbit-db-keystore");
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 
@@ -54,7 +54,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await identityStore.open()
     })
 
-    test('adds an operation and triggers the write event', (done) => {
+    it('adds an operation and triggers the write event', (done) => {
       const data = { data: 12345 }
 
       store.events.on('write', (address, entry, heads) => {
@@ -76,7 +76,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       store._addOperation(data)
     })
 
-    test('adds multiple operations and triggers multiple write events', async () => {
+    it('adds multiple operations and triggers multiple write events', async () => {
       const writes = 3
       let eventsFired = 0
 
@@ -100,7 +100,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       }
     })
 
-    test('Shows that batch writing is not yet implemented', async () => {
+    it('Shows that batch writing is not yet implemented', async () => {
       try {
         await store._addOperationBatch({})
       } catch (e) {

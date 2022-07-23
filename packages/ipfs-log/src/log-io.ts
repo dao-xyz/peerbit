@@ -2,10 +2,11 @@ import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { EntryFetchAllOptions, EntryIO, strictFetchOptions } from './entry-io'
 import { ISortFunction, LastWriteWins, NoZeroes } from './log-sorting'
 import * as LogError from './log-errors'
-import * as io from 'orbit-db-io';
+import io from '@dao-xyz/orbit-db-io';
 import { isDefined } from './is-defined';
 import { findUniques } from './find-uniques';
 import { difference } from './difference';
+import { Log } from './log';
 
 const IPLD_LINKS = ['heads']
 const last = (arr, n) => arr.slice(arr.length - Math.min(arr.length, n), arr.length)
@@ -19,7 +20,7 @@ export class LogIO {
    * @returns {Promise<string>}
    * @deprecated
    */
-  static async toMultihash(ipfs, log, options: { format?: string } = {}) {
+  static async toMultihash(ipfs, log: Log<any>, options: { format?: string } = {}) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(log)) throw LogError.LogNotDefinedError()
     let format = options.format;
@@ -68,7 +69,7 @@ export class LogIO {
    * @param {Array<Entry>} options.exclude Entries to not fetch (cached)
    * @param {function(hash, entry, parent, depth)} options.onProgressCallback
    */
-  static async fromEntryHash(ipfs, hash,
+  static async fromEntryHash(ipfs, hash: string[] | string,
     options: EntryFetchAllOptions & { sortFn?: ISortFunction }) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(hash)) throw new Error("'hash' must be defined")

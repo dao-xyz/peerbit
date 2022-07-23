@@ -57,7 +57,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         log3 = new Log(ipfs, testIdentity3, { logId: 'X' })
       })
 
-      test('join is associative', async () => {
+      it('join is associative', async () => {
         const expectedElementsCount = 6
 
         await log1.append('helloA1')
@@ -95,7 +95,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.deepStrictEqual(res1, res2)
       })
 
-      test('join is commutative', async () => {
+      it('join is commutative', async () => {
         const expectedElementsCount = 4
 
         await log1.append('helloA1')
@@ -124,7 +124,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.deepStrictEqual(res1, res2)
       })
 
-      test('multiple joins are commutative', async () => {
+      it('multiple joins are commutative', async () => {
         // b + a == a + b
         log1 = new Log(ipfs, testIdentity, { logId: 'X' })
         log2 = new Log(ipfs, testIdentity2, { logId: 'X' })
@@ -240,7 +240,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(logLeft, logRight)
       })
 
-      test('join is idempotent', async () => {
+      it('join is idempotent', async () => {
         const expectedElementsCount = 3
 
         const logA = new Log(ipfs, testIdentity, { logId: 'X' })

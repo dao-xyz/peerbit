@@ -1,7 +1,7 @@
-import { LamportClock as Clock } from './lamport-clock'
+import { LamportClock as Clock, LamportClock } from './lamport-clock'
 import { isDefined } from './is-defined'
 import { variant, field, vec, option, serialize, deserialize } from '@dao-xyz/borsh';
-import * as io from 'orbit-db-io'
+import io from '@dao-xyz/orbit-db-io';
 import { IPFS } from 'ipfs-core-types/src/'
 import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider'
 const IpfsNotDefinedError = () => new Error('Ipfs instance not defined')
@@ -91,6 +91,7 @@ export class Entry {
   @field({ type: option(vec('String')) })
   refs?: string[] // Array of hashes
 
+  @field({ type: option('String') })
   hash?: string // "zd...Foo", we'll set the hash after persisting the entry
 
   static IPLD_LINKS = ['next', 'refs']
@@ -214,15 +215,20 @@ export class Entry {
     if (!Entry.isEntry(entry)) throw new Error('Invalid object format, cannot generate entry hash')
 
     // Ensure `entry` follows the correct format
-    const e = Entry.toEntry(entry)
+    const e = Entry.toEntry(entry) // Will remove the hash
     return io.write(ipfs, Entry.getWriteFormat(), e.serialize(), { links: Entry.IPLD_LINKS, pin })
   }
 
   static toEntry(entry: Entry | EntrySerialized): Entry {
     const e: Entry = new Entry({
-      hash: entry.hash,
+      hash: null,
       data: entry.data instanceof Uint8Array ? EntryData.from(entry.data) : new EntryData({
-        ...entry.data,
+        id: entry.data.id,
+        payload: entry.data.payload,
+        identity: entry.data.identity,
+        key: entry.data.key,
+        sig: entry.data.sig,
+        clock: new LamportClock(entry.data.clock.id, entry.data.clock.time)
       }),
       next: entry.next,
       refs: entry.refs
@@ -232,9 +238,9 @@ export class Entry {
 
   static toEntryWithoutSignature(entry: Entry | EntrySerialized): Entry {
     const e: Entry = new Entry({
-      hash: entry.hash,
+      hash: undefined,
       data: entry.data instanceof Uint8Array ? EntryData.from(entry.data) : new EntryData({
-        clock: entry.data.clock,
+        clock: new LamportClock(entry.data.clock.id, entry.data.clock.time),
         id: entry.data.id,
         payload: entry.data.payload,
         identity: undefined,
@@ -276,6 +282,9 @@ export class Entry {
    * @returns {boolean}
    */
   static isEntry(obj: any) {
+    if (obj instanceof Entry === false) {
+      return false;
+    }
     if (!obj.data) {
       return false
     }

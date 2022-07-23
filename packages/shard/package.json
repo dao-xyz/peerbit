@@ -54,11 +54,11 @@
         "@dao-xyz/time": "^0.0.11",
         "@solana/web3.js": "^1.41.3",
         "bn.js": "^5.2.0",
-        "bs58": "^4.0.1",
+        "bs58": "^5.0.0",
         "buffer": "^6.0.3",
         "crypto-browserify": "^3.12.0",
         "@dao-xyz/orbit-db-access-controllers": "^0.3.2",
-        "orbit-db-io": "^1.0.2",
+        "@dao-xyz/orbit-db-io": "^1.1.0",
         "reflect-metadata": "^0.1.13",
         "tweetnacl": "^1.0.3"
     },

@@ -185,6 +185,14 @@ export class Log<T> extends GSet {
   }
 
   /**
+   * Returns the values in the log.
+   * @returns {Array<T>}
+   */
+  get payloadsDecoded(): { payload: T, entry: Entry }[] {
+    return Object.values(this.traverse(this.heads)).reverse().map(entry => { return { entry, payload: this._io.decoder(entry.data.payload) } })
+  }
+
+  /**
    * Returns an array of heads.
    * @returns {Array<Entry>}
    */
@@ -648,7 +656,7 @@ export class Log<T> extends GSet {
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise<Log>} New Log
    */
-  static async fromEntryHash<T>(ipfs: IPFS, identity: Identity, hash: string,
+  static async fromEntryHash<T>(ipfs: IPFS, identity: Identity, hash: string | string[],
     options: { io?: IOOptions<T>, logId?: any, access?: any, length?: number, exclude?: any[], shouldExclude?: any, timeout?: number, concurrency?: number, sortFn?: any, onProgressCallback?: any } = { length: -1, exclude: [] }) {
     // TODO: need to verify the entries with 'key'
     const { entries } = await LogIO.fromEntryHash(ipfs, hash,

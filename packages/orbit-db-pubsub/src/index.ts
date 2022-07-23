@@ -1,16 +1,32 @@
 
-const pSeries = require('p-series')
-const PeerMonitor = require('ipfs-pubsub-peer-monitor')
-
-const Logger = require('logplease');
+import pSeries from 'p-series'
+import PeerMonitor from 'ipfs-pubsub-peer-monitor'
+import Logger from 'logplease';
 const logger = Logger.create("pubsub", { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
 const maxTopicsOpen = 256
 let topicsOpenCount = 0
 
-class IPFSPubsub {
-  constructor(ipfs, id) {
+export class Message {
+  id: string;
+  from: string;
+  topicIDs?: string[];
+  topic?: string;
+  data: any;
+}
+export class PubSub {
+  _ipfs: any;
+  _id: any;
+  _subscriptions: {
+    [key: string]: {
+      topicMonitor: PeerMonitor,
+      onNewPeer: (topic: string, peer: any) => void,
+      onMessage: (topicId: string, content: Uint8Array, from: string) => void
+    }
+  };
+
+  constructor(ipfs, id: string) {
     this._ipfs = ipfs
     this._id = id
     this._subscriptions = {}
@@ -26,7 +42,7 @@ class IPFSPubsub {
       this._ipfs.setMaxListeners(maxTopicsOpen)
   }
 
-  async subscribe(topic, onMessageCallback, onNewPeerCallback, options = {}) {
+  async subscribe(topic: string, onMessageCallback, onNewPeerCallback, options = {}) {
     if (!this._subscriptions[topic] && this._ipfs.pubsub) {
       await this._ipfs.pubsub.subscribe(topic, this._handleMessage, options)
 
@@ -68,15 +84,15 @@ class IPFSPubsub {
     }
   }
 
-  publish(topic, message, options = {}) {
+  publish(topic: string, payload: Uint8Array, options = {}) {
     if (this._subscriptions[topic] && this._ipfs.pubsub) {
-      let payload;
-      //Buffer should be already serialized. Everything else will get serialized as json if not buffer, string.
-      if (Buffer.isBuffer(message) | typeof message === "string") {
-        payload = message;
-      } else {
-        payload = JSON.stringify(message);
-      }
+      /*       let payload;
+       */      //Buffer should be already serialized. Everything else will get serialized as json if not buffer, string.
+      /*  if (Buffer.isBuffer(message) || typeof message === "string") {
+         payload = message;
+       } else {
+         payload = JSON.stringify(message);
+       } */
       this._ipfs.pubsub.publish(topic, Buffer.from(payload), options)
     }
   }
@@ -87,7 +103,7 @@ class IPFSPubsub {
     this._subscriptions = {}
   }
 
-  async _handleMessage(message) {
+  async _handleMessage(message: Message) {
     // Don't process our own messages
     if (message.from === this._id)
       return
@@ -98,12 +114,7 @@ class IPFSPubsub {
     // Get the topic. Compat with ipfs js 62 and 63
     topicId = message.topic ? message.topic : message.topicIDs[0]
 
-    // TODO fix inefficient code
-    try {
-      content = JSON.parse(Buffer.from(message.data).toString())
-    } catch {
-      content = message.data; //Leave content alone. Meant for higher level code using custom serialization.
-    }
+    content = message.data;
     subscription = this._subscriptions[topicId]
 
     if (subscription && subscription.onMessage && content) {
@@ -111,5 +122,3 @@ class IPFSPubsub {
     }
   }
 }
-
-module.exports = IPFSPubsub

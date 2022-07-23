@@ -48,7 +48,7 @@ Object.keys(testAPIs).forEach(IPFS => {
         log2 = new Log(ipfs, testIdentity, { logId: 'A', sortFn: SortByEntryHash })
       })
 
-      test('joins consistently', async () => {
+      it('joins consistently', async () => {
         for (let i = 0; i < 10; i++) {
           await log1.append('hello1-' + i)
           await log2.append('hello2-' + i)
@@ -65,7 +65,7 @@ Object.keys(testAPIs).forEach(IPFS => {
         assert.deepStrictEqual(log1.values.map(e => e.data.payload), log2.values.map(e => e.data.payload))
       })
 
-      test('Concurrently appending same payload after join results in same state', async () => {
+      it('Concurrently appending same payload after join results in same state', async () => {
         for (let i = 10; i < 20; i++) {
           await log1.append('hello1-' + i)
           await log2.append('hello2-' + i)
@@ -86,7 +86,7 @@ Object.keys(testAPIs).forEach(IPFS => {
         assert.deepStrictEqual(log1.values.map(e => e.data.payload), log2.values.map(e => e.data.payload))
       })
 
-      test('Joining after concurrently appending same payload joins entry once', async () => {
+      it('Joining after concurrently appending same payload joins entry once', async () => {
         await log1.join(log2)
         await log2.join(log1)
 

@@ -1,6 +1,6 @@
 import { DefaultAccessController } from '../default-access-controller'
 import { Entry } from '@dao-xyz/ipfs-log-entry';
-export const io = require('orbit-db-io')
+import io from '@dao-xyz/orbit-db-io'
 const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
@@ -53,7 +53,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     describe('create', () => {
-      test('creates a an empty entry', async () => {
+      it('creates a an empty entry', async () => {
         const expectedHash = 'zdpuAsPdzSyeux5mFsFV1y3WeHAShGNi4xo22cYBYWUdPtxVB'
         const entry = await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from('hello')))
         assert.strictEqual(entry.hash, expectedHash)
@@ -65,7 +65,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(entry.refs.length, 0)
       })
 
-      test('creates a entry with payload', async () => {
+      it('creates a entry with payload', async () => {
         const expectedHash = 'zdpuAyvJU3TS7LUdfRxwAnJorkz6NfpAWHGypsQEXLZxcCCRC'
         const payload = 'hello world'
         const entry = await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from(payload)), [])
@@ -78,7 +78,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(entry.hash, expectedHash)
       })
 
-      test('creates a entry with payload and next', async () => {
+      it('creates a entry with payload and next', async () => {
         const expectedHash = 'zdpuAqsN9Py4EWSfrGYZS8tuokWuiTd9zhS8dhr9XpSGQajP2'
         const payload1 = 'hello world'
         const payload2 = 'hello again'
@@ -92,25 +92,25 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(entry2.data.clock.time, 1)
       })
 
-      test('`next` parameter can be an array of strings', async () => {
+      it('`next` parameter can be an array of strings', async () => {
         const entry1 = await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from('hello1')), [])
         const entry2 = await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from('hello2')), [entry1.hash])
         assert.strictEqual(typeof entry2.next[0] === 'string', true)
       })
 
-      test('`next` parameter can be an array of Entry instances', async () => {
+      it('`next` parameter can be an array of Entry instances', async () => {
         const entry1 = await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from('hello1')), [])
         const entry2 = await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from('hello2')), [entry1])
         assert.strictEqual(typeof entry2.next[0] === 'string', true)
       })
 
-      test('`next` parameter can contain nulls and undefined objects', async () => {
+      it('`next` parameter can contain nulls and undefined objects', async () => {
         const entry1 = await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from('hello1')), [])
         const entry2 = await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from('hello2')), [entry1, null, undefined])
         assert.strictEqual(typeof entry2.next[0] === 'string', true)
       })
 
-      test('throws an error if ipfs is not defined', async () => {
+      it('throws an error if ipfs is not defined', async () => {
         let err
         try {
           await Entry.create(undefined, undefined, undefined, undefined)
@@ -120,7 +120,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(err.message, 'Ipfs instance not defined')
       })
 
-      test('throws an error if identity are not defined', async () => {
+      it('throws an error if identity are not defined', async () => {
         let err
         try {
           await Entry.create(ipfs, null, 'A', new Uint8Array(Buffer.from('hello2')), [])
@@ -130,7 +130,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(err.message, 'Identity is required, cannot create entry')
       })
 
-      test('throws an error if id is not defined', async () => {
+      it('throws an error if id is not defined', async () => {
         let err
         try {
           await Entry.create(ipfs, testIdentity, null, new Uint8Array(Buffer.from('hello')), [])
@@ -140,7 +140,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(err.message, 'Entry requires an id')
       })
 
-      test('throws an error if data is not defined', async () => {
+      it('throws an error if data is not defined', async () => {
         let err
         try {
           await Entry.create(ipfs, testIdentity, 'A', null, [])
@@ -150,7 +150,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(err.message, 'Entry requires data')
       })
 
-      test('throws an error if next is not an array', async () => {
+      it('throws an error if next is not an array', async () => {
         let err
         try {
           await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from('hello')), {} as any)
@@ -162,21 +162,21 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     describe('toMultihash', () => {
-      test('returns an ipfs multihash', async () => {
+      it('returns an ipfs multihash', async () => {
         const expectedMultihash = 'zdpuAsPdzSyeux5mFsFV1y3WeHAShGNi4xo22cYBYWUdPtxVB'
         const entry = await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from('hello')), [])
         const multihash = await Entry.toMultihash(ipfs, entry)
         assert.strictEqual(multihash, expectedMultihash)
       })
 
-      test('returns the correct ipfs multihash for a v0 entry', async () => {
+      it('returns the correct ipfs multihash for a v0 entry', async () => {
         const expectedMultihash = 'Qmc2DEiLirMH73kHpuFPbt3V65sBrnDWkJYSjUQHXXvghT'
         const entry = v0Entries.hello
         const multihash = await Entry.toMultihash(ipfs, entry)
         assert.strictEqual(multihash, expectedMultihash)
       })
 
-      test('returns the correct ipfs multihash for a v1 entry', async () => {
+      it('returns the correct ipfs multihash for a v1 entry', async () => {
         const entry = v1Entries[0]
         const expectedMultihash = 'zdpuAsJDrLKrAiU8M518eu6mgv9HzS3e1pfH5XC7LUsFgsK5c'
         const e = Entry.toEntry(entry as any)
@@ -185,7 +185,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(multihash, expectedMultihash)
       })
 
-      test('throws an error if ipfs is not defined', async () => {
+      it('throws an error if ipfs is not defined', async () => {
         let err
         try {
           await Entry.toMultihash(undefined, undefined)
@@ -195,7 +195,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(err.message, 'Ipfs instance not defined')
       })
 
-      test('throws an error if the object being passed is invalid', async () => {
+      it('throws an error if the object being passed is invalid', async () => {
         let err
         try {
           const entry = await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from('hello')), [])
@@ -209,7 +209,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     describe('fromMultihash', () => {
-      test('creates a entry from ipfs hash', async () => {
+      it('creates a entry from ipfs hash', async () => {
         const expectedHash = 'zdpuAnRGWKPkMHqumqdkRJtzbyW6qAGEiBRv61Zj3Ts4j9tQF'
         const payload1 = 'hello world'
         const payload2 = 'hello again'
@@ -225,7 +225,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(final.hash, expectedHash)
       })
       /* 
-            test('creates a entry from ipfs multihash of v0 entries', async () => {
+            it('creates a entry from ipfs multihash of v0 entries', async () => {
               const expectedHash = 'QmZ8va2fSjRufV1sD6x5mwi6E5GrSjXHx7RiKFVBzkiUNZ'
               const entry1Hash = await io.write(ipfs, 'dag-pb', Entry.toEntry(v0Entries.helloWorld))
               const entry2Hash = await io.write(ipfs, 'dag-pb', Entry.toEntry(v0Entries.helloAgain))
@@ -241,7 +241,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
               assert.strictEqual(final.hash, expectedHash)
             })
       
-            test('creates a entry from ipfs multihash of v1 entries', async () => {
+            it('creates a entry from ipfs multihash of v1 entries', async () => {
               const expectedHash = 'zdpuAxgKyiM9qkP9yPKCCqrHer9kCqYyr7KbhucsPwwfh6JB3'
               const e1 = v1Entries[0]
               const e2 = v1Entries[1]
@@ -258,7 +258,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
               assert.strictEqual(entry2Hash, expectedHash)
             }) */
 
-      test('should return an entry interopable with older and newer versions', async () => {
+      it('should return an entry interopable with older and newer versions', async () => {
         const expectedHashV1 = 'zdpuAsPdzSyeux5mFsFV1y3WeHAShGNi4xo22cYBYWUdPtxVB'
         const entryV1 = await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from('hello')), [])
         const finalV1 = await Entry.fromMultihash(ipfs, entryV1.hash)
@@ -272,7 +272,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(Object.assign({}, finalV0).hash, expectedHashV0)
       })
 
-      test('throws an error if ipfs is not present', async () => {
+      it('throws an error if ipfs is not present', async () => {
         let err
         try {
           await Entry.fromMultihash(undefined as any, undefined)
@@ -282,7 +282,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(err.message, 'Ipfs instance not defined')
       })
 
-      test('throws an error if hash is undefined', async () => {
+      it('throws an error if hash is undefined', async () => {
         let err
         try {
           await Entry.fromMultihash(ipfs, undefined)
@@ -294,7 +294,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     describe('isParent', () => {
-      test('returns true if entry has a child', async () => {
+      it('returns true if entry has a child', async () => {
         const payload1 = 'hello world'
         const payload2 = 'hello again'
         const entry1 = await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from(payload1)), [])
@@ -302,7 +302,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(Entry.isParent(entry1, entry2), true)
       })
 
-      test('returns false if entry does not have a child', async () => {
+      it('returns false if entry does not have a child', async () => {
         const payload1 = 'hello world'
         const payload2 = 'hello again'
         const entry1 = await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from(payload1)), [])
@@ -315,14 +315,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     describe('compare', () => {
-      test('returns true if entries are the same', async () => {
+      it('returns true if entries are the same', async () => {
         const payload1 = 'hello world'
         const entry1 = await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from(payload1)), [])
         const entry2 = await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from(payload1)), [])
         assert.strictEqual(Entry.isEqual(entry1, entry2), true)
       })
 
-      test('returns true if entries are not the same', async () => {
+      it('returns true if entries are not the same', async () => {
         const payload1 = 'hello world1'
         const payload2 = 'hello world2'
         const entry1 = await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from(payload1)), [])
@@ -332,41 +332,41 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     describe('isEntry', () => {
-      test('is an Entry', async () => {
+      it('is an Entry', async () => {
         const entry = await Entry.create(ipfs, testIdentity, 'A', new Uint8Array(Buffer.from('hello')), [])
         assert.strictEqual(Entry.isEntry(entry), true)
       })
 
-      test('is an Entry (v0)', async () => {
+      it('is an Entry (v0)', async () => {
         assert.strictEqual(Entry.isEntry(v0Entries.hello), true)
       })
 
-      test('is not an Entry - no id', async () => {
+      it('is not an Entry - no id', async () => {
         const fakeEntry = { data: { v: 1, hash: 'Foo', payload: 123, seq: 0 }, next: [], }
         assert.strictEqual(Entry.isEntry(fakeEntry as any), false)
       })
 
-      test('is not an Entry - no seq', async () => {
+      it('is not an Entry - no seq', async () => {
         const fakeEntry = { data: { v: 1, hash: 'Foo', payload: 123 }, next: [] }
         assert.strictEqual(Entry.isEntry(fakeEntry as any), false)
       })
 
-      test('is not an Entry - no next', async () => {
+      it('is not an Entry - no next', async () => {
         const fakeEntry = { data: { id: 'A', v: 1, hash: 'Foo', seq: 0 }, payload: 123 }
         assert.strictEqual(Entry.isEntry(fakeEntry as any), false)
       })
 
-      test('is not an Entry - no version', async () => {
+      it('is not an Entry - no version', async () => {
         const fakeEntry = { data: { id: 'A', payload: 123, seq: 0 }, next: [] }
         assert.strictEqual(Entry.isEntry(fakeEntry as any), false)
       })
 
-      test('is not an Entry - no hash', async () => {
+      it('is not an Entry - no hash', async () => {
         const fakeEntry = { data: { id: 'A', v: 1, payload: 123, seq: 0 }, next: [] }
         assert.strictEqual(Entry.isEntry(fakeEntry as any), false)
       })
 
-      test('is not an Entry - no payload', async () => {
+      it('is not an Entry - no payload', async () => {
         const fakeEntry = { data: { id: 'A', v: 1, hash: 'Foo', seq: 0 }, next: [] }
         assert.strictEqual(Entry.isEntry(fakeEntry as any), false)
       })

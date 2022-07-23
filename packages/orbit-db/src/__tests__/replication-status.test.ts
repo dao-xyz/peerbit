@@ -1,5 +1,5 @@
 import { OrbitDB } from "../orbit-db"
-import { EVENT_STORE_TYPE } from "./utils/stores/log/event-store"
+import { EventStore, EVENT_STORE_TYPE } from "./utils/stores/event-store"
 
 const assert = require('assert')
 const rmrf = require('rimraf')
@@ -19,7 +19,7 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Replication Status (${API})`, function () {
     jest.setTimeout(config.timeout)
 
-    let ipfsd, ipfs, orbitdb1: OrbitDB, orbitdb2: OrbitDB, db
+    let ipfsd, ipfs, orbitdb1: OrbitDB, orbitdb2: OrbitDB, db: EventStore<string>
 
     beforeAll(async () => {
       rmrf.sync(dbPath1)
@@ -42,11 +42,11 @@ Object.keys(testAPIs).forEach(API => {
         await stopIpfs(ipfsd)
     })
 
-    test('has correct initial state', async () => {
+    it('has correct initial state', async () => {
       assert.deepEqual(db.replicationStatus, { progress: 0, max: 0 })
     })
 
-    test('has correct replication info after load', async () => {
+    it('has correct replication info after load', async () => {
       await db.add('hello')
       await db.close()
       await db.load()
@@ -54,12 +54,12 @@ Object.keys(testAPIs).forEach(API => {
       await db.close()
     })
 
-    test('has correct replication info after close', async () => {
+    it('has correct replication info after close', async () => {
       await db.close()
       assert.deepEqual(db.replicationStatus, { progress: 0, max: 0 })
     })
 
-    test('has correct replication info after sync', async () => {
+    it('has correct replication info after sync', async () => {
       await db.load()
       await db.add('hello2')
 
@@ -78,7 +78,7 @@ Object.keys(testAPIs).forEach(API => {
       })
     })
 
-    test('has correct replication info after loading from snapshot', async () => {
+    it('has correct replication info after loading from snapshot', async () => {
       await db._cache._store.open()
       await db.saveSnapshot()
       await db.close()

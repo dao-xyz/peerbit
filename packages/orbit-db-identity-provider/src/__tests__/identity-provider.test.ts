@@ -28,14 +28,14 @@ describe('Identity Provider', function () {
     const id = 'A'
     let identity
 
-    test('identityKeysPath only - has the correct id', async () => {
+    it('identityKeysPath only - has the correct id', async () => {
       identity = await Identities.createIdentity({ id, identityKeysPath })
       const key = await identity.provider.keystore.getKey(id)
       const externalId = Buffer.from(key.public.marshal()).toString('hex')
       assert.strictEqual(identity.id, externalId)
     })
 
-    test('identityKeysPath and signingKeysPath - has a different id', async () => {
+    it('identityKeysPath and signingKeysPath - has a different id', async () => {
       identity = await Identities.createIdentity({ id, identityKeysPath, signingKeysPath })
       const key = await identity.provider.keystore.getKey(id)
       const externalId = Buffer.from(key.public.marshal()).toString('hex')
@@ -56,7 +56,7 @@ describe('Identity Provider', function () {
       signingKeystore = new Keystore(signingKeysPath)
     })
 
-    test('has the correct id', async () => {
+    it('has the correct id', async () => {
       identity = await Identities.createIdentity({ id, keystore })
       keystore = identity.provider._keystore
       const key = await keystore.getKey(id)
@@ -64,12 +64,12 @@ describe('Identity Provider', function () {
       assert.strictEqual(identity.id, externalId)
     })
 
-    test('created a key for id in identity-keystore', async () => {
+    it('created a key for id in identity-keystore', async () => {
       const key = await keystore.getKey(id)
       assert.notStrictEqual(key, undefined)
     })
 
-    test('has the correct public key', async () => {
+    it('has the correct public key', async () => {
       const key = await keystore.getKey(id)
       const externalId = Buffer.from(key.public.marshal()).toString('hex')
       const signingKey = await keystore.getKey(externalId)
@@ -77,7 +77,7 @@ describe('Identity Provider', function () {
       assert.strictEqual(identity.publicKey, keystore.getPublic(signingKey))
     })
 
-    test('has a signature for the id', async () => {
+    it('has a signature for the id', async () => {
       const key = await keystore.getKey(id)
       const externalId = Buffer.from(key.public.marshal()).toString('hex')
       const signingKey = await keystore.getKey(externalId)
@@ -88,7 +88,7 @@ describe('Identity Provider', function () {
       assert.strictEqual(identity.signatures.id, idSignature)
     })
 
-    test('has a signature for the publicKey', async () => {
+    it('has a signature for the publicKey', async () => {
       const key = await keystore.getKey(id)
       const externalId = Buffer.from(key.public.marshal()).toString('hex')
       const signingKey = await keystore.getKey(externalId)
@@ -128,28 +128,28 @@ describe('Identity Provider', function () {
       rmrf.sync(savedKeysPath)
     })
 
-    test('has the correct id', async () => {
+    it('has the correct id', async () => {
       const key = await savedKeysKeystore.getKey(id)
       assert.strictEqual(identity.id, Buffer.from(key.public.marshal()).toString('hex'))
     })
 
-    test('has the correct public key', async () => {
+    it('has the correct public key', async () => {
       assert.strictEqual(identity.publicKey, expectedPublicKey)
     })
 
-    test('has the correct identity type', async () => {
+    it('has the correct identity type', async () => {
       assert.strictEqual(identity.type, type)
     })
 
-    test('has the correct idSignature', async () => {
+    it('has the correct idSignature', async () => {
       assert.strictEqual(identity.signatures.id, expectedIdSignature)
     })
 
-    test('has a pubKeyIdSignature for the publicKey', async () => {
+    it('has a pubKeyIdSignature for the publicKey', async () => {
       assert.strictEqual(identity.signatures.publicKey, expectedPkIdSignature)
     })
 
-    test('has the correct signatures', async () => {
+    it('has the correct signatures', async () => {
       const internalSigningKey = await savedKeysKeystore.getKey(identity.id)
       const externalSigningKey = await savedKeysKeystore.getKey(id)
       const idSignature = await savedKeysKeystore.sign(internalSigningKey, identity.id)
@@ -173,19 +173,19 @@ describe('Identity Provider', function () {
       signingKeystore = new Keystore(signingKeysPath)
     })
 
-    test('identity pkSignature verifies', async () => {
+    it('identity pkSignature verifies', async () => {
       identity = await Identities.createIdentity({ id, type, keystore, signingKeystore })
       const verified = await Keystore.verify(identity.signatures.id, identity.publicKey, identity.id)
       assert.strictEqual(verified, true)
     })
 
-    test('identity signature verifies', async () => {
+    it('identity signature verifies', async () => {
       identity = await Identities.createIdentity({ id, type, keystore, signingKeystore })
       const verified = await Keystore.verify(identity.signatures.publicKey, identity.id, identity.publicKey + identity.signatures.id)
       assert.strictEqual(verified, true)
     })
 
-    test('false signature doesn\'t verify', async () => {
+    it('false signature doesn\'t verify', async () => {
       class IP {
         async getId() { return 'pubKey' }
 
@@ -217,7 +217,7 @@ describe('Identity Provider', function () {
       signingKeystore = new Keystore(signingKeysPath)
     })
 
-    test('identity verifies', async () => {
+    it('identity verifies', async () => {
       identity = await Identities.createIdentity({ id, type, keystore, signingKeystore })
       const verified = await identity.provider.verifyIdentity(identity)
       assert.strictEqual(verified, true)
@@ -240,14 +240,14 @@ describe('Identity Provider', function () {
       identity = await Identities.createIdentity({ id, keystore, signingKeystore })
     })
 
-    test('sign data', async () => {
+    it('sign data', async () => {
       const signingKey = await keystore.getKey(identity.id)
       const expectedSignature = await keystore.sign(signingKey, data)
       const signature = await identity.provider.sign(identity, data, keystore)
       assert.strictEqual(signature, expectedSignature)
     })
 
-    test('throws an error if private key is not found from keystore', async () => {
+    it('throws an error if private key is not found from keystore', async () => {
       // Remove the key from the keystore (we're using a mock storage in these tests)
       const modifiedIdentity = new Identity({
         id: 'this id does not exist', publicKey: identity.publicKey, signatures: new Signatures({ id: '<sig>', publicKey: identity.signatures }), type: identity.type, provider: identity.provider
@@ -285,12 +285,12 @@ describe('Identity Provider', function () {
       signature = await identity.provider.sign(identity, data, keystore)
     })
 
-    test('verifies that the signature is valid', async () => {
+    it('verifies that the signature is valid', async () => {
       const verified = await identity.provider.verify(signature, identity.publicKey, data)
       assert.strictEqual(verified, true)
     })
 
-    test('doesn\'t verify invalid signature', async () => {
+    it('doesn\'t verify invalid signature', async () => {
       const verified = await identity.provider.verify('invalid', identity.publicKey, data)
       assert.strictEqual(verified, false)
     })
@@ -312,11 +312,11 @@ describe('Identity Provider', function () {
       identity = await Identities.createIdentity({ id: 'A', migrate: migrate(source) as any, keystore, signingKeystore })
     })
 
-    test('creates identity with correct public key', async () => {
+    it('creates identity with correct public key', async () => {
       assert.strictEqual(identity.publicKey, publicKey)
     })
 
-    test('verifies signatures signed by existing key', async () => {
+    it('verifies signatures signed by existing key', async () => {
       const sig = '3045022067aa0eacf268ed8a94f07a1f352f8e4e03f2168e75896aaa18709bc759cd8f41022100e9f9b281a0873efb86d52aef647d8dedc6e3e4e383c8a82258a9e1da78bf2057'
       const ver = await identity.provider.verify(sig, identity.publicKey, 'signme', 'v0')
       assert.strictEqual(ver, true)

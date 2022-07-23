@@ -115,7 +115,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await ipfs2.pubsub.unsubscribe(channel, handleMessage2)
       })
 
-      test('replicates logs', async () => {
+      it('replicates logs', async () => {
         await waitForPeers(ipfs1, [id2], channel)
 
         for (let i = 1; i <= amount; i++) {

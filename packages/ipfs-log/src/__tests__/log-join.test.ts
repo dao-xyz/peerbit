@@ -67,7 +67,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
 
-      test('joins logs', async () => {
+      it('joins logs', async () => {
         const items1: Entry[] = []
         const items2: Entry[] = []
         const items3: Entry[] = []
@@ -101,7 +101,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(logA.heads.length, 1)
       })
 
-      test('throws an error if first log is not defined', async () => {
+      it('throws an error if first log is not defined', async () => {
         let err
         try {
           await log1.join(undefined)
@@ -112,7 +112,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(err.message, 'Log instance not defined')
       })
 
-      test('throws an error if passed argument is not an instance of Log', async () => {
+      it('throws an error if passed argument is not an instance of Log', async () => {
         let err
         try {
           await log1.join({} as any)
@@ -123,7 +123,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(err.message, 'Given argument is not an instance of Log')
       })
 
-      test('joins only unique items', async () => {
+      it('joins only unique items', async () => {
         await log1.append('helloA1')
         await log1.append('helloA2')
         await log2.append('helloB1')
@@ -142,7 +142,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(item.next.length, 1)
       })
 
-      test('joins logs two ways', async () => {
+      it('joins logs two ways', async () => {
         await log1.append('helloA1')
         await log1.append('helloA2')
         await log2.append('helloB1')
@@ -159,7 +159,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.deepStrictEqual(log2.values.map((e) => e.data.payload), expectedData)
       })
 
-      test('joins logs twice', async () => {
+      it('joins logs twice', async () => {
         await log1.append('helloA1')
         await log2.append('helloB1')
         await log2.join(log1)
@@ -176,7 +176,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.deepStrictEqual(log2.values.map((e) => e.data.payload), expectedData)
       })
 
-      test('joins 2 logs two ways', async () => {
+      it('joins 2 logs two ways', async () => {
         await log1.append('helloA1')
         await log2.append('helloB1')
         await log2.join(log1)
@@ -193,7 +193,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.deepStrictEqual(log2.values.map((e) => e.data.payload), expectedData)
       })
 
-      test('joins 2 logs two ways and has the right heads at every step', async () => {
+      it('joins 2 logs two ways and has the right heads at every step', async () => {
         await log1.append('helloA1')
         assert.strictEqual(log1.heads.length, 1)
         assertPayload(log1.heads[0].data.payload, 'helloA1')
@@ -226,7 +226,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assertPayload(log2.heads[1].data.payload, 'helloA2')
       })
 
-      test('joins 4 logs to one', async () => {
+      it('joins 4 logs to one', async () => {
         // order determined by identity's publicKey
         await log1.append('helloA1')
         await log1.append('helloA2')
@@ -258,7 +258,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.deepStrictEqual(log1.values.map(e => e.data.payload), expectedData)
       })
 
-      test('joins 4 logs to one is commutative', async () => {
+      it('joins 4 logs to one is commutative', async () => {
         await log1.append('helloA1')
         await log1.append('helloA2')
         await log2.append('helloB1')
@@ -278,7 +278,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.deepStrictEqual(log1.values.map(e => e.data.payload), log2.values.map(e => e.data.payload))
       })
 
-      test('joins logs and updates clocks', async () => {
+      it('joins logs and updates clocks', async () => {
         await log1.append('helloA1')
         await log2.append('helloB1')
         await log2.join(log1)
@@ -342,7 +342,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.deepStrictEqual(transformed, expectedData)
       })
 
-      test('joins logs from 4 logs', async () => {
+      it('joins logs from 4 logs', async () => {
         await log1.append('helloA1')
         await log1.join(log2)
         await log2.append('helloB1')
@@ -400,7 +400,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           await log2.append('helloB2')
         })
 
-        test('joins only specified amount of entries - one entry', async () => {
+        it('joins only specified amount of entries - one entry', async () => {
           await log1.join(log2, 1)
 
           const expectedData = [
@@ -413,7 +413,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           assert.strictEqual(lastEntry.next.length, 1)
         })
 
-        test('joins only specified amount of entries - two entries', async () => {
+        it('joins only specified amount of entries - two entries', async () => {
           await log1.join(log2, 2)
 
           const expectedData = [
@@ -426,7 +426,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           assert.strictEqual(lastEntry.next.length, 1)
         })
 
-        test('joins only specified amount of entries - three entries', async () => {
+        it('joins only specified amount of entries - three entries', async () => {
           await log1.join(log2, 3)
 
           const expectedData = [
@@ -439,7 +439,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           assert.strictEqual(lastEntry.next.length, 1)
         })
 
-        test('joins only specified amount of entries - (all) four entries', async () => {
+        it('joins only specified amount of entries - (all) four entries', async () => {
           await log1.join(log2, 4)
 
           const expectedData = [

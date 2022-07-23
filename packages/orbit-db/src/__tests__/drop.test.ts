@@ -46,7 +46,7 @@ Object.keys(testAPIs).forEach(API => {
         assert.equal(fs.existsSync(localDataPath), true)
       })
 
-      test('removes local database cache', async () => {
+      it('removes local database cache', async () => {
         await db.drop()
         await db._cache.open()
         assert.equal(await db._cache.get(db.localHeadsPath), undefined)

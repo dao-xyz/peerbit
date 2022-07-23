@@ -1,7 +1,7 @@
 import { AccessController } from "./access-controller-interface"
 import { Entry } from '@dao-xyz/ipfs-log-entry';
 
-const io = require('orbit-db-io')
+import io from '@dao-xyz/orbit-db-io'
 const Buffer = require('safe-buffer/').Buffer
 const type = 'legacy-ipfs'
 

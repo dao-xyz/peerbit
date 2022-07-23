@@ -35,7 +35,7 @@ const storeTestSetup = async (): Promise<{
 
 describe('query', () => {
 
-    test('only context', async () => {
+    it('only context', async () => {
         let {
             creator,
             observer,
@@ -70,7 +70,7 @@ describe('query', () => {
 
     });
 
-    test('match all', async () => {
+    it('match all', async () => {
         let {
             creator,
             observer,
@@ -101,7 +101,7 @@ describe('query', () => {
 
     });
 
-    test('match part', async () => {
+    it('match part', async () => {
         let {
             creator,
             observer,

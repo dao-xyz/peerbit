@@ -46,7 +46,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await signingKeystore?.close()
     })
     describe('References', () => {
-      test('creates entries with references', async () => {
+      it('creates entries with references', async () => {
         const amount = 64
         const maxReferenceDistance = 2
         const log1 = new Log(ipfs, testIdentity, { logId: 'A' })

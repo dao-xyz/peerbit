@@ -19,7 +19,7 @@ export const DEFAULT_QUERY_REGION = 'world';
 export const MIN_REPLICATION_AMOUNT = 1;
 import { MemoryLimitExceededError } from "./errors";
 import Logger from 'logplease';
-import { Entry } from "@dao-xyz/ipfs-log";
+import { Entry } from "@dao-xyz/ipfs-log-entry";
 import { DYNAMIC_ACCESS_CONTROLER } from "@dao-xyz/orbit-db-dynamic-access-controller";
 import isNode from 'is-node';
 

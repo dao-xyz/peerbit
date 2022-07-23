@@ -32,7 +32,7 @@
   "dependencies": {
     "@dao-xyz/borsh": "^2.1.4",
     "@dao-xyz/orbit-db-identity-provider": "^0.5.10",
-    "orbit-db-io": "^1.0.2"
+    "@dao-xyz/orbit-db-io": "^1.0.2"
   },
   "devDependencies": {
     "@babel/cli": "^7.14.3",

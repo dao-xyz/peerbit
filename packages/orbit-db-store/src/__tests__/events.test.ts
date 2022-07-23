@@ -1,6 +1,6 @@
 import assert from 'assert'
 
-import { default as Cache } from 'orbit-db-cache'
+import { default as Cache } from '@dao-xyz/orbit-db-cache'
 const Keystore = require("orbit-db-keystore");
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 
@@ -54,7 +54,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const options = Object.assign({}, DefaultOptions, { cache })
       store = new Store(ipfs, testIdentity, address, options)
     })
-    test('Specific log.op event', (done) => {
+    /* it('Specific log.op event', (done) => {
       const data = {
         op: 'SET',
         key: 'transaction',
@@ -69,6 +69,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
         done()
       })
       store._addOperation(data)
-    })
+    }) */
   })
 })

@@ -8,7 +8,7 @@ const defaultStoreOptions = (l: P2PTrust, isServer: boolean = true, directory: s
 
 describe('isTrusted', () => {
 
-    test('trusted by chain', async () => {
+    it('trusted by chain', async () => {
 
         let [peer, peer2, peer3] = await getConnectedPeers(3);
         const l0a = new P2PTrust({
@@ -33,7 +33,7 @@ describe('isTrusted', () => {
 
     })
 
-    test('untrusteed by chain', async () => {
+    it('untrusteed by chain', async () => {
 
         let [peer, peer2, peer3] = await getConnectedPeers(3);
 

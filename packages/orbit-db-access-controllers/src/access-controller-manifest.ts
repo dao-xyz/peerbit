@@ -1,4 +1,4 @@
-const io = require('orbit-db-io')
+import io from '@dao-xyz/orbit-db-io'
 
 export class AccessControllerManifest {
   type: string;

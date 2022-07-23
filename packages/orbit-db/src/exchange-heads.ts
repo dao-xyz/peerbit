@@ -3,12 +3,13 @@ import Logger from 'logplease'
 import { variant, field, vec, serialize, deserialize } from '@dao-xyz/borsh';
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Message } from './message';
+import { HeadsCache, Store } from '@dao-xyz/orbit-db-store';
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
 
 @variant(0)
-export class ExchangeHeadsMessage {
+export class ExchangeHeadsMessage extends Message {
   @field({ type: 'String' })
   address: string;
 
@@ -19,6 +20,7 @@ export class ExchangeHeadsMessage {
     address: string,
     heads: Entry[]
   }) {
+    super();
     if (props) {
       this.address = props.address;
       this.heads = props.heads;
@@ -27,23 +29,26 @@ export class ExchangeHeadsMessage {
 
 }
 
-const getHeadsForDatabase = async store => {
+const getHeadsForDatabase = async (store: Store<any, any, any>) => {
   if (!(store && store._cache)) return []
-  const localHeads = await store._cache.get(store.localHeadsPath) || []
-  const remoteHeads = await store._cache.get(store.remoteHeadsPath) || []
+  const localHeads = (await store._cache.getBinary(store.localHeadsPath, HeadsCache))?.heads || []
+  const remoteHeads = (await store._cache.getBinary(store.remoteHeadsPath, HeadsCache))?.heads || []
   return [...localHeads, ...remoteHeads]
 }
 
-export const exchangeHeads = async (ipfs, address, peer, getStore, getDirectConnection, onMessage, onChannelCreated) => {
+export const exchangeHeads = async (ipfs, address, peer, getStore, getDirectConnection, onMessage: (address: string, data: Uint8Array) => void, onChannelCreated) => {
   const _handleMessage = (message: { data: Uint8Array }) => {
-    const msg = deserialize(Buffer.from(message.data), Message)
+
+    // On message instead,
+    onMessage(address, message.data)
+    /* const msg = deserialize(Buffer.from(message.data), Message)
     if (msg instanceof ExchangeHeadsMessage) {
       const { address, heads } = msg
-      onMessage(address, heads)
+      onExchangedHeads(address, heads)
     }
     else {
       throw new Error("Unexpected message")
-    }
+    } */
   }
 
   let channel = getDirectConnection(peer)
@@ -67,7 +72,8 @@ export const exchangeHeads = async (ipfs, address, peer, getStore, getDirectConn
   const heads = await getHeadsForDatabase(getStore(address))
   logger.debug(`Send latest heads of '${address}':\n`, JSON.stringify(heads.map(e => e.hash), null, 2))
   if (heads) {
-    await channel.send(serialize(new ExchangeHeadsMessage({ address: address, heads: heads })))
+    const message = serialize(new ExchangeHeadsMessage({ address: address, heads: heads }));
+    await channel.send(message)
   }
 
   return channel
