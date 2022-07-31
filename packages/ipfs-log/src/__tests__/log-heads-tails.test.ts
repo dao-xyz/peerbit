@@ -3,8 +3,8 @@ const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Entry } from '@dao-xyz/ipfs-log-entry';
 import { Log } from '../log'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
-const Keystore = require('orbit-db-keystore')
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
 const {
@@ -14,19 +14,19 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity, testIdentity2, testIdentity3, testIdentity4
+let ipfsd, ipfs, testIdentity: Identity, testIdentity2: Identity, testIdentity3: Identity, testIdentity4: Identity
 
 const last = (arr) => {
   return arr[arr.length - 1]
 }
 
 Object.keys(testAPIs).forEach((IPFS) => {
-  describe('Log - Heads and Tails (' + IPFS + ')', function () {
+  describe('Log - Heads and Tails', function () {
     jest.setTimeout(config.timeout)
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
 
-    let keystore, signingKeystore
+    let keystore: Keystore, signingKeystore: Keystore
 
     beforeAll(async () => {
       rmrf.sync(identityKeysPath)
@@ -36,11 +36,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
+      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
+      testIdentity2 = await Identities.createIdentity({ id: new Uint8Array([1]), keystore, signingKeystore })
+      testIdentity3 = await Identities.createIdentity({ id: new Uint8Array([2]), keystore, signingKeystore })
+      testIdentity4 = await Identities.createIdentity({ id: new Uint8Array([4]), keystore, signingKeystore })
 
-      testIdentity = await Identities.createIdentity({ id: 'userA', keystore, signingKeystore })
-      testIdentity2 = await Identities.createIdentity({ id: 'userB', keystore, signingKeystore })
-      testIdentity3 = await Identities.createIdentity({ id: 'userC', keystore, signingKeystore })
-      testIdentity4 = await Identities.createIdentity({ id: 'userD', keystore, signingKeystore })
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })
@@ -264,11 +264,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log3.join(log2)
         await log4.join(log3)
         assert.strictEqual(log4.tails.length, 3)
-        assert.strictEqual(log4.tails[0].id, 'XX')
-        assert.strictEqual(log4.tails[0].data.clock.id, testIdentity3.publicKey)
-        assert.strictEqual(log4.tails[1].data.clock.id, testIdentity2.publicKey)
-        assert.strictEqual(log4.tails[2].data.clock.id, testIdentity.publicKey)
-        assert.strictEqual(log4.clock.id, testIdentity4.publicKey)
+        assert.strictEqual(log4.tails[0].data.id, 'XX')
+        assert.deepStrictEqual(log4.tails[2].data.clock.id, testIdentity3.publicKey)
+        assert.deepStrictEqual(log4.tails[1].data.clock.id, testIdentity2.publicKey)
+        assert.deepStrictEqual(log4.tails[0].data.clock.id, testIdentity.publicKey)
+        assert.deepStrictEqual(log4.clock.id, testIdentity4.publicKey)
       })
     })
   })

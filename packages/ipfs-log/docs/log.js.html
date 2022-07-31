@@ -237,7 +237,7 @@ class Log extends GSet {
 
     // Add an entry to the stack and traversed nodes index
     const addToStack = entry => {
-      // If we've already processed the entry, don't add it to the stack
+      // If we've already processed the Entry<T>, don't add it to the stack
       if (!entry || traversed[entry.hash]) {
         return
       }
@@ -332,7 +332,7 @@ class Log extends GSet {
 
     const canAppend = await this._access.canAppend(entry, this._identity.provider)
     if (!canAppend) {
-      throw new Error(`Could not append entry, key "${this._identity.id}" is not allowed to write to the log`)
+      throw new Error(`Could not append Entry<T>, key "${this._identity.id}" is not allowed to write to the log`)
     }
 
     this._entryIndex.set(entry.hash, entry)
@@ -430,7 +430,7 @@ class Log extends GSet {
     const permitted = async (entry) => {
       const canAppend = await this._access.canAppend(entry, identityProvider)
       if (!canAppend) {
-        throw new Error(`Could not append entry, key "${entry.data.identity.id}" is not allowed to write to the log`)
+        throw new Error(`Could not append Entry<T>, key "${entry.data.identity.id}" is not allowed to write to the log`)
       }
     }
 
@@ -571,7 +571,7 @@ class Log extends GSet {
    * @param {AccessController} options.access The access controller instance
    * @param {number} options.length How many items to include in the log
    * @param {Array&lt;Entry>} options.exclude Entries to not fetch (cached)
-   * @param {function(hash, entry, parent, depth)} options.onProgressCallback
+   * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @returns {Promise&lt;Log>}
    */
@@ -593,7 +593,7 @@ class Log extends GSet {
    * @param {AccessController} options.access The access controller instance
    * @param {number} options.length How many entries to include in the log
    * @param {Array&lt;Entry>} options.exclude Entries to not fetch (cached)
-   * @param {function(hash, entry, parent, depth)} options.onProgressCallback
+   * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise&lt;Log>} New Log
    */
@@ -613,7 +613,7 @@ class Log extends GSet {
    * @param {Object} options
    * @param {AccessController} options.access The access controller instance
    * @param {number} options.length How many entries to include in the log
-   * @param {function(hash, entry, parent, depth)} [options.onProgressCallback]
+   * @param {function(hash, entry,  parent, depth)} [options.onProgressCallback]
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise&lt;Log>} New Log
    */
@@ -634,7 +634,7 @@ class Log extends GSet {
    * @param {AccessController} options.access The access controller instance
    * @param {number} options.length How many entries to include. Default: infinite.
    * @param {Array&lt;Entry>} options.exclude Entries to not fetch (cached)
-   * @param {function(hash, entry, parent, depth)} [options.onProgressCallback]
+   * @param {function(hash, entry,  parent, depth)} [options.onProgressCallback]
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise&lt;Log>} New Log
    */
@@ -656,7 +656,7 @@ class Log extends GSet {
    * @returns {Array&lt;Entry>}
    */
   static findHeads (entries) {
-    const indexReducer = (res, entry, idx, arr) => {
+    const indexReducer = (res, entry,  idx, arr) => {
       const addToResult = e => (res[e] = entry.hash)
       entry.next.forEach(addToResult)
       return res
@@ -722,7 +722,7 @@ class Log extends GSet {
   static findTailHashes (entries) {
     const hashes = {}
     const addToIndex = e => (hashes[e.hash] = true)
-    const reduceTailHashes = (res, entry, idx, arr) => {
+    const reduceTailHashes = (res, entry,  idx, arr) => {
       const addToResult = (e) => {
         /* istanbul ignore else */
         if (hashes[e] === undefined) {

@@ -6,3 +6,5 @@ orbit-db-stores
 ipfs
 lib
 .vscode
+keystore
+keystore-test

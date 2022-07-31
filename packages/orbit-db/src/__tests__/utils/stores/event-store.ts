@@ -1,4 +1,5 @@
 import { Log } from "@dao-xyz/ipfs-log";
+import { Entry } from "@dao-xyz/ipfs-log-entry";
 import { JSON_ENCODER } from "@dao-xyz/orbit-db-store";
 import { Store } from "@dao-xyz/orbit-db-store"
 import { OrbitDB } from "../../../orbit-db";
@@ -6,6 +7,11 @@ import { OrbitDB } from "../../../orbit-db";
 
 // TODO: generalize the Iterator functions and spin to its own module
 export const EVENT_STORE_TYPE = 'event';
+export interface Operation<T> {
+    op: string
+    key: string
+    value: T
+}
 export class EventIndex<T> {
     _index: Log<T>;
     constructor() {
@@ -13,7 +19,7 @@ export class EventIndex<T> {
     }
 
     get() {
-        return this._index ? this._index.payloadsDecoded : []
+        return this._index ? this._index.values : []
     }
 
     async updateIndex(oplog, entries?: []) {
@@ -21,7 +27,7 @@ export class EventIndex<T> {
     }
 }
 
-export class EventStore<T> extends Store<T, EventIndex<T>, any> {
+export class EventStore<T> extends Store<T, EventIndex<Operation<T>>, any> {
     constructor(ipfs, id, dbname, options: any = {}) {
         if (options.Index === undefined) Object.assign(options, { Index: EventIndex })
         if (options.io === undefined) Object.assign(options, { io: JSON_ENCODER })
@@ -43,6 +49,7 @@ export class EventStore<T> extends Store<T, EventIndex<T>, any> {
     get(hash) {
         return this.iterator({ gte: hash, limit: 1 }).collect()[0]
     }
+
     iterator(options) {
         const messages = this._query(options)
         let currentIndex = 0
@@ -51,7 +58,7 @@ export class EventStore<T> extends Store<T, EventIndex<T>, any> {
                 return this
             },
             next() {
-                let item: { value?: T, done: boolean } = { value: null, done: true }
+                let item: { value?: Entry<Operation<T>>, done: boolean } = { value: null, done: true }
                 if (currentIndex < messages.length) {
                     item = { value: messages[currentIndex], done: false }
                     currentIndex++
@@ -69,7 +76,7 @@ export class EventStore<T> extends Store<T, EventIndex<T>, any> {
 
         const amount = opts.limit ? (opts.limit > -1 ? opts.limit : this._index.get().length) : 1 // Return 1 if no limit is provided
         const events = this._index.get().slice()
-        let result: T[] = []
+        let result: Entry<Operation<T>>[] = []
 
         if (opts.gt || opts.gte) {
             // Greater than case
@@ -86,7 +93,7 @@ export class EventStore<T> extends Store<T, EventIndex<T>, any> {
         return result
     }
 
-    _read(ops, hash, amount, inclusive) {
+    _read(ops: Entry<Operation<T>>[], hash, amount, inclusive) {
         // Find the index of the gt/lt hash, or start from the beginning of the array if not found
         const index = ops.map((e) => e.hash).indexOf(hash)
         let startIndex = Math.max(index, 0)

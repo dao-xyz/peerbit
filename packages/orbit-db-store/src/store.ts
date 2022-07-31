@@ -2,7 +2,8 @@ import path from 'path'
 import { EventEmitter } from 'events'
 import mapSeries from 'p-each-series'
 import { default as PQueue } from 'p-queue'
-import { Log, ISortFunction, IOOptions, RecycleOptions, AccessError } from '@dao-xyz/ipfs-log'
+import { Log, ISortFunction, RecycleOptions, AccessError } from '@dao-xyz/ipfs-log'
+import { IOOptions } from '@dao-xyz/ipfs-log-entry'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Index } from './store-index'
 import { Replicator } from './replicator'
@@ -16,20 +17,20 @@ import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { OrbitDBAccessController } from '@dao-xyz/orbit-db-access-controllers'
 import stringify from 'json-stringify-deterministic'
 import { AccessController } from '@dao-xyz/orbit-db-access-controllers'
-
+import { deserialize, serialize } from '@dao-xyz/borsh'
 export type Constructor<T> = new (...args: any[]) => T;
 
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
 Logger.setLogLevel('ERROR')
 
 @variant(0)
-export class HeadsCache {
+export class HeadsCache<T> {
 
   @field({ type: vec(Entry) })
-  heads: Entry[]
+  heads: Entry<T>[]
 
   constructor(opts?: {
-    heads: Entry[]
+    heads: Entry<T>[]
   }) {
     if (opts) {
       this.heads = opts.heads;
@@ -159,14 +160,14 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
   manifestPath: string;
   _ipfs: IPFS;
   _cache: Cache;
-  access: AccessController;
+  access: AccessController<T>;
   _oplog: Log<any>;
   _queue: PQueue<any, any>
   _index: X;
   _replicationStatus: ReplicationInfo;
   _stats: any;
-  _replicator: Replicator;
-  _loader: Replicator;
+  _replicator: Replicator<T>;
+  _loader: Replicator<T>;
   _key: string;
 
   constructor(ipfs: IPFS, identity: Identity, address: Address | string, options: O) {
@@ -201,13 +202,13 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
 
     // Access mapping
     this.access = options.accessController || {
-      canAppend: (entry: Entry, _identityProvider: Identities) => (entry.data.identity.publicKey === identity.publicKey),
+      canAppend: (entry: Entry<T>, _identityProvider: Identities) => (entry.data.identity.publicKey === identity.publicKey),
       type: undefined,
       address: undefined,
       close: undefined,
       load: undefined,
       save: undefined
-    } as any as OrbitDBAccessController // TODO fix types
+    } as any as OrbitDBAccessController<T> // TODO fix types
 
     // Create the operations log
     this._oplog = new Log(this._ipfs, this.identity, this.logOptions)
@@ -232,13 +233,13 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     }
 
     try {
-      const onReplicationQueued = async (entry: Entry) => {
+      const onReplicationQueued = async (entry: Entry<T>) => {
         // Update the latest entry state (latest is the entry with largest clock time)
         this._recalculateReplicationMax(entry.data.clock ? entry.data.clock.time : 0)
         this.events.emit('replicate', this.address.toString(), entry)
       }
 
-      const onReplicationProgress = async (entry: Entry) => {
+      const onReplicationProgress = async (entry: Entry<T>) => {
         const previousProgress = this.replicationStatus.progress
         const previousMax = this.replicationStatus.max
         this._recalculateReplicationStatus(entry.data.clock.time)
@@ -412,8 +413,8 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     if (this.options.onLoad) {
       await this.options.onLoad(this)
     }
-    const localHeads: Entry[] = (await this._cache.getBinary(this.localHeadsPath, HeadsCache))?.heads || []
-    const remoteHeads: Entry[] = (await this._cache.getBinary(this.remoteHeadsPath, HeadsCache))?.heads || []
+    const localHeads: Entry<T>[] = (await this._cache.getBinary<HeadsCache<T>>(this.localHeadsPath, HeadsCache))?.heads || []
+    const remoteHeads: Entry<T>[] = (await this._cache.getBinary<HeadsCache<T>>(this.remoteHeadsPath, HeadsCache))?.heads || []
     const heads = localHeads.concat(remoteHeads)
 
     if (heads.length > 0) {
@@ -442,7 +443,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     this.events.emit('ready', this.address.toString(), this._oplog.heads)
   }
 
-  async sync(heads: Entry[]) {
+  async sync(heads: Entry<T>[]) {
     this._stats.syncRequestsReceieved += 1
     logger.debug(`Sync request #${this._stats.syncRequestsReceieved} ${heads.length}`)
     if (heads.length === 0) {
@@ -456,7 +457,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     // the log, it'll fetch it from the network instead from the disk.
     // return this._replicator.load(heads)
 
-    const saveToIpfs = async (head: Entry) => {
+    const saveToIpfs = async (head: Entry<T>) => {
       if (!head) {
         console.warn("Warning: Given input entry was 'null'.")
         return Promise.resolve(null)
@@ -523,7 +524,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
 
     const maxClock = (res, val) => Math.max(res, val.clock.time)
 
-    const queue = (await this._cache.getBinary(this.queuePath, HeadsCache))?.heads
+    const queue = (await this._cache.getBinary<HeadsCache<T>>(this.queuePath, HeadsCache))?.heads
     this.sync(queue || [])
 
     const snapshot = await this._cache.get(this.snapshotPath) as any
@@ -558,7 +559,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     return this
   }
 
-  async _updateIndex(entries?: Entry[]) {
+  async _updateIndex(entries?: Entry<T>[]) {
     await this._index.updateIndex(this._oplog, entries);
   }
 
@@ -594,11 +595,11 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     return this._queue.add(addOperation.bind(this))
   }
 
-  _addOperationBatch(data, batchOperation, lastOperation, onProgressCallback) {
+  _addOperationBatch(data, batchOperation?, lastOperation?, onProgressCallback?) {
     throw new Error('Not implemented!')
   }
 
-  _procEntry(entry: Entry) {
+  _procEntry(entry: Entry<T>) {
     const { data: { payload }, hash } = entry
     /* const { op } = payload
     if (op) {

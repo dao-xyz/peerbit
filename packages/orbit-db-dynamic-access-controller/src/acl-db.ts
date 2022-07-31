@@ -58,7 +58,7 @@ export class ACLInterface extends SingleDBInterface<Access, BinaryDocumentStore<
 
     // custom can append
 
-    async allowed(entry: Entry): Promise<boolean> {
+    async allowed(entry: Entry<T>): Promise<boolean> {
         // TODO, improve, caching etc
 
         // Else check whether its trusted by this access controller

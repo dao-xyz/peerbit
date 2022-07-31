@@ -6,16 +6,16 @@ import { IPFS } from 'ipfs-core-types/src/'
 const hasItems = arr => arr && arr.length > 0
 
 
-export interface EntryFetchOptions { length?: number, timeout?: number, exclude?: any[], onProgressCallback?: (entry: Entry) => void, concurrency?: number }
-interface EntryFetchStrictOptions { length: number, timeout?: number, exclude: any[], onProgressCallback?: (entry: Entry) => void, concurrency: number }
+export interface EntryFetchOptions<T> { length?: number, timeout?: number, exclude?: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency?: number }
+interface EntryFetchStrictOptions<T> { length: number, timeout?: number, exclude: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency: number }
 
-export interface EntryFetchAllOptions extends EntryFetchOptions { shouldExclude?: (string) => boolean, onStartProgressCallback?: any, delay?: number }
-interface EntryFetchAllStrictOptions extends EntryFetchStrictOptions { shouldExclude?: (string) => boolean, onStartProgressCallback?: any, delay: number }
+export interface EntryFetchAllOptions<T> extends EntryFetchOptions<T> { shouldExclude?: (string) => boolean, onStartProgressCallback?: any, delay?: number }
+interface EntryFetchAllStrictOptions<T> extends EntryFetchStrictOptions<T> { shouldExclude?: (string) => boolean, onStartProgressCallback?: any, delay: number }
 
 
 
-export const strictAllFetchOptions = (options: EntryFetchAllOptions): EntryFetchAllStrictOptions => {
-  const ret: EntryFetchAllStrictOptions = {
+export const strictAllFetchOptions = <T>(options: EntryFetchAllOptions<T>): EntryFetchAllStrictOptions<T> => {
+  const ret: EntryFetchAllStrictOptions<T> = {
     ...options
   } as any;
   if (ret.length == undefined) {
@@ -32,8 +32,8 @@ export const strictAllFetchOptions = (options: EntryFetchAllOptions): EntryFetch
   }
   return ret;
 }
-export const strictFetchOptions = (options: EntryFetchOptions): EntryFetchStrictOptions => {
-  const ret: EntryFetchStrictOptions = {
+export const strictFetchOptions = <T>(options: EntryFetchOptions<T>): EntryFetchStrictOptions<T> => {
+  const ret: EntryFetchStrictOptions<T> = {
     ...options
   } as any
   if (ret.length == undefined) {
@@ -52,7 +52,7 @@ export const strictFetchOptions = (options: EntryFetchOptions): EntryFetchStrict
 
 export class EntryIO {
   // Fetch log graphs in parallel
-  static async fetchParallel(ipfs: IPFS, hashes: string | string[], options: EntryFetchAllOptions) {
+  static async fetchParallel<T>(ipfs: IPFS, hashes: string | string[], options: EntryFetchAllOptions<T>) {
     const fetchOne = async (hash) => EntryIO.fetchAll(ipfs, hash, strictFetchOptions(options))
     const concatArrays = (arr1, arr2) => arr1.concat(arr2)
     const flatten = (arr) => arr.reduce(concatArrays, [])
@@ -71,9 +71,9 @@ export class EntryIO {
    * @param {Number} [depth=0] Current depth of the recursion
    * @param {function(entry)} shouldExclude A function that can be passed to determine whether a specific hash should be excluded, ie. not fetched. The function should return true to indicate exclusion, otherwise return false.
    * @param {function(entry)} onProgressCallback Called when an entry was fetched
-   * @returns {Promise<Array<Entry>>}
+   * @returns {Promise<Array<Entry<T>>>}
    */
-  static async fetchAll(ipfs: IPFS, hashes: string | string[], options: EntryFetchAllOptions) {
+  static async fetchAll<T>(ipfs: IPFS, hashes: string | string[], options: EntryFetchAllOptions<T>) {
     options = strictFetchOptions(options);
     const result = []
     const cache = {}
@@ -90,7 +90,7 @@ export class EntryIO {
     const loadingQueueHasMore = () => Object.values(loadingQueue).find(hasItems) !== undefined
 
     // Add a multihash to the loading queue
-    const addToLoadingQueue = (e: Entry | string, idx: number) => {
+    const addToLoadingQueue = (e: Entry<T> | string, idx: number) => {
       if (!loadingCache[e["hash"] || e] && !shouldExclude(e)) {
         if (!loadingQueue[idx]) loadingQueue[idx] = []
         if (!loadingQueue[idx].includes(e)) {
@@ -136,7 +136,7 @@ export class EntryIO {
           }, options.timeout)
           : null
 
-        const addToResults = (entry: Entry) => {
+        const addToResults = (entry: Entry<T>) => {
           if (Entry.isEntry(entry) && !cache[entry.hash] && !shouldExclude(entry.hash)) {
             const ts = entry.data.clock.time
 
@@ -186,7 +186,7 @@ export class EntryIO {
 
         try {
           // Load the entry
-          const entry = await Entry.fromMultihash(ipfs, hash)
+          const entry = await Entry.fromMultihash<T>(ipfs, hash)
           // Simulate network latency (for debugging purposes)
           if (options.delay > 0) {
             const sleep = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms))

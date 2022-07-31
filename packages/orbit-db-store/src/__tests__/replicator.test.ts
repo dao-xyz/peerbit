@@ -1,7 +1,7 @@
 import assert from 'assert'
 import { Log } from '@dao-xyz/ipfs-log'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
-const Keystore = require("orbit-db-keystore");
+import { Keystore } from "@dao-xyz/orbit-db-keystore"
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 
 import {
@@ -60,7 +60,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const logLength = 100
 
       beforeAll(async () => {
-        const testIdentity = await Identities.createIdentity({ id: 'userB', keystore, signingKeystore })
+        const testIdentity = await Identities.createIdentity({ id: new Uint8Array([1]), keystore, signingKeystore })
         log2 = new Log(ipfs, testIdentity, { logId: log.id })
 
         console.log(`writing ${logLength} entries to the log`)

@@ -2,7 +2,7 @@
 /// <reference path="./LogEntry.d.ts" />
 declare module 'orbit-db' {
     import { Store } from '@dao-xyz/orbit-db-store';
-    import { Keystore } from "orbit-db-keystore";
+    import { Keystore } from "@dao-xyz/orbit-db-keystore";
     import Cache from "@dao-xyz/orbit-db-cache";
     import { Identity } from "@dao-xyz/orbit-db-identity-provider";
     import * as IPFS from "ipfs";

@@ -3,11 +3,18 @@ import { Entry } from '@dao-xyz/ipfs-log-entry';
 
 const pMapSeries = require('p-map-series')
 import { AccessController } from './access-controller-interface'
+import { Identity } from "@dao-xyz/orbit-db-identity-provider";
+import OrbitDB from "orbit-db";
 
 const type = 'orbitdb'
+export type Options = {
+  admin?: Uint8Array
+}
+export class OrbitDBAccessController<T> extends AccessController<T> {
 
-export class OrbitDBAccessController extends AccessController {
-  constructor(orbitdb, options?: any) {
+  _options: Options;
+  _orbitdb: OrbitDB;
+  constructor(orbitdb, options?: Options) {
     super()
     this._orbitdb = orbitdb
     this._db = null
@@ -23,11 +30,11 @@ export class OrbitDBAccessController extends AccessController {
   }
 
   // Return true if entry is allowed to be added to the database
-  async canAppend(entry: Entry, identityProvider) {
+  async canAppend<T>(entry: Entry<T>, identityProvider) {
     // Write keys and admins keys are allowed
     const access = new Set([...this.get('write'), ...this.get('admin')])
     // If the ACL contains the writer's public key or it contains '*'
-    if (access.has(entry.data.identity.id) || access.has('*')) {
+    if (access.has(Buffer.from(entry.data.identity.id).toString()) || access.has('*')) {
       const verifiedIdentity = await identityProvider.verifyIdentity(entry.data.identity)
       // Allow access if identity verifies
       return verifiedIdentity
@@ -71,11 +78,11 @@ export class OrbitDBAccessController extends AccessController {
     if (this._db) { await this._db.close() }
 
     // Force '<address>/_access' naming for the database
-    this._db = await this._orbitdb.keyvalue(ensureAddress(address), {
+    this._db = await this._orbitdb.open(ensureAddress(address), {
       // use ipfs controller as a immutable "root controller"
       accessController: {
         type: 'ipfs',
-        write: this._options.admin || [this._orbitdb.identity.id]
+        write: (this._options.admin ? Buffer.from(this._options.admin).toString() : undefined) || [Buffer.from(this._orbitdb.identity.id).toString()]
       },
       sync: true
     })
@@ -97,18 +104,18 @@ export class OrbitDBAccessController extends AccessController {
   async hasCapability(capability, identity) {
     // Write keys and admins keys are allowed
     const access = new Set(this.get(capability))
-    return access.has(identity.id) || access.has("*")
+    return access.has(Buffer.from(identity.id).toString()) || access.has("*")
   }
 
-  async grant(capability, key) {
+  async grant(capability: string, key: Uint8Array) {
     // Merge current keys with the new key
-    const capabilities = new Set([...(this._db.get(capability) || []), ...[key]])
+    const capabilities = new Set([...(this._db.get(capability) || []), ...[Buffer.from(key).toString()]])
     await this._db.put(capability, Array.from(capabilities.values()))
   }
 
-  async revoke(capability, key) {
+  async revoke(capability: string, key: Uint8Array) {
     const capabilities = new Set(this._db.get(capability) || [])
-    capabilities.delete(key)
+    capabilities.delete(Buffer.from(key).toString())
     if (capabilities.size > 0) {
       await this._db.put(capability, Array.from(capabilities.values()))
     } else {

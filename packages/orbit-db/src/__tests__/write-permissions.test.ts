@@ -164,7 +164,7 @@ Object.keys(testAPIs).forEach(API => {
             // Make sure peer 2's instance throws an error
             err = e.toString()
           }
-          assert.strictEqual(err, `Error: Could not append entry, key "${orbitdb2.identity.id}" is not allowed to write to the log`)
+          assert.strictEqual(err, `Error: Could not append Entry<T>, key "${orbitdb2.identity.id}" is not allowed to write to the log`)
 
           // Make sure nothing was added to the database
           assert.strictEqual(database.query(db1).length, 0)
@@ -209,7 +209,7 @@ Object.keys(testAPIs).forEach(API => {
           } catch (e) {
             err = e.toString()
           }
-          assert.strictEqual(err, `Error: Could not append entry, key "${orbitdb2.identity.id}" is not allowed to write to the log`)
+          assert.strictEqual(err, `Error: Could not append Entry<T>, key "${orbitdb2.identity.id}" is not allowed to write to the log`)
         })
       })
     })

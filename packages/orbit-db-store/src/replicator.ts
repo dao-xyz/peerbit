@@ -1,5 +1,4 @@
 import { default as PQueue } from 'p-queue'
-
 import { Log } from '@dao-xyz/ipfs-log'
 import { IPFS } from 'ipfs-core-types/src/'
 import { Identity } from '@dao-xyz/orbit-db-identity-provider'
@@ -11,15 +10,15 @@ const flatMap = (res, val) => res.concat(val)
 
 const defaultConcurrency = 32
 
-interface Store {
-  _oplog: Log<any>;
+interface Store<T> {
+  _oplog: Log<T>;
   _ipfs: IPFS;
   identity: Identity;
   id: string;
-  access: AccessController
+  access: AccessController<T>
 }
-export class Replicator {
-  _store: Store
+export class Replicator<T> {
+  _store: Store<T>
   _concurrency: number;
   _q: PQueue;
   _logs: any[];
@@ -97,7 +96,7 @@ export class Replicator {
     Process new heads.
     Param 'entries' is an Array of Entry instances or strings (of CIDs).
    */
-  async load(entries: (Entry | string)[]) {
+  async load(entries: (Entry<T> | string)[]) {
     try {
       // Add entries to the replication queue
       this._addToQueue(entries)
@@ -106,7 +105,7 @@ export class Replicator {
     }
   }
 
-  async _addToQueue(entries: (Entry | string)[]) {
+  async _addToQueue(entries: (Entry<T> | string)[]) {
     // Function to determine if an entry should be fetched (ie. do we have it somewhere already?)
     const shouldExclude = (h: string) => h && this._store._oplog && (this._store._oplog.has(h) || this._fetching[h] !== undefined || this._fetched[h])
 
@@ -161,14 +160,14 @@ export class Replicator {
     this._fetched = {}
   }
 
-  async _replicateLog(entry: Entry) {
+  async _replicateLog(entry: Entry<T>) {
     const hash = entry.hash || entry
     if (typeof hash !== 'string') {
       throw new Error("Unexpected hash format");
     }
 
     // Notify the Store that we made progress
-    const onProgressCallback = (entry: Entry) => {
+    const onProgressCallback = (entry: Entry<T>) => {
       this._fetched[entry.hash] = true
       if (this.onReplicationProgress) {
         this.onReplicationProgress(entry)

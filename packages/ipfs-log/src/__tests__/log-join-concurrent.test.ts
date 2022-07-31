@@ -16,7 +16,7 @@ const {
 let ipfsd, ipfs, testIdentity
 
 Object.keys(testAPIs).forEach(IPFS => {
-  describe('Log - Join Concurrent Entries (' + IPFS + ')', function () {
+  describe('Log - Join Concurrent Entries', function () {
     jest.setTimeout(config.timeout)
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
@@ -26,7 +26,8 @@ Object.keys(testAPIs).forEach(IPFS => {
       rmrf.sync(signingKeysPath)
       await fs.copy(identityKeyFixtures(__dirname), identityKeysPath)
       await fs.copy(signingKeyFixtures(__dirname), signingKeysPath)
-      testIdentity = await Identities.createIdentity({ id: 'userA', identityKeysPath, signingKeysPath })
+      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), identityKeysPath, signingKeysPath })
+
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })

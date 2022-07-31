@@ -1,11 +1,10 @@
 import { EntryIO } from "../entry-io"
 import { Log } from "../log"
-
+import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
-const Keystore = require('orbit-db-keystore')
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
 const {
@@ -20,7 +19,7 @@ let ipfsd, ipfs, testIdentity, testIdentity2, testIdentity3, testIdentity4
 const last = arr => arr[arr.length - 1]
 
 Object.keys(testAPIs).forEach((IPFS) => {
-  describe('Entry - Persistency (' + IPFS + ')', function () {
+  describe('Entry - Persistency', function () {
     jest.setTimeout(config.timeout)
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config

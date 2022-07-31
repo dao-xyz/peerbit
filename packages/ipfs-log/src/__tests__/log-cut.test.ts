@@ -4,7 +4,7 @@ const fs = require('fs-extra')
 import { Log } from '../log'
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { assertPayload } from './utils/assert'
-const Keystore = require('orbit-db-keystore')
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
 const {
@@ -17,7 +17,7 @@ const {
 let ipfsd, ipfs, testIdentity
 
 Object.keys(testAPIs).forEach((IPFS) => {
-  describe('Log - Cut (' + IPFS + ')', function () {
+  describe('Log - Cut', function () {
     jest.setTimeout(config.timeout)
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
@@ -33,7 +33,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
 
-      testIdentity = await Identities.createIdentity({ id: 'userA', keystore, signingKeystore })
+      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
+
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })
@@ -49,7 +50,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
 
     it('cut back to max oplog length', async () => {
-      const log = new Log(ipfs, testIdentity, { logId: 'A', recycle: { maxOplogLength: 1 } })
+      const log = new Log<string>(ipfs, testIdentity, { logId: 'A', recycle: { maxOplogLength: 1 } })
       await log.append('hello1')
       await log.append('hello2')
       await log.append('hello3')
@@ -58,7 +59,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     it('cut back to cut length', async () => {
-      const log = new Log(ipfs, testIdentity, { logId: 'A', recycle: { maxOplogLength: 3, cutOplogToLength: 1 } })
+      const log = new Log<string>(ipfs, testIdentity, { logId: 'A', recycle: { maxOplogLength: 3, cutOplogToLength: 1 } })
       await log.append('hello1')
       await log.append('hello2')
       await log.append('hello3')

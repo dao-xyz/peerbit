@@ -82,7 +82,7 @@ class Entry {
     entry.data.key = identity.publicKey
     entry.data.identity = identity.toSerializable()
     entry.sig = signature
-    entry.hash = await Entry.toMultihash(ipfs, entry, pin)
+    entry.hash = await Entry.toMultihash(ipfs, entry,  pin)
 
     return entry
   }
@@ -126,7 +126,7 @@ class Entry {
    * // "Qm...Foo"
    * @deprecated
    */
-  static async toMultihash (ipfs, entry, pin = false) {
+  static async toMultihash (ipfs, entry,  pin = false) {
     if (!ipfs) throw IpfsNotDefinedError()
     if (!Entry.isEntry(entry)) throw new Error('Invalid object format, cannot generate entry hash')
 

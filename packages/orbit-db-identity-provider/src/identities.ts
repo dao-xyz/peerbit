@@ -3,9 +3,11 @@ import { EthIdentityProvider, EthIdentityProviderOptions } from "./ethereum-iden
 import { Identity, IdentitySerializable, Signatures } from "./identity"
 import { IdentityProvider } from "./identity-provider-interface"
 import { OrbitDBIdentityProvider } from "./orbit-db-identity-provider"
-import Keystore from 'orbit-db-keystore'
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 import LRU from 'lru'
 import path from 'path'
+import { Ed25519PublicKey } from 'sodium-plus';
+import { joinUint8Arrays } from "./utils"
 
 const defaultType = 'orbitdb'
 const identityKeysPath = path.join('./orbitdb', 'identity', 'identitykeys')
@@ -24,9 +26,9 @@ const getHandlerFor = (type: string) => {
 }
 
 export class Identities {
-  _keystore: any;
-  _signingKeystore: any;
-  _knownIdentities: any;
+  _keystore: Keystore;
+  _signingKeystore: Keystore;
+  _knownIdentities: { get(id: string): IdentitySerializable, set(id: string, identity: IdentitySerializable): void };
 
   constructor(options) {
     this._keystore = options.keystore
@@ -40,8 +42,8 @@ export class Identities {
 
   get signingKeystore() { return this._signingKeystore }
 
-  async sign(identity: IdentitySerializable, data) {
-    const signingKey = await this.keystore.getKey(identity.id)
+  async sign(identity: Identity | IdentitySerializable, data: Uint8Array) {
+    const signingKey = await this.keystore.getKey(Buffer.from(identity.id).toString())
     if (!signingKey) {
       throw new Error('Private signing key not found from Keystore')
     }
@@ -50,11 +52,11 @@ export class Identities {
   }
 
 
-  async verify(signature: string, publicKey: string, data, verifier = 'v1') {
-    return this.keystore.verify(signature, publicKey, data, verifier)
+  async verify(signature: Uint8Array, publicKey: Ed25519PublicKey, data) {
+    return this.keystore.verify(signature, publicKey, data)
   }
 
-  async createIdentity(options: { type?: string, keystore?: typeof Keystore, signingKeystore?: typeof Keystore, id?: string, migrate?: (options: { targetStore: any, targetId: string }) => Promise<void> } & DIDIdentityProviderOptions & EthIdentityProviderOptions = {}) {
+  async createIdentity(options: { type?: string, keystore?: Keystore, signingKeystore?: Keystore, id?: Uint8Array, migrate?: (options: { targetStore: any, targetId: Uint8Array }) => Promise<void> } & DIDIdentityProviderOptions & EthIdentityProviderOptions = {}) {
     const keystore = options.keystore || this.keystore
     const type = options.type || defaultType
     const identityProvider = type === defaultType ? new OrbitDBIdentityProvider(options.signingKeystore || keystore) : new (getHandlerFor(type))(options as any)
@@ -63,59 +65,67 @@ export class Identities {
     if (options.migrate) {
       await options.migrate({ targetStore: keystore._store, targetId: id })
     }
+
     const { publicKey, idSignature } = await this.signId(id)
-    const pubKeyIdSignature = await identityProvider.sign(publicKey + idSignature, options)
-    return new Identity({
-      id, publicKey, signatures: new Signatures({
+    const publicKeyBytes = new Uint8Array(publicKey.getBuffer());
+    const pubKeyIdSignature = await identityProvider.sign(joinUint8Arrays([publicKeyBytes, idSignature]), options)
+
+
+    const identity = new Identity({
+      id, publicKey: publicKeyBytes, signatures: new Signatures({
         id: idSignature, publicKey: pubKeyIdSignature
       }), type, provider: this
     })
+    return identity;
   }
 
-  async signId(id: string) {
+  async signId(id: Uint8Array) {
     const keystore = this.keystore
-    const key = await keystore.getKey(id) || await keystore.createKey(id)
-    const publicKey = keystore.getPublic(key)
+    const idString = Buffer.from(id).toString();
+    const existingKey = await keystore.getKey(idString);
+    const key = existingKey || await keystore.createKey(idString)
+    const publicKey = await Keystore.getPublicSign(key)
     const idSignature = await keystore.sign(key, id)
     return { publicKey, idSignature }
   }
 
-  async verifyIdentity(identity: IdentitySerializable) {
+  async verifyIdentity(identity: Identity | IdentitySerializable) {
     if (!Identity.isIdentity(identity)) {
       return false
     }
 
-    const knownID = this._knownIdentities.get(identity.signatures.id)
+    const identityHex = Buffer.from(identity.signatures.id).toString();
+    const knownID = this._knownIdentities.get(identityHex)
     if (knownID) {
-      return identity.id === knownID.id &&
-        identity.publicKey === knownID.publicKey &&
-        identity.signatures.id === knownID.signatures.id &&
-        identity.signatures.publicKey === knownID.signatures.publicKey
+      return identity.equals(knownID)
     }
 
     const verifyIdSig = await this.keystore.verify(
       identity.signatures.id,
-      identity.publicKey,
+      new Ed25519PublicKey(Buffer.from(identity.publicKey)),
       identity.id
     )
-    if (!verifyIdSig) return false
+
+    if (!verifyIdSig) {
+      return false
+    }
 
     const IdentityProvider = getHandlerFor(identity.type)
     const verified = await IdentityProvider.verifyIdentity(identity)
     if (verified) {
-      this._knownIdentities.set(identity.signatures.id, identity)
+      this._knownIdentities.set(identityHex, identity instanceof Identity ? identity.toSerializable() : identity)
     }
     return verified
   }
 
-  static async verifyIdentity(identity) {
+  static async verifyIdentity(identity: Identity) {
     if (!Identity.isIdentity(identity)) {
       return false
     }
 
-    const verifyIdSig = await (Keystore as any).verify(
+    const verifyIdSig = await Keystore.verify(
       identity.signatures.id,
-      identity.publicKey,
+      new Ed25519PublicKey(Buffer.from(identity.publicKey)),
       identity.id
     )
 
@@ -125,7 +135,7 @@ export class Identities {
     return IdentityProvider.verifyIdentity(identity)
   }
 
-  static async createIdentity(options: { type?: string, identityKeysPath?: string, signingKeysPath?: string, keystore?: typeof Keystore, signingKeystore?: typeof Keystore, id?: string, migrate?: (options: { targetStore: any, targetId: string }) => Promise<void> } & DIDIdentityProviderOptions & EthIdentityProviderOptions = {}) {
+  static async createIdentity(options: { type?: string, identityKeysPath?: string, signingKeysPath?: string, keystore?: Keystore, signingKeystore?: Keystore, id?: Uint8Array, migrate?: (options: { targetStore: any, targetId: Uint8Array }) => Promise<void> } & DIDIdentityProviderOptions & EthIdentityProviderOptions = {}) {
     if (!options.keystore) {
       options.keystore = new (Keystore as any)(options.identityKeysPath || identityKeysPath)
     }

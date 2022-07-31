@@ -1,7 +1,8 @@
 import { Entry } from '@dao-xyz/ipfs-log-entry';
-import { LamportClock as Clock } from '@dao-xyz/ipfs-log-entry'
+import { LamportClock as Clock, arraysCompare } from '@dao-xyz/ipfs-log-entry'
+import { arraysEqual } from '@dao-xyz/orbit-db-keystore';
 
-export type ISortFunction = (a: Entry, b: Entry, resolveConflict?: (a: Entry, b: Entry) => number) => number;
+export type ISortFunction = <T> (a: Entry<T>, b: Entry<T>, resolveConflict?: (a: Entry<T>, b: Entry<T>) => number) => number;
 /**
  * Sort two entries as Last-Write-Wins (LWW).
  *
@@ -12,7 +13,7 @@ export type ISortFunction = (a: Entry, b: Entry, resolveConflict?: (a: Entry, b:
  * @param {Entry} b Second entry
  * @returns {number} 1 if a is latest, -1 if b is latest
  */
-export const LastWriteWins: ISortFunction = (a: Entry, b: Entry) => {
+export const LastWriteWins: ISortFunction = <T>(a: Entry<T>, b: Entry<T>) => {
   // Ultimate conflict resolution (take the first/left arg)
   const First = (a, b) => a
   // Sort two entries by their clock id, if the same always take the first
@@ -50,7 +51,7 @@ export const SortByEntryHash: ISortFunction = (a, b) => {
  * @param {function(a, b)} resolveConflict A function to call if entries are concurrent (happened at the same time). The function should take in two entries and return 1 if the first entry should be chosen and -1 if the second entry should be chosen.
  * @returns {number} 1 if a is greater, -1 if b is greater
  */
-export const SortByClocks: ISortFunction = (a: Entry, b: Entry, resolveConflict) => {
+export const SortByClocks: ISortFunction = <T>(a: Entry<T>, b: Entry<T>, resolveConflict) => {
   // Compare the clocks
   const diff = Clock.compare(a.data.clock, b.data.clock)
   // If the clocks are concurrent, use the provided
@@ -68,9 +69,10 @@ export const SortByClocks: ISortFunction = (a: Entry, b: Entry, resolveConflict)
 export const SortByClockId: ISortFunction = (a, b, resolveConflict) => {
   // Sort by ID if clocks are concurrent,
   // take the entry with a "greater" clock id
-  return a.data.clock.id === b.data.clock.id
-    ? resolveConflict(a, b)
-    : a.data.clock.id < b.data.clock.id ? -1 : 1
+  const clockCompare = arraysCompare(a.data.clock.id, b.data.clock.id);
+  return clockCompare === 0 ?
+    resolveConflict(a, b)
+    : clockCompare
 }
 
 /**
@@ -82,7 +84,7 @@ export const SortByClockId: ISortFunction = (a, b, resolveConflict) => {
 export const NoZeroes = (func: ISortFunction) => {
   const msg = `Your log's tiebreaker function, ${func.name}, has returned zero and therefore cannot be`
 
-  const comparator = (a: Entry, b: Entry) => {
+  const comparator = <T>(a: Entry<T>, b: Entry<T>) => {
     // Validate by calling the function
     const result = func(a, b)
     if (result === 0) { throw Error(msg) }

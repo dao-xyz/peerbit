@@ -17,20 +17,20 @@ export class KeyValueIndex {
     }
 
     updateIndex(oplog: Log<any>) {
-        const values = oplog.payloadsDecoded
+        const values = oplog.values
         const handled = {}
         for (let i = values.length - 1; i >= 0; i--) {
             const item = values[i]
-            if (handled[item.payload.key]) {
+            if (handled[item.data.payload.key]) {
                 continue
             }
-            handled[item.payload.key] = true
-            if (item.payload.op === 'PUT') {
-                this._index[item.payload.key] = item.payload.value
+            handled[item.data.payload.key] = true
+            if (item.data.payload.op === 'PUT') {
+                this._index[item.data.payload.key] = item.data.payload.value
                 continue
             }
-            if (item.payload.op === 'DEL') {
-                delete this._index[item.payload.key]
+            if (item.data.payload.op === 'DEL') {
+                delete this._index[item.data.payload.key]
                 continue
             }
         }

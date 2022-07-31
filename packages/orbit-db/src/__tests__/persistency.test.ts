@@ -39,7 +39,7 @@ Object.keys(testAPIs).forEach(API => {
 
       const entryCount = 65
 
-      let ipfsd, ipfs, orbitdb1: OrbitDB, db: EventStore, address
+      let ipfsd, ipfs, orbitdb1: OrbitDB, db: EventStore<{ value: string }>, address
 
       beforeAll(async () => {
         const options: any = Object.assign({}, test.orbitDBConfig)

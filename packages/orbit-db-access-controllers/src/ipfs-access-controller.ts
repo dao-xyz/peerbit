@@ -5,8 +5,9 @@ import { Identities } from '@dao-xyz/orbit-db-identity-provider';
 
 const type = 'ipfs'
 
-export class IPFSAccessController extends AccessController {
-  constructor(ipfs, options?: any) {
+export class IPFSAccessController<T> extends AccessController<T> {
+  _write: string[];
+  constructor(ipfs, options?: { write?: string[] }) {
     super()
     this._ipfs = ipfs
     this._write = Array.from(options.write || [])
@@ -20,10 +21,10 @@ export class IPFSAccessController extends AccessController {
     return this._write
   }
 
-  async canAppend(entry: Entry, identityProvider: Identities) {
+  async canAppend<T>(entry: Entry<T>, identityProvider: Identities) {
     // Allow if access list contain the writer's publicKey or is '*'
     const key = entry.data.identity.id
-    if (this.write.includes(key) || this.write.includes('*')) {
+    if (this.write.includes(Buffer.from(key).toString()) || this.write.includes('*')) {
       // check identity is valid
       return identityProvider.verifyIdentity(entry.data.identity)
     }
@@ -38,7 +39,7 @@ export class IPFSAccessController extends AccessController {
     try {
       this._write = (await io.read(this._ipfs, address) as any).write;
       if (typeof this.write === 'string') {
-        this._write = JSON.parse(this._write);
+        this._write = JSON.parse(this._write as any as string);
       }
     } catch (e) {
       console.log('IPFSAccessController.load ERROR:', e)
@@ -56,8 +57,8 @@ export class IPFSAccessController extends AccessController {
     return { address: cid }
   }
 
-  static async create(orbitdb, options: any = {}) {
-    options = { ...options, ...{ write: options.write || [orbitdb.identity.id] } }
+  static async create(orbitdb, options: { write?: string[] } = {}) {
+    options = { ...options, ...{ write: options.write || [Buffer.from(orbitdb.identity.id).toString()] } }
     return new IPFSAccessController(orbitdb._ipfs, options)
   }
 }

@@ -7,12 +7,12 @@ import { Entry } from '@dao-xyz/ipfs-log-entry';
  * Any OrbitDB access controller needs to define and implement
  * the methods defined by the interface here.
  */
-export abstract class AccessController extends EventEmitter {
+export abstract class AccessController<T> extends EventEmitter {
   /*
     Every AC needs to have a 'Factory' method
     that creates an instance of the AccessController
   */
-  static async create(orbitdb, options): Promise<AccessController> {
+  static async create<T>(orbitdb, options): Promise<AccessController<T>> {
     throw new Error("Not implemented")
 
   }
@@ -41,7 +41,7 @@ export abstract class AccessController extends EventEmitter {
     be allowed in the database. Return true if the entry is allowed,
     false is not allowed
   */
-  async canAppend(entry: Entry, identityProvider): Promise<boolean> {
+  async canAppend<T>(entry: Entry<T>, identityProvider): Promise<boolean> {
     throw new Error("Not implemented")
   }
 

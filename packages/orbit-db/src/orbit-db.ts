@@ -1,5 +1,5 @@
 import path from 'path'
-import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store'
+import { Constructor, IStoreOptions, Store } from '@dao-xyz/orbit-db-store'
 import io from '@dao-xyz/orbit-db-io'
 import { PubSub } from '@dao-xyz/orbit-db-pubsub'
 import Storage from 'orbit-db-storage-adapter'
@@ -9,7 +9,7 @@ import { Identity, Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import { AccessControllers } from '@dao-xyz/orbit-db-access-controllers' // Fix fork
 import Cache from '@dao-xyz/orbit-db-cache'
-import Keystore from 'orbit-db-keystore'
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 import { isDefined } from './is-defined'
 import { OrbitDBAddress } from './orbit-db-address'
 import { createDBManifest } from './db-manifest'
@@ -21,15 +21,13 @@ let AccessControllersModule = AccessControllers;
 Logger.setLogLevel('ERROR')
 
 // Mapping for 'database type' -> Class
-const databaseTypes = {
-
-}
+const databaseTypes: { [key: string]: Constructor<Store<any, any, any>> } = {}
 
 const defaultTimeout = 30000 // 30 seconds
 
 
 export type Storage = { createStore: (string) => any }
-export type CreateOptions = { AccessControllers?: any, cache?: Cache, keystore?: typeof Keystore, peerId?: string, offline?: boolean, directory?: string, storage?: Storage, broker?: any };
+export type CreateOptions = { AccessControllers?: any, cache?: Cache, keystore?: Keystore, peerId?: string, offline?: boolean, directory?: string, storage?: Storage, broker?: any };
 export type CreateInstanceOptions = CreateOptions & { identity?: Identity, id?: string };
 export class OrbitDB {
   _ipfs: IPFSInstance;
@@ -128,7 +126,7 @@ export class OrbitDB {
 
     if (!options.identity) {
       options.identity = await Identities.createIdentity({
-        id: id,
+        id: new Uint8Array(Buffer.from(id)),
         keystore: options.keystore
       })
     }
@@ -184,13 +182,13 @@ export class OrbitDB {
     await this.disconnect()
   }
 
-  async _createCache(path) {
+  async _createCache(path: string) {
     const cacheStorage = await this.storage.createStore(path)
     return new Cache(cacheStorage)
   }
 
   /* Private methods */
-  async _createStore(type, address, options: { identity?: Identity, accessControllerAddress?: string } & IStoreOptions<any, any>) {
+  async _createStore<T>(type: string, address, options: { identity?: Identity, accessControllerAddress?: string } & IStoreOptions<T, any>) {
     // Get the type -> class mapping
     const Store = databaseTypes[type]
 
@@ -238,7 +236,7 @@ export class OrbitDB {
   }
 
   // Callback for local writes to the database. We the update to pubsub.
-  _onWrite(address: string, _entry: Entry, heads: Entry[]) {
+  _onWrite<T>(address: string, _entry: Entry<T>, heads: Entry<T>[]) {
     if (!heads) {
       throw new Error("'heads' not defined")
     }
@@ -251,7 +249,7 @@ export class OrbitDB {
   }
 
   // Callback for receiving a message from the network
-  async _onMessage(address: string, data: Uint8Array, peer) {
+  async _onMessage(address: string, data: Uint8Array, peer: string) {
     const store = this.stores[address]
     try {
       const msg = deserialize(Buffer.from(data), Message)
@@ -274,7 +272,7 @@ export class OrbitDB {
   }
 
   // Callback for when a peer connected to a database
-  async _onPeerConnected(address, peer) {
+  async _onPeerConnected(address: string, peer: string) {
     logger.debug(`New peer '${peer}' connected to '${address}'`)
 
     const getStore = address => this.stores[address]
@@ -295,7 +293,7 @@ export class OrbitDB {
   }
 
   // Callback when database was closed
-  async _onClose(db) {
+  async _onClose(db: Store<any, any, any>) {
     const address = db.address.toString()
     logger.debug(`Close ${address}`)
 
@@ -315,20 +313,20 @@ export class OrbitDB {
     delete this.stores[address]
   }
 
-  async _onDrop(db) {
+  async _onDrop(db: Store<any, any, any>) {
     const address = db.address.toString()
     const dir = db && db.options.directory ? db.options.directory : this.directory
     await this._requestCache(address, dir, db._cache)
   }
 
-  async _onLoad(db) {
+  async _onLoad(db: Store<any, any, any>) {
     const address = db.address.toString()
     const dir = db && db.options.directory ? db.options.directory : this.directory
     await this._requestCache(address, dir, db._cache)
     this.stores[address] = db
   }
 
-  async _determineAddress(name, type, options: { nameResolver?: (name: string) => string, accessController?: any, onlyHash?: boolean } = {}) {
+  async _determineAddress(name: string, type: string, options: { nameResolver?: (name: string) => string, accessController?: any, onlyHash?: boolean } = {}) {
     if (!OrbitDB.isValidType(type)) { throw new Error(`Invalid database type '${type}'`) }
 
     name = options?.nameResolver ? options.nameResolver(name) : name;
@@ -354,11 +352,16 @@ export class OrbitDB {
     }
   */
   async create(name, type, options: {
-    cache?: Cache, directory?: string, accessController?: any,
+    identity?: Identity,
+    cache?: Cache,
+    directory?: string,
     onlyHash?: boolean,
     overwrite?: boolean,
+    accessController?: any,
+    timeout?: number,
     create?: boolean,
-    replicationConcurrency?: number
+    type?: string,
+    localOnly?: boolean
   } = {}) {
     logger.debug('create()')
 
@@ -414,15 +417,16 @@ export class OrbitDB {
       }
    */
   async open(address, options: {
+    identity?: Identity,
     cache?: Cache,
     directory?: string,
     accessController?: any,
     onlyHash?: boolean,
     overwrite?: boolean,
+    timeout?: number,
     create?: boolean,
     type?: string,
-    localOnly?: boolean,
-    timeout?: number
+    localOnly?: boolean
   } = {}) {
     logger.debug('open()')
 

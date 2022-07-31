@@ -4,7 +4,7 @@ const fs = require('fs-extra')
 import { Log } from '../log'
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { assertPayload } from './utils/assert'
-const Keystore = require('orbit-db-keystore')
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
 const {
@@ -17,12 +17,11 @@ const {
 let ipfsd, ipfs, testIdentity
 
 Object.keys(testAPIs).forEach((IPFS) => {
-  describe('Log - Append (' + IPFS + ')', function () {
+  describe('Log - Append', function () {
     jest.setTimeout(config.timeout)
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
-
-    let keystore, signingKeystore
+    let keystore: Keystore, signingKeystore
 
     beforeAll(async () => {
       rmrf.sync(identityKeysPath)
@@ -33,7 +32,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
 
-      testIdentity = await Identities.createIdentity({ id: 'userA', keystore, signingKeystore })
+      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })
@@ -89,7 +88,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const amount = 100
       const nextPointerAmount = 64
 
-      let log
+      let log: Log<string>
 
       beforeAll(async () => {
         log = new Log(ipfs, testIdentity, { logId: 'A' })

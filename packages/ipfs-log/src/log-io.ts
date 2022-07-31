@@ -36,10 +36,10 @@ export class LogIO {
    * @param {string} hash The hash of the log
    * @param {Object} options
    * @param {number} options.length How many items to include in the log
-   * @param {Array<Entry>} options.exclude Entries to not fetch (cached)
-   * @param {function(hash, entry, parent, depth)} options.onProgressCallback
+   * @param {Array<Entry<T>>} options.exclude Entries to not fetch (cached)
+   * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
    */
-  static async fromMultihash<T>(ipfs, hash, options: EntryFetchAllOptions & { sortFn: any }) {
+  static async fromMultihash<T>(ipfs, hash, options: EntryFetchAllOptions<T> & { sortFn: any }) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(hash)) throw new Error(`Invalid hash: ${hash}`)
 
@@ -66,11 +66,11 @@ export class LogIO {
    * @param {string} hash The hash of the entry
    * @param {Object} options
    * @param {number} options.length How many items to include in the log
-   * @param {Array<Entry>} options.exclude Entries to not fetch (cached)
-   * @param {function(hash, entry, parent, depth)} options.onProgressCallback
+   * @param {Array<Entry<T>>} options.exclude Entries to not fetch (cached)
+   * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
    */
-  static async fromEntryHash(ipfs, hash: string[] | string,
-    options: EntryFetchAllOptions & { sortFn?: ISortFunction }) {
+  static async fromEntryHash<T>(ipfs, hash: string[] | string,
+    options: EntryFetchAllOptions<T> & { sortFn?: ISortFunction }) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(hash)) throw new Error("'hash' must be defined")
     // Convert input hash(s) to an array
@@ -83,7 +83,7 @@ export class LogIO {
       }
     }
 
-    const all = await EntryIO.fetchParallel(ipfs, hashes,
+    const all = await EntryIO.fetchParallel<T>(ipfs, hashes,
       options)
     // Cap the result at the right size by taking the last n entries,
     // or if given length is -1, then take all
@@ -99,13 +99,13 @@ export class LogIO {
    * @param {json} json A json object containing valid log data
    * @param {Object} options
    * @param {number} options.length How many entries to include
-   * @param {function(hash, entry, parent, depth)} options.onProgressCallback
+   * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
    **/
-  static async fromJSON(ipfs, json, options: EntryFetchAllOptions) {
+  static async fromJSON<T>(ipfs, json: { id: string, heads: string[] | Entry<T>[] }, options: EntryFetchAllOptions<T>) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     const { id, heads } = json
     const headHashes = heads.map(e => e.hash)
-    const all = await EntryIO.fetchParallel(ipfs, headHashes, options)
+    const all: Entry<T>[] = await EntryIO.fetchParallel(ipfs, headHashes, options)
     const entries = all.sort(Entry.compare)
     return { logId: id, entries, heads }
   }
@@ -113,13 +113,13 @@ export class LogIO {
   /**
    * Create a new log starting from an entry.
    * @param {IPFS} ipfs An IPFS instance
-   * @param {Entry|Array<Entry>} sourceEntries An entry or an array of entries to fetch a log from
+   * @param {Entry|Array<Entry<T>>} sourceEntries An entry or an array of entries to fetch a log from
    * @param {Object} options
    * @param {number} options.length How many entries to include
-   * @param {Array<Entry>} options.exclude Entries to not fetch (cached)
-   * @param {function(hash, entry, parent, depth)} options.onProgressCallback
+   * @param {Array<Entry<T>>} options.exclude Entries to not fetch (cached)
+   * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
    */
-  static async fromEntry(ipfs, sourceEntries, options: EntryFetchAllOptions) {
+  static async fromEntry<T>(ipfs, sourceEntries: Entry<T>[] | Entry<T>, options: EntryFetchAllOptions<T>) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(sourceEntries)) throw new Error("'sourceEntries' must be defined")
 
@@ -158,7 +158,7 @@ export class LogIO {
     // in order to not lose references
     const missingSourceEntries = difference(sliced, sourceEntries, 'hash')
 
-    const replaceInFront = (a, withEntries) => {
+    const replaceInFront = (a: Entry<T>[], withEntries: Entry<T>[]): Entry<T>[] => {
       const sliced = a.slice(withEntries.length, a.length)
       return withEntries.concat(sliced)
     }
@@ -166,7 +166,7 @@ export class LogIO {
     // Add the input entries at the beginning of the array and remove
     // as many elements from the array before inserting the original entries
     const entries = replaceInFront(sliced, missingSourceEntries)
-    const logId = entries[entries.length - 1].id
+    const logId = entries[entries.length - 1].data.id
     return { logId, entries }
   }
 }

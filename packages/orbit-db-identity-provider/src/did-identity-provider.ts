@@ -2,7 +2,8 @@ import { IdentityProvider } from "./identity-provider-interface"
 
 import * as u8a from 'uint8arrays'
 import { DID } from 'dids'
-import { IdentitySerializable } from "./identity";
+import { Identity, IdentitySerializable } from "./identity";
+import { joinUint8Arrays } from "./utils";
 
 const TYPE = 'DID'
 export type DIDIdentityProviderOptions = { didProvider?: any };
@@ -25,15 +26,15 @@ export class DIDIdentityProvider extends IdentityProvider {
 
   async getId({ }) {
     if (!this.did.authenticated) await this.did.authenticate()
-    return this.did.id
+    return new Uint8Array(Buffer.from(this.did.id))
   }
 
-  async sign(data, { }) {
+  async sign(data: Uint8Array, { }): Promise<Uint8Array> {
     if (!this.did.authenticated) await this.did.authenticate()
-    const payload = u8a.toString(u8a.fromString(data, 'base16'), 'base64url')
+    const payload = u8a.toString(data, 'base64url')
     const jws = await this.did.createJWS(payload)
     // encode as JWS with detached payload
-    return `${jws.signatures[0].protected}..${jws.signatures[0].signature}`
+    return new Uint8Array(Buffer.from(`${jws.signatures[0].protected}..${jws.signatures[0].signature}`))
   }
 
   static setDIDResolver(resolver) {
@@ -44,14 +45,14 @@ export class DIDIdentityProvider extends IdentityProvider {
     }
   }
 
-  static async verifyIdentity(identity: IdentitySerializable) {
+  static async verifyIdentity(identity: Identity | IdentitySerializable) {
     if (!this.did) {
       throw new Error('The DID resolver must first be set with setDIDResolver()')
     }
-    const data = identity.publicKey + identity.signatures.id
+    const data = joinUint8Arrays([identity.publicKey, identity.signatures.id]);
     try {
-      const payload = u8a.toString(u8a.fromString(data, 'base16'), 'base64url')
-      const [header, signature] = identity.signatures.publicKey.split('..')
+      const payload = u8a.toString(data, 'base64url')
+      const [header, signature] = Buffer.from(identity.signatures.publicKey).toString().split('..')
       const jws = [header, payload, signature].join('.')
       await this.did.verifyJWS(jws)
 

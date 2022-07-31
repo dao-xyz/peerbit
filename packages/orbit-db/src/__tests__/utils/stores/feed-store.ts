@@ -15,13 +15,13 @@ class FeedIndex {
 
     updateIndex(oplog: Log<any>) {
         this._index = {}
-        oplog.payloadsDecoded.reduce((handled, item) => {
-            if (!handled.includes(item.entry.hash)) {
-                handled.push(item.entry.hash)
-                if (item.payload.op === 'ADD') {
-                    this._index[item.entry.hash] = item
-                } else if (item.payload.op === 'DEL') {
-                    delete this._index[item.payload.value]
+        oplog.values.reduce((handled, item) => {
+            if (!handled.includes(item.hash)) {
+                handled.push(item.hash)
+                if (item.data.payload.op === 'ADD') {
+                    this._index[item.hash] = item
+                } else if (item.data.payload.op === 'DEL') {
+                    delete this._index[item.data.payload.value]
                 }
             }
             return handled

@@ -1,12 +1,12 @@
-import { Identity, Signatures } from "../identity"
+import { Identity, IdentitySerializable, Signatures } from "../identity"
 
 const assert = require('assert')
 
 describe('Identity', function () {
-  const id = '0x01234567890abcdefghijklmnopqrstuvwxyz'
-  const publicKey = '<pubkey>'
-  const idSignature = 'signature for <id>'
-  const publicKeyAndIdSignature = 'signature for <publicKey + idSignature>'
+  const id = new Uint8Array([0])
+  const publicKey = new Uint8Array([0])
+  const idSignature = new Uint8Array([0]) // 'signature for <id>'
+  const publicKeyAndIdSignature = new Uint8Array([0]) //'signature for <publicKey + idSignature>'
   const type = 'orbitdb'
   const provider = 'IdentityProviderInstance'
 
@@ -41,13 +41,13 @@ describe('Identity', function () {
   })
 
   it('converts identity to a JSON object', async () => {
-    const expected = {
+    const expected = new IdentitySerializable({
       id: id,
       publicKey: publicKey,
-      signatures: { id: idSignature, publicKey: publicKeyAndIdSignature },
+      signatures: new Signatures({ id: idSignature, publicKey: publicKeyAndIdSignature }),
       type: type
-    }
-    assert.deepStrictEqual(identity.toSerializable(), expected)
+    })
+    assert(identity.toSerializable().equals(expected))
   })
 
   describe('Constructor inputs', () => {

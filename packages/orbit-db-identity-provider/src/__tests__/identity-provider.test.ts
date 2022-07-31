@@ -4,13 +4,15 @@ import { Identity, Signatures } from "../identity"
 const assert = require('assert')
 const path = require('path')
 const rmrf = require('rimraf')
-const Keystore = require('orbit-db-keystore')
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 const fixturesPath = path.resolve(__dirname, 'fixtures/keys')
 const savedKeysPath = path.resolve(__dirname, 'fixtures/savedKeys')
 const signingKeysPath = path.resolve(__dirname, 'signingKeys')
 const identityKeysPath = path.resolve(__dirname, 'identityKeys')
 const migrate = require('localstorage-level-migration')
 import fs from 'fs-extra';
+import { joinUint8Arrays } from "../utils"
+import { Ed25519PublicKey } from "sodium-plus"
 const type = 'orbitdb'
 
 describe('Identity Provider', function () {
@@ -25,31 +27,36 @@ describe('Identity Provider', function () {
   })
 
   describe('Creating Identities', () => {
-    const id = 'A'
-    let identity
+    const id = new Uint8Array([1])
+    let identity: Identity
 
     it('identityKeysPath only - has the correct id', async () => {
       identity = await Identities.createIdentity({ id, identityKeysPath })
       const key = await identity.provider.keystore.getKey(id)
-      const externalId = Buffer.from(key.public.marshal()).toString('hex')
-      assert.strictEqual(identity.id, externalId)
+      const externalId = new Uint8Array((await Keystore.getPublicSign(key)).getBuffer());
+      assert.deepStrictEqual(identity.id, externalId)
     })
 
     it('identityKeysPath and signingKeysPath - has a different id', async () => {
       identity = await Identities.createIdentity({ id, identityKeysPath, signingKeysPath })
       const key = await identity.provider.keystore.getKey(id)
-      const externalId = Buffer.from(key.public.marshal()).toString('hex')
-      assert.notStrictEqual(identity.id, externalId)
+      const externalId = await Keystore.getPublicSign(key);
+      try {
+        assert.deepStrictEqual(identity.id, new Uint8Array(externalId.getBuffer()))
+        assert(false); // expected to not be deep equal
+      } catch (error) {
+        // Expected
+      }
     })
 
     afterEach(async () => {
-      await identity.provider.keystore.close()
-      await identity.provider.signingKeystore.close()
+      await identity?.provider.keystore.close()
+      await identity?.provider.signingKeystore.close()
     })
   })
 
   describe('Passing in custom keystore', () => {
-    const id = 'B'; let identity; let keystore; let signingKeystore
+    const id = new Uint8Array([1]); let identity: Identity; let keystore: Keystore; let signingKeystore: Keystore
 
     beforeAll(async () => {
       keystore = new Keystore(identityKeysPath)
@@ -60,8 +67,8 @@ describe('Identity Provider', function () {
       identity = await Identities.createIdentity({ id, keystore })
       keystore = identity.provider._keystore
       const key = await keystore.getKey(id)
-      const externalId = Buffer.from(key.public.marshal()).toString('hex')
-      assert.strictEqual(identity.id, externalId)
+      const externalId = await Keystore.getPublicSign(key);
+      assert.deepStrictEqual(identity.id, new Uint8Array(externalId.getBuffer()))
     })
 
     it('created a key for id in identity-keystore', async () => {
@@ -71,31 +78,31 @@ describe('Identity Provider', function () {
 
     it('has the correct public key', async () => {
       const key = await keystore.getKey(id)
-      const externalId = Buffer.from(key.public.marshal()).toString('hex')
+      const externalId = (await Keystore.getPublicSign(key)).toString();
       const signingKey = await keystore.getKey(externalId)
       assert.notStrictEqual(signingKey, undefined)
-      assert.strictEqual(identity.publicKey, keystore.getPublic(signingKey))
+      assert.deepStrictEqual(identity.publicKey, new Uint8Array((await Keystore.getPublicSign(signingKey)).getBuffer()))
     })
 
     it('has a signature for the id', async () => {
       const key = await keystore.getKey(id)
-      const externalId = Buffer.from(key.public.marshal()).toString('hex')
-      const signingKey = await keystore.getKey(externalId)
-      const idSignature = await keystore.sign(signingKey, externalId)
-      const publicKey = Buffer.from(signingKey.public.marshal()).toString('hex')
-      const verifies = await Keystore.verify(idSignature, publicKey, externalId)
+      const externalId = await Keystore.getPublicSign(key);
+      const signingKey = await keystore.getKey(externalId.toString())
+      const idSignature = await keystore.sign(signingKey, new Uint8Array(externalId.getBuffer()))
+      const publicKey = await Keystore.getPublicSign(signingKey);
+      const verifies = await Keystore.verify(idSignature, publicKey, new Uint8Array(externalId.getBuffer()))
       assert.strictEqual(verifies, true)
-      assert.strictEqual(identity.signatures.id, idSignature)
+      assert.deepStrictEqual(identity.signatures.id, idSignature)
     })
 
     it('has a signature for the publicKey', async () => {
       const key = await keystore.getKey(id)
-      const externalId = Buffer.from(key.public.marshal()).toString('hex')
-      const signingKey = await keystore.getKey(externalId)
-      const idSignature = await keystore.sign(signingKey, externalId)
+      const externalId = await Keystore.getPublicSign(key);
+      const signingKey = await keystore.getKey(externalId.toString())
+      const idSignature = await keystore.sign(signingKey, new Uint8Array(externalId.getBuffer()))
       const externalKey = await keystore.getKey(id)
-      const publicKeyAndIdSignature = await keystore.sign(externalKey, identity.publicKey + idSignature)
-      assert.strictEqual(identity.signatures.publicKey, publicKeyAndIdSignature)
+      const publicKeyAndIdSignature = await keystore.sign(externalKey, joinUint8Arrays([identity.publicKey, idSignature]))
+      assert.deepStrictEqual(identity.signatures.publicKey, publicKeyAndIdSignature)
     })
 
     afterAll(async () => {
@@ -105,21 +112,22 @@ describe('Identity Provider', function () {
   })
 
   describe('create an identity with saved keys', () => {
-    let keystore, signingKeystore
-    let savedKeysKeystore, identity
-    const id = 'QmPhnEjVkYE1Ym7F5MkRUfkD6NtuSptE7ugu1Ggr149W2X'
-
-    const expectedPublicKey = '040d78ff62afb656ac62db1aae3b1536a614991e28bb4d721498898b7d4194339640cd18c37b259e2c77738de0d6f9a5d52e0b936611de6b6ba78891a8b2a38317'
-    const expectedIdSignature = '30450221009de7b91952d73f577e85962aa6301350865212e3956862f80f4ebb626ffc126b022027d57415fb145b7e06cf06320fbfa63ea98a958b065726fe86eaab809a6bf607'
-    const expectedPkIdSignature = '304402202806e7c2406ca1f35961d38adc3997c179e142d54e1ca838ace373fae27124fd02200d6ca3aea6e1341bf5e4e0b84b559bbeefecfade34115de266a69d04d924905e'
-
+    let keystore: Keystore, signingKeystore: Keystore
+    let savedKeysKeystore: Keystore, identity: Identity
+    const id = new Uint8Array(Buffer.from('id'))
+    const expectedPublicKey = new Uint8Array([61, 50, 55, 131, 68, 105, 166, 252, 107, 230, 133, 159, 99, 94, 240, 206, 95, 72, 62, 253, 15, 17, 134, 70, 205, 95, 67, 18, 113, 62, 82, 6])
+    const expectedIdSignature = new Uint8Array([206, 225, 178, 3, 112, 79, 32, 3, 151, 223, 222, 219, 148, 32, 124, 32, 149, 161, 57, 55, 140, 38, 206, 161, 251, 55, 174, 34, 241, 142, 238, 192, 150, 240, 227, 84, 21, 90, 64, 244, 232, 60, 243, 183, 70, 66, 131, 108, 64, 198, 207, 208, 79, 120, 253, 140, 20, 217, 49, 74, 163, 20, 69, 3, 189, 72, 227, 53, 75, 1, 197, 230, 169, 3, 198, 34, 185, 137, 137, 42, 127, 235, 216, 230, 195, 70, 245, 47, 186, 219, 8, 113, 188, 192, 140, 153])
+    const expectedPkIdSignature = new Uint8Array([253, 177, 245, 46, 128, 11, 77, 30, 124, 134, 147, 174, 23, 61, 183, 240, 12, 168, 235, 184, 104, 124, 61, 64, 244, 138, 108, 52, 19, 9, 112, 178, 41, 231, 231, 84, 105, 124, 162, 202, 194, 122, 141, 240, 40, 167, 178, 113, 11, 187, 101, 92, 180, 68, 177, 244, 55, 216, 156, 233, 135, 231, 222, 2, 61, 50, 55, 131, 68, 105, 166, 252, 107, 230, 133, 159, 99, 94, 240, 206, 95, 72, 62, 253, 15, 17, 134, 70, 205, 95, 67, 18, 113, 62, 82, 6, 206, 225, 178, 3, 112, 79, 32, 3, 151, 223, 222, 219, 148, 32, 124, 32, 149, 161, 57, 55, 140, 38, 206, 161, 251, 55, 174, 34, 241, 142, 238, 192, 150, 240, 227, 84, 21, 90, 64, 244, 232, 60, 243, 183, 70, 66, 131, 108, 64, 198, 207, 208, 79, 120, 253, 140, 20, 217, 49, 74, 163, 20, 69, 3, 189, 72, 227, 53, 75, 1, 197, 230, 169, 3, 198, 34, 185, 137, 137, 42, 127, 235, 216, 230, 195, 70, 245, 47, 186, 219, 8, 113, 188, 192, 140, 153])
 
     beforeAll(async () => {
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
       await fs.copy(fixturesPath, savedKeysPath)
       savedKeysKeystore = new Keystore(savedKeysPath)
+      /* const id = await savedKeysKeystore.createKey(id, 'sign'); */
       identity = await Identities.createIdentity({ id, keystore: savedKeysKeystore })
+      /*  */
+      const x = 132;
     })
 
 
@@ -130,11 +138,11 @@ describe('Identity Provider', function () {
 
     it('has the correct id', async () => {
       const key = await savedKeysKeystore.getKey(id)
-      assert.strictEqual(identity.id, Buffer.from(key.public.marshal()).toString('hex'))
+      assert.deepStrictEqual(identity.id, new Uint8Array((await Keystore.getPublicSign(key)).getBuffer()));
     })
 
     it('has the correct public key', async () => {
-      assert.strictEqual(identity.publicKey, expectedPublicKey)
+      assert.deepStrictEqual(identity.publicKey, expectedPublicKey)
     })
 
     it('has the correct identity type', async () => {
@@ -142,18 +150,18 @@ describe('Identity Provider', function () {
     })
 
     it('has the correct idSignature', async () => {
-      assert.strictEqual(identity.signatures.id, expectedIdSignature)
+      assert.deepStrictEqual(identity.signatures.id, expectedIdSignature)
     })
 
     it('has a pubKeyIdSignature for the publicKey', async () => {
-      assert.strictEqual(identity.signatures.publicKey, expectedPkIdSignature)
+      assert.deepStrictEqual(identity.signatures.publicKey, expectedPkIdSignature)
     })
 
     it('has the correct signatures', async () => {
-      const internalSigningKey = await savedKeysKeystore.getKey(identity.id)
+      const internalSigningKey = await savedKeysKeystore.getKey(Buffer.from(identity.id).toString())
       const externalSigningKey = await savedKeysKeystore.getKey(id)
       const idSignature = await savedKeysKeystore.sign(internalSigningKey, identity.id)
-      const pubKeyIdSignature = await savedKeysKeystore.sign(externalSigningKey, identity.publicKey + idSignature)
+      const pubKeyIdSignature = await savedKeysKeystore.sign(externalSigningKey, joinUint8Arrays([identity.publicKey, idSignature]))
       const expectedSignature = { id: idSignature, publicKey: pubKeyIdSignature }
       assert.deepStrictEqual({ ...identity.signatures }, expectedSignature)
     })
@@ -165,8 +173,8 @@ describe('Identity Provider', function () {
   })
 
   describe('verify identity\'s signature', () => {
-    const id = 'QmFoo'
-    let identity, keystore, signingKeystore
+    const id = new Uint8Array(Buffer.from('QmFoo'))
+    let identity: Identity, keystore: Keystore, signingKeystore
 
     beforeAll(async () => {
       keystore = new Keystore(identityKeysPath)
@@ -175,13 +183,13 @@ describe('Identity Provider', function () {
 
     it('identity pkSignature verifies', async () => {
       identity = await Identities.createIdentity({ id, type, keystore, signingKeystore })
-      const verified = await Keystore.verify(identity.signatures.id, identity.publicKey, identity.id)
+      const verified = await Keystore.verify(identity.signatures.id, new Ed25519PublicKey(Buffer.from(identity.publicKey)), identity.id)
       assert.strictEqual(verified, true)
     })
 
     it('identity signature verifies', async () => {
       identity = await Identities.createIdentity({ id, type, keystore, signingKeystore })
-      const verified = await Keystore.verify(identity.signatures.publicKey, identity.id, identity.publicKey + identity.signatures.id)
+      const verified = await Keystore.verify(identity.signatures.publicKey, new Ed25519PublicKey(Buffer.from(identity.id)), joinUint8Arrays([identity.publicKey, identity.signatures.id]))
       assert.strictEqual(verified, true)
     })
 
@@ -209,8 +217,8 @@ describe('Identity Provider', function () {
   })
 
   describe('verify identity', () => {
-    const id = 'QmFoo'
-    let identity, keystore, signingKeystore
+    const id = new Uint8Array(Buffer.from('QmFoo'))
+    let identity: Identity, keystore, signingKeystore
 
     beforeAll(async () => {
       keystore = new Keystore(identityKeysPath)
@@ -230,9 +238,9 @@ describe('Identity Provider', function () {
   })
 
   describe('sign data with an identity', () => {
-    const id = '0x01234567890abcdefghijklmnopqrstuvwxyz'
-    const data = 'hello friend'
-    let identity, keystore, signingKeystore
+    const id = new Uint8Array(Buffer.from('0x01234567890abcdefghijklmnopqrstuvwxyz'))
+    const data = new Uint8Array([1, 2, 3])
+    let identity: Identity, keystore: Keystore, signingKeystore: Keystore
 
     beforeAll(async () => {
       keystore = new Keystore(identityKeysPath)
@@ -241,21 +249,21 @@ describe('Identity Provider', function () {
     })
 
     it('sign data', async () => {
-      const signingKey = await keystore.getKey(identity.id)
+      const signingKey = await keystore.getKey(Buffer.from(identity.id).toString())
       const expectedSignature = await keystore.sign(signingKey, data)
-      const signature = await identity.provider.sign(identity, data, keystore)
-      assert.strictEqual(signature, expectedSignature)
+      const signature = await identity.provider.sign(identity, data)
+      assert.deepStrictEqual(signature, expectedSignature)
     })
 
     it('throws an error if private key is not found from keystore', async () => {
       // Remove the key from the keystore (we're using a mock storage in these tests)
       const modifiedIdentity = new Identity({
-        id: 'this id does not exist', publicKey: identity.publicKey, signatures: new Signatures({ id: '<sig>', publicKey: identity.signatures }), type: identity.type, provider: identity.provider
+        id: new Uint8Array([123]), publicKey: identity.publicKey, signatures: new Signatures({ id: new Uint8Array([0]), publicKey: identity.signatures.publicKey }), type: identity.type, provider: identity.provider
       })
       let signature
       let err
       try {
-        signature = await identity.provider.sign(modifiedIdentity, data, keystore)
+        signature = await identity.provider.sign(modifiedIdentity, data)
       } catch (e) {
         err = e.toString()
       }
@@ -270,9 +278,9 @@ describe('Identity Provider', function () {
   })
 
   describe('verify data signed by an identity', () => {
-    const id = '03602a3da3eb35f1148e8028f141ec415ef7f6d4103443edbfec2a0711d716f53f'
-    const data = 'hello friend'
-    let identity, keystore, signingKeystore
+    const id = new Uint8Array(Buffer.from('03602a3da3eb35f1148e8028f141ec415ef7f6d4103443edbfec2a0711d716f53f'))
+    const data = new Uint8Array(Buffer.from('hello friend'))
+    let identity: Identity, keystore: Keystore, signingKeystore: Keystore
     let signature
 
     beforeAll(async () => {
@@ -282,16 +290,16 @@ describe('Identity Provider', function () {
 
     beforeEach(async () => {
       identity = await Identities.createIdentity({ id, type, keystore, signingKeystore })
-      signature = await identity.provider.sign(identity, data, keystore)
+      signature = await identity.provider.sign(identity, data)
     })
 
     it('verifies that the signature is valid', async () => {
-      const verified = await identity.provider.verify(signature, identity.publicKey, data)
+      const verified = await identity.provider.verify(signature, new Ed25519PublicKey(Buffer.from(identity.publicKey)), data)
       assert.strictEqual(verified, true)
     })
 
     it('doesn\'t verify invalid signature', async () => {
-      const verified = await identity.provider.verify('invalid', identity.publicKey, data)
+      const verified = await identity.provider.verify(new Uint8Array([0, 0, 0]), new Ed25519PublicKey(Buffer.from(identity.publicKey)), data)
       assert.strictEqual(verified, false)
     })
 
@@ -304,12 +312,12 @@ describe('Identity Provider', function () {
   describe('create identity from existing keys', () => {
     const source = fixturesPath + '/existing'
     const publicKey = '045756c20f03ec494d07e8dd8456f67d6bd97ca175e6c4882435fe364392f131406db3a37eebe1d634b105a57b55e4f17247c1ec8ffe04d6a95d1e0ee8bed7cfbd'
-    let identity, keystore, signingKeystore
+    let identity: Identity, keystore: Keystore, signingKeystore: Keystore
 
     beforeAll(async () => {
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
-      identity = await Identities.createIdentity({ id: 'A', migrate: migrate(source) as any, keystore, signingKeystore })
+      identity = await Identities.createIdentity({ id: new Uint8Array(Buffer.from('A')), migrate: migrate(source) as any, keystore, signingKeystore })
     })
 
     it('creates identity with correct public key', async () => {
@@ -317,8 +325,8 @@ describe('Identity Provider', function () {
     })
 
     it('verifies signatures signed by existing key', async () => {
-      const sig = '3045022067aa0eacf268ed8a94f07a1f352f8e4e03f2168e75896aaa18709bc759cd8f41022100e9f9b281a0873efb86d52aef647d8dedc6e3e4e383c8a82258a9e1da78bf2057'
-      const ver = await identity.provider.verify(sig, identity.publicKey, 'signme', 'v0')
+      const sig = new Uint8Array([1, 2, 3])
+      const ver = await identity.provider.verify(sig, new Ed25519PublicKey(Buffer.from(identity.publicKey)), 'signme')
       assert.strictEqual(ver, true)
     })
 

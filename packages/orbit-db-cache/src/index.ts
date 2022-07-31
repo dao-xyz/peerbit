@@ -62,7 +62,7 @@ export default class Cache {
 
   async getBinary<T>(key: string, clazz: Constructor<T>): Promise<T | null> {
     return new Promise((resolve, reject) => {
-      this._store.get(key, (err, value: string) => {
+      this._store.get(key, (err, value: Buffer | Uint8Array) => {
         if (err) {
           // Ignore error if key was not found
           if (err.toString().indexOf('NotFoundError: Key not found in database') === -1 &&
@@ -70,15 +70,26 @@ export default class Cache {
             return reject(err)
           }
         }
-        resolve(value ? deserialize(bs58.decode(value), clazz) : null)
+        let buffer = Buffer.isBuffer(value) ? value : Buffer.from(value);
+        try {
+          const der = value ? deserialize(buffer, clazz) : null
+          resolve(der)
+          return;
+        } catch (error) {
+          const x = 123;
+        }
+        resolve(null);
       })
     })
   }
 
   setBinary(key: string, value: any) {
     return new Promise((resolve, reject) => {
-      const encoded = bs58.encode(serialize(value));
-      this._store.put(key, encoded, (err) => {
+
+      const bytes = serialize(value);
+      const serialized = Buffer.from(bytes);
+      //const der = deserialize(Buffer.from(bytes), value.constructor);
+      this._store.put(key, serialized, (err) => {
         if (err) {
           // Ignore error if key was not found
           if (err.toString().indexOf('NotFoundError: Key not found in database') === -1 &&
@@ -86,7 +97,7 @@ export default class Cache {
             return reject(err)
           }
         }
-        logger.debug(`cache: SetBinary ${key} to ${encoded}`)
+        logger.debug(`cache: SetBinary ${key} to value with length ${serialized.length}`)
         resolve(true)
       })
     })
@@ -96,7 +107,7 @@ export default class Cache {
   destroy() { } // noop
 
   // Remove a value and key from the cache
-  async del(key) {
+  async del(key: string) {
     return new Promise((resolve, reject) => {
       this._store.del(key, (err) => {
         if (err) {

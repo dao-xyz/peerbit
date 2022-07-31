@@ -1,6 +1,7 @@
 import { Wallet, verifyMessage } from '@ethersproject/wallet'
-import { IdentitySerializable } from './identity';
+import { Identity, IdentitySerializable } from './identity';
 import { IdentityProvider } from './identity-provider-interface';
+import { joinUint8Arrays } from './utils';
 const type = 'ethereum'
 
 export type EthIdentityProviderOptions = { wallet?: Wallet };
@@ -19,25 +20,25 @@ export class EthIdentityProvider extends IdentityProvider {
     if (!this.wallet) {
       this.wallet = await this._createWallet(options)
     }
-    return this.wallet.getAddress()
+    return new Uint8Array(Buffer.from(await this.wallet.getAddress()))
   }
 
   // Returns a signature of pubkeysignature
-  async sign(data, options = {}) {
+  async sign(data: Uint8Array, options = {}) {
     const wallet = this.wallet
     if (!wallet) { throw new Error('wallet is required') }
 
-    return wallet.signMessage(data)
+    return new Uint8Array(Buffer.from((await wallet.signMessage(data))))
   }
 
-  static async verify(signature: string, data: string | Uint8Array, publicKey: string): Promise<boolean> {
-    const signerAddress = verifyMessage(data, signature)
-    return (signerAddress === publicKey)
+  static async verify(signature: Uint8Array, data: string | Uint8Array, publicKey: Uint8Array): Promise<boolean> {
+    const signerAddress = verifyMessage(data, Buffer.from(signature).toString())
+    return (signerAddress === Buffer.from(publicKey).toString())
   }
 
-  static async verifyIdentity(identity: IdentitySerializable) {
+  static async verifyIdentity(identity: Identity | IdentitySerializable) {
     // Verify that identity was signed by the id
-    return EthIdentityProvider.verify(identity.signatures.publicKey, identity.publicKey + identity.signatures.id, identity.id)
+    return EthIdentityProvider.verify(identity.signatures.publicKey, joinUint8Arrays([identity.publicKey, identity.signatures.id]), identity.id)
   }
 
   async _createWallet(options?: { encryptedJsonOpts?: { progressCallback: any, json: any, password: any }, mnemonicOpts?: { mnemonic: any, path: any, wordlist: any } }) {

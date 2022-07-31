@@ -54,7 +54,7 @@ class EntryIO {
    * @param {Object} [all] Entries to skip
    * @param {Number} [amount=-1] How many entries to fetch
    * @param {Number} [depth=0] Current depth of the recursion
-   * @param {function(hash, entry, parent, depth)} onProgressCallback
+   * @param {function(hash, entry,  parent, depth)} onProgressCallback
    * @returns {Promise&lt;Array&lt;Entry>>}
    */
   static async fetchAll (ipfs, hashes, { length = -1, exclude = [], timeout, onProgressCallback, onStartProgressCallback, concurrency = 32, delay = 0 } = {}) {
@@ -139,7 +139,7 @@ class EntryIO {
               cache[hash] = true
 
               if (onProgressCallback) {
-                onProgressCallback(hash, entry, result.length, result.length)
+                onProgressCallback(hash, entry,  result.length, result.length)
               }
             }
 

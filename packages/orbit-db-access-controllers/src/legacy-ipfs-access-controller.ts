@@ -5,7 +5,7 @@ import io from '@dao-xyz/orbit-db-io'
 const Buffer = require('safe-buffer/').Buffer
 const type = 'legacy-ipfs'
 
-export class LegacyIPFSAccessController extends AccessController {
+export class LegacyIPFSAccessController<T> extends AccessController<T> {
   constructor(ipfs, options?: any) {
     super()
     this._ipfs = ipfs
@@ -20,7 +20,7 @@ export class LegacyIPFSAccessController extends AccessController {
     return this._write
   }
 
-  async canAppend(entry: Entry, identityProvider) {
+  async canAppend<T>(entry: Entry<T>, identityProvider) {
     // Allow if access list contain the writer's publicKey or is '*'
     const publicKey = entry.data.key
     if (this.write.includes(publicKey) ||

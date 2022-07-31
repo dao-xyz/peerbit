@@ -38,9 +38,9 @@
     "@dao-xyz/orbit-db-access-controllers": "^0.3.2",
     "@dao-xyz/orbit-db-cache": "^0.4.0",
     "@dao-xyz/orbit-db-io": "^1.1.0",
-    "orbit-db-keystore": "^1.0.0",
+    "@dao-xyz/orbit-db-keystore": "^0.0.1",
     "@dao-xyz/orbit-db-pubsub": "^0.6.11",
-    "orbit-db-storage-adapter": "~0.5.3",
+    "orbit-db-storage-adapter": "^0.6.0",
     "wherearewe": "^1.0.2"
   },
   "devDependencies": {

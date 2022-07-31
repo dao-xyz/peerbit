@@ -9,16 +9,16 @@ Logger.setLogLevel('ERROR')
 
 
 @variant(0)
-export class ExchangeHeadsMessage extends Message {
+export class ExchangeHeadsMessage<T> extends Message {
   @field({ type: 'String' })
   address: string;
 
   @field({ type: vec(Entry) })
-  heads: Entry[];
+  heads: Entry<T>[];
 
   constructor(props?: {
     address: string,
-    heads: Entry[]
+    heads: Entry<T>[]
   }) {
     super();
     if (props) {
@@ -29,6 +29,50 @@ export class ExchangeHeadsMessage extends Message {
 
 }
 
+const U8IntArraySerializer = {
+  serialize: (obj: Uint8Array, writer) => {
+    writer.writeU32(obj.length);
+    for (let i = 0; i < obj.length; i++) {
+      writer.writeU8(obj[i])
+    }
+  },
+  deserialize: (reader) => {
+    const len = reader.readU32();
+    const arr = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      arr[i] = reader.readU8();
+    }
+    return arr;
+  }
+};
+
+@variant(1)
+export class ExchangeKeysMessage extends Message {
+
+  @field(U8IntArraySerializer)
+  keyEncrypted: Uint8Array;
+
+  @field(U8IntArraySerializer)
+  encryptionPublicKey: Uint8Array;
+
+  @field(U8IntArraySerializer)
+  encryptionNonce: Uint8Array;
+
+
+  constructor(props?: {
+    keyEncrypted: Uint8Array;
+    encryptionPublicKey: Uint8Array;
+    encryptionNonce: Uint8Array;
+  }) {
+    super();
+    if (props) {
+      this.keyEncrypted = props.keyEncrypted;
+      this.encryptionPublicKey = props.encryptionPublicKey;
+      this.encryptionNonce = props.encryptionNonce;
+    }
+  }
+}
+
 const getHeadsForDatabase = async (store: Store<any, any, any>) => {
   if (!(store && store._cache)) return []
   const localHeads = (await store._cache.getBinary(store.localHeadsPath, HeadsCache))?.heads || []
@@ -36,7 +80,7 @@ const getHeadsForDatabase = async (store: Store<any, any, any>) => {
   return [...localHeads, ...remoteHeads]
 }
 
-export const exchangeHeads = async (ipfs, address, peer, getStore, getDirectConnection, onMessage: (address: string, data: Uint8Array) => void, onChannelCreated) => {
+export const exchangeHeads = async (ipfs, address: string, peer: string, getStore, getDirectConnection, onMessage: (address: string, data: Uint8Array) => void, onChannelCreated) => {
   const _handleMessage = (message: { data: Uint8Array }) => {
 
     // On message instead,

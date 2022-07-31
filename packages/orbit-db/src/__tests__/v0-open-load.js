@@ -9,7 +9,7 @@ const Zip = require('adm-zip')
 const OrbitDB = require('../src/OrbitDB')
 const Identities = require('@dao-xyz/orbit-db-identity-provider')
 const migrate = require('localstorage-level-migration')
-const Keystore = require('orbit-db-keystore')
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 const storage = require('orbit-db-storage-adapter')(leveldown)
 storage.preCreate = async (directory, options) => {
   fs.mkdirSync(directory, { recursive: true })

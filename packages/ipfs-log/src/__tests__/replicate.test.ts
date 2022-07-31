@@ -4,7 +4,7 @@ const fs = require('fs-extra')
 import { Log } from '../log'
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { assertPayload } from './utils/assert'
-const Keystore = require('orbit-db-keystore')
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
 const {
@@ -18,7 +18,7 @@ const {
 } = require('orbit-db-test-utils')
 
 Object.keys(testAPIs).forEach((IPFS) => {
-  describe('ipfs-log - Replication (' + IPFS + ')', function () {
+  describe('ipfs-log - Replication', function () {
     jest.setTimeout(config.timeout * 6)
 
     let ipfsd1, ipfsd2, ipfs1, ipfs2, id1, id2, testIdentity, testIdentity2
@@ -49,8 +49,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
       signingKeystore = new Keystore(signingKeysPath)
 
       // Create an identity for each peers
-      testIdentity = await Identities.createIdentity({ id: 'userB', keystore, signingKeystore })
-      testIdentity2 = await Identities.createIdentity({ id: 'userA', keystore, signingKeystore })
+      testIdentity = await Identities.createIdentity({ id: new Uint8Array([1]), keystore, signingKeystore })
+      testIdentity2 = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
     })
 
     afterAll(async () => {
@@ -68,7 +68,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const channel = 'XXX'
       const logId = 'A'
 
-      let log1, log2, input1, input2
+      let log1: Log<string>, log2: Log<string>, input1: Log<string>, input2: Log<string>
       const buffer1: string[] = []
       const buffer2: string[] = []
       let processing = 0
@@ -82,7 +82,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         processing++
         process.stdout.write('\r')
         process.stdout.write(`> Buffer1: ${buffer1.length} - Buffer2: ${buffer2.length}`)
-        const log = await Log.fromMultihash(ipfs1, testIdentity, hash, {})
+        const log = await Log.fromMultihash<string>(ipfs1, testIdentity, hash, {})
         await log1.join(log)
         processing--
       }
@@ -96,7 +96,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         processing++
         process.stdout.write('\r')
         process.stdout.write(`> Buffer1: ${buffer1.length} - Buffer2: ${buffer2.length}`)
-        const log = await Log.fromMultihash(ipfs2, testIdentity2, hash, {})
+        const log = await Log.fromMultihash<string>(ipfs2, testIdentity2, hash, {})
         await log2.join(log)
         processing--
       }
@@ -147,7 +147,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         console.log('Waiting for all to process')
         await whileProcessingMessages(config.timeout * 2)
 
-        const result = new Log(ipfs1, testIdentity, { logId })
+        const result = new Log<string>(ipfs1, testIdentity, { logId })
         await result.join(log1)
         await result.join(log2)
 

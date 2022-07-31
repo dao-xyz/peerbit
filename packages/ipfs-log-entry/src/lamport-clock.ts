@@ -1,10 +1,11 @@
 import { field, variant } from "@dao-xyz/borsh";
-
+import { U8IntArraySerializer } from "@dao-xyz/borsh-utils";
+import { arraysCompare, arraysEqual } from "./utils";
 @variant(0)
 export class LamportClock {
 
-  @field({ type: 'String' })
-  id: string;
+  @field(U8IntArraySerializer)
+  id: Uint8Array;
 
   @field({
     serialize: (value, writer) => {
@@ -16,7 +17,7 @@ export class LamportClock {
   })
   time: number;
 
-  constructor(id: string, time?: number) {
+  constructor(id: Uint8Array, time?: number) {
     this.id = id
     this.time = time || 0
   }
@@ -34,13 +35,20 @@ export class LamportClock {
     return new LamportClock(this.id, this.time)
   }
 
+  equals(other: LamportClock): boolean {
+    return arraysEqual(this.id, other.id) && this.time === other.time;
+  }
+
+
   static compare(a: LamportClock, b: LamportClock) {
     // Calculate the "distance" based on the clock, ie. lower or greater
     const dist = a.time - b.time
 
     // If the sequence number is the same (concurrent events),
     // and the IDs are different, take the one with a "lower" id
-    if (dist === 0 && a.id !== b.id) return a.id < b.id ? -1 : 1
+    if (dist === 0) {
+      return arraysCompare(a.id, b.id);
+    }
 
     return dist
   }

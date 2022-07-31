@@ -13,7 +13,7 @@ export class Network {
 
 export class AccessCondition {
 
-    async allowed(entry: Entry): Promise<boolean> {
+    async allowed(entry: Entry<T>): Promise<boolean> {
         throw new Error("Not implemented")
     }
 }
@@ -23,7 +23,7 @@ export class AnyAccessCondition extends AccessCondition {
     constructor() {
         super();
     }
-    async allowed(entry: Entry): Promise<boolean> {
+    async allowed(entry: Entry<T>): Promise<boolean> {
         return true;
     }
 }
@@ -48,7 +48,7 @@ export class PublicKeyAccessCondition extends AccessCondition {
         }
     }
 
-    async allowed(entry: Entry): Promise<boolean> {
+    async allowed(entry: Entry<T>): Promise<boolean> {
         return this.type === entry.data.identity.type && this.key === entry.data.identity.id
     }
 }

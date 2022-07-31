@@ -1,21 +1,23 @@
 
 import { Identities } from "./identities";
 import { isDefined } from "./is-defined";
-import { variant, field, serialize } from '@dao-xyz/borsh';
+import { variant, field, serialize, vec } from '@dao-xyz/borsh';
 import { createHash } from "crypto";
+import { U8IntArraySerializer } from "@dao-xyz/borsh-utils";
+import { arraysEqual } from "./utils";
 
 @variant(0)
 export class Signatures {
 
-  @field({ type: 'String' })
-  id: string;
+  @field(U8IntArraySerializer)
+  id: Uint8Array;
 
-  @field({ type: 'String' })
-  publicKey: string;
+  @field(U8IntArraySerializer)
+  publicKey: Uint8Array;
 
   constructor(options?: {
-    id: string;
-    publicKey: string;
+    id: Uint8Array;
+    publicKey: Uint8Array;
   }) {
     if (options) {
       if (!isDefined(options.id)) {
@@ -29,17 +31,19 @@ export class Signatures {
       this.publicKey = options.publicKey;
     }
   }
-
+  equals(other: Signatures): boolean {
+    return arraysEqual(this.id, other.id) && arraysEqual(this.publicKey, other.publicKey)
+  }
 }
 
 @variant(0)
 export class IdentitySerializable {
 
-  @field({ type: 'String' })
-  id: string;
+  @field(U8IntArraySerializer)
+  id: Uint8Array;
 
-  @field({ type: 'String' })
-  publicKey: string;
+  @field(U8IntArraySerializer)
+  publicKey: Uint8Array;
 
   @field({ type: Signatures })
   signatures: Signatures;
@@ -49,8 +53,8 @@ export class IdentitySerializable {
 
   constructor(
     options?: {
-      id: string,
-      publicKey: string,
+      id: Uint8Array,
+      publicKey: Uint8Array,
       signatures: Signatures,
       type: string
     }
@@ -82,20 +86,24 @@ export class IdentitySerializable {
       type: identity.type
     })
   }
+
+  equals(other: IdentitySerializable): boolean {
+    return arraysEqual(this.id, other.id) && arraysEqual(this.publicKey, other.publicKey) && this.type === other.type && this.signatures.equals(other.signatures)
+  }
 }
 
 
 
 export class Identity {
 
-  _id: string;
-  _publicKey: string;
+  _id: Uint8Array;
+  _publicKey: Uint8Array;
   _signatures: Signatures;
   _type: string;
 
 
   _provider: Identities;
-  constructor(options?: { id: string, publicKey: string, signatures: Signatures, type: string, provider: Identities }) {
+  constructor(options?: { id: Uint8Array, publicKey: Uint8Array, signatures: Signatures, type: string, provider: Identities }) {
     if (options) {
       if (!isDefined(options.id)) {
         throw new Error('Identity id is required')
@@ -129,11 +137,11 @@ export class Identity {
   * This is only used as a fallback to the clock id when necessary
   * @return {string} public key hex encoded
   */
-  get id(): string {
+  get id(): Uint8Array {
     return this._id
   }
 
-  get publicKey(): string {
+  get publicKey(): Uint8Array {
     return this._publicKey
   }
 
@@ -165,6 +173,10 @@ export class Identity {
       identity.signatures.id !== undefined &&
       identity.signatures.publicKey !== undefined &&
       identity.type !== undefined
+  }
+
+  equals(other: IdentitySerializable): boolean {
+    return arraysEqual(this.id, other.id) && arraysEqual(this.publicKey, other.publicKey) && this.type === other.type && this.signatures.equals(other.signatures)
   }
 
 

@@ -4,7 +4,7 @@ const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { OrbitDB } from '../orbit-db'
-import { EventStore, EVENT_STORE_TYPE } from './utils/stores/event-store'
+import { EventStore, EVENT_STORE_TYPE, Operation } from './utils/stores/event-store'
 
 // Include test utilities
 const {
@@ -117,10 +117,10 @@ Object.keys(testAPIs).forEach(API => {
         timer = setInterval(() => {
           if (finished) {
             clearInterval(timer)
-            const entries: string[] = db2.iterator({ limit: -1 }).collect()
+            const entries: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
             try {
               assert.equal(entries.length, 1)
-              assert.equal(entries[0], 'hello')
+              assert.equal(entries[0].data.payload.value, 'hello')
               assert.equal(replicatedEventCount, 1)
             } catch (error) {
               reject(error)

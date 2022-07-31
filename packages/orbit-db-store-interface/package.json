@@ -30,7 +30,7 @@
   "author": "dao.xyz",
   "license": "MIT",
   "dependencies": {
-    "@dao-xyz/borsh": "^2.1.4",
+    "@dao-xyz/borsh": "^2.1.5",
     "@dao-xyz/bquery": "^0.0.42",
     "@dao-xyz/time": "^0.0.11",
     "uuid": "^8.3.2"

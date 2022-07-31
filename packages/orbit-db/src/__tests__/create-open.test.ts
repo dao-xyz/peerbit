@@ -6,10 +6,10 @@ const rmrf = require('rimraf')
 const Zip = require('adm-zip')
 import { OrbitDB } from '../orbit-db'
 import { KeyValueStore } from './utils/stores/key-value-store'
-const OrbitDBAddress = require('../orbit-db-address')
-const Identities = require('@dao-xyz/orbit-db-identity-provider')
 import io from '@dao-xyz/orbit-db-io'
 import { FEED_STORE_TYPE } from './utils/stores'
+import { OrbitDBAddress } from '../orbit-db-address'
+import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 // Include test utilities
 const {
   config,
@@ -321,7 +321,7 @@ Object.keys(testAPIs).forEach(API => {
       })
 
       it('opens a database - with a different identity', async () => {
-        const identity = await Identities.createIdentity({ id: 'test-id', keystore: orbitdb.keystore })
+        const identity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore: orbitdb.keystore })
         const db = await orbitdb.open('abc', { create: true, type: FEED_STORE_TYPE, overwrite: true, identity })
         assert.equal(db.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db.address.toString().indexOf('zd'), 9)
@@ -331,7 +331,7 @@ Object.keys(testAPIs).forEach(API => {
       })
 
       it('opens the same database - from an address', async () => {
-        const identity = await Identities.createIdentity({ id: 'test-id', keystore: orbitdb.keystore })
+        const identity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore: orbitdb.keystore })
         const db = await orbitdb.open('abc', { create: true, type: FEED_STORE_TYPE, overwrite: true, identity })
         const db2 = await orbitdb.open(db.address)
         assert.equal(db2.address.toString().indexOf('/orbitdb'), 0)

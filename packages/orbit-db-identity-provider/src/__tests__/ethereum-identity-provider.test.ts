@@ -1,14 +1,17 @@
 import { EthIdentityProvider } from "../ethereum-identity-provider"
 import { Identities } from "../identities"
 import { Identity, Signatures } from "../identity"
+import { Ed25519PublicKey } from 'sodium-plus';
+import { Wallet } from '@ethersproject/wallet'
 
 const assert = require('assert')
 const path = require('path')
 const rmrf = require('rimraf')
-const Keystore = require('orbit-db-keystore')
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { joinUint8Arrays } from "../utils"
 const keypath = path.resolve(__dirname, 'keys')
 
-let keystore
+let keystore: Keystore
 
 const type = EthIdentityProvider.type
 describe('Ethereum Identity Provider', function () {
@@ -24,8 +27,8 @@ describe('Ethereum Identity Provider', function () {
   })
 
   describe('create an ethereum identity', () => {
-    let identity
-    let wallet
+    let identity: Identity
+    let wallet: Wallet
 
     beforeAll(async () => {
       const ethIdentityProvider = new EthIdentityProvider()
@@ -34,38 +37,38 @@ describe('Ethereum Identity Provider', function () {
     })
 
     it('has the correct id', async () => {
-      assert.strictEqual(identity.id, wallet.address)
+      assert.deepStrictEqual(identity.id, new Uint8Array(Buffer.from(wallet.address)))
     })
 
     it('created a key for id in keystore', async () => {
       const key = await keystore.getKey(wallet.address)
-      assert.notStrictEqual(key, undefined)
+      assert(!!key)
     })
 
     it('has the correct public key', async () => {
       const signingKey = await keystore.getKey(wallet.address)
       assert.notStrictEqual(signingKey, undefined)
-      assert.strictEqual(identity.publicKey, keystore.getPublic(signingKey))
+      assert.deepStrictEqual(identity.publicKey, new Uint8Array((await Keystore.getPublicSign(signingKey)).getBuffer()))
     })
 
     it('has a signature for the id', async () => {
       const signingKey = await keystore.getKey(wallet.address)
       const idSignature = await keystore.sign(signingKey, wallet.address)
-      const verifies = await Keystore.verify(idSignature, Buffer.from(signingKey.public.marshal()).toString('hex'), wallet.address)
+      const verifies = await Keystore.verify(idSignature, await Keystore.getPublicSign(signingKey), new Uint8Array(Buffer.from(wallet.address)))
       assert.strictEqual(verifies, true)
-      assert.strictEqual(identity.signatures.id, idSignature)
+      assert.deepStrictEqual(identity.signatures.id, idSignature)
     })
 
     it('has a signature for the publicKey', async () => {
       const signingKey = await keystore.getKey(wallet.address)
       const idSignature = await keystore.sign(signingKey, wallet.address)
-      const publicKeyAndIdSignature = await wallet.signMessage(identity.publicKey + idSignature)
-      assert.strictEqual(identity.signatures.publicKey, publicKeyAndIdSignature)
+      const publicKeyAndIdSignature = await wallet.signMessage(joinUint8Arrays([identity.publicKey, idSignature]))
+      assert.deepStrictEqual(identity.signatures.publicKey, new Uint8Array(Buffer.from(publicKeyAndIdSignature)))
     })
   })
 
   describe('verify identity', () => {
-    let identity
+    let identity: Identity
 
     beforeAll(async () => {
       identity = await Identities.createIdentity({ keystore, type })
@@ -80,7 +83,7 @@ describe('Ethereum Identity Provider', function () {
       const identity2 = new Identity({
         ...identity.toSerializable(),
         provider: identity.provider,
-        id: 'NotAnId',
+        id: new Uint8Array([1, 1, 1]),
       })
       const verified = await Identities.verifyIdentity(identity2)
       assert.strictEqual(verified, false)
@@ -89,23 +92,23 @@ describe('Ethereum Identity Provider', function () {
 
   describe('sign data with an identity', () => {
     let identity
-    const data = 'hello friend'
+    const data = new Uint8Array(Buffer.from('hello friend'))
 
     beforeAll(async () => {
       identity = await Identities.createIdentity({ keystore, type })
     })
 
     it('sign data', async () => {
-      const signingKey = await keystore.getKey(identity.id)
-      const expectedSignature = await keystore.sign(signingKey, data)
+      const signingKey = await keystore.getKey(Buffer.from(identity.id).toString())
+      const expectedSignature = await keystore.sign(signingKey, Buffer.from(data))
       const signature = await identity.provider.sign(identity, data, keystore)
-      assert.strictEqual(signature, expectedSignature)
+      assert.deepStrictEqual(signature, expectedSignature)
     })
 
     it('throws an error if private key is not found from keystore', async () => {
       // Remove the key from the keystore (we're using a mock storage in these tests)
       const modifiedIdentity = new Identity({
-        id: 'this id does not exist', publicKey: identity.publicKey, signatures: new Signatures({ id: '<sig>', publicKey: identity.signatures }), type: identity.type, provider: identity.provider
+        id: new Uint8Array([1, 2, 3]), publicKey: identity.publicKey, signatures: new Signatures({ id: new Uint8Array([0]), publicKey: identity.signatures }), type: identity.type, provider: identity.provider
       })
       let signature
       let err
@@ -119,22 +122,22 @@ describe('Ethereum Identity Provider', function () {
     })
 
     describe('verify data signed by an identity', () => {
-      const data = 'hello friend'
-      let identity
+      const data = new Uint8Array(Buffer.from('hello friend'));
+      let identity: Identity
       let signature
 
       beforeAll(async () => {
         identity = await Identities.createIdentity({ type, keystore })
-        signature = await identity.provider.sign(identity, data, keystore)
+        signature = await identity.provider.sign(identity, data)
       })
 
       it('verifies that the signature is valid', async () => {
-        const verified = await identity.provider.verify(signature, identity.publicKey, data)
+        const verified = await identity.provider.verify(signature, new Ed25519PublicKey(Buffer.from(identity.publicKey)), data)
         assert.strictEqual(verified, true)
       })
 
       it('doesn\'t verify invalid signature', async () => {
-        const verified = await identity.provider.verify('invalid', identity.publicKey, data)
+        const verified = await identity.provider.verify(new Uint8Array(Buffer.from('invalid')), new Ed25519PublicKey(Buffer.from(identity.publicKey)), data)
         assert.strictEqual(verified, false)
       })
     })

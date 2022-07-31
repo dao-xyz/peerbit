@@ -4,7 +4,7 @@ import { OrbitDB } from "../orbit-db"
 const fs = require('fs')
 const assert = require('assert')
 const rmrf = require('rimraf')
-const Keystore = require('orbit-db-keystore')
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 const leveldown = require('leveldown')
 const storage = require('orbit-db-storage-adapter')(leveldown)
 
@@ -35,8 +35,8 @@ Object.keys(testAPIs).forEach(API => {
       const identityStore = await storage.createStore(keysPath)
 
       keystore = new Keystore(identityStore)
-      identity1 = await Identities.createIdentity({ id: 'test-id1', keystore })
-      identity2 = await Identities.createIdentity({ id: 'test-id2', keystore })
+      identity1 = await Identities.createIdentity({ id: new Uint8Array([0]), keystore })
+      identity2 = await Identities.createIdentity({ id: new Uint8Array([1]), keystore })
       orbitdb = await OrbitDB.createInstance(ipfs, { directory: dbPath })
     })
 
@@ -94,7 +94,7 @@ Object.keys(testAPIs).forEach(API => {
       } catch (e) {
         err = e.message
       }
-      assert.equal(err, `Could not append entry, key "${identity2.id}" is not allowed to write to the log`)
+      assert.equal(err, `Could not append Entry<T>, key "${identity2.id}" is not allowed to write to the log`)
       await db.drop()
     })
   })

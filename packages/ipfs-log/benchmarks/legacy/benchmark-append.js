@@ -4,7 +4,7 @@ const IPFSRepo = require('ipfs-repo')
 const DatastoreLevel = require('datastore-level')
 const Log = require('../src/log')
 import { IdentityProvider } from '@dao-xyz/orbit-db-identity-provider'
-const Keystore = require('orbit-db-keystore')
+const Keystore = require('@dao-xyz/orbit-db-keystore')
 
 // State
 let ipfs

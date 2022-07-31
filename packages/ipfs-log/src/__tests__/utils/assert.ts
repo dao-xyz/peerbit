@@ -1,10 +1,11 @@
 
 const assert = require('assert')
-export const assertPayload = (binary: Uint8Array, compare: string | Uint8Array) => {
+export const assertPayload = (value: string | Uint8Array, compare: string | Uint8Array) => {
+
 
     if (typeof compare === 'string')
-        assert.strictEqual(Buffer.from(binary).toString(), compare)
+        assert.strictEqual(Buffer.from(value).toString(), compare)
     else {
-        assert.strictEqual(binary, compare)
+        assert.strictEqual(value, compare)
     }
 }

@@ -52,11 +52,11 @@
     "standard": "^16.0.3"
   },
   "dependencies": {
-    "@dao-xyz/borsh": "^2.1.4",
+    "@dao-xyz/borsh": "^2.1.5",
     "@ethersproject/wallet": "^5.0.10",
     "assert": "^2.0.0",
     "dids": "^2.1.0",
-    "orbit-db-keystore": "^1.0.0",
+    "@dao-xyz/orbit-db-keystore": "^0.0.1",
     "path-browserify": "^1.0.1",
     "stream-browserify": "^3.0.0"
   },

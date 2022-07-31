@@ -91,172 +91,172 @@ const main = async (IPFS, ORBITDB) => {
 
     // Hook up to the load progress event and render the progress
     let maxTotal = 0, loaded = 0
-    db.events.on('load.progress', (address, hash, entry, progress, total) => {
-      loaded++
-      maxTotal = Math.max.apply(null, [maxTotal, progress, 0])
-      total = Math.max.apply(null, [progress, maxTotal, total, entry.data.clock.time, 0])
-      statusElm.innerHTML = `Loading database... ${maxTotal} / ${total}`
-    })
+    db.events.on('load.progress', (address, hash, Entry < T >, progress, total) => {
+  loaded++
+  maxTotal = Math.max.apply(null, [maxTotal, progress, 0])
+  total = Math.max.apply(null, [progress, maxTotal, total, entry.data.clock.time, 0])
+  statusElm.innerHTML = `Loading database... ${maxTotal} / ${total}`
+})
 
-    db.events.on('ready', () => {
-      // Set the status text
-      setTimeout(() => {
-        statusElm.innerHTML = 'Database is ready'
-      }, 1000)
-    })
+db.events.on('ready', () => {
+  // Set the status text
+  setTimeout(() => {
+    statusElm.innerHTML = 'Database is ready'
+  }, 1000)
+})
 
-    // Load locally persisted database
-    await db.load()
+// Load locally persisted database
+await db.load()
   }
 
-  const startWriter = async (db, interval) => {
-    // Set the status text
-    writerText.innerHTML = `Writing to database every ${interval} milliseconds...`
+const startWriter = async (db, interval) => {
+  // Set the status text
+  writerText.innerHTML = `Writing to database every ${interval} milliseconds...`
 
-    // Start update/insert loop
-    updateInterval = setInterval(async () => {
-      try {
-        await update(db)
-      } catch (e) {
-        console.error(e.toString())
-        writerText.innerHTML = '<span style="color: red">' + e.toString() + '</span>'
-        clearInterval(updateInterval)
-      }
-    }, interval)
-  }
-
-  const resetDatabase = async (db) => {
-    writerText.innerHTML = ""
-    outputElm.innerHTML = ""
-    outputHeaderElm.innerHTML = ""
-
-    clearInterval(updateInterval)
-
-    if (db) {
-      await db.close()
-    }
-
-    interval = Math.floor((Math.random() * 300) + (Math.random() * 2000))
-  }
-
-  const createDatabase = async () => {
-    await resetDatabase(db)
-
-    openButton.disabled = true
-    createButton.disabled = true
-
+  // Start update/insert loop
+  updateInterval = setInterval(async () => {
     try {
-      const name = dbnameField.value
-      const type = createType.value
-      const publicAccess = publicCheckbox.checked
+      await update(db)
+    } catch (e) {
+      console.error(e.toString())
+      writerText.innerHTML = '<span style="color: red">' + e.toString() + '</span>'
+      clearInterval(updateInterval)
+    }
+  }, interval)
+}
 
-      db = await orbitdb.open(name, {
-        // If database doesn't exist, create it
-        create: true,
-        overwrite: true,
-        // Load only the local version of the database, 
-        // don't load the latest from the network yet
-        localOnly: false,
-        type: type,
-        // If "Public" flag is set, allow anyone to write to the database,
-        // otherwise only the creator of the database can write
-        accessController: {
-          write: publicAccess ? ['*'] : [orbitdb.identity.id],
-        }
-      })
+const resetDatabase = async (db) => {
+  writerText.innerHTML = ""
+  outputElm.innerHTML = ""
+  outputHeaderElm.innerHTML = ""
 
-      await load(db, 'Creating database...')
+  clearInterval(updateInterval)
+
+  if (db) {
+    await db.close()
+  }
+
+  interval = Math.floor((Math.random() * 300) + (Math.random() * 2000))
+}
+
+const createDatabase = async () => {
+  await resetDatabase(db)
+
+  openButton.disabled = true
+  createButton.disabled = true
+
+  try {
+    const name = dbnameField.value
+    const type = createType.value
+    const publicAccess = publicCheckbox.checked
+
+    db = await orbitdb.open(name, {
+      // If database doesn't exist, create it
+      create: true,
+      overwrite: true,
+      // Load only the local version of the database, 
+      // don't load the latest from the network yet
+      localOnly: false,
+      type: type,
+      // If "Public" flag is set, allow anyone to write to the database,
+      // otherwise only the creator of the database can write
+      accessController: {
+        write: publicAccess ? ['*'] : [orbitdb.identity.id],
+      }
+    })
+
+    await load(db, 'Creating database...')
+    startWriter(db, interval)
+  } catch (e) {
+    console.error(e)
+  }
+  openButton.disabled = false
+  createButton.disabled = false
+}
+
+const openDatabase = async () => {
+  const address = dbAddressField.value
+
+  await resetDatabase(db)
+
+  openButton.disabled = true
+  createButton.disabled = true
+
+  try {
+    statusElm.innerHTML = "Connecting to peers..."
+    db = await orbitdb.open(address, { sync: true })
+    await load(db, 'Loading database...')
+
+    if (!readonlyCheckbox.checked) {
       startWriter(db, interval)
-    } catch (e) {
-      console.error(e)
-    }
-    openButton.disabled = false
-    createButton.disabled = false
-  }
-
-  const openDatabase = async () => {
-    const address = dbAddressField.value
-
-    await resetDatabase(db)
-
-    openButton.disabled = true
-    createButton.disabled = true
-
-    try {
-      statusElm.innerHTML = "Connecting to peers..."
-      db = await orbitdb.open(address, { sync: true })
-      await load(db, 'Loading database...')
-
-      if (!readonlyCheckbox.checked) {
-        startWriter(db, interval)
-      } else {
-        writerText.innerHTML = `Listening for updates to the database...`
-      }
-    } catch (e) {
-      console.error(e)
-    }
-    openButton.disabled = false
-    createButton.disabled = false
-  }
-
-  const update = async (db) => {
-    count++
-
-    const time = new Date().toISOString()
-    const idx = Math.floor(Math.random() * creatures.length)
-    const creature = creatures[idx]
-
-    if (db.type === 'eventlog') {
-      const value = "GrEEtinGs from " + orbitdb.id + " " + creature + ": Hello #" + count + " (" + time + ")"
-      await db.add(value)
-    } else if (db.type === 'feed') {
-      const value = "GrEEtinGs from " + orbitdb.id + " " + creature + ": Hello #" + count + " (" + time + ")"
-      await db.add(value)
-    } else if (db.type === 'docstore') {
-      const value = { _id: 'peer1', avatar: creature, updated: time }
-      await db.put(value)
-    } else if (db.type === 'keyvalue') {
-      await db.set('mykey', creature)
-    } else if (db.type === 'counter') {
-      await db.inc(1)
     } else {
-      throw new Error("Unknown datatbase type: ", db.type)
+      writerText.innerHTML = `Listening for updates to the database...`
     }
+  } catch (e) {
+    console.error(e)
   }
+  openButton.disabled = false
+  createButton.disabled = false
+}
 
-  const query = (db) => {
-    if (db.type === 'eventlog')
-      return db.iterator({ limit: 5 }).collect()
-    else if (db.type === 'feed')
-      return db.iterator({ limit: 5 }).collect()
-    else if (db.type === 'docstore')
-      return db.get('peer1')
-    else if (db.type === 'keyvalue')
-      return db.get('mykey')
-    else if (db.type === 'counter')
-      return db.value
-    else
-      throw new Error("Unknown datatbase type: ", db.type)
+const update = async (db) => {
+  count++
+
+  const time = new Date().toISOString()
+  const idx = Math.floor(Math.random() * creatures.length)
+  const creature = creatures[idx]
+
+  if (db.type === 'eventlog') {
+    const value = "GrEEtinGs from " + orbitdb.id + " " + creature + ": Hello #" + count + " (" + time + ")"
+    await db.add(value)
+  } else if (db.type === 'feed') {
+    const value = "GrEEtinGs from " + orbitdb.id + " " + creature + ": Hello #" + count + " (" + time + ")"
+    await db.add(value)
+  } else if (db.type === 'docstore') {
+    const value = { _id: 'peer1', avatar: creature, updated: time }
+    await db.put(value)
+  } else if (db.type === 'keyvalue') {
+    await db.set('mykey', creature)
+  } else if (db.type === 'counter') {
+    await db.inc(1)
+  } else {
+    throw new Error("Unknown datatbase type: ", db.type)
   }
+}
 
-  const queryAndRender = async (db) => {
-    const networkPeers = await ipfs.swarm.peers()
-    const databasePeers = await ipfs.pubsub.peers(db.address.toString())
+const query = (db) => {
+  if (db.type === 'eventlog')
+    return db.iterator({ limit: 5 }).collect()
+  else if (db.type === 'feed')
+    return db.iterator({ limit: 5 }).collect()
+  else if (db.type === 'docstore')
+    return db.get('peer1')
+  else if (db.type === 'keyvalue')
+    return db.get('mykey')
+  else if (db.type === 'counter')
+    return db.value
+  else
+    throw new Error("Unknown datatbase type: ", db.type)
+}
 
-    const result = query(db)
+const queryAndRender = async (db) => {
+  const networkPeers = await ipfs.swarm.peers()
+  const databasePeers = await ipfs.pubsub.peers(db.address.toString())
 
-    if (dbType !== db.type || dbAddress !== db.address) {
-      dbType = db.type;
-      dbAddress = db.address;
+  const result = query(db)
 
-      outputHeaderElm.innerHTML = `
+  if (dbType !== db.type || dbAddress !== db.address) {
+    dbType = db.type;
+    dbAddress = db.address;
+
+    outputHeaderElm.innerHTML = `
         <h2>${dbType.toUpperCase()}</h2>
         <h3 id="remoteAddress">${dbAddress}</h3>
         <p>Copy this address and use the 'Open Remote Database' in another browser to replicate this database between peers.</p>
       `
-    }
+  }
 
-    outputElm.innerHTML = `
+  outputElm.innerHTML = `
       <div><b>Peer ID:</b> ${orbitdb.id}</div>
       <div><b>Peers (database/network):</b> ${databasePeers.length} / ${networkPeers.length}</div>
       <div><b>Oplog Size:</b> ${Math.max(db._replicationStatus.progress, db._oplog.length)} / ${db._replicationStatus.max}</div>
@@ -264,18 +264,18 @@ const main = async (IPFS, ORBITDB) => {
       <div id="results">
         <div>
         ${result && Array.isArray(result) && result.length > 0 && db.type !== 'docstore' && db.type !== 'keyvalue'
-        ? result.slice().reverse().map((e) => e.payload.value).join('<br>\n')
-        : db.type === 'docstore'
-          ? JSON.stringify(result, null, 2)
-          : result ? result.toString().replace('"', '').replace('"', '') : result
-      }
+      ? result.slice().reverse().map((e) => e.payload.value).join('<br>\n')
+      : db.type === 'docstore'
+        ? JSON.stringify(result, null, 2)
+        : result ? result.toString().replace('"', '').replace('"', '') : result
+    }
         </div>
       </div>
     `
-  }
+}
 
-  openButton.addEventListener('click', openDatabase)
-  createButton.addEventListener('click', createDatabase)
+openButton.addEventListener('click', openDatabase)
+createButton.addEventListener('click', createDatabase)
 }
 
 if (typeof module !== 'undefined' && typeof module.exports !== 'undefined')
