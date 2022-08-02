@@ -30,7 +30,7 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^2.1.5",
-    "@dao-xyz/borsh-utils": "^0.0.1",
+    "@dao-xyz/io-utils": "^0.0.1",
     "elliptic": "^6.5.4",
     "level": "^8.0.0",
     "libp2p-crypto": "^0.19.4",

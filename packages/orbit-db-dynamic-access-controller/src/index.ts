@@ -50,7 +50,7 @@ export type AccessVerifier = (identity: IdentitySerializable) => Promise<boolean
 
 export const DYNAMIC_ACCESS_CONTROLER = 'dynamic-access-controller';
 
-export class DynamicAccessController<T, B extends Store<T, any, any>> extends AccessController {
+export class DynamicAccessController<T, B extends Store<T, any, any, any>> extends AccessController<T> {
 
     aclDB: ACLInterface;
     _store: B;
@@ -165,7 +165,7 @@ export class DynamicAccessController<T, B extends Store<T, any, any>> extends Ac
     static get type() { return DYNAMIC_ACCESS_CONTROLER } // Return the type for this controller
 
 
-    static async create<T, B extends Store<T, any, any>>(orbitDB: OrbitDB, options: { name: string, appendAll?: boolean, heapSizeLimit: () => number, onMemoryExceeded: (entry: Entry<T>) => void, trustResolver: () => P2PTrust, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>, storeOptions: ACLInterfaceOptions }): Promise<DynamicAccessController<T, B>> {
+    static async create<T, B extends Store<T, any, any, any>>(orbitDB: OrbitDB, options: { name: string, appendAll?: boolean, heapSizeLimit: () => number, onMemoryExceeded: (entry: Entry<T>) => void, trustResolver: () => P2PTrust, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>, storeOptions: ACLInterfaceOptions }): Promise<DynamicAccessController<T, B>> {
         const controller = new DynamicAccessController({ orbitDB, ...options })
         return controller;
     }

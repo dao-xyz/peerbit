@@ -83,7 +83,7 @@ export class BinaryFeedStoreInterface extends SingleDBInterface<Document, Binary
 
 @variant([1, 1])
 export class DocumentStoreInterface extends SingleDBInterface<Document, BinaryDocumentStore<Document>> {
-    init(orbitDB: OrbitDB, options: IStoreOptions<Document, any>): Promise<void> {
+    init(orbitDB: OrbitDB, options: IStoreOptions<Document, any, any>): Promise<void> {
         return super.init(orbitDB, {
             ...options, typeMap: {
                 [Document.name]: Document

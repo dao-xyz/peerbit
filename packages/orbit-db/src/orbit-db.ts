@@ -21,7 +21,7 @@ let AccessControllersModule = AccessControllers;
 Logger.setLogLevel('ERROR')
 
 // Mapping for 'database type' -> Class
-const databaseTypes: { [key: string]: Constructor<Store<any, any, any>> } = {}
+const databaseTypes: { [key: string]: Constructor<Store<any, any, any, any>> } = {}
 
 const defaultTimeout = 30000 // 30 seconds
 
@@ -39,7 +39,7 @@ export class OrbitDB {
   storage: Storage;
   caches: any;
   keystore: any;
-  stores: { [key: string]: Store<any, any, any> };
+  stores: { [key: string]: Store<any, any, any, any> };
   constructor(ipfs: IPFSInstance, identity: Identity, options: CreateOptions = {}) {
     if (!isDefined(ipfs)) { throw new Error('IPFS is a required argument. See https://github.com/orbitdb/orbit-db/blob/master/API.md#createinstance') }
 
@@ -188,7 +188,7 @@ export class OrbitDB {
   }
 
   /* Private methods */
-  async _createStore<T>(type: string, address, options: { identity?: Identity, accessControllerAddress?: string } & IStoreOptions<T, any>) {
+  async _createStore<T>(type: string, address, options: { identity?: Identity, accessControllerAddress?: string } & IStoreOptions<T, any, any>) {
     // Get the type -> class mapping
     const Store = databaseTypes[type]
 
@@ -293,7 +293,7 @@ export class OrbitDB {
   }
 
   // Callback when database was closed
-  async _onClose(db: Store<any, any, any>) {
+  async _onClose(db: Store<any, any, any, any>) {
     const address = db.address.toString()
     logger.debug(`Close ${address}`)
 
@@ -313,13 +313,13 @@ export class OrbitDB {
     delete this.stores[address]
   }
 
-  async _onDrop(db: Store<any, any, any>) {
+  async _onDrop(db: Store<any, any, any, any>) {
     const address = db.address.toString()
     const dir = db && db.options.directory ? db.options.directory : this.directory
     await this._requestCache(address, dir, db._cache)
   }
 
-  async _onLoad(db: Store<any, any, any>) {
+  async _onLoad(db: Store<any, any, any, any>) {
     const address = db.address.toString()
     const dir = db && db.options.directory ? db.options.directory : this.directory
     await this._requestCache(address, dir, db._cache)
@@ -361,7 +361,11 @@ export class OrbitDB {
     timeout?: number,
     create?: boolean,
     type?: string,
-    localOnly?: boolean
+    localOnly?: boolean,
+    replicationConcurrency?: number,
+    replicate?: boolean
+    meta?: any
+
   } = {}) {
     logger.debug('create()')
 
@@ -426,7 +430,10 @@ export class OrbitDB {
     timeout?: number,
     create?: boolean,
     type?: string,
-    localOnly?: boolean
+    localOnly?: boolean,
+    replicationConcurrency?: number,
+    replicate?: boolean
+    meta?: any
   } = {}) {
     logger.debug('open()')
 

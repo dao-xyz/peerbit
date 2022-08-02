@@ -2,7 +2,6 @@ import Logger from 'logplease'
 const logger = Logger.create('cache', { color: Logger.Colors.Magenta })
 Logger.setLogLevel('ERROR')
 import { serialize, deserialize, Constructor } from '@dao-xyz/borsh';
-import bs58 from 'bs58';
 
 export default class Cache {
   _store: any;
@@ -62,7 +61,7 @@ export default class Cache {
 
   async getBinary<T>(key: string, clazz: Constructor<T>): Promise<T | null> {
     return new Promise((resolve, reject) => {
-      this._store.get(key, (err, value: Buffer | Uint8Array) => {
+      this._store.get(key, { asBuffer: false }, (err, value: string) => {
         if (err) {
           // Ignore error if key was not found
           if (err.toString().indexOf('NotFoundError: Key not found in database') === -1 &&
@@ -70,15 +69,13 @@ export default class Cache {
             return reject(err)
           }
         }
-        let buffer = Buffer.isBuffer(value) ? value : Buffer.from(value);
-        try {
-          const der = value ? deserialize(buffer, clazz) : null
-          resolve(der)
+        if (value == undefined) {
+          resolve(null)
           return;
-        } catch (error) {
-          const x = 123;
         }
-        resolve(null);
+        let buffer = Buffer.isBuffer(value) ? value : Buffer.from(value, 'base64');
+        const der = value ? deserialize(buffer, clazz) : null
+        resolve(der)
       })
     })
   }
@@ -87,7 +84,7 @@ export default class Cache {
     return new Promise((resolve, reject) => {
 
       const bytes = serialize(value);
-      const serialized = Buffer.from(bytes);
+      const serialized = Buffer.from(bytes).toString('base64');
       //const der = deserialize(Buffer.from(bytes), value.constructor);
       this._store.put(key, serialized, (err) => {
         if (err) {

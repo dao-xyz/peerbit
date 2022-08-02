@@ -7,10 +7,9 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-import { DocumentIndex } from './document-index.mjs';
+import { DeleteOperation, DocumentIndex, Operation, PutAllOperation, PutOperation } from './document-index.mjs';
 import pMap from 'p-map';
-import { field, serialize, variant } from '@dao-xyz/borsh';
-import bs58 from 'bs58';
+import { deserialize, field, serialize, variant } from '@dao-xyz/borsh';
 import { asString } from './utils.mjs';
 import { FieldQuery, ResultWithSource, SortDirection } from '@dao-xyz/bquery';
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
@@ -30,7 +29,11 @@ let BinaryDocumentStoreOptions = class BinaryDocumentStoreOptions extends BStore
         if (!clazz) {
             throw new Error(`Undefined type: ${this.objectType}`);
         }
-        return orbitDB.open(address, { ...options, ...{ clazz, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: this.indexBy } });
+        return orbitDB.open(address, {
+            ...options, ...{
+                clazz, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: this.indexBy
+            }
+        });
     }
     get identifier() {
         return BINARY_DOCUMENT_STORE_TYPE;
@@ -54,6 +57,12 @@ const defaultOptions = (options) => {
         Object.assign(options, { indexBy: '_id' });
     if (!options.Index)
         Object.assign(options, { Index: DocumentIndex });
+    if (!options.io) {
+        options.io = {
+            decoder: (bytes) => deserialize(Buffer.from(bytes), Operation),
+            encoder: (data) => serialize(data)
+        };
+    }
     return options;
 };
 export class BinaryDocumentStore extends QueryStore {
@@ -90,25 +99,23 @@ export class BinaryDocumentStore extends QueryStore {
     async close() {
         await super.close();
     }
-    queryDocuments(mapper, options = {}) {
+    queryDocuments(mapper) {
         // Whether we return the full operation data or just the db value
-        const fullOp = options.fullOp || false;
-        const getValue = fullOp ? (value) => value.payload.value : (value) => value;
         return Object.keys(this.index._index)
-            .map((e) => this.index.get(e, fullOp))
-            .filter((doc) => mapper(getValue(doc)));
+            .map((e) => this.index.get(e))
+            .filter((doc) => mapper(doc));
     }
     queryHandler(query) {
         const documentQuery = query.type;
         let filters = documentQuery.queries.filter(q => q instanceof FieldQuery);
         let results = this.queryDocuments(doc => (filters === null || filters === void 0 ? void 0 : filters.length) > 0 ? filters.map(f => {
             if (f instanceof FieldQuery) {
-                return f.apply(doc);
+                return f.apply(doc.value);
             }
             else {
                 throw new Error("Unsupported query type");
             }
-        }).reduce((prev, current) => prev && current) : true);
+        }).reduce((prev, current) => prev && current) : true).map(x => x.value);
         if (documentQuery.sort) {
             const resolveField = (obj) => {
                 let v = obj;
@@ -158,11 +165,10 @@ export class BinaryDocumentStore extends QueryStore {
         if (!doc[this.options.indexBy]) {
             throw new Error(`The provided document doesn't contain field '${this.options.indexBy}'`);
         }
-        return this._addOperation({
-            op: 'PUT',
+        return this._addOperation(new PutOperation({
             key: asString(doc[this.options.indexBy]),
-            value: bs58.encode(serialize(doc)),
-        }, options);
+            value: serialize(doc),
+        }), options);
     }
     putAll(docs, options = {}) {
         if (!(Array.isArray(docs))) {
@@ -171,23 +177,20 @@ export class BinaryDocumentStore extends QueryStore {
         if (!(docs.every(d => d[this.options.indexBy]))) {
             throw new Error(`The provided document doesn't contain field '${this.options.indexBy}'`);
         }
-        return this._addOperation({
-            op: 'PUTALL',
-            docs: docs.map((value) => ({
+        return this._addOperation(new PutAllOperation({
+            docs: docs.map((value) => new PutOperation({
                 key: asString(value[this.options.indexBy]),
-                value: bs58.encode(serialize(value))
+                value: serialize(value)
             }))
-        }, options);
+        }), options);
     }
     del(key, options = {}) {
         if (!this._index.get(key)) {
             throw new Error(`No entry with key '${key}' in the database`);
         }
-        return this._addOperation({
-            op: 'DEL',
-            key: asString(key),
-            value: null
-        }, options);
+        return this._addOperation(new DeleteOperation({
+            key: asString(key)
+        }), options);
     }
     get size() {
         return Object.keys(this.index._index).length;

@@ -18,7 +18,7 @@ const {
 const storage = require('orbit-db-storage-adapter')(require('memdown'))
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`addOperation ${IPFS}`, function () {
-    let ipfsd, ipfs, testIdentity, identityStore, store: Store<any, any, any>, cacheStore
+    let ipfsd, ipfs, testIdentity, identityStore, store: Store<any, any, any, any>, cacheStore
 
     jest.setTimeout(config.timeout);
 

@@ -1,10 +1,10 @@
 const assert = require('assert')
 const rmrf = require('rimraf')
 const Web3 = require('web3')
-const OrbitDB = require('../../src/OrbitDB.js')
-import { Identities as IdentityProvider } from '@dao-xyz/orbit-db-identity-provider'
+import { AccessControllers } from '@dao-xyz/orbit-db-access-controllers'
+import { Identities as IdentityProvider, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
-const AccessControllers = require('@dao-xyz/orbit-db-access-controllers')
+import { OrbitDB } from '../../orbit-db'
 const ganache = require('ganache-cli')
 const { abi, bytecode } = require('./Access')
 
@@ -22,8 +22,8 @@ const dbPath2 = './orbitdb/tests/orbitdb-access-controller/2'
 describe(`orbit-db - Access Controller Handlers`, function () {
   jest.setTimeout(config.timeout)
 
-  let web3, contract, ipfsd1, ipfsd2, ipfs1, ipfs2, id1, id2
-  let orbitdb1, orbitdb2
+  let web3, contract, ipfsd1, ipfsd2, ipfs1, ipfs2, id1: Identity, id2: Identity
+  let orbitdb1: OrbitDB, orbitdb2: OrbitDB
 
   beforeAll(async () => {
     rmrf.sync(dbPath1)

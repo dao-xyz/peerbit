@@ -73,7 +73,7 @@ export class ExchangeKeysMessage extends Message {
   }
 }
 
-const getHeadsForDatabase = async (store: Store<any, any, any>) => {
+const getHeadsForDatabase = async (store: Store<any, any, any, any>) => {
   if (!(store && store._cache)) return []
   const localHeads = (await store._cache.getBinary(store.localHeadsPath, HeadsCache))?.heads || []
   const remoteHeads = (await store._cache.getBinary(store.remoteHeadsPath, HeadsCache))?.heads || []

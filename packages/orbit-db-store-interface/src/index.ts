@@ -27,7 +27,7 @@ export class DBInterface extends BinaryPayload {
 
     }
 
-    async init(_orbitDB: OrbitDB, _options: IStoreOptions<any, any>): Promise<void> {
+    async init(_orbitDB: OrbitDB, _options: IStoreOptions<any, any, any>): Promise<void> {
         throw new Error("Not implemented")
     }
 
@@ -44,7 +44,7 @@ export class DBInterface extends BinaryPayload {
 // Every interface has to have its own variant, else DBInterface can not be
 // used as a deserialization target.
 @variant([0, 0])
-export abstract class SingleDBInterface<T, B extends Store<T, any, IStoreOptions<T, any>>> extends DBInterface {
+export abstract class SingleDBInterface<T, B extends Store<any, any, any, any>> extends DBInterface {
 
     @field({ type: 'String' })
     name: string;
@@ -57,7 +57,7 @@ export abstract class SingleDBInterface<T, B extends Store<T, any, IStoreOptions
 
     db: B;
     _orbitDB: OrbitDB
-    _options: IStoreOptions<T, any>
+    _options: IStoreOptions<T, T, any>
 
     constructor(opts?: {
         name: string;
@@ -72,11 +72,11 @@ export abstract class SingleDBInterface<T, B extends Store<T, any, IStoreOptions
         }
     }
 
-    get options(): IStoreOptions<T, any> {
+    get options(): IStoreOptions<T, T, any> {
         return this._options;
     }
 
-    async init(orbitDB: OrbitDB, options: IStoreOptions<T, any>): Promise<void> {
+    async init(orbitDB: OrbitDB, options: IStoreOptions<T, T, any>): Promise<void> {
         this.db = undefined;
         this._options = options;
         this._orbitDB = orbitDB;

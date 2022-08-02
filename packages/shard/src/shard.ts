@@ -55,7 +55,7 @@ export class ReplicationRequest {
 
 }
 
-export type StoreBuilder<B> = (name: string, defaultOptions: IStoreOptions<any, any>, orbitdDB: OrbitDB) => Promise<B>
+export type StoreBuilder<B> = (name: string, defaultOptions: IStoreOptions<any, any, any>, orbitdDB: OrbitDB) => Promise<B>
 
 export type Behaviours<St> = {
     newStore: StoreBuilder<St>
@@ -105,7 +105,7 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
 
     cid: string;
 
-    storeOptions: IQueryStoreOptions<T, any>
+    storeOptions: IQueryStoreOptions<T, T, any>
 
     constructor(props?: {
         id: string,
@@ -137,7 +137,7 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
         }
 
     }
-    get defaultStoreOptions(): IQueryStoreOptions<T, any> {
+    get defaultStoreOptions(): IQueryStoreOptions<T, T, any> {
         if (!this.peer) {
             throw new Error("Not initialized")
         }
@@ -293,7 +293,7 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
                     delayStopper();
                 await promise;
             });
-            while (this.peer.node.isOnline() && !stop) {
+            while (this.peer.node.isOnline() && !stop) { // 
                 promise = task();
                 await promise;
                 await delay(EMIT_HEALTHCHECK_INTERVAL, (stopper) => { delayStopper = stopper }); // some delay

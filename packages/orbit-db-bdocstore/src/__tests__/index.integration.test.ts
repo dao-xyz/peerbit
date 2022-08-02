@@ -4,8 +4,7 @@ import BN from 'bn.js';
 import { BinaryDocumentStore, BINARY_DOCUMENT_STORE_TYPE, DocumentStoreOptions } from '../document-store';
 import { DocumentQueryRequest, Compare, FieldCompareQuery, QueryRequestV0, QueryResponseV0, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort } from '@dao-xyz/bquery';
 import { query } from '@dao-xyz/bquery';
-import { disconnectPeers, getConnectedPeers, getPeer, Peer } from '@dao-xyz/peer-test-utils';
-import { waitFor } from '@dao-xyz/time';
+import { disconnectPeers, getConnectedPeers, Peer } from '@dao-xyz/peer-test-utils';
 import { BinaryPayload } from '@dao-xyz/bpayload';
 
 @variant("document")//@variant([1, 0])

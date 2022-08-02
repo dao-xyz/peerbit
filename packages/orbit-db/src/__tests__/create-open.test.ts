@@ -5,7 +5,7 @@ const path = require('path')
 const rmrf = require('rimraf')
 const Zip = require('adm-zip')
 import { OrbitDB } from '../orbit-db'
-import { KeyValueStore } from './utils/stores/key-value-store'
+import { KeyValueStore, KEY_VALUE_STORE_TYPE } from './utils/stores/key-value-store'
 import io from '@dao-xyz/orbit-db-io'
 import { FEED_STORE_TYPE } from './utils/stores'
 import { OrbitDBAddress } from '../orbit-db-address'
@@ -29,7 +29,7 @@ Object.keys(testAPIs).forEach(API => {
     jest.retryTimes(1) // windows...
     jest.setTimeout(config.timeout)
 
-    let ipfsd, ipfs, orbitdb, address
+    let ipfsd, ipfs, orbitdb: OrbitDB, address
     let localDataPath
 
     const filterFunc = (src, dest) => {
@@ -96,8 +96,8 @@ Object.keys(testAPIs).forEach(API => {
         it('throws an error if database type doesn\'t match', async () => {
           let err, log, kv
           try {
-            log = await orbitdb.kvstore('keyvalue', { replicate: false })
-            kv = await orbitdb.eventlog(log.address.toString())
+            log = await orbitdb.create('keyvalue', KEY_VALUE_STORE_TYPE, { create: true, replicate: false })
+            kv = await orbitdb.open(log.address.toString(), { type: FEED_STORE_TYPE })
           } catch (e) {
             err = e.toString()
           }
@@ -153,35 +153,6 @@ Object.keys(testAPIs).forEach(API => {
           await db2.close()
         })
 
-        it('loads cache from previous version of orbit-db', async () => {
-          const dbName = 'cache-schema-test'
-
-          db = await orbitdb.create(dbName, 'keyvalue', { overwrite: true })
-          const manifestHash = db.address.root
-          const migrationDataPath = path.join(dbPath, manifestHash, dbName)
-
-          await db.load()
-          assert.equal((await db.get('key')), undefined)
-          await db.drop()
-
-          await fs.copy(migrationFixturePath, migrationDataPath, { filter: filterFunc })
-          db = await orbitdb.create(dbName, 'keyvalue')
-          await db.load()
-
-          assert.equal(manifestHash, db.address.root)
-          assert.equal((await db.get('key')), 'value')
-        })
-
-        it('loads cache from previous version of orbit-db with the directory option', async () => {
-          const dbName = 'cache-schema-test2'
-          const directory = path.join(dbPath, "some-other-place")
-
-          await fs.copy(migrationFixturePath, directory, { filter: filterFunc })
-          db = await orbitdb.create(dbName, 'keyvalue', { directory })
-          await db.load()
-
-          assert.equal((await db.get('key')), 'value')
-        })
 
         describe('Access Controller', function () {
           beforeAll(async () => {
@@ -198,7 +169,7 @@ Object.keys(testAPIs).forEach(API => {
 
           it('creates an access controller and adds ourselves as writer by default', async () => {
             db = await orbitdb.create('fourth', FEED_STORE_TYPE)
-            assert.deepEqual(db.access.write, [orbitdb.identity.id])
+            assert.deepEqual(db.access.write, [Buffer.from(orbitdb.identity.id).toString('base64')])
           })
 
           it('creates an access controller and adds writers', async () => {
@@ -207,14 +178,10 @@ Object.keys(testAPIs).forEach(API => {
                 write: ['another-key', 'yet-another-key', orbitdb.identity.id]
               }
             })
-            assert.deepEqual(db.access.write, ['another-key', 'yet-another-key', orbitdb.identity.id])
-          })
-
-          it('creates an access controller and doesn\'t add read access keys', async () => {
-            db = await orbitdb.create('seventh', FEED_STORE_TYPE, { read: ['one', 'two'] })
-            assert.deepEqual(db.access.write, [orbitdb.identity.id])
+            assert.deepEqual(db.access.write, ['another-key', 'yet-another-key', Buffer.from(orbitdb.identity.id).toString('base64')])
           })
         })
+
         describe('Meta', function () {
           beforeAll(async () => {
             if (db) {
@@ -273,7 +240,7 @@ Object.keys(testAPIs).forEach(API => {
 
       describe('Success', function () {
         beforeAll(async () => {
-          address = await orbitdb.determineAddress('third', FEED_STORE_TYPE, { replicate: false })
+          address = await orbitdb.determineAddress('third', FEED_STORE_TYPE) // , { replicate: false }
           localDataPath = path.join(dbPath, address.root, address.path)
         })
 
@@ -344,7 +311,7 @@ Object.keys(testAPIs).forEach(API => {
       it('opens a database and adds the creator as the only writer', async () => {
         const db = await orbitdb.open('abc', { create: true, type: FEED_STORE_TYPE, overwrite: true })
         assert.equal(db.access.write.length, 1)
-        assert.equal(db.access.write[0], db.identity.id)
+        assert.equal(db.access.write[0], Buffer.from(db.identity.id).toString('base64'))
         await db.drop()
       })
 

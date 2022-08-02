@@ -27,7 +27,7 @@ export class EventIndex<T> {
     }
 }
 
-export class EventStore<T> extends Store<T, EventIndex<Operation<T>>, any> {
+export class EventStore<T> extends Store<T, T, EventIndex<Operation<T>>, any> {
     constructor(ipfs, id, dbname, options: any = {}) {
         if (options.Index === undefined) Object.assign(options, { Index: EventIndex })
         if (options.io === undefined) Object.assign(options, { io: JSON_ENCODER })
@@ -50,7 +50,7 @@ export class EventStore<T> extends Store<T, EventIndex<Operation<T>>, any> {
         return this.iterator({ gte: hash, limit: 1 }).collect()[0]
     }
 
-    iterator(options) {
+    iterator(options?) {
         const messages = this._query(options)
         let currentIndex = 0
         let iterator = {

@@ -4,9 +4,8 @@ import { variant, field, vec, option, serialize, deserialize } from '@dao-xyz/bo
 import io from '@dao-xyz/orbit-db-io';
 import { IPFS } from 'ipfs-core-types/src/'
 import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider'
-import { U8IntArraySerializer, U8IntArraySerializerOptional } from '@dao-xyz/borsh-utils';
+import { arraysEqual, U8IntArraySerializer, U8IntArraySerializerOptional } from '@dao-xyz/io-utils';
 import { Ed25519PublicKey } from 'sodium-plus';
-import { arraysEqual } from './utils';
 
 const uintArrayEqual = (array1?: Uint8Array, array2?: Uint8Array) => {
   if (!!array1 != !!array2)

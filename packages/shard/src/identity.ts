@@ -42,8 +42,9 @@ export class SolanaIdentityProvider extends IdentityProvider {
     static async verifyIdentity(identity: Identity) {
 
         // Verify that identity was signed by the id
-        const signedKey = nacl.sign.open(Uint8Array.from(Buffer.from(identity.signatures.publicKey)), bs58.decode(identity.id));
+        /* const signedKey = nacl.sign.open(Uint8Array.from(Buffer.from(identity.signatures.publicKey)), bs58.decode(identity.id));
         let verified = nacl.verify(signedKey, Uint8Array.from(Buffer.from(identity.publicKey + identity.signatures.id)));
-        return verified
+        return verified */
+        return false;
     }
 }

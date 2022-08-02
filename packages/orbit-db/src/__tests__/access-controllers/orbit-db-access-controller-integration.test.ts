@@ -1,10 +1,11 @@
 const assert = require('assert')
 const rmrf = require('rimraf')
-import { Identities as IdentityProvider } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities as IdentityProvider, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
 import { AccessControllers } from '@dao-xyz/orbit-db-access-controllers';
 import { OrbitDB } from '../../orbit-db';
 import io from '@dao-xyz/orbit-db-io'
+import { FEED_STORE_TYPE } from '../utils/stores';
 // Include test utilities
 const {
   config,
@@ -20,8 +21,8 @@ const dbPath2 = './orbitdb/tests/orbitdb-access-controller-integration/2'
 describe(`orbit-db - OrbitDBAccessController Integration`, function () {
   jest.setTimeout(config.timeout)
 
-  let ipfsd1, ipfsd2, ipfs1, ipfs2, id1, id2
-  let orbitdb1, orbitdb2
+  let ipfsd1, ipfsd2, ipfs1, ipfs2, id1: Identity, id2: Identity
+  let orbitdb1: OrbitDB, orbitdb2: OrbitDB
 
   beforeAll(async () => {
     rmrf.sync(dbPath1)
@@ -77,7 +78,8 @@ describe(`orbit-db - OrbitDBAccessController Integration`, function () {
     let dbManifest, acManifest
 
     beforeAll(async () => {
-      db = await orbitdb1.feed('AABB', {
+      db = await orbitdb1.create('AABB', FEED_STORE_TYPE, {
+        create: true,
         identity: id1,
         accessController: {
           type: 'orbitdb',
@@ -85,7 +87,7 @@ describe(`orbit-db - OrbitDBAccessController Integration`, function () {
         }
       })
 
-      db2 = await orbitdb2.feed(db.address, { identity: id2 })
+      db2 = await orbitdb2.open(db.address, { identity: id2 })
       await db2.load()
 
       dbManifest = await io.read(ipfs1, db.address.root)

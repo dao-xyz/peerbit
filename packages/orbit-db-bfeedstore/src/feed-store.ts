@@ -8,7 +8,7 @@ import { OrbitDB } from '@dao-xyz/orbit-db';
 export const BINARY_FEED_STORE_TYPE = 'bfeed_store';
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores'
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store'
-export type IBinaryFeedStoreOptions<T> = IQueryStoreOptions<T, FeedIndex<T>> & { clazz: Constructor<T> };
+export type IBinaryFeedStoreOptions<T> = IQueryStoreOptions<T, T, FeedIndex<T>> & { clazz: Constructor<T> };
 
 @variant([0, 2])
 export class BinaryFeedStoreOptions<T> extends BStoreOptions<BinaryFeedStore<T>> {
@@ -46,7 +46,7 @@ const defaultOptions = <T>(options: IBinaryFeedStoreOptions<T>): any => {
   if (!options.Index) Object.assign(options, { Index: FeedIndex })
   return options;
 }
-export class BinaryFeedStore<T> extends Store<T, FeedIndex<T>, IBinaryFeedStoreOptions<T>> {
+export class BinaryFeedStore<T> extends Store<T, T, FeedIndex<T>, IBinaryFeedStoreOptions<T>> {
 
   _type: string = undefined;
   constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IBinaryFeedStoreOptions<T>) {

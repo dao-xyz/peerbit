@@ -1,9 +1,8 @@
 const fs = (typeof window === 'object' || typeof self === 'object') ? null : eval('require("fs")') // eslint-disable-line
 import { Level } from 'level';
 import LRU from 'lru';
-import bs58 from 'bs58';
 import { variant, field, serialize, deserialize } from '@dao-xyz/borsh';
-import { U8IntArraySerializer } from '@dao-xyz/borsh-utils';
+import { U8IntArraySerializer } from '@dao-xyz/io-utils';
 import { SodiumPlus, CryptographyKey, X25519PublicKey, Ed25519PublicKey } from 'sodium-plus';
 import { waitFor } from '@dao-xyz/time';
 /* import { ready, crypto_sign, crypto_sign_keypair, crypto_sign_verify_detached } from 'libsodium-wrappers';
@@ -92,10 +91,14 @@ export class Keystore {
     return hasKey
   }
 
-  async createKey(id: string, type: KeyType = 'sign'): Promise<CryptographyKey> {
+  async createKey(id: string | Buffer | Uint8Array, type: KeyType = 'sign'): Promise<CryptographyKey> {
 
     if (!id) {
       throw new Error('id needed to create a key')
+    }
+
+    if (typeof id !== 'string') {
+      id = Buffer.isBuffer(id) ? id.toString('base64') : Buffer.from(id).toString('base64')
     }
 
     if (this._store.status === 'opening') {
@@ -138,7 +141,7 @@ export class Keystore {
       throw new Error('id needed to get a key')
     }
     if (typeof id !== 'string') {
-      id = Buffer.isBuffer(id) ? id.toString() : Buffer.from(id).toString()
+      id = Buffer.isBuffer(id) ? id.toString('base64') : Buffer.from(id).toString('base64')
     }
     if (!this._store) {
       await this.open()

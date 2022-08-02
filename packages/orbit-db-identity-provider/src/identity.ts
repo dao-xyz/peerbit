@@ -3,8 +3,7 @@ import { Identities } from "./identities";
 import { isDefined } from "./is-defined";
 import { variant, field, serialize, vec } from '@dao-xyz/borsh';
 import { createHash } from "crypto";
-import { U8IntArraySerializer } from "@dao-xyz/borsh-utils";
-import { arraysEqual } from "./utils";
+import { U8IntArraySerializer, arraysEqual } from "@dao-xyz/io-utils";
 
 @variant(0)
 export class Signatures {
@@ -36,6 +35,9 @@ export class Signatures {
   }
 }
 
+const identityToString = (identity: IdentitySerializable | Identity) => {
+  return identity.type + "/" + Buffer.from(identity.id).toString('base64')
+}
 @variant(0)
 export class IdentitySerializable {
 
@@ -89,6 +91,10 @@ export class IdentitySerializable {
 
   equals(other: IdentitySerializable): boolean {
     return arraysEqual(this.id, other.id) && arraysEqual(this.publicKey, other.publicKey) && this.type === other.type && this.signatures.equals(other.signatures)
+  }
+
+  toString() {
+    return identityToString(this);
   }
 }
 
@@ -177,6 +183,10 @@ export class Identity {
 
   equals(other: IdentitySerializable): boolean {
     return arraysEqual(this.id, other.id) && arraysEqual(this.publicKey, other.publicKey) && this.type === other.type && this.signatures.equals(other.signatures)
+  }
+
+  toString() {
+    return identityToString(this);
   }
 
 

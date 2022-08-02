@@ -25,7 +25,7 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends SingleDBIn
         })
     }
 
-    async init(orbitDB: OrbitDB, options: IStoreOptions<T, any>): Promise<void> {
+    async init(orbitDB: OrbitDB, options: IStoreOptions<Shard<T>, any, any>): Promise<void> {
         options.typeMap[Shard.name] = Shard;
         return await super.init(orbitDB, options);
     }
@@ -60,8 +60,8 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends SingleDBIn
     async loadShard(cid: string, peer: AnyPeer): Promise<Shard<T>> {
         // Get the latest shard that have non empty peer
         let shard = this.db.get(cid)[0]
-        await shard.init(peer);
-        return shard;
+        await shard.value.init(peer);
+        return shard.value;
     }
     /* get loaded(): boolean {
         return !!this.db?.loaded;

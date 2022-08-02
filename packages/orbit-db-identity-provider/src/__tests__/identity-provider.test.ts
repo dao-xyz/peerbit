@@ -78,7 +78,7 @@ describe('Identity Provider', function () {
 
     it('has the correct public key', async () => {
       const key = await keystore.getKey(id)
-      const externalId = (await Keystore.getPublicSign(key)).toString();
+      const externalId = (await Keystore.getPublicSign(key)).toString('base64');
       const signingKey = await keystore.getKey(externalId)
       assert.notStrictEqual(signingKey, undefined)
       assert.deepStrictEqual(identity.publicKey, new Uint8Array((await Keystore.getPublicSign(signingKey)).getBuffer()))
@@ -87,7 +87,7 @@ describe('Identity Provider', function () {
     it('has a signature for the id', async () => {
       const key = await keystore.getKey(id)
       const externalId = await Keystore.getPublicSign(key);
-      const signingKey = await keystore.getKey(externalId.toString())
+      const signingKey = await keystore.getKey(externalId.toString('base64'))
       const idSignature = await keystore.sign(signingKey, new Uint8Array(externalId.getBuffer()))
       const publicKey = await Keystore.getPublicSign(signingKey);
       const verifies = await Keystore.verify(idSignature, publicKey, new Uint8Array(externalId.getBuffer()))
@@ -98,7 +98,7 @@ describe('Identity Provider', function () {
     it('has a signature for the publicKey', async () => {
       const key = await keystore.getKey(id)
       const externalId = await Keystore.getPublicSign(key);
-      const signingKey = await keystore.getKey(externalId.toString())
+      const signingKey = await keystore.getKey(externalId.toString('base64'))
       const idSignature = await keystore.sign(signingKey, new Uint8Array(externalId.getBuffer()))
       const externalKey = await keystore.getKey(id)
       const publicKeyAndIdSignature = await keystore.sign(externalKey, joinUint8Arrays([identity.publicKey, idSignature]))
@@ -115,16 +115,17 @@ describe('Identity Provider', function () {
     let keystore: Keystore, signingKeystore: Keystore
     let savedKeysKeystore: Keystore, identity: Identity
     const id = new Uint8Array(Buffer.from('id'))
-    const expectedPublicKey = new Uint8Array([61, 50, 55, 131, 68, 105, 166, 252, 107, 230, 133, 159, 99, 94, 240, 206, 95, 72, 62, 253, 15, 17, 134, 70, 205, 95, 67, 18, 113, 62, 82, 6])
-    const expectedIdSignature = new Uint8Array([206, 225, 178, 3, 112, 79, 32, 3, 151, 223, 222, 219, 148, 32, 124, 32, 149, 161, 57, 55, 140, 38, 206, 161, 251, 55, 174, 34, 241, 142, 238, 192, 150, 240, 227, 84, 21, 90, 64, 244, 232, 60, 243, 183, 70, 66, 131, 108, 64, 198, 207, 208, 79, 120, 253, 140, 20, 217, 49, 74, 163, 20, 69, 3, 189, 72, 227, 53, 75, 1, 197, 230, 169, 3, 198, 34, 185, 137, 137, 42, 127, 235, 216, 230, 195, 70, 245, 47, 186, 219, 8, 113, 188, 192, 140, 153])
-    const expectedPkIdSignature = new Uint8Array([253, 177, 245, 46, 128, 11, 77, 30, 124, 134, 147, 174, 23, 61, 183, 240, 12, 168, 235, 184, 104, 124, 61, 64, 244, 138, 108, 52, 19, 9, 112, 178, 41, 231, 231, 84, 105, 124, 162, 202, 194, 122, 141, 240, 40, 167, 178, 113, 11, 187, 101, 92, 180, 68, 177, 244, 55, 216, 156, 233, 135, 231, 222, 2, 61, 50, 55, 131, 68, 105, 166, 252, 107, 230, 133, 159, 99, 94, 240, 206, 95, 72, 62, 253, 15, 17, 134, 70, 205, 95, 67, 18, 113, 62, 82, 6, 206, 225, 178, 3, 112, 79, 32, 3, 151, 223, 222, 219, 148, 32, 124, 32, 149, 161, 57, 55, 140, 38, 206, 161, 251, 55, 174, 34, 241, 142, 238, 192, 150, 240, 227, 84, 21, 90, 64, 244, 232, 60, 243, 183, 70, 66, 131, 108, 64, 198, 207, 208, 79, 120, 253, 140, 20, 217, 49, 74, 163, 20, 69, 3, 189, 72, 227, 53, 75, 1, 197, 230, 169, 3, 198, 34, 185, 137, 137, 42, 127, 235, 216, 230, 195, 70, 245, 47, 186, 219, 8, 113, 188, 192, 140, 153])
+    const expectedPublicKey = new Uint8Array([151, 15, 154, 152, 163, 12, 235, 93, 47, 90, 49, 208, 165, 112, 247, 71, 132, 114, 205, 172, 92, 204, 115, 105, 138, 93, 10, 39, 225, 77, 120, 11])
+    const expectedIdSignature = new Uint8Array([32, 79, 37, 236, 119, 230, 153, 106, 52, 233, 154, 211, 158, 194, 210, 175, 233, 39, 119, 103, 166, 98, 142, 198, 240, 246, 171, 63, 117, 25, 124, 13, 140, 169, 155, 240, 174, 31, 198, 172, 217, 203, 61, 21, 37, 7, 20, 239, 170, 18, 28, 120, 42, 115, 224, 55, 60, 217, 83, 215, 94, 243, 169, 6, 81, 88, 146, 112, 141, 42, 119, 208, 163, 50, 101, 22, 118, 86, 202, 59, 109, 75, 175, 47, 66, 46, 200, 240, 170, 144, 161, 24, 38, 178, 46, 50])
+    const expectedPkIdSignature = new Uint8Array([32, 64, 152, 210, 238, 235, 182, 100, 141, 164, 232, 110, 213, 74, 176, 177, 62, 172, 169, 39, 150, 172, 174, 16, 130, 76, 49, 99, 200, 230, 27, 79, 81, 3, 117, 156, 88, 195, 106, 53, 91, 241, 139, 109, 196, 85, 217, 127, 167, 8, 12, 123, 80, 204, 63, 77, 134, 109, 222, 142, 64, 232, 213, 7, 151, 15, 154, 152, 163, 12, 235, 93, 47, 90, 49, 208, 165, 112, 247, 71, 132, 114, 205, 172, 92, 204, 115, 105, 138, 93, 10, 39, 225, 77, 120, 11, 32, 79, 37, 236, 119, 230, 153, 106, 52, 233, 154, 211, 158, 194, 210, 175, 233, 39, 119, 103, 166, 98, 142, 198, 240, 246, 171, 63, 117, 25, 124, 13, 140, 169, 155, 240, 174, 31, 198, 172, 217, 203, 61, 21, 37, 7, 20, 239, 170, 18, 28, 120, 42, 115, 224, 55, 60, 217, 83, 215, 94, 243, 169, 6, 81, 88, 146, 112, 141, 42, 119, 208, 163, 50, 101, 22, 118, 86, 202, 59, 109, 75, 175, 47, 66, 46, 200, 240, 170, 144, 161, 24, 38, 178, 46, 50])
 
     beforeAll(async () => {
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
       await fs.copy(fixturesPath, savedKeysPath)
       savedKeysKeystore = new Keystore(savedKeysPath)
-      /* const id = await savedKeysKeystore.createKey(id, 'sign'); */
+      //await savedKeysKeystore.createKey(id, 'sign');
+      /* */
       identity = await Identities.createIdentity({ id, keystore: savedKeysKeystore })
       /*  */
       const x = 132;
@@ -158,7 +159,7 @@ describe('Identity Provider', function () {
     })
 
     it('has the correct signatures', async () => {
-      const internalSigningKey = await savedKeysKeystore.getKey(Buffer.from(identity.id).toString())
+      const internalSigningKey = await savedKeysKeystore.getKey(identity.id)
       const externalSigningKey = await savedKeysKeystore.getKey(id)
       const idSignature = await savedKeysKeystore.sign(internalSigningKey, identity.id)
       const pubKeyIdSignature = await savedKeysKeystore.sign(externalSigningKey, joinUint8Arrays([identity.publicKey, idSignature]))
@@ -249,7 +250,7 @@ describe('Identity Provider', function () {
     })
 
     it('sign data', async () => {
-      const signingKey = await keystore.getKey(Buffer.from(identity.id).toString())
+      const signingKey = await keystore.getKey(identity.id)
       const expectedSignature = await keystore.sign(signingKey, data)
       const signature = await identity.provider.sign(identity, data)
       assert.deepStrictEqual(signature, expectedSignature)

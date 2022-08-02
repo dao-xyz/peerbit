@@ -26,7 +26,7 @@
 import { Log } from "@dao-xyz/ipfs-log";
 import { Entry } from "@dao-xyz/ipfs-log-entry";
 
-export class Index<T> {
+export class Index<T, X> {
 
 
   /*
@@ -44,7 +44,7 @@ export class Index<T> {
    @param oplog - the source operations log that called updateIndex
    @param entries - operations that were added to the log
  */
-  async updateIndex(oplog: Log<Entry<T>>, entries?: Entry<T>[]) {
+  async updateIndex(oplog: Log<T>, entries?: Entry<T>[]) {
     this._index = oplog.values
   }
 }

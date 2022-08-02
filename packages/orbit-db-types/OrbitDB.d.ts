@@ -60,15 +60,15 @@ declare module 'orbit-db' {
             broker?: any,
         }): Promise<OrbitDB>
 
-        create(name: string, type: TStoreType, options?: ICreateOptions): Promise<Store>;
+        create(name: string, type: string, options?: ICreateOptions): Promise<Store>;
 
         open<T extends Store>(address: string, options?: IOpenOptions): Promise<T>;
 
         disconnect(): Promise<void>;
         stop(): Promise<void>;
-        determineAddress(name: string, type: TStoreType, options?: ICreateOptions): Promise<OrbitDBAddress>
+        determineAddress(name: string, type: string, options?: ICreateOptions): Promise<OrbitDBAddress>
 
-        static isValidType(type: TStoreType): boolean;
+        static isValidType(type: string): boolean;
         static addDatabaseType(type: string, store: typeof Store): void;
         static getDatabaseTypes(): {};
         static isValidAddress(address: string): boolean;

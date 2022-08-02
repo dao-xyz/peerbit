@@ -1,6 +1,7 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { U8IntArraySerializer } from "@dao-xyz/borsh-utils";
-import { arraysCompare, arraysEqual } from "./utils";
+import { U8IntArraySerializer } from "@dao-xyz/io-utils";
+import { arraysCompare, arraysEqual } from "@dao-xyz/io-utils";
+
 @variant(0)
 export class LamportClock {
 

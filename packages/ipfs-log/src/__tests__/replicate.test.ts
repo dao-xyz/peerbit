@@ -2,7 +2,7 @@ const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { assertPayload } from './utils/assert'
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
 
@@ -21,11 +21,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
   describe('ipfs-log - Replication', function () {
     jest.setTimeout(config.timeout * 6)
 
-    let ipfsd1, ipfsd2, ipfs1, ipfs2, id1, id2, testIdentity, testIdentity2
+    let ipfsd1, ipfsd2, ipfs1, ipfs2, id1: Identity, id2: Identity, testIdentity: Identity, testIdentity2: Identity
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
 
-    let keystore, signingKeystore
+    let keystore: Keystore, signingKeystore: Keystore
 
     beforeAll(async () => {
       rmrf.sync(identityKeysPath)

@@ -41,7 +41,7 @@ export abstract class AccessController<T> extends EventEmitter {
     be allowed in the database. Return true if the entry is allowed,
     false is not allowed
   */
-  async canAppend<T>(entry: Entry<T>, identityProvider): Promise<boolean> {
+  async canAppend(entry: Entry<T>, identityProvider): Promise<boolean> {
     throw new Error("Not implemented")
   }
 

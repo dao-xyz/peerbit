@@ -1,6 +1,6 @@
 import { Entry } from '@dao-xyz/ipfs-log-entry';
-import { LamportClock as Clock, arraysCompare } from '@dao-xyz/ipfs-log-entry'
-import { arraysEqual } from '@dao-xyz/orbit-db-keystore';
+import { LamportClock as Clock } from '@dao-xyz/ipfs-log-entry'
+import { arraysCompare } from '@dao-xyz/io-utils';
 
 export type ISortFunction = <T> (a: Entry<T>, b: Entry<T>, resolveConflict?: (a: Entry<T>, b: Entry<T>) => number) => number;
 /**

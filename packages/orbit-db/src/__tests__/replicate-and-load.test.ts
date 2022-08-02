@@ -118,8 +118,8 @@ Object.keys(testAPIs).forEach(API => {
 
               const items = db2.iterator({ limit: -1 }).collect()
               assert.equal(items.length, entryCount)
-              assert.equal(items[0], 'hello0')
-              assert.equal(items[items.length - 1], 'hello99')
+              assert.equal(items[0].data.payload.value, 'hello0')
+              assert.equal(items[items.length - 1].data.payload.value, 'hello99')
 
               try {
 
@@ -138,10 +138,10 @@ Object.keys(testAPIs).forEach(API => {
 
                 // Open the database again (this time from the disk)
                 options = Object.assign({}, options, { path: dbPath1, create: false })
-                const db3 = await orbitdb1.create(EVENT_STORE_TYPE, addr, options)
+                const db3 = await orbitdb1.open(addr, options)
                 // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
                 options = Object.assign({}, options, { path: dbPath2, localOnly: true })
-                const db4 = await orbitdb2.create(EVENT_STORE_TYPE, addr, options)
+                const db4 = await orbitdb2.open(addr, options)
 
                 await db3.load()
                 await db4.load()

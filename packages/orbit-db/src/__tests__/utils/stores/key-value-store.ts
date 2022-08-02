@@ -38,7 +38,7 @@ export class KeyValueIndex {
 }
 
 
-export class KeyValueStore extends Store<any, any, any> {
+export class KeyValueStore extends Store<any, any, any, any> {
     _type: string;
     _index: any;
     constructor(ipfs, id, dbname, options: any) {

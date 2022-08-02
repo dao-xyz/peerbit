@@ -27,9 +27,9 @@ export class Access extends AccessData {
     accessTypes: AccessType[]
 
     @field({ type: AccessCondition })
-    accessCondition: AccessCondition
+    accessCondition: AccessCondition<any>
 
-    constructor(options?: { accessTypes: AccessType[], accessCondition: AccessCondition }) {
+    constructor(options?: { accessTypes: AccessType[], accessCondition: AccessCondition<any> }) {
         super();
         if (options) {
             Object.assign(this, options);

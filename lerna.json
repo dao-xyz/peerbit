@@ -1,7 +1,7 @@
 {
     "packages": [
         "packages/shard",
-        "packages/borsh-utils",
+        "packages/io-utils",
         "packages/ipfs-log",
         "packages/ipfs-log-entry",
         "packages/orbit-db-access-controllers",

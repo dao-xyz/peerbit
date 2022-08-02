@@ -34,7 +34,7 @@ export class OrbitDBAccessController<T> extends AccessController<T> {
     // Write keys and admins keys are allowed
     const access = new Set([...this.get('write'), ...this.get('admin')])
     // If the ACL contains the writer's public key or it contains '*'
-    if (access.has(Buffer.from(entry.data.identity.id).toString()) || access.has('*')) {
+    if (access.has(Buffer.from(entry.data.identity.id).toString('base64')) || access.has('*')) {
       const verifiedIdentity = await identityProvider.verifyIdentity(entry.data.identity)
       // Allow access if identity verifies
       return verifiedIdentity
@@ -82,7 +82,7 @@ export class OrbitDBAccessController<T> extends AccessController<T> {
       // use ipfs controller as a immutable "root controller"
       accessController: {
         type: 'ipfs',
-        write: (this._options.admin ? Buffer.from(this._options.admin).toString() : undefined) || [Buffer.from(this._orbitdb.identity.id).toString()]
+        write: (this._options.admin ? Buffer.from(this._options.admin).toString('base64') : undefined) || [Buffer.from(this._orbitdb.identity.id).toString('base64')]
       },
       sync: true
     })
@@ -104,18 +104,18 @@ export class OrbitDBAccessController<T> extends AccessController<T> {
   async hasCapability(capability, identity) {
     // Write keys and admins keys are allowed
     const access = new Set(this.get(capability))
-    return access.has(Buffer.from(identity.id).toString()) || access.has("*")
+    return access.has(Buffer.from(identity.id).toString('base64')) || access.has("*")
   }
 
   async grant(capability: string, key: Uint8Array) {
     // Merge current keys with the new key
-    const capabilities = new Set([...(this._db.get(capability) || []), ...[Buffer.from(key).toString()]])
+    const capabilities = new Set([...(this._db.get(capability) || []), ...[Buffer.from(key).toString('base64')]])
     await this._db.put(capability, Array.from(capabilities.values()))
   }
 
   async revoke(capability: string, key: Uint8Array) {
     const capabilities = new Set(this._db.get(capability) || [])
-    capabilities.delete(Buffer.from(key).toString())
+    capabilities.delete(Buffer.from(key).toString('base64'))
     if (capabilities.size > 0) {
       await this._db.put(capability, Array.from(capabilities.values()))
     } else {

@@ -28,7 +28,7 @@ const findAllOccurrences = (str: string, substr: string): number[] => {
 }
 
 
-export type IStringStoreOptions = IQueryStoreOptions<string, StringIndex>;
+export type IStringStoreOptions = IQueryStoreOptions<string, string, StringIndex>;
 
 
 @variant([0, 3])
@@ -51,7 +51,7 @@ const defaultOptions = (options: IStringStoreOptions): any => {
   return options;
 }
 
-export class StringStore extends QueryStore<string, StringIndex, IStringStoreOptions> {
+export class StringStore extends QueryStore<string, string, StringIndex, IStringStoreOptions> {
 
   _type: string = undefined;
   constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IStringStoreOptions) {

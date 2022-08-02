@@ -22,7 +22,7 @@ export class StringIndex {
   }
 }
 
-export const applyOperations = (string: string, operations: StringLogEntry<T>[]): string => {
+export const applyOperations = (string: string, operations: StringLogEntry[]): string => {
   operations.reduce((handled, item: { hash: string, payload: PayloadOperation }, idx) => {
     if (!handled.includes(item.hash)) {
       handled.push(item.hash)

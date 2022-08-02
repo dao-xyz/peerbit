@@ -4,6 +4,7 @@ const fs = require('fs')
 const path = require('path')
 const rmrf = require('rimraf')
 import { OrbitDB } from '../orbit-db'
+import { FEED_STORE_TYPE } from './utils/stores'
 
 // Include test utilities
 const {
@@ -19,7 +20,7 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Drop Database (${API})`, function () {
     jest.setTimeout(config.timeout)
 
-    let ipfsd, ipfs, orbitdb, db, address
+    let ipfsd, ipfs, orbitdb: OrbitDB, db, address
     let localDataPath
 
     beforeAll(async () => {
@@ -41,7 +42,7 @@ Object.keys(testAPIs).forEach(API => {
 
     describe('Drop', function () {
       beforeAll(async () => {
-        db = await orbitdb.create('first', 'feed')
+        db = await orbitdb.create('first', FEED_STORE_TYPE)
         localDataPath = path.join(dbPath)
         assert.equal(fs.existsSync(localDataPath), true)
       })

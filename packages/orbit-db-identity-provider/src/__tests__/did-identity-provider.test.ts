@@ -43,18 +43,18 @@ describe('DID Identity Provider', function () {
     })
 
     it('created a key for id in keystore', async () => {
-      const key = await keystore.getKey(Buffer.from(didStr).toString())
+      const key = await keystore.getKey(didStr)
       assert.notStrictEqual(key, undefined)
     })
 
     it('has the correct public key', async () => {
-      const signingKey = await keystore.getKey(Buffer.from(didStr).toString())
+      const signingKey = await keystore.getKey(didStr)
       assert.notStrictEqual(signingKey, undefined)
       assert.deepStrictEqual(identity.publicKey, new Uint8Array((await Keystore.getPublicSign(signingKey)).getBuffer()))
     })
 
     it('has a signature for the id', async () => {
-      const signingKey = await keystore.getKey(Buffer.from(didStr).toString())
+      const signingKey = await keystore.getKey(didStr)
       const idSignature = await keystore.sign(signingKey, didStr)
       const verifies = await Keystore.verify(idSignature, new Ed25519PublicKey(Buffer.from(identity.publicKey)), new Uint8Array(Buffer.from(didStr)))
       assert.strictEqual(verifies, true)
@@ -62,7 +62,7 @@ describe('DID Identity Provider', function () {
     })
 
     it('has a signature for the publicKey', async () => {
-      const signingKey = await keystore.getKey(Buffer.from(didStr).toString())
+      const signingKey = await keystore.getKey(didStr)
       const idSignature = await keystore.sign(signingKey, didStr)
       assert.notStrictEqual(idSignature, undefined)
     })
@@ -100,7 +100,7 @@ describe('DID Identity Provider', function () {
     })
 
     it('sign data', async () => {
-      const signingKey = await keystore.getKey(Buffer.from(identity.id).toString())
+      const signingKey = await keystore.getKey(identity.id)
       const expectedSignature = await keystore.sign(signingKey, data)
       const signature = await identity.provider.sign(identity, data)
       assert.deepStrictEqual(signature, expectedSignature)

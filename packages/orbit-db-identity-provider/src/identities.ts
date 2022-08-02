@@ -43,7 +43,7 @@ export class Identities {
   get signingKeystore() { return this._signingKeystore }
 
   async sign(identity: Identity | IdentitySerializable, data: Uint8Array) {
-    const signingKey = await this.keystore.getKey(Buffer.from(identity.id).toString())
+    const signingKey = await this.keystore.getKey(Buffer.from(identity.id).toString('base64'))
     if (!signingKey) {
       throw new Error('Private signing key not found from Keystore')
     }
@@ -81,7 +81,7 @@ export class Identities {
 
   async signId(id: Uint8Array) {
     const keystore = this.keystore
-    const idString = Buffer.from(id).toString();
+    const idString = Buffer.from(id).toString('base64');
     const existingKey = await keystore.getKey(idString);
     const key = existingKey || await keystore.createKey(idString)
     const publicKey = await Keystore.getPublicSign(key)
@@ -94,7 +94,7 @@ export class Identities {
       return false
     }
 
-    const identityHex = Buffer.from(identity.signatures.id).toString();
+    const identityHex = Buffer.from(identity.signatures.id).toString('base64');
     const knownID = this._knownIdentities.get(identityHex)
     if (knownID) {
       return identity.equals(knownID)

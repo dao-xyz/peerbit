@@ -5,7 +5,7 @@ import { OrbitDB } from '../../orbit-db'
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
 import { AccessControllers } from '@dao-xyz/orbit-db-access-controllers'
 import io from '@dao-xyz/orbit-db-io'
-import { FEED_STORE_TYPE } from '../utils/stores'
+import { FeedStore, FEED_STORE_TYPE } from '../utils/stores'
 // Include test utilities
 const {
   config,
@@ -66,7 +66,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
   })
 
   describe('OrbitDB Integration', function () {
-    let db, db2
+    let db: FeedStore<string>, db2: FeedStore<string>
     let dbManifest, acManifest
 
     beforeAll(async () => {
@@ -89,7 +89,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
     })
 
     it('has the correct access rights after creating the database', async () => {
-      assert.deepStrictEqual(db.access.write, [id1.id])
+      assert.deepStrictEqual(db.access.write, [Buffer.from(id1.id).toString('base64')])
     })
 
     it('makes database use the correct access controller', async () => {
@@ -133,7 +133,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
           err = e.toString()
         }
 
-        const res = await db.iterator().collect().map(e => e.payload.value)
+        const res = await db.iterator().collect().map(e => e.data.payload.value)
         assert.strictEqual(err, undefined)
         assert.deepStrictEqual(res, ['hello?'])
       })
@@ -147,9 +147,9 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
           err = e
         }
 
-        const res = await db2.iterator().collect().map(e => e.payload.value)
+        const res = await db2.iterator().collect().map(e => e.data.payload.value)
         assert.strictEqual(err.message, `Could not append Entry<T>, key "${db2.identity.id}" is not allowed to write to the log`)
-        assert.deepStrictEqual(res.includes(e => e === 'hello!!'), false)
+        assert.deepStrictEqual(res.includes('hello!!'), false)
       })
     })
   })

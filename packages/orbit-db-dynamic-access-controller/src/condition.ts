@@ -1,5 +1,6 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { Entry } from '@dao-xyz/ipfs-log-entry';
+import { U8IntArraySerializer, arraysEqual } from '@dao-xyz/io-utils';
 
 @variant(0)
 export class Network {
@@ -11,7 +12,7 @@ export class Network {
     rpc: string;
 }
 
-export class AccessCondition {
+export class AccessCondition<T> {
 
     async allowed(entry: Entry<T>): Promise<boolean> {
         throw new Error("Not implemented")
@@ -19,7 +20,7 @@ export class AccessCondition {
 }
 
 @variant([0, 0])
-export class AnyAccessCondition extends AccessCondition {
+export class AnyAccessCondition<T> extends AccessCondition<T> {
     constructor() {
         super();
     }
@@ -29,17 +30,17 @@ export class AnyAccessCondition extends AccessCondition {
 }
 
 @variant([0, 1])
-export class PublicKeyAccessCondition extends AccessCondition {
+export class PublicKeyAccessCondition<T> extends AccessCondition<T> {
 
     @field({ type: 'String' })
     type: string
 
-    @field({ type: 'String' })
-    key: string
+    @field(U8IntArraySerializer)
+    key: Uint8Array
 
     constructor(options?: {
         type: string,
-        key: string
+        key: Uint8Array
     }) {
         super();
         if (options) {
@@ -49,7 +50,7 @@ export class PublicKeyAccessCondition extends AccessCondition {
     }
 
     async allowed(entry: Entry<T>): Promise<boolean> {
-        return this.type === entry.data.identity.type && this.key === entry.data.identity.id
+        return this.type === entry.data.identity.type && arraysEqual(this.key, entry.data.identity.id)
     }
 }
 

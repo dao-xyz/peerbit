@@ -1,6 +1,7 @@
 import { field, serialize, variant } from "@dao-xyz/borsh";
 import { createHash } from "crypto";
 import { BinaryPayload } from "@dao-xyz/bpayload";
+import { U8IntArraySerializer, arraysEqual } from "@dao-xyz/io-utils";
 export type IdentityProviderType = 'orbitdb' | 'ethereum' | 'solana' | string;
 
 @variant("trust")
@@ -10,15 +11,15 @@ export class TrustData extends BinaryPayload {
 @variant(0)
 export class PublicKey extends TrustData {
 
-    @field({ type: 'String' })
-    id: string;
+    @field(U8IntArraySerializer)
+    id: Uint8Array;
 
     @field({ type: 'String' })
     type: string;
 
 
     constructor(properties?: {
-        id: string;
+        id: Uint8Array;
         type: IdentityProviderType;
     }) {
         super();
@@ -28,7 +29,7 @@ export class PublicKey extends TrustData {
         }
     }
 
-    static from(identity: PublicKey | { type: string, id: string } | string): PublicKey {
+    static from(identity: PublicKey | { type: string, id: Uint8Array } | string): PublicKey {
         if (identity instanceof PublicKey)
             return identity;
         else if (typeof identity === 'string') {
@@ -39,7 +40,7 @@ export class PublicKey extends TrustData {
             const type = identity.substring(0, splitIndex);
             const id = identity.substring(splitIndex + 1);
             return new PublicKey({
-                id, type
+                id: new Uint8Array(Buffer.from(id)), type
             })
         }
         return new PublicKey({
@@ -51,8 +52,13 @@ export class PublicKey extends TrustData {
     hashCode(): string {
         return createHash('sha1').update(serialize(this)).digest('hex');
     }
+
+    equals(other: { type: string, id: Uint8Array }) {
+        return this.type === other.type && arraysEqual(this.id, other.id)
+    }
+
     toString() {
-        return this.type + '/' + this.id;
+        return this.type + '/' + Buffer.from(this.id).toString('base64');
     }
 }
 

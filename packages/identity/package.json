@@ -31,6 +31,7 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^2.1.5",
-    "@dao-xyz/bpayload": "^0.0.11"
+    "@dao-xyz/bpayload": "^0.0.11",
+    "@dao-xyz/io-utils": "^0.0.1"
   }
 }

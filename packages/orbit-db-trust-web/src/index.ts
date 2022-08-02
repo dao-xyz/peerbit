@@ -1,5 +1,5 @@
 import { deserialize, field, option, serialize, variant } from "@dao-xyz/borsh";
-import { BinaryDocumentStore, BinaryDocumentStoreOptions, LogEntry } from "@dao-xyz/orbit-db-bdocstore";
+import { BinaryDocumentStore, BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import { SingleDBInterface } from "@dao-xyz/orbit-db-store-interface";
 import { Identities, Identity, IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
@@ -11,6 +11,7 @@ import { Entry } from "@dao-xyz/ipfs-log-entry";
 import { createHash } from "crypto";
 import { IQueryStoreOptions } from "@dao-xyz/orbit-db-query-store";
 import { PublicKey, TrustData } from "@dao-xyz/identity";
+import { arraysEqual } from "@dao-xyz/io-utils";
 
 import isNode from 'is-node';
 import { IStoreOptions } from "@dao-xyz/orbit-db-store";
@@ -41,19 +42,19 @@ export const getTargetPath = (start: PublicKey, target: (key: PublicKey) => bool
         if (target(current)) {
             return path;
         }
-        let trust = db.db.index.get(PublicKey.from(current).hashCode(), true) as LogEntry<P2PTrustRelation>;
+        let trust = db.db.index.get(PublicKey.from(current).hashCode());
         if (!trust) {
             return undefined; // no path
         }
 
         // TODO: could be multiple but we just follow one path for now
-        if (current == trust.payload.value.trustee) {
+        if (current == trust.value.trustee) {
             return undefined; // no path
         }
 
         // Assumed message is signed
-        let truster = trust.identity;
-        let trustRelation = trust.payload.value;
+        let truster = trust.entry.data.identity;
+        let trustRelation = trust.value;
         trustRelation.truster = truster;
         let key = truster.toString();
         if (visited.has(key)) {
@@ -121,7 +122,7 @@ export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocument
 
     }
 
-    getStoreOptions(replicate: boolean, directory?: string): IQueryStoreOptions<P2PTrustRelation, any> {
+    getStoreOptions(replicate: boolean, directory?: string): IQueryStoreOptions<P2PTrustRelation, any, any> {
         return {
             subscribeToQueries: replicate,
             replicate,
@@ -141,7 +142,7 @@ export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocument
         }
     }
 
-    async init(orbitDB: OrbitDB, options: IStoreOptions<any, any>): Promise<void> {
+    async init(orbitDB: OrbitDB, options: IStoreOptions<any, any, any>): Promise<void> {
         const storeOptions = this.getStoreOptions(options.replicate, options.directory);
         await super.init(orbitDB, storeOptions);
         if (!this.cid) {
@@ -221,7 +222,7 @@ export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocument
 }
 
 export const getTrustPath = (start: PublicKey, end: PublicKey, db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>): P2PTrustRelation[] => {
-    return getTargetPath(start, (key) => end.id === key.id && end.type === key.type, db)
+    return getTargetPath(start, (key) => end.type === key.type && arraysEqual(end.id, key.id), db)
 }
 
 
@@ -233,7 +234,7 @@ export type TrustWebAccessControllerOptions = {
     appendAll?: boolean
 };
 
-export class TrustWebAccessController extends AccessController {
+export class TrustWebAccessController extends AccessController<any> {
 
     // MAKE DISJOIN
     _trustResolver: () => P2PTrust
@@ -250,7 +251,7 @@ export class TrustWebAccessController extends AccessController {
 
     }
 
-    async canAppend(entry: Entry<T>, identityProvider: Identities): Promise<boolean> {
+    async canAppend(entry: Entry<any>, identityProvider: Identities): Promise<boolean> {
 
         if (!identityProvider.verifyIdentity(entry.data.identity)) {
             return false;

@@ -2,7 +2,7 @@ import path from 'path'
 import { EventEmitter } from 'events'
 import mapSeries from 'p-each-series'
 import { default as PQueue } from 'p-queue'
-import { Log, ISortFunction, RecycleOptions, AccessError } from '@dao-xyz/ipfs-log'
+import { Log, ISortFunction, RecycleOptions, AccessError, LogOptions } from '@dao-xyz/ipfs-log'
 import { IOOptions } from '@dao-xyz/ipfs-log-entry'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Index } from './store-index'
@@ -83,7 +83,7 @@ interface IOpenOptions {
    * Otherwise it's used to validate the manifest.
    * You ony need to set this if using OrbitDB#open
    */
-  type?: TStoreType;
+  type?: string;
 
   /**
    * Overwrite an existing database (Default: false)
@@ -97,8 +97,8 @@ interface IOpenOptions {
 }
 
 
-export interface IStoreOptions<T, X extends Index<T>> extends ICreateOptions, IOpenOptions {
-  Index?: Constructor<X>,
+export interface IStoreOptions<T, X, I extends Index<T, X>> extends ICreateOptions, IOpenOptions {
+  Index?: Constructor<I>,
   maxHistory?: number,
   fetchEntryTimeout?: number,
   referenceCount?: number,
@@ -110,9 +110,9 @@ export interface IStoreOptions<T, X extends Index<T>> extends ICreateOptions, IO
   recycle?: RecycleOptions,
   typeMap?: { [key: string]: Constructor<any> },
   onlyObserver?: boolean,
-  onClose?: (store: Store<T, X, any>) => void,
-  onDrop?: (store: Store<T, X, any>) => void,
-  onLoad?: (store: Store<T, X, any>) => void,
+  onClose?: (store: Store<T, X, I, any>) => void,
+  onDrop?: (store: Store<T, X, I, any>) => void,
+  onLoad?: (store: Store<T, X, I, any>) => void,
   encyption?: {
     encrypt: (arr: Uint8Array) => Uint8Array
     decrypt: (arr: Uint8Array) => Uint8Array
@@ -125,7 +125,7 @@ export const JSON_ENCODER = {
   decoder: (obj) => JSON.parse(Buffer.from(obj).toString())
 };
 
-export const DefaultOptions: IStoreOptions<any, Index<any>> = {
+export const DefaultOptions: IStoreOptions<any, any, Index<any, any>> = {
   Index: Index,
   maxHistory: -1,
   fetchEntryTimeout: null,
@@ -144,7 +144,7 @@ export interface Address {
   toString(): string;
 };
 
-export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
+export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>> {
 
   options: O;
   _type: string;
@@ -163,7 +163,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
   access: AccessController<T>;
   _oplog: Log<any>;
   _queue: PQueue<any, any>
-  _index: X;
+  _index: I;
   _replicationStatus: ReplicationInfo;
   _stats: any;
   _replicator: Replicator<T>;
@@ -211,7 +211,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     } as any as OrbitDBAccessController<T> // TODO fix types
 
     // Create the operations log
-    this._oplog = new Log(this._ipfs, this.identity, this.logOptions)
+    this._oplog = new Log<T>(this._ipfs, this.identity, this.logOptions)
 
     // _addOperation and log-joins queue. Adding ops and joins to the queue
     // makes sure they get processed sequentially to avoid race conditions
@@ -319,7 +319,7 @@ export class Store<T, X extends Index<T>, O extends IStoreOptions<T, X>> {
     return this._index;
   }
 
-  get logOptions() {
+  get logOptions(): LogOptions<T> {
     return { logId: this.id, io: this.options.io, access: this.access, sortFn: this.options.sortFn, recycle: this.options.recycle };
   }
 

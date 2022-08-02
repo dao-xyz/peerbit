@@ -65,8 +65,8 @@ Object.keys(testAPIs).forEach(API => {
         // Set write access for both clients
         accessController: {
           write: [
-            orbitdb1.identity.id,
-            orbitdb2.identity.id
+            Buffer.from(orbitdb1.identity.id).toString(),
+            Buffer.from(orbitdb2.identity.id).toString(),
           ]
         }
       }
@@ -167,8 +167,8 @@ Object.keys(testAPIs).forEach(API => {
             const entries = db2.iterator({ limit: -1 }).collect()
             try {
               assert.equal(entries.length, entryCount)
-              assert.equal(entries[0], 'hello0')
-              assert.equal(entries[entries.length - 1], 'hello99')
+              assert.equal(entries[0].data.payload.value, 'hello0')
+              assert.equal(entries[entries.length - 1].data.payload.value, 'hello99')
               resolve(true)
             } catch (error) {
               reject(error)

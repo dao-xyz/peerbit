@@ -73,7 +73,7 @@ describe(`orbit-db - IPFSAccessController`, function () {
 
     beforeAll(async () => {
       accessController = await IPFSAccessController.create(orbitdb1, {
-        write: [Buffer.from(id1.id).toString()]
+        write: [id1.id]
       })
     })
 
@@ -93,7 +93,7 @@ describe(`orbit-db - IPFSAccessController`, function () {
     })
 
     it('sets default capabilities', async () => {
-      assert.deepStrictEqual(accessController.write, [id1.id])
+      assert.deepStrictEqual(accessController.write, [Buffer.from(id1.id).toString('base64')])
     })
 
     it('allows owner to append after creation', async () => {
@@ -114,14 +114,14 @@ describe(`orbit-db - IPFSAccessController`, function () {
 
     beforeAll(async () => {
       accessController = await IPFSAccessController.create(orbitdb1, {
-        write: ['A', 'B', Buffer.from(id1.id).toString()]
+        write: ['A', 'B', id1.id]
       })
       manifest = await accessController.save()
       await accessController.load(manifest.address)
     })
 
     it('has correct capabalities', async () => {
-      assert.deepStrictEqual(accessController.write, ['A', 'B', id1.id])
+      assert.deepStrictEqual(accessController.write, ['A', 'B', Buffer.from(id1.id).toString('base64')])
     })
   })
 })

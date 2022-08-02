@@ -41,8 +41,7 @@ describe('cluster', () => {
             expect(l0a.cid).toBeDefined();
             expect(l0a.trust).toBeInstanceOf(P2PTrust);
             expect((l0a.trust as P2PTrust).rootTrust).toBeDefined();
-            expect((l0a.trust as P2PTrust).rootTrust.id === peer.orbitDB.identity.id)
-
+            expect((l0a.trust as P2PTrust).rootTrust.equals(peer.orbitDB.identity))
 
             let newTrustee = peer2.orbitDB.identity;
             await l0a.trust.addTrust(newTrustee);
@@ -67,7 +66,7 @@ describe('cluster', () => {
             await l0.init(peer);
             expect(l0.cid).toBeDefined();
             let loadedShard = await Shard.loadFromCID<BinaryFeedStoreInterface>(l0.cid, peer2.node);
-            expect(loadedShard.interface.db.address).toEqual(l0.interface.db.address);
+            expect(loadedShard.interface.address).toEqual(l0.interface.address);
             await disconnectPeers([peer, peer2]);
         })
     })
@@ -435,16 +434,16 @@ describe('cluster', () => {
             let [peer] = await getConnectedPeers(1)
 
             // Create Root shard
-
             let l0 = await shardStoreShard();
             await l0.replicate(peer);
+
             // Create 2 feed stores
-            let feedStore1 = await (await documentStoreShard()).init(peer, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
+            let feedStore1 = await (await documentStoreShard()).init(peer, l0.cid);
             await feedStore1.replicate(peer);
-            let feedStore2 = await (await documentStoreShard()).init(peer, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
+            let feedStore2 = await (await documentStoreShard()).init(peer, l0.cid);
             await feedStore2.replicate(peer);
             const subscriptions = await peer.node.pubsub.ls();
-            expect(subscriptions.filter(x => x.endsWith("/query"))).toHaveLength(1);
+            expect(subscriptions.length).toHaveLength(1);
             disconnectPeers([peer]);
         })
     })

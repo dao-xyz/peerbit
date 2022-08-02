@@ -7,10 +7,10 @@ const type = 'ipfs'
 
 export class IPFSAccessController<T> extends AccessController<T> {
   _write: string[];
-  constructor(ipfs, options?: { write?: string[] }) {
+  constructor(ipfs, options?: { write?: (string | Uint8Array)[] }) {
     super()
     this._ipfs = ipfs
-    this._write = Array.from(options.write || [])
+    this._write = Array.from(options.write || []).map(x => x instanceof Uint8Array ? Buffer.from(x).toString('base64') : x)
   }
 
   // Returns the type of the access controller
@@ -24,7 +24,7 @@ export class IPFSAccessController<T> extends AccessController<T> {
   async canAppend<T>(entry: Entry<T>, identityProvider: Identities) {
     // Allow if access list contain the writer's publicKey or is '*'
     const key = entry.data.identity.id
-    if (this.write.includes(Buffer.from(key).toString()) || this.write.includes('*')) {
+    if (this.write.includes(Buffer.from(key).toString('base64')) || this.write.includes('*')) {
       // check identity is valid
       return identityProvider.verifyIdentity(entry.data.identity)
     }
@@ -57,8 +57,9 @@ export class IPFSAccessController<T> extends AccessController<T> {
     return { address: cid }
   }
 
-  static async create(orbitdb, options: { write?: string[] } = {}) {
-    options = { ...options, ...{ write: options.write || [Buffer.from(orbitdb.identity.id).toString()] } }
+  static async create(orbitdb, options: { write?: (string | Uint8Array)[] } = {}) {
+    options = { ...options, ...{ write: options.write || [Buffer.from(orbitdb.identity.id).toString('base64')] } }
     return new IPFSAccessController(orbitdb._ipfs, options)
   }
 }
+

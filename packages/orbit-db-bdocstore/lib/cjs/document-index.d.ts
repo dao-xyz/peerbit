@@ -1,24 +1,43 @@
 import { Constructor } from "@dao-xyz/borsh";
-import { IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
 import { Hashable } from "./utils";
-export interface LogEntry<T> {
-    identity: IdentitySerializable;
-    payload: Payload<T>;
+import { Entry } from "@dao-xyz/ipfs-log-entry";
+import { Log } from "@dao-xyz/ipfs-log";
+export declare class Operation {
 }
-export interface Payload<T> {
-    op?: string;
-    key?: string;
+export declare class PutOperation extends Operation {
+    key: string;
+    value: Uint8Array;
+    constructor(props?: {
+        key: string;
+        value: Uint8Array;
+    });
+}
+export declare class PutAllOperation extends Operation {
+    docs: PutOperation[];
+    constructor(props?: {
+        docs: PutOperation[];
+    });
+}
+export declare class DeleteOperation extends Operation {
+    key: string;
+    constructor(props?: {
+        key: string;
+    });
+}
+export interface IndexedValue<T> {
+    key: string;
     value: T;
+    entry: Entry<Operation>;
 }
 export declare class DocumentIndex<T> {
     _index: {
-        [key: string]: LogEntry<T>;
+        [key: string]: IndexedValue<T>;
     };
     clazz: Constructor<T>;
     constructor();
     init(clazz: Constructor<T>): void;
-    get(key: Hashable, fullOp?: boolean): (LogEntry<T> | T);
-    updateIndex(oplog: any): Promise<void>;
-    deserializeOrPass(value: string | T): T;
-    deserializeOrItem(item: LogEntry<T | string>): LogEntry<T>;
+    get(key: Hashable): IndexedValue<T>;
+    updateIndex(oplog: Log<IndexedValue<T>>): Promise<void>;
+    deserializeOrPass(value: Uint8Array | T): T;
+    deserializeOrItem(entry: Entry<Operation>, operation: PutOperation): IndexedValue<T>;
 }

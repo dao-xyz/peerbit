@@ -39,10 +39,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
       signingKeystore = new Keystore(signingKeysPath)
 
       // The ids are choosen so that the tests plays out "nicely", specifically the logs clock id sort will reflect the testIdentity suffix
-      testIdentity = await Identities.createIdentity({ id: new Uint8Array([3]), keystore, signingKeystore })
-      testIdentity2 = await Identities.createIdentity({ id: new Uint8Array([2]), keystore, signingKeystore })
-      testIdentity3 = await Identities.createIdentity({ id: new Uint8Array([1]), keystore, signingKeystore })
-      testIdentity4 = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
+      testIdentity = await Identities.createIdentity({ id: new Uint8Array([1]), keystore, signingKeystore })
+      testIdentity2 = await Identities.createIdentity({ id: new Uint8Array([3]), keystore, signingKeystore })
+      testIdentity3 = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
+      testIdentity4 = await Identities.createIdentity({ id: new Uint8Array([2]), keystore, signingKeystore })
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })
