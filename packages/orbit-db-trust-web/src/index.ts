@@ -122,16 +122,16 @@ export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocument
 
     }
 
-    getStoreOptions(replicate: boolean, directory?: string): IQueryStoreOptions<P2PTrustRelation, any, any> {
+    getStoreOptions(options: { queryRegion?: string, replicate?: boolean, directory?: string }): IQueryStoreOptions<P2PTrustRelation, any, any> {
         return {
-            subscribeToQueries: replicate,
-            replicate,
-            directory,
-            queryRegion: undefined,
+            subscribeToQueries: options.replicate,
+            replicate: options.replicate,
+            directory: options.directory,
             typeMap: {
                 [P2PTrustRelation.name]: P2PTrustRelation
             },
-            create: replicate,
+            queryRegion: options.queryRegion,
+            create: options.replicate,
             cache: undefined,
             nameResolver: (name: string) => name,
             accessController: {
@@ -142,8 +142,8 @@ export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocument
         }
     }
 
-    async init(orbitDB: OrbitDB, options: IStoreOptions<any, any, any>): Promise<void> {
-        const storeOptions = this.getStoreOptions(options.replicate, options.directory);
+    async init(orbitDB: OrbitDB, options: IQueryStoreOptions<any, any, any>): Promise<void> {
+        const storeOptions = this.getStoreOptions(options);
         await super.init(orbitDB, storeOptions);
         if (!this.cid) {
             await this.save(orbitDB._ipfs);

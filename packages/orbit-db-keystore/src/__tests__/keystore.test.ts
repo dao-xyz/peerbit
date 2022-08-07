@@ -84,7 +84,7 @@ describe('keystore', () => {
     })
   })
 
-  describe('#createKey()', () => {
+  describe('createKey', () => {
     let keystore: Keystore
 
     beforeEach(async () => {
@@ -127,7 +127,7 @@ describe('keystore', () => {
     })
   })
 
-  describe('#hasKey()', () => {
+  describe('hasKey', () => {
     let keystore: Keystore
 
     beforeAll(async () => {
@@ -174,7 +174,7 @@ describe('keystore', () => {
     })
   })
 
-  describe('#getKey()', () => {
+  describe('getKey', () => {
     let keystore: Keystore
 
     beforeAll(async () => {
@@ -220,7 +220,41 @@ describe('keystore', () => {
     })
   })
 
-  describe('#sign()', () => {
+  describe('getKeys', () => {
+    let keystore: Keystore, aSignKey: CryptographyKey, aBoxKey: CryptographyKey, aBox2Key: CryptographyKey, bSignKey: CryptographyKey
+
+    beforeAll(async () => {
+
+      keystore = new Keystore()
+      aSignKey = await keystore.createKey('ASign', 'sign', 'Group')
+      aBoxKey = await keystore.createKey('ABox', 'box', 'Group')
+      aBox2Key = await keystore.createKey('ABox2', 'box', 'Group')
+      bSignKey = await keystore.createKey('BSign', 'sign', 'B')
+
+    })
+
+    it('gets keys by group', async () => {
+      const keys = await keystore.getKeys('Group')
+      assert.deepStrictEqual(keys[0].getBuffer(), aBoxKey.getBuffer())
+      assert.deepStrictEqual(keys[1].getBuffer(), aBox2Key.getBuffer())
+      assert.deepStrictEqual(keys[2].getBuffer(), aSignKey.getBuffer())
+
+    })
+
+
+    it('gets keys by group and type', async () => {
+      const keys = await keystore.getKeys('Group', 'box')
+      assert.deepStrictEqual(keys[0].getBuffer(), aBoxKey.getBuffer())
+      assert.deepStrictEqual(keys[1].getBuffer(), aBox2Key.getBuffer())
+    })
+
+
+    afterAll(async () => {
+      // keystore.close()
+    })
+  })
+
+  describe('sign', () => {
     let keystore: Keystore, key, signingStore
 
     beforeAll(async () => {
@@ -237,7 +271,7 @@ describe('keystore', () => {
     })
 
     it('signs data', async () => {
-      const expectedSignature = new Uint8Array([128, 94, 90, 111, 244, 34, 12, 68, 67, 222, 198, 232, 113, 114, 19, 168, 15, 252, 93, 41, 116, 162, 218, 34, 230, 29, 101, 138, 255, 235, 195, 144, 251, 226, 68, 62, 242, 129, 222, 139, 107, 116, 47, 177, 223, 127, 16, 36, 28, 8, 201, 73, 50, 165, 138, 32, 160, 96, 186, 209, 126, 78, 230, 10, 100, 97, 116, 97, 32, 100, 97, 116, 97, 32, 100, 97, 116, 97])
+      const expectedSignature = new Uint8Array([6, 67, 127, 228, 255, 25, 228, 149, 239, 54, 116, 56, 63, 165, 202, 141, 76, 75, 130, 245, 71, 207, 234, 8, 224, 190, 114, 251, 6, 29, 245, 214, 231, 243, 44, 160, 88, 210, 85, 148, 192, 167, 247, 126, 143, 38, 56, 141, 6, 43, 239, 251, 135, 190, 56, 173, 81, 0, 96, 92, 99, 246, 186, 14, 100, 97, 116, 97, 32, 100, 97, 116, 97, 32, 100, 97, 116, 97])
       const signature = await keystore.sign(key, Buffer.from('data data data'))
       assert.deepStrictEqual(signature, expectedSignature)
     })
@@ -263,7 +297,7 @@ describe('keystore', () => {
     })
   })
 
-  describe('#getPublic', () => {
+  describe('getPublic', () => {
     let keystore: Keystore, key, signingStore
 
     beforeAll(async () => {
@@ -275,7 +309,8 @@ describe('keystore', () => {
 
 
     it('gets the public key', async () => {
-      const expectedKey = new Uint8Array([245, 250, 56, 119, 249, 255, 90, 188, 29, 84, 40, 192, 167, 161, 11, 133, 218, 49, 125, 194, 217, 14, 143, 205, 138, 146, 240, 240, 38, 20, 72, 77]);
+      const expectedKey = new Uint8Array([223, 178, 12, 178, 50, 135, 253, 208, 210, 71, 27, 136, 221, 91, 110, 140, 184, 251, 59, 171, 98, 101, 56, 87, 225, 117, 155, 60, 208, 107, 90, 246]
+      );
       const publicKey = await Keystore.getPublicSign(key)
       assert.deepStrictEqual(new Uint8Array(publicKey.getBuffer()), expectedKey)
     })
@@ -296,7 +331,7 @@ describe('keystore', () => {
     })
   })
 
-  describe('#verify', () => {
+  describe('verify', () => {
     jest.setTimeout(5000)
     let keystore: Keystore, signingStore, publicKey, key: CryptographyKey
 
@@ -340,7 +375,7 @@ describe('keystore', () => {
     })
   })
 
-  describe('#open', () => {
+  describe('open', () => {
     let keystore: Keystore, signingStore
 
     beforeEach(async () => {
@@ -370,4 +405,59 @@ describe('keystore', () => {
       signingStore.close()
     })
   })
+
+  describe('encryption', () => {
+    describe('box', () => {
+      let keystore: Keystore, keyA: CryptographyKey, keyB: CryptographyKey, encryptStore
+
+      beforeAll(async () => {
+        encryptStore = await storage.createStore(storagePath)
+        keystore = new Keystore(encryptStore) // 
+
+        await keystore.createKey('box-a', 'box');
+        await keystore.createKey('box-b', 'box');
+        keyA = await keystore.getKey('box-a', 'box')
+        keyB = await keystore.getKey('box-b', 'box')
+
+      })
+
+      it('encrypts/decrypts', async () => {
+        const data = new Uint8Array([1, 2, 3]);
+        const encrypted = await keystore.encrypt(data, keyA, await Keystore.getPublicBox(keyB));
+        const decrypted = await keystore.decrypt(encrypted, keyB, await Keystore.getPublicBox(keyA))
+        assert.deepStrictEqual(data, decrypted);
+      })
+
+
+      afterAll(async () => {
+        encryptStore.close()
+      })
+    })
+
+    describe('secret', () => {
+      let keystore: Keystore, key: CryptographyKey, encryptStore
+
+      beforeAll(async () => {
+        encryptStore = await storage.createStore(storagePath)
+        keystore = new Keystore(encryptStore) // 
+
+        await keystore.createKey('secret', 'secret');
+        key = await keystore.getKey('secret', 'secret')
+      })
+
+      it('encrypts/decrypts', async () => {
+        const data = new Uint8Array([1, 2, 3]);
+        const encrypted = await keystore.encrypt(data, key);
+        const decrypted = await keystore.decrypt(encrypted, key)
+        assert.deepStrictEqual(data, decrypted);
+      })
+
+
+      afterAll(async () => {
+        encryptStore.close()
+      })
+    })
+
+  })
+
 })

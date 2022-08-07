@@ -73,3 +73,11 @@ export const arraysCompare = (array1: Uint8Array, array2: Uint8Array): number =>
     }
     return 1;
 }
+
+export const joinUint8Arrays = (arrays: Uint8Array[]) => {
+    const flatNumberArray = arrays.reduce((acc, curr) => {
+        acc.push(...curr);
+        return acc;
+    }, []);
+    return new Uint8Array(flatNumberArray);
+};

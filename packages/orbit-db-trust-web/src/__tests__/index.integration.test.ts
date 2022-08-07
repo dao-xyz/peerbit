@@ -3,7 +3,7 @@ import { P2PTrust } from '..';
 import { PublicKey } from '@dao-xyz/identity';
 
 const defaultStoreOptions = (l: P2PTrust, isServer: boolean = true, directory: string = undefined) => {
-    return l.getStoreOptions(isServer, directory)
+    return l.getStoreOptions({ replicate: isServer, directory })
 }
 
 describe('isTrusted', () => {

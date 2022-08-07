@@ -12,6 +12,7 @@ import { v4 as uuid } from 'uuid';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import { P2PTrust } from "@dao-xyz/orbit-db-trust-web";
 import isNode from 'is-node';
+import { arraysEqual } from "@dao-xyz/orbit-db-keystore";
 let v8 = undefined;
 if (isNode) {
     v8 = require('v8');
@@ -63,7 +64,7 @@ export class AnyPeer {
 
 
     // trust regions that are currently replicated by the peer
-    public trustWebs: Map<string, { trust: P2PTrust, shards: Shard<any>[] }> = new Map(); // key is the hash of P2PTrust
+    public trustWebs: Map<string, { trust: P2PTrust, shards: Map<string, Shard<any>> }> = new Map(); // key is the hash of P2PTrust
 
     // to know whether we should treat the peer as long lasting or temporary with web restrictions
 
@@ -80,26 +81,36 @@ export class AnyPeer {
         return this.orbitDB._ipfs;
     }
 
-    _getCachedTrustOrSetPromise: Promise<P2PTrust> = undefined;
-    async getCachedTrustOrSet(from: P2PTrust, shard: Shard<any>): Promise<P2PTrust> {
+    _getCachedTrustOrSetPromise: Promise<{ trust: P2PTrust, afterShardSave?: () => void }> = undefined;
+    async getCachedTrustOrSet(from: P2PTrust, shard: Shard<any>): Promise<{ trust: P2PTrust, afterShardSave?: () => void }> {
         await this._getCachedTrustOrSetPromise; // prevent concurrency sideffects
         this._getCachedTrustOrSetPromise = new Promise(async (resolve, reject) => {
             const hashCode = from.hashCode();
             let value = this.trustWebs.get(hashCode);
             if (!value) {
                 value = {
-                    shards: [shard],
+                    shards: new Map(),
                     trust: from
                 }
             }
             else {
-                if (from != value.trust) { // Only close trust if different (instance wise)
+                if (from !== value.trust) { // Only close trust if different (instance wise)
                     await from.close();
                 }
-                value.shards.push(shard)
             }
+            let afterShardSave = undefined;
+            if (!shard.cid) {
+                afterShardSave = () => value.shards.set(shard.cid, shard);
+            }
+            else {
+                value.shards.set(shard.cid, shard);
+            }
+
             this.trustWebs.set(hashCode, value)
-            resolve(value.trust)
+            resolve({
+                trust: value.trust,
+                afterShardSave
+            })
         })
         return this._getCachedTrustOrSetPromise;
 
@@ -113,8 +124,8 @@ export class AnyPeer {
             let value = this.trustWebs.get(hashCode);
             if (!value)
                 return;
-            value.shards = value.shards.filter(s => s !== shard);
-            if (value.shards.length == 0) {
+            value.shards.delete(shard.cid)
+            if (value.shards.size === 0) {
                 await value.trust.close();
                 this.trustWebs.delete(hashCode);
             }
@@ -267,7 +278,7 @@ export class ShardPeerInfo {
         let nextIndex = slotIndex + 1;
         if (nextIndex >= peerHashed.length)
             nextIndex = 0;
-        return hashToPeer.get(peerHashed[nextIndex]).key.id === this._shard.peer.orbitDB.identity.id
+        return arraysEqual(hashToPeer.get(peerHashed[nextIndex]).key.id, this._shard.peer.orbitDB.identity.id)
 
         // better alg, 
         // convert slot into hash, find most "probable peer" 

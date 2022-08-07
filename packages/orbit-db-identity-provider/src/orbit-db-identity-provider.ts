@@ -2,8 +2,7 @@ import { Identity, IdentitySerializable } from './identity';
 import { IdentityProvider } from './identity-provider-interface'
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
 import { Ed25519PublicKey } from 'sodium-plus';
-import { joinUint8Arrays } from './utils';
-const type = 'orbitdb'
+import { joinUint8Arrays } from '@dao-xyz/io-utils';
 
 export class OrbitDBIdentityProvider extends IdentityProvider {
   _keystore: Keystore;
@@ -16,7 +15,7 @@ export class OrbitDBIdentityProvider extends IdentityProvider {
   }
 
   // Returns the type of the identity provider
-  static get type() { return type }
+  static get type() { return 'orbitdb' }
 
   async getId(options: { id?: Uint8Array } = {}) {
     const id = options.id

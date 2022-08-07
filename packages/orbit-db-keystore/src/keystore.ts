@@ -2,9 +2,14 @@ const fs = (typeof window === 'object' || typeof self === 'object') ? null : eva
 import { Level } from 'level';
 import LRU from 'lru';
 import { variant, field, serialize, deserialize } from '@dao-xyz/borsh';
-import { U8IntArraySerializer } from '@dao-xyz/io-utils';
-import { SodiumPlus, CryptographyKey, X25519PublicKey, Ed25519PublicKey } from 'sodium-plus';
+import { joinUint8Arrays, U8IntArraySerializer } from '@dao-xyz/io-utils';
+import { SodiumPlus, CryptographyKey, X25519PublicKey, Ed25519PublicKey, X25519SecretKey } from 'sodium-plus';
 import { waitFor } from '@dao-xyz/time';
+import { createHash } from 'crypto';
+
+const DEFAULT_KEY_GROUP = '_';
+const getGroupKey = (group: string) => group === DEFAULT_KEY_GROUP ? DEFAULT_KEY_GROUP : createHash('sha1').update(group).digest('base64')
+
 /* import { ready, crypto_sign, crypto_sign_keypair, crypto_sign_verify_detached } from 'libsodium-wrappers';
  */
 //import { ready, crypto_sign_keypair, crypto_sign, crypto_box_keypair, type KeyType as CryptoKeyType, KeyPair } from 'sodium-plus';
@@ -14,9 +19,13 @@ function createStore(path = './keystore'): Level {
   }
   return new Level(path, { valueEncoding: 'view' })
 }
-const verifiedCache: { get(string: string): { publicKey: Ed25519PublicKey, data: Uint8Array }, set(string: string, { publicKey: Ed25519PublicKey, data: Uint8Array }) } = new LRU(1000)
 
+const verifiedCache: { get(string: string): { publicKey: Ed25519PublicKey, data: Uint8Array }, set(string: string, { publicKey: Ed25519PublicKey, data: Uint8Array }) } = new LRU(1000)
 const _crypto = SodiumPlus.auto();
+type KeyType = 'box' | 'sign' | 'secret'
+const NONCE_LENGTH = 24;
+const X25519PublicKey_LENGTH = 32;
+export const getStoreId = (group: string, type: KeyType, key: string) => group + '/' + type + '/' + key;
 
 @variant(0)
 export class KeySet {
@@ -33,12 +42,12 @@ export class KeySet {
   }
 }
 
-type KeyType = 'box' | 'sign'
-export const getStoreId = (type: KeyType, key: string) => type + '/' + key;
 
 export class Keystore {
+
   _store: Level;
   _cache: LRU
+
   constructor(input: (Level | { store?: string } | { store?: Level }) & { cache?: any } | string = {}) {
     if (typeof input === 'string') {
       this._store = createStore(input)
@@ -66,7 +75,8 @@ export class Keystore {
   }
 
 
-  async hasKey(id: string, type: KeyType): Promise<boolean> {
+  async hasKey(id: string, type: KeyType, group: string = DEFAULT_KEY_GROUP): Promise<boolean> {
+
     if (!id) {
       throw new Error('id needed to check a key')
     }
@@ -78,7 +88,8 @@ export class Keystore {
     if (this._store.status && this._store.status !== 'open') {
       return Promise.resolve(null)
     }
-    const storeId = getStoreId(type, id);
+
+    const storeId = getStoreId(group, type, id);
     let hasKey = false
     try {
       const storedKey = this._cache.get(storeId) || await this._store.get(storeId)
@@ -87,11 +98,11 @@ export class Keystore {
       // Catches 'Error: ENOENT: no such file or directory, open <path>'
       console.error('Error: ENOENT: no such file or directory')
     }
-
     return hasKey
   }
 
-  async createKey(id: string | Buffer | Uint8Array, type: KeyType = 'sign'): Promise<CryptographyKey> {
+
+  async createKey(id: string | Buffer | Uint8Array, type: KeyType = 'sign', group = DEFAULT_KEY_GROUP): Promise<CryptographyKey> {
 
     if (!id) {
       throw new Error('id needed to create a key')
@@ -118,9 +129,21 @@ export class Keystore {
       privateKey: Buffer.from(keys.marshal()).toString('hex')
     } */
 
-    const storeId = getStoreId(type, id);
+    // Normalize group names
+    group = getGroupKey(group);
+
+    const storeId = getStoreId(group, type, id);
     const crypto = await _crypto;
-    const key = await (type === 'box' ? (crypto.crypto_box_keypair()) : (crypto.crypto_sign_keypair()))
+    let key = undefined;
+    if (type === 'box') {
+      key = await crypto.crypto_box_keypair();
+    }
+    else if (type === 'secret') {
+      key = await crypto.crypto_secretbox_keygen();
+    }
+    else if (type === 'sign') {
+      key = await crypto.crypto_sign_keypair()
+    }
 
     const keys = new KeySet({
       key: new Uint8Array(key.getBuffer())
@@ -136,7 +159,7 @@ export class Keystore {
     return key
   }
 
-  async getKey(id: string | Buffer | Uint8Array, type: KeyType = 'sign'): Promise<CryptographyKey> {
+  async getKey(id: string | Buffer | Uint8Array, type: KeyType = 'sign', group = DEFAULT_KEY_GROUP): Promise<CryptographyKey> {
     if (!id) {
       throw new Error('id needed to get a key')
     }
@@ -155,7 +178,9 @@ export class Keystore {
       return Promise.resolve(null)
     }
 
-    const storeId = getStoreId(type, id);
+    // Normalize group names
+    group = getGroupKey(group);
+    const storeId = getStoreId(group, type, id);
     const cachedKey = this._cache.get(storeId)
 
     let loadedKey: KeySet
@@ -183,6 +208,41 @@ export class Keystore {
     }
 
     return new CryptographyKey(Buffer.from(loadedKey.key))
+  }
+
+  async getKeys(group: string, type?: string): Promise<CryptographyKey[]> {
+    if (!this._store) {
+      await this.open()
+    }
+
+    if (this._store.status === 'opening') {
+      await waitFor(() => this._store.status === 'open')
+    }
+
+    if (this._store.status && this._store.status !== 'open') {
+      return Promise.resolve(null)
+    }
+
+    try {
+
+      // Normalize group names
+      group = getGroupKey(group);
+      let prefix = group;
+
+      // Add type suffix
+      if (type) {
+        prefix += '/' + type;
+      }
+      const iterator = this._store.iterator({ gte: prefix, lte: prefix + "\xFF", valueEncoding: 'view' });
+      const ret: CryptographyKey[] = [];
+      for await (const [key, value] of iterator) {
+        ret.push(new CryptographyKey(Buffer.from(deserialize(Buffer.from(value), KeySet).key)));
+      }
+      return ret;
+    } catch (e) {
+      // not found
+      return Promise.resolve(null)
+    }
   }
 
   async sign(key: CryptographyKey, arrayLike: string | Uint8Array | Buffer): Promise<Uint8Array> {
@@ -217,6 +277,65 @@ export class Keystore {
 
     return signature
   }
+
+  async encrypt(arrayLike: string | Uint8Array | Buffer, key: CryptographyKey, reciever?: X25519PublicKey): Promise<Uint8Array> {
+    if (!key) {
+      throw new Error('No signing key given')
+    }
+
+    if (!arrayLike) {
+      throw new Error('Given input data was undefined')
+    }
+
+
+    let data: Uint8Array = undefined;
+    if (typeof arrayLike === 'string') {
+      data = new Uint8Array(Buffer.from(arrayLike))
+    }
+    else if (arrayLike instanceof Buffer) {
+      data = new Uint8Array(arrayLike);
+    }
+    else {
+      data = arrayLike;
+    }
+
+    let encrypted = undefined;
+    const crypto = await _crypto;
+    const nonce = new Uint8Array(await crypto.randombytes_buf(NONCE_LENGTH));
+    const ret = [nonce];
+    if (reciever) {
+      const secret = await crypto.crypto_box_secretkey(key);
+      encrypted = new Uint8Array(await crypto.crypto_box(Buffer.from(data), Buffer.from(nonce), secret, reciever))
+      ret.push(encrypted);
+      ret.push(new Uint8Array((await crypto.crypto_box_publickey_from_secretkey(secret)).getBuffer()))
+    }
+    else {
+      encrypted = new Uint8Array(await crypto.crypto_secretbox(Buffer.from(data), Buffer.from(nonce), key))
+      ret.push(encrypted)
+    }
+    return joinUint8Arrays(ret)
+  }
+
+  async decrypt(bytes: Uint8Array, key: CryptographyKey, sender?: X25519PublicKey): Promise<Uint8Array> {
+
+    if (!key) {
+      throw new Error('No signing key given')
+    }
+    const crypto = await _crypto;
+    const nonce = bytes.slice(0, NONCE_LENGTH)
+    const cipher = bytes.slice(NONCE_LENGTH, bytes.length - X25519PublicKey_LENGTH)
+
+    if (sender) {
+      // Nonce??
+      return new Uint8Array(await crypto.crypto_box_open(Buffer.from(cipher), Buffer.from(nonce), await crypto.crypto_box_secretkey(key), sender))
+    }
+    else {
+      const cipher = bytes.slice(NONCE_LENGTH, bytes.length)
+      return new Uint8Array(await crypto.crypto_secretbox_open(Buffer.from(cipher), Buffer.from(nonce), key))
+    }
+  }
+
+
 
   static async getPublicSign(key: CryptographyKey): Promise<Ed25519PublicKey> {
     const crypto = await _crypto;

@@ -310,6 +310,7 @@ describe('Identity Provider', function () {
     })
   })
 
+  // TODO fix failing (bad test)
   describe('create identity from existing keys', () => {
     const source = fixturesPath + '/existing'
     const publicKey = '045756c20f03ec494d07e8dd8456f67d6bd97ca175e6c4882435fe364392f131406db3a37eebe1d634b105a57b55e4f17247c1ec8ffe04d6a95d1e0ee8bed7cfbd'

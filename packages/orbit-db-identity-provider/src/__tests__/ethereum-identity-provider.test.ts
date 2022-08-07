@@ -91,7 +91,7 @@ describe('Ethereum Identity Provider', function () {
   })
 
   describe('sign data with an identity', () => {
-    let identity
+    let identity: Identity
     const data = new Uint8Array(Buffer.from('hello friend'))
 
     beforeAll(async () => {
@@ -101,19 +101,19 @@ describe('Ethereum Identity Provider', function () {
     it('sign data', async () => {
       const signingKey = await keystore.getKey(identity.id)
       const expectedSignature = await keystore.sign(signingKey, Buffer.from(data))
-      const signature = await identity.provider.sign(identity, data, keystore)
+      const signature = await identity.provider.sign(identity, data)
       assert.deepStrictEqual(signature, expectedSignature)
     })
 
     it('throws an error if private key is not found from keystore', async () => {
       // Remove the key from the keystore (we're using a mock storage in these tests)
       const modifiedIdentity = new Identity({
-        id: new Uint8Array([1, 2, 3]), publicKey: identity.publicKey, signatures: new Signatures({ id: new Uint8Array([0]), publicKey: identity.signatures }), type: identity.type, provider: identity.provider
+        id: new Uint8Array([1, 2, 3]), publicKey: identity.publicKey, signatures: new Signatures({ id: new Uint8Array([0]), publicKey: identity.signatures.publicKey }), type: identity.type, provider: identity.provider
       })
       let signature
       let err
       try {
-        signature = await identity.provider.sign(modifiedIdentity, data, keystore)
+        signature = await identity.provider.sign(modifiedIdentity, data)
       } catch (e) {
         err = e.toString()
       }

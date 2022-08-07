@@ -1,0 +1,144 @@
+import { Identity, Signatures } from "../identity"
+import { PublicKey as SPublicKey, Keypair } from '@solana/web3.js';
+const assert = require('assert')
+const path = require('path')
+const rmrf = require('rimraf')
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { joinUint8Arrays } from "../utils"
+import { Identities } from "../identities"
+const keypath = path.resolve(__dirname, 'keys')
+import nacl from "tweetnacl";
+import { Ed25519PublicKey } from 'sodium-plus';
+import { SolanaIdentityProvider } from "../solana-identity-provider";
+let keystore: Keystore
+
+/** Tests have to run in order */
+const type = SolanaIdentityProvider.type
+describe('Solana Identity Provider', function () {
+    beforeAll(async () => {
+        rmrf.sync(keypath)
+        Identities.addIdentityProvider(SolanaIdentityProvider)
+        keystore = new Keystore(keypath)
+    })
+
+    afterAll(async () => {
+        await keystore.close()
+        rmrf.sync(keypath)
+    })
+
+    describe('create an solana identity', () => {
+        let identity: Identity
+        let keypair: Keypair
+
+        beforeAll(async () => {
+            keypair = Keypair.generate();
+            identity = await Identities.createIdentity({ type, keystore, keypair: keypair })
+        })
+
+        it('has the correct id', async () => {
+            assert.deepStrictEqual(identity.id, keypair.publicKey.toBytes())
+        })
+
+        it('created a key for id in keystore', async () => {
+            const key = await keystore.getKey(keypair.publicKey.toBuffer().toString('base64'))
+            assert(!!key)
+        })
+
+        it('has the correct public key', async () => {
+            const signingKey = await keystore.getKey(keypair.publicKey.toBuffer().toString('base64'))
+            assert.notStrictEqual(signingKey, undefined)
+            assert.deepStrictEqual(identity.publicKey, new Uint8Array((await Keystore.getPublicSign(signingKey)).getBuffer()))
+        })
+
+        it('has a signature for the id', async () => {
+            const signingKey = await keystore.getKey(keypair.publicKey.toBuffer().toString('base64'))
+            const idSignature = await keystore.sign(signingKey, keypair.publicKey.toBytes())
+            const verifies = await Keystore.verify(idSignature, await Keystore.getPublicSign(signingKey), keypair.publicKey.toBytes())
+            assert.strictEqual(verifies, true)
+            assert.deepStrictEqual(identity.signatures.id, idSignature)
+        })
+
+        it('has a signature for the publicKey', async () => {
+            const signingKey = await keystore.getKey(keypair.publicKey.toBuffer().toString('base64'))
+            const idSignature = await keystore.sign(signingKey, keypair.publicKey.toBytes())
+            const publicKeyAndIdSignature = await nacl.sign(joinUint8Arrays([identity.publicKey, idSignature]), keypair.secretKey)
+            assert.deepStrictEqual(identity.signatures.publicKey, new Uint8Array(Buffer.from(publicKeyAndIdSignature)))
+        })
+    })
+
+    describe('verify identity', () => {
+        let identity: Identity
+
+        beforeAll(async () => {
+            identity = await Identities.createIdentity({ keystore, type })
+        })
+
+        it('solana identity verifies', async () => {
+            const verified = await Identities.verifyIdentity(identity)
+            assert.strictEqual(verified, true)
+        })
+
+        it('solana identity with incorrect id does not verify', async () => {
+            const identity2 = new Identity({
+                ...identity.toSerializable(),
+                provider: identity.provider,
+                id: new Uint8Array([1, 1, 1]),
+            })
+            const verified = await Identities.verifyIdentity(identity2)
+            assert.strictEqual(verified, false)
+        })
+    })
+
+    describe('sign data with an identity', () => {
+        let identity: Identity
+        const data = new Uint8Array(Buffer.from('hello friend'))
+
+        beforeAll(async () => {
+            identity = await Identities.createIdentity({ keystore, type })
+        })
+
+        it('sign data', async () => {
+            const signingKey = await keystore.getKey(identity.id)
+            const expectedSignature = await keystore.sign(signingKey, Buffer.from(data))
+            const signature = await identity.provider.sign(identity, data)
+            assert.deepStrictEqual(signature, expectedSignature)
+        })
+
+        it('throws an error if private key is not found from keystore', async () => {
+            // Remove the key from the keystore (we're using a mock storage in these tests)
+            const modifiedIdentity = new Identity({
+                id: new Uint8Array([1, 2, 3]), publicKey: identity.publicKey, signatures: new Signatures({ id: new Uint8Array([0]), publicKey: identity.signatures.publicKey }), type: identity.type, provider: identity.provider
+            })
+            let signature
+            let err
+            try {
+                signature = await identity.provider.sign(modifiedIdentity, data)
+            } catch (e) {
+                err = e.toString()
+            }
+            assert.strictEqual(signature, undefined)
+            assert.strictEqual(err, 'Error: Private signing key not found from Keystore')
+        })
+
+        describe('verify data signed by an identity', () => {
+            const data = new Uint8Array(Buffer.from('hello friend'));
+            let identity: Identity
+            let signature
+
+            beforeAll(async () => {
+                identity = await Identities.createIdentity({ type, keystore })
+                signature = await identity.provider.sign(identity, data)
+            })
+
+            it('verifies that the signature is valid', async () => {
+                const verified = await identity.provider.verify(signature, new Ed25519PublicKey(Buffer.from(identity.publicKey)), data)
+                assert.strictEqual(verified, true)
+            })
+
+            it('doesn\'t verify invalid signature', async () => {
+                const verified = await identity.provider.verify(new Uint8Array(Buffer.from('invalid')), new Ed25519PublicKey(Buffer.from(identity.publicKey)), data)
+                assert.strictEqual(verified, false)
+            })
+        })
+    })
+})

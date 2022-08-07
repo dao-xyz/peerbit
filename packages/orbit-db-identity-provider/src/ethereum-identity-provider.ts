@@ -1,8 +1,7 @@
 import { Wallet, verifyMessage } from '@ethersproject/wallet'
 import { Identity, IdentitySerializable } from './identity';
 import { IdentityProvider } from './identity-provider-interface';
-import { joinUint8Arrays } from './utils';
-const type = 'ethereum'
+import { joinUint8Arrays } from '@dao-xyz/io-utils';
 
 export type EthIdentityProviderOptions = { wallet?: Wallet };
 export class EthIdentityProvider extends IdentityProvider {
@@ -13,7 +12,7 @@ export class EthIdentityProvider extends IdentityProvider {
   }
 
   // Returns the type of the identity provider
-  static get type() { return type }
+  static get type() { return 'ethereum' }
 
   // Returns the signer's id
   async getId(options = {}) {

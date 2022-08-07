@@ -99,6 +99,7 @@ interface IOpenOptions {
 
 export interface IStoreOptions<T, X, I extends Index<T, X>> extends ICreateOptions, IOpenOptions {
   Index?: Constructor<I>,
+  replicationTopic?: string | (() => string),
   maxHistory?: number,
   fetchEntryTimeout?: number,
   referenceCount?: number,
@@ -302,7 +303,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
     this.events.on('replicated.progress', (address, hash, entry, progress, have) => {
       this._procEntry(entry)
     })
-    this.events.on('write', (address, entry, heads) => {
+    this.events.on('write', (topic, address, entry, heads) => {
       this._procEntry(entry)
     })
   }
@@ -329,6 +330,13 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
    */
   get replicationStatus() {
     return this._replicationStatus
+  }
+
+  get replicationTopic() {
+    return Store.getReplicationTopic(this.address, this.options)
+  }
+  static getReplicationTopic(address: Address | string, options: IStoreOptions<any, any, any>) {
+    return options.replicationTopic ? (typeof options.replicationTopic === 'string' ? options.replicationTopic : options.replicationTopic()) : (typeof address === 'string' ? address : address.toString());
   }
 
   setIdentity(identity) {
@@ -587,7 +595,13 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
         this._recalculateReplicationStatus(entry.data.clock.time)
         await this._cache.setBinary(this.localHeadsPath, new HeadsCache({ heads: [entry] }))
         await this._updateIndex([entry])
-        this.events.emit('write', this.address.toString(), entry, this._oplog.heads)
+
+        // The row below will emit an "event", which is subscribed to on the orbit-db client (confusing enough)
+        // there, the write is binded to the pubsub publish, with the entry. Which will send this entry 
+        // to all the connected peers to tell them that a new entry has been added
+        // TODO: don't use events, or make it more transparent that there is a vital subscription in the background
+        // that is handling replication
+        this.events.emit('write', this.replicationTopic, this.address.toString(), entry, this._oplog.heads)
         if (options?.onProgressCallback) options.onProgressCallback(entry)
         return entry.hash
       }

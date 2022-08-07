@@ -42,7 +42,7 @@ export class PubSub {
       this._ipfs.setMaxListeners(maxTopicsOpen)
   }
 
-  async subscribe(topic: string, onMessageCallback, onNewPeerCallback, options = {}) {
+  async subscribe(topic: string, onMessageCallback: (topic: string, content: any, from: any) => void, onNewPeerCallback: (topic: string, peer: string) => void, options = {}) {
     if (!this._subscriptions[topic] && this._ipfs.pubsub) {
       await this._ipfs.pubsub.subscribe(topic, this._handleMessage, options)
 

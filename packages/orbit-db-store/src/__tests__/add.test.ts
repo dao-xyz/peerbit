@@ -57,7 +57,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('adds an operation and triggers the write event', (done) => {
       const data = { data: 12345 }
-      store.events.on('write', (address, entry, heads) => {
+      store.events.on('write', (topic, address, entry, heads) => {
         assert.strictEqual(heads.length, 1)
         assert.strictEqual(address, 'test-address')
         assert.deepStrictEqual(entry.data.payload, data)
@@ -84,7 +84,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const writes = 3
       let eventsFired = 0
 
-      store.events.on('write', (address, entry, heads) => {
+      store.events.on('write', (topic, address, entry, heads) => {
         eventsFired++
         if (eventsFired === writes) {
           assert.strictEqual(heads.length, 1)

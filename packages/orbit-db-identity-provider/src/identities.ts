@@ -8,6 +8,7 @@ import LRU from 'lru'
 import path from 'path'
 import { Ed25519PublicKey } from 'sodium-plus';
 import { joinUint8Arrays } from "./utils"
+import { SolanaIdentityProviderOptions } from "./solana-identity-provider"
 
 const defaultType = 'orbitdb'
 const identityKeysPath = path.join('./orbitdb', 'identity', 'identitykeys')
@@ -56,7 +57,7 @@ export class Identities {
     return this.keystore.verify(signature, publicKey, data)
   }
 
-  async createIdentity(options: { type?: string, keystore?: Keystore, signingKeystore?: Keystore, id?: Uint8Array, migrate?: (options: { targetStore: any, targetId: Uint8Array }) => Promise<void> } & DIDIdentityProviderOptions & EthIdentityProviderOptions = {}) {
+  async createIdentity(options: { type?: string, keystore?: Keystore, signingKeystore?: Keystore, id?: Uint8Array, migrate?: (options: { targetStore: any, targetId: Uint8Array }) => Promise<void> } & (DIDIdentityProviderOptions | EthIdentityProviderOptions | SolanaIdentityProviderOptions) = {}) {
     const keystore = options.keystore || this.keystore
     const type = options.type || defaultType
     const identityProvider = type === defaultType ? new OrbitDBIdentityProvider(options.signingKeystore || keystore) : new (getHandlerFor(type))(options as any)
@@ -135,7 +136,7 @@ export class Identities {
     return IdentityProvider.verifyIdentity(identity)
   }
 
-  static async createIdentity(options: { type?: string, identityKeysPath?: string, signingKeysPath?: string, keystore?: Keystore, signingKeystore?: Keystore, id?: Uint8Array, migrate?: (options: { targetStore: any, targetId: Uint8Array }) => Promise<void> } & DIDIdentityProviderOptions & EthIdentityProviderOptions = {}) {
+  static async createIdentity(options: { type?: string, identityKeysPath?: string, signingKeysPath?: string, keystore?: Keystore, signingKeystore?: Keystore, id?: Uint8Array, migrate?: (options: { targetStore: any, targetId: Uint8Array }) => Promise<void> } & (DIDIdentityProviderOptions | EthIdentityProviderOptions | SolanaIdentityProviderOptions) = {}) {
     if (!options.keystore) {
       options.keystore = new (Keystore as any)(options.identityKeysPath || identityKeysPath)
     }

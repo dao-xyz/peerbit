@@ -65,8 +65,8 @@ Object.keys(testAPIs).forEach(API => {
         // Set write access for both clients
         accessController: {
           write: [
-            Buffer.from(orbitdb1.identity.id).toString(),
-            Buffer.from(orbitdb2.identity.id).toString(),
+            orbitdb1.identity.id,
+            orbitdb2.identity.id,
           ]
         }
       }

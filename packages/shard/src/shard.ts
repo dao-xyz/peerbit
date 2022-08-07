@@ -143,6 +143,7 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
         }
         return {
             queryRegion: DEFAULT_QUERY_REGION,
+            replicationTopic: () => this.trust.address,
             accessController: {
                 type: DYNAMIC_ACCESS_CONTROLER,
                 trustResolver: () => this.trust,
@@ -161,6 +162,8 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
                     subscribeToQueries: this.peer.options.isServer,
                     replicate: this.peer.options.isServer,
                     directory: this.peer.options.storeDirectory,
+                    queryRegion: DEFAULT_QUERY_REGION, // the acl has a DB that you also can query
+                    replicationTopic: () => this.trust.address,
                 }
             } as any,
             subscribeToQueries: this.peer.options.isServer,
@@ -173,8 +176,10 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
 
     async init(from: AnyPeer, parentShardCID?: string): Promise<Shard<T>> {
         // TODO: this is ugly but ok for now
-
-        await this.close();
+        if (this.peer && this.peer !== from) {
+            throw new Error("Reinitialization with different peer might lead to unexpected behaviours. Create a new instance instead")
+        }
+        //await this.close();
         this.peer = from;
         this.storeOptions = this.defaultStoreOptions;
 
@@ -188,9 +193,12 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
                 rootTrust: from.orbitDB.identity.toSerializable()
             })
         }
-        await this.trust.init(this.peer.orbitDB, this.storeOptions);
-        this.trust = await this.peer.getCachedTrustOrSet(this.trust, this);
 
+        if (!this.trust.loaded) { // Since the trust is shared between shards, we dont want to reinitialize already loaded trust
+            await this.trust.init(this.peer.orbitDB, this.storeOptions);
+        }
+        const result = await this.peer.getCachedTrustOrSet(this.trust, this);
+        this.trust = result.trust;
 
         if (!this.shardPeerInfo) {
             this.shardPeerInfo = new ShardPeerInfo(this);
@@ -205,6 +213,9 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
             await this.save(from.node);
         }
 
+        if (result.afterShardSave) {
+            result.afterShardSave();
+        }
         return this;
     }
 
@@ -324,8 +335,12 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
                       return;
                   }
                  */
-                shard.trust = await me.getCachedTrustOrSet(trust, shard) // this is necessary, else the shard with initialize with a new trust region
+                const trustResult = (await me.getCachedTrustOrSet(trust, shard));
+                shard.trust = trustResult.trust  // this is necessary, else the shard with initialize with a new trust region
                 await shard.replicate(me);
+                if (trustResult.afterShardSave) {
+                    trustResult.afterShardSave();
+                }
 
                 if (onReplication)
                     onReplication(shard);
@@ -396,7 +411,9 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
 
     }
     async load() {
-        await this.trust.load();
+        if (!this.trust.loaded) { // Since the trust is shared between shards, we dont want to reinitialize already loaded trust
+            await this.trust.load();
+        }
         await this.interface.load();
     }
 

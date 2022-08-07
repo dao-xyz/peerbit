@@ -33,7 +33,7 @@ export class ACLInterface extends SingleDBInterface<Access, BinaryDocumentStore<
     async init(orbitDB: OrbitDB, options: ACLInterfaceOptions): Promise<void> {
         options = {
             ...options,
-            queryRegion: undefined,// Prevent query region to be set (will fallback to db specific queries (not global))
+            //queryRegion: undefined,// Prevent query region to be set (will fallback to db specific queries (not global))
             accessController: {
                 type: TRUST_WEB_ACCESS_CONTROLLER,
                 trustResolver: options.trustResolver,

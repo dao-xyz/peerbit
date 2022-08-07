@@ -52,13 +52,16 @@
     "standard": "^16.0.3"
   },
   "dependencies": {
+    "@solana/web3.js": "^1.41.3",
+    "bs58": "^5.0.0",
     "@dao-xyz/borsh": "^2.1.5",
     "@ethersproject/wallet": "^5.0.10",
     "assert": "^2.0.0",
     "dids": "^2.1.0",
     "@dao-xyz/orbit-db-keystore": "^0.0.1",
     "path-browserify": "^1.0.1",
-    "stream-browserify": "^3.0.0"
+    "stream-browserify": "^3.0.0",
+    "tweetnacl": "^1.0.3"
   },
   "localMaintainers": [
     "haad <haad@haja.io>",

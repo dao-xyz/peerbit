@@ -1,15 +1,17 @@
-import Channel from 'ipfs-pubsub-1on1'
-import Logger from 'logplease'
-import { variant, field, vec, serialize, deserialize } from '@dao-xyz/borsh';
+import { variant, field, vec, serialize } from '@dao-xyz/borsh';
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Message } from './message';
 import { HeadsCache, Store } from '@dao-xyz/orbit-db-store';
+import Logger from 'logplease'
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
-
-@variant(0)
+@variant([0, 0])
 export class ExchangeHeadsMessage<T> extends Message {
+
+  @field({ type: 'String' })
+  replicationTopic: string;
+
   @field({ type: 'String' })
   address: string;
 
@@ -17,61 +19,41 @@ export class ExchangeHeadsMessage<T> extends Message {
   heads: Entry<T>[];
 
   constructor(props?: {
+    replicationTopic: string,
     address: string,
     heads: Entry<T>[]
   }) {
     super();
     if (props) {
+      this.replicationTopic = props.replicationTopic;
       this.address = props.address;
       this.heads = props.heads;
     }
   }
-
 }
 
-const U8IntArraySerializer = {
-  serialize: (obj: Uint8Array, writer) => {
-    writer.writeU32(obj.length);
-    for (let i = 0; i < obj.length; i++) {
-      writer.writeU8(obj[i])
-    }
-  },
-  deserialize: (reader) => {
-    const len = reader.readU32();
-    const arr = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      arr[i] = reader.readU8();
-    }
-    return arr;
-  }
-};
+@variant([0, 1])
+export class RequestHeadsMessage extends Message {
 
-@variant(1)
-export class ExchangeKeysMessage extends Message {
+  @field({ type: 'String' })
+  replicationTopic: string;
 
-  @field(U8IntArraySerializer)
-  keyEncrypted: Uint8Array;
-
-  @field(U8IntArraySerializer)
-  encryptionPublicKey: Uint8Array;
-
-  @field(U8IntArraySerializer)
-  encryptionNonce: Uint8Array;
-
+  @field({ type: 'String' })
+  address: string;
 
   constructor(props?: {
-    keyEncrypted: Uint8Array;
-    encryptionPublicKey: Uint8Array;
-    encryptionNonce: Uint8Array;
+    replicationTopic: string,
+    address: string
   }) {
     super();
     if (props) {
-      this.keyEncrypted = props.keyEncrypted;
-      this.encryptionPublicKey = props.encryptionPublicKey;
-      this.encryptionNonce = props.encryptionNonce;
+      this.replicationTopic = props.replicationTopic;
+      this.address = props.address;
     }
   }
 }
+
+
 
 const getHeadsForDatabase = async (store: Store<any, any, any, any>) => {
   if (!(store && store._cache)) return []
@@ -80,46 +62,17 @@ const getHeadsForDatabase = async (store: Store<any, any, any, any>) => {
   return [...localHeads, ...remoteHeads]
 }
 
-export const exchangeHeads = async (ipfs, address: string, peer: string, getStore, getDirectConnection, onMessage: (address: string, data: Uint8Array) => void, onChannelCreated) => {
-  const _handleMessage = (message: { data: Uint8Array }) => {
-
-    // On message instead,
-    onMessage(address, message.data)
-    /* const msg = deserialize(Buffer.from(message.data), Message)
-    if (msg instanceof ExchangeHeadsMessage) {
-      const { address, heads } = msg
-      onExchangedHeads(address, heads)
-    }
-    else {
-      throw new Error("Unexpected message")
-    } */
-  }
-
-  let channel = getDirectConnection(peer)
-  if (!channel) {
-    try {
-      logger.debug(`Create a channel to ${peer}`)
-      channel = await Channel.open(ipfs, peer)
-      channel.on('message', _handleMessage)
-      logger.debug(`Channel created to ${peer}`)
-      onChannelCreated(channel)
-    } catch (e) {
-      logger.error(e)
-    }
-  }
-
-  // Wait for the direct channel to be fully connected
-  await channel.connect()
-  logger.debug(`Connected to ${peer}`)
+export const exchangeHeads = async (channel: any, topic: string, getStore: (address: string) => { [key: string]: Store<any, any, any, any> }) => {
 
   // Send the heads if we have any
-  const heads = await getHeadsForDatabase(getStore(address))
-  logger.debug(`Send latest heads of '${address}':\n`, JSON.stringify(heads.map(e => e.hash), null, 2))
-  if (heads) {
-    const message = serialize(new ExchangeHeadsMessage({ address: address, heads: heads }));
-    await channel.send(message)
+  const stores = getStore(topic);
+  for (const [storeAddress, store] of Object.entries(stores)) {
+    const heads = await getHeadsForDatabase(store)
+    logger.debug(`Send latest heads of '${topic}':\n`, JSON.stringify(heads.map(e => e.hash), null, 2))
+    if (heads) {
+      const message = serialize(new ExchangeHeadsMessage({ replicationTopic: topic, address: storeAddress, heads: heads }));
+      await channel.send(message)
+    }
   }
-
-  return channel
 }
 
