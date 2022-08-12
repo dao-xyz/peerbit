@@ -1,4 +1,4 @@
-import { CryptOptions, Entry, LamportClock as Clock } from '@dao-xyz/ipfs-log-entry';
+import { Entry, LamportClock as Clock } from '@dao-xyz/ipfs-log-entry';
 import { EntryIndex } from "./entry-index"
 import pMap from 'p-map'
 import { GSet } from './g-set'
@@ -14,6 +14,8 @@ import { findUniques } from "./find-uniques"
 import { AccessError } from "./errors"
 import { IOOptions } from "@dao-xyz/ipfs-log-entry";
 import { JSON_IO_OPTIONS } from '@dao-xyz/ipfs-log-entry';
+import { X25519PublicKey } from 'sodium-plus'
+import { CryptOptions } from '@dao-xyz/ipfs-log-entry';
 
 const { LastWriteWins, NoZeroes } = Sorting
 const randomId = () => new Date().getTime().toString()
@@ -321,13 +323,13 @@ export class Log<T> extends GSet {
    * @param {Entry} entry Entry to add
    * @return {Log} New Log containing the appended value
    */
-  async append(data: T, pointerCount = 1, pin = false) {
+  async append(data: T, options: { pointerCount: number, pin?: boolean, recieverPayload?: X25519PublicKey, recieverIdentity?: X25519PublicKey } = { pointerCount: 1, pin: false }) {
 
     // Update the clock (find the latest clock)
     const newTime = Math.max(this.clock.time, this.heads.reduce(maxClockTimeReducer, 0)) + 1
     this._clock = new Clock(this.clock.id, newTime)
 
-    const all = Object.values(this.traverse(this.heads, Math.max(pointerCount, this.heads.length)))
+    const all = Object.values(this.traverse(this.heads, Math.max(options.pointerCount, this.heads.length)))
 
     // If pointer count is 4, returns 2
     // If pointer count is 8, returns 3 references
@@ -341,10 +343,10 @@ export class Log<T> extends GSet {
       }
       return entries
     }
-    const references = getEveryPow2(Math.min(pointerCount, all.length))
+    const references = getEveryPow2(Math.min(options.pointerCount, all.length))
 
     // Always include the last known reference
-    if (all.length < pointerCount && all[all.length - 1]) {
+    if (all.length < options.pointerCount && all[all.length - 1]) {
       references.add(all[all.length - 1])
     }
 
@@ -355,6 +357,10 @@ export class Log<T> extends GSet {
     const refs = Array.from(references).map(getHash).filter(isNext)
     // Create the entry and add it to the internal cache
 
+    if ((options.recieverIdentity || options.recieverPayload) && !this._crypt) {
+      throw new Error("Message is intended to be encrypted but no encryption methods are provided for the log")
+    }
+
     const entry = await Entry.create(
       {
         ipfs: this._storage,
@@ -364,15 +370,19 @@ export class Log<T> extends GSet {
         next: nexts,
         clock: this.clock,
         refs,
-        pin,
-        assertAllowed: async (e: Entry<T>) => {
-          const canAppend = await this._access.canAppend(e, this._identity.provider);
+        pin: options.pin,
+        assertAllowed: async (entryData, identity) => {
+          const canAppend = await this._access.canAppend(entryData, identity, this._identity.provider);
           if (!canAppend) {
             throw new AccessError(`Could not append Entry<T>, key "${this._identity.id}" is not allowed to write to the log`)
           }
         },
         ioOptions: this._io,
-        cryptOptions: this._crypt
+        encryption: (options.recieverIdentity || options.recieverPayload) ? {
+          options: this._crypt,
+          recieverIdentity: options.recieverIdentity,
+          recieverPayload: options.recieverPayload
+        } : undefined
       }
     )
 
@@ -473,17 +483,19 @@ export class Log<T> extends GSet {
     // Verify if entries are allowed to be added to the log and throws if
     // there's an invalid entry
     const permitted = async (entry: Entry<T>) => {
-      const canAppend = await this._access.canAppend(entry, identityProvider)
+      const canAppend = await this._access.canAppend(entry.data, await entry.identityWithSignature.identity, identityProvider)
       if (!canAppend) {
-        throw new AccessError(`Could not append Entry<T>, key "${entry.data.identity.id}" is not allowed to write to the log`)
+        throw new AccessError(`Could not append Entry<T>, key "${(await entry.identityWithSignature.identity).id}" is not allowed to write to the log`)
       }
     }
 
     // Verify signature for each entry and throws if there's an invalid signature
     const verify = async (entry: Entry<T>) => {
       const isValid = await Entry.verify(identityProvider, entry)
-      const publicKey = entry.data.identity ? entry.data.identity.publicKey : entry.data.key
-      if (!isValid) throw new Error(`Could not validate signature "${entry.data.sig}" for entry "${entry.hash}" and key "${publicKey}"`)
+      const identity = await entry.identityWithSignature.identity;
+      const signature = await entry.identityWithSignature.signature;
+      const publicKey = identity.publicKey
+      if (!isValid) throw new Error(`Could not validate signature "${signature}" for entry "${entry.hash}" and key "${publicKey}"`)
     }
 
     const entriesToJoin = Object.values(newItems)

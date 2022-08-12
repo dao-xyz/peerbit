@@ -1,9 +1,9 @@
 import { ensureAddress } from "./utils"
-import { Entry } from '@dao-xyz/ipfs-log-entry';
+import { Entry, EntryDataBox, EntryDataBoxEncrypted } from '@dao-xyz/ipfs-log-entry';
 
 const pMapSeries = require('p-map-series')
 import { AccessController } from './access-controller-interface'
-import { Identity } from "@dao-xyz/orbit-db-identity-provider";
+import { Identity, IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
 import OrbitDB from "orbit-db";
 
 const type = 'orbitdb'
@@ -30,12 +30,19 @@ export class OrbitDBAccessController<T> extends AccessController<T> {
   }
 
   // Return true if entry is allowed to be added to the database
-  async canAppend<T>(entry: Entry<T>, identityProvider) {
+  async canAppend<T>(entryData: EntryDataBox<T>, identity: IdentitySerializable, identityProvider) {
+
+    if (entryData instanceof EntryDataBoxEncrypted) {
+      await entryData.decrypt();
+    }
+
     // Write keys and admins keys are allowed
     const access = new Set([...this.get('write'), ...this.get('admin')])
     // If the ACL contains the writer's public key or it contains '*'
-    if (access.has(Buffer.from(entry.data.identity.id).toString('base64')) || access.has('*')) {
-      const verifiedIdentity = await identityProvider.verifyIdentity(entry.data.identity)
+
+
+    if (access.has(Buffer.from(identity.id).toString('base64')) || access.has('*')) {
+      const verifiedIdentity = await identityProvider.verifyIdentity(identity)
       // Allow access if identity verifies
       return verifiedIdentity
     }

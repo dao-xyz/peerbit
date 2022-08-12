@@ -5,7 +5,7 @@ const { CID } = require('multiformats/cid')
 const { base58btc } = require('multiformats/bases/base58')
 import { Entry, EntryDataDecrypted, LamportClock as Clock } from '@dao-xyz/ipfs-log-entry';
 import { Log } from '../log'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
 const fs = require('fs-extra')
 import io from '@dao-xyz/orbit-db-io'
@@ -13,6 +13,7 @@ import io from '@dao-xyz/orbit-db-io'
 // For tiebreaker testing
 import { LastWriteWins } from '../log-sorting';
 import { assertPayload } from './utils/assert'
+import { IdentityWithSignature, IdentityWithSignatureSecure } from '@dao-xyz/ipfs-log-entry';
 const FirstWriteWins = (a, b) => LastWriteWins(a, b) * -1
 
 // Test utils
@@ -23,7 +24,7 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity, testIdentity2, testIdentity3
+let ipfsd, ipfs, testIdentity: Identity, testIdentity2: Identity, testIdentity3: Identity
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe('Log', function () {
@@ -31,7 +32,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
 
-    let keystore, signingKeystore
+    let keystore: Keystore, signingKeystore: Keystore
 
     beforeAll(async () => {
       await fs.copy(identityKeyFixtures(__dirname), identityKeysPath)
@@ -157,7 +158,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('creates default public AccessController if not defined', async () => {
         const log = new Log(ipfs, testIdentity)
-        const anyoneCanAppend = await log._access.canAppend('any' as any, undefined)
+        const anyoneCanAppend = await log._access.canAppend('any' as any, testIdentity.toSerializable(), undefined)
         assert.notStrictEqual(log._access, undefined)
         assert.strictEqual(anyoneCanAppend, true)
       })
@@ -242,13 +243,17 @@ Object.keys(testAPIs).forEach((IPFS) => {
           data: new EntryDataDecrypted({
             id: 'AAA',
             payload: new Uint8Array(Buffer.from('one')),
-            clock: new Clock(testIdentity.publicKey, 1),
-            key: testIdentity.toSerializable()
+            clock: new Clock(testIdentity.publicKey, 1)
           }),
+          identityWithSignature: undefined,
           next: [],
-        })
-        const sig = await testIdentity.provider.sign(testIdentity, Buffer.from(JSON.stringify(expectedData)))
-        Object.assign(expectedData, { sig })
+        });
+        expectedData.identityWithSignature = new IdentityWithSignatureSecure({
+          identityWithSignature: new IdentityWithSignature({
+            identity: testIdentity.toSerializable(),
+            signature: await testIdentity.provider.sign(expectedData.dataToSign, testIdentity)
+          })
+        });
       })
 
       beforeEach(async () => {

@@ -27,7 +27,7 @@ export class OrbitDBIdentityProvider extends IdentityProvider {
     const idString = Buffer.from(id).toString('base64');
     const existingKey = await keystore.getKey(idString);
     const key = (existingKey) || (await keystore.createKey(idString))
-    return new Uint8Array((await Keystore.getPublicSign(key)).getBuffer());
+    return new Uint8Array((await Keystore.getPublicSign(key.key)).getBuffer());
   }
 
   async sign(data: string | Uint8Array | Buffer, options: { id?: Uint8Array } = {}) {
@@ -41,7 +41,7 @@ export class OrbitDBIdentityProvider extends IdentityProvider {
     if (!key) {
       throw new Error(`Signing key for '${idString}' not found`)
     }
-    return keystore.sign(key, data);
+    return keystore.sign(data, key.key);
   }
 
   static async verify(signature: Uint8Array, data: Uint8Array, publicKey: Uint8Array): Promise<boolean> {

@@ -4,8 +4,9 @@ import { Store, DefaultOptions, HeadsCache } from '../store'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
 import { Keystore } from "@dao-xyz/orbit-db-keystore"
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
-import { Entry, JSON_IO_OPTIONS } from '@dao-xyz/ipfs-log-entry'
-import { setTimeout } from 'timers/promises'
+import { JSON_IO_OPTIONS } from '@dao-xyz/ipfs-log-entry'
+import { createStore } from './storage'
+
 
 // Test utils
 const {
@@ -15,7 +16,6 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-const storage = require('orbit-db-storage-adapter')(require('memdown'))
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`addOperation ${IPFS}`, function () {
     let ipfsd, ipfs, testIdentity, identityStore, store: Store<any, any, any, any>, cacheStore
@@ -27,10 +27,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     beforeAll(async () => {
-      identityStore = await storage.createStore('identity')
+      identityStore = await createStore('identity')
       const keystore = new Keystore(identityStore)
 
-      cacheStore = await storage.createStore('cache')
+      cacheStore = await createStore('cache')
       const cache = new Cache(cacheStore)
 
       testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore })
@@ -78,6 +78,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         })
       })
       store._addOperation(data)
+
     })
 
     it('adds multiple operations and triggers multiple write events', async () => {

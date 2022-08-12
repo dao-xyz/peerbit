@@ -208,7 +208,7 @@ export class SignedAccessRequest {
     }
 
     async sign(identity: Identity) {
-        this.signature = await identity.provider.sign(identity, this.serializePresigned())
+        this.signature = await identity.provider.sign(this.serializePresigned(),identity)
     }
 
     async verifySignature(identities: Identities): Promise<boolean> {

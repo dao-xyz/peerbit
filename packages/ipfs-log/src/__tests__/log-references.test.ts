@@ -1,9 +1,9 @@
 const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
-import { Log } from '../log'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { Log } from '../log'
 
 // Test utils
 const {
@@ -13,7 +13,7 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity
+let ipfsd, ipfs, testIdentity: Identity
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe('Log - References', function () {
@@ -55,19 +55,19 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log4 = new Log(ipfs, testIdentity, { logId: 'D' })
 
         for (let i = 0; i < amount; i++) {
-          await log1.append(i.toString(), maxReferenceDistance)
+          await log1.append(i.toString(), { pointerCount: maxReferenceDistance })
         }
 
         for (let i = 0; i < amount * 2; i++) {
-          await log2.append(i.toString(), Math.pow(maxReferenceDistance, 2))
+          await log2.append(i.toString(), { pointerCount: Math.pow(maxReferenceDistance, 2) })
         }
 
         for (let i = 0; i < amount * 3; i++) {
-          await log3.append(i.toString(), Math.pow(maxReferenceDistance, 3))
+          await log3.append(i.toString(), { pointerCount: Math.pow(maxReferenceDistance, 3) })
         }
 
         for (let i = 0; i < amount * 4; i++) {
-          await log4.append(i.toString(), Math.pow(maxReferenceDistance, 4))
+          await log4.append(i.toString(), { pointerCount: Math.pow(maxReferenceDistance, 4) })
         }
 
         assert.strict.equal(log1.values[log1.length - 1].next?.length, 1)

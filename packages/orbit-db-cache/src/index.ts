@@ -2,14 +2,14 @@ import Logger from 'logplease'
 const logger = Logger.create('cache', { color: Logger.Colors.Magenta })
 Logger.setLogLevel('ERROR')
 import { serialize, deserialize, Constructor } from '@dao-xyz/borsh';
-
+import { Level } from 'level';
 export default class Cache {
-  _store: any;
-  constructor(store) {
+  _store: Level;
+  constructor(store: Level) {
     this._store = store
   }
 
-  get status() { return this._store.db.status }
+  get status() { return this._store.status }
 
   async close() {
     if (!this._store) return Promise.reject(new Error('No cache store found to close'))
@@ -61,7 +61,7 @@ export default class Cache {
 
   async getBinary<T>(key: string, clazz: Constructor<T>): Promise<T | null> {
     return new Promise((resolve, reject) => {
-      this._store.get(key, { asBuffer: false }, (err, value: string) => {
+      this._store.get(key, { valueEncoding: 'view' }, (err, value: string) => {
         if (err) {
           // Ignore error if key was not found
           if (err.toString().indexOf('NotFoundError: Key not found in database') === -1 &&
@@ -73,7 +73,7 @@ export default class Cache {
           resolve(null)
           return;
         }
-        let buffer = Buffer.isBuffer(value) ? value : Buffer.from(value, 'base64');
+        let buffer = Buffer.isBuffer(value) ? value : Buffer.from(value);
         const der = value ? deserialize(buffer, clazz) : null
         resolve(der)
       })
@@ -81,22 +81,9 @@ export default class Cache {
   }
 
   setBinary(key: string, value: any) {
-    return new Promise((resolve, reject) => {
-
-      const bytes = serialize(value);
-      const serialized = Buffer.from(bytes).toString('base64');
-      //const der = deserialize(Buffer.from(bytes), value.constructor);
-      this._store.put(key, serialized, (err) => {
-        if (err) {
-          // Ignore error if key was not found
-          if (err.toString().indexOf('NotFoundError: Key not found in database') === -1 &&
-            err.toString().indexOf('NotFound') === -1) {
-            return reject(err)
-          }
-        }
-        logger.debug(`cache: SetBinary ${key} to value with length ${serialized.length}`)
-        resolve(true)
-      })
+    const bytes = serialize(value);
+    this._store.put(key, bytes, {
+      valueEncoding: 'view'
     })
   }
 

@@ -43,7 +43,8 @@
   "dependencies": {
     "bs58": "^5.0.0",
     "@dao-xyz/borsh": "^2.1.5",
-    "logplease": "~1.2.15"
+    "logplease": "~1.2.15",
+    "level": "^8.0.0"
   },
   "devDependencies": {
     "@babel/core": "^7.5.5",
@@ -59,7 +60,6 @@
     "memdown": "^6.0.0",
     "mocha": "^8.4.0",
     "mocha-headless-chrome": "^3.1.0",
-    "orbit-db-storage-adapter": "^0.6.0",
     "orbit-db-test-utils": "^1.0.2",
     "sqlite3": "^5.0.2",
     "standard": "^16.0.3",

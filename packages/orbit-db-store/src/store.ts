@@ -3,7 +3,7 @@ import { EventEmitter } from 'events'
 import mapSeries from 'p-each-series'
 import { default as PQueue } from 'p-queue'
 import { Log, ISortFunction, RecycleOptions, AccessError, LogOptions } from '@dao-xyz/ipfs-log'
-import { IOOptions } from '@dao-xyz/ipfs-log-entry'
+import { CryptOptions, EntryDataBox, IOOptions } from '@dao-xyz/ipfs-log-entry'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Index } from './store-index'
 import { Replicator } from './replicator'
@@ -13,11 +13,15 @@ import io from '@dao-xyz/orbit-db-io'
 import Cache from '@dao-xyz/orbit-db-cache';
 import { variant, field, vec } from '@dao-xyz/borsh';
 import { IPFS } from 'ipfs-core-types/src/'
-import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider'
 import { OrbitDBAccessController } from '@dao-xyz/orbit-db-access-controllers'
 import stringify from 'json-stringify-deterministic'
 import { AccessController } from '@dao-xyz/orbit-db-access-controllers'
-import { deserialize, serialize } from '@dao-xyz/borsh'
+import { serialize, deserialize } from '@dao-xyz/borsh';
+import { Snapshot } from './snapshot'
+import { X25519PublicKey } from 'sodium-plus';
+import { arraysEqual } from '@dao-xyz/io-utils'
+
 export type Constructor<T> = new (...args: any[]) => T;
 
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
@@ -36,6 +40,14 @@ export class HeadsCache<T> {
       this.heads = opts.heads;
     }
   }
+}
+
+export type StoreCryptOptions = {
+  encrypt: (bytes: Uint8Array, reciever: X25519PublicKey, replicationTopic: string) => Promise<{
+    data: Uint8Array
+    senderPublicKey: X25519PublicKey
+  }>,
+  decrypt: (data: Uint8Array, senderPublicKey: X25519PublicKey, recieverPublicKey: X25519PublicKey, replicationTopic: string) => Promise<Uint8Array>
 }
 
 interface ICreateOptions {
@@ -111,13 +123,16 @@ export interface IStoreOptions<T, X, I extends Index<T, X>> extends ICreateOptio
   recycle?: RecycleOptions,
   typeMap?: { [key: string]: Constructor<any> },
   onlyObserver?: boolean,
+
   onClose?: (store: Store<T, X, I, any>) => void,
   onDrop?: (store: Store<T, X, I, any>) => void,
   onLoad?: (store: Store<T, X, I, any>) => void,
-  encyption?: {
-    encrypt: (arr: Uint8Array) => Uint8Array
-    decrypt: (arr: Uint8Array) => Uint8Array
-  },
+
+  /* encryption?: {
+    encrypt: (arr: Uint8Array, keyGroup: string) => Promise<{ bytes: Uint8Array, keyId: Uint8Array }>
+    decrypt: (arr: Uint8Array, keyGroup: string, keyId: Uint8Array) => Promise<Uint8Array>
+  }, */
+  crypt?: StoreCryptOptions,
   io?: IOOptions<T>
 
 }
@@ -203,7 +218,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
 
     // Access mapping
     this.access = options.accessController || {
-      canAppend: (entry: Entry<T>, _identityProvider: Identities) => (entry.data.identity.publicKey === identity.publicKey),
+      canAppend: async (entry: EntryDataBox<T>, entryIdentity: IdentitySerializable, _identityProvider: Identities) => (arraysEqual(entryIdentity.publicKey, identity.publicKey)),
       type: undefined,
       address: undefined,
       close: undefined,
@@ -225,6 +240,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
     // Replication progress info
     this._replicationStatus = new ReplicationInfo()
 
+
     // Statistics
     this._stats = {
       snapshot: {
@@ -232,6 +248,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
       },
       syncRequestsReceieved: 0
     }
+
 
     try {
       const onReplicationQueued = async (entry: Entry<T>) => {
@@ -321,7 +338,17 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
   }
 
   get logOptions(): LogOptions<T> {
-    return { logId: this.id, io: this.options.io, access: this.access, sortFn: this.options.sortFn, recycle: this.options.recycle };
+    return {
+      logId: this.id,
+      io: this.options.io,
+      crypt: this.options.crypt ? {
+        decrypt: (data, senderPublicKey, recieverPublicKey) => this.options.crypt.decrypt(data, senderPublicKey, recieverPublicKey, this.replicationTopic),
+        encrypt: (data, recieverPublicKey) => this.options.crypt.encrypt(data, recieverPublicKey, this.replicationTopic)
+      } : undefined, //this.options.crypt
+      access: this.access,
+      sortFn: this.options.sortFn,
+      recycle: this.options.recycle,
+    };
   }
 
   /**
@@ -438,7 +465,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
       length: amount,
       timeout: fetchEntryTimeout,
       onProgressCallback: this._onLoadProgress.bind(this),
-      concurrency: this.options.replicationConcurrency
+      concurrency: this.options.replicationConcurrency,
     })
 
     this._oplog = log
@@ -475,13 +502,13 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
       if (!identityProvider) throw new Error('Identity-provider is required, cannot verify entry')
 
       // TODO Fix types
-      const canAppend = await this.access.canAppend(head, identityProvider as any)
+      const canAppend = await this.access.canAppend(head.data, await head.identityWithSignature.init(this._oplog._crypt).identity, identityProvider as any)
       if (!canAppend) {
         logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
         return Promise.resolve(null)
       }
 
-      const logEntry = Entry.toEntry(head)
+      const logEntry = Entry.toEntryNoHash(head)
       const hash = await io.write(this._ipfs, Entry.getWriteFormat(), logEntry.serialize(), { links: Entry.IPLD_LINKS }) ///, onlyHash: true
 
       if (hash !== head.hash) {
@@ -504,21 +531,20 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
   async saveSnapshot() {
     const unfinished = this._replicator.unfinished
     const snapshotData = this._oplog.toSnapshot()
-    const buf = Buffer.from(JSON.stringify({
+    const buf = Buffer.from(serialize(new Snapshot({
       id: snapshotData.id,
       heads: snapshotData.heads,
       size: snapshotData.values.length,
       values: snapshotData.values,
       type: this.type
-    }))
+    })))
 
     const snapshot = await this._ipfs.add(buf)
-
-    snapshot["hash"] = snapshot.cid.toString() // js-ipfs >= 0.41, ipfs.add results contain a cid property (a CID instance) instead of a string hash property
+    snapshot["hash"] = snapshot.cid.toString();
     await this._cache.set(this.snapshotPath, snapshot)
     await this._cache.set(this.queuePath, unfinished)
 
-    logger.debug(`Saved snapshot: ${snapshot["hash"]}, queue length: ${unfinished.length}`)
+    logger.debug(`Saved snapshot: ${snapshot.cid.toString()}, queue length: ${unfinished.length}`)
 
     return [snapshot]
   }
@@ -530,20 +556,23 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
 
     this.events.emit('load', this.address.toString()) // TODO emits inconsistent params, missing heads param
 
-    const maxClock = (res, val) => Math.max(res, val.clock.time)
+    const maxClock = (res, val: Entry<any>) => Math.max(res, val.data.clock.time)
+    this.sync([])
 
-    const queue = (await this._cache.getBinary<HeadsCache<T>>(this.queuePath, HeadsCache))?.heads
-    this.sync(queue || [])
+    const queue = (await this._cache.get(this.queuePath)) as string[]
+    if (queue?.length > 0) {
+      this._replicator.load(queue)
+    }
 
-    const snapshot = await this._cache.get(this.snapshotPath) as any
+    const snapshot = await this._cache.get(this.snapshotPath)
 
     if (snapshot) {
       const chunks = []
-      for await (const chunk of this._ipfs.cat(snapshot.hash)) {
+      for await (const chunk of this._ipfs.cat(snapshot["hash"])) {
         chunks.push(chunk)
       }
       const buffer = Buffer.concat(chunks)
-      const snapshotData = JSON.parse(buffer.toString())
+      const snapshotData = deserialize(buffer, Snapshot);
 
       // Fetch the entries
       // Timeout 1 sec to only load entries that are already fetched (in order to not get stuck at loading)
@@ -584,26 +613,34 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
     }
   }
 
-  async _addOperation(data, options: { onProgressCallback?: (any) => void, pin?: boolean } = {}) {
+  async _addOperation(data, options: { onProgressCallback?: (any) => void, pin?: boolean, reciever?: X25519PublicKey, recieverPayload?: X25519PublicKey, recieverIdentity?: X25519PublicKey } = {}) {
     const addOperation = async () => {
       if (this._oplog) {
         // check local cache for latest heads
         if (this.options.syncLocal) {
           await this.syncLocal()
         }
-        const entry = await this._oplog.append(data, this.options.referenceCount, options.pin)
-        this._recalculateReplicationStatus(entry.data.clock.time)
-        await this._cache.setBinary(this.localHeadsPath, new HeadsCache({ heads: [entry] }))
-        await this._updateIndex([entry])
+        const recieverPayload = options.recieverPayload ? options.recieverPayload : options.reciever
+        const recieverIdentity = options.recieverIdentity ? options.recieverIdentity : options.reciever
 
-        // The row below will emit an "event", which is subscribed to on the orbit-db client (confusing enough)
-        // there, the write is binded to the pubsub publish, with the entry. Which will send this entry 
-        // to all the connected peers to tell them that a new entry has been added
-        // TODO: don't use events, or make it more transparent that there is a vital subscription in the background
-        // that is handling replication
-        this.events.emit('write', this.replicationTopic, this.address.toString(), entry, this._oplog.heads)
-        if (options?.onProgressCallback) options.onProgressCallback(entry)
-        return entry.hash
+        try {
+          const entry = await this._oplog.append(data, { pointerCount: this.options.referenceCount, pin: options.pin, recieverPayload, recieverIdentity })
+          this._recalculateReplicationStatus(entry.data.clock.time)
+          await this._cache.setBinary(this.localHeadsPath, new HeadsCache({ heads: [entry] }))
+          await this._updateIndex([entry])
+
+          // The row below will emit an "event", which is subscribed to on the orbit-db client (confusing enough)
+          // there, the write is binded to the pubsub publish, with the entry. Which will send this entry 
+          // to all the connected peers to tell them that a new entry has been added
+          // TODO: don't use events, or make it more transparent that there is a vital subscription in the background
+          // that is handling replication
+          this.events.emit('write', this.replicationTopic, this.address.toString(), entry, this._oplog.heads)
+          if (options?.onProgressCallback) options.onProgressCallback(entry)
+          return entry.hash
+        } catch (error) {
+          const x = 132;
+          return error;
+        }
       }
     }
     return this._queue.add(addOperation.bind(this))

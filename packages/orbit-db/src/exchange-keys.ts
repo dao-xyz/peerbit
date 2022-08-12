@@ -1,50 +1,44 @@
-import { variant, field, serialize, deserialize } from '@dao-xyz/borsh';
+import { variant, field, serialize, deserialize, vec } from '@dao-xyz/borsh';
 import { Message } from './message';
-import { joinUint8Arrays, U8IntArraySerializer } from '@dao-xyz/io-utils';
+import { U8IntArraySerializer } from '@dao-xyz/io-utils';
 import { EthIdentityProvider, OrbitDBIdentityProvider, SolanaIdentityProvider } from '@dao-xyz/orbit-db-identity-provider';
 import { X25519PublicKey, Ed25519PublicKey, CryptographyKey } from 'sodium-plus'
+import Logger from 'logplease'
+const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
+Logger.setLogLevel('ERROR')
 export type KeyAccessCondition = (fromKey: {
     type: string,
     key: Uint8Array,
+}, keyToAccess: {
     group: string
-}, keyToAccess: { key: Uint8Array }) => Promise<boolean>;
+}) => Promise<boolean>;
 export type KeyType = 'ethereum' | 'solana' | 'orbitdb';
 
-export class SignedMessage {
-
-    @field(U8IntArraySerializer)
-    nonce: Uint8Array
-
-    @field(U8IntArraySerializer)
-    key: Uint8Array
+@variant(0)
+export class OrbitDBSignedMessage {
 
     @field(U8IntArraySerializer)
     signature: Uint8Array
 
-    @field({ type: 'String' })
-    type: KeyType
+    @field(U8IntArraySerializer)
+    key: Uint8Array
 
     constructor(props?: {
-        nonce: Uint8Array,
-        signature: Uint8Array,
-        key: Uint8Array,
-        type: KeyType
+        signature?: Uint8Array,
+        key: Uint8Array
     }) {
         if (props) {
-            this.nonce = props.nonce;
             this.signature = props.signature;
             this.key = props.key;
-            this.type = props.type
         }
     }
 
-    get dataToSign() {
-        return joinUint8Arrays([new Uint8Array(Buffer.from(this.type)), this.key, this.nonce]);
+    async sign(data: Uint8Array, signer: (bytes: Uint8Array) => Promise<Uint8Array>): Promise<OrbitDBSignedMessage> {
+        this.signature = await signer(data)
+        return this;
     }
 
-    async verify(): Promise<boolean> {
-        return await verifySignature(this.signature, this.dataToSign, this.type, this.key)
-    }
+
 }
 
 
@@ -89,80 +83,134 @@ export class PublicKeyMessage {
 
 
 @variant([1, 0])
-export class ExchangeKeysMessage extends Message {
+export class KeyResponseMessage extends Message {
 
     // TODO nonce?
 
     @field(U8IntArraySerializer)
-    keyEncrypted: Uint8Array;
+    keysEncryptedAndSigned: Uint8Array;
 
     @field(U8IntArraySerializer)
     encryptionPublicKey: Uint8Array;
 
+    @field(U8IntArraySerializer)
+    signerPublicKey: Uint8Array
 
     constructor(props?: {
-        keyEncrypted: Uint8Array;
-        encryptionPublicKey: Uint8Array
+        keysEncryptedAndSigned: Uint8Array
+        signerPublicKey: Uint8Array;
+        encryptionPublicKey: Uint8Array;
     }) {
         super();
         if (props) {
-            this.keyEncrypted = props.keyEncrypted;
+            this.keysEncryptedAndSigned = props.keysEncryptedAndSigned;
             this.encryptionPublicKey = props.encryptionPublicKey;
+            this.signerPublicKey = props.signerPublicKey;
         }
     }
 }
 
 
 @variant([1, 1])
-export class RequestAllKeysMessage extends Message {
+export class RequestKeysInGroupMessage extends Message {
 
-    @field({ type: SignedMessage })
-    signedKey: SignedMessage
+    @field({ type: OrbitDBSignedMessage })
+    signedKey: OrbitDBSignedMessage
 
     @field(U8IntArraySerializer)
     encryptionPublicKey: Uint8Array
 
     constructor(props?: {
-        signedKey: SignedMessage;
+        signedKey: OrbitDBSignedMessage;
+        encryptionPublicKey: Uint8Array
     }) {
         super();
         if (props) {
             this.signedKey = props.signedKey
+            this.encryptionPublicKey = props.encryptionPublicKey;
+
         }
     }
+    async getGroup(open: (data: Uint8Array, publicKey: Ed25519PublicKey) => Promise<Uint8Array>): Promise<string> {
+        return Buffer.from(await open(this.signedKey.signature, new Ed25519PublicKey(Buffer.from(this.signedKey.key)))).toString();
+    }
 
 
 }
 
 
-export const exchangeKeys = async (channel: any, request: RequestAllKeysMessage, canAccessKeys: KeyAccessCondition, getSymmetricKey: (key: Uint8Array) => Promise<CryptographyKey>, encrypt: (data: Uint8Array, recieverPublicKey: X25519PublicKey) => Promise<{ publicKey: X25519PublicKey, bytes: Uint8Array }>) => { // 
+export class Key {
+    key: Uint8Array;
+
+    constructor(props?: {
+        key: Uint8Array
+    }) {
+        if (props) {
+            this.key = props.key;
+        }
+    }
+}
+
+export class Keys {
+
+    @field({ type: 'String' })
+    group: string;
+
+    @field({ type: vec(Key) })
+    keys: Key[];
+
+    constructor(props?: {
+        group: string
+        keys: Key[]
+    }) {
+        if (props) {
+            this.group = props.group;
+            this.keys = props.keys;
+        }
+    }
+}
+export const requestKeys = async (channel: any, request: RequestKeysInGroupMessage, canAccessKeys: KeyAccessCondition, getSymmetricKeys: (group: string) => Promise<CryptographyKey[]>, sign: (bytes: Uint8Array) => Promise<{ bytes: Uint8Array, publicKey: Ed25519PublicKey }>, open: (data: Uint8Array, signerPublicKey: Ed25519PublicKey) => Promise<Buffer>, encrypt: (data: Uint8Array, recieverPublicKey: X25519PublicKey) => Promise<{ publicKey: X25519PublicKey, bytes: Uint8Array }>) => { // 
 
     // Validate signature
-    const verified = await request.signedKey.verify();
-    if (!verified) {
-        throw new Error("Invalid signature")
+    let group: string = undefined;
+    try {
+        group = await request.getGroup(open);
+    } catch (error) {
+        // Invalid signature 
+        logger.info("Invalid signature found from key request")
+        return;
     }
 
-    if (!await canAccessKeys({ type: request.signedKey.type, key: request.signedKey.key }, {
-        key: request.requestedKey
+    if (!await canAccessKeys({ type: 'orbitdb', key: request.signedKey.key }, {
+        group
     })) {
-        throw new Error("Not allowed to access key")
+        return; // Do not send any keys
     }
-
-    const secretKey = await getSymmetricKey(request.requestedKey);
-
-    if (!secretKey) {
-        throw new Error("Requested key does not exist")
-    }
-
-    if (secretKey.isPublicKey()) {
-        throw new Error("Lookup did not resolve a secret key")
-    }
-
-    const encryptedSecretKey = await encrypt(new Uint8Array(secretKey.getBuffer()), new X25519PublicKey(Buffer.from(request.encryptionPublicKey)));
-    const message = serialize(new ExchangeKeysMessage({ encryptionPublicKey: new Uint8Array(encryptedSecretKey.publicKey.getBuffer()), keyEncrypted: encryptedSecretKey.bytes }));
+    const secretKeys = await await getSymmetricKeys(group);
+    const secretKeysBytes = serialize(new Keys({
+        group,
+        keys: secretKeys.map(x => new Key({
+            key: new Uint8Array(x.getBuffer())
+        }))
+    }));
+    const signatureResult = await sign(secretKeysBytes);
+    const encryptionResult = await encrypt(signatureResult.bytes, new X25519PublicKey(Buffer.from(request.encryptionPublicKey)));
+    const message = serialize(new KeyResponseMessage({ encryptionPublicKey: new Uint8Array(encryptionResult.publicKey.getBuffer()), keysEncryptedAndSigned: encryptionResult.bytes, signerPublicKey: new Uint8Array(signatureResult.publicKey.getBuffer()) }));
     await channel.send(message)
 }
+
+export const recieveKeys = async (response: KeyResponseMessage, isTrusted: (key: Ed25519PublicKey) => Promise<boolean>, setSymmetricKeys: (group: string, keys: CryptographyKey[]) => Promise<any[]>, open: (data: Uint8Array, signerPublicKey: Ed25519PublicKey) => Promise<Buffer>, decrypt: (data: Uint8Array, senderPublicKey: X25519PublicKey) => Promise<Uint8Array>) => { // 
+    // Verify signer is trusted by opening the message and checking the public key
+    const signer = new Ed25519PublicKey(Buffer.from(response.signerPublicKey));
+    const trusted = await isTrusted(signer);
+    if (!trusted) {
+        throw new Error("Recieved keys from a not trusted party");
+    }
+    const decrypted = await decrypt(response.keysEncryptedAndSigned, new X25519PublicKey(Buffer.from(response.encryptionPublicKey)))
+    const keys = deserialize(await open(decrypted, signer), Keys);
+    await setSymmetricKeys(keys.group, keys.keys.map(x => new CryptographyKey(Buffer.from(x.key))))
+}
+
 
 
 export const verifySignature = (signature: Uint8Array, data: Uint8Array, type: KeyType, publicKey: Uint8Array): Promise<boolean> => {

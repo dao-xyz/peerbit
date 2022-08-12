@@ -40,8 +40,8 @@
     "@dao-xyz/orbit-db-io": "^1.1.0",
     "@dao-xyz/orbit-db-keystore": "^0.0.1",
     "@dao-xyz/orbit-db-pubsub": "^0.6.11",
-    "orbit-db-storage-adapter": "^0.6.0",
-    "wherearewe": "^1.0.2"
+    "wherearewe": "^1.0.2",
+    "level": "^8.0.0"
   },
   "devDependencies": {
     "adm-zip": "^0.4.16",

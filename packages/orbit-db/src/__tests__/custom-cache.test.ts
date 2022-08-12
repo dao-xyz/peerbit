@@ -5,7 +5,6 @@ const path = require('path')
 import { OrbitDB } from '../orbit-db'
 const CustomCache = require('@dao-xyz/orbit-db-cache')
 const localdown = require('localstorage-down')
-const storage = require("orbit-db-storage-adapter")(localdown)
 
 // Include test utilities
 const {

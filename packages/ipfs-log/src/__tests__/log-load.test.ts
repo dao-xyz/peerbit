@@ -5,7 +5,7 @@ import { LastWriteWins } from '../log-sorting'
 import bigLogString from './fixtures/big-log.fixture';
 import { Entry, JSON_IO_OPTIONS } from '@dao-xyz/ipfs-log-entry';
 import { Log } from '../log'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
 import { LogCreator } from './utils/log-creator'
 import { assertPayload } from './utils/assert';
@@ -25,7 +25,7 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity, testIdentity2, testIdentity3, testIdentity4
+let ipfsd, ipfs, testIdentity: Identity, testIdentity2: Identity, testIdentity3: Identity, testIdentity4: Identity
 
 const last = <T>(arr: T[]): T => {
   return arr[arr.length - 1]
@@ -126,7 +126,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     describe('fromEntryHash', () => {
-      let identities
+      let identities: Identity[]
 
       beforeAll(async () => {
         identities = [testIdentity, testIdentity2, testIdentity3, testIdentity4]
@@ -177,7 +177,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     describe('fromEntry', () => {
-      let identities
+      let identities: Identity[]
 
       beforeAll(async () => {
         identities = [testIdentity, testIdentity2, testIdentity3, testIdentity4]
@@ -664,22 +664,22 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log = new Log(ipfs, testIdentity2, { logId: 'X' })
 
         for (let i = 1; i <= 5; i++) {
-          await logA.append('entryA' + i, nextPointerAmount)
+          await logA.append('entryA' + i, { pointerCount: nextPointerAmount })
         }
 
         for (let i = 1; i <= 5; i++) {
-          await logB.append('entryB' + i, nextPointerAmount)
+          await logB.append('entryB' + i, { pointerCount: nextPointerAmount })
         }
 
         await log3.join(logA)
         await log3.join(logB)
 
         for (let i = 6; i <= 10; i++) {
-          await logA.append('entryA' + i, nextPointerAmount)
+          await logA.append('entryA' + i, { pointerCount: nextPointerAmount })
         }
 
         await log.join(log3)
-        await log.append('entryC0', nextPointerAmount)
+        await log.append('entryC0', { pointerCount: nextPointerAmount })
 
         await log.join(logA)
 
@@ -728,22 +728,22 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log = new Log(ipfs, testIdentity2, { logId: 'X' })
 
         for (let i = 1; i <= 5; i++) {
-          await logA.append('entryA' + i, nextPointersAmount)
+          await logA.append('entryA' + i, { pointerCount: nextPointersAmount })
         }
 
         for (let i = 1; i <= 5; i++) {
-          await logB.append('entryB' + i, nextPointersAmount)
+          await logB.append('entryB' + i, { pointerCount: nextPointersAmount })
         }
 
         await log3.join(logA)
         await log3.join(logB)
 
         for (let i = 6; i <= 10; i++) {
-          await logA.append('entryA' + i, nextPointersAmount)
+          await logA.append('entryA' + i, { pointerCount: nextPointersAmount })
         }
 
         await log.join(log3)
-        await log.append('entryC0', nextPointersAmount)
+        await log.append('entryC0', { pointerCount: nextPointersAmount })
 
         await log.join(logA)
 

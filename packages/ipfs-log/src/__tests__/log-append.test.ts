@@ -93,7 +93,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       beforeAll(async () => {
         log = new Log(ipfs, testIdentity, { logId: 'A' })
         for (let i = 0; i < amount; i++) {
-          await log.append('hello' + i, nextPointerAmount)
+          await log.append('hello' + i, { pin: false, pointerCount: nextPointerAmount })
           // Make sure the log has the right heads after each append
           const values = log.values
           assert.strictEqual(log.heads.length, 1)

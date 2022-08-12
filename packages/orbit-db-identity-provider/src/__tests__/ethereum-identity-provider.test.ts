@@ -8,7 +8,7 @@ const assert = require('assert')
 const path = require('path')
 const rmrf = require('rimraf')
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
-import { joinUint8Arrays } from "../utils"
+import { joinUint8Arrays } from "@dao-xyz/io-utils";
 const keypath = path.resolve(__dirname, 'keys')
 
 let keystore: Keystore
@@ -48,12 +48,12 @@ describe('Ethereum Identity Provider', function () {
     it('has the correct public key', async () => {
       const signingKey = await keystore.getKey(Buffer.from(wallet.address).toString('base64'))
       assert.notStrictEqual(signingKey, undefined)
-      assert.deepStrictEqual(identity.publicKey, new Uint8Array((await Keystore.getPublicSign(signingKey)).getBuffer()))
+      assert.deepStrictEqual(identity.publicKey, new Uint8Array((await Keystore.getPublicSign(signingKey.key)).getBuffer()))
     })
 
     it('has a signature for the id', async () => {
-      const signingKey = await keystore.getKey(Buffer.from(wallet.address).toString('base64'))
-      const idSignature = await keystore.sign(signingKey, wallet.address)
+      const signingKey = (await keystore.getKey(Buffer.from(wallet.address).toString('base64'))).key
+      const idSignature = await keystore.sign(wallet.address, signingKey)
       const verifies = await Keystore.verify(idSignature, await Keystore.getPublicSign(signingKey), new Uint8Array(Buffer.from(wallet.address)))
       assert.strictEqual(verifies, true)
       assert.deepStrictEqual(identity.signatures.id, idSignature)
@@ -61,7 +61,7 @@ describe('Ethereum Identity Provider', function () {
 
     it('has a signature for the publicKey', async () => {
       const signingKey = await keystore.getKey(Buffer.from(wallet.address).toString('base64'))
-      const idSignature = await keystore.sign(signingKey, wallet.address)
+      const idSignature = await keystore.sign(wallet.address, signingKey.key)
       const publicKeyAndIdSignature = await wallet.signMessage(joinUint8Arrays([identity.publicKey, idSignature]))
       assert.deepStrictEqual(identity.signatures.publicKey, new Uint8Array(Buffer.from(publicKeyAndIdSignature)))
     })
@@ -100,8 +100,8 @@ describe('Ethereum Identity Provider', function () {
 
     it('sign data', async () => {
       const signingKey = await keystore.getKey(identity.id)
-      const expectedSignature = await keystore.sign(signingKey, Buffer.from(data))
-      const signature = await identity.provider.sign(identity, data)
+      const expectedSignature = await keystore.sign(Buffer.from(data), signingKey.key)
+      const signature = await identity.provider.sign(data, identity)
       assert.deepStrictEqual(signature, expectedSignature)
     })
 
@@ -113,7 +113,7 @@ describe('Ethereum Identity Provider', function () {
       let signature
       let err
       try {
-        signature = await identity.provider.sign(modifiedIdentity, data)
+        signature = await identity.provider.sign(data, modifiedIdentity)
       } catch (e) {
         err = e.toString()
       }
@@ -128,7 +128,7 @@ describe('Ethereum Identity Provider', function () {
 
       beforeAll(async () => {
         identity = await Identities.createIdentity({ type, keystore })
-        signature = await identity.provider.sign(identity, data)
+        signature = await identity.provider.sign(data, identity)
       })
 
       it('verifies that the signature is valid', async () => {

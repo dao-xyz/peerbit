@@ -138,10 +138,10 @@ Object.keys(testAPIs).forEach(API => {
 
                 // Open the database again (this time from the disk)
                 options = Object.assign({}, options, { path: dbPath1, create: false })
-                const db3 = await orbitdb1.open(addr, options)
+                const db3 = await orbitdb1.open(addr, { ...options, replicationTopic: '_' }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
                 // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
                 options = Object.assign({}, options, { path: dbPath2, localOnly: true })
-                const db4 = await orbitdb2.open(addr, options)
+                const db4 = await orbitdb2.open(addr, { ...options, replicationTopic: '_' }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
 
                 await db3.load()
                 await db4.load()

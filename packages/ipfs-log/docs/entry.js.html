@@ -77,7 +77,7 @@ class Entry {
       clock: clock || new Clock(identity.publicKey)
     }
 
-    const signature = await identity.provider.sign(identity, Entry.toBuffer(entry))
+    const signature = await identity.provider.sign(Entry.toBuffer(entry),identity)
 
     entry.data.key = identity.publicKey
     entry.data.identity = identity.toSerializable()

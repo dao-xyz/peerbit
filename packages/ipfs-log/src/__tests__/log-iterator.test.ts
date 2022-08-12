@@ -2,7 +2,7 @@ const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
 import { LogCreator } from './utils/log-creator'
 import { assertPayload } from './utils/assert'
@@ -15,7 +15,7 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity, testIdentity2, testIdentity3
+let ipfsd, ipfs, testIdentity: Identity, testIdentity2: Identity, testIdentity3: Identity
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe('Log - Iterator', function () {

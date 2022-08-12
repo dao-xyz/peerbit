@@ -3,7 +3,7 @@ const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Entry, LamportClock as Clock } from '@dao-xyz/ipfs-log-entry';
 import { Log } from '../log'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { assertPayload } from './utils/assert'
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
 
@@ -15,7 +15,7 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity, testIdentity2, testIdentity3, testIdentity4
+let ipfsd, ipfs, testIdentity: Identity, testIdentity2: Identity, testIdentity3: Identity, testIdentity4: Identity
 
 const last = (arr) => {
   return arr[arr.length - 1]

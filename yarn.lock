@@ -17417,14 +17417,6 @@ orbit-db-keystore@^1.0.0:
     reachdown "^1.1.0"
     safe-buffer "^5.2.1"
 
-orbit-db-storage-adapter@^0.6.0:
-  version "0.6.0"
-  resolved "https://registry.yarnpkg.com/orbit-db-storage-adapter/-/orbit-db-storage-adapter-0.6.0.tgz#1a115532a884b4dee7ff21bd8b26294429b94b54"
-  integrity sha512-Q1MKjHw7F6KDeQY16hHG+W/2XrJri4YVCoOdHI8/xkaSG9cdAyanTxjhCslBj5EDK2r2K7xRfGKwOLv7HfPTOg==
-  dependencies:
-    level "^7.0.0"
-    mkdirp "^0.5.1"
-
 orbit-db-test-utils@^1.0.2, orbit-db-test-utils@^1.0.3:
   version "1.4.1"
   resolved "https://registry.yarnpkg.com/orbit-db-test-utils/-/orbit-db-test-utils-1.4.1.tgz#1cbc9415923b33594ead2d1f65649528ba536ef4"

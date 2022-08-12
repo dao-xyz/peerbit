@@ -1,19 +1,39 @@
 const fs = (typeof window === 'object' || typeof self === 'object') ? null : eval('require("fs")') // eslint-disable-line
 import { Level } from 'level';
+
 import LRU from 'lru';
 import { variant, field, serialize, deserialize } from '@dao-xyz/borsh';
-import { joinUint8Arrays, U8IntArraySerializer } from '@dao-xyz/io-utils';
-import { SodiumPlus, CryptographyKey, X25519PublicKey, Ed25519PublicKey, X25519SecretKey } from 'sodium-plus';
+import { joinUint8Arrays, U64Serializer } from '@dao-xyz/io-utils';
+import { SodiumPlus, CryptographyKey, X25519PublicKey, Ed25519PublicKey } from 'sodium-plus';
 import { waitFor } from '@dao-xyz/time';
 import { createHash } from 'crypto';
 
 const DEFAULT_KEY_GROUP = '_';
 const getGroupKey = (group: string) => group === DEFAULT_KEY_GROUP ? DEFAULT_KEY_GROUP : createHash('sha1').update(group).digest('base64')
+const getIdKey = (id: string | Buffer | Uint8Array): string => {
+  if (typeof id !== 'string') {
+    id = Buffer.isBuffer(id) ? id.toString('base64') : Buffer.from(id).toString('base64')
+  }
+  return id;
+}
+
+const isId = (id: string) => id.indexOf('/') !== -1
+
+const idFromKey = async (key: CryptographyKey, type: KeyType): Promise<string> => {
+  const crypto = await _crypto;
+  if (type === 'sign') {
+    return (await crypto.crypto_sign_publickey(key)).toString('base64');
+  }
+  if (type === 'box') {
+    return (await crypto.crypto_box_publickey(key)).toString('base64');
+  }
+  return createHash('sha256').update(key.getBuffer()).digest('base64')
+}
 
 /* import { ready, crypto_sign, crypto_sign_keypair, crypto_sign_verify_detached } from 'libsodium-wrappers';
  */
 //import { ready, crypto_sign_keypair, crypto_sign, crypto_box_keypair, type KeyType as CryptoKeyType, KeyPair } from 'sodium-plus';
-function createStore(path = './keystore'): Level {
+export const createStore = (path = './keystore'): Level => {
   if (fs && fs.mkdirSync) {
     fs.mkdirSync(path, { recursive: true })
   }
@@ -22,23 +42,54 @@ function createStore(path = './keystore'): Level {
 
 const verifiedCache: { get(string: string): { publicKey: Ed25519PublicKey, data: Uint8Array }, set(string: string, { publicKey: Ed25519PublicKey, data: Uint8Array }) } = new LRU(1000)
 const _crypto = SodiumPlus.auto();
-type KeyType = 'box' | 'sign' | 'secret'
+type KeyType = 'box' | 'sign'
 const NONCE_LENGTH = 24;
 const X25519PublicKey_LENGTH = 32;
-export const getStoreId = (group: string, type: KeyType, key: string) => group + '/' + type + '/' + key;
+export const getKeyId = (group: string, type: KeyType, key: string) => group + '/' + type + '/' + key;
 
 @variant(0)
-export class KeySet {
+export class KeyWithMeta {
 
-  @field(U8IntArraySerializer)
-  key: Uint8Array
+  @field({ type: 'String' })
+  id: string
+
+  @field({
+    serialize: (obj: CryptographyKey, writer) => {
+      const buffer = obj.getBuffer();
+      writer.writeU32(buffer.length);
+      buffer.forEach((value) => {
+        writer.writeU8(value)
+      })
+    },
+    deserialize: (reader) => {
+      const len = reader.readU32();
+      const arr = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        arr[i] = reader.readU8();
+      }
+      return new CryptographyKey(Buffer.from(arr));
+    }
+  })
+  key: CryptographyKey
+
+  @field(U64Serializer)
+  timestamp: number
 
   constructor(props?: {
-    key: Uint8Array
+    id: string;
+    key: CryptographyKey,
+    timestamp: number
   }) {
     if (props) {
+      this.id = props.id;
       this.key = props.key; // secret + public key 
+      this.timestamp = props.timestamp;
     }
+  }
+
+
+  equals(other: KeyWithMeta) {
+    return this.timestamp === other.timestamp && Buffer.compare(this.key.getBuffer(), other.key.getBuffer()) === 0
   }
 }
 
@@ -61,7 +112,7 @@ export class Keystore {
     this._cache = input["cache"] || new LRU(100)
   }
 
-  async open() {
+  async openStore() {
     if (this._store) {
       await this._store.open()
       return Promise.resolve()
@@ -74,12 +125,21 @@ export class Keystore {
     await this._store.close()
   }
 
+  get groupStore() {
+    return this._store.sublevel('group')
+  }
 
-  async hasKey(id: string, type: KeyType, group: string = DEFAULT_KEY_GROUP): Promise<boolean> {
+  get keyStore() {
+    return this._store.sublevel('key')
+  }
 
-    if (!id) {
+
+  async hasKey(key: string | Buffer | Uint8Array, type: KeyType, group: string = DEFAULT_KEY_GROUP): Promise<boolean> {
+    if (!key) {
       throw new Error('id needed to check a key')
     }
+
+    const idKey = getIdKey(key);
 
     if (this._store.status === 'opening') {
       await waitFor(() => this._store.status === 'open')
@@ -89,90 +149,84 @@ export class Keystore {
       return Promise.resolve(null)
     }
 
-    const storeId = getStoreId(group, type, id);
+    const storeId = getKeyId(group, type, idKey);
+    return this.hasKeyById(storeId);
+  }
+
+  async hasKeyById(id: string): Promise<boolean> {
     let hasKey = false
     try {
-      const storedKey = this._cache.get(storeId) || await this._store.get(storeId)
+      const storedKey = this._cache.get(id) || (isId(id) ? await this.groupStore.get(id, { valueEncoding: 'view' }) : await this.keyStore.get(id, { valueEncoding: 'view' }))
       hasKey = storedKey !== undefined && storedKey !== null
     } catch (e) {
-      // Catches 'Error: ENOENT: no such file or directory, open <path>'
-      console.error('Error: ENOENT: no such file or directory')
+
+      return undefined;
     }
     return hasKey
   }
 
 
-  async createKey(id: string | Buffer | Uint8Array, type: KeyType = 'sign', group = DEFAULT_KEY_GROUP): Promise<CryptographyKey> {
+  async createKey(id?: string | Buffer | Uint8Array, type: KeyType = 'sign', group?: string): Promise<KeyWithMeta> {
 
-    if (!id) {
-      throw new Error('id needed to create a key')
-    }
-
-    if (typeof id !== 'string') {
-      id = Buffer.isBuffer(id) ? id.toString('base64') : Buffer.from(id).toString('base64')
-    }
-
-    if (this._store.status === 'opening') {
-      await waitFor(() => this._store.status === 'open')
-    }
-
-    if (this._store.status && this._store.status !== 'open') {
-      return Promise.resolve(null)
-    }
-
-    // Throws error if seed is lower than 192 bit length.
-    /* const keys = await unmarshal(ec.genKeyPair({ entropy: options.entropy }).getPrivate().toArrayLike(Buffer))
-    const pubKey = keys.public.marshal()
-    const decompressedKey = secp256k1.publicKeyConvert(Buffer.from(pubKey), false)
-    const key = {
-      publicKey: Buffer.from(decompressedKey).toString('hex'),
-      privateKey: Buffer.from(keys.marshal()).toString('hex')
-    } */
-
-    // Normalize group names
-    group = getGroupKey(group);
-
-    const storeId = getStoreId(group, type, id);
     const crypto = await _crypto;
-    let key = undefined;
+    let key: CryptographyKey = undefined;
     if (type === 'box') {
       key = await crypto.crypto_box_keypair();
-    }
-    else if (type === 'secret') {
-      key = await crypto.crypto_secretbox_keygen();
     }
     else if (type === 'sign') {
       key = await crypto.crypto_sign_keypair()
     }
 
-    const keys = new KeySet({
-      key: new Uint8Array(key.getBuffer())
-    });
+    const keyWithMeta = await this.saveKey(key, id, type, group)
+    return keyWithMeta;
 
-    try {
-      const buffer = Buffer.from(serialize(keys));
-      await this._store.put(storeId, buffer as any as string) // TODO fix types, are just wrong 
-    } catch (e) {
-      console.log(e)
-    }
-    this._cache.set(storeId, keys)
-    return key
   }
 
-  async getKey(id: string | Buffer | Uint8Array, type: KeyType = 'sign', group = DEFAULT_KEY_GROUP): Promise<CryptographyKey> {
-    if (!id) {
-      throw new Error('id needed to get a key')
-    }
-    if (typeof id !== 'string') {
-      id = Buffer.isBuffer(id) ? id.toString('base64') : Buffer.from(id).toString('base64')
-    }
-    if (!this._store) {
-      await this.open()
-    }
-
+  async waitForOpen() {
     if (this._store.status === 'opening') {
       await waitFor(() => this._store.status === 'open')
     }
+  }
+
+  async saveKey(key: CryptographyKey, id?: string | Buffer | Uint8Array, type: KeyType = 'sign', group = DEFAULT_KEY_GROUP): Promise<KeyWithMeta> {
+    const idKey = id ? getIdKey(id) : await idFromKey(key, type);
+
+    await this.waitForOpen();
+
+
+    if (this._store.status && this._store.status !== 'open') {
+      return Promise.resolve(null)
+    }
+
+    // Normalize group names
+    const groupHash = getGroupKey(group);
+    const keyId = getKeyId(groupHash, type, idKey);
+    const keyWithMeta = new KeyWithMeta({
+      id: keyId,
+      key,
+      timestamp: +new Date
+    });
+
+    const buffer = Buffer.from(serialize(keyWithMeta));
+    const publicKeyString = (type === 'box' ? await Keystore.getPublicBox(key) : await Keystore.getPublicSign(key)).toString('base64')
+    await this.groupStore.put(keyId, buffer, { valueEncoding: 'view' }) // TODO fix types, are just wrong 
+    await this.keyStore.put(publicKeyString, key.getBuffer(), { valueEncoding: 'view' }) // TODO fix types, are just wrong 
+    this._cache.set(keyId, keyWithMeta)
+    this._cache.set(publicKeyString, keyWithMeta)
+    return keyWithMeta;
+  }
+
+  async getKey(id: string | Buffer | Uint8Array, type: KeyType = 'sign', group = DEFAULT_KEY_GROUP): Promise<KeyWithMeta> {
+    if (!id) {
+      throw new Error('id needed to get a key')
+    }
+    const idKey = getIdKey(id);
+
+    if (!this._store) {
+      await this.openStore()
+    }
+
+    await this.waitForOpen();
 
     if (this._store.status && this._store.status !== 'open') {
       return Promise.resolve(null)
@@ -180,23 +234,26 @@ export class Keystore {
 
     // Normalize group names
     group = getGroupKey(group);
-    const storeId = getStoreId(group, type, id);
-    const cachedKey = this._cache.get(storeId)
+    const storeId = getKeyId(group, type, idKey);
+    return this.getKeyById(storeId)
+  }
 
-    let loadedKey: KeySet
+  async getKeyById(id: string): Promise<KeyWithMeta> {
+    const cachedKey = this._cache.get(id)
+
+    let loadedKey: KeyWithMeta
     if (cachedKey)
       loadedKey = cachedKey
     else {
       let buffer = undefined;
       try {
 
-        buffer = await this._store.get(storeId) as any as Uint8Array;
+        buffer = isId(id) ? await this.groupStore.get(id, { valueEncoding: 'view' }) as any as Uint8Array : await this.keyStore.get(id, { valueEncoding: 'view' }) as any as Uint8Array;
       } catch (e) {
         // not found
         return Promise.resolve(null)
       }
-
-      loadedKey = deserialize(Buffer.from(buffer), KeySet);
+      loadedKey = deserialize(Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer), KeyWithMeta);
     }
 
     if (!loadedKey) {
@@ -204,20 +261,19 @@ export class Keystore {
     }
 
     if (!cachedKey) {
-      this._cache.set(storeId, loadedKey)
+      this._cache.set(id, loadedKey)
     }
 
-    return new CryptographyKey(Buffer.from(loadedKey.key))
+    return loadedKey
   }
 
-  async getKeys(group: string, type?: string): Promise<CryptographyKey[]> {
+  async getKeys(group: string, type?: string): Promise<KeyWithMeta[]> {
     if (!this._store) {
-      await this.open()
+      await this.openStore()
     }
 
-    if (this._store.status === 'opening') {
-      await waitFor(() => this._store.status === 'open')
-    }
+    await this.waitForOpen();
+
 
     if (this._store.status && this._store.status !== 'open') {
       return Promise.resolve(null)
@@ -226,18 +282,20 @@ export class Keystore {
     try {
 
       // Normalize group names
-      group = getGroupKey(group);
-      let prefix = group;
+      const groupHash = getGroupKey(group);
+      let prefix = groupHash;
 
       // Add type suffix
       if (type) {
         prefix += '/' + type;
       }
-      const iterator = this._store.iterator({ gte: prefix, lte: prefix + "\xFF", valueEncoding: 'view' });
-      const ret: CryptographyKey[] = [];
-      for await (const [key, value] of iterator) {
-        ret.push(new CryptographyKey(Buffer.from(deserialize(Buffer.from(value), KeySet).key)));
+      const iterator = this.groupStore.iterator({ gte: prefix, lte: prefix + "\xFF", valueEncoding: 'view' });
+      const ret: KeyWithMeta[] = [];
+
+      for await (const [_key, value] of iterator) {
+        ret.push(deserialize(Buffer.from(value), KeyWithMeta));
       }
+
       return ret;
     } catch (e) {
       // not found
@@ -245,7 +303,7 @@ export class Keystore {
     }
   }
 
-  async sign(key: CryptographyKey, arrayLike: string | Uint8Array | Buffer): Promise<Uint8Array> {
+  async sign(arrayLike: string | Uint8Array | Buffer, key: CryptographyKey): Promise<Uint8Array> {
     if (!key) {
       throw new Error('No signing key given')
     }
@@ -368,7 +426,7 @@ export class Keystore {
        */
 
       try {
-        const signedData = await crypto.crypto_sign_open(Buffer.from(signature), publicKey);
+        const signedData = await Keystore.open(signature, publicKey);
         const verified = Buffer.compare(signedData, Buffer.from(data)) === 0;
         res = verified
         if (verified) {
@@ -386,7 +444,19 @@ export class Keystore {
     }
     return res
   }
+
+  async open(signature: Uint8Array, publicKey: Ed25519PublicKey): Promise<Buffer> {
+    return Keystore.open(signature, publicKey)
+  }
+
+  static async open(signature: Uint8Array, publicKey: Ed25519PublicKey): Promise<Buffer> {
+    const crypto = await _crypto;
+    return await crypto.crypto_sign_open(Buffer.from(signature), publicKey);
+  }
+
+
 }
+
 
 export const arraysEqual = (array1?: Uint8Array, array2?: Uint8Array) => {
   if (!!array1 != !!array2)

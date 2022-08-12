@@ -14,7 +14,7 @@ export class Network {
 
 export class AccessCondition<T> {
 
-    async allowed(entry: Entry<T>): Promise<boolean> {
+    async allowed(_entry: Entry<T>): Promise<boolean> {
         throw new Error("Not implemented")
     }
 }
@@ -24,7 +24,7 @@ export class AnyAccessCondition<T> extends AccessCondition<T> {
     constructor() {
         super();
     }
-    async allowed(entry: Entry<T>): Promise<boolean> {
+    async allowed(_entry: Entry<T>): Promise<boolean> {
         return true;
     }
 }

@@ -1,7 +1,8 @@
 import { AccessController } from "./access-controller-interface"
-import { Entry } from '@dao-xyz/ipfs-log-entry';
+import { Entry, EntryDataBox, EntryDataBoxEncrypted } from '@dao-xyz/ipfs-log-entry';
 
 import io from '@dao-xyz/orbit-db-io'
+import { IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
 const Buffer = require('safe-buffer/').Buffer
 const type = 'legacy-ipfs'
 
@@ -20,9 +21,20 @@ export class LegacyIPFSAccessController<T> extends AccessController<T> {
     return this._write
   }
 
-  async canAppend<T>(entry: Entry<T>, identityProvider) {
+  async canAppend<T>(entryData: EntryDataBox<T>, identity: IdentitySerializable, identityProvider) {
+
+    if (entryData instanceof EntryDataBoxEncrypted) {
+      await entryData.decrypt();
+    }
+
+
     // Allow if access list contain the writer's publicKey or is '*'
-    const publicKey = entry.data.key
+
+    if (entryData instanceof EntryDataBoxEncrypted) {
+      await entryData.decrypt();
+    }
+
+    const publicKey = identity.publicKey
     if (this.write.includes(publicKey) ||
       this.write.includes('*')) {
       return true

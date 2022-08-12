@@ -4,12 +4,12 @@ const assert = require('assert')
 const path = require('path')
 const rmrf = require('rimraf')
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
-import { joinUint8Arrays } from "../utils"
 import { Identities } from "../identities"
 const keypath = path.resolve(__dirname, 'keys')
 import nacl from "tweetnacl";
 import { Ed25519PublicKey } from 'sodium-plus';
 import { SolanaIdentityProvider } from "../solana-identity-provider";
+import { joinUint8Arrays } from "@dao-xyz/io-utils";
 let keystore: Keystore
 
 /** Tests have to run in order */
@@ -47,20 +47,20 @@ describe('Solana Identity Provider', function () {
         it('has the correct public key', async () => {
             const signingKey = await keystore.getKey(keypair.publicKey.toBuffer().toString('base64'))
             assert.notStrictEqual(signingKey, undefined)
-            assert.deepStrictEqual(identity.publicKey, new Uint8Array((await Keystore.getPublicSign(signingKey)).getBuffer()))
+            assert.deepStrictEqual(identity.publicKey, new Uint8Array((await Keystore.getPublicSign(signingKey.key)).getBuffer()))
         })
 
         it('has a signature for the id', async () => {
             const signingKey = await keystore.getKey(keypair.publicKey.toBuffer().toString('base64'))
-            const idSignature = await keystore.sign(signingKey, keypair.publicKey.toBytes())
-            const verifies = await Keystore.verify(idSignature, await Keystore.getPublicSign(signingKey), keypair.publicKey.toBytes())
+            const idSignature = await keystore.sign(keypair.publicKey.toBytes(), signingKey.key)
+            const verifies = await Keystore.verify(idSignature, await Keystore.getPublicSign(signingKey.key), keypair.publicKey.toBytes())
             assert.strictEqual(verifies, true)
             assert.deepStrictEqual(identity.signatures.id, idSignature)
         })
 
         it('has a signature for the publicKey', async () => {
             const signingKey = await keystore.getKey(keypair.publicKey.toBuffer().toString('base64'))
-            const idSignature = await keystore.sign(signingKey, keypair.publicKey.toBytes())
+            const idSignature = await keystore.sign(keypair.publicKey.toBytes(), signingKey.key)
             const publicKeyAndIdSignature = await nacl.sign(joinUint8Arrays([identity.publicKey, idSignature]), keypair.secretKey)
             assert.deepStrictEqual(identity.signatures.publicKey, new Uint8Array(Buffer.from(publicKeyAndIdSignature)))
         })
@@ -99,8 +99,8 @@ describe('Solana Identity Provider', function () {
 
         it('sign data', async () => {
             const signingKey = await keystore.getKey(identity.id)
-            const expectedSignature = await keystore.sign(signingKey, Buffer.from(data))
-            const signature = await identity.provider.sign(identity, data)
+            const expectedSignature = await keystore.sign(Buffer.from(data), signingKey.key)
+            const signature = await identity.provider.sign(data, identity)
             assert.deepStrictEqual(signature, expectedSignature)
         })
 
@@ -112,7 +112,7 @@ describe('Solana Identity Provider', function () {
             let signature
             let err
             try {
-                signature = await identity.provider.sign(modifiedIdentity, data)
+                signature = await identity.provider.sign(data, modifiedIdentity)
             } catch (e) {
                 err = e.toString()
             }
@@ -127,7 +127,7 @@ describe('Solana Identity Provider', function () {
 
             beforeAll(async () => {
                 identity = await Identities.createIdentity({ type, keystore })
-                signature = await identity.provider.sign(identity, data)
+                signature = await identity.provider.sign(data, identity)
             })
 
             it('verifies that the signature is valid', async () => {

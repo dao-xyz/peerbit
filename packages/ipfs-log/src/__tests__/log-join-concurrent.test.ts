@@ -3,7 +3,7 @@ const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
 import { SortByEntryHash } from '../log-sorting'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 
 // Test utils
 const {
@@ -13,7 +13,7 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity
+let ipfsd, ipfs, testIdentity: Identity
 
 Object.keys(testAPIs).forEach(IPFS => {
   describe('Log - Join Concurrent Entries', function () {

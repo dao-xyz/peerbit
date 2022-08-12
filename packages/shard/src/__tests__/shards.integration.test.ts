@@ -35,7 +35,6 @@ const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 describe('cluster', () => {
     describe('trust', () => {
         it('add trustee', async () => {
-
             let [peer, peer2] = await getConnectedPeers(2);
             let l0a = await documentStoreShard();
             await l0a.init(peer);
@@ -51,8 +50,6 @@ describe('cluster', () => {
             await l0b.trust.load(1);
             expect(l0b.trust.db.size).toEqual(1)
             await disconnectPeers([peer, peer2]);
-
-
         })
     })
 
@@ -158,7 +155,6 @@ describe('cluster', () => {
             await feedStoreLoaded.interface.load();
             await waitFor(() => Object.keys(feedStoreLoaded.interface.db.index._index).length === 1);
             await disconnectPeers([peer, peer2]);
-
         })
 
         it('first peer drop, data still alive because 2nd peer is up', async () => {
@@ -229,6 +225,8 @@ describe('cluster', () => {
            WHILE PARNET
        SUBSCRICE ?
     */
+
+
     describe('peer', () => {
 
         it('peer counter from 1 replicator', async () => {
@@ -455,6 +453,42 @@ describe('cluster', () => {
 
     describe('sharding', () => {
 
+        describe('encryption', () => {
+            it('keys are shared', async () => {
+                let peer = await getPeer();
+                let peer2 = await getPeer(undefined, false);
+                await connectPeers(peer, peer2);
+
+                let l0a = await shardStoreShard();
+                await l0a.init(peer);
+                await l0a.trust.load();
+                await l0a.trust.addTrust(peer2.orbitDB.identity);
+                await waitFor(() => l0a.trust.db.size == 1)// add some delay because trust db is not synchronous
+
+                let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
+                await l0b.init(peer2)
+
+                expect(await l0a.shardPeerInfo.getPeers()).toHaveLength(0)
+                expect(l0a.trust.rootTrust.id === l0b.trust.rootTrust.id);
+
+                // Replication step
+                let replicationCallback = false
+                await Shard.subscribeForReplication(peer, l0a.trust, () => { replicationCallback = true });
+                await delay(5000); // Pubsub is flaky, wait some time before requesting shard
+                await l0b.requestReplicate();
+
+
+                //  --------------
+                expect(await l0b.shardPeerInfo.getPeers()).toHaveLength(1)
+                expect(replicationCallback);
+                // add some delay because replication might take some time and is not synchronous
+                await disconnectPeers([peer, peer2]);
+            })
+        })
+    })
+
+    describe('trigger', () => {
+
         it('memory left peer info', async () => {
             let peer = await getPeer()
 
@@ -540,7 +574,6 @@ describe('cluster', () => {
             await waitFor(() => Object.keys((peerSupporting.supportJobs.values().next().value.shard.interface as DocumentStoreInterface).db.index._index).length == 1);
             await disconnectPeers([peerLowMemory, peerSupporting, peerNew]);
         })
-
-
     })
-});
+
+})

@@ -4,19 +4,10 @@ import { variant, field, vec, option, serialize, deserialize } from '@dao-xyz/bo
 import io from '@dao-xyz/orbit-db-io';
 import { IPFS } from 'ipfs-core-types/src/'
 import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider'
-import { arraysEqual, U8IntArraySerializer, U8IntArraySerializerOptional } from '@dao-xyz/io-utils';
-import { Ed25519PublicKey } from 'sodium-plus';
-
-const uintArrayEqual = (array1?: Uint8Array, array2?: Uint8Array) => {
-  if (!!array1 != !!array2)
-    return false;
-  if (array1.byteLength != array2.byteLength) return false
-  return array1.every((val, i) => val == array2[i])
-}
-export interface CryptOptions {
-  encrypt: (data: Uint8Array) => { data: Uint8Array, nonce: Uint8Array, publicKey: Uint8Array },
-  decrypt: (data: Uint8Array, publicKey: Uint8Array, nonce: Uint8Array) => Uint8Array
-}
+import { arraysEqual, joinUint8Arrays, U8IntArraySerializer } from '@dao-xyz/io-utils';
+import { X25519PublicKey, Ed25519PublicKey } from 'sodium-plus';
+import { CryptOptions, DecryptedThing, Encryption, X25519PublicKeySerializer } from './encryption';
+import { IdentityWithSignature, IdentityWithSignatureSecure } from './identity';
 
 
 export interface IOOptions<T> {
@@ -43,10 +34,13 @@ const IpfsNotDefinedError = () => new Error('Ipfs instance not defined')
 
 export interface EntrySerialized<T> {
   data: Uint8Array
+  identityWithSignature: Uint8Array
   hash?: string // "zd...Foo", we'll set the hash after persisting the entry
   next?: string[] | Entry<T>[]
   refs?: string[] // Array of hashes
 }
+
+
 
 @variant(0)
 export class EntryDataBox<T> {
@@ -75,15 +69,6 @@ export class EntryDataBox<T> {
   get clock(): LamportClock {
     throw new Error("Not implemented")
   }
-  get identity(): IdentitySerializable | undefined {
-    throw new Error("Not implemented")
-  }
-  get key(): Uint8Array | undefined {
-    throw new Error("Not implemented")
-  }
-  get sig(): Uint8Array | undefined {
-    throw new Error("Not implemented")
-  }
 
   clone(signed: boolean = true): EntryDataBox<T> {
     throw new Error("Not implemented")
@@ -107,31 +92,16 @@ export class EntryDataDecrypted<T> extends EntryDataBox<T> {
   @field({ type: Clock })
   _clock: Clock
 
-  @field({ type: option(IdentitySerializable) })
-  _identity?: IdentitySerializable;
-
-  @field(U8IntArraySerializerOptional)
-  _key?: Uint8Array;
-
-  @field(U8IntArraySerializerOptional)
-  _sig?: Uint8Array;
-
   constructor(obj?: {
     id: string // For determining a unique chain
     payload: Uint8Array
     clock: Clock
-    identity?: IdentitySerializable;
-    key?: Uint8Array;
-    sig?: Uint8Array;
   }) {
     super();
     if (obj) {
       this._id = obj.id;
       this._payload = obj.payload;
       this._clock = obj.clock;
-      this._identity = obj.identity;
-      this._key = obj.key;
-      this._sig = obj.sig;
     }
   }
 
@@ -151,28 +121,21 @@ export class EntryDataDecrypted<T> extends EntryDataBox<T> {
   get clock(): LamportClock {
     return this._clock;
   }
-  get identity(): IdentitySerializable | undefined {
-    return this._identity
-  }
-  get key(): Uint8Array | undefined {
-    return this._key;
-  }
-  get sig(): Uint8Array | undefined {
-    return this._sig;
-  }
+
 
   static from<T>(arr: Uint8Array): EntryDataDecrypted<T> {
     return deserialize<EntryDataDecrypted<T>>(Buffer.from(arr), EntryDataDecrypted)
   }
 
-  encrypt(): EntryDataEncrypted<T> {
+  async encrypt(recieverPublicKey: X25519PublicKey): Promise<EntryDataBoxEncrypted<T>> {
     const bytes = serialize(this)
-    const enc = new EntryDataEncrypted<T>(this._crypt.encrypt(Buffer.from(bytes)))
+    const { data, senderPublicKey } = await this._crypt.encrypt(Buffer.from(bytes), recieverPublicKey);
+    const enc = new EntryDataBoxEncrypted<T>({ data, senderPublicKey, recieverPublicKey })
     enc._decrypted = this;
     return enc;
   }
 
-  clone(signed: boolean = true) {
+  /* clone(signed: boolean = true) {
     return new EntryDataDecrypted<T>({
       id: this.id,
       payload: this.payloadEncoded,
@@ -181,11 +144,19 @@ export class EntryDataDecrypted<T> extends EntryDataBox<T> {
       key: signed ? this.key : undefined,
       sig: signed ? this.sig : undefined,
     }).init(this._io, this._crypt)
+  } */
+
+  clone() {
+    return new EntryDataDecrypted<T>({
+      id: this.id,
+      payload: this.payloadEncoded,
+      clock: new LamportClock(this.clock.id, this.clock.time)
+    }).init(this._io, this._crypt)
   }
 
   equals(other: EntryDataBox<T>): boolean {
     if (other instanceof EntryDataDecrypted) {
-      return this.id === other.id && uintArrayEqual(this._payload, other._payload) && this.clock.equals(other.clock) && this.identity.equals(other.identity) && arraysEqual(this.sig, other.sig) && arraysEqual(this.key, other.key);
+      return this.id === other.id && arraysEqual(this._payload, other._payload) && this.clock.equals(other.clock)
     }
     else {
       return false;
@@ -196,66 +167,64 @@ export class EntryDataDecrypted<T> extends EntryDataBox<T> {
 
 
 @variant(1)
-export class EntryDataEncrypted<T> extends EntryDataBox<T> {
+export class EntryDataBoxEncrypted<T> extends EntryDataBox<T> {
 
   @field(U8IntArraySerializer)
   _data: Uint8Array;
 
-  @field(U8IntArraySerializer)
-  _publicKey: Uint8Array
+  @field(X25519PublicKeySerializer)
+  _senderPublicKey: X25519PublicKey
 
-  @field(U8IntArraySerializer)
-  _nonce: Uint8Array
-
+  @field(X25519PublicKeySerializer)
+  _recieverPublicKey: X25519PublicKey
 
   constructor(obj?: {
     data: Uint8Array;
-    publicKey: Uint8Array;
-    nonce: Uint8Array;
+    senderPublicKey: X25519PublicKey;
+    recieverPublicKey: X25519PublicKey;
+
   }) {
     super();
     if (obj) {
       this._data = obj.data;
-      this._nonce = obj.nonce;
-      this._publicKey = obj.publicKey
+      this._senderPublicKey = obj.senderPublicKey;
+      this._recieverPublicKey = obj.recieverPublicKey
     }
   }
 
   get id(): string {
-    return this._decrypt().id;
+    return this.decrypted.id;
   }
 
   get payload(): T {
-    return this._decrypt().payload
+    return this.decrypted.payload
   }
 
   get payloadEncoded(): Uint8Array {
-    return this._decrypt()._payload;
+    return this.decrypted._payload;
   }
 
   get clock(): LamportClock {
-    return this._decrypt().clock;
+    return this.decrypted.clock;
   }
-  get identity(): IdentitySerializable | undefined {
-    return this._decrypt().identity
-  }
-  get key(): Uint8Array | undefined {
-    return this._decrypt().key;
-  }
-  get sig(): Uint8Array | undefined {
-    return this._decrypt().sig;
-  }
+
 
   _decrypted: EntryDataDecrypted<T>
+  get decrypted(): EntryDataDecrypted<T> {
+    if (!this._decrypted) {
+      throw new Error("Entry has not been decrypted, invoke decrypt method before")
+    }
+    return this._decrypted;
+  }
 
-  _decrypt(): EntryDataDecrypted<T> {
+  async decrypt(): Promise<EntryDataDecrypted<T>> {
     if (this._decrypted) {
       return this._decrypted
     }
     let der: EntryDataBox<T> = this;
     let counter = 0;
-    while (der instanceof EntryDataEncrypted) {
-      der = deserialize<EntryDataBox<T>>(Buffer.from(this._crypt.decrypt(this._data, this._publicKey, this._nonce)), EntryDataBox)
+    while (der instanceof EntryDataBoxEncrypted) {
+      der = deserialize<EntryDataBox<T>>(Buffer.from(await this._crypt.decrypt(this._data, this._senderPublicKey, this._recieverPublicKey)), EntryDataBox)
       counter += 1;
       if (counter >= 10) {
         throw new Error("Unexpected decryption behaviour, data seems to always be in encrypted state")
@@ -266,14 +235,42 @@ export class EntryDataEncrypted<T> extends EntryDataBox<T> {
     return this._decrypted;
   }
 
-  clone(signed: boolean) {
-    const dec = this._decrypt().clone(signed);
-    return dec.encrypt().init(this._io, this._crypt,)
+  /* clone(signed: boolean): EntryDataBoxEncrypted<T> {
+
+    // TODO the only reasons we do this (below) is because the clone method has the signed argument, perhaps find a better solution where the clone does not need to have the signed argument
+    const dec = this.decrypted;
+    if (!!dec._sig != signed) {
+      if (signed)
+        throw new Error("Can not clone and encrypted entry and sign at the same time")
+      else if (!signed) {
+        throw new Error("Can not clone and encrypted entry removed signed data at the same time")
+      }
+    }
+
+    const cloned = new EntryDataBoxEncrypted<T>({
+      data: new Uint8Array(this._data),
+      recieverPublicKey: new X25519PublicKey(this._recieverPublicKey.getBuffer()),
+      senderPublicKey: new X25519PublicKey(this._senderPublicKey.getBuffer())
+    }).init(this._io, this._crypt)
+
+    return cloned
+  } */
+
+  clone(): EntryDataBoxEncrypted<T> {
+
+    // TODO the only reasons we do this (below) is because the clone method has the signed argument, perhaps find a better solution where the clone does not need to have the signed argument
+    const cloned = new EntryDataBoxEncrypted<T>({
+      data: new Uint8Array(this._data),
+      recieverPublicKey: new X25519PublicKey(this._recieverPublicKey.getBuffer()),
+      senderPublicKey: new X25519PublicKey(this._senderPublicKey.getBuffer())
+    }).init(this._io, this._crypt)
+
+    return cloned
   }
 
   equals(other: EntryDataBox<T>): boolean {
-    if (other instanceof EntryDataEncrypted) {
-      return uintArrayEqual(this._data, other._data) && uintArrayEqual(this._nonce, other._nonce)
+    if (other instanceof EntryDataBoxEncrypted) {
+      return arraysEqual(this._data, other._data) && Buffer.compare(this._senderPublicKey.getBuffer(), other._senderPublicKey.getBuffer()) === 0 && Buffer.compare(this._recieverPublicKey.getBuffer(), other._recieverPublicKey.getBuffer()) === 0
     }
     else {
       return false;
@@ -288,8 +285,11 @@ export class Entry<T> {
   @field({ type: EntryDataBox })
   data: EntryDataBox<T>
 
+  @field({ type: IdentityWithSignatureSecure })
+  identityWithSignature: IdentityWithSignatureSecure
+
   @field({ type: option(vec('String')) })
-  next?: string[] | Entry<T>[]
+  next?: string[] | Entry<T>[] // TODO fix types
 
   @field({ type: option(vec('String')) })
   refs?: string[] // Array of hashes
@@ -303,12 +303,14 @@ export class Entry<T> {
 
   constructor(obj?: {
     data: EntryDataBox<T>
+    identityWithSignature: IdentityWithSignatureSecure
     next?: string[] | Entry<T>[]
     refs?: string[] // Array of hashes
     hash?: string // "zd...Foo", we'll set the hash after persisting the entry
   }) {
     if (obj) {
       this.data = obj.data;
+      this.identityWithSignature = obj.identityWithSignature;
       this.next = obj.next;
       this.refs = obj.refs;
       this.hash = obj.hash;
@@ -323,14 +325,29 @@ export class Entry<T> {
   serialize(): EntrySerialized<T> {
     return {
       data: serialize(this.data),
+      identityWithSignature: serialize(this.identityWithSignature),
       hash: this.hash,
       next: this.next,
       refs: this.refs
     }
   }
 
+  get dataToSign(): Buffer {
+    const arrays: Uint8Array[] = [serialize(this.data)];
+    if (this.next) {
+      this.next.forEach((n) => {
+        arrays.push(new Uint8Array(Buffer.from(n)));
+      })
+    }
+    if (this.refs) {
+      this.refs.forEach((r) => {
+        arrays.push(new Uint8Array(Buffer.from(r)));
+      })
+    }
+    return Buffer.from(joinUint8Arrays(arrays));
+  }
   equals(other: Entry<T>) {
-    return other.hash === this.hash && arraysEqual(this.next, other.next) && arraysEqual(this.refs, other.refs) && this.data.equals(other.data)
+    return other.hash === this.hash && this.identityWithSignature.equals(other.identityWithSignature) && arraysEqual(this.next, other.next) && arraysEqual(this.refs, other.refs) && this.data.equals(other.data)
   }
 
   /**
@@ -347,7 +364,7 @@ export class Entry<T> {
    * console.log(entry)
    * // { hash: null, payload: "hello", next: [] }
    */
-  static async create<T>(options: { ipfs: IPFS, identity: Identity, logId: string, data: T, next?: (Entry<T> | string)[], ioOptions?: IOOptions<T>, clock?: Clock, refs?: string[], pin?: boolean, assertAllowed?: (entry: Entry<T>) => Promise<void>, cryptOptions?: CryptOptions }) {
+  static async create<T>(options: { ipfs: IPFS, identity: Identity, logId: string, data: T, next?: (Entry<T> | string)[], ioOptions?: IOOptions<T>, clock?: Clock, refs?: string[], pin?: boolean, assertAllowed?: (entryData: EntryDataBox<T>, identity: IdentitySerializable) => Promise<void>, encryption?: Encryption }) {
     if (!options.ioOptions || !options.refs || !options.next) {
       options = {
         ...options,
@@ -373,27 +390,41 @@ export class Entry<T> {
       payload: options.ioOptions.encoder(options.data), // Can be any JSON.stringifyable data
       clock: options.clock || new Clock(options.identity.publicKey),
     });
+
+    const identitySerializable = options.identity.toSerializable();
+
+
     const entry: Entry<T> = new Entry<T>({
       data: entryDataDecrypted,
+      identityWithSignature: null, // TODO pass identity with signature without signature?
       hash: null, // "zd...Foo", we'll set the hash after persisting the entry
       next: nexts, // Array of hashes
       refs: options.refs,
     })
-    const identitySerializable = options.identity.toSerializable();
 
     if (options.assertAllowed) {
-      entryDataDecrypted._identity = identitySerializable
-      await options.assertAllowed(entry);
-      entryDataDecrypted._identity = undefined;
+      await options.assertAllowed(entryDataDecrypted, identitySerializable);
     }
+    entry.next?.forEach((next) => {
+      if (typeof next !== 'string') {
+        throw new Error("Unsupported next type")
+      }
+    })
+    const signature = await options.identity.provider.sign(entry.dataToSign, identitySerializable)
 
-    const signature = await options.identity.provider.sign(identitySerializable, Entry.toBuffer(entry))
-    entryDataDecrypted._key = options.identity.publicKey
-    entryDataDecrypted._identity = identitySerializable
-    entryDataDecrypted._sig = signature
-    entryDataDecrypted.init(options.ioOptions, options.cryptOptions);
-    if (options.cryptOptions) {
-      entry.data = entryDataDecrypted.encrypt();
+    entry.identityWithSignature = new IdentityWithSignatureSecure({
+      identityWithSignature: new DecryptedThing({
+        data: serialize(new IdentityWithSignature({
+          identity: identitySerializable,
+          signature
+        }))
+      })
+    })
+    entryDataDecrypted.init(options.ioOptions, options.encryption?.options);
+    entry.identityWithSignature.init(options.encryption?.options);
+    if (options.encryption) {
+      entry.data = await entryDataDecrypted.encrypt(options.encryption.recieverPayload);
+      await entry.identityWithSignature.encrypt(options.encryption.recieverIdentity);
     }
 
     entry.hash = await Entry.toMultihash(options.ipfs, entry, options.pin)
@@ -410,11 +441,11 @@ export class Entry<T> {
   static async verify<T>(identityProvider: Identities, entry: Entry<T>) {
     if (!identityProvider) throw new Error('Identity-provider is required, cannot verify entry')
     if (!Entry.isEntry(entry)) throw new Error('Invalid Log entry')
-    if (!entry.data.key) throw new Error("Entry doesn't have a key")
-    if (!entry.data.sig) throw new Error("Entry doesn't have a signature")
-
-    const e = Entry.toEntryWithoutSignature(entry)
-    return identityProvider.verify(entry.data.sig, new Ed25519PublicKey(Buffer.from(entry.data.key)), Entry.toBuffer(e))
+    const key = await (await entry.identityWithSignature.identity).publicKey;
+    if (!key) throw new Error("Entry doesn't have a key")
+    const signature = await entry.identityWithSignature.signature;
+    if (!signature) throw new Error("Entry doesn't have a signature")
+    return identityProvider.verify(signature, new Ed25519PublicKey(Buffer.from(key)), entry.dataToSign)
   }
 
   /**
@@ -442,31 +473,28 @@ export class Entry<T> {
     if (!Entry.isEntry(entry)) throw new Error('Invalid object format, cannot generate entry hash')
 
     // Ensure `entry` follows the correct format
-    const e = Entry.toEntry(entry) // Will remove the hash
+    const e = Entry.toEntryNoHash(entry) // Will remove the hash
     return io.write(ipfs, Entry.getWriteFormat(), e.serialize(), { links: Entry.IPLD_LINKS, pin })
   }
 
-  static toEntry<T>(entry: Entry<T> | EntrySerialized<T>): Entry<T> {
+  /**
+   * TODO can cause sideffects because .data is not cloned if entry instance of Entry
+   * @param entry 
+   * @returns 
+   */
+  static toEntryNoHash<T>(entry: Entry<T> | EntrySerialized<T>): Entry<T> {
     const e: Entry<T> = new Entry<T>({
       hash: null,
       // TODO improve performance (unecessary cloning)
-      data: entry.data instanceof Uint8Array ? deserialize<EntryDataBox<T>>(Buffer.from(entry.data), EntryDataBox) : entry.data.clone(),
+      data: entry.data instanceof Uint8Array ? deserialize<EntryDataBox<T>>(Buffer.from(entry.data), EntryDataBox) : entry.data,
+      identityWithSignature: entry.identityWithSignature instanceof Uint8Array ? deserialize(Buffer.from(entry.identityWithSignature), IdentityWithSignatureSecure) : entry.identityWithSignature,
       next: entry.next,
       refs: entry.refs
     })
     return e
   }
 
-  static toEntryWithoutSignature<T>(entry: Entry<T> | EntrySerialized<T>): Entry<T> {
-    const e: Entry<T> = new Entry<T>({
-      hash: undefined,
-      // TODO improve performance (unecessary cloning)
-      data: entry.data instanceof Uint8Array ? EntryDataDecrypted.from<T>(entry.data).clone(false) : entry.data.clone(false),
-      next: entry.next,
-      refs: entry.refs
-    })
-    return e
-  }
+
 
 
 
@@ -484,10 +512,8 @@ export class Entry<T> {
     if (!ipfs) throw IpfsNotDefinedError()
     if (!hash) throw new Error(`Invalid hash: ${hash}`)
     const e: EntrySerialized<T> = await io.read(ipfs, hash, { links: Entry.IPLD_LINKS })
-
-    const entry = Entry.toEntry(e)
+    const entry = Entry.toEntryNoHash(e)
     entry.hash = hash
-
     return entry
   }
 
@@ -504,10 +530,9 @@ export class Entry<T> {
       return false
     }
     return obj && obj.data.id !== undefined &&
-      obj.next !== undefined &&
-      obj.data._payload !== undefined &&
-      obj.hash !== undefined &&
-      obj.data.clock !== undefined && obj.refs !== undefined
+      obj.next !== undefined && obj.hash !== undefined && obj.refs !== undefined
+      &&
+      obj.data.clock !== undefined //  && obj.data._payload !== undefined
   }
 
   /**

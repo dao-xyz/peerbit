@@ -12,7 +12,6 @@ import { Keystore } from '@dao-xyz/orbit-db-keystore'
 const keypath = path.resolve(__dirname, 'keys')
 
 let keystore: Keystore
-
 const seed = new Uint8Array([157, 94, 116, 198, 19, 248, 93, 239, 173, 82, 245, 222, 199, 7, 183, 177, 123, 238, 83, 240, 143, 188, 87, 191, 33, 95, 58, 136, 46, 218, 219, 245])
 const didStr = new Uint8Array([100, 105, 100, 58, 107, 101, 121, 58, 122, 54, 77, 107, 112, 110, 84, 74, 119, 114, 114, 86, 117, 112, 104, 78, 104, 49, 117, 75, 98, 53, 68, 66, 55, 101, 82, 120, 118, 113, 110, 105, 86, 97, 83, 68, 85, 72, 85, 54, 106, 116, 71, 86, 109, 110, 51, 114]);
 
@@ -50,12 +49,12 @@ describe('DID Identity Provider', function () {
     it('has the correct public key', async () => {
       const signingKey = await keystore.getKey(didStr)
       assert.notStrictEqual(signingKey, undefined)
-      assert.deepStrictEqual(identity.publicKey, new Uint8Array((await Keystore.getPublicSign(signingKey)).getBuffer()))
+      assert.deepStrictEqual(identity.publicKey, new Uint8Array((await Keystore.getPublicSign(signingKey.key)).getBuffer()))
     })
 
     it('has a signature for the id', async () => {
       const signingKey = await keystore.getKey(didStr)
-      const idSignature = await keystore.sign(signingKey, didStr)
+      const idSignature = await keystore.sign(didStr, signingKey.key)
       const verifies = await Keystore.verify(idSignature, new Ed25519PublicKey(Buffer.from(identity.publicKey)), new Uint8Array(Buffer.from(didStr)))
       assert.strictEqual(verifies, true)
       assert.deepStrictEqual(identity.signatures.id, idSignature)
@@ -63,7 +62,7 @@ describe('DID Identity Provider', function () {
 
     it('has a signature for the publicKey', async () => {
       const signingKey = await keystore.getKey(didStr)
-      const idSignature = await keystore.sign(signingKey, didStr)
+      const idSignature = await keystore.sign(didStr, signingKey.key)
       assert.notStrictEqual(idSignature, undefined)
     })
   })
@@ -101,8 +100,8 @@ describe('DID Identity Provider', function () {
 
     it('sign data', async () => {
       const signingKey = await keystore.getKey(identity.id)
-      const expectedSignature = await keystore.sign(signingKey, data)
-      const signature = await identity.provider.sign(identity, data)
+      const expectedSignature = await keystore.sign(data, signingKey.key)
+      const signature = await identity.provider.sign(data, identity)
       assert.deepStrictEqual(signature, expectedSignature)
     })
 
@@ -114,7 +113,7 @@ describe('DID Identity Provider', function () {
       let signature
       let err
       try {
-        signature = await identity.provider.sign(modifiedIdentity, data)
+        signature = await identity.provider.sign(data, modifiedIdentity)
       } catch (e) {
         err = e.toString()
       }
@@ -130,7 +129,7 @@ describe('DID Identity Provider', function () {
       beforeAll(async () => {
         const didProvider = new Ed25519Provider(seed)
         identity = await Identities.createIdentity({ type, keystore, didProvider })
-        signature = await identity.provider.sign(identity, data)
+        signature = await identity.provider.sign(data, identity)
       })
 
       it('verifies that the signature is valid', async () => {

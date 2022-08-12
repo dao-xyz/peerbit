@@ -3,7 +3,7 @@ import { IdentityProvider } from "./identity-provider-interface"
 import * as u8a from 'uint8arrays'
 import { DID } from 'dids'
 import { Identity, IdentitySerializable } from "./identity";
-import { joinUint8Arrays } from "./utils";
+import { joinUint8Arrays } from "@dao-xyz/io-utils";
 
 const TYPE = 'DID'
 export type DIDIdentityProviderOptions = { didProvider?: any };

@@ -59,7 +59,6 @@
     "localstorage-down": "^0.6.7",
     "memdown": "^6.0.0",
     "mocha-headless-chrome": "^2.0.3",
-    "orbit-db-storage-adapter": "^0.6.0",
     "orbit-db-test-utils": "^1.0.3",
     "standard": "^12.0.1",
     "webpack": "^4.43.0",

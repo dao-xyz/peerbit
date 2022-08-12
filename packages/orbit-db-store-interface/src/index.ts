@@ -130,11 +130,11 @@ export abstract class SingleDBInterface<T, B extends Store<any, any, any, any>> 
         let directConnectionsFromWrite: { [peer: string]: string } = {};
         let preExistingConnections = new Set();
         if (!subscribed) {
-            await this._orbitDB._pubsub.subscribe(topic, this._orbitDB._onMessage.bind(this._orbitDB), (address: string, peer: string) => {
+            await this._orbitDB._pubsub.subscribe(topic, this._orbitDB._onMessage.bind(this._orbitDB), async (address: string, peer: string) => {
                 if (this._orbitDB._directConnections[peer]) {
                     preExistingConnections.add(peer);
                 }
-                this._orbitDB.getChannel(peer, topic)
+                await this._orbitDB.getChannel(peer)
                 //this._orbitDB._onPeerConnected(topic, peer);
                 directConnectionsFromWrite[peer] = address;
             })

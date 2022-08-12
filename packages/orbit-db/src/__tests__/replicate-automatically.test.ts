@@ -116,7 +116,9 @@ Object.keys(testAPIs).forEach(API => {
               const result1 = db1.iterator({ limit: -1 }).collect()
               const result2 = db2.iterator({ limit: -1 }).collect()
               assert.equal(result1.length, result2.length)
-              assert.deepEqual(result1, result2)
+              for (let i = 0; i < result1.length; i++) {
+                assert(result1[i].equals(result2[i]))
+              }
               resolve(true)
             }
           }, 1000)

@@ -7,8 +7,8 @@ import { Keystore } from '@dao-xyz/orbit-db-keystore'
 import LRU from 'lru'
 import path from 'path'
 import { Ed25519PublicKey } from 'sodium-plus';
-import { joinUint8Arrays } from "./utils"
 import { SolanaIdentityProviderOptions } from "./solana-identity-provider"
+import { joinUint8Arrays } from "@dao-xyz/io-utils"
 
 const defaultType = 'orbitdb'
 const identityKeysPath = path.join('./orbitdb', 'identity', 'identitykeys')
@@ -43,17 +43,17 @@ export class Identities {
 
   get signingKeystore() { return this._signingKeystore }
 
-  async sign(identity: Identity | IdentitySerializable, data: Uint8Array) {
+  async sign(data: Uint8Array, identity: Identity | IdentitySerializable) {
     const signingKey = await this.keystore.getKey(Buffer.from(identity.id).toString('base64'))
     if (!signingKey) {
       throw new Error('Private signing key not found from Keystore')
     }
-    const sig = await this.keystore.sign(signingKey, data)
+    const sig = await this.keystore.sign(data, signingKey.key)
     return sig
   }
 
 
-  async verify(signature: Uint8Array, publicKey: Ed25519PublicKey, data) {
+  async verify(signature: Uint8Array, publicKey: Ed25519PublicKey, data: Uint8Array) {
     return this.keystore.verify(signature, publicKey, data)
   }
 
@@ -67,11 +67,10 @@ export class Identities {
       await options.migrate({ targetStore: keystore._store, targetId: id })
     }
 
+    // Sign id (and generate signer key of this id)
     const { publicKey, idSignature } = await this.signId(id)
     const publicKeyBytes = new Uint8Array(publicKey.getBuffer());
     const pubKeyIdSignature = await identityProvider.sign(joinUint8Arrays([publicKeyBytes, idSignature]), options)
-
-
     const identity = new Identity({
       id, publicKey: publicKeyBytes, signatures: new Signatures({
         id: idSignature, publicKey: pubKeyIdSignature
@@ -85,8 +84,8 @@ export class Identities {
     const idString = Buffer.from(id).toString('base64');
     const existingKey = await keystore.getKey(idString);
     const key = existingKey || await keystore.createKey(idString)
-    const publicKey = await Keystore.getPublicSign(key)
-    const idSignature = await keystore.sign(key, id)
+    const publicKey = await Keystore.getPublicSign(key.key)
+    const idSignature = await keystore.sign(id, key.key)
     return { publicKey, idSignature }
   }
 

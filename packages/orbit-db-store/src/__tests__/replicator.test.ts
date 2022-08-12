@@ -12,7 +12,7 @@ import {
 } from 'orbit-db-test-utils'
 import { Replicator } from '../replicator'
 import { DefaultOptions, Store } from '../store'
-const storage = require('orbit-db-storage-adapter')(require('memdown'))
+import { createStore } from './storage'
 
 // Tests timeout
 const timeout = 30000
@@ -22,7 +22,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     jest.setTimeout(timeout);
 
-    let log, ipfsd, ipfs, replicator, store, keystore, signingKeystore, cacheStore
+    let log: Log<string>, ipfsd, ipfs, replicator: Replicator<string>, store: Store<any, any, any, any>, keystore: Keystore, signingKeystore: Keystore, cacheStore
 
     const { identityKeysPath } = config
 
@@ -31,11 +31,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       ipfsd = await startIpfs(IPFS, config.daemon1)
       ipfs = ipfsd.api
-      const id = await ipfsd.api.id()
+      const id = (await ipfsd.api.id()).id
 
       const testIdentity = await Identities.createIdentity({ id, keystore })
       log = new Log(ipfs, testIdentity)
-      cacheStore = await storage.createStore('cache')
+      cacheStore = await createStore('cache')
       const cache = new Cache(cacheStore)
       const options = Object.assign({}, DefaultOptions, { cache })
       store = new Store(ipfs, testIdentity, log.id, options)
@@ -53,7 +53,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     describe('concurrency = 123', function () {
-      let log2
+      let log2: Log<string>
 
       jest.setTimeout(timeout)
 
@@ -65,7 +65,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         console.log(`writing ${logLength} entries to the log`)
         for (let i = 0; i < logLength; i++) {
-          await log2.append(`entry${i}`, 123)
+          await log2.append(`entry${i}`, { pointerCount: 123 })
         }
         expect(log2.values.length).toEqual(logLength)
       })
@@ -86,7 +86,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
             await log.join(replicatedLog)
           }
           assert.strictEqual(log.values.length, logLength)
-          assert.deepStrictEqual(log.values, log2.values)
+          assert.strictEqual(log.values.length, log2.values.length)
+          for (let i = 0; i < log.values.length; i++) {
+            assert(log.values[i].equals(log2.values[i]))
+          }
           done();
         }
 

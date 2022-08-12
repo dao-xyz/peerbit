@@ -1,8 +1,7 @@
 import path from 'path'
-import { Address, Constructor, IStoreOptions, Store } from '@dao-xyz/orbit-db-store'
+import { Address, Constructor, IStoreOptions, Store, StoreCryptOptions } from '@dao-xyz/orbit-db-store'
 import io from '@dao-xyz/orbit-db-io'
 import { PubSub } from '@dao-xyz/orbit-db-pubsub'
-import Storage from 'orbit-db-storage-adapter'
 import Logger from 'logplease'
 const logger = Logger.create('orbit-db')
 import { Identity, Identities } from '@dao-xyz/orbit-db-identity-provider'
@@ -13,12 +12,13 @@ import { Keystore } from '@dao-xyz/orbit-db-keystore'
 import { isDefined } from './is-defined'
 import { OrbitDBAddress } from './orbit-db-address'
 import { createDBManifest } from './db-manifest'
+import { Level } from 'level';
 import { exchangeHeads, ExchangeHeadsMessage, RequestHeadsMessage } from './exchange-heads'
-import { Entry } from '@dao-xyz/ipfs-log-entry'
+import { CryptOptions, Entry, IOOptions } from '@dao-xyz/ipfs-log-entry'
 import { serialize, deserialize } from '@dao-xyz/borsh'
 import { Message } from './message'
 import { getCreateChannel } from './channel'
-import { exchangeKeys, ExchangeKeysMessage, KeyAccessCondition, RequestSymmetricKeyMessage } from './exchange-keys'
+import { requestKeys, KeyResponseMessage, KeyAccessCondition, RequestKeysInGroupMessage, recieveKeys, OrbitDBSignedMessage } from './exchange-keys'
 let AccessControllersModule = AccessControllers;
 Logger.setLogLevel('ERROR')
 
@@ -65,7 +65,7 @@ export class OrbitDB {
     this.caches = {}
     this.caches[this.directory] = { cache: options.cache, handlers: new Set() }
     this.keystore = options.keystore
-    this.canAccessKeys = options.canAccessKeys;
+    this.canAccessKeys = options.canAccessKeys || (() => Promise.resolve(false));
     this.stores = {}
 
     // AccessControllers module can be passed in to enable
@@ -78,7 +78,6 @@ export class OrbitDB {
   static get Keystore() { return Keystore }
   static get Identities() { return Identities }
   static get AccessControllers() { return AccessControllersModule }
-  static get Storage() { return Storage }
   static get OrbitDBAddress() { return OrbitDBAddress }
 
   static get Store() { return Store }
@@ -114,10 +113,13 @@ export class OrbitDB {
     if (!options.directory) { options.directory = './orbitdb' }
 
     if (!options.storage) {
-      const storageOptions = {}
 
       // Create default `level` store
-      options.storage = Storage(null, storageOptions)
+      options.storage = {
+        createStore: (path): Level => {
+          return new Level(path)
+        }
+      };
     }
 
     if (options.identity && options.identity.provider.keystore) {
@@ -216,8 +218,8 @@ export class OrbitDB {
       cache: options.cache,
       onClose: this._onClose.bind(this),
       onDrop: this._onDrop.bind(this),
-      onLoad: this._onLoad.bind(this)
-    })
+      onLoad: this._onLoad.bind(this),
+    } as IStoreOptions<any, any, any>)
     const identity = options.identity || this.identity
 
     const store = new Store(this._ipfs, identity, address, opts)
@@ -268,7 +270,13 @@ export class OrbitDB {
   async _onMessage(_topic: string, data: Uint8Array, peer: string) {
     try {
       const msg = deserialize(Buffer.from(data), Message)
+
       if (msg instanceof ExchangeHeadsMessage) {
+        /**
+         * I have recieved heads from someone else. 
+         * I can use them to load associated lkogs and join/sync them with the stores I run
+         */
+
         const { replicationTopic, address, heads } = msg
         const stores = this.stores[replicationTopic]
         if (heads && stores) {
@@ -288,22 +296,38 @@ export class OrbitDB {
         logger.debug(`Received ${heads.length} heads for '${address}':\n`, JSON.stringify(heads.map(e => e.hash), null, 2))
       }
       else if (msg instanceof RequestHeadsMessage) {
+        /**
+         * I have recieved a message urging me to share my heads
+         * so that another peer can clone my log and join with theirs
+         */
         const { replicationTopic, address } = msg
         const channel = await this.getChannel(peer)
         await exchangeHeads(channel, replicationTopic, (address: string) => this.stores[address]);
         logger.debug(`Received exchange heades request for topic: ${replicationTopic}, address: ${address}`)
       }
-      else if (msg instanceof ExchangeKeysMessage) {
-
+      else if (msg instanceof KeyResponseMessage) {
+        // TODO fix args
+        await recieveKeys(msg, () => Promise.resolve(true), (group, keys) => {
+          return Promise.all(keys.map(key => this.keystore.saveKey(key, key.getBuffer(), 'secret', group)))
+        }, this.keystore.open, this.keystore.decrypt)
       }
-      else if (msg instanceof RequestSymmetricKeyMessage) {
+      else if (msg instanceof RequestKeysInGroupMessage) {
         const channel = await this.getChannel(peer)
-        const secretKeyResolver = (key) => this.keystore.getKey(key, 'secret');
-        await exchangeKeys(channel, msg, this.canAccessKeys, secretKeyResolver, (data, recieverPublicKey) => {
-          return this.keystore.encrypt(data, SENDERPUBLICKEY, recieverPublicKey)
+        const secretKeyResolver = (group: string) => this.keystore.getKeys(group, 'box').then(keys => keys.map(k => k.key));
+        const senderSignerSecretKey = (await this.keystore.getKey(this.identity.id, 'sign')).key
+        const senderBoxSecretKey = ((await this.keystore.getKey(this.identity.id, 'box')) || (await this.keystore.createKey(this.identity.id, 'box'))).key
+        await requestKeys(channel, msg, this.canAccessKeys, secretKeyResolver, async (bytes) => {
+          return {
+            bytes: await this.keystore.sign(bytes, senderSignerSecretKey),
+            publicKey: await Keystore.getPublicSign(senderSignerSecretKey)
+          }
+        }, this.keystore.open, async (bytes, recieverPublicKey) => {
+          return {
+            bytes: await this.keystore.encrypt(bytes, senderBoxSecretKey, recieverPublicKey),
+            publicKey: await Keystore.getPublicBox(senderBoxSecretKey)
+          }
         })
-        logger.debug(`Exchanged key`)
-
+        logger.debug(`Exchanged keys`)
       }
       else {
         throw new Error("Unexpected message")
@@ -321,11 +345,27 @@ export class OrbitDB {
     const channel = await this.getChannel(peer)
 
     const getStore = address => this.stores[address]
+    // Exchange heads
     await exchangeHeads(
       channel,
       replicationTopic,
       getStore
     )
+
+    // Request key for decrypting messages
+    const signKey = await this.keystore.getKey(this.identity.id, 'sign'); // should exist
+    let key = await this.keystore.getKey(this.identity.id, 'box');
+    if (!key) {
+      key = await this.keystore.createKey(this.identity.id, 'box');
+    }
+
+    const keyGroup = replicationTopic;
+    await channel.send(serialize(new RequestKeysInGroupMessage({
+      encryptionPublicKey: new Uint8Array((await Keystore.getPublicBox((await this.keystore.getKey(this.identity.id, 'box')).key)).getBuffer()),
+      signedKey: await new OrbitDBSignedMessage({
+        key: new Uint8Array((await Keystore.getPublicSign(signKey.key)).getBuffer()),
+      }).sign(new Uint8Array(Buffer.from(keyGroup)), (bytes) => this.keystore.sign(bytes, signKey.key))
+    })))
 
     if (getStore(replicationTopic)) { Object.values(getStore(replicationTopic)).forEach(db => db.events.emit('peer', peer)) } // TODO remove this (because performance)?
   }
@@ -426,24 +466,29 @@ export class OrbitDB {
     }
   */
   async create(name, type, options: {
-    identity?: Identity,
-    cache?: Cache,
-    directory?: string,
-    onlyHash?: boolean,
-    overwrite?: boolean,
-    accessController?: any,
     timeout?: number,
-    create?: boolean,
-    type?: string,
-    localOnly?: boolean,
-    replicationConcurrency?: number,
-    replicate?: boolean,
-    replicationTopic?: string | (() => string),
-    meta?: any
+    identity?: Identity,
+    meta?: any,
+    cache?: Cache,
 
-  } = {}) {
+
+    /*  directory?: string,
+     onlyHash?: boolean,
+     overwrite?: boolean,
+     accessController?: any,
+     create?: boolean,
+     type?: string,
+     localOnly?: boolean,
+     replicationConcurrency?: number,
+     replicate?: boolean,
+     replicationTopic?: string | (() => string),
+ 
+     io?: IOOptions<any>;
+     crypt?: (keystore: Keystore) => StoreCryptOptions; */
+
+  } & IStoreOptions<any, any, any> = {}) {
+
     logger.debug('create()')
-
     logger.debug(`Creating database '${name}' as ${type}`)
 
     // Create the database address
@@ -496,21 +541,23 @@ export class OrbitDB {
       }
    */
   async open(address, options: {
+    timeout?: number,
     identity?: Identity,
-    cache?: Cache,
+    meta?: any
+
+    /* cache?: Cache,
     directory?: string,
     accessController?: any,
     onlyHash?: boolean,
     overwrite?: boolean,
-    timeout?: number,
     create?: boolean,
     type?: string,
     localOnly?: boolean,
     replicationConcurrency?: number,
     replicate?: boolean,
     replicationTopic?: string | (() => string),
-    meta?: any
-  } = {}) {
+    crypt?: (keystore: Keystore) => StoreCryptOptions; */
+  } & IStoreOptions<any, any, any> = {}) {
     logger.debug('open()')
 
     options = Object.assign({ localOnly: false, create: false }, options)

@@ -3,7 +3,7 @@ import { Entry } from "@dao-xyz/ipfs-log-entry";
 import { JSON_ENCODER } from "@dao-xyz/orbit-db-store";
 import { Store } from "@dao-xyz/orbit-db-store"
 import { OrbitDB } from "../../../orbit-db";
-
+import { X25519PublicKey } from 'sodium-plus';
 
 // TODO: generalize the Iterator functions and spin to its own module
 export const EVENT_STORE_TYPE = 'event';
@@ -38,7 +38,11 @@ export class EventStore<T> extends Store<T, T, EventIndex<Operation<T>>, any> {
          }) */
     }
 
-    add(data, options = {}) {
+    add(data, options?: {
+        onProgressCallback?: (any: any) => void;
+        pin?: boolean;
+        reciever?: X25519PublicKey;
+    }) {
         return this._addOperation({
             op: 'ADD',
             key: null,

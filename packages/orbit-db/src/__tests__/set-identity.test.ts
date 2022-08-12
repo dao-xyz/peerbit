@@ -5,6 +5,7 @@ const fs = require('fs')
 const assert = require('assert')
 const rmrf = require('rimraf')
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { EVENT_STORE_TYPE } from "./utils/stores"
 const leveldown = require('leveldown')
 const storage = require('orbit-db-storage-adapter')(leveldown)
 
@@ -57,7 +58,7 @@ Object.keys(testAPIs).forEach(API => {
           identity1.id
         ]
       }
-      options = Object.assign({}, options, { create: true, type: 'eventlog', overwrite: true })
+      options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, overwrite: true })
     })
 
     it('sets identity', async () => {

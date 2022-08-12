@@ -55,8 +55,8 @@
     "memdown": "^6.0.0",
     "@dao-xyz/orbit-db-cache": "^0.4.0",
     "@dao-xyz/orbit-db-keystore": "^0.0.1",
-    "orbit-db-storage-adapter": "^0.6.0",
-    "orbit-db-test-utils": "^1.3.0"
+    "orbit-db-test-utils": "^1.3.0",
+    "level": "^8.0.0"
   },
   "localMaintainers": [
     "dao.xyz"

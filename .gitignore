@@ -8,3 +8,4 @@ lib
 .vscode
 keystore
 keystore-test
+**/__tests__/**/tmp
