@@ -80,7 +80,7 @@ class Entry {
     const signature = await identity.provider.sign(Entry.toBuffer(entry),identity)
 
     entry.data.key = identity.publicKey
-    entry.data.identity = identity.toSerializable()
+    entry.metadata.idDecryptedentity = identity.toSerializable()
     entry.sig = signature
     entry.hash = await Entry.toMultihash(ipfs, entry,  pin)
 
@@ -138,8 +138,8 @@ class Entry {
   static toEntry (entry, { presigned = false, includeHash = false } = {}) {
     const e = {
       hash: includeHash ? entry.hash : null,
-      id: entry.data.id,
-      payload: entry.data.payload,
+      id: entry.metadata.idDecrypted,
+      payload: entry.payload.value,
       next: entry.next
     }
 
@@ -148,7 +148,7 @@ class Entry {
       e.refs = entry.refs // added in v2
     }
     e.v = entry.data.v
-    e.clock = new Clock(entry.data.clock.id, entry.data.clock.time)
+    e.clock = new Clock(entry.metadata.clockDecrypted.id, entry.metadata.clockDecrypted.time)
 
     if (presigned) {
       return e // don't include key/sig information
@@ -156,7 +156,7 @@ class Entry {
 
     e.key = entry.data.key
     if (v > 0) {
-      e.identity = entry.data.identity // added in v1
+      e.identity = entry.metadata.idDecryptedentity // added in v1
     }
     e.sig = entry.sig
     return e

@@ -2,6 +2,7 @@
     "packages": [
         "packages/shard",
         "packages/io-utils",
+        "packages/encryption-utils",
         "packages/ipfs-log",
         "packages/ipfs-log-entry",
         "packages/orbit-db-access-controllers",

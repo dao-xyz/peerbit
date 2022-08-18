@@ -53,7 +53,7 @@ export const SortByEntryHash: ISortFunction = (a, b) => {
  */
 export const SortByClocks: ISortFunction = <T>(a: Entry<T>, b: Entry<T>, resolveConflict) => {
   // Compare the clocks
-  const diff = Clock.compare(a.data.clock, b.data.clock)
+  const diff = Clock.compare(a.metadata.clockDecrypted, b.metadata.clockDecrypted)
   // If the clocks are concurrent, use the provided
   // conflict resolution function to determine which comes first
   return diff === 0 ? resolveConflict(a, b) : diff
@@ -69,7 +69,7 @@ export const SortByClocks: ISortFunction = <T>(a: Entry<T>, b: Entry<T>, resolve
 export const SortByClockId: ISortFunction = (a, b, resolveConflict) => {
   // Sort by ID if clocks are concurrent,
   // take the entry with a "greater" clock id
-  const clockCompare = arraysCompare(a.data.clock.id, b.data.clock.id);
+  const clockCompare = arraysCompare(a.metadata.clockDecrypted.id, b.metadata.clockDecrypted.id);
   return clockCompare === 0 ?
     resolveConflict(a, b)
     : clockCompare

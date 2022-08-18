@@ -361,9 +361,10 @@ describe('cluster', () => {
                 expect(subscriptions.length).toEqual(0); // non server should not have any subscriptions idle
                 await delay(3000)
                 await l0Write.interface.load();
-                await l0Write.interface.write((x) => l0Write.interface.db.put(x), new Document({
-                    id: 'hello'
-                }))
+                await l0Write.interface.db.put(new Document({ id: 'hello' }))
+                /*  await l0Write.interface.write((x) => l0Write.interface.db.put(x), new Document({
+                     id: 'hello'
+                 })) */
 
                 //  await l0.interface.load();
                 await waitFor(() => l0.interface.db.size > 0);

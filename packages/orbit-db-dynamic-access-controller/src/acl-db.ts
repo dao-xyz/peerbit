@@ -1,12 +1,12 @@
 import { variant } from '@dao-xyz/borsh';
-import { Entry } from '@dao-xyz/ipfs-log-entry';
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { BinaryDocumentStore, BinaryDocumentStoreOptions } from '@dao-xyz/orbit-db-bdocstore';
+import { IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
 import { SingleDBInterface } from '@dao-xyz/orbit-db-store-interface';
 import { P2PTrust, TRUST_WEB_ACCESS_CONTROLLER } from '@dao-xyz/orbit-db-trust-web';
 import { Access, AccessData, AccessType } from './access';
-
+import { Payload } from '@dao-xyz/ipfs-log-entry'
 export type ACLInterfaceOptions = IQueryStoreOptions<Access, any, any> & {
     trustResolver: () => P2PTrust, appendAll: boolean, subscribeToQueries: boolean,
     cache: boolean,
@@ -58,15 +58,15 @@ export class ACLInterface extends SingleDBInterface<Access, BinaryDocumentStore<
 
     // custom can append
 
-    async allowed(entry: Entry<any>): Promise<boolean> {
+    async allowed(entry: Payload<any>, identity: IdentitySerializable): Promise<boolean> {
         // TODO, improve, caching etc
 
         // Else check whether its trusted by this access controller
-        for (const value of Object.values(this.db._index._index)) {
+        for (const value of Object.values(this.db.index._index)) {
             const access = value.value;
             if (access.accessTypes.find((x) => x === AccessType.Admin) !== undefined) {
                 // check condition
-                if (access.accessCondition.allowed(entry)) {
+                if (access.accessCondition.allowed(entry, identity)) {
                     return true;
                 }
                 continue;

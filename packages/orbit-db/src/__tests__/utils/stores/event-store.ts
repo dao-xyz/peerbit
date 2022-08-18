@@ -30,7 +30,7 @@ export class EventIndex<T> {
 export class EventStore<T> extends Store<T, T, EventIndex<Operation<T>>, any> {
     constructor(ipfs, id, dbname, options: any = {}) {
         if (options.Index === undefined) Object.assign(options, { Index: EventIndex })
-        if (options.io === undefined) Object.assign(options, { io: JSON_ENCODER })
+        if (options.encoding === undefined) Object.assign(options, { encoding: JSON_ENCODER })
         super(ipfs, id, dbname, options)
         this._type = EVENT_STORE_TYPE;
         /*  this.events.on("log.op.ADD", (address, hash, payload) => {

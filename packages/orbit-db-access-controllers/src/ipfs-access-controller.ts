@@ -1,5 +1,5 @@
 import { AccessController } from './access-controller-interface'
-import { Entry, EntryDataBox, EntryDataBoxEncrypted } from '@dao-xyz/ipfs-log-entry';
+import { Entry, Payload } from '@dao-xyz/ipfs-log-entry';
 import io from '@dao-xyz/orbit-db-io'
 import { Identities, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
 
@@ -21,11 +21,9 @@ export class IPFSAccessController<T> extends AccessController<T> {
     return this._write
   }
 
-  async canAppend<T>(entryData: EntryDataBox<T>, identity: IdentitySerializable, identityProvider: Identities) {
+  async canAppend<T>(payload: Payload<T>, identity: IdentitySerializable, identityProvider: Identities) {
     // Allow if access list contain the writer's publicKey or is '*'
-    if (entryData instanceof EntryDataBoxEncrypted) {
-      await entryData.decrypt();
-    }
+    await payload.decrypt();
 
     const key = identity.id
     if (this.write.includes(Buffer.from(key).toString('base64')) || this.write.includes('*')) {

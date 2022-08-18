@@ -2,12 +2,13 @@ import pMap from 'p-map'
 import pDoWhilst from 'p-do-whilst'
 import { Entry } from '@dao-xyz/ipfs-log-entry';
 import { IPFS } from 'ipfs-core-types/src/'
+import { PublicKeyEncryption } from '@dao-xyz/encryption-utils';
 
 const hasItems = arr => arr && arr.length > 0
 
 
-export interface EntryFetchOptions<T> { length?: number, timeout?: number, exclude?: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency?: number }
-interface EntryFetchStrictOptions<T> { length: number, timeout?: number, exclude: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency: number }
+export interface EntryFetchOptions<T> { length?: number, timeout?: number, exclude?: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency?: number, encryption?: PublicKeyEncryption }
+interface EntryFetchStrictOptions<T> { length: number, timeout?: number, exclude: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency: number, encryption?: PublicKeyEncryption }
 
 export interface EntryFetchAllOptions<T> extends EntryFetchOptions<T> { shouldExclude?: (string) => boolean, onStartProgressCallback?: any, delay?: number }
 interface EntryFetchAllStrictOptions<T> extends EntryFetchStrictOptions<T> { shouldExclude?: (string) => boolean, onStartProgressCallback?: any, delay: number }
@@ -136,14 +137,15 @@ export class EntryIO {
           }, options.timeout)
           : null
 
-        const addToResults = (entry: Entry<T>) => {
+        const addToResults = async (entry: Entry<T>) => {
           if (Entry.isEntry(entry) && !cache[entry.hash] && !shouldExclude(entry.hash)) {
-            const ts = entry.data.clock.time
+            entry.init({ encryption: options.encryption, encoding: undefined });
+            const ts = (await entry.metadata.clock).time
 
             // Update min/max clocks
             maxClock = Math.max(maxClock, ts)
             minClock = result.length > 0
-              ? Math.min(result[result.length - 1].data.clock.time, minClock)
+              ? Math.min((await result[result.length - 1].metadata.clock).time, minClock)
               : maxClock
 
             const isLater = (result.length >= options.length && ts >= minClock)
@@ -193,7 +195,7 @@ export class EntryIO {
             await sleep(options.delay)
           }
           // Add it to the results
-          addToResults(entry)
+          await addToResults(entry)
           resolve(undefined)
         } catch (e) {
           reject(e)

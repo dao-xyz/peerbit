@@ -1,8 +1,9 @@
-import { Keystore } from '@dao-xyz/orbit-db-keystore';
-import { StoreCryptOptions } from '@dao-xyz/orbit-db-store';
+import { Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore';
+import { StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store';
 import { X25519PublicKey } from 'sodium-plus';
+import { OrbitDB } from './orbit-db';
 
-export const replicationTopicAsKeyGroupCryptOptions = (keystore: Keystore): StoreCryptOptions => {
+const replicationTopicAsKeyGroupPublicKeyEncryption = (keystore: Keystore, requestKey: (key: X25519PublicKey, replicationTopic: string) => Promise<KeyWithMeta | undefined>): StorePublicKeyEncryption => {
     return {
         encrypt: async (bytes: Uint8Array, reciever: X25519PublicKey, replicationTopic: string) => {
             const keyGroup = replicationTopic; // Assumption
@@ -14,10 +15,21 @@ export const replicationTopicAsKeyGroupCryptOptions = (keystore: Keystore): Stor
                 senderPublicKey: await Keystore.getPublicBox(key.key)
             }
         },
-        decrypt: async (data: Uint8Array, senderPublicKey: X25519PublicKey, recieverPublicKey: X25519PublicKey, replicationTopic) => {
-            const keyGroup = replicationTopic;
-            const key = await keystore.getKey(recieverPublicKey.getBuffer(), 'box', keyGroup) || await keystore.getKey(recieverPublicKey.getBuffer(), 'box')
+        decrypt: async (data: Uint8Array, senderPublicKey: X25519PublicKey, recieverPublicKey: X25519PublicKey, replicationTopic: string) => {
+            let key = await keystore.getKeyById(recieverPublicKey);
+            if (!key) {
+                key = await requestKey(recieverPublicKey, replicationTopic);
+                if (!key) {
+                    return undefined;
+                }
+                keystore.saveKey(key.key, (await Keystore.getPublicBox(key.key)).getBuffer(), 'box', key.group, key.timestamp)
+
+            }
             return keystore.decrypt(data, key.key, senderPublicKey)
         }
     }
+}
+
+export const replicationTopicEncryption = (orbitdb: OrbitDB): StorePublicKeyEncryption => {
+    return replicationTopicAsKeyGroupPublicKeyEncryption(orbitdb.keystore, (key, replicationTopic) => orbitdb.requestAndWaitForKeys(key, replicationTopic))
 }

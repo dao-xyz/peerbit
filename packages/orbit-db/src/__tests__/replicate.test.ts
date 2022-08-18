@@ -120,7 +120,7 @@ Object.keys(testAPIs).forEach(API => {
             const entries: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
             try {
               assert.equal(entries.length, 1)
-              assert.equal(entries[0].data.payload.value, 'hello')
+              assert.equal(entries[0].payload.value.value, 'hello')
               assert.equal(replicatedEventCount, 1)
             } catch (error) {
               reject(error)
@@ -167,8 +167,8 @@ Object.keys(testAPIs).forEach(API => {
             const entries = db2.iterator({ limit: -1 }).collect()
             try {
               assert.equal(entries.length, entryCount)
-              assert.equal(entries[0].data.payload.value, 'hello0')
-              assert.equal(entries[entries.length - 1].data.payload.value, 'hello99')
+              assert.equal(entries[0].payload.value.value, 'hello0')
+              assert.equal(entries[entries.length - 1].payload.value.value, 'hello99')
               resolve(true)
             } catch (error) {
               reject(error)
@@ -195,7 +195,7 @@ Object.keys(testAPIs).forEach(API => {
           if (!replicateSet.has(entry.hash)) {
             replicateSet.add(entry.hash)
           } else {
-            reject(new Error('Shouldn\'t have started replication twice for entry ' + entry.hash + '\n' + entry.data.payload.value))
+            reject(new Error('Shouldn\'t have started replication twice for entry ' + entry.hash + '\n' + entry.payload.value.value))
           }
         })
 
@@ -392,8 +392,6 @@ Object.keys(testAPIs).forEach(API => {
 
         try {
           await mapSeries(adds, add)
-          console.log()
-
           timer = setInterval(() => {
             if (finished) {
               clearInterval(timer)

@@ -35,7 +35,7 @@ describe('keystore', () => {
       assert.strictEqual(typeof keystore.openStore, 'function')
       assert.strictEqual(typeof keystore.hasKey, 'function')
       assert.strictEqual(typeof keystore.createKey, 'function')
-      assert.strictEqual(typeof keystore.getKey, 'function')
+      assert.strictEqual(typeof keystore.getKeyByPath, 'function')
       assert.strictEqual(typeof keystore.sign, 'function')
       assert.strictEqual(typeof Keystore.getPublicSign, 'function')
       assert.strictEqual(typeof Keystore.getPublicBox, 'function')
@@ -99,20 +99,6 @@ describe('keystore', () => {
       const hasKey = await keystore.hasKey(id, 'sign')
       assert.strictEqual(hasKey, true)
     })
-
-    it('creates a new key with id from sign key', async () => {
-      const key = await keystore.createKey(undefined, 'sign')
-      const idFromKey = (await Keystore.getPublicSign(key.key)).toString('base64')
-      expect(key.id.endsWith(idFromKey))
-    })
-
-
-    it('creates a new key with id from box key', async () => {
-      const key = await keystore.createKey(undefined, 'box')
-      const idFromKey = (await Keystore.getPublicBox(key.key)).toString('base64')
-      expect(key.id.endsWith(idFromKey))
-    })
-
 
     it('throws an error upon not receiving an ID', async () => {
       try {
@@ -186,24 +172,29 @@ describe('keystore', () => {
   })
 
   describe('getKey', () => {
-    let keystore: Keystore
-
+    let keystore: Keystore, createdKey: KeyWithMeta
     beforeAll(async () => {
       if (store.status !== 'open') {
         await store.open()
       }
       keystore = new Keystore(store)
-      await keystore.createKey('ZZZ', 'sign')
+      createdKey = await keystore.createKey('ZZZ', 'sign')
     })
 
     it('gets an existing key', async () => {
-      const key = await keystore.getKey('ZZZ', 'sign')
+      const key = await keystore.getKeyByPath('ZZZ', 'sign')
       assert.strictEqual(key.key.getLength(), 96)
+    })
+
+    it('gets an existing key by publicKey', async () => {
+      const publicKey = await Keystore.getPublicSign(createdKey.key);
+      const key = await keystore.getKeyById(publicKey.toString('base64'))
+      assert.strictEqual(key.key.getBuffer(), createdKey.key.getBuffer())
     })
 
     it('throws an error upon accessing a non-existant key', async () => {
       try {
-        await keystore.getKey('ZZZZ', 'sign')
+        await keystore.getKeyByPath('ZZZZ', 'sign')
       } catch (e) {
         assert.strictEqual(true, true)
       }
@@ -211,7 +202,7 @@ describe('keystore', () => {
 
     it('throws an error upon not receiving an ID', async () => {
       try {
-        await keystore.getKey(undefined, undefined)
+        await keystore.getKeyByPath(undefined, undefined)
       } catch (e) {
         assert.strictEqual(true, true)
       }
@@ -220,7 +211,7 @@ describe('keystore', () => {
     it('throws an error accessing a closed store', async () => {
       try {
         await store.close()
-        await keystore.getKey('ZZZ', 'sign')
+        await keystore.getKeyByPath('ZZZ', 'sign')
       } catch (e) {
         assert.strictEqual(true, true)
       }
@@ -280,15 +271,15 @@ describe('keystore', () => {
        })*/
       /* 
       await keystore.close(); */
-      /*  await keystore.createKey('signing', 'sign')
-       await keystore.close(); */
-      key = await keystore.getKey('signing', 'sign')
+      /* await keystore.createKey('signing', 'sign')
+      await keystore.close(); */
+      key = await keystore.getKeyByPath('signing', 'sign')
 
       const x = 123;
     })
 
     it('signs data', async () => {
-      const expectedSignature = new Uint8Array([109, 63, 0, 169, 47, 192, 41, 123, 168, 36, 253, 214, 63, 56, 82, 29, 238, 208, 215, 24, 44, 111, 77, 22, 104, 208, 31, 18, 45, 24, 160, 207, 104, 1, 252, 126, 88, 69, 32, 134, 241, 76, 158, 76, 156, 243, 138, 7, 90, 146, 204, 238, 205, 21, 14, 196, 214, 68, 87, 91, 9, 65, 91, 7, 100, 97, 116, 97, 32, 100, 97, 116, 97, 32, 100, 97, 116, 97])
+      const expectedSignature = new Uint8Array([191, 195, 210, 159, 208, 207, 13, 165, 9, 29, 222, 29, 226, 249, 53, 152, 34, 152, 153, 109, 78, 58, 76, 154, 125, 68, 8, 186, 226, 136, 36, 71, 26, 86, 112, 179, 132, 20, 223, 196, 114, 128, 232, 238, 199, 107, 198, 254, 133, 127, 67, 79, 124, 151, 140, 58, 255, 238, 220, 112, 130, 178, 228, 15, 100, 97, 116, 97, 32, 100, 97, 116, 97, 32, 100, 97, 116, 97])
       const signature = await keystore.sign(Buffer.from('data data data'), key.key)
       assert.deepStrictEqual(signature, expectedSignature)
     })
@@ -320,13 +311,13 @@ describe('keystore', () => {
     beforeAll(async () => {
       signingStore = await createStore(storagePath)
       keystore = new Keystore(signingStore)
-      key = await keystore.getKey('signing', 'sign')
+      key = await keystore.getKeyByPath('signing', 'sign')
     })
 
 
 
     it('gets the public key', async () => {
-      const expectedKey = new Uint8Array([176, 181, 140, 226, 109, 23, 196, 156, 77, 62, 25, 156, 155, 216, 73, 113, 35, 102, 143, 131, 91, 184, 102, 60, 103, 18, 150, 230, 14, 118, 57, 17]);
+      const expectedKey = new Uint8Array([110, 94, 187, 241, 230, 73, 175, 167, 155, 164, 166, 92, 211, 59, 10, 237, 19, 250, 162, 38, 3, 156, 57, 215, 44, 224, 229, 2, 45, 14, 194, 179]);
       const publicKey = await Keystore.getPublicSign(key.key)
       assert.deepStrictEqual(new Uint8Array(publicKey.getBuffer()), expectedKey)
     })
@@ -354,7 +345,7 @@ describe('keystore', () => {
     beforeAll(async () => {
       signingStore = await createStore(storagePath)
       keystore = new Keystore(signingStore)
-      key = await keystore.getKey('signing', 'sign')
+      key = await keystore.getKeyByPath('signing', 'sign')
       publicKey = await Keystore.getPublicSign(key.key)
     })
 
@@ -432,8 +423,8 @@ describe('keystore', () => {
 
         await keystore.createKey('box-a', 'box');
         await keystore.createKey('box-b', 'box');
-        keyA = await keystore.getKey('box-a', 'box')
-        keyB = await keystore.getKey('box-b', 'box')
+        keyA = await keystore.getKeyByPath('box-a', 'box')
+        keyB = await keystore.getKeyByPath('box-b', 'box')
 
       })
 

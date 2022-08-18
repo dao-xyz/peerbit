@@ -4,7 +4,7 @@ const databases = [
     create: (orbitdb, name, options) => orbitdb.eventlog(name, options),
     tryInsert: (db) => db.add('hello'),
     query: (db) => db.iterator({ limit: -1 }).collect(),
-    getTestValue: (db) => db.iterator({ limit: -1 }).collect()[0].data.payload.value,
+    getTestValue: (db) => db.iterator({ limit: -1 }).collect()[0].payload.value.value,
     expectedValue: 'hello',
   },
   {
@@ -12,7 +12,7 @@ const databases = [
     create: (orbitdb, name, options) => orbitdb.feed(name, options),
     tryInsert: (db) => db.add('hello'),
     query: (db) => db.iterator({ limit: -1 }).collect(),
-    getTestValue: (db) => db.iterator({ limit: -1 }).collect()[0].data.payload.value,
+    getTestValue: (db) => db.iterator({ limit: -1 }).collect()[0].payload.value.value,
     expectedValue: 'hello',
   },
   {

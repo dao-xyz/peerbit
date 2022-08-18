@@ -3,6 +3,8 @@ import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Message } from './message';
 import { HeadsCache, Store } from '@dao-xyz/orbit-db-store';
 import Logger from 'logplease'
+import { DecryptedThing, UnsignedMessage } from '@dao-xyz/encryption-utils';
+import { Ed25519PublicKey } from 'sodium-plus';
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
@@ -62,7 +64,7 @@ const getHeadsForDatabase = async (store: Store<any, any, any, any>) => {
   return [...localHeads, ...remoteHeads]
 }
 
-export const exchangeHeads = async (channel: any, topic: string, getStore: (address: string) => { [key: string]: Store<any, any, any, any> }) => {
+export const exchangeHeads = async (channel: any, topic: string, getStore: (address: string) => { [key: string]: Store<any, any, any, any> }, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: Ed25519PublicKey }>) => {
 
   // Send the heads if we have any
   const stores = getStore(topic);
@@ -70,8 +72,13 @@ export const exchangeHeads = async (channel: any, topic: string, getStore: (addr
     const heads = await getHeadsForDatabase(store)
     logger.debug(`Send latest heads of '${topic}':\n`, JSON.stringify(heads.map(e => e.hash), null, 2))
     if (heads) {
-      const message = serialize(new ExchangeHeadsMessage({ replicationTopic: topic, address: storeAddress, heads: heads }));
-      await channel.send(message)
+      const message = new ExchangeHeadsMessage({ replicationTopic: topic, address: storeAddress, heads: heads });
+      const signedMessage = await new UnsignedMessage({ data: serialize(message) }).sign(sign)
+      const decryptedMessage = new DecryptedThing({
+        data: serialize(signedMessage)
+      })
+      const serializedMessage = serialize(decryptedMessage);
+      await channel.send(serializedMessage)
     }
   }
 }

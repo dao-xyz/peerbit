@@ -118,8 +118,8 @@ Object.keys(testAPIs).forEach(API => {
 
               const items = db2.iterator({ limit: -1 }).collect()
               assert.equal(items.length, entryCount)
-              assert.equal(items[0].data.payload.value, 'hello0')
-              assert.equal(items[items.length - 1].data.payload.value, 'hello99')
+              assert.equal(items[0].payload.value.value, 'hello0')
+              assert.equal(items[items.length - 1].payload.value.value, 'hello99')
 
               try {
 

@@ -350,8 +350,8 @@ Object.keys(testAPIs).forEach(API => {
         const res = db.iterator({ limit: -1 }).collect()
 
         assert.equal(res.length, 2)
-        assert.equal(res[0].data.payload.value, 'hello1')
-        assert.equal(res[1].data.payload.value, 'hello2')
+        assert.equal(res[0].payload.value.value, 'hello1')
+        assert.equal(res[1].payload.value.value, 'hello2')
         await db.drop()
         await db2.drop()
       })

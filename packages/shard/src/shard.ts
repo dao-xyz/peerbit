@@ -307,7 +307,7 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
             while (this.peer.node.isOnline() && !stop) { // 
                 promise = task();
                 await promise;
-                await delay(EMIT_HEALTHCHECK_INTERVAL, (stopper) => { delayStopper = stopper }); // some delay
+                await delay(EMIT_HEALTHCHECK_INTERVAL, { stopperCallback: (stopper) => { delayStopper = stopper } }); // some delay
             }
         }
         cron();
@@ -368,7 +368,10 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
             const currentPeersCount = async () => (await this.shardPeerInfo.getPeers()).length
             let ser = serialize(shard);
             await this.peer.node.pubsub.publish(this.trust.replicationTopic, ser);
-            await waitForAsync(async () => await currentPeersCount() >= MIN_REPLICATION_AMOUNT, 60000)
+            await waitForAsync(async () => await currentPeersCount() >= MIN_REPLICATION_AMOUNT, {
+                timeout: 60000,
+                delayInterval: 50
+            })
             resolve();
         })
         await this._requestingReplicationPromise;

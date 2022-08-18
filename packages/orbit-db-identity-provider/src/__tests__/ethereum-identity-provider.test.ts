@@ -41,18 +41,18 @@ describe('Ethereum Identity Provider', function () {
     })
 
     it('created a key for id in keystore', async () => {
-      const key = await keystore.getKey(Buffer.from(wallet.address).toString('base64'))
+      const key = await keystore.getKeyByPath(Buffer.from(wallet.address).toString('base64'))
       assert(!!key)
     })
 
     it('has the correct public key', async () => {
-      const signingKey = await keystore.getKey(Buffer.from(wallet.address).toString('base64'))
+      const signingKey = await keystore.getKeyByPath(Buffer.from(wallet.address).toString('base64'))
       assert.notStrictEqual(signingKey, undefined)
       assert.deepStrictEqual(identity.publicKey, new Uint8Array((await Keystore.getPublicSign(signingKey.key)).getBuffer()))
     })
 
     it('has a signature for the id', async () => {
-      const signingKey = (await keystore.getKey(Buffer.from(wallet.address).toString('base64'))).key
+      const signingKey = (await keystore.getKeyByPath(Buffer.from(wallet.address).toString('base64'))).key
       const idSignature = await keystore.sign(wallet.address, signingKey)
       const verifies = await Keystore.verify(idSignature, await Keystore.getPublicSign(signingKey), new Uint8Array(Buffer.from(wallet.address)))
       assert.strictEqual(verifies, true)
@@ -60,7 +60,7 @@ describe('Ethereum Identity Provider', function () {
     })
 
     it('has a signature for the publicKey', async () => {
-      const signingKey = await keystore.getKey(Buffer.from(wallet.address).toString('base64'))
+      const signingKey = await keystore.getKeyByPath(Buffer.from(wallet.address).toString('base64'))
       const idSignature = await keystore.sign(wallet.address, signingKey.key)
       const publicKeyAndIdSignature = await wallet.signMessage(joinUint8Arrays([identity.publicKey, idSignature]))
       assert.deepStrictEqual(identity.signatures.publicKey, new Uint8Array(Buffer.from(publicKeyAndIdSignature)))
@@ -99,7 +99,7 @@ describe('Ethereum Identity Provider', function () {
     })
 
     it('sign data', async () => {
-      const signingKey = await keystore.getKey(identity.id)
+      const signingKey = await keystore.getKeyByPath(identity.id)
       const expectedSignature = await keystore.sign(Buffer.from(data), signingKey.key)
       const signature = await identity.provider.sign(data, identity)
       assert.deepStrictEqual(signature, expectedSignature)

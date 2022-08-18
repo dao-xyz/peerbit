@@ -21,16 +21,16 @@ export class KeyValueIndex {
         const handled = {}
         for (let i = values.length - 1; i >= 0; i--) {
             const item = values[i]
-            if (handled[item.data.payload.key]) {
+            if (handled[item.payload.value.key]) {
                 continue
             }
-            handled[item.data.payload.key] = true
-            if (item.data.payload.op === 'PUT') {
-                this._index[item.data.payload.key] = item.data.payload.value
+            handled[item.payload.value.key] = true
+            if (item.payload.value.op === 'PUT') {
+                this._index[item.payload.value.key] = item.payload.value.value
                 continue
             }
-            if (item.data.payload.op === 'DEL') {
-                delete this._index[item.data.payload.key]
+            if (item.payload.value.op === 'DEL') {
+                delete this._index[item.payload.value.key]
                 continue
             }
         }
@@ -43,7 +43,7 @@ export class KeyValueStore extends Store<any, any, any, any> {
     _index: any;
     constructor(ipfs, id, dbname, options: any) {
         let opts = Object.assign({}, { Index: KeyValueIndex })
-        if (options.io === undefined) Object.assign(options, { io: JSON_ENCODER })
+        if (options.encoding === undefined) Object.assign(options, { encoding: JSON_ENCODER })
         Object.assign(opts, options)
         super(ipfs, id, dbname, opts)
         this._type = KEY_VALUE_STORE_TYPE

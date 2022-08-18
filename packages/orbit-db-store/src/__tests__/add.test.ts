@@ -4,7 +4,7 @@ import { Store, DefaultOptions, HeadsCache } from '../store'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
 import { Keystore } from "@dao-xyz/orbit-db-keystore"
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
-import { JSON_IO_OPTIONS } from '@dao-xyz/ipfs-log-entry'
+import { JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log-entry'
 import { createStore } from './storage'
 
 
@@ -60,16 +60,16 @@ Object.keys(testAPIs).forEach((IPFS) => {
       store.events.on('write', (topic, address, entry, heads) => {
         assert.strictEqual(heads.length, 1)
         assert.strictEqual(address, 'test-address')
-        assert.deepStrictEqual(entry.data.payload, data)
+        assert.deepStrictEqual(entry.payload.value, data)
         assert.strictEqual(store.replicationStatus.progress, 1)
         assert.strictEqual(store.replicationStatus.max, 1)
         assert.strictEqual(store.address.root, store._index.id)
         assert.deepStrictEqual(store._index._index, heads)
         store._cache.getBinary(store.localHeadsPath, HeadsCache).then((localHeads) => {
           localHeads.heads[0].init({
-            io: JSON_IO_OPTIONS
+            encoding: JSON_ENCODING_OPTIONS
           });
-          assert.deepStrictEqual(localHeads.heads[0].data.payload, data)
+          assert.deepStrictEqual(localHeads.heads[0].payload.value, data)
           assert(localHeads.heads[0].equals(heads[0]))
           assert.strictEqual(heads.length, 1)
           assert.strictEqual(localHeads.heads.length, 1)
@@ -94,9 +94,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
           assert.strictEqual(store._index._index.length, writes)
           store._cache.getBinary(store.localHeadsPath, HeadsCache).then((localHeads) => {
             localHeads.heads[0].init({
-              io: JSON_IO_OPTIONS
+              encoding: JSON_ENCODING_OPTIONS
             });
-            assert.deepStrictEqual(localHeads.heads[0].data.payload, store._index._index[2].data.payload)
+            assert.deepStrictEqual(localHeads.heads[0].payload.value, store._index._index[2].payload.value)
             store.events.removeAllListeners('write')
             return Promise.resolve()
           })

@@ -150,7 +150,7 @@ const start = async () => {
 
   await log.append({ some: &quot;data&quot; });
   await log.append(&quot;text&quot;);
-  console.log(log.values.map((e) => e.data.payload));
+  console.log(log.values.map((e) => e.payload.value));
 };
 
 start();

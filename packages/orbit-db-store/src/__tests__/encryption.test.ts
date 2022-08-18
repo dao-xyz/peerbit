@@ -1,10 +1,9 @@
 
 import assert from 'assert'
-import { Store, DefaultOptions, HeadsCache, IStoreOptions, StoreCryptOptions } from '../store'
+import { Store, DefaultOptions, HeadsCache, IStoreOptions, StorePublicKeyEncryption } from '../store'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
 import { Keystore, KeyWithMeta } from "@dao-xyz/orbit-db-keystore"
 import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
-import { EntryDataBoxEncrypted } from '@dao-xyz/ipfs-log-entry'
 import { Index } from '../store-index'
 import { createStore } from './storage'
 
@@ -19,7 +18,7 @@ const {
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`addOperation ${IPFS}`, function () {
-    let ipfsd, ipfs, testIdentity: Identity, keystore: Keystore, identityStore, store: Store<any, any, any, any>, cacheStore, senderKey: KeyWithMeta, recieverKey: KeyWithMeta, crypt: StoreCryptOptions
+    let ipfsd, ipfs, testIdentity: Identity, keystore: Keystore, identityStore, store: Store<any, any, any, any>, cacheStore, senderKey: KeyWithMeta, recieverKey: KeyWithMeta, encryption: StorePublicKeyEncryption
 
     jest.setTimeout(config.timeout);
 
@@ -41,7 +40,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const address = 'test-address'
       senderKey = await keystore.createKey('sender', 'box');
       recieverKey = await keystore.createKey('sender', 'box');
-      crypt = {
+      encryption = {
         decrypt: (data, sender, _reciever, _replicationTopic) => keystore.decrypt(data, recieverKey.key, sender),
         encrypt: async (data, reciever, _replicationTopic) => {
           return {
@@ -53,7 +52,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const options: IStoreOptions<any, any, Index<any, any>> & {
         cache: Cache;
       } = Object.assign({}, DefaultOptions, { cache })
-      options.crypt = crypt
+      options.encryption = encryption
       store = new Store(ipfs, testIdentity, address, options)
 
     })
@@ -77,19 +76,18 @@ Object.keys(testAPIs).forEach((IPFS) => {
       store.events.on('write', (topic, address, entry, heads) => {
         assert.strictEqual(heads.length, 1)
         assert.strictEqual(address, 'test-address')
-        assert.deepStrictEqual(entry.data.payload, data)
+        assert.deepStrictEqual(entry.payload.value, data)
         assert.strictEqual(store.replicationStatus.progress, 1)
         assert.strictEqual(store.replicationStatus.max, 1)
         assert.strictEqual(store.address.root, store._index.id)
         assert.deepStrictEqual(store._index._index, heads)
         store._cache.getBinary(store.localHeadsPath, HeadsCache).then(async (localHeads) => {
           localHeads.heads[0].init({
-            io: store.logOptions.io,
-            crypt: store.logOptions.crypt
+            encoding: store.logOptions.encoding,
+            encryption: store.logOptions.encryption
           });
-          assert(localHeads.heads[0].data instanceof EntryDataBoxEncrypted);
-          await localHeads.heads[0].data.decrypt();
-          assert.deepStrictEqual(localHeads.heads[0].data.payload, data)
+          await localHeads.heads[0].payload.decrypt();
+          assert.deepStrictEqual(localHeads.heads[0].payload.value, data)
           assert(localHeads.heads[0].equals(heads[0]))
           assert.strictEqual(heads.length, 1)
           assert.strictEqual(localHeads.heads.length, 1)

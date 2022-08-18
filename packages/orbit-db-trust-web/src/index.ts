@@ -6,7 +6,7 @@ import { Identities, Identity, IdentitySerializable } from "@dao-xyz/orbit-db-id
 import { OrbitDB } from "@dao-xyz/orbit-db";
 import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
 import { AccessController, AccessControllers } from "@dao-xyz/orbit-db-access-controllers";
-import { Entry } from "@dao-xyz/ipfs-log-entry";
+import { Payload } from "@dao-xyz/ipfs-log-entry";
 
 import { createHash } from "crypto";
 import { IQueryStoreOptions } from "@dao-xyz/orbit-db-query-store";
@@ -14,7 +14,6 @@ import { PublicKey, TrustData } from "@dao-xyz/identity";
 import { arraysEqual } from "@dao-xyz/io-utils";
 
 import isNode from 'is-node';
-import { IStoreOptions } from "@dao-xyz/orbit-db-store";
 let v8 = undefined;
 if (isNode) {
     v8 = require('v8');
@@ -48,12 +47,12 @@ export const getTargetPath = (start: PublicKey, target: (key: PublicKey) => bool
         }
 
         // TODO: could be multiple but we just follow one path for now
-        if (current == trust.value.trustee) {
-            return undefined; // no path
-        }
+        /*    if (current.equals(trust.value.trustee)) {
+               return undefined; // no path
+           } */
 
         // Assumed message is signed
-        let truster = trust.entry.data.identity;
+        let truster = trust.entry.metadata.decrypted._identity;
         let trustRelation = trust.value;
         trustRelation.truster = truster;
         let key = truster.toString();
@@ -210,7 +209,8 @@ export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocument
         /**
          * TODO: Currently very inefficient
          */
-        return !!getTrustPath(trustee, truster, this);
+        const trustPath = !!getTrustPath(trustee, truster, this);
+        return trustPath;
     }
 
     hashCode(): string {
@@ -251,16 +251,17 @@ export class TrustWebAccessController extends AccessController<any> {
 
     }
 
-    async canAppend(entry: Entry<any>, identityProvider: Identities): Promise<boolean> {
+    async canAppend(_payload: Payload<any>, identity: IdentitySerializable, identityProvider: Identities): Promise<boolean> {
 
-        if (!identityProvider.verifyIdentity(entry.data.identity)) {
+        if (!identityProvider.verifyIdentity(identity)) {
             return false;
         }
         if (this._appendAll) {
             return true;
         }
 
-        return this._trustResolver().isTrusted(entry.data.identity)
+        const isTrusted = this._trustResolver().isTrusted(identity)
+        return isTrusted;
     }
 
 

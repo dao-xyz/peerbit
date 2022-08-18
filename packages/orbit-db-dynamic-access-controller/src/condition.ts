@@ -1,6 +1,7 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Entry } from '@dao-xyz/ipfs-log-entry';
 import { U8IntArraySerializer, arraysEqual } from '@dao-xyz/io-utils';
+import { Payload } from "@dao-xyz/ipfs-log-entry";
+import { IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
 
 @variant(0)
 export class Network {
@@ -14,7 +15,7 @@ export class Network {
 
 export class AccessCondition<T> {
 
-    async allowed(_entry: Entry<T>): Promise<boolean> {
+    async allowed(_entry: Payload<T>, _identity: IdentitySerializable): Promise<boolean> {
         throw new Error("Not implemented")
     }
 }
@@ -24,7 +25,7 @@ export class AnyAccessCondition<T> extends AccessCondition<T> {
     constructor() {
         super();
     }
-    async allowed(_entry: Entry<T>): Promise<boolean> {
+    async allowed(_entry: Payload<T>, _identity: IdentitySerializable): Promise<boolean> {
         return true;
     }
 }
@@ -49,8 +50,8 @@ export class PublicKeyAccessCondition<T> extends AccessCondition<T> {
         }
     }
 
-    async allowed(entry: Entry<T>): Promise<boolean> {
-        return this.type === entry.data.identity.type && arraysEqual(this.key, entry.data.identity.id)
+    async allowed(_payload: Payload<T>, identity: IdentitySerializable): Promise<boolean> {
+        return this.type === identity.type && arraysEqual(this.key, identity.id)
     }
 }
 

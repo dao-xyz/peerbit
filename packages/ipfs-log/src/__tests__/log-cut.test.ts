@@ -55,7 +55,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await log.append('hello2')
       await log.append('hello3')
       assert.strictEqual(log.length, 1);
-      assertPayload(log.values[0].data.payload, 'hello3');
+      assertPayload(log.values[0].payload.value, 'hello3');
     })
 
     it('cut back to cut length', async () => {
@@ -66,7 +66,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.strictEqual(log.length, 3);
       await log.append('hello4')
       assert.strictEqual(log.length, 1); // We exceed 'maxOplogLength' and cut back to 'cutOplogToLength'
-      assertPayload(log.values[0].data.payload, 'hello4');
+      assertPayload(log.values[0].payload.value, 'hello4');
     })
   })
 })

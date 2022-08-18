@@ -6,11 +6,16 @@ import { variant, field, serialize, deserialize } from '@dao-xyz/borsh';
 import { joinUint8Arrays, U64Serializer } from '@dao-xyz/io-utils';
 import { SodiumPlus, CryptographyKey, X25519PublicKey, Ed25519PublicKey } from 'sodium-plus';
 import { waitFor } from '@dao-xyz/time';
+import { CryptographyKeySerializer } from '@dao-xyz/encryption-utils';
 import { createHash } from 'crypto';
 
 const DEFAULT_KEY_GROUP = '_';
 const getGroupKey = (group: string) => group === DEFAULT_KEY_GROUP ? DEFAULT_KEY_GROUP : createHash('sha1').update(group).digest('base64')
-const getIdKey = (id: string | Buffer | Uint8Array): string => {
+const getIdKey = (id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519PublicKey): string => {
+  if (id instanceof X25519PublicKey || id instanceof Ed25519PublicKey) {
+    return id.getBuffer().toString('base64');
+  }
+
   if (typeof id !== 'string') {
     id = Buffer.isBuffer(id) ? id.toString('base64') : Buffer.from(id).toString('base64')
   }
@@ -50,38 +55,23 @@ export const getKeyId = (group: string, type: KeyType, key: string) => group + '
 @variant(0)
 export class KeyWithMeta {
 
-  @field({ type: 'String' })
-  id: string
-
-  @field({
-    serialize: (obj: CryptographyKey, writer) => {
-      const buffer = obj.getBuffer();
-      writer.writeU32(buffer.length);
-      buffer.forEach((value) => {
-        writer.writeU8(value)
-      })
-    },
-    deserialize: (reader) => {
-      const len = reader.readU32();
-      const arr = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        arr[i] = reader.readU8();
-      }
-      return new CryptographyKey(Buffer.from(arr));
-    }
-  })
+  @field(CryptographyKeySerializer)
   key: CryptographyKey
+
+  @field({ type: 'String' })
+  group: string
 
   @field(U64Serializer)
   timestamp: number
 
+
   constructor(props?: {
-    id: string;
     key: CryptographyKey,
+    group: string,
     timestamp: number
   }) {
     if (props) {
-      this.id = props.id;
+      this.group = props.group
       this.key = props.key; // secret + public key 
       this.timestamp = props.timestamp;
     }
@@ -89,7 +79,7 @@ export class KeyWithMeta {
 
 
   equals(other: KeyWithMeta) {
-    return this.timestamp === other.timestamp && Buffer.compare(this.key.getBuffer(), other.key.getBuffer()) === 0
+    return this.timestamp === other.timestamp && this.group === other.group && Buffer.compare(this.key.getBuffer(), other.key.getBuffer()) === 0
   }
 }
 
@@ -188,7 +178,7 @@ export class Keystore {
     }
   }
 
-  async saveKey(key: CryptographyKey, id?: string | Buffer | Uint8Array, type: KeyType = 'sign', group = DEFAULT_KEY_GROUP): Promise<KeyWithMeta> {
+  async saveKey(key: CryptographyKey, id?: string | Buffer | Uint8Array, type: KeyType = 'sign', group = DEFAULT_KEY_GROUP, timestamp = +new Date): Promise<KeyWithMeta> {
     const idKey = id ? getIdKey(id) : await idFromKey(key, type);
 
     await this.waitForOpen();
@@ -202,9 +192,9 @@ export class Keystore {
     const groupHash = getGroupKey(group);
     const keyId = getKeyId(groupHash, type, idKey);
     const keyWithMeta = new KeyWithMeta({
-      id: keyId,
       key,
-      timestamp: +new Date
+      timestamp,
+      group
     });
 
     const buffer = Buffer.from(serialize(keyWithMeta));
@@ -216,7 +206,7 @@ export class Keystore {
     return keyWithMeta;
   }
 
-  async getKey(id: string | Buffer | Uint8Array, type: KeyType = 'sign', group = DEFAULT_KEY_GROUP): Promise<KeyWithMeta> {
+  async getKeyByPath(id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519PublicKey, type: KeyType = 'sign', group = DEFAULT_KEY_GROUP): Promise<KeyWithMeta> {
     if (!id) {
       throw new Error('id needed to get a key')
     }
@@ -238,7 +228,10 @@ export class Keystore {
     return this.getKeyById(storeId)
   }
 
-  async getKeyById(id: string): Promise<KeyWithMeta> {
+  async getKeyById(id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519PublicKey): Promise<KeyWithMeta> {
+
+    id = getIdKey(id);
+
     const cachedKey = this._cache.get(id)
 
     let loadedKey: KeyWithMeta

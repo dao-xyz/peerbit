@@ -3,8 +3,8 @@ const assert = require('assert')
 const rmrf = require('rimraf')
 const path = require('path')
 import { OrbitDB } from '../orbit-db'
+import { createStore } from './storage'
 const CustomCache = require('@dao-xyz/orbit-db-cache')
-const localdown = require('localstorage-down')
 
 // Include test utilities
 const {
@@ -27,7 +27,7 @@ Object.keys(testAPIs).forEach(API => {
     let ipfsd, ipfs, orbitdb1, store
 
     beforeAll(async () => {
-      store = await storage.createStore("local")
+      store = await createStore("local")
       const cache = new CustomCache(store)
 
       rmrf.sync(dbPath)

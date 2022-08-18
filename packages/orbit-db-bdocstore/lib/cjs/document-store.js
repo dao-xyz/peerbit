@@ -72,8 +72,8 @@ const defaultOptions = (options) => {
         Object.assign(options, { indexBy: '_id' });
     if (!options.Index)
         Object.assign(options, { Index: document_index_1.DocumentIndex });
-    if (!options.io) {
-        options.io = {
+    if (!options.encoding) {
+        options.encoding = {
             decoder: (bytes) => (0, borsh_1.deserialize)(Buffer.from(bytes), document_index_1.Operation),
             encoder: (data) => (0, borsh_1.serialize)(data)
         };

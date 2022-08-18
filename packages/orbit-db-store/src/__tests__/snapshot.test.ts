@@ -78,7 +78,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.strictEqual(storeFromSnapshot.index._index.length, 10)
 
       for (let i = 0; i < writes; i++) {
-        assert.strictEqual((storeFromSnapshot.index._index[i] as Entry<any>).data.payload.step, i)
+        assert.strictEqual((storeFromSnapshot.index._index[i] as Entry<any>).payload.value.step, i)
       }
     })
 

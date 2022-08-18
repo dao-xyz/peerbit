@@ -22,7 +22,7 @@
   "scripts": {
     "clean": "shx rm -rf lib/*",
     "build": "yarn clean && tsc -p tsconfig.json; tsc-esm -p tsconfig.json && tsc -p tsconfig.cjs.json",
-    "postbuild": "echo '{\"type\":\"commonjs\"}' | npx json > lib/cjs/package.json && echo '{\"type\":\"module\"} ' | npx json > lib/esm/package.json",
+    "postbuild": "echo '{\"type\":\"commonjs\"}' | node ../../node_modules/.bin/json > lib/cjs/package.json && echo '{\"type\":\"module\"} ' | node ../../node_modules/.bin/json > lib/esm/package.json",
     "test": "node ../../node_modules/.bin/jest test  -c  ../../jest.config.cjs --runInBand --forceExit",
     "test:unit": "node ../../node_modules/.bin/jest test  -c  ../../jest.config.unit.cjs --runInBand --forceExit",
     "test:integration": "node ../node_modules/.bin/jest test -c  ../jest.config.integration.cjs --runInBand --forceExit"
@@ -30,7 +30,7 @@
   "author": "dao.xyz",
   "license": "MIT",
   "dependencies": {
-    "@dao-xyz/borsh": "^2.1.5",
+    "@dao-xyz/borsh": "^2.1.6",
     "@dao-xyz/bpayload": "^0.0.11",
     "@dao-xyz/time": "^0.0.11",
     "uuid": "^8.3.2"

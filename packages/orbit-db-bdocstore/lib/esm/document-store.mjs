@@ -57,8 +57,8 @@ const defaultOptions = (options) => {
         Object.assign(options, { indexBy: '_id' });
     if (!options.Index)
         Object.assign(options, { Index: DocumentIndex });
-    if (!options.io) {
-        options.io = {
+    if (!options.encoding) {
+        options.encoding = {
             decoder: (bytes) => deserialize(Buffer.from(bytes), Operation),
             encoder: (data) => serialize(data)
         };

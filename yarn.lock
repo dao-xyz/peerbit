@@ -1956,10 +1956,10 @@
     ethereumjs-util "^6.0.0"
     ethers "^4.0.33"
 
-"@dao-xyz/borsh@^2.1.5":
-  version "2.1.5"
-  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-2.1.5.tgz#04046ff494a190f828654ddd69ff35316b98e642"
-  integrity sha512-jQiz4WmPrwPT0g9SfK4ORMrtgQuA/j5gFRusdOVcA2ugsdshKua+mdEJ84M6R3zVxl9ksqxR8QihI3dchs9cLw==
+"@dao-xyz/borsh@^2.1.6":
+  version "2.1.6"
+  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-2.1.6.tgz#4063e117c090ba5f9f96d9a5119f0c9a44d250bf"
+  integrity sha512-IBPEHOQTxyjWSrvxEHbjiyC/8F9OOHA+xarT0hCDDZSMtSApuaD8OJG9JJCn3GMksHz+yHdWjx6BGkhveC4a1g==
   dependencies:
     bn.js "^5.2.0"
     bs58 "^4.0.0"
@@ -14453,6 +14453,11 @@ json5@^1.0.1:
   dependencies:
     minimist "^1.2.0"
 
+json@^11.0.0:
+  version "11.0.0"
+  resolved "https://registry.yarnpkg.com/json/-/json-11.0.0.tgz#2e84493134e2f42c131165aa22a124df38b3a3ee"
+  integrity sha512-N/ITv3Yw9Za8cGxuQqSqrq6RHnlaHWZkAFavcfpH/R52522c26EbihMxnY7A1chxfXJ4d+cEFIsyTgfi9GihrA==
+
 jsonc-parser@^3.0.0:
   version "3.0.0"
   resolved "https://registry.yarnpkg.com/jsonc-parser/-/jsonc-parser-3.0.0.tgz#abdd785701c7e7eaca8a9ec8cf070ca51a745a22"
@@ -14833,16 +14838,6 @@ level-transcoder@^1.0.1:
     buffer "^6.0.3"
     module-error "^1.0.1"
 
-level@^5.0.0, level@~5.0.1:
-  version "5.0.1"
-  resolved "https://registry.yarnpkg.com/level/-/level-5.0.1.tgz#8528cc1ee37ac413270129a1eab938c610be3ccb"
-  integrity sha512-wcak5OQeA4rURGacqS62R/xNHjCYnJSQDBOlm4KNUGJVE9bWv2B04TclqReYejN+oD65PzD4FsqeWoI5wNC5Lg==
-  dependencies:
-    level-js "^4.0.0"
-    level-packager "^5.0.0"
-    leveldown "^5.0.0"
-    opencollective-postinstall "^2.0.0"
-
 level@^7.0.0:
   version "7.0.1"
   resolved "https://registry.yarnpkg.com/level/-/level-7.0.1.tgz#05121748d95a4ff7355860d56eb5d0aa36faef2a"
@@ -14859,6 +14854,16 @@ level@^8.0.0:
   dependencies:
     browser-level "^1.0.1"
     classic-level "^1.2.0"
+
+level@~5.0.1:
+  version "5.0.1"
+  resolved "https://registry.yarnpkg.com/level/-/level-5.0.1.tgz#8528cc1ee37ac413270129a1eab938c610be3ccb"
+  integrity sha512-wcak5OQeA4rURGacqS62R/xNHjCYnJSQDBOlm4KNUGJVE9bWv2B04TclqReYejN+oD65PzD4FsqeWoI5wNC5Lg==
+  dependencies:
+    level-js "^4.0.0"
+    level-packager "^5.0.0"
+    leveldown "^5.0.0"
+    opencollective-postinstall "^2.0.0"
 
 leveldown@^5.0.0:
   version "5.6.0"
@@ -15401,15 +15406,6 @@ localstorage-down@^0.6.7:
     humble-localstorage "^1.4.2"
     inherits "^2.0.1"
     tiny-queue "0.2.0"
-
-localstorage-level-migration@~0.1.0:
-  version "0.1.0"
-  resolved "https://registry.yarnpkg.com/localstorage-level-migration/-/localstorage-level-migration-0.1.0.tgz#9afad8ff0eceb71a164261eff936c88b76843bb5"
-  integrity sha512-T/FsTw6oDXOD4HZiA+H6IRsZm1laN4C9yYuWYMJeKrpBr0VrcFGRd/kJqf1/DxjNo7Xfp68xmSWEdh6aIt1BqQ==
-  dependencies:
-    level "^5.0.0"
-    mkdirp "^0.5.1"
-    node-localstorage "^1.3.1"
 
 localstorage-memory@^1.0.1:
   version "1.0.3"
@@ -16839,13 +16835,6 @@ node-libs-browser@^2.2.1:
     url "^0.11.0"
     util "^0.11.0"
     vm-browserify "^1.0.1"
-
-node-localstorage@^1.3.1:
-  version "1.3.1"
-  resolved "https://registry.yarnpkg.com/node-localstorage/-/node-localstorage-1.3.1.tgz#3177ef42837f398aee5dd75e319b281e40704243"
-  integrity sha512-NMWCSWWc6JbHT5PyWlNT2i8r7PgGYXVntmKawY83k/M0UJScZ5jirb61TLnqKwd815DfBQu+lR3sRw08SPzIaQ==
-  dependencies:
-    write-file-atomic "^1.1.4"
 
 node-polyfill-webpack-plugin@^1.1.4:
   version "1.1.4"
@@ -20012,7 +20001,7 @@ slice-ansi@^4.0.0:
     astral-regex "^2.0.0"
     is-fullwidth-code-point "^3.0.0"
 
-slide@^1.1.5, slide@^1.1.6:
+slide@^1.1.6:
   version "1.1.6"
   resolved "https://registry.yarnpkg.com/slide/-/slide-1.1.6.tgz#56eb027d65b4d2dce6cb2e2d32c4d4afc9e1d707"
   integrity sha512-NwrtjCg+lZoqhFU8fOwl4ay2ei8PaqCBOUV3/ektPY9trO1yQ1oXEfmHAhKArUVUr/hOHvy5f6AdP17dCM0zMw==
@@ -22782,15 +22771,6 @@ wrappy@1:
   version "1.0.2"
   resolved "https://registry.yarnpkg.com/wrappy/-/wrappy-1.0.2.tgz#b5243d8f3ec1aa35f1364605bc0d1036e30ab69f"
   integrity sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==
-
-write-file-atomic@^1.1.4:
-  version "1.3.4"
-  resolved "https://registry.yarnpkg.com/write-file-atomic/-/write-file-atomic-1.3.4.tgz#f807a4f0b1d9e913ae7a48112e6cc3af1991b45f"
-  integrity sha512-SdrHoC/yVBPpV0Xq/mUZQIpW2sWXAShb/V4pomcJXh92RuaO+f3UTWItiR3Px+pLnV2PvC2/bfn5cwr5X6Vfxw==
-  dependencies:
-    graceful-fs "^4.1.11"
-    imurmurhash "^0.1.4"
-    slide "^1.1.5"
 
 write-file-atomic@^2.4.2:
   version "2.4.3"

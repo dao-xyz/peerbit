@@ -23,15 +23,6 @@ export class LamportClock {
     this.time = time || 0
   }
 
-  tick() {
-    return new LamportClock(this.id, ++this.time)
-  }
-
-  merge(clock) {
-    this.time = Math.max(this.time, clock.time)
-    return new LamportClock(this.id, this.time)
-  }
-
   clone() {
     return new LamportClock(this.id, this.time)
   }

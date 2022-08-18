@@ -40,18 +40,18 @@ describe('Solana Identity Provider', function () {
         })
 
         it('created a key for id in keystore', async () => {
-            const key = await keystore.getKey(keypair.publicKey.toBuffer().toString('base64'))
+            const key = await keystore.getKeyByPath(keypair.publicKey.toBuffer().toString('base64'))
             assert(!!key)
         })
 
         it('has the correct public key', async () => {
-            const signingKey = await keystore.getKey(keypair.publicKey.toBuffer().toString('base64'))
+            const signingKey = await keystore.getKeyByPath(keypair.publicKey.toBuffer().toString('base64'))
             assert.notStrictEqual(signingKey, undefined)
             assert.deepStrictEqual(identity.publicKey, new Uint8Array((await Keystore.getPublicSign(signingKey.key)).getBuffer()))
         })
 
         it('has a signature for the id', async () => {
-            const signingKey = await keystore.getKey(keypair.publicKey.toBuffer().toString('base64'))
+            const signingKey = await keystore.getKeyByPath(keypair.publicKey.toBuffer().toString('base64'))
             const idSignature = await keystore.sign(keypair.publicKey.toBytes(), signingKey.key)
             const verifies = await Keystore.verify(idSignature, await Keystore.getPublicSign(signingKey.key), keypair.publicKey.toBytes())
             assert.strictEqual(verifies, true)
@@ -59,7 +59,7 @@ describe('Solana Identity Provider', function () {
         })
 
         it('has a signature for the publicKey', async () => {
-            const signingKey = await keystore.getKey(keypair.publicKey.toBuffer().toString('base64'))
+            const signingKey = await keystore.getKeyByPath(keypair.publicKey.toBuffer().toString('base64'))
             const idSignature = await keystore.sign(keypair.publicKey.toBytes(), signingKey.key)
             const publicKeyAndIdSignature = await nacl.sign(joinUint8Arrays([identity.publicKey, idSignature]), keypair.secretKey)
             assert.deepStrictEqual(identity.signatures.publicKey, new Uint8Array(Buffer.from(publicKeyAndIdSignature)))
@@ -98,7 +98,7 @@ describe('Solana Identity Provider', function () {
         })
 
         it('sign data', async () => {
-            const signingKey = await keystore.getKey(identity.id)
+            const signingKey = await keystore.getKeyByPath(identity.id)
             const expectedSignature = await keystore.sign(Buffer.from(data), signingKey.key)
             const signature = await identity.provider.sign(data, identity)
             assert.deepStrictEqual(signature, expectedSignature)

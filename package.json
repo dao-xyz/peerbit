@@ -55,8 +55,11 @@
         "eslint-config-react-app": "^7.0.0",
         "eslint-plugin-prettier": "^4.0.0",
         "gh-pages": "^3.2.3",
+        "ipfs-core-types": "^0.10.3",
         "jest": "^27.1.0",
+        "json": "^11.0.0",
         "lerna": "^4.0.0",
+        "patch-package": "^6.4.7",
         "prettier": "^2.5.1",
         "shx": "^0.3.3",
         "start-server-and-test": "^1.14.0",
@@ -64,8 +67,6 @@
         "tslib": "^2.4.0",
         "typedoc": "^0.22.10",
         "typescript": "~4.4.4",
-        "typescript-esm": "^2.0.0",
-        "ipfs-core-types": "^0.10.3",
-        "patch-package": "^6.4.7"
+        "typescript-esm": "^2.0.0"
     }
 }

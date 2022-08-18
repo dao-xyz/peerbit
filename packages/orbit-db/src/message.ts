@@ -1,5 +1,1 @@
-export class Message {
-    constructor() {
-
-    }
-}
+export class Message { }

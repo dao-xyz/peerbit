@@ -1,45 +1,20 @@
 import { variant, field, serialize, deserialize, vec } from '@dao-xyz/borsh';
 import { Message } from './message';
 import { U8IntArraySerializer } from '@dao-xyz/io-utils';
-import { EthIdentityProvider, OrbitDBIdentityProvider, SolanaIdentityProvider } from '@dao-xyz/orbit-db-identity-provider';
+import { EthIdentityProvider, Identity, OrbitDBIdentityProvider, SolanaIdentityProvider } from '@dao-xyz/orbit-db-identity-provider';
 import { X25519PublicKey, Ed25519PublicKey, CryptographyKey } from 'sodium-plus'
 import Logger from 'logplease'
+import { Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore';
+import { SignedMessage, X25519PublicKeySerializer, CryptographyKeySerializer, MaybeEncrypted, UnsignedMessage, PublicKeyEncryption } from '@dao-xyz/encryption-utils';
+import { DecryptedThing, EncryptedThing } from '@dao-xyz/encryption-utils';
+import { TimeoutError, waitForAsync } from '@dao-xyz/time';
+
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
+
 Logger.setLogLevel('ERROR')
-export type KeyAccessCondition = (fromKey: {
-    type: string,
-    key: Uint8Array,
-}, keyToAccess: {
-    group: string
-}) => Promise<boolean>;
+export type KeyAccessCondition = (requester: Ed25519PublicKey, keyToAccess: KeyWithMeta) => Promise<boolean>;
 export type KeyType = 'ethereum' | 'solana' | 'orbitdb';
 
-@variant(0)
-export class OrbitDBSignedMessage {
-
-    @field(U8IntArraySerializer)
-    signature: Uint8Array
-
-    @field(U8IntArraySerializer)
-    key: Uint8Array
-
-    constructor(props?: {
-        signature?: Uint8Array,
-        key: Uint8Array
-    }) {
-        if (props) {
-            this.signature = props.signature;
-            this.key = props.key;
-        }
-    }
-
-    async sign(data: Uint8Array, signer: (bytes: Uint8Array) => Promise<Uint8Array>): Promise<OrbitDBSignedMessage> {
-        this.signature = await signer(data)
-        return this;
-    }
-
-
-}
 
 
 export class SignedX25519PublicKey {
@@ -85,135 +60,186 @@ export class PublicKeyMessage {
 @variant([1, 0])
 export class KeyResponseMessage extends Message {
 
-    // TODO nonce?
-
-    @field(U8IntArraySerializer)
-    keysEncryptedAndSigned: Uint8Array;
-
-    @field(U8IntArraySerializer)
-    encryptionPublicKey: Uint8Array;
-
-    @field(U8IntArraySerializer)
-    signerPublicKey: Uint8Array
+    @field({ type: vec(KeyWithMeta) })
+    keys: KeyWithMeta[]
 
     constructor(props?: {
-        keysEncryptedAndSigned: Uint8Array
-        signerPublicKey: Uint8Array;
-        encryptionPublicKey: Uint8Array;
+        keys: KeyWithMeta[]
     }) {
         super();
         if (props) {
-            this.keysEncryptedAndSigned = props.keysEncryptedAndSigned;
-            this.encryptionPublicKey = props.encryptionPublicKey;
-            this.signerPublicKey = props.signerPublicKey;
-        }
-    }
-}
-
-
-@variant([1, 1])
-export class RequestKeysInGroupMessage extends Message {
-
-    @field({ type: OrbitDBSignedMessage })
-    signedKey: OrbitDBSignedMessage
-
-    @field(U8IntArraySerializer)
-    encryptionPublicKey: Uint8Array
-
-    constructor(props?: {
-        signedKey: OrbitDBSignedMessage;
-        encryptionPublicKey: Uint8Array
-    }) {
-        super();
-        if (props) {
-            this.signedKey = props.signedKey
-            this.encryptionPublicKey = props.encryptionPublicKey;
-
-        }
-    }
-    async getGroup(open: (data: Uint8Array, publicKey: Ed25519PublicKey) => Promise<Uint8Array>): Promise<string> {
-        return Buffer.from(await open(this.signedKey.signature, new Ed25519PublicKey(Buffer.from(this.signedKey.key)))).toString();
-    }
-
-
-}
-
-
-export class Key {
-    key: Uint8Array;
-
-    constructor(props?: {
-        key: Uint8Array
-    }) {
-        if (props) {
-            this.key = props.key;
-        }
-    }
-}
-
-export class Keys {
-
-    @field({ type: 'String' })
-    group: string;
-
-    @field({ type: vec(Key) })
-    keys: Key[];
-
-    constructor(props?: {
-        group: string
-        keys: Key[]
-    }) {
-        if (props) {
-            this.group = props.group;
             this.keys = props.keys;
         }
     }
 }
-export const requestKeys = async (channel: any, request: RequestKeysInGroupMessage, canAccessKeys: KeyAccessCondition, getSymmetricKeys: (group: string) => Promise<CryptographyKey[]>, sign: (bytes: Uint8Array) => Promise<{ bytes: Uint8Array, publicKey: Ed25519PublicKey }>, open: (data: Uint8Array, signerPublicKey: Ed25519PublicKey) => Promise<Buffer>, encrypt: (data: Uint8Array, recieverPublicKey: X25519PublicKey) => Promise<{ publicKey: X25519PublicKey, bytes: Uint8Array }>) => { // 
+
+@variant([1, 1])
+export class RequestKeyMessage extends Message {
+
+    @field(X25519PublicKeySerializer)
+    encryptionKey: X25519PublicKey
+}
+
+@variant(0)
+export class RequestKeysInReplicationTopicMessage extends RequestKeyMessage {
+
+    @field({ type: 'String' })
+    replicationTopic: string
+
+    constructor(props?: {
+        replicationTopic: string,
+        encryptionKey: X25519PublicKey
+    }) {
+        super();
+        if (props) {
+            this.replicationTopic = props.replicationTopic
+            this.encryptionKey = props.encryptionKey
+
+        }
+    }
+}
+
+@variant(1)
+export class RequestSingleKeyMessage extends RequestKeyMessage {
+
+    @field(X25519PublicKeySerializer)
+    key: X25519PublicKey
+
+    constructor(props?: {
+        key: X25519PublicKey,
+        encryptionKey: X25519PublicKey
+    }) {
+        super();
+        if (props) {
+            this.key = props.key
+            this.encryptionKey = props.encryptionKey
+        }
+    }
+}
+
+
+
+
+export const requestAndWaitForKeys = async (send: (message: Uint8Array) => void | Promise<void>, keystore: Keystore, myIdentity: Identity, request: { group: string } | { key: X25519PublicKey }): Promise<KeyWithMeta[]> => {
+    await requestKeys(send, keystore, myIdentity, request);
+    const group = request["group"];
+    if (group) {
+        try {
+            // timeout
+            return await waitForAsync(async () => {
+                const keys = await keystore.getKeys(group)
+                if (keys.length > 0) {
+                    return keys;
+                }
+                return undefined
+            }, {
+                timeout: 10000,
+                delayInterval: 1000
+            });
+        } catch (error) {
+            if (error instanceof TimeoutError) {
+                return;
+            }
+            throw error;
+        }
+
+    }
+    else {
+        const key: Ed25519PublicKey = request['key'];
+        const keyId = new Uint8Array(key.getBuffer());
+        try {
+            return [await waitForAsync(() => keystore.getKeyById(keyId), {
+                timeout: 10000,
+                delayInterval: 1000
+            })]
+
+        } catch (error) {
+            if (error instanceof TimeoutError) {
+                return;
+            }
+            throw error;
+        }
+    }
+}
+
+export const requestKeys = async (send: (message: Uint8Array) => void | Promise<void>, keystore: Keystore, myIdentity: Identity, request: { group: string } | { key: X25519PublicKey }) => {
+    const signKey = await keystore.getKeyByPath(myIdentity.id, 'sign'); // should exist
+    let key = await keystore.getKeyByPath(myIdentity.id, 'box');
+    if (!key) {
+        key = await keystore.createKey(myIdentity.id, 'box');
+    }
+    const encryptionKey = await Keystore.getPublicBox((await keystore.getKeyByPath(myIdentity.id, 'box')).key);
+    const requestMessage = request["group"] ? new RequestKeysInReplicationTopicMessage({ replicationTopic: request["group"], encryptionKey }) : new RequestSingleKeyMessage({ key: request["key"], encryptionKey })
+
+    const signedMessage = await new UnsignedMessage<RequestKeysInReplicationTopicMessage>({
+        data: serialize(requestMessage)
+    }).sign(async (bytes) => {
+        return {
+            signature: await keystore.sign(bytes, signKey.key),
+            publicKey: await Keystore.getPublicSign(signKey.key)
+        }
+    })
+    const unencryptedMessage = new DecryptedThing(
+        {
+            data: serialize(signedMessage)
+        }
+    );
+    await send(serialize(unencryptedMessage))
+}
+
+export const exchangeKeys = async (channel: any, request: RequestKeyMessage, requester: Ed25519PublicKey, canAccessKey: KeyAccessCondition, getKeyByPublicKey: (key: X25519PublicKey) => Promise<KeyWithMeta>, getKeysByGroup: (group: string) => Promise<KeyWithMeta[]>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: Ed25519PublicKey }>, encryption: PublicKeyEncryption) => { //  encrypt: (data: Uint8Array, recieverPublicKey: X25519PublicKey) => Promise<{ publicKey: X25519PublicKey, bytes: Uint8Array }>
 
     // Validate signature
+    let secretKeys: KeyWithMeta[] = []
     let group: string = undefined;
-    try {
-        group = await request.getGroup(open);
-    } catch (error) {
-        // Invalid signature 
-        logger.info("Invalid signature found from key request")
-        return;
+    if (request instanceof RequestKeysInReplicationTopicMessage) {
+        try {
+            group = await request.replicationTopic
+        } catch (error) {
+            // Invalid signature 
+            logger.info("Invalid signature found from key request")
+            return;
+        }
+
+        secretKeys = await getKeysByGroup(group);
+    }
+    else if (request instanceof RequestSingleKeyMessage) {
+        const key = await getKeyByPublicKey(request.key)
+        if (key) {
+            group = key.group
+        }
+        secretKeys = key ? [key] : []
     }
 
-    if (!await canAccessKeys({ type: 'orbitdb', key: request.signedKey.key }, {
-        group
-    })) {
-        return; // Do not send any keys
+    secretKeys = (await Promise.all(secretKeys.map(async (key) => {
+        return (await canAccessKey(requester, key)) ? key : undefined
+    }))).filter(x => !!x);
+
+    if (secretKeys.length === 0) {
+        return
     }
-    const secretKeys = await await getSymmetricKeys(group);
-    const secretKeysBytes = serialize(new Keys({
-        group,
-        keys: secretKeys.map(x => new Key({
-            key: new Uint8Array(x.getBuffer())
-        }))
+
+    const secretKeyResponseMessage = serialize(new KeyResponseMessage({
+        keys: secretKeys
     }));
-    const signatureResult = await sign(secretKeysBytes);
-    const encryptionResult = await encrypt(signatureResult.bytes, new X25519PublicKey(Buffer.from(request.encryptionPublicKey)));
-    const message = serialize(new KeyResponseMessage({ encryptionPublicKey: new Uint8Array(encryptionResult.publicKey.getBuffer()), keysEncryptedAndSigned: encryptionResult.bytes, signerPublicKey: new Uint8Array(signatureResult.publicKey.getBuffer()) }));
-    await channel.send(message)
+
+    const signatureResult = await sign(secretKeyResponseMessage);
+    await channel.send(serialize(await new DecryptedThing<KeyResponseMessage>({
+        data: serialize(new SignedMessage({
+            signature: signatureResult.signature,
+            key: signatureResult.publicKey
+        }))
+    }).encrypt(request.encryptionKey, encryption)));
+
 }
 
-export const recieveKeys = async (response: KeyResponseMessage, isTrusted: (key: Ed25519PublicKey) => Promise<boolean>, setSymmetricKeys: (group: string, keys: CryptographyKey[]) => Promise<any[]>, open: (data: Uint8Array, signerPublicKey: Ed25519PublicKey) => Promise<Buffer>, decrypt: (data: Uint8Array, senderPublicKey: X25519PublicKey) => Promise<Uint8Array>) => { // 
-    // Verify signer is trusted by opening the message and checking the public key
-    const signer = new Ed25519PublicKey(Buffer.from(response.signerPublicKey));
-    const trusted = await isTrusted(signer);
-    if (!trusted) {
-        throw new Error("Recieved keys from a not trusted party");
-    }
-    const decrypted = await decrypt(response.keysEncryptedAndSigned, new X25519PublicKey(Buffer.from(response.encryptionPublicKey)))
-    const keys = deserialize(await open(decrypted, signer), Keys);
-    await setSymmetricKeys(keys.group, keys.keys.map(x => new CryptographyKey(Buffer.from(x.key))))
+export const recieveKeys = async (msg: KeyResponseMessage, setKeys: (keys: KeyWithMeta[]) => Promise<any[]>) => { // 
+    await setKeys(msg.keys);
 }
 
 
 
-export const verifySignature = (signature: Uint8Array, data: Uint8Array, type: KeyType, publicKey: Uint8Array): Promise<boolean> => {
+/* export const verifySignature = (signature: Uint8Array, data: Uint8Array, type: KeyType, publicKey: Uint8Array): Promise<boolean> => {
     if (type === 'ethereum') {
         return EthIdentityProvider.verify(signature, data, publicKey)
     }
@@ -224,4 +250,4 @@ export const verifySignature = (signature: Uint8Array, data: Uint8Array, type: K
         return OrbitDBIdentityProvider.verify(signature, data, publicKey)
     }
     throw new Error("Unsupported keytype")
-}
+} */

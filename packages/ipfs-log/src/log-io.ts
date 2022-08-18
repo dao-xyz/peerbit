@@ -119,7 +119,7 @@ export class LogIO {
    * @param {Array<Entry<T>>} options.exclude Entries to not fetch (cached)
    * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
    */
-  static async fromEntry<T>(ipfs, sourceEntries: Entry<T>[] | Entry<T>, options: EntryFetchAllOptions<T>) {
+  static async fromEntry<T>(ipfs, sourceEntries: Entry<T>[] | Entry<T>, options: EntryFetchAllOptions<T>): Promise<{ logId: string, entries: Entry<T>[] }> {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(sourceEntries)) throw new Error("'sourceEntries' must be defined")
 
@@ -166,7 +166,7 @@ export class LogIO {
     // Add the input entries at the beginning of the array and remove
     // as many elements from the array before inserting the original entries
     const entries = replaceInFront(sliced, missingSourceEntries)
-    const logId = entries[entries.length - 1].data.id
+    const logId = await entries[entries.length - 1].metadata.id
     return { logId, entries }
   }
 }

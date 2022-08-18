@@ -133,7 +133,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
           err = e.toString()
         }
 
-        const res = await db.iterator().collect().map(e => e.data.payload.value)
+        const res = await db.iterator().collect().map(e => e.payload.value.value)
         assert.strictEqual(err, undefined)
         assert.deepStrictEqual(res, ['hello?'])
       })
@@ -147,7 +147,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
           err = e
         }
 
-        const res = await db2.iterator().collect().map(e => e.data.payload.value)
+        const res = await db2.iterator().collect().map(e => e.payload.value.value)
         assert.strictEqual(err.message, `Could not append Entry<T>, key "${db2.identity.id}" is not allowed to write to the log`)
         assert.deepStrictEqual(res.includes('hello!!'), false)
       })

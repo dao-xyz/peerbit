@@ -19,10 +19,10 @@ class FeedIndex {
         oplog.values.reduce((handled, item) => {
             if (!handled.includes(item.hash)) {
                 handled.push(item.hash)
-                if (item.data.payload.op === 'ADD') {
+                if (item.payload.value.op === 'ADD') {
                     this._index[item.hash] = item
-                } else if (item.data.payload.op === 'DEL') {
-                    delete this._index[item.data.payload.value]
+                } else if (item.payload.value.op === 'DEL') {
+                    delete this._index[item.payload.value.value]
                 }
             }
             return handled

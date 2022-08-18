@@ -1,5 +1,5 @@
 import { ensureAddress } from "./utils"
-import { Entry, EntryDataBox, EntryDataBoxEncrypted } from '@dao-xyz/ipfs-log-entry';
+import { Entry, Payload } from '@dao-xyz/ipfs-log-entry';
 
 const pMapSeries = require('p-map-series')
 import { AccessController } from './access-controller-interface'
@@ -30,11 +30,9 @@ export class OrbitDBAccessController<T> extends AccessController<T> {
   }
 
   // Return true if entry is allowed to be added to the database
-  async canAppend<T>(entryData: EntryDataBox<T>, identity: IdentitySerializable, identityProvider) {
+  async canAppend<T>(payload: Payload<T>, identity: IdentitySerializable, identityProvider) {
 
-    if (entryData instanceof EntryDataBoxEncrypted) {
-      await entryData.decrypt();
-    }
+    await payload.decrypt()
 
     // Write keys and admins keys are allowed
     const access = new Set([...this.get('write'), ...this.get('admin')])

@@ -93,7 +93,7 @@ export class DocumentIndex<T> {
       throw new Error("Not initialized");
     }
     const reducer = (handled, item: Entry<Operation>, idx) => {
-      let payload = item.data.payload;
+      let payload = item.payload.value;
       if (payload instanceof PutAllOperation) {
         for (const doc of payload.docs) {
           if (doc && handled[doc.key] !== true) {

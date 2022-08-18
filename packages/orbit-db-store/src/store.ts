@@ -3,7 +3,7 @@ import { EventEmitter } from 'events'
 import mapSeries from 'p-each-series'
 import { default as PQueue } from 'p-queue'
 import { Log, ISortFunction, RecycleOptions, AccessError, LogOptions } from '@dao-xyz/ipfs-log'
-import { CryptOptions, EntryDataBox, IOOptions } from '@dao-xyz/ipfs-log-entry'
+import { Payload, IEncoding } from '@dao-xyz/ipfs-log-entry'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Index } from './store-index'
 import { Replicator } from './replicator'
@@ -42,12 +42,12 @@ export class HeadsCache<T> {
   }
 }
 
-export type StoreCryptOptions = {
+export type StorePublicKeyEncryption = {
   encrypt: (bytes: Uint8Array, reciever: X25519PublicKey, replicationTopic: string) => Promise<{
     data: Uint8Array
     senderPublicKey: X25519PublicKey
   }>,
-  decrypt: (data: Uint8Array, senderPublicKey: X25519PublicKey, recieverPublicKey: X25519PublicKey, replicationTopic: string) => Promise<Uint8Array>
+  decrypt: (data: Uint8Array, senderPublicKey: X25519PublicKey, recieverPublicKey: X25519PublicKey, replicationTopic: string) => Promise<Uint8Array | undefined>
 }
 
 interface ICreateOptions {
@@ -132,8 +132,8 @@ export interface IStoreOptions<T, X, I extends Index<T, X>> extends ICreateOptio
     encrypt: (arr: Uint8Array, keyGroup: string) => Promise<{ bytes: Uint8Array, keyId: Uint8Array }>
     decrypt: (arr: Uint8Array, keyGroup: string, keyId: Uint8Array) => Promise<Uint8Array>
   }, */
-  crypt?: StoreCryptOptions,
-  io?: IOOptions<T>
+  encryption?: StorePublicKeyEncryption,
+  encoding?: IEncoding<T>
 
 }
 export const JSON_ENCODER = {
@@ -152,7 +152,7 @@ export const DefaultOptions: IStoreOptions<any, any, Index<any, any>> = {
   onlyObserver: false,
   typeMap: {},
   nameResolver: (name: string) => name,
-  io: JSON_ENCODER
+  encoding: JSON_ENCODER
 }
 export interface Address {
   root: string;
@@ -218,7 +218,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
 
     // Access mapping
     this.access = options.accessController || {
-      canAppend: async (entry: EntryDataBox<T>, entryIdentity: IdentitySerializable, _identityProvider: Identities) => (arraysEqual(entryIdentity.publicKey, identity.publicKey)),
+      canAppend: async (entry: Payload<T>, entryIdentity: IdentitySerializable, _identityProvider: Identities) => (arraysEqual(entryIdentity.publicKey, identity.publicKey)),
       type: undefined,
       address: undefined,
       close: undefined,
@@ -253,14 +253,14 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
     try {
       const onReplicationQueued = async (entry: Entry<T>) => {
         // Update the latest entry state (latest is the entry with largest clock time)
-        this._recalculateReplicationMax(entry.data.clock ? entry.data.clock.time : 0)
+        this._recalculateReplicationMax((await entry.metadata.clock).time)
         this.events.emit('replicate', this.address.toString(), entry)
       }
 
       const onReplicationProgress = async (entry: Entry<T>) => {
         const previousProgress = this.replicationStatus.progress
         const previousMax = this.replicationStatus.max
-        this._recalculateReplicationStatus(entry.data.clock.time)
+        this._recalculateReplicationStatus((await entry.metadata.clock).time)
         if (this._oplog.length + 1 > this.replicationStatus.progress ||
           this.replicationStatus.progress > previousProgress ||
           this.replicationStatus.max > previousMax) {
@@ -340,11 +340,11 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
   get logOptions(): LogOptions<T> {
     return {
       logId: this.id,
-      io: this.options.io,
-      crypt: this.options.crypt ? {
-        decrypt: (data, senderPublicKey, recieverPublicKey) => this.options.crypt.decrypt(data, senderPublicKey, recieverPublicKey, this.replicationTopic),
-        encrypt: (data, recieverPublicKey) => this.options.crypt.encrypt(data, recieverPublicKey, this.replicationTopic)
-      } : undefined, //this.options.crypt
+      encoding: this.options.encoding,
+      encryption: this.options.encryption ? {
+        decrypt: (data, senderPublicKey, recieverPublicKey) => this.options.encryption.decrypt(data, senderPublicKey, recieverPublicKey, this.replicationTopic),
+        encrypt: (data, recieverPublicKey) => this.options.encryption.encrypt(data, recieverPublicKey, this.replicationTopic)
+      } : undefined, //this.options.encryption
       access: this.access,
       sortFn: this.options.sortFn,
       recycle: this.options.recycle,
@@ -457,7 +457,10 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
     }
 
     // Update the replication status from the heads
-    heads.forEach(h => this._recalculateReplicationMax(h.data.clock.time))
+    for (const head of heads) {
+      const time = (await head.metadata.clock).time
+      this._recalculateReplicationMax(time)
+    }
 
     // Load the log
     const log = await Log.fromEntryHash(this._ipfs, this.identity, heads.map(e => e.hash), {
@@ -502,7 +505,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
       if (!identityProvider) throw new Error('Identity-provider is required, cannot verify entry')
 
       // TODO Fix types
-      const canAppend = await this.access.canAppend(head.data, await head.identityWithSignature.init(this._oplog._crypt).identity, identityProvider as any)
+      const canAppend = await this.access.canAppend(head.payload.init(this._oplog._encoding, this._oplog._encryption), await head.metadata.init(this._oplog._encryption).identity, identityProvider as any)
       if (!canAppend) {
         logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
         return Promise.resolve(null)
@@ -556,7 +559,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
 
     this.events.emit('load', this.address.toString()) // TODO emits inconsistent params, missing heads param
 
-    const maxClock = (res, val: Entry<any>) => Math.max(res, val.data.clock.time)
+    const maxClock = (res, val: Entry<any>) => Math.max(res, val.metadata.clockDecrypted.time)
     this.sync([])
 
     const queue = (await this._cache.get(this.queuePath)) as string[]
@@ -623,24 +626,20 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
         const recieverPayload = options.recieverPayload ? options.recieverPayload : options.reciever
         const recieverIdentity = options.recieverIdentity ? options.recieverIdentity : options.reciever
 
-        try {
-          const entry = await this._oplog.append(data, { pointerCount: this.options.referenceCount, pin: options.pin, recieverPayload, recieverIdentity })
-          this._recalculateReplicationStatus(entry.data.clock.time)
-          await this._cache.setBinary(this.localHeadsPath, new HeadsCache({ heads: [entry] }))
-          await this._updateIndex([entry])
+        const entry = await this._oplog.append(data, { pointerCount: this.options.referenceCount, pin: options.pin, recieverPayload, recieverIdentity })
+        this._recalculateReplicationStatus((await entry.metadata.clock).time)
+        await this._cache.setBinary(this.localHeadsPath, new HeadsCache({ heads: [entry] }))
+        await this._updateIndex([entry])
 
-          // The row below will emit an "event", which is subscribed to on the orbit-db client (confusing enough)
-          // there, the write is binded to the pubsub publish, with the entry. Which will send this entry 
-          // to all the connected peers to tell them that a new entry has been added
-          // TODO: don't use events, or make it more transparent that there is a vital subscription in the background
-          // that is handling replication
-          this.events.emit('write', this.replicationTopic, this.address.toString(), entry, this._oplog.heads)
-          if (options?.onProgressCallback) options.onProgressCallback(entry)
-          return entry.hash
-        } catch (error) {
-          const x = 132;
-          return error;
-        }
+        // The row below will emit an "event", which is subscribed to on the orbit-db client (confusing enough)
+        // there, the write is binded to the pubsub publish, with the entry. Which will send this entry 
+        // to all the connected peers to tell them that a new entry has been added
+        // TODO: don't use events, or make it more transparent that there is a vital subscription in the background
+        // that is handling replication
+        this.events.emit('write', this.replicationTopic, this.address.toString(), entry, this._oplog.heads)
+        if (options?.onProgressCallback) options.onProgressCallback(entry)
+        return entry.hash
+
       }
     }
     return this._queue.add(addOperation.bind(this))
@@ -651,7 +650,6 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
   }
 
   _procEntry(entry: Entry<T>) {
-    const { data: { payload }, hash } = entry
     /* const { op } = payload
     if (op) {
       this.events.emit(`log.op.${op}`, this.address.toString(), hash, payload)
@@ -683,8 +681,8 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
   }
 
   /* Loading progress callback */
-  _onLoadProgress(entry) {
-    this._recalculateReplicationStatus(entry.data.clock.time)
+  _onLoadProgress(entry: Entry<any>) {
+    this._recalculateReplicationStatus(entry.metadata.clockDecrypted.time)
     this.events.emit('load.progress', this.address.toString(), entry.hash, entry, this.replicationStatus.progress, this.replicationStatus.max)
   }
 }

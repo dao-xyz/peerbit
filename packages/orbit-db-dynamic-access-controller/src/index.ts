@@ -6,8 +6,8 @@
 
 // Relation with enc/dec?
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
-import { Identities, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
-import { Entry } from '@dao-xyz/ipfs-log-entry';
+import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
+import { Entry, Payload } from '@dao-xyz/ipfs-log-entry';
 import { AccessController, AccessControllers } from "@dao-xyz/orbit-db-access-controllers";
 import { Store } from '@dao-xyz/orbit-db-store';
 import { OrbitDB } from '@dao-xyz/orbit-db';
@@ -50,6 +50,7 @@ export type AccessVerifier = (identity: IdentitySerializable) => Promise<boolean
 
 export const DYNAMIC_ACCESS_CONTROLER = 'dynamic-access-controller';
 
+export type OnMemoryExceededCallback<T> = (payload: Payload<T>, identity: IdentitySerializable) => void;
 export class DynamicAccessController<T, B extends Store<T, any, any, any>> extends AccessController<T> {
 
     aclDB: ACLInterface;
@@ -60,12 +61,12 @@ export class DynamicAccessController<T, B extends Store<T, any, any, any>> exten
     _orbitDB: OrbitDB
     _appendAll: boolean;
     _heapSizeLimit: () => number;
-    _onMemoryExceeded: (entry: Entry<T>) => void;
+    _onMemoryExceeded: OnMemoryExceededCallback<T>;
 
     @field({ type: 'String' })
     name: string;
 
-    constructor(options?: { orbitDB: OrbitDB, name: string, heapSizeLimit: () => number, onMemoryExceeded: (entry: Entry<T>) => void, appendAll?: boolean, trustResolver: () => P2PTrust, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>, storeOptions: ACLInterfaceOptions }) {
+    constructor(options?: { orbitDB: OrbitDB, name: string, heapSizeLimit: () => number, onMemoryExceeded: OnMemoryExceededCallback<T>, appendAll?: boolean, trustResolver: () => P2PTrust, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>, storeOptions: ACLInterfaceOptions }) {
         super();
         if (options) {
             this._storeAccessCondition = options?.storeAccessCondition;
@@ -124,8 +125,8 @@ export class DynamicAccessController<T, B extends Store<T, any, any, any>> exten
     }
 
 
-    async canAppend(entry: Entry<T>, identityProvider: Identities) {
-        if (!identityProvider.verifyIdentity(entry.data.identity)) {
+    async canAppend(payload: Payload<T>, identity: IdentitySerializable, identityProvider: Identities) {
+        if (!identityProvider.verifyIdentity(identity)) {
             return false;
         }
 
@@ -137,17 +138,17 @@ export class DynamicAccessController<T, B extends Store<T, any, any, any>> exten
         const usedHeapSize = v8.getHeapStatistics().used_heap_size;
         if (usedHeapSize > this._heapSizeLimit()) {
             if (this._onMemoryExceeded)
-                this._onMemoryExceeded(entry);
+                this._onMemoryExceeded(payload, identity);
             return false;
         }
 
 
         // Check whether it is trusted by trust web
-        if (await this._storeOptions.trustResolver().isTrusted(entry.data.identity)) {
+        if (await this._storeOptions.trustResolver().isTrusted(identity)) {
             return true;
         }
 
-        if (await this.aclDB.allowed(entry)) {
+        if (await this.aclDB.allowed(payload, identity)) {
             return true; // Creator of entry does not own NFT or token, or publickey etc
         }
         return false;
@@ -165,7 +166,7 @@ export class DynamicAccessController<T, B extends Store<T, any, any, any>> exten
     static get type() { return DYNAMIC_ACCESS_CONTROLER } // Return the type for this controller
 
 
-    static async create<T, B extends Store<T, any, any, any>>(orbitDB: OrbitDB, options: { name: string, appendAll?: boolean, heapSizeLimit: () => number, onMemoryExceeded: (entry: Entry<T>) => void, trustResolver: () => P2PTrust, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>, storeOptions: ACLInterfaceOptions }): Promise<DynamicAccessController<T, B>> {
+    static async create<T, B extends Store<T, any, any, any>>(orbitDB: OrbitDB, options: { name: string, appendAll?: boolean, heapSizeLimit: () => number, onMemoryExceeded: OnMemoryExceededCallback<T>, trustResolver: () => P2PTrust, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>, storeOptions: ACLInterfaceOptions }): Promise<DynamicAccessController<T, B>> {
         const controller = new DynamicAccessController({ orbitDB, ...options })
         return controller;
     }

@@ -430,14 +430,14 @@ class Log extends GSet {
     const permitted = async (entry) => {
       const canAppend = await this._access.canAppend(entry, identityProvider)
       if (!canAppend) {
-        throw new Error(`Could not append Entry<T>, key "${entry.data.identity.id}" is not allowed to write to the log`)
+        throw new Error(`Could not append Entry<T>, key "${entry.metadata.idDecryptedentity.id}" is not allowed to write to the log`)
       }
     }
 
     // Verify signature for each entry and throws if there's an invalid signature
     const verify = async (entry) => {
       const isValid = await entry.data.verify(identityProvider, entry)
-      const publicKey = entry.data.identity ? entry.data.identity.publicKey : entry.data.key
+      const publicKey = entry.metadata.idDecryptedentity ? entry.metadata.idDecryptedentity.publicKey : entry.data.key
       if (!isValid) throw new Error(`Could not validate signature "${entry.sig}" for entry "${entry.hash}" and key "${publicKey}"`)
     }
 
@@ -538,7 +538,7 @@ class Log extends GSet {
         padding = len > 1 ? padding.fill('  ') : padding
         padding = len > 0 ? padding.concat(['└─']) : padding
         /* istanbul ignore next */
-        return padding.join('') + (payloadMapper ? payloadMapper(e.data.payload) : e.data.payload)
+        return padding.join('') + (payloadMapper ? payloadMapper(e.payload.value) : e.payload.value)
       })
       .join('\n')
   }
@@ -752,7 +752,7 @@ class Log extends GSet {
     while (stack.length > 0) {
       const hash = stack.shift()
       const entry = a.get(hash)
-      if (entry &amp;&amp; !b.get(hash) &amp;&amp; entry.data.id === b.id) {
+      if (entry &amp;&amp; !b.get(hash) &amp;&amp; entry.metadata.idDecrypted === b.id) {
         res[entry.hash] = entry
         traversed[entry.hash] = true
         entry.next.forEach(pushToStack)

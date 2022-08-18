@@ -89,8 +89,8 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
       await db.load()
       const items = db.iterator({ limit: -1 }).collect()
       assert.equal(items.length, entryCount)
-      assert.equal(items[0].data.payload.value, 'hello0')
-      assert.equal(items[items.length - 1].data.payload.value, 'hello' + (entryCount - 1))
+      assert.equal(items[0].payload.value.value, 'hello0')
+      assert.equal(items[items.length - 1].payload.value.value, 'hello' + (entryCount - 1))
     })
 
     it('loads database partially', async () => {
@@ -99,9 +99,9 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
       await db.load(amount)
       const items = db.iterator({ limit: -1 }).collect()
       assert.equal(items.length, amount)
-      assert.equal(items[0].data.payload.value, 'hello' + (entryCount - amount))
-      assert.equal(items[1].data.payload.value, 'hello' + (entryCount - amount + 1))
-      assert.equal(items[items.length - 1].data.payload.value, 'hello' + (entryCount - 1))
+      assert.equal(items[0].payload.value.value, 'hello' + (entryCount - amount))
+      assert.equal(items[1].payload.value.value, 'hello' + (entryCount - amount + 1))
+      assert.equal(items[items.length - 1].payload.value.value, 'hello' + (entryCount - 1))
     })
 
     it('load and close several times', async () => {
@@ -111,9 +111,9 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
         await db.load()
         const items = db.iterator({ limit: -1 }).collect()
         assert.equal(items.length, entryCount)
-        assert.equal(items[0].data.payload.value, 'hello0')
-        assert.equal(items[1].data.payload.value, 'hello1')
-        assert.equal(items[items.length - 1].data.payload.value, 'hello' + (entryCount - 1))
+        assert.equal(items[0].payload.value.value, 'hello0')
+        assert.equal(items[1].payload.value.value, 'hello1')
+        assert.equal(items[items.length - 1].payload.value.value, 'hello' + (entryCount - 1))
         await db.close()
       }
     })
@@ -144,7 +144,7 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
         await db.add('hello' + (entryCount + i))
         const items = db.iterator({ limit: -1 }).collect()
         assert.equal(items.length, entryCount + i + 1)
-        assert.equal(items[items.length - 1].data.payload.value, 'hello' + (entryCount + i))
+        assert.equal(items[items.length - 1].payload.value.value, 'hello' + (entryCount + i))
         await db.close()
       }
     })
@@ -155,8 +155,8 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
         db.events.on('ready', () => {
           const items = db.iterator({ limit: -1 }).collect()
           assert.equal(items.length, entryCount)
-          assert.equal(items[0].data.payload.value, 'hello0')
-          assert.equal(items[items.length - 1].data.payload.value, 'hello' + (entryCount - 1))
+          assert.equal(items[0].payload.value.value, 'hello0')
+          assert.equal(items[items.length - 1].payload.value.value, 'hello' + (entryCount - 1))
           resolve(true)
         })
         await db.load()
@@ -233,8 +233,8 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
       await db.loadFromSnapshot()
       const items = db.iterator({ limit: -1 }).collect()
       assert.equal(items.length, entryCount)
-      assert.equal(items[0].data.payload.value, 'hello0')
-      assert.equal(items[entryCount - 1].data.payload.value, 'hello' + (entryCount - 1))
+      assert.equal(items[0].payload.value.value, 'hello0')
+      assert.equal(items[entryCount - 1].payload.value.value, 'hello' + (entryCount - 1))
     })
 
     it('load, add one and save snapshot several times', async () => {
@@ -245,8 +245,8 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
         await db.add('hello' + (entryCount + i))
         const items = db.iterator({ limit: -1 }).collect()
         assert.equal(items.length, entryCount + i + 1)
-        assert.equal(items[0].data.payload.value, 'hello0')
-        assert.equal(items[items.length - 1].data.payload.value, 'hello' + (entryCount + i))
+        assert.equal(items[0].payload.value.value, 'hello0')
+        assert.equal(items[items.length - 1].payload.value.value, 'hello' + (entryCount + i))
         await db.saveSnapshot()
         await db.close()
       }
@@ -273,8 +273,8 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
         db.events.on('ready', () => {
           const items = db.iterator({ limit: -1 }).collect()
           assert.equal(items.length, entryCount)
-          assert.equal(items[0].data.payload.value, 'hello0')
-          assert.equal(items[entryCount - 1].data.payload.value, 'hello' + (entryCount - 1))
+          assert.equal(items[0].payload.value.value, 'hello0')
+          assert.equal(items[entryCount - 1].payload.value.value, 'hello' + (entryCount - 1))
           resolve(true)
         })
         await db.loadFromSnapshot()
