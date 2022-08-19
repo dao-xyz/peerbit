@@ -1,6 +1,5 @@
 const fs = (typeof window === 'object' || typeof self === 'object') ? null : eval('require("fs")') // eslint-disable-line
 import { Level } from 'level';
-
 import LRU from 'lru';
 import { variant, field, serialize, deserialize } from '@dao-xyz/borsh';
 import { joinUint8Arrays, U64Serializer } from '@dao-xyz/io-utils';
@@ -59,6 +58,9 @@ export class KeyWithMeta {
   key: CryptographyKey
 
   @field({ type: 'String' })
+  type: KeyType
+
+  @field({ type: 'String' })
   group: string
 
   @field(U64Serializer)
@@ -67,11 +69,13 @@ export class KeyWithMeta {
 
   constructor(props?: {
     key: CryptographyKey,
+    type: KeyType,
     group: string,
     timestamp: number
   }) {
     if (props) {
       this.group = props.group
+      this.type = props.type;
       this.key = props.key; // secret + public key 
       this.timestamp = props.timestamp;
     }
@@ -193,6 +197,7 @@ export class Keystore {
     const keyId = getKeyId(groupHash, type, idKey);
     const keyWithMeta = new KeyWithMeta({
       key,
+      type,
       timestamp,
       group
     });

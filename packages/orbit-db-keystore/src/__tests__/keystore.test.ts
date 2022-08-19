@@ -271,15 +271,15 @@ describe('keystore', () => {
        })*/
       /* 
       await keystore.close(); */
-      /* await keystore.createKey('signing', 'sign')
-      await keystore.close(); */
+      /*  await keystore.createKey('signing', 'sign')
+       await keystore.close(); */
       key = await keystore.getKeyByPath('signing', 'sign')
 
       const x = 123;
     })
 
     it('signs data', async () => {
-      const expectedSignature = new Uint8Array([191, 195, 210, 159, 208, 207, 13, 165, 9, 29, 222, 29, 226, 249, 53, 152, 34, 152, 153, 109, 78, 58, 76, 154, 125, 68, 8, 186, 226, 136, 36, 71, 26, 86, 112, 179, 132, 20, 223, 196, 114, 128, 232, 238, 199, 107, 198, 254, 133, 127, 67, 79, 124, 151, 140, 58, 255, 238, 220, 112, 130, 178, 228, 15, 100, 97, 116, 97, 32, 100, 97, 116, 97, 32, 100, 97, 116, 97])
+      const expectedSignature = new Uint8Array([164, 246, 39, 162, 52, 168, 176, 69, 227, 67, 78, 85, 230, 101, 226, 231, 64, 33, 246, 194, 65, 193, 192, 6, 74, 94, 23, 161, 45, 221, 45, 23, 34, 222, 84, 224, 1, 65, 218, 173, 82, 200, 44, 23, 33, 24, 88, 42, 152, 0, 150, 67, 108, 169, 20, 117, 19, 195, 150, 152, 91, 22, 163, 0, 100, 97, 116, 97, 32, 100, 97, 116, 97, 32, 100, 97, 116, 97])
       const signature = await keystore.sign(Buffer.from('data data data'), key.key)
       assert.deepStrictEqual(signature, expectedSignature)
     })
@@ -317,7 +317,7 @@ describe('keystore', () => {
 
 
     it('gets the public key', async () => {
-      const expectedKey = new Uint8Array([110, 94, 187, 241, 230, 73, 175, 167, 155, 164, 166, 92, 211, 59, 10, 237, 19, 250, 162, 38, 3, 156, 57, 215, 44, 224, 229, 2, 45, 14, 194, 179]);
+      const expectedKey = new Uint8Array([165, 101, 48, 85, 191, 55, 5, 194, 33, 163, 202, 54, 35, 125, 255, 221, 51, 199, 52, 69, 155, 239, 206, 89, 190, 50, 39, 169, 88, 180, 108, 232]);
       const publicKey = await Keystore.getPublicSign(key.key)
       assert.deepStrictEqual(new Uint8Array(publicKey.getBuffer()), expectedKey)
     })

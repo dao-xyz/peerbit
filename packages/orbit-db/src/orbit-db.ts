@@ -14,12 +14,12 @@ import { OrbitDBAddress } from './orbit-db-address'
 import { createDBManifest } from './db-manifest'
 import { Level } from 'level';
 import { exchangeHeads, ExchangeHeadsMessage, RequestHeadsMessage } from './exchange-heads'
-import { Entry, IEncoding } from '@dao-xyz/ipfs-log-entry'
+import { Entry, IOOptions } from '@dao-xyz/ipfs-log-entry'
 import { serialize, deserialize } from '@dao-xyz/borsh'
 import { Message } from './message'
 import { getCreateChannel } from './channel'
 import { exchangeKeys, KeyResponseMessage, KeyAccessCondition, RequestKeysInReplicationTopicMessage, recieveKeys, requestAndWaitForKeys, RequestKeyMessage } from './exchange-keys'
-import { DecryptedThing, MaybeEncrypted, MaybeSigned, SignedMessage, UnsignedMessage } from '@dao-xyz/encryption-utils'
+import { DecryptedThing, MaybeEncrypted, MaybeSigned, PublicKeyEncryption, SignedMessage, UnsignedMessage } from '@dao-xyz/encryption-utils'
 import { Ed25519PublicKey, X25519PublicKey } from 'sodium-plus'
 let AccessControllersModule = AccessControllers;
 Logger.setLogLevel('ERROR')
@@ -95,6 +95,18 @@ export class OrbitDB {
 
   get cache() { return this.caches[this.directory].cache }
 
+  get encryption(): PublicKeyEncryption {
+    return {
+      decrypt: (data, senderPublicKey) => this.keystore.decrypt(data, senderPublicKey),
+      encrypt: async (data, senderPublicKey) => {
+        const key = await this.keystore.getKeyByPath(this.identity.id, 'box'); // TODO add key rotation, potentially generate new key every call
+        return {
+          data: await this.keystore.encrypt(data, key.key, senderPublicKey),
+          senderPublicKey: await Keystore.getPublicBox(key.key)
+        }
+      }
+    }
+  }
   /* setKeysInFlight() {
     this.keysInFlight = new Promise((resolve, _reject) => {
       this._keysInFlightResolver = resolve;
@@ -426,7 +438,7 @@ export class OrbitDB {
         const senderBoxSecretKey = ((await this.keystore.getKeyByPath(this.identity.id, 'box')) || (await this.keystore.createKey(this.identity.id, 'box'))).key
          */
 
-        await exchangeKeys(channel, msg, sender, this.canAccessKeys, getKeysByPublicKey, getKeysByGroup, await this.getSigner())
+        await exchangeKeys(channel, msg, sender, this.canAccessKeys, getKeysByPublicKey, getKeysByGroup, await this.getSigner(), this.encryption)
         logger.debug(`Exchanged keys`)
       }
       else {
@@ -580,7 +592,7 @@ export class OrbitDB {
      replicate?: boolean,
      replicationTopic?: string | (() => string),
  
-     encoding?: IEncoding<any>;
+     encoding?: IOOptions<any>;
      encryption?: (keystore: Keystore) => StorePublicKeyEncryption; */
 
   } & IStoreOptions<any, any, any> = {}) {

@@ -229,7 +229,7 @@ export const exchangeKeys = async (channel: any, request: RequestKeyMessage, req
             signature: signatureResult.signature,
             key: signatureResult.publicKey
         }))
-    }).encrypt(request.encryptionKey, encryption)));
+    }).init(encryption).encrypt(request.encryptionKey)));
 
 }
 

@@ -9,11 +9,11 @@ import { Ed25519PublicKey, X25519PublicKey } from 'sodium-plus';
 import { PublicKeyEncryption, DecryptedThing, EncryptedThing, Encryption, MaybeEncrypted } from '@dao-xyz/encryption-utils';
 import { Metadata, MetadataSecure } from './metadata';
 
-export interface IEncoding<T> {
+export interface IOOptions<T> {
   encoder: (data: T) => Uint8Array
   decoder: (bytes: Uint8Array) => T
 }
-export const JSON_ENCODING_OPTIONS: IEncoding<any> = {
+export const JSON_ENCODING_OPTIONS: IOOptions<any> = {
   encoder: (obj: any) => {
     return new Uint8Array(Buffer.from(JSON.stringify(obj)))
   },
@@ -43,7 +43,7 @@ export interface EntrySerialized<T> {
 export class Payload<T>
 {
   _encryption: PublicKeyEncryption
-  _encoding: IEncoding<T>
+  _encoding: IOOptions<T>
 
   @field({ type: MaybeEncrypted })
   _data: MaybeEncrypted<T>
@@ -56,7 +56,7 @@ export class Payload<T>
     }
   }
 
-  init(encoding: IEncoding<T>, encryption?: PublicKeyEncryption) {
+  init(encoding: IOOptions<T>, encryption?: PublicKeyEncryption) {
     this._encryption = encryption;
     this._encoding = encoding;
     this._data.init(this._encryption);
@@ -325,7 +325,7 @@ export class Entry<T> {
     }
   }
 
-  init(props: { encoding: IEncoding<T>, encryption?: PublicKeyEncryption } | Entry<T>): Entry<T> {
+  init(props: { encoding: IOOptions<T>, encryption?: PublicKeyEncryption } | Entry<T>): Entry<T> {
     const encoding = props instanceof Entry ? props.payload._encoding : props.encoding;
     const encryption = props instanceof Entry ? props.payload._encryption : props.encryption;
     this.payload.init(encoding, encryption);
@@ -381,7 +381,7 @@ export class Entry<T> {
    * console.log(entry)
    * // { hash: null, payload: "hello", next: [] }
    */
-  static async create<T>(options: { ipfs: IPFS, identity: Identity, logId: string, data: T, next?: (Entry<T> | string)[], encodingOptions?: IEncoding<T>, clock?: Clock, refs?: string[], pin?: boolean, assertAllowed?: (entryData: Payload<T>, identity: IdentitySerializable) => Promise<void>, encryption?: Encryption }) {
+  static async create<T>(options: { ipfs: IPFS, identity: Identity, logId: string, data: T, next?: (Entry<T> | string)[], encodingOptions?: IOOptions<T>, clock?: Clock, refs?: string[], pin?: boolean, assertAllowed?: (entryData: Payload<T>, identity: IdentitySerializable) => Promise<void>, encryption?: Encryption }) {
     if (!options.encodingOptions || !options.refs || !options.next) {
       options = {
         ...options,

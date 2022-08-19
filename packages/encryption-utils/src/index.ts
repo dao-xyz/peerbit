@@ -68,6 +68,7 @@ export const CryptographyKeySerializer = {
     }
 }
 
+
 @variant(0)
 export class MaybeEncrypted<T>  {
 

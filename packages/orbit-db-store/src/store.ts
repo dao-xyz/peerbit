@@ -3,7 +3,7 @@ import { EventEmitter } from 'events'
 import mapSeries from 'p-each-series'
 import { default as PQueue } from 'p-queue'
 import { Log, ISortFunction, RecycleOptions, AccessError, LogOptions } from '@dao-xyz/ipfs-log'
-import { Payload, IEncoding } from '@dao-xyz/ipfs-log-entry'
+import { Payload, IOOptions } from '@dao-xyz/ipfs-log-entry'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Index } from './store-index'
 import { Replicator } from './replicator'
@@ -133,7 +133,7 @@ export interface IStoreOptions<T, X, I extends Index<T, X>> extends ICreateOptio
     decrypt: (arr: Uint8Array, keyGroup: string, keyId: Uint8Array) => Promise<Uint8Array>
   }, */
   encryption?: StorePublicKeyEncryption,
-  encoding?: IEncoding<T>
+  encoding?: IOOptions<T>
 
 }
 export const JSON_ENCODER = {

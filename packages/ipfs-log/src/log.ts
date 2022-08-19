@@ -12,7 +12,7 @@ import { AccessController, DefaultAccessController } from "./default-access-cont
 import { isDefined } from './is-defined'
 import { findUniques } from "./find-uniques"
 import { AccessError } from "./errors"
-import { IEncoding } from "@dao-xyz/ipfs-log-entry";
+import { IOOptions } from "@dao-xyz/ipfs-log-entry";
 import { JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log-entry';
 import { X25519PublicKey } from 'sodium-plus'
 import { PublicKeyEncryption } from '@dao-xyz/encryption-utils';
@@ -33,7 +33,7 @@ export interface RecycleOptions {
   cutOplogToLength?: number, // When oplog shorter, cut to length
 }
 
-export type LogOptions<T> = { encoding?: IEncoding<T>, encryption?: PublicKeyEncryption, logId?: string, entries?: Entry<T>[], heads?: any, clock?: any, access?: AccessController<T>, sortFn?: Sorting.ISortFunction, concurrency?: number, recycle?: RecycleOptions };
+export type LogOptions<T> = { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, logId?: string, entries?: Entry<T>[], heads?: any, clock?: any, access?: AccessController<T>, sortFn?: Sorting.ISortFunction, concurrency?: number, recycle?: RecycleOptions };
 /**
  * @description
  * Log implements a G-Set CRDT and adds ordering.
@@ -64,7 +64,7 @@ export class Log<T> extends GSet {
   _length: number
   _clock: Clock;
   _recycle?: RecycleOptions
-  _encoding: IEncoding<T>
+  _encoding: IOOptions<T>
   _encryption: PublicKeyEncryption
 
   joinConcurrency: number;
@@ -659,7 +659,7 @@ export class Log<T> extends GSet {
    * @returns {Promise<Log>}
    */
   static async fromMultihash<T>(ipfs, identity, hash,
-    options?: { encoding?: IEncoding<T>, encryption?: PublicKeyEncryption, access?: AccessController<T>, sortFn?: Sorting.ISortFunction } & EntryFetchAllOptions<T>) {
+    options?: { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, access?: AccessController<T>, sortFn?: Sorting.ISortFunction } & EntryFetchAllOptions<T>) {
     // TODO: need to verify the entries with 'key'
     const { logId, entries, heads } = await LogIO.fromMultihash(ipfs, hash,
       { length: options?.length, exclude: options?.exclude, shouldExclude: options?.shouldExclude, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback, concurrency: options?.concurrency, sortFn: options?.sortFn })
@@ -681,7 +681,7 @@ export class Log<T> extends GSet {
    * @return {Promise<Log>} New Log
    */
   static async fromEntryHash<T>(ipfs: IPFS, identity: Identity, hash: string | string[],
-    options: { encoding?: IEncoding<T>, encryption?: PublicKeyEncryption, logId?: any, access?: any, length?: number, exclude?: any[], shouldExclude?: any, timeout?: number, concurrency?: number, sortFn?: any, onProgressCallback?: any } = { length: -1, exclude: [] }) {
+    options: { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, logId?: any, access?: any, length?: number, exclude?: any[], shouldExclude?: any, timeout?: number, concurrency?: number, sortFn?: any, onProgressCallback?: any } = { length: -1, exclude: [] }) {
     // TODO: need to verify the entries with 'key'
     const { entries } = await LogIO.fromEntryHash(ipfs, hash,
       { length: options.length, exclude: options.exclude, encryption: options?.encryption, shouldExclude: options.shouldExclude, timeout: options.timeout, concurrency: options.concurrency, onProgressCallback: options.onProgressCallback, sortFn: options.sortFn })
@@ -701,7 +701,7 @@ export class Log<T> extends GSet {
    * @return {Promise<Log>} New Log
    */
   static async fromJSON<T>(ipfs: IPFS, identity: Identity, json: { id: string, heads: string[] | Entry<T>[] },
-    options?: { encoding?: IEncoding<T>, encryption?: PublicKeyEncryption, access?: AccessController<T>, length?: number, timeout?: number, sortFn?: Sorting.ISortFunction, onProgressCallback?: (entry: Entry<T>) => void }) {
+    options?: { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, access?: AccessController<T>, length?: number, timeout?: number, sortFn?: Sorting.ISortFunction, onProgressCallback?: (entry: Entry<T>) => void }) {
     // TODO: need to verify the entries with 'key'
     const { logId, entries } = await LogIO.fromJSON(ipfs, json,
       { length: options?.length, encryption: options?.encryption, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback })
@@ -721,7 +721,7 @@ export class Log<T> extends GSet {
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise<Log>} New Log
    */
-  static async fromEntry<T>(ipfs: IPFS, identity: Identity, sourceEntries: Entry<T>[] | Entry<T>, options: EntryFetchOptions<T> & { encoding?: IEncoding<T>, encryption?: PublicKeyEncryption, access?: AccessController<T>, sortFn?: Sorting.ISortFunction }) {
+  static async fromEntry<T>(ipfs: IPFS, identity: Identity, sourceEntries: Entry<T>[] | Entry<T>, options: EntryFetchOptions<T> & { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, access?: AccessController<T>, sortFn?: Sorting.ISortFunction }) {
     // TODO: need to verify the entries with 'key'
     options = strictFetchOptions(options);
     const { logId, entries } = await LogIO.fromEntry(ipfs, sourceEntries,
