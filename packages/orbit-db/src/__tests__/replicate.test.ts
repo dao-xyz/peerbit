@@ -269,7 +269,6 @@ Object.keys(testAPIs).forEach(API => {
         }
 
         await mapSeries(adds, add)
-        console.log()
 
         // Open second instance again
         options = {

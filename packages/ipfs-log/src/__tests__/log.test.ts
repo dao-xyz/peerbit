@@ -159,7 +159,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('creates default public AccessController if not defined', async () => {
         const log = new Log(ipfs, testIdentity)
-        const anyoneCanAppend = await log._access.canAppend('any' as any, testIdentity.toSerializable(), undefined)
+        const anyoneCanAppend = await log._access.canAppend('any' as any, () => Promise.resolve(testIdentity.toSerializable()), undefined)
         assert.notStrictEqual(log._access, undefined)
         assert.strictEqual(anyoneCanAppend, true)
       })
@@ -195,7 +195,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     describe('get', () => {
-      let log
+      let log: Log<any>
 
       beforeEach(async () => {
         log = new Log(ipfs, testIdentity, { logId: 'AAA' })
@@ -239,7 +239,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       let log: Log<string>, expectedData: Entry<string>
 
       beforeAll(async () => {
-        const clock = new Clock(testIdentity.publicKey, 1)
+        const clock = new Clock(new Uint8Array(testIdentity.publicKey.getBuffer()), 1)
         const payload = new Payload<string>({
           data: new DecryptedThing({
             data: new Uint8Array(Buffer.from('one'))

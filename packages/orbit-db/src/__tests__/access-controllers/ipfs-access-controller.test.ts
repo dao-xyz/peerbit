@@ -104,7 +104,7 @@ describe(`orbit-db - IPFSAccessController`, function () {
         // ...
         // doesn't matter what we put here, only identity is used for the check
       }
-      const canAppend = await accessController.canAppend(mockEntry.data as any, id1.toSerializable(), id1.provider)
+      const canAppend = await accessController.canAppend(mockEntry.data as any, () => Promise.resolve(id1.toSerializable()), id1.provider)
       assert.strictEqual(canAppend, true)
     })
   })

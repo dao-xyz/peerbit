@@ -1,10 +1,10 @@
 import { Identity, IdentitySerializable, Signatures } from "../identity"
-
+import { Ed25519PublicKey } from 'sodium-plus'
 const assert = require('assert')
 
 describe('Identity', function () {
   const id = new Uint8Array([0])
-  const publicKey = new Uint8Array([0])
+  const publicKey = new Ed25519PublicKey(Buffer.from(new Array(32).fill(0)))
   const idSignature = new Uint8Array([0]) // 'signature for <id>'
   const publicKeyAndIdSignature = new Uint8Array([0]) //'signature for <publicKey + idSignature>'
   const type = 'orbitdb'

@@ -8,7 +8,7 @@ import { Identity, Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import { AccessControllers } from '@dao-xyz/orbit-db-access-controllers' // Fix fork
 import Cache from '@dao-xyz/orbit-db-cache'
-import { Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { BoxKeyWithMeta, Keystore, KeyWithMeta, SignKeyWithMeta, WithType } from '@dao-xyz/orbit-db-keystore'
 import { isDefined } from './is-defined'
 import { OrbitDBAddress } from './orbit-db-address'
 import { createDBManifest } from './db-manifest'
@@ -18,9 +18,10 @@ import { Entry, IOOptions } from '@dao-xyz/ipfs-log-entry'
 import { serialize, deserialize } from '@dao-xyz/borsh'
 import { Message } from './message'
 import { getCreateChannel } from './channel'
-import { exchangeKeys, KeyResponseMessage, KeyAccessCondition, RequestKeysInReplicationTopicMessage, recieveKeys, requestAndWaitForKeys, RequestKeyMessage } from './exchange-keys'
+import { exchangeKeys, KeyResponseMessage, KeyAccessCondition, recieveKeys, requestAndWaitForKeys, RequestKeyMessage, RequestKeyCondition, RequestKeysByKey, RequestKeysByReplicationTopic } from './exchange-keys'
 import { DecryptedThing, MaybeEncrypted, MaybeSigned, PublicKeyEncryption, SignedMessage, UnsignedMessage } from '@dao-xyz/encryption-utils'
-import { Ed25519PublicKey, X25519PublicKey } from 'sodium-plus'
+import { Ed25519PublicKey, X25519PublicKey, Ed25519SecretKey, X25519SecretKey } from 'sodium-plus'
+import { replicationTopicAsKeyGroupPublicKeyEncryption } from './encryption'
 let AccessControllersModule = AccessControllers;
 Logger.setLogLevel('ERROR')
 
@@ -97,12 +98,16 @@ export class OrbitDB {
 
   get encryption(): PublicKeyEncryption {
     return {
-      decrypt: (data, senderPublicKey) => this.keystore.decrypt(data, senderPublicKey),
+      decrypt: async (data, senderPublicKey: X25519PublicKey, recieverPublicKey: X25519PublicKey) => this.keystore.decrypt(data, await this.keystore.getKeyById(recieverPublicKey), senderPublicKey),
       encrypt: async (data, senderPublicKey) => {
-        const key = await this.keystore.getKeyByPath(this.identity.id, 'box'); // TODO add key rotation, potentially generate new key every call
+        let key = await this.keystore.getKeyByPath(this.identity.id, BoxKeyWithMeta); // TODO add key rotation, potentially generate new key every call
+        if (!key) {
+          key = await this.keystore.createKey(this.identity.id, BoxKeyWithMeta);
+        }
+
         return {
-          data: await this.keystore.encrypt(data, key.key, senderPublicKey),
-          senderPublicKey: await Keystore.getPublicBox(key.key)
+          data: await this.keystore.encrypt(data, key, senderPublicKey),
+          senderPublicKey: key.publicKey
         }
       }
     }
@@ -355,7 +360,7 @@ export class OrbitDB {
     try {
 
       const maybeEncryptedMessage = deserialize(Buffer.from(data), MaybeEncrypted) as MaybeEncrypted<MaybeSigned<Message>>
-      const decrypted = await maybeEncryptedMessage.decrypt()
+      const decrypted = await maybeEncryptedMessage.init(this.encryption).decrypt()
       const signedMessage = decrypted.getValue(MaybeSigned);
       const msg = await signedMessage.open(this.keystore.open, Message);
       const sender = signedMessage instanceof SignedMessage ? signedMessage.key : undefined;
@@ -412,8 +417,28 @@ export class OrbitDB {
         logger.debug(`Received exchange heades request for topic: ${replicationTopic}, address: ${address}`)
       }
       else if (msg instanceof KeyResponseMessage) {
+        const pksk = (key: KeyWithMeta): { publicKey: Ed25519PublicKey, secretKey: Ed25519SecretKey } | { publicKey: X25519PublicKey, secretKey: X25519SecretKey } => {
+          if (key instanceof SignKeyWithMeta) {
+            return {
+              publicKey: key.publicKey,
+              secretKey: key.secretKey
+            }
+          }
+
+          if (key instanceof BoxKeyWithMeta) {
+            return {
+              publicKey: key.publicKey,
+              secretKey: key.secretKey
+            }
+          }
+
+          throw new Error("Unsupported")
+        }
+
+
         await recieveKeys(msg, (keys) => {
-          return Promise.all(keys.map(async (key) => this.keystore.saveKey(key.key, (await Keystore.getPublicBox(key.key)).getBuffer(), 'box', key.group)))
+          const keysToSave = keys.filter(key => key instanceof SignKeyWithMeta || key instanceof BoxKeyWithMeta);
+          return Promise.all(keysToSave.map(async (key) => this.keystore.saveKey(pksk(key), pksk(key).publicKey.getBuffer(), key.constructor as any, key.group, key.timestamp)))
         })
         /*         
         this._keysInFlightResolver?.();
@@ -426,13 +451,9 @@ export class OrbitDB {
          * 
          */
 
-        if (!sender || (msg instanceof RequestKeysInReplicationTopicMessage && !await checkTrustedSender(msg.replicationTopic))) {
-          return;
-        }
-
         const channel = await this.getChannel(peer)
-        const getKeysByGroup = (group: string) => this.keystore.getKeys(group, 'box');
-        const getKeysByPublicKey = (key: X25519PublicKey) => this.keystore.getKeyById(key.getBuffer());
+        const getKeysByGroup = <T extends KeyWithMeta>(group: string, type: WithType<T>) => this.keystore.getKeys(group, type);
+        const getKeysByPublicKey = (key: Uint8Array) => this.keystore.getKeyById(key);
 
         /*         
         const senderBoxSecretKey = ((await this.keystore.getKeyByPath(this.identity.id, 'box')) || (await this.keystore.createKey(this.identity.id, 'box'))).key
@@ -469,18 +490,17 @@ export class OrbitDB {
   }
 
   async getSigner() {
-    const senderSignerSecretKey = (await this.keystore.getKeyByPath(this.identity.id, 'sign')).key
+    const senderSignerSecretKey = await this.keystore.getKeyByPath(this.identity.id, SignKeyWithMeta)
     return async (bytes) => {
       return {
         signature: await this.keystore.sign(bytes, senderSignerSecretKey),
-        publicKey: await Keystore.getPublicSign(senderSignerSecretKey)
+        publicKey: senderSignerSecretKey.publicKey
       }
     }
   }
 
 
   async getChannel(peer: string) {
-
     const getDirectConnection = peer => this._directConnections[peer]
     const onChannelCreated = channel => { this._directConnections[channel._receiverID] = channel }
     const handleMessage = (message: { data: Uint8Array }) => {
@@ -528,14 +548,14 @@ export class OrbitDB {
   /* addStore(store: Store<any, any, any, any>) {
     const storeAddress = store.address.toString();
     if (!storeAddress) { throw new Error("Address undefined") }
- 
+   
     const existingStore = this.stores[storeAddress];
     if (!!existingStore && existingStore !== store) { // second condition only makes this throw error if we are to add a new instance with the same address
       throw new Error(`Store at ${storeAddress} is already created`)
     }
     this.stores[storeAddress] = store;
   }
- */
+  */
   addStore(store: Store<any, any, any, any>) {
     const replicationTopic = store.replicationTopic;
     if (!this.stores[replicationTopic]) {
@@ -591,7 +611,7 @@ export class OrbitDB {
      replicationConcurrency?: number,
      replicate?: boolean,
      replicationTopic?: string | (() => string),
- 
+   
      encoding?: IOOptions<any>;
      encryption?: (keystore: Keystore) => StorePublicKeyEncryption; */
 
@@ -792,18 +812,19 @@ export class OrbitDB {
     return OrbitDBAddress.parse(address)
   }
 
-  _keysInflightMap: Map<string, Promise<KeyWithMeta | undefined>> = new Map();
-  async requestAndWaitForKeys(key: X25519PublicKey, replicationTopic: string): Promise<KeyWithMeta> {
-    const promiseKey = key.toString('base64') + '/' + replicationTopic;
+  _keysInflightMap: Map<string, Promise<any>> = new Map(); // TODO fix types
+  async requestAndWaitForKeys<T extends KeyWithMeta>(replicationTopic: string, condition: RequestKeyCondition<T>): Promise<T[]> {
+    const promiseKey = condition.hashcode;
     const existingPromise = this._keysInflightMap.get(promiseKey);
     if (existingPromise) {
       return existingPromise
     }
-    const promise = new Promise<KeyWithMeta | undefined>((resolve, reject) => {
+
+    const promise = new Promise<T[] | undefined>((resolve, reject) => {
       const send = (message: Uint8Array) => this._pubsub.publish(replicationTopic, message)
-      requestAndWaitForKeys(send, this.keystore, this.identity, { key }).then((results) => {
+      requestAndWaitForKeys(condition, send, this.keystore, this.identity).then((results) => {
         if (results?.length > 0) {
-          resolve(results[0]); // TODO fix determinism, what happens if many? Log, error? 
+          resolve(results);
         }
         else {
           resolve(undefined);
@@ -823,5 +844,28 @@ export class OrbitDB {
     return new DecryptedThing({
       data: serialize(signedMessage)
     })
+  }
+
+
+  replicationTopicEncryption(): StorePublicKeyEncryption {
+    return replicationTopicAsKeyGroupPublicKeyEncryption(this.identity, this.keystore, (key, replicationTopic) => this.requestAndWaitForKeys<BoxKeyWithMeta>(replicationTopic, new RequestKeysByKey<BoxKeyWithMeta>({
+      key: new Uint8Array(key.getBuffer()),
+      type: BoxKeyWithMeta
+    })))
+  }
+
+
+  async getEncryptionKey(replicationTopic: string): Promise<BoxKeyWithMeta | undefined> {
+    // v0 take some recent
+    const keys = (await this.keystore.getKeys(replicationTopic, BoxKeyWithMeta));
+    let key = keys[0];
+    if (!key) {
+      const keys = await this.requestAndWaitForKeys(replicationTopic, new RequestKeysByReplicationTopic({
+        replicationTopic,
+        type: BoxKeyWithMeta
+      }))
+      key = keys ? keys[0] : undefined;
+    }
+    return key;
   }
 }

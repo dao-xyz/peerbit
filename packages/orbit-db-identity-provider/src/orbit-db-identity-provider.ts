@@ -1,6 +1,6 @@
 import { Identity, IdentitySerializable } from './identity';
 import { IdentityProvider } from './identity-provider-interface'
-import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { Ed25519PublicKey } from 'sodium-plus';
 import { joinUint8Arrays } from '@dao-xyz/io-utils';
 
@@ -25,9 +25,9 @@ export class OrbitDBIdentityProvider extends IdentityProvider {
 
     const keystore = this._keystore
     const idString = Buffer.from(id).toString('base64');
-    const existingKey = await keystore.getKeyByPath(idString);
-    const key = (existingKey) || (await keystore.createKey(idString))
-    return new Uint8Array((await Keystore.getPublicSign(key.key)).getBuffer());
+    const existingKey = await keystore.getKeyByPath(idString, SignKeyWithMeta);
+    const key = (existingKey) || (await keystore.createKey(idString, SignKeyWithMeta))
+    return new Uint8Array(key.publicKey.getBuffer());
   }
 
   async sign(data: string | Uint8Array | Buffer, options: { id?: Uint8Array } = {}) {
@@ -37,11 +37,11 @@ export class OrbitDBIdentityProvider extends IdentityProvider {
     }
     const keystore = this._keystore
     const idString = Buffer.from(id).toString('base64');
-    const key = await keystore.getKeyByPath(idString)
+    const key = await keystore.getKeyByPath(idString, SignKeyWithMeta)
     if (!key) {
       throw new Error(`Signing key for '${idString}' not found`)
     }
-    return keystore.sign(data, key.key);
+    return keystore.sign(data, key);
   }
 
   static async verify(signature: Uint8Array, data: Uint8Array, publicKey: Uint8Array): Promise<boolean> {
@@ -56,7 +56,7 @@ export class OrbitDBIdentityProvider extends IdentityProvider {
     // Verify that identity was signed by the ID
     return OrbitDBIdentityProvider.verify(
       identity.signatures.publicKey,
-      joinUint8Arrays([identity.publicKey, identity.signatures.id]),
+      new Uint8Array(Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id])),
       identity.id
     )
   }

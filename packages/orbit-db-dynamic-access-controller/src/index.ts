@@ -125,7 +125,8 @@ export class DynamicAccessController<T, B extends Store<T, any, any, any>> exten
     }
 
 
-    async canAppend(payload: Payload<T>, identity: IdentitySerializable, identityProvider: Identities) {
+    async canAppend(payload: Payload<T>, identityResolver: () => Promise<IdentitySerializable>, identityProvider: Identities) {
+        const identity = await identityResolver();
         if (!identityProvider.verifyIdentity(identity)) {
             return false;
         }

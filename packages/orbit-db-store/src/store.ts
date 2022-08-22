@@ -21,6 +21,7 @@ import { serialize, deserialize } from '@dao-xyz/borsh';
 import { Snapshot } from './snapshot'
 import { X25519PublicKey } from 'sodium-plus';
 import { arraysEqual } from '@dao-xyz/io-utils'
+import { PublicKeyEncryption } from '@dao-xyz/encryption-utils'
 
 export type Constructor<T> = new (...args: any[]) => T;
 
@@ -42,13 +43,13 @@ export class HeadsCache<T> {
   }
 }
 
-export type StorePublicKeyEncryption = {
-  encrypt: (bytes: Uint8Array, reciever: X25519PublicKey, replicationTopic: string) => Promise<{
+export type StorePublicKeyEncryption = (replicationTopic: string) => PublicKeyEncryption/* {
+  encrypt: (bytes: Uint8Array, reciever: X25519PublicKey) => Promise<{
     data: Uint8Array
     senderPublicKey: X25519PublicKey
   }>,
-  decrypt: (data: Uint8Array, senderPublicKey: X25519PublicKey, recieverPublicKey: X25519PublicKey, replicationTopic: string) => Promise<Uint8Array | undefined>
-}
+  decrypt: (data: Uint8Array, senderPublicKey: X25519PublicKey, recieverPublicKey: X25519PublicKey) => Promise<Uint8Array | undefined>
+} */
 
 interface ICreateOptions {
   /**
@@ -218,7 +219,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
 
     // Access mapping
     this.access = options.accessController || {
-      canAppend: async (entry: Payload<T>, entryIdentity: IdentitySerializable, _identityProvider: Identities) => (arraysEqual(entryIdentity.publicKey, identity.publicKey)),
+      canAppend: async (entry: Payload<T>, entryIdentity: IdentitySerializable, _identityProvider: Identities) => (Buffer.compare(entryIdentity.publicKey.getBuffer(), identity.publicKey.getBuffer()) === 0),
       type: undefined,
       address: undefined,
       close: undefined,
@@ -342,8 +343,8 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
       logId: this.id,
       encoding: this.options.encoding,
       encryption: this.options.encryption ? {
-        decrypt: (data, senderPublicKey, recieverPublicKey) => this.options.encryption.decrypt(data, senderPublicKey, recieverPublicKey, this.replicationTopic),
-        encrypt: (data, recieverPublicKey) => this.options.encryption.encrypt(data, recieverPublicKey, this.replicationTopic)
+        decrypt: (data, senderPublicKey, recieverPublicKey) => this.options.encryption(this.replicationTopic).decrypt(data, senderPublicKey, recieverPublicKey),
+        encrypt: (data, recieverPublicKey) => this.options.encryption(this.replicationTopic).encrypt(data, recieverPublicKey)
       } : undefined, //this.options.encryption
       access: this.access,
       sortFn: this.options.sortFn,
@@ -505,7 +506,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
       if (!identityProvider) throw new Error('Identity-provider is required, cannot verify entry')
 
       // TODO Fix types
-      const canAppend = await this.access.canAppend(head.payload.init(this._oplog._encoding, this._oplog._encryption), await head.metadata.init(this._oplog._encryption).identity, identityProvider as any)
+      const canAppend = await this.access.canAppend(head.payload.init(this._oplog._encoding, this._oplog._encryption), () => head.metadata.init(this._oplog._encryption).identity, identityProvider as any)
       if (!canAppend) {
         logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
         return Promise.resolve(null)

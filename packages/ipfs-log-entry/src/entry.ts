@@ -115,178 +115,6 @@ export class Payload<T>
   }
 }
 
-
-/* @variant(0)
-export class EntryDataBox<T> {
-
-  
-
-
-  get payload(): T {
-    throw new Error("Not implemented")
-  }
-
-  get payloadEncoded(): Uint8Array {
-    throw new Error("Not implemented")
-  }
-
-
-  clone(signed: boolean = true): EntryDataBox<T> {
-    throw new Error("Not implemented")
-  }
-
-  equals(other: EntryDataBox<T>): boolean {
-    throw new Error("Not implemented")
-  }
-
-} */
-
-/* @variant(0)
-export class EntryDataDecrypted<T> extends EntryDataBox<T> {
-
-
-  @field(U8IntArraySerializer)
-  _payload: Uint8Array
-
-
-
-  constructor(obj?: {
-    payload: Uint8Array
-  }) {
-    super();
-    if (obj) {
-      this._payload = obj.payload;
-    }
-  }
-
-
-  get payload(): T {
-    return this._encoding.decoder(this._payload)
-  }
-
-  get payloadEncoded(): Uint8Array {
-    return this._payload;
-  }
-
-
-
-  static from<T>(arr: Uint8Array): EntryDataDecrypted<T> {
-    return deserialize<EntryDataDecrypted<T>>(Buffer.from(arr), EntryDataDecrypted)
-  }
-
-  async encrypt(recieverPublicKey: X25519PublicKey): Promise<EntryDataBoxEncrypted<T>> {
-    const bytes = serialize(this)
-    const { data, senderPublicKey } = await this._encryption.encrypt(Buffer.from(bytes), recieverPublicKey);
-    const enc = new EntryDataBoxEncrypted<T>({ data, senderPublicKey, recieverPublicKey })
-    enc._decrypted = this;
-    return enc;
-  }
-
-
-  clone() {
-    return new EntryDataDecrypted<T>({
-      payload: this.payloadEncoded,
-    }).init(this._encoding, this._encryption)
-  }
-
-  equals(other: EntryDataBox<T>): boolean {
-    if (other instanceof EntryDataDecrypted) {
-      return arraysEqual(this._payload, other._payload)
-    }
-    else {
-      return false;
-    }
-  }
-
-}
-
-
-@variant(1)
-export class EntryDataBoxEncrypted<T> extends EntryDataBox<T> {
-
-  @field(U8IntArraySerializer)
-  _data: Uint8Array;
-
-  @field(X25519PublicKeySerializer)
-  _senderPublicKey: X25519PublicKey
-
-  @field(X25519PublicKeySerializer)
-  _recieverPublicKey: X25519PublicKey
-
-  constructor(obj?: {
-    data: Uint8Array;
-    senderPublicKey: X25519PublicKey;
-    recieverPublicKey: X25519PublicKey;
-
-  }) {
-    super();
-    if (obj) {
-      this._data = obj.data;
-      this._senderPublicKey = obj.senderPublicKey;
-      this._recieverPublicKey = obj.recieverPublicKey
-    }
-  }
-
-  get payload(): T {
-    return this.decrypted.payload
-  }
-
-  get payloadEncoded(): Uint8Array {
-    return this.decrypted._payload;
-  }
-
-
-
-  _decrypted: EntryDataDecrypted<T>
-  get decrypted(): EntryDataDecrypted<T> {
-    if (!this._decrypted) {
-      throw new Error("Entry has not been decrypted, invoke decrypt method before")
-    }
-    return this._decrypted;
-  }
-
-  async decrypt(): Promise<EntryDataDecrypted<T>> {
-    if (this._decrypted) {
-      return this._decrypted
-    }
-    let der: EntryDataBox<T> = this;
-    let counter = 0;
-    while (der instanceof EntryDataBoxEncrypted) {
-      der = deserialize<EntryDataBox<T>>(Buffer.from(await this._encryption.decrypt(this._data, this._senderPublicKey, this._recieverPublicKey)), EntryDataBox)
-      counter += 1;
-      if (counter >= 10) {
-        throw new Error("Unexpected decryption behaviour, data seems to always be in encrypted state")
-      }
-    }
-    der.init(this._encoding, this._encryption,)
-    this._decrypted = der as EntryDataDecrypted<T>
-    return this._decrypted;
-  }
-
-
-  clone(): EntryDataBoxEncrypted<T> {
-
-    // TODO the only reasons we do this (below) is because the clone method has the signed argument, perhaps find a better solution where the clone does not need to have the signed argument
-    const cloned = new EntryDataBoxEncrypted<T>({
-      data: new Uint8Array(this._data),
-      recieverPublicKey: new X25519PublicKey(this._recieverPublicKey.getBuffer()),
-      senderPublicKey: new X25519PublicKey(this._senderPublicKey.getBuffer())
-    }).init(this._encoding, this._encryption)
-
-    return cloned
-  }
-
-  equals(other: EntryDataBox<T>): boolean {
-    if (other instanceof EntryDataBoxEncrypted) {
-      return arraysEqual(this._data, other._data) && Buffer.compare(this._senderPublicKey.getBuffer(), other._senderPublicKey.getBuffer()) === 0 && Buffer.compare(this._recieverPublicKey.getBuffer(), other._recieverPublicKey.getBuffer()) === 0
-    }
-    else {
-      return false;
-    }
-  }
-} */
-
-
 @variant(0)
 export class Entry<T> {
 
@@ -411,7 +239,7 @@ export class Entry<T> {
 
     const id = options.logId; // For determining a unique chain
     const identitySerializable = options.identity.toSerializable();
-    const clock = options.clock || new Clock(options.identity.publicKey);
+    const clock = options.clock || new Clock(new Uint8Array(options.identity.publicKey.getBuffer()));
 
 
     const entry: Entry<T> = new Entry<T>({
@@ -476,11 +304,11 @@ export class Entry<T> {
   static async verify<T>(identityProvider: Identities, entry: Entry<T>) {
     if (!identityProvider) throw new Error('Identity-provider is required, cannot verify entry')
     if (!Entry.isEntry(entry)) throw new Error('Invalid Log entry')
-    const key = await (await entry.metadata.identity).publicKey;
+    const key = (await entry.metadata.identity).publicKey;
     if (!key) throw new Error("Entry doesn't have a key")
     const signature = await entry.metadata.signature;
     if (!signature) throw new Error("Entry doesn't have a signature")
-    const verified = identityProvider.verify(signature, new Ed25519PublicKey(Buffer.from(key)), await entry.createDataToSign())
+    const verified = identityProvider.verify(signature, key, await entry.createDataToSign())
     return verified;
   }
 

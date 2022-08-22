@@ -3,7 +3,7 @@ import { EthIdentityProvider, EthIdentityProviderOptions } from "./ethereum-iden
 import { Identity, IdentitySerializable, Signatures } from "./identity"
 import { IdentityProvider } from "./identity-provider-interface"
 import { OrbitDBIdentityProvider } from "./orbit-db-identity-provider"
-import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import LRU from 'lru'
 import path from 'path'
 import { Ed25519PublicKey } from 'sodium-plus';
@@ -44,11 +44,11 @@ export class Identities {
   get signingKeystore() { return this._signingKeystore }
 
   async sign(data: Uint8Array, identity: Identity | IdentitySerializable) {
-    const signingKey = await this.keystore.getKeyByPath(Buffer.from(identity.id).toString('base64'))
+    const signingKey = await this.keystore.getKeyByPath<SignKeyWithMeta>(Buffer.from(identity.id).toString('base64'))
     if (!signingKey) {
       throw new Error('Private signing key not found from Keystore')
     }
-    const sig = await this.keystore.sign(data, signingKey.key)
+    const sig = await this.keystore.sign(data, signingKey)
     return sig
   }
 
@@ -69,10 +69,9 @@ export class Identities {
 
     // Sign id (and generate signer key of this id)
     const { publicKey, idSignature } = await this.signId(id)
-    const publicKeyBytes = new Uint8Array(publicKey.getBuffer());
-    const pubKeyIdSignature = await identityProvider.sign(joinUint8Arrays([publicKeyBytes, idSignature]), options)
+    const pubKeyIdSignature = await identityProvider.sign(Buffer.concat([publicKey.getBuffer(), idSignature]), options)
     const identity = new Identity({
-      id, publicKey: publicKeyBytes, signatures: new Signatures({
+      id, publicKey: publicKey, signatures: new Signatures({
         id: idSignature, publicKey: pubKeyIdSignature
       }), type, provider: this
     })
@@ -81,11 +80,10 @@ export class Identities {
 
   async signId(id: Uint8Array) {
     const keystore = this.keystore
-    const idString = Buffer.from(id).toString('base64');
-    const existingKey = await keystore.getKeyByPath(idString);
-    const key = existingKey || await keystore.createKey(idString)
-    const publicKey = await Keystore.getPublicSign(key.key)
-    const idSignature = await keystore.sign(id, key.key)
+    const existingKey = await keystore.getKeyByPath(id, SignKeyWithMeta);
+    const key = existingKey || await keystore.createKey(id, SignKeyWithMeta)
+    const publicKey = key.publicKey
+    const idSignature = await keystore.sign(id, key)
     return { publicKey, idSignature }
   }
 
@@ -102,7 +100,7 @@ export class Identities {
 
     const verifyIdSig = await this.keystore.verify(
       identity.signatures.id,
-      new Ed25519PublicKey(Buffer.from(identity.publicKey)),
+      identity.publicKey,
       identity.id
     )
 
@@ -125,7 +123,7 @@ export class Identities {
 
     const verifyIdSig = await Keystore.verify(
       identity.signatures.id,
-      new Ed25519PublicKey(Buffer.from(identity.publicKey)),
+      identity.publicKey,
       identity.id
     )
 

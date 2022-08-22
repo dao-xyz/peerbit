@@ -1,6 +1,6 @@
 import { BinaryReader, BinaryWriter, Constructor, deserialize, field, serialize, variant } from '@dao-xyz/borsh';
 import { U8IntArraySerializer } from '@dao-xyz/io-utils';
-import { X25519PublicKey, Ed25519PublicKey, CryptographyKey } from 'sodium-plus';
+import { X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519SecretKey, CryptographyKey } from 'sodium-plus';
 import { arraysEqual } from '@dao-xyz/io-utils'
 
 export interface PublicKeyEncryption {
@@ -13,8 +13,30 @@ export interface Encryption {
     recieverIdentity: X25519PublicKey,
     options: PublicKeyEncryption
 }
+export type GetBuffer = {
+    getBuffer(): Buffer
+}
+export const bufferSerializer = (clazz: Constructor<GetBuffer>) => {
+    return {
+        serialize: (obj: GetBuffer, writer: BinaryWriter) => {
+            const buffer = obj.getBuffer();
+            writer.writeU32(buffer.length);
+            for (let i = 0; i < buffer.length; i++) {
+                writer.writeU8(buffer[i])
+            }
+        },
+        deserialize: (reader: BinaryReader) => {
+            const len = reader.readU32();
+            const arr = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                arr[i] = reader.readU8();
+            }
+            return new clazz(Buffer.from(arr));
+        }
+    }
+}
 
-export const Ed25519PublicKeySerializer = {
+/* export const Ed25519PublicKeySerializer = {
     serialize: (obj: Ed25519PublicKey, writer: BinaryWriter) => {
         const buffer = obj.getBuffer();
         writer.writeU32(buffer.length);
@@ -50,6 +72,24 @@ export const X25519PublicKeySerializer = {
     }
 }
 
+export const X25519SecretKeySerializer = {
+    serialize: (obj: X25519SecretKey, writer: BinaryWriter) => {
+        const buffer = obj.getBuffer();
+        writer.writeU32(buffer.length);
+        for (let i = 0; i < buffer.length; i++) {
+            writer.writeU8(buffer[i])
+        }
+    },
+    deserialize: (reader: BinaryReader) => {
+        const len = reader.readU32();
+        const arr = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+            arr[i] = reader.readU8();
+        }
+        return new X25519PublicKey(Buffer.from(arr));
+    }
+}
+
 export const CryptographyKeySerializer = {
     serialize: (obj: CryptographyKey, writer) => {
         const buffer = obj.getBuffer();
@@ -66,7 +106,7 @@ export const CryptographyKeySerializer = {
         }
         return new CryptographyKey(Buffer.from(arr));
     }
-}
+} */
 
 
 @variant(0)
@@ -144,10 +184,10 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
     @field(U8IntArraySerializer)
     _encrypted: Uint8Array;
 
-    @field(X25519PublicKeySerializer)
+    @field(bufferSerializer(X25519PublicKey))
     _senderPublicKey: X25519PublicKey
 
-    @field(X25519PublicKeySerializer)
+    @field(bufferSerializer(X25519PublicKey))
     _recieverPublicKey: X25519PublicKey
 
 
@@ -256,7 +296,7 @@ export class SignedMessage<T> extends MaybeSigned<T> {
     @field(U8IntArraySerializer)
     signature: Uint8Array
 
-    @field(Ed25519PublicKeySerializer)
+    @field(bufferSerializer(Ed25519PublicKey))
     key: Ed25519PublicKey
 
     constructor(props?: {

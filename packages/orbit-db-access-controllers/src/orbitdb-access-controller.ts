@@ -30,10 +30,10 @@ export class OrbitDBAccessController<T> extends AccessController<T> {
   }
 
   // Return true if entry is allowed to be added to the database
-  async canAppend<T>(payload: Payload<T>, identity: IdentitySerializable, identityProvider) {
+  async canAppend<T>(payload: Payload<T>, identityResolver: () => Promise<IdentitySerializable>, identityProvider) {
 
     await payload.decrypt()
-
+    const identity = await identityProvider();
     // Write keys and admins keys are allowed
     const access = new Set([...this.get('write'), ...this.get('admin')])
     // If the ACL contains the writer's public key or it contains '*'

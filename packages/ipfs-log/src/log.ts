@@ -156,7 +156,7 @@ export class Log<T> extends GSet {
     // Take the given key as the clock id is it's a Key instance,
     // otherwise if key was given, take whatever it is,
     // and if it was null, take the given id as the clock id
-    this._clock = new Clock(this._identity.publicKey, maxTime)
+    this._clock = new Clock(new Uint8Array(this._identity.publicKey.getBuffer()), maxTime)
 
     this.joinConcurrency = concurrency || 16
 
@@ -240,7 +240,7 @@ export class Log<T> extends GSet {
     this._identity = identity
     // Find the latest clock from the heads
     const time = Math.max(this.clock.time, this.heads.reduce(maxClockTimeReducer, 0))
-    this._clock = new Clock(this._identity.publicKey, time)
+    this._clock = new Clock(new Uint8Array(this._identity.publicKey.getBuffer()), time)
   }
 
   /**
@@ -372,7 +372,7 @@ export class Log<T> extends GSet {
         refs,
         pin: options.pin,
         assertAllowed: async (entryData, identity) => {
-          const canAppend = await this._access.canAppend(entryData.init(this._encoding, this._encryption), identity, this._identity.provider);
+          const canAppend = await this._access.canAppend(entryData.init(this._encoding, this._encryption), () => Promise.resolve(identity), this._identity.provider);
           if (!canAppend) {
             throw new AccessError(`Could not append Entry<T>, key "${this._identity.id}" is not allowed to write to the log`)
           }
@@ -483,7 +483,7 @@ export class Log<T> extends GSet {
     // Verify if entries are allowed to be added to the log and throws if
     // there's an invalid entry
     const permitted = async (entry: Entry<T>) => {
-      const canAppend = await this._access.canAppend(entry.payload.init(this._encoding, this._encryption), await entry.metadata.identity, identityProvider)
+      const canAppend = await this._access.canAppend(entry.payload.init(this._encoding, this._encryption), () => entry.metadata.identity, identityProvider)
       if (!canAppend) {
         throw new AccessError(`Could not append Entry<T>, key "${(await entry.metadata.identity).id}" is not allowed to write to the log`)
       }

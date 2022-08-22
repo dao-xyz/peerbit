@@ -35,7 +35,6 @@ export class Metadata {
     @field({ type: 'String' })
     _id: string // For determining a unique chain
 
-
     @field({ type: IdentitySerializable })
     _identity: IdentitySerializable
 

@@ -2,6 +2,7 @@ const EventEmitter = require('events').EventEmitter
 import { Payload } from '@dao-xyz/ipfs-log-entry';
 import { IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
 
+// TODO extend IPFS-LOG access controller interface for canAppend method
 /**
  * Interface for OrbitDB Access Controllers
  *
@@ -42,7 +43,7 @@ export abstract class AccessController<T> extends EventEmitter {
     be allowed in the database. Return true if the entry is allowed,
     false is not allowed
   */
-  async canAppend(payload: Payload<T>, identity: IdentitySerializable, identityProvider): Promise<boolean> {
+  async canAppend(payload: Payload<T>, identityResolver: () => Promise<IdentitySerializable>, identityProvider): Promise<boolean> {
     throw new Error("Not implemented")
   }
 

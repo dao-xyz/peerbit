@@ -53,6 +53,6 @@ export class SolanaIdentityProvider extends IdentityProvider {
         /* const signedKey = nacl.sign.open(Uint8Array.from(Buffer.from(identity.signatures.publicKey)), bs58.decode(identity.id));
         let verified = nacl.verify(signedKey, Uint8Array.from(Buffer.from(identity.publicKey + identity.signatures.id)));
         return verified */
-        return SolanaIdentityProvider.verify(identity.signatures.publicKey, joinUint8Arrays([identity.publicKey, identity.signatures.id]), identity.id);
+        return SolanaIdentityProvider.verify(identity.signatures.publicKey, Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id]), identity.id);
     }
 }

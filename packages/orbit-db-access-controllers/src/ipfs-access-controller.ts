@@ -21,10 +21,9 @@ export class IPFSAccessController<T> extends AccessController<T> {
     return this._write
   }
 
-  async canAppend<T>(payload: Payload<T>, identity: IdentitySerializable, identityProvider: Identities) {
+  async canAppend<T>(_payload: Payload<T>, identityResolver: () => Promise<IdentitySerializable>, identityProvider: Identities) {
     // Allow if access list contain the writer's publicKey or is '*'
-    await payload.decrypt();
-
+    const identity = await identityResolver();
     const key = identity.id
     if (this.write.includes(Buffer.from(key).toString('base64')) || this.write.includes('*')) {
       // check identity is valid

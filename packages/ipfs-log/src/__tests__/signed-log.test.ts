@@ -3,7 +3,7 @@ const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { AccessController } from '../default-access-controller'
 import { Log } from '../log'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { assertPayload } from './utils/assert'
 import { Metadata } from '@dao-xyz/ipfs-log-entry'
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
@@ -18,7 +18,7 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity, testIdentity2
+let ipfsd, ipfs, testIdentity: Identity, testIdentity2: Identity
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe('Signed Log', function () {
@@ -62,10 +62,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     it('has the correct identity', () => {
       const log = new Log(ipfs, testIdentity, { logId: 'A' })
       assert.notStrictEqual(log.id, null)
-      assert.deepStrictEqual(log._identity.id, new Uint8Array([111, 6, 85, 222, 160, 121, 220, 218, 205, 255, 21, 34, 65, 120, 252, 76, 2, 241, 182, 50, 29, 37, 245, 30, 202, 21, 214, 10, 252, 73, 167, 230]))
-      assert.deepStrictEqual(log._identity.publicKey, new Uint8Array([240, 177, 8, 169, 97, 21, 230, 138, 138, 99, 69, 70, 172, 19, 253, 191, 14, 57, 119, 130, 161, 179, 40, 29, 220, 145, 162, 221, 100, 1, 22, 179]))
-      assert.deepStrictEqual(log._identity.signatures.id, new Uint8Array([94, 213, 221, 3, 129, 109, 111, 5, 154, 104, 176, 108, 180, 52, 238, 236, 10, 230, 234, 134, 144, 254, 20, 195, 247, 167, 95, 192, 115, 179, 155, 99, 190, 83, 56, 134, 146, 126, 234, 5, 19, 7, 126, 98, 146, 161, 241, 49, 39, 203, 178, 137, 109, 252, 67, 60, 49, 250, 171, 198, 124, 166, 181, 9, 111, 6, 85, 222, 160, 121, 220, 218, 205, 255, 21, 34, 65, 120, 252, 76, 2, 241, 182, 50, 29, 37, 245, 30, 202, 21, 214, 10, 252, 73, 167, 230]))
-      assert.deepStrictEqual(log._identity.signatures.publicKey, new Uint8Array([153, 57, 78, 75, 239, 78, 27, 30, 51, 49, 242, 47, 42, 58, 0, 11, 178, 119, 33, 87, 95, 117, 202, 43, 245, 66, 173, 242, 165, 174, 239, 28, 221, 138, 0, 237, 169, 64, 221, 11, 141, 24, 82, 111, 77, 207, 229, 71, 214, 19, 151, 51, 213, 193, 109, 51, 145, 190, 145, 168, 255, 130, 252, 4, 249, 145, 187, 86, 63, 149, 199, 198, 57, 245, 252, 154, 48, 16, 105, 118, 136, 151, 13, 190, 204, 44, 32, 250, 144, 165, 173, 217, 231, 38, 141, 155, 98, 24, 169, 199, 9, 58, 88, 45, 228, 51, 81, 54, 20, 223, 115, 33, 122, 47, 222, 172, 161, 205, 149, 197, 148, 251, 49, 19, 142, 74, 10, 255, 164, 233, 204, 87, 0, 229, 53, 111, 219, 92, 111, 14, 149, 94, 23, 252, 246, 33, 26, 193, 17, 233, 87, 247, 89, 134, 240, 134, 43, 34, 155, 12, 93, 201, 5, 196, 210, 158, 82, 212, 109, 104, 191, 137, 168, 231, 184, 220, 225, 250, 242, 158, 33, 48, 197, 90, 87, 8, 234, 41, 227, 127, 18, 251]))
+      expect(log._identity.toSerializable()).toMatchSnapshot('identity');
     })
 
     it('has the correct public key', () => {
@@ -183,7 +180,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('throws an error upon join if entry doesn\'t have append access', async () => {
       const testACL = {
-        canAppend: (entry, identity, _) => Buffer.compare(identity.id, testIdentity.id) === 0
+        canAppend: async (_entry, identity, _) => Buffer.compare((await identity()).id, testIdentity.id) === 0
       } as AccessController<string>;
       const log1 = new Log<string>(ipfs, testIdentity, { logId: 'A', access: testACL })
       const log2 = new Log<string>(ipfs, testIdentity2, { logId: 'A' })

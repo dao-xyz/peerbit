@@ -49,7 +49,7 @@ export class DIDIdentityProvider extends IdentityProvider {
     if (!this.did) {
       throw new Error('The DID resolver must first be set with setDIDResolver()')
     }
-    const data = joinUint8Arrays([identity.publicKey, identity.signatures.id]);
+    const data = new Uint8Array(Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id]));
     try {
       const payload = u8a.toString(data, 'base64url')
       const [header, signature] = Buffer.from(identity.signatures.publicKey).toString().split('..')

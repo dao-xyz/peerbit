@@ -2,7 +2,7 @@ const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { assertPayload } from './utils/assert'
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
 
@@ -14,7 +14,7 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity
+let ipfsd, ipfs, testIdentity: Identity
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe('Log - Append', function () {
@@ -78,7 +78,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('updated the clocks correctly', async () => {
         log.values.forEach((entry) => {
-          assert.deepStrictEqual(entry.metadata.clockDecrypted.id, testIdentity.publicKey)
+          assert.deepStrictEqual(entry.metadata.clockDecrypted.id, new Uint8Array(testIdentity.publicKey.getBuffer()))
           assert.strictEqual(entry.metadata.clockDecrypted.time, 1)
         })
       })
@@ -114,7 +114,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       it('updated the clocks correctly', async () => {
         log.values.forEach((entry, index) => {
           assert.strictEqual(entry.metadata.clockDecrypted.time, index + 1)
-          assert.deepStrictEqual(entry.metadata.clockDecrypted.id, testIdentity.publicKey)
+          assert.deepStrictEqual(entry.metadata.clockDecrypted.id, new Uint8Array(testIdentity.publicKey.getBuffer()))
         })
       })
 

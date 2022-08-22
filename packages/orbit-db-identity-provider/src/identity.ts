@@ -4,7 +4,8 @@ import { isDefined } from "./is-defined";
 import { variant, field, serialize, vec } from '@dao-xyz/borsh';
 import { createHash } from "crypto";
 import { U8IntArraySerializer, arraysEqual } from "@dao-xyz/io-utils";
-
+import { Ed25519PublicKey } from "sodium-plus";
+import { bufferSerializer } from "@dao-xyz/encryption-utils";
 @variant(0)
 export class Signatures {
 
@@ -44,8 +45,8 @@ export class IdentitySerializable {
   @field(U8IntArraySerializer)
   id: Uint8Array;
 
-  @field(U8IntArraySerializer)
-  publicKey: Uint8Array;
+  @field(bufferSerializer(Ed25519PublicKey))
+  publicKey: Ed25519PublicKey;
 
   @field({ type: Signatures })
   signatures: Signatures;
@@ -56,7 +57,7 @@ export class IdentitySerializable {
   constructor(
     options?: {
       id: Uint8Array,
-      publicKey: Uint8Array,
+      publicKey: Ed25519PublicKey,
       signatures: Signatures,
       type: string
     }
@@ -90,7 +91,7 @@ export class IdentitySerializable {
   }
 
   equals(other: IdentitySerializable): boolean {
-    return arraysEqual(this.id, other.id) && arraysEqual(this.publicKey, other.publicKey) && this.type === other.type && this.signatures.equals(other.signatures)
+    return arraysEqual(this.id, other.id) && Buffer.compare(this.publicKey.getBuffer(), other.publicKey.getBuffer()) === 0 && this.type === other.type && this.signatures.equals(other.signatures)
   }
 
   toString() {
@@ -103,13 +104,13 @@ export class IdentitySerializable {
 export class Identity {
 
   _id: Uint8Array;
-  _publicKey: Uint8Array;
+  _publicKey: Ed25519PublicKey;
   _signatures: Signatures;
   _type: string;
 
 
   _provider: Identities;
-  constructor(options?: { id: Uint8Array, publicKey: Uint8Array, signatures: Signatures, type: string, provider: Identities }) {
+  constructor(options?: { id: Uint8Array, publicKey: Ed25519PublicKey, signatures: Signatures, type: string, provider: Identities }) {
     if (options) {
       if (!isDefined(options.id)) {
         throw new Error('Identity id is required')
@@ -147,7 +148,7 @@ export class Identity {
     return this._id
   }
 
-  get publicKey(): Uint8Array {
+  get publicKey(): Ed25519PublicKey {
     return this._publicKey
   }
 
@@ -182,7 +183,7 @@ export class Identity {
   }
 
   equals(other: IdentitySerializable): boolean {
-    return arraysEqual(this.id, other.id) && arraysEqual(this.publicKey, other.publicKey) && this.type === other.type && this.signatures.equals(other.signatures)
+    return arraysEqual(this.id, other.id) && Buffer.compare(this.publicKey.getBuffer(), other.publicKey.getBuffer()) === 0 && this.type === other.type && this.signatures.equals(other.signatures)
   }
 
   toString() {

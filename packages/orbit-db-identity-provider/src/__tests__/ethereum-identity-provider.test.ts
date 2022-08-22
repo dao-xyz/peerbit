@@ -7,7 +7,7 @@ import { Wallet } from '@ethersproject/wallet'
 const assert = require('assert')
 const path = require('path')
 const rmrf = require('rimraf')
-import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { joinUint8Arrays } from "@dao-xyz/io-utils";
 const keypath = path.resolve(__dirname, 'keys')
 
@@ -46,23 +46,23 @@ describe('Ethereum Identity Provider', function () {
     })
 
     it('has the correct public key', async () => {
-      const signingKey = await keystore.getKeyByPath(Buffer.from(wallet.address).toString('base64'))
+      const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(Buffer.from(wallet.address).toString('base64'))
       assert.notStrictEqual(signingKey, undefined)
-      assert.deepStrictEqual(identity.publicKey, new Uint8Array((await Keystore.getPublicSign(signingKey.key)).getBuffer()))
+      assert.deepStrictEqual(identity.publicKey, signingKey.publicKey)
     })
 
     it('has a signature for the id', async () => {
-      const signingKey = (await keystore.getKeyByPath(Buffer.from(wallet.address).toString('base64'))).key
+      const signingKey = (await keystore.getKeyByPath<SignKeyWithMeta>(Buffer.from(wallet.address).toString('base64')));
       const idSignature = await keystore.sign(wallet.address, signingKey)
-      const verifies = await Keystore.verify(idSignature, await Keystore.getPublicSign(signingKey), new Uint8Array(Buffer.from(wallet.address)))
+      const verifies = await Keystore.verify(idSignature, signingKey.publicKey, new Uint8Array(Buffer.from(wallet.address)))
       assert.strictEqual(verifies, true)
       assert.deepStrictEqual(identity.signatures.id, idSignature)
     })
 
     it('has a signature for the publicKey', async () => {
-      const signingKey = await keystore.getKeyByPath(Buffer.from(wallet.address).toString('base64'))
-      const idSignature = await keystore.sign(wallet.address, signingKey.key)
-      const publicKeyAndIdSignature = await wallet.signMessage(joinUint8Arrays([identity.publicKey, idSignature]))
+      const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(Buffer.from(wallet.address).toString('base64'))
+      const idSignature = await keystore.sign(wallet.address, signingKey)
+      const publicKeyAndIdSignature = await wallet.signMessage(Buffer.concat([identity.publicKey.getBuffer(), idSignature]))
       assert.deepStrictEqual(identity.signatures.publicKey, new Uint8Array(Buffer.from(publicKeyAndIdSignature)))
     })
   })
@@ -99,8 +99,8 @@ describe('Ethereum Identity Provider', function () {
     })
 
     it('sign data', async () => {
-      const signingKey = await keystore.getKeyByPath(identity.id)
-      const expectedSignature = await keystore.sign(Buffer.from(data), signingKey.key)
+      const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(identity.id)
+      const expectedSignature = await keystore.sign(Buffer.from(data), signingKey)
       const signature = await identity.provider.sign(data, identity)
       assert.deepStrictEqual(signature, expectedSignature)
     })
@@ -132,12 +132,12 @@ describe('Ethereum Identity Provider', function () {
       })
 
       it('verifies that the signature is valid', async () => {
-        const verified = await identity.provider.verify(signature, new Ed25519PublicKey(Buffer.from(identity.publicKey)), data)
+        const verified = await identity.provider.verify(signature, identity.publicKey, data)
         assert.strictEqual(verified, true)
       })
 
       it('doesn\'t verify invalid signature', async () => {
-        const verified = await identity.provider.verify(new Uint8Array(Buffer.from('invalid')), new Ed25519PublicKey(Buffer.from(identity.publicKey)), data)
+        const verified = await identity.provider.verify(new Uint8Array(Buffer.from('invalid')), identity.publicKey, data)
         assert.strictEqual(verified, false)
       })
     })

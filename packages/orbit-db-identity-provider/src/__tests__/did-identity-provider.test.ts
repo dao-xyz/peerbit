@@ -8,7 +8,7 @@ const rmrf = require('rimraf')
 import { Ed25519Provider } from 'key-did-provider-ed25519'
 import { Ed25519PublicKey } from 'sodium-plus'
 const { default: KeyResolver } = require('key-did-resolver')
-import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 const keypath = path.resolve(__dirname, 'keys')
 
 let keystore: Keystore
@@ -47,22 +47,22 @@ describe('DID Identity Provider', function () {
     })
 
     it('has the correct public key', async () => {
-      const signingKey = await keystore.getKeyByPath(didStr)
+      const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(didStr)
       assert.notStrictEqual(signingKey, undefined)
-      assert.deepStrictEqual(identity.publicKey, new Uint8Array((await Keystore.getPublicSign(signingKey.key)).getBuffer()))
+      assert.deepStrictEqual(identity.publicKey, signingKey.publicKey);
     })
 
     it('has a signature for the id', async () => {
-      const signingKey = await keystore.getKeyByPath(didStr)
-      const idSignature = await keystore.sign(didStr, signingKey.key)
-      const verifies = await Keystore.verify(idSignature, new Ed25519PublicKey(Buffer.from(identity.publicKey)), new Uint8Array(Buffer.from(didStr)))
+      const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(didStr)
+      const idSignature = await keystore.sign(didStr, signingKey)
+      const verifies = await Keystore.verify(idSignature, identity.publicKey, new Uint8Array(Buffer.from(didStr)))
       assert.strictEqual(verifies, true)
       assert.deepStrictEqual(identity.signatures.id, idSignature)
     })
 
     it('has a signature for the publicKey', async () => {
-      const signingKey = await keystore.getKeyByPath(didStr)
-      const idSignature = await keystore.sign(didStr, signingKey.key)
+      const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(didStr)
+      const idSignature = await keystore.sign(didStr, signingKey)
       assert.notStrictEqual(idSignature, undefined)
     })
   })
@@ -99,8 +99,8 @@ describe('DID Identity Provider', function () {
     })
 
     it('sign data', async () => {
-      const signingKey = await keystore.getKeyByPath(identity.id)
-      const expectedSignature = await keystore.sign(data, signingKey.key)
+      const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(identity.id)
+      const expectedSignature = await keystore.sign(data, signingKey)
       const signature = await identity.provider.sign(data, identity)
       assert.deepStrictEqual(signature, expectedSignature)
     })
@@ -133,12 +133,12 @@ describe('DID Identity Provider', function () {
       })
 
       it('verifies that the signature is valid', async () => {
-        const verified = await identity.provider.verify(signature, new Ed25519PublicKey(Buffer.from(identity.publicKey)), data)
+        const verified = await identity.provider.verify(signature, identity.publicKey, data)
         assert.strictEqual(verified, true)
       })
 
       it('doesn\'t verify invalid signature', async () => {
-        const verified = await identity.provider.verify(new Uint8Array([1, 1, 1]), new Ed25519PublicKey(Buffer.from(identity.publicKey)), data)
+        const verified = await identity.provider.verify(new Uint8Array([1, 1, 1]), identity.publicKey, data)
         assert.strictEqual(verified, false)
       })
     })

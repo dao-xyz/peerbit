@@ -1,35 +1,33 @@
-import { Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore';
+import { Identity } from '@dao-xyz/orbit-db-identity-provider';
+import { BoxKeyWithMeta, Keystore } from '@dao-xyz/orbit-db-keystore';
 import { StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store';
 import { X25519PublicKey } from 'sodium-plus';
-import { OrbitDB } from './orbit-db';
 
-const replicationTopicAsKeyGroupPublicKeyEncryption = (keystore: Keystore, requestKey: (key: X25519PublicKey, replicationTopic: string) => Promise<KeyWithMeta | undefined>): StorePublicKeyEncryption => {
-    return {
-        encrypt: async (bytes: Uint8Array, reciever: X25519PublicKey, replicationTopic: string) => {
-            const keyGroup = replicationTopic; // Assumption
-            const keys = await keystore.getKeys(keyGroup, 'box')
-            // TODO make smarter key choice
-            const key = keys?.length > 0 ? keys[0] : await keystore.createKey(undefined, 'box', keyGroup)
-            return {
-                data: await keystore.encrypt(bytes, key.key, reciever),
-                senderPublicKey: await Keystore.getPublicBox(key.key)
-            }
-        },
-        decrypt: async (data: Uint8Array, senderPublicKey: X25519PublicKey, recieverPublicKey: X25519PublicKey, replicationTopic: string) => {
-            let key = await keystore.getKeyById(recieverPublicKey);
-            if (!key) {
-                key = await requestKey(recieverPublicKey, replicationTopic);
-                if (!key) {
-                    return undefined;
+export const replicationTopicAsKeyGroupPublicKeyEncryption = (identity: Identity, keystore: Keystore, requestKey: (key: X25519PublicKey, replicationTopic: string) => Promise<BoxKeyWithMeta[] | undefined>): StorePublicKeyEncryption => {
+    return (replicationTopic: string) => {
+        return {
+            encrypt: async (bytes: Uint8Array, reciever: X25519PublicKey) => {
+                const key = await keystore.getKeyByPath(identity.id, BoxKeyWithMeta) || await keystore.createKey(identity.id, BoxKeyWithMeta)
+                return {
+                    data: await keystore.encrypt(bytes, key, reciever),
+                    senderPublicKey: key.publicKey
                 }
-                keystore.saveKey(key.key, (await Keystore.getPublicBox(key.key)).getBuffer(), 'box', key.group, key.timestamp)
+            },
+            decrypt: async (data: Uint8Array, senderPublicKey: X25519PublicKey, recieverPublicKey: X25519PublicKey) => {
+                let key = await keystore.getKeyById<BoxKeyWithMeta>(recieverPublicKey);
+                if (!key) {
+                    const newKeys = await requestKey(recieverPublicKey, replicationTopic);
+                    if (!newKeys || newKeys.length === 0) {
+                        return undefined;
+                    }
+                    key = newKeys[0];
 
+                }
+                if (key instanceof BoxKeyWithMeta && !key.secretKey) {
+                    throw new Error("Can not open")
+                }
+                return keystore.decrypt(data, key, senderPublicKey)
             }
-            return keystore.decrypt(data, key.key, senderPublicKey)
         }
     }
-}
-
-export const replicationTopicEncryption = (orbitdb: OrbitDB): StorePublicKeyEncryption => {
-    return replicationTopicAsKeyGroupPublicKeyEncryption(orbitdb.keystore, (key, replicationTopic) => orbitdb.requestAndWaitForKeys(key, replicationTopic))
 }

@@ -21,11 +21,11 @@ export class LegacyIPFSAccessController<T> extends AccessController<T> {
     return this._write
   }
 
-  async canAppend<T>(payload: Payload<T>, identity: IdentitySerializable, identityProvider) {
+  async canAppend<T>(payload: Payload<T>, identityResolver: () => Promise<IdentitySerializable>, identityProvider) {
 
     await payload.decrypt()
 
-    const publicKey = identity.publicKey
+    const publicKey = (await identityResolver()).publicKey
     if (this.write.includes(publicKey) ||
       this.write.includes('*')) {
       return true

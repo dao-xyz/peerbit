@@ -2,7 +2,7 @@
 import assert from 'assert'
 import { Store, DefaultOptions, HeadsCache, IStoreOptions, StorePublicKeyEncryption } from '../store'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
-import { Keystore, KeyWithMeta } from "@dao-xyz/orbit-db-keystore"
+import { BoxKeyWithMeta, Keystore, KeyWithMeta } from "@dao-xyz/orbit-db-keystore"
 import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { Index } from '../store-index'
 import { createStore } from './storage'
@@ -18,7 +18,7 @@ const {
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`addOperation ${IPFS}`, function () {
-    let ipfsd, ipfs, testIdentity: Identity, keystore: Keystore, identityStore, store: Store<any, any, any, any>, cacheStore, senderKey: KeyWithMeta, recieverKey: KeyWithMeta, encryption: StorePublicKeyEncryption
+    let ipfsd, ipfs, testIdentity: Identity, keystore: Keystore, identityStore, store: Store<any, any, any, any>, cacheStore, senderKey: BoxKeyWithMeta, recieverKey: BoxKeyWithMeta, encryption: StorePublicKeyEncryption
 
     jest.setTimeout(config.timeout);
 
@@ -38,14 +38,16 @@ Object.keys(testAPIs).forEach((IPFS) => {
       ipfs = ipfsd.api
 
       const address = 'test-address'
-      senderKey = await keystore.createKey('sender', 'box');
-      recieverKey = await keystore.createKey('sender', 'box');
-      encryption = {
-        decrypt: (data, sender, _reciever, _replicationTopic) => keystore.decrypt(data, recieverKey.key, sender),
-        encrypt: async (data, reciever, _replicationTopic) => {
-          return {
-            data: await keystore.encrypt(data, senderKey.key, reciever),
-            senderPublicKey: await Keystore.getPublicBox(senderKey.key)
+      senderKey = await keystore.createKey('sender', BoxKeyWithMeta, undefined, { overwrite: true });
+      recieverKey = await keystore.createKey('reciever', BoxKeyWithMeta, undefined, { overwrite: true });
+      encryption = (_) => {
+        return {
+          decrypt: (data, sender, _reciever) => keystore.decrypt(data, recieverKey, sender),
+          encrypt: async (data, reciever) => {
+            return {
+              data: await keystore.encrypt(data, senderKey, reciever),
+              senderPublicKey: senderKey.publicKey
+            }
           }
         }
       };
@@ -96,9 +98,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         })
       })
 
-      Keystore.getPublicBox(recieverKey.key).then((reciever) => {
-        store._addOperation(data, { reciever })
-      })
+      store._addOperation(data, { reciever: recieverKey.publicKey })
 
     })
 

@@ -3,7 +3,7 @@ import assert from 'assert';
 import rmrf from 'rimraf'
 import fs from 'fs-extra'
 import { Entry, Payload } from '../entry';
-import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { BoxKeyWithMeta, Keystore } from '@dao-xyz/orbit-db-keystore'
 import { EncryptedThing } from '@dao-xyz/encryption-utils';
 import { Metadata, MetadataSecure } from '../metadata';
 import { LamportClock } from '../lamport-clock';
@@ -49,11 +49,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     describe('create', () => {
       it('creates a an empty entry', async () => {
-        const expectedHash = 'zdpuAtqSKKm8YQkXVDsZcmhTkKGLbmToSsoqS4b4pqto2E6nQ'
+        const expectedHash = 'zdpuAv4mGT1q4LmSdsAvtpCgbzyZSuzNH4PiRKd42SHGevyYr'
         const entry = await Entry.create({ ipfs, identity: testIdentity, logId: 'A', data: 'hello' })
         assert.strictEqual(entry.hash, expectedHash)
         assert.strictEqual(await entry.metadata.id, 'A')
-        assert.deepStrictEqual((await entry.metadata.clock).id, testIdentity.publicKey)
+        assert.deepStrictEqual((await entry.metadata.clock).id, new Uint8Array(testIdentity.publicKey.getBuffer()))
         assert.strictEqual((await entry.metadata.clock).time, 0)
         assert.strictEqual(entry.payload.value, 'hello')
         assert.strictEqual(entry.next.length, 0)
@@ -61,13 +61,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       it('creates a entry with payload', async () => {
-        const expectedHash = 'zdpuAyaaqg2ZPFcZAJaG32DBXg3FWvfN67UAqWC9J6DcsrMd8'
+        const expectedHash = 'zdpuB1X9ET12pmBig6xTzUUSF6F2J5E2pvghe28ztXrrt8hZU'
         const payload = 'hello world'
         const entry = await Entry.create({ ipfs, identity: testIdentity, logId: 'A', data: payload, next: [] })
         assert.strictEqual(entry.hash, expectedHash)
         assert.strictEqual(entry.payload.value, payload)
         assert.strictEqual(await entry.metadata.id, 'A')
-        assert.deepStrictEqual((await entry.metadata.clock).id, testIdentity.publicKey)
+        assert.deepStrictEqual((await entry.metadata.clock).id, new Uint8Array(testIdentity.publicKey.getBuffer()))
         assert.strictEqual((await entry.metadata.clock).time, 0)
         assert.strictEqual(entry.next.length, 0)
         assert.strictEqual(entry.refs.length, 0)
@@ -76,21 +76,21 @@ Object.keys(testAPIs).forEach((IPFS) => {
       it('creates a encrypted entry with payload', async () => {
 
         const payload = 'hello world'
-        const senderKey = await keystore.createKey('sender', 'box');
-        const receiverKey = await keystore.createKey('reciever', 'box');
+        const senderKey = await keystore.createKey('sender', BoxKeyWithMeta);
+        const receiverKey = await keystore.createKey('reciever', BoxKeyWithMeta);
         const entry = await Entry.create({
           ipfs, identity: testIdentity, logId: 'A', data: payload, next: [], encryption: {
-            recieverPayload: await Keystore.getPublicBox(receiverKey.key),
-            recieverIdentity: await Keystore.getPublicBox(receiverKey.key),
+            recieverPayload: receiverKey.publicKey,
+            recieverIdentity: receiverKey.publicKey,
             options: {
               decrypt: async (data, sender, reciever) => {
-                assert.deepStrictEqual(reciever.getBuffer(), await Keystore.getPublicBox(receiverKey.key))
-                return keystore.decrypt(data, receiverKey.key, sender)
+                assert.deepStrictEqual(reciever.getBuffer(), receiverKey.publicKey.getBuffer())
+                return keystore.decrypt(data, receiverKey, sender)
               },
               encrypt: async (data, reciever) => {
                 return {
-                  data: await keystore.encrypt(data, senderKey.key, reciever),
-                  senderPublicKey: await Keystore.getPublicBox(senderKey.key)
+                  data: await keystore.encrypt(data, senderKey, reciever),
+                  senderPublicKey: senderKey.publicKey
                 }
               }
             }
@@ -102,14 +102,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         // We can not have a hash check because nonce of encryption will always change
         assert.strictEqual(await entry.metadata.id, 'A')
-        assert.deepStrictEqual((await entry.metadata.clock).id, testIdentity.publicKey)
+        assert.deepStrictEqual(Buffer.from((await entry.metadata.clock).id), testIdentity.publicKey.getBuffer())
         assert.strictEqual((await entry.metadata.clock).time, 0)
         assert.strictEqual(entry.next.length, 0)
         assert.strictEqual(entry.refs.length, 0)
       })
 
       it('creates a entry with payload and next', async () => {
-        const expectedHash = 'zdpuApDRXj9NWVCNVrLEo7SSY1c7CvoarEwWEUeXSawq5fQoN'
+        const expectedHash = 'zdpuB2nMfnUNbXgcu7bbSZf8k4XGxMWHSEEqWweuMJdrsmrfr'
         const payload1 = 'hello world'
         const payload2 = 'hello again'
         const entry1 = await Entry.create({ ipfs, identity: testIdentity, logId: 'A', data: payload1, next: [] })
@@ -126,7 +126,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(entry2.payload.value, payload2)
         assert.strictEqual(entry2.next.length, 1)
         assert.strictEqual(entry2.hash, expectedHash)
-        assert.deepStrictEqual((await entry2.metadata.clock).id, testIdentity.publicKey)
+        assert.deepStrictEqual((await entry2.metadata.clock).id, new Uint8Array(testIdentity.publicKey.getBuffer()))
         assert.strictEqual((await entry2.metadata.clock).time, 1)
       })
 
@@ -191,7 +191,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     describe('toMultihash', () => {
       it('returns an ipfs multihash', async () => {
-        const expectedMultihash = 'zdpuAtqSKKm8YQkXVDsZcmhTkKGLbmToSsoqS4b4pqto2E6nQ'
+        const expectedMultihash = 'zdpuAv4mGT1q4LmSdsAvtpCgbzyZSuzNH4PiRKd42SHGevyYr'
         const entry = await Entry.create({ ipfs, identity: testIdentity, logId: 'A', data: 'hello', next: [] })
         const multihash = await Entry.toMultihash(ipfs, entry)
         assert.strictEqual(multihash, expectedMultihash)
@@ -224,7 +224,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     describe('fromMultihash', () => {
       it('creates a entry from ipfs hash', async () => {
-        const expectedHash = 'zdpuAksugktdiQhk21UjvUQc2mXpmxEMZNcYVvrwEaffKr9fV'
+        const expectedHash = 'zdpuAyB6EJhnY4Cw2Bjn1RJ3oHsacrrfqqXjAMsm3Vxspe1ny'
         const payload1 = 'hello world'
         const payload2 = 'hello again'
         const entry1 = await Entry.create({ ipfs, identity: testIdentity, logId: 'A', data: payload1, next: [] })

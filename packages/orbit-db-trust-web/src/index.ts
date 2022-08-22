@@ -251,8 +251,9 @@ export class TrustWebAccessController extends AccessController<any> {
 
     }
 
-    async canAppend(_payload: Payload<any>, identity: IdentitySerializable, identityProvider: Identities): Promise<boolean> {
+    async canAppend(_payload: Payload<any>, identityResolver: () => Promise<IdentitySerializable>, identityProvider: Identities): Promise<boolean> {
 
+        const identity = await identityResolver();
         if (!identityProvider.verifyIdentity(identity)) {
             return false;
         }

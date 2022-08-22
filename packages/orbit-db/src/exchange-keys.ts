@@ -4,10 +4,11 @@ import { U8IntArraySerializer } from '@dao-xyz/io-utils';
 import { EthIdentityProvider, Identity, OrbitDBIdentityProvider, SolanaIdentityProvider } from '@dao-xyz/orbit-db-identity-provider';
 import { X25519PublicKey, Ed25519PublicKey, CryptographyKey } from 'sodium-plus'
 import Logger from 'logplease'
-import { Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore';
-import { SignedMessage, X25519PublicKeySerializer, CryptographyKeySerializer, MaybeEncrypted, UnsignedMessage, PublicKeyEncryption } from '@dao-xyz/encryption-utils';
+import { BoxKeyWithMeta, Keystore, KeyWithMeta, SignKeyWithMeta, WithType } from '@dao-xyz/orbit-db-keystore';
+import { SignedMessage, MaybeEncrypted, UnsignedMessage, PublicKeyEncryption, bufferSerializer } from '@dao-xyz/encryption-utils';
 import { DecryptedThing, EncryptedThing } from '@dao-xyz/encryption-utils';
-import { TimeoutError, waitForAsync } from '@dao-xyz/time';
+import { TimeoutError, waitForAsync, waitFor } from '@dao-xyz/time';
+import { Constructor } from '@dao-xyz/orbit-db-store';
 
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 
@@ -56,8 +57,105 @@ export class PublicKeyMessage {
     }
 }
 
+@variant(0)
+export class RequestKeyCondition<T extends KeyWithMeta> {
+
+    @field({ type: 'u8' })
+    _type: number;
+
+    constructor(props?: { type: WithType<T> }) {
+        if (props) {
+            if (props.type === SignKeyWithMeta as any) { // TODO fix types
+                this._type = 0;
+            }
+            else if (props.type === BoxKeyWithMeta as any) { // TODO fix types
+                this._type = 1
+            }
+        }
+    }
+
+    get type(): WithType<T> {
+        if (this._type === 0) {
+            return SignKeyWithMeta as any as WithType<T>
+        }
+        else if (this._type === 1) {
+            return BoxKeyWithMeta as any as WithType<T>
+        }
+        else {
+            throw new Error("Unsupported")
+        }
+    }
+
+    get hashcode(): string {
+        throw new Error("Unsupported")
+    }
+
+}
+
+@variant(0)
+export class RequestKeysByReplicationTopic<T extends KeyWithMeta> extends RequestKeyCondition<T> {
+
+    @field({ type: 'String' })
+    replicationTopic: string;
+
+    constructor(props?: {
+        type: WithType<T>,
+        replicationTopic: string
+    }) {
+        super({ type: props?.type });
+        if (props) {
+            this.replicationTopic = props.replicationTopic;
+        }
+    }
+
+    get hashcode() {
+        return this._type + this.replicationTopic
+    }
+
+}
+
+@variant(1)
+export class RequestKeysByKey<T extends KeyWithMeta> extends RequestKeyCondition<T> {
+
+    @field(U8IntArraySerializer)
+    key: Uint8Array;
+
+    constructor(props?: {
+        type: WithType<T>,
+        key: Uint8Array
+    }) {
+        super({ type: props?.type });
+        if (props) {
+            this.key = props.key;
+        }
+    }
+
+    get hashcode() {
+        return this._type + Buffer.from(this.key).toString('base64');
+    }
+
+}
 
 @variant([1, 0])
+export class RequestKeyMessage<T extends KeyWithMeta> extends Message {
+
+    @field(bufferSerializer(X25519PublicKey))
+    encryptionKey: X25519PublicKey
+
+    @field({ type: RequestKeyCondition })
+    condition: RequestKeyCondition<T>
+
+    constructor(props?: { encryptionKey: X25519PublicKey, condition: RequestKeyCondition<T> }) {
+        super();
+        if (props) {
+            this.encryptionKey = props.encryptionKey;
+            this.condition = props.condition;
+        }
+    }
+}
+
+
+@variant([1, 1])
 export class KeyResponseMessage extends Message {
 
     @field({ type: vec(KeyWithMeta) })
@@ -73,61 +171,13 @@ export class KeyResponseMessage extends Message {
     }
 }
 
-@variant([1, 1])
-export class RequestKeyMessage extends Message {
-
-    @field(X25519PublicKeySerializer)
-    encryptionKey: X25519PublicKey
-}
-
-@variant(0)
-export class RequestKeysInReplicationTopicMessage extends RequestKeyMessage {
-
-    @field({ type: 'String' })
-    replicationTopic: string
-
-    constructor(props?: {
-        replicationTopic: string,
-        encryptionKey: X25519PublicKey
-    }) {
-        super();
-        if (props) {
-            this.replicationTopic = props.replicationTopic
-            this.encryptionKey = props.encryptionKey
-
-        }
-    }
-}
-
-@variant(1)
-export class RequestSingleKeyMessage extends RequestKeyMessage {
-
-    @field(X25519PublicKeySerializer)
-    key: X25519PublicKey
-
-    constructor(props?: {
-        key: X25519PublicKey,
-        encryptionKey: X25519PublicKey
-    }) {
-        super();
-        if (props) {
-            this.key = props.key
-            this.encryptionKey = props.encryptionKey
-        }
-    }
-}
-
-
-
-
-export const requestAndWaitForKeys = async (send: (message: Uint8Array) => void | Promise<void>, keystore: Keystore, myIdentity: Identity, request: { group: string } | { key: X25519PublicKey }): Promise<KeyWithMeta[]> => {
-    await requestKeys(send, keystore, myIdentity, request);
-    const group = request["group"];
-    if (group) {
+export const requestAndWaitForKeys = async<T extends KeyWithMeta>(condition: RequestKeyCondition<T>, send: (message: Uint8Array) => void | Promise<void>, keystore: Keystore, myIdentity: Identity): Promise<T[]> => {
+    await requestKeys(condition, send, keystore, myIdentity);
+    if (condition instanceof RequestKeysByReplicationTopic) {
         try {
             // timeout
             return await waitForAsync(async () => {
-                const keys = await keystore.getKeys(group)
+                const keys = await keystore.getKeys<T>(condition.replicationTopic)
                 if (keys.length > 0) {
                     return keys;
                 }
@@ -144,11 +194,9 @@ export const requestAndWaitForKeys = async (send: (message: Uint8Array) => void 
         }
 
     }
-    else {
-        const key: Ed25519PublicKey = request['key'];
-        const keyId = new Uint8Array(key.getBuffer());
+    else if (condition instanceof RequestKeysByKey) {
         try {
-            return [await waitForAsync(() => keystore.getKeyById(keyId), {
+            return [await waitForAsync(() => keystore.getKeyById(condition.key), {
                 timeout: 10000,
                 delayInterval: 1000
             })]
@@ -162,21 +210,24 @@ export const requestAndWaitForKeys = async (send: (message: Uint8Array) => void 
     }
 }
 
-export const requestKeys = async (send: (message: Uint8Array) => void | Promise<void>, keystore: Keystore, myIdentity: Identity, request: { group: string } | { key: X25519PublicKey }) => {
-    const signKey = await keystore.getKeyByPath(myIdentity.id, 'sign'); // should exist
-    let key = await keystore.getKeyByPath(myIdentity.id, 'box');
-    if (!key) {
-        key = await keystore.createKey(myIdentity.id, 'box');
-    }
-    const encryptionKey = await Keystore.getPublicBox((await keystore.getKeyByPath(myIdentity.id, 'box')).key);
-    const requestMessage = request["group"] ? new RequestKeysInReplicationTopicMessage({ replicationTopic: request["group"], encryptionKey }) : new RequestSingleKeyMessage({ key: request["key"], encryptionKey })
 
-    const signedMessage = await new UnsignedMessage<RequestKeysInReplicationTopicMessage>({
-        data: serialize(requestMessage)
+
+export const requestKeys = async <T extends KeyWithMeta>(condition: RequestKeyCondition<T>, send: (message: Uint8Array) => void | Promise<void>, keystore: Keystore, myIdentity: Identity) => {
+    const signKey = await keystore.getKeyByPath(myIdentity.id, SignKeyWithMeta); // should exist
+    let key = await keystore.getKeyByPath(myIdentity.id, BoxKeyWithMeta);
+    if (!key) {
+        key = await keystore.createKey(myIdentity.id, BoxKeyWithMeta);
+    }
+    const encryptionKey = key.publicKey;
+    const signedMessage = await new UnsignedMessage<RequestKeyMessage<T>>({
+        data: serialize(new RequestKeyMessage<T>({
+            condition,
+            encryptionKey
+        }))
     }).sign(async (bytes) => {
         return {
-            signature: await keystore.sign(bytes, signKey.key),
-            publicKey: await Keystore.getPublicSign(signKey.key)
+            signature: await keystore.sign(bytes, signKey),
+            publicKey: await signKey.publicKey
         }
     })
     const unencryptedMessage = new DecryptedThing(
@@ -187,40 +238,87 @@ export const requestKeys = async (send: (message: Uint8Array) => void | Promise<
     await send(serialize(unencryptedMessage))
 }
 
-export const exchangeKeys = async (channel: any, request: RequestKeyMessage, requester: Ed25519PublicKey, canAccessKey: KeyAccessCondition, getKeyByPublicKey: (key: X25519PublicKey) => Promise<KeyWithMeta>, getKeysByGroup: (group: string) => Promise<KeyWithMeta[]>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: Ed25519PublicKey }>, encryption: PublicKeyEncryption) => { //  encrypt: (data: Uint8Array, recieverPublicKey: X25519PublicKey) => Promise<{ publicKey: X25519PublicKey, bytes: Uint8Array }>
+/* 
+export const requestAndWaitForPublicKeys = async<T extends KeyWithMeta>(replicationTopic: string, type: WithType<T>, send: (message: Uint8Array) => void | Promise<void>, keystore: Keystore, myIdentity: Identity, resolver: (replicationTopic: string, type: WithType<T>) => Promise<T[] | undefined>): Promise<T[] | undefined> => {
+
+    // send request
+    const signKey = await keystore.getKeyByPath<SignKeyWithMeta>(myIdentity.id, SignKeyWithMeta); // should exist
+    let key = await keystore.getKeyByPath(myIdentity.id, BoxKeyWithMeta);
+    if (!key) {
+        key = await keystore.createKey(myIdentity.id, BoxKeyWithMeta);
+    }
+
+    const encryptionKey = key.publicKey;
+    const requestMessage = new RequestKeysInReplicationTopicMessage({ replicationTopic, encryptionKey })
+    const signedMessage = await new UnsignedMessage<RequestKeysInReplicationTopicMessage>({
+        data: serialize(requestMessage)
+    }).sign(async (bytes) => {
+        return {
+            signature: await keystore.sign(bytes, signKey),
+            publicKey: signKey.publicKey
+        }
+    })
+    const unencryptedMessage = new DecryptedThing(
+        {
+            data: serialize(signedMessage)
+        }
+    );
+    await send(serialize(unencryptedMessage))
+
+
+    // wait for response 
+    try {
+        // timeout
+        return await waitForAsync(async () => {
+            const keys = (await resolver(replicationTopic, type))?.filter(key => key instanceof type) as T[];
+            if (keys?.length > 0) {
+                return keys;
+            }
+            return undefined;
+        }, {
+            timeout: 10000,
+            delayInterval: 1000
+        });
+    } catch (error) {
+        if (error instanceof TimeoutError) {
+            return;
+        }
+        throw error;
+    }
+
+
+
+} */
+
+export const exchangeKeys = async <T extends KeyWithMeta>(channel: any, request: RequestKeyMessage<T>, requester: Ed25519PublicKey, canAccessKey: KeyAccessCondition, getKeyByPublicKey: (key: Uint8Array) => Promise<T>, getKeysByGroup: (group: string, type: WithType<T>) => Promise<T[]>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: Ed25519PublicKey }>, encryption: PublicKeyEncryption) => { //  encrypt: (data: Uint8Array, recieverPublicKey: X25519PublicKey) => Promise<{ publicKey: X25519PublicKey, bytes: Uint8Array }>
 
     // Validate signature
     let secretKeys: KeyWithMeta[] = []
     let group: string = undefined;
-    if (request instanceof RequestKeysInReplicationTopicMessage) {
-        try {
-            group = await request.replicationTopic
-        } catch (error) {
-            // Invalid signature 
-            logger.info("Invalid signature found from key request")
-            return;
-        }
-
-        secretKeys = await getKeysByGroup(group);
+    if (request.condition instanceof RequestKeysByReplicationTopic) {
+        secretKeys = await getKeysByGroup(request.condition.replicationTopic, request.condition.type);
     }
-    else if (request instanceof RequestSingleKeyMessage) {
-        const key = await getKeyByPublicKey(request.key)
+    else if (request.condition instanceof RequestKeysByKey) {
+        const key = await getKeyByPublicKey(request.condition.key)
         if (key) {
             group = key.group
         }
         secretKeys = key ? [key] : []
     }
+    else {
+        throw new Error("Unsupported")
+    }
 
-    secretKeys = (await Promise.all(secretKeys.map(async (key) => {
-        return (await canAccessKey(requester, key)) ? key : undefined
+    const mappedKeys = (await Promise.all(secretKeys.map(async (key) => {
+        return (await canAccessKey(requester, key)) ? key : key.clone(false)
     }))).filter(x => !!x);
 
-    if (secretKeys.length === 0) {
+    if (mappedKeys.length === 0) {
         return
     }
 
     const secretKeyResponseMessage = serialize(new KeyResponseMessage({
-        keys: secretKeys
+        keys: mappedKeys
     }));
 
     const signatureResult = await sign(secretKeyResponseMessage);

@@ -37,7 +37,7 @@ export class EthIdentityProvider extends IdentityProvider {
 
   static async verifyIdentity(identity: Identity | IdentitySerializable) {
     // Verify that identity was signed by the id
-    return EthIdentityProvider.verify(identity.signatures.publicKey, joinUint8Arrays([identity.publicKey, identity.signatures.id]), identity.id)
+    return EthIdentityProvider.verify(identity.signatures.publicKey, Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id]), identity.id)
   }
 
   async _createWallet(options?: { encryptedJsonOpts?: { progressCallback: any, json: any, password: any }, mnemonicOpts?: { mnemonic: any, path: any, wordlist: any } }) {
