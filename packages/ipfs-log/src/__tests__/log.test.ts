@@ -15,6 +15,7 @@ import { LastWriteWins } from '../log-sorting';
 import { assertPayload } from './utils/assert'
 import { Metadata, MetadataSecure } from '@dao-xyz/ipfs-log-entry';
 import { DecryptedThing } from '@dao-xyz/encryption-utils';
+import { serialize } from '@dao-xyz/borsh';
 const FirstWriteWins = (a, b) => LastWriteWins(a, b) * -1
 
 // Test utils
@@ -222,16 +223,16 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       it('changes identity', async () => {
-        assert.deepStrictEqual(log.values[0].metadata.clockDecrypted.id, testIdentity.publicKey)
-        assert.strictEqual(log.values[0].metadata.clockDecrypted.time, 1)
+        assert.deepStrictEqual(log.values[0].clock.id, testIdentity.publicKey)
+        assert.strictEqual(log.values[0].clock.time, 1)
         log.setIdentity(testIdentity2)
         await log.append('two')
-        assert.deepStrictEqual(log.values[1].metadata.clockDecrypted.id, testIdentity2.publicKey)
-        assert.strictEqual(log.values[1].metadata.clockDecrypted.time, 2)
+        assert.deepStrictEqual(log.values[1].clock.id, testIdentity2.publicKey)
+        assert.strictEqual(log.values[1].clock.time, 2)
         log.setIdentity(testIdentity3)
         await log.append('three')
-        assert.deepStrictEqual(log.values[2].metadata.clockDecrypted.id, testIdentity3.publicKey)
-        assert.strictEqual(log.values[2].metadata.clockDecrypted.time, 3)
+        assert.deepStrictEqual(log.values[2].clock.id, testIdentity3.publicKey)
+        assert.strictEqual(log.values[2].clock.time, 3)
       })
     })
 
@@ -240,6 +241,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       beforeAll(async () => {
         const clock = new Clock(new Uint8Array(testIdentity.publicKey.getBuffer()), 1)
+        const clockDecrypted = new DecryptedThing<Clock>({ data: serialize(clock) });
         const payload = new Payload<string>({
           data: new DecryptedThing({
             data: new Uint8Array(Buffer.from('one'))
@@ -249,15 +251,16 @@ Object.keys(testAPIs).forEach((IPFS) => {
         expectedData = new Entry<string>({
           hash: 'zdpuAozwfaZEdTCimGoLbXrz3hsJdCQZATpVgyVDMJLVrACqw',
           payload,
+          clock: clockDecrypted,
           metadata: undefined,
           next: [],
         });
         expectedData.metadata = new MetadataSecure({
           metadata: new Metadata({
             id,
-            clock,
+
             identity: testIdentity.toSerializable(),
-            signature: await testIdentity.provider.sign(Entry.createDataToSign(id, payload, clock, []), testIdentity)
+            signature: await testIdentity.provider.sign(Entry.createDataToSign(id, payload, clockDecrypted, []), testIdentity)
           })
         });
       })
@@ -416,8 +419,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
           assert.strictEqual(JSON.stringify(res.toJSON()), JSON.stringify(expectedData))
           assert.strictEqual(res.length, 1)
           assertPayload(res.values[0].payload.value, 'one')
-          assert.deepStrictEqual(res.values[0].metadata.clockDecrypted.id, testIdentity.publicKey)
-          assert.strictEqual(res.values[0].metadata.clockDecrypted.time, 1)
+          assert.deepStrictEqual(res.values[0].clock.id, testIdentity.publicKey)
+          assert.strictEqual(res.values[0].clock.time, 1)
         })
 
         it('creates a log from ipfs CID - three entries', async () => {
@@ -425,11 +428,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const res = await Log.fromMultihash<string>(ipfs, testIdentity, hash, { length: -1 })
           assert.strictEqual(res.length, 3)
           assertPayload(res.values[0].payload.value, 'one')
-          assert.strictEqual(res.values[0].metadata.clockDecrypted.time, 1)
+          assert.strictEqual(res.values[0].clock.time, 1)
           assertPayload(res.values[1].payload.value, 'two')
-          assert.strictEqual(res.values[1].metadata.clockDecrypted.time, 2)
+          assert.strictEqual(res.values[1].clock.time, 2)
           assertPayload(res.values[2].payload.value, 'three')
-          assert.strictEqual(res.values[2].metadata.clockDecrypted.time, 3)
+          assert.strictEqual(res.values[2].clock.time, 3)
         })
 
         it('creates a log from ipfs multihash (backwards compat)', async () => {
@@ -444,8 +447,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
           assert.strictEqual(JSON.stringify(res.toJSON()), JSON.stringify(expectedData))
           assert.strictEqual(res.length, 1)
           assertPayload(res.values[0].payload.value, 'one')
-          assert.strictEqual(res.values[0].metadata.clockDecrypted.id, testIdentity.publicKey)
-          assert.strictEqual(res.values[0].metadata.clockDecrypted.time, 1)
+          assert.strictEqual(res.values[0].clock.id, testIdentity.publicKey)
+          assert.strictEqual(res.values[0].clock.time, 1)
         })
 
         it('has the right sequence number after creation and appending', async () => {
@@ -455,7 +458,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           await res.append('four')
           assert.strictEqual(res.length, 4)
           assertPayload(res.values[3].payload.value, 'four')
-          assert.strictEqual(res.values[3].metadata.clockDecrypted.time, 4)
+          assert.strictEqual(res.values[3].clock.time, 4)
         })
 
         it('creates a log from ipfs CID that has three heads', async () => {
@@ -587,9 +590,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
           // Make sure the onProgress callback was called for each entry
           assert.strictEqual(i, amount)
           // Make sure the log entries are correct ones
-          assert.strictEqual(result.values[0].metadata.clockDecrypted.time, 1)
+          assert.strictEqual(result.values[0].clock.time, 1)
           assertPayload(result.values[0].payload.value, '0')
-          assert.strictEqual(result.values[result.length - 1].metadata.clockDecrypted.time, 100)
+          assert.strictEqual(result.values[result.length - 1].clock.time, 100)
           assert.strictEqual(result.values[result.length - 1].payload.value, '99')
         })
       })

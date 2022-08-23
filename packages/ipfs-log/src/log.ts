@@ -22,7 +22,7 @@ const randomId = () => new Date().getTime().toString()
 const getHash = <T>(e: Entry<T>) => e.hash
 const flatMap = (res, acc) => res.concat(acc)
 const getNextPointers = entry => entry.next
-const maxClockTimeReducer = <T>(res: number, acc: Entry<T>): number => Math.max(res, acc.metadata.clockDecrypted.time)
+const maxClockTimeReducer = <T>(res: number, acc: Entry<T>): number => Math.max(res, acc.clock.time)
 const uniqueEntriesReducer = <T>(res: { [key: string]: Entry<T> }, acc: Entry<T>) => {
   res[acc.hash] = acc
   return res
@@ -323,7 +323,7 @@ export class Log<T> extends GSet {
    * @param {Entry} entry Entry to add
    * @return {Log} New Log containing the appended value
    */
-  async append(data: T, options: { pointerCount: number, pin?: boolean, recieverPayload?: X25519PublicKey, recieverIdentity?: X25519PublicKey } = { pointerCount: 1, pin: false }) {
+  async append(data: T, options: { pointerCount: number, pin?: boolean, recieverPayload?: X25519PublicKey, recieverIdentity?: X25519PublicKey, recieverClock?: X25519PublicKey } = { pointerCount: 1, pin: false }) {
 
     // Update the clock (find the latest clock)
     const newTime = Math.max(this.clock.time, this.heads.reduce(maxClockTimeReducer, 0)) + 1
@@ -357,7 +357,7 @@ export class Log<T> extends GSet {
     const refs = Array.from(references).map(getHash).filter(isNext)
     // Create the entry and add it to the internal cache
 
-    if ((options.recieverIdentity || options.recieverPayload) && !this._encryption) {
+    if ((options.recieverIdentity || options.recieverPayload || options.recieverClock) && !this._encryption) {
       throw new Error("Message is intended to be encrypted but no encryption methods are provided for the log")
     }
 
@@ -381,7 +381,8 @@ export class Log<T> extends GSet {
         encryption: (options.recieverIdentity || options.recieverPayload) ? {
           options: this._encryption,
           recieverIdentity: options.recieverIdentity,
-          recieverPayload: options.recieverPayload
+          recieverPayload: options.recieverPayload,
+          recieverClock: options.recieverClock,
         } : undefined
       }
     )
@@ -500,9 +501,9 @@ export class Log<T> extends GSet {
 
     const entriesToJoin = Object.values(newItems)
     await pMap(entriesToJoin, async (e: Entry<T>) => {
-      await permitted(e)
-      await verify(e)
       e.init({ encoding: this._encoding, encryption: this._encryption })
+      await permitted(e)
+      await verify(e)  // Assumes the access controller is verifying signatures
     }, { concurrency: this.joinConcurrency })
 
     // Update the internal next pointers index
@@ -748,7 +749,7 @@ export class Log<T> extends GSet {
     const items = entries.reduce(indexReducer, {})
 
     const exists = (e: Entry<T>) => items[e.hash] === undefined
-    const compareIds = (a: Entry<T>, b: Entry<T>) => Clock.compare(a.metadata.clockDecrypted, b.metadata.clockDecrypted);
+    const compareIds = (a: Entry<T>, b: Entry<T>) => Clock.compare(a.clock, b.clock);
     return entries.filter(exists).sort(compareIds)
   }
 

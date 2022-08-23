@@ -39,12 +39,13 @@ const testHello = async (addToDB: EventStore<string>, readFromDB: EventStore<str
       finished = (all === 1)
     })
 
-    timer = setInterval(() => {
+    timer = setInterval(async () => {
       if (finished) {
         clearInterval(timer)
         const entries: Entry<Operation<string>>[] = readFromDB.iterator({ limit: -1 }).collect()
         try {
           assert.equal(entries.length, 1)
+          await entries[0].payload.decrypt();
           assert.equal(entries[0].payload.value.value, 'hello')
           assert.equal(replicatedEventCount, 1)
         } catch (error) {
@@ -116,11 +117,7 @@ Object.keys(testAPIs).forEach(API => {
       options = {
         // Set write access for both clients
         accessController: {
-          write: [
-            orbitdb1.identity.id,
-            orbitdb2.identity.id,
-            orbitdb3.identity.id,
-          ]
+          write: ['*']
         }
       }
 
@@ -202,7 +199,7 @@ Object.keys(testAPIs).forEach(API => {
       assert.deepStrictEqual(reciever.secretKey, undefined); // because client 1 is not trusted by 3
       assert.deepStrictEqual(db3Key.publicKey.getBuffer(), reciever.publicKey.getBuffer());
       // ... so that append with reciever key, it the reciever will be able to decrypt
-      await testHello(db1, db2, reciever.publicKey, timer)
+      await testHello(db1, db3, reciever.publicKey, timer)
 
     })
 
@@ -224,37 +221,36 @@ Object.keys(testAPIs).forEach(API => {
       assert.deepStrictEqual(db1Key.publicKey.getBuffer(), reciever.publicKey.getBuffer());
     })
 
-    it('can relay with end to end encryption', async () => {
+    it('can relay with end to end encryption with public identities', async () => {
 
       console.log("Waiting for peers to connect")
 
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
       await waitForPeers(ipfs3, [orbitdb1.id], db1.address.toString())
 
+      const relayKey = await orbitdb1.keystore.createKey('relay', BoxKeyWithMeta, db1.replicationTopic);
+
       options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true })
       db2 = await orbitdb2.open(db1.address.toString(), { ...options, encryption: orbitdb2.replicationTopicEncryption() })
 
-
       options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath3, sync: true })
       db3 = await orbitdb3.open(db1.address.toString(), { ...options, encryption: orbitdb3.replicationTopicEncryption() })
-      const db3Key = await orbitdb3.keystore.createKey('unknown', BoxKeyWithMeta, db1.replicationTopic);
 
-      // db2 ask the network how to encrypt messageswith db3 as reciever
-      const reciever = await orbitdb2.getEncryptionKey(db1.replicationTopic);
-      assert(!reciever.secretKey); // because client 2 is not trusted by 3
-      assert.deepStrictEqual(db3Key.publicKey.getBuffer(), reciever.publicKey.getBuffer());
-      await db2.add('hello', { reciever: reciever.publicKey })
+      const db3Key = await orbitdb3.keystore.createKey('unknown', BoxKeyWithMeta, db1.replicationTopic);
+      await orbitdb3.keystore.saveKey(relayKey);
+
+      await db2.add('hello', { recieverPayload: db3Key.publicKey, recieverIdentity: relayKey.publicKey, recieverClock: undefined })
       let finishedRelay = false;
       let finishedEnd = false;
 
       await new Promise((resolve, reject) => {
         let replicatedEventCount = 0
 
-        db2.events.on('replicated', (address, length) => {
+        db1.events.on('replicated', (address, length) => {
           replicatedEventCount++
           // Once db2 has finished replication, make sure it has all elements
           // and process to the asserts below
-          const all = db3.iterator({ limit: -1 }).collect().length
+          const all = db2.iterator({ limit: -1 }).collect().length
           finishedRelay = (all === 1)
         })
 
@@ -266,13 +262,31 @@ Object.keys(testAPIs).forEach(API => {
           finishedEnd = (all === 1)
         })
 
-        timer = setInterval(() => {
+        timer = setInterval(async () => {
           if (finishedEnd && finishedRelay) {
             clearInterval(timer)
-            const entries: Entry<Operation<string>>[] = db3.iterator({ limit: -1 }).collect()
+
+
+            const entriesRelay: Entry<Operation<string>>[] = db1.iterator({ limit: -1 }).collect()
             try {
-              assert.equal(entries.length, 1)
-              assert.equal(entries[0].payload.value.value, 'hello')
+              assert.equal(entriesRelay.length, 1)
+              try {
+                await entriesRelay[0].payload.decrypt(); // should fail, since relay can not see the message
+                assert(false);
+              } catch (error) {
+
+              }
+              assert.equal(replicatedEventCount, 1)
+            } catch (error) {
+              reject(error)
+            }
+
+
+            const entriesReciever: Entry<Operation<string>>[] = db3.iterator({ limit: -1 }).collect()
+            try {
+              assert.equal(entriesReciever.length, 1)
+              await entriesReciever[0].payload.decrypt();
+              assert.equal(entriesReciever[0].payload.value, 'hello')
               assert.equal(replicatedEventCount, 1)
             } catch (error) {
               reject(error)

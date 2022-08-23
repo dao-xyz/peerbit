@@ -119,12 +119,12 @@ class EntryIO {
 
         const addToResults = (entry) => {
           if (Entry.isEntry(entry)) {
-            const ts = entry.metadata.clockDecrypted.time
+            const ts = entry.clock.time
 
             // Update min/max clocks
             maxClock = Math.max(maxClock, ts)
             minClock = result.length > 0
-              ? Math.min(result[result.length - 1].metadata.clockDecrypted.time, minClock)
+              ? Math.min(result[result.length - 1].clock.time, minClock)
               : maxClock
 
             const isLater = (result.length >= length &amp;&amp; ts >= minClock)

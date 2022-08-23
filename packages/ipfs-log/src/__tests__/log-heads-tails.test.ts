@@ -266,9 +266,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(log4.tails.length, 3)
         const log4Id = (await log4.tails[0].metadata.id);
         assert.strictEqual(log4Id, 'XX')
-        assert.deepStrictEqual(log4.tails[0].metadata.clockDecrypted.id, testIdentity3.publicKey)
-        assert.deepStrictEqual(log4.tails[1].metadata.clockDecrypted.id, testIdentity2.publicKey)
-        assert.deepStrictEqual(log4.tails[2].metadata.clockDecrypted.id, testIdentity.publicKey)
+        assert.deepStrictEqual(log4.tails[0].clock.id, testIdentity3.publicKey)
+        assert.deepStrictEqual(log4.tails[1].clock.id, testIdentity2.publicKey)
+        assert.deepStrictEqual(log4.tails[2].clock.id, testIdentity.publicKey)
         assert.deepStrictEqual(log4.clock.id, testIdentity4.publicKey)
       })
     })

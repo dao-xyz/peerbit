@@ -38,28 +38,23 @@ export class Metadata {
     @field({ type: IdentitySerializable })
     _identity: IdentitySerializable
 
-    @field({ type: Clock })
-    _clock: Clock
-
     @field(U8IntArraySerializerOptional)
     _signature: Uint8Array; // Signing some data
 
     constructor(props: {
         id: string
         identity: IdentitySerializable,
-        signature: Uint8Array;
-        clock: Clock;
+        signature: Uint8Array
     }) {
         if (props) {
             this._id = props.id
             this._identity = props.identity;
-            this._signature = props.signature;
-            this._clock = props.clock;
+            this._signature = props.signature
         }
     }
 
     equals(other: Metadata): boolean {
-        return this._id === other._id && this._identity.equals(other._identity) && arraysEqual(this._signature, other._signature) && this._clock.equals(other._clock)
+        return this._id === other._id && this._identity.equals(other._identity) && arraysEqual(this._signature, other._signature)
     }
 }
 
@@ -115,15 +110,6 @@ export class MetadataSecure {
 
     get signature(): Promise<Uint8Array> {
         return this._metadata.decrypt().then(x => x.getValue(Metadata)._signature)
-    }
-
-    get clock(): Promise<LamportClock> {
-        return this._metadata.decrypt().then(x => x.getValue(Metadata)._clock)
-    }
-
-    get clockDecrypted(): LamportClock {
-        return this.decrypted._clock;
-
     }
 
     async encrypt(recieverPublicKey: X25519PublicKey) {

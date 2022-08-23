@@ -23,13 +23,20 @@ export class IPFSAccessController<T> extends AccessController<T> {
 
   async canAppend<T>(_payload: Payload<T>, identityResolver: () => Promise<IdentitySerializable>, identityProvider: Identities) {
     // Allow if access list contain the writer's publicKey or is '*'
-    const identity = await identityResolver();
-    const key = identity.id
-    if (this.write.includes(Buffer.from(key).toString('base64')) || this.write.includes('*')) {
-      // check identity is valid
-      return identityProvider.verifyIdentity(identity)
+    let identity = undefined;
+    try {
+      identity = await identityResolver();
+      if (!identityProvider.verifyIdentity(identity)) {
+        return false;
+      }
+    } catch (error) {
+      // Can not access
     }
-    return false
+
+    if (this.write.includes('*')) {
+      return true; // we can end up with encrypted identities
+    }
+    return this.write.includes(Buffer.from(identity.id).toString('base64'))
   }
 
   async load(address) {

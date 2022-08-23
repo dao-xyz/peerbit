@@ -42,6 +42,9 @@ export class EventStore<T> extends Store<T, T, EventIndex<Operation<T>>, any> {
         onProgressCallback?: (any: any) => void;
         pin?: boolean;
         reciever?: X25519PublicKey;
+        recieverPayload?: X25519PublicKey;
+        recieverIdentity?: X25519PublicKey;
+        recieverClock?: X25519PublicKey;
     }) {
         return this._addOperation({
             op: 'ADD',

@@ -140,12 +140,12 @@ export class EntryIO {
         const addToResults = async (entry: Entry<T>) => {
           if (Entry.isEntry(entry) && !cache[entry.hash] && !shouldExclude(entry.hash)) {
             entry.init({ encryption: options.encryption, encoding: undefined });
-            const ts = (await entry.metadata.clock).time
+            const ts = (await entry.clock).time
 
             // Update min/max clocks
             maxClock = Math.max(maxClock, ts)
             minClock = result.length > 0
-              ? Math.min((await result[result.length - 1].metadata.clock).time, minClock)
+              ? Math.min((await result[result.length - 1].clock).time, minClock)
               : maxClock
 
             const isLater = (result.length >= options.length && ts >= minClock)

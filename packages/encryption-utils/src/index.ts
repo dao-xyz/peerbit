@@ -8,11 +8,7 @@ export interface PublicKeyEncryption {
     decrypt: (data: Uint8Array, senderPublicKey: X25519PublicKey, recieverPublicKey: X25519PublicKey) => Promise<Uint8Array>
 }
 
-export interface Encryption {
-    recieverPayload: X25519PublicKey,
-    recieverIdentity: X25519PublicKey,
-    options: PublicKeyEncryption
-}
+
 export type GetBuffer = {
     getBuffer(): Buffer
 }
@@ -121,11 +117,24 @@ export class MaybeEncrypted<T>  {
 
     }
 
+    /**
+     * Will throw error if not decrypted
+     */
+    get decrypted(): DecryptedThing<T> {
+        throw new Error("Not implented")
+    }
 
     async decrypt(): Promise<DecryptedThing<T>> {
         throw new Error("Not implemented")
     }
     equals(other: MaybeEncrypted<T>): boolean {
+        throw new Error("Not implemented")
+    }
+
+    /**
+     * Clear cached data
+     */
+    clear() {
         throw new Error("Not implemented")
     }
 
@@ -162,6 +171,10 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
         return enc;
     }
 
+    get decrypted(): DecryptedThing<T> {
+        return this;
+    }
+
     async decrypt(): Promise<DecryptedThing<T>> {
         return this;
     }
@@ -173,6 +186,10 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
         else {
             return false;
         }
+    }
+
+    clear() {
+        this._value = undefined;
     }
 }
 
@@ -241,6 +258,11 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
         else {
             return false;
         }
+    }
+
+
+    clear() {
+        this._decrypted = undefined;
     }
 }
 

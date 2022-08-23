@@ -6,7 +6,7 @@ import { BoxKeyWithMeta, createStore, Keystore, KeyWithMeta, SignKeyWithMeta } f
 import rmrf from 'rimraf'
 import { waitFor } from '@dao-xyz/time';
 import { Level } from 'level';
-import { Ed25519PublicKey } from 'sodium-plus';
+import { Ed25519PublicKey, X25519PublicKey, X25519SecretKey } from 'sodium-plus';
 import { deserialize, serialize } from '@dao-xyz/borsh';
 
 const fs = require('fs-extra')
@@ -103,6 +103,90 @@ describe('keystore', () => {
       await keystore.createKey(id, SignKeyWithMeta)
       const hasKey = await keystore.hasKey(id, SignKeyWithMeta)
       assert.strictEqual(hasKey, true)
+    })
+
+    it('throws an error upon not receiving an ID', async () => {
+      try {
+        await keystore.createKey(undefined, undefined)
+      } catch (e) {
+        assert.strictEqual(true, true)
+      }
+    })
+    it('throws an error if key already exist', async () => {
+      const id = 'already'
+      await keystore.createKey(id, SignKeyWithMeta)
+      try {
+        await keystore.createKey(id, SignKeyWithMeta)
+      } catch (e) {
+        assert.strictEqual(true, true)
+      }
+    })
+    it('throws an error accessing a closed store', async () => {
+      try {
+        const id = 'X'
+
+        await store.close()
+        await keystore.createKey(id, SignKeyWithMeta)
+      } catch (e) {
+        assert.strictEqual(true, true)
+      }
+    })
+
+
+
+    afterEach(async () => {
+      // await keystore.close()
+    })
+  })
+
+  describe('saveKey', () => {
+    let keystore: Keystore
+
+    beforeEach(async () => {
+      keystore = new Keystore(store)
+      if (store.status !== 'open') {
+        await store.open()
+      }
+    })
+
+    it('can overwrite if secret key is missing', async () => {
+      const id = 'overwrite key'
+      let keyWithMeta = new BoxKeyWithMeta({
+        secretKey: undefined,
+        publicKey: new X25519PublicKey(Buffer.from(new Array(32).fill(0))),
+        timestamp: +new Date,
+        group: '_'
+      });
+      let savedKey = await keystore.saveKey(keyWithMeta, id)
+      assert(!savedKey.secretKey);
+      keyWithMeta = new BoxKeyWithMeta({
+        secretKey: new X25519SecretKey(Buffer.from(new Array(32).fill(0))),
+        publicKey: new X25519PublicKey(Buffer.from(new Array(32).fill(0))),
+        timestamp: keyWithMeta.timestamp,
+        group: '_'
+      });
+      savedKey = await keystore.saveKey(keyWithMeta, id)
+      assert(!!savedKey.secretKey)
+    })
+
+    it('will return secret key if missing when saving', async () => {
+      const id = 'overwrite key'
+      let keyWithMeta = new BoxKeyWithMeta({
+        secretKey: new X25519SecretKey(Buffer.from(new Array(32).fill(0))),
+        publicKey: new X25519PublicKey(Buffer.from(new Array(32).fill(0))),
+        timestamp: +new Date,
+        group: '_'
+      });
+      let savedKey = await keystore.saveKey(keyWithMeta, id)
+      assert(!!savedKey.secretKey);
+      keyWithMeta = new BoxKeyWithMeta({
+        secretKey: undefined,
+        publicKey: new X25519PublicKey(Buffer.from(new Array(32).fill(0))),
+        timestamp: keyWithMeta.timestamp,
+        group: '_'
+      });
+      savedKey = await keystore.saveKey(keyWithMeta, id)
+      assert(!!savedKey.secretKey)
     })
 
     it('throws an error upon not receiving an ID', async () => {

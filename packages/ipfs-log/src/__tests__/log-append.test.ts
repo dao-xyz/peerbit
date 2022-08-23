@@ -78,8 +78,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('updated the clocks correctly', async () => {
         log.values.forEach((entry) => {
-          assert.deepStrictEqual(entry.metadata.clockDecrypted.id, new Uint8Array(testIdentity.publicKey.getBuffer()))
-          assert.strictEqual(entry.metadata.clockDecrypted.time, 1)
+          assert.deepStrictEqual(entry.clock.id, new Uint8Array(testIdentity.publicKey.getBuffer()))
+          assert.strictEqual(entry.clock.time, 1)
         })
       })
     })
@@ -113,8 +113,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('updated the clocks correctly', async () => {
         log.values.forEach((entry, index) => {
-          assert.strictEqual(entry.metadata.clockDecrypted.time, index + 1)
-          assert.deepStrictEqual(entry.metadata.clockDecrypted.id, new Uint8Array(testIdentity.publicKey.getBuffer()))
+          assert.strictEqual(entry.clock.time, index + 1)
+          assert.deepStrictEqual(entry.clock.id, new Uint8Array(testIdentity.publicKey.getBuffer()))
         })
       })
 

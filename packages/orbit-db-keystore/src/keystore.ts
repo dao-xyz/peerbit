@@ -94,7 +94,7 @@ export class KeyWithMeta {
     throw new Error("Unsupported")
   }
 
-  equals(other: KeyWithMeta) {
+  equals(other: KeyWithMeta, ignoreMissingSecret: boolean = false) {
     return this.timestamp === other.timestamp && this.group === other.group
   }
 
@@ -130,9 +130,9 @@ export class SignKeyWithMeta extends KeyWithMeta {
     return 'sign'
   }
 
-  equals(other: KeyWithMeta) {
+  equals(other: KeyWithMeta, ignoreMissingSecret: boolean = false) {
     if (other instanceof SignKeyWithMeta) {
-      if (!super.equals(other)) {
+      if (!super.equals(other, ignoreMissingSecret)) {
         return false;
       }
       if (Buffer.compare(this.publicKey.getBuffer(), other.publicKey.getBuffer()) !== 0) {
@@ -140,7 +140,7 @@ export class SignKeyWithMeta extends KeyWithMeta {
       }
 
       if (!this.secretKey !== !other.secretKey) {
-        return false;
+        return ignoreMissingSecret;
       }
       if (!this.secretKey && !other.secretKey) {
         return true
@@ -190,9 +190,9 @@ export class BoxKeyWithMeta extends KeyWithMeta {
     return 'box'
   }
 
-  equals(other: KeyWithMeta) {
+  equals(other: KeyWithMeta, ignoreMissingSecret: boolean = false) {
     if (other instanceof BoxKeyWithMeta) {
-      if (!super.equals(other)) {
+      if (!super.equals(other, ignoreMissingSecret)) {
         return false;
       }
       if (Buffer.compare(this.publicKey.getBuffer(), other.publicKey.getBuffer()) !== 0) {
@@ -200,7 +200,7 @@ export class BoxKeyWithMeta extends KeyWithMeta {
       }
 
       if (!this.secretKey !== !other.secretKey) {
-        return false;
+        return ignoreMissingSecret;
       }
       if (!this.secretKey && !other.secretKey) {
         return true
@@ -321,8 +321,15 @@ export class Keystore {
     else {
       throw new Error("Unuspported")
     }
+    const keyWithMeta: T = new type({
+      secretKey: key.secretKey,
+      publicKey: key.publicKey,
+      timestamp: +new Date,
+      group: group || DEFAULT_KEY_GROUP
+    }) as T;
 
-    const keyWithMeta = await this.saveKey<T>(key, id, type, group, undefined, options)
+
+    await this.saveKey<T>(keyWithMeta, id, options)
     return keyWithMeta;
 
   }
@@ -333,41 +340,42 @@ export class Keystore {
     }
   }
 
-  async saveKey<T extends KeyWithMeta>(key: { secretKey: X25519SecretKey, publicKey: X25519PublicKey } | { secretKey: Ed25519SecretKey, publicKey: Ed25519PublicKey }, id?: string | Buffer | Uint8Array, type: WithType<T> = SignKeyWithMeta as any, group = DEFAULT_KEY_GROUP, timestamp = +new Date, options: { overwrite: boolean } = { overwrite: false }): Promise<T> { // TODO fix types 
+  async saveKey<T extends KeyWithMeta>(toSave: T, id?: string | Buffer | Uint8Array, options: { overwrite: boolean } = { overwrite: false }): Promise<T> { // TODO fix types 
+    const key = toSave as any as (BoxKeyWithMeta | SignKeyWithMeta);
     const idKey = id ? getIdKey(id) : await idFromKey(key.publicKey);
-
     await this.waitForOpen();
     if (this._store.status && this._store.status !== 'open') {
       return Promise.resolve(null)
     }
 
-    const keyWithMeta: T = new type({
-      secretKey: key.secretKey,
-      publicKey: key.publicKey,
-      timestamp,
-      group
-    }) as T;
 
 
     // Normalize group names
-    const groupHash = getGroupKey(group);
-    const path = getPath(groupHash, type, idKey);
+    const groupHash = getGroupKey(key.group);
+    const path = getPath(groupHash, key.constructor as any, idKey);
 
 
     if (!options.overwrite) {
-      const existingKey = await this.getKeyById(path);
-      if (existingKey && !existingKey.equals(keyWithMeta)) {
-        throw new Error("Key already exist with this id, and is different")
+      const existingKey = await this.getKeyById<BoxKeyWithMeta | SignKeyWithMeta>(path);
+      if (existingKey && !existingKey.equals(key)) {
+
+        if (!existingKey.equals(key, true)) {
+          throw new Error("Key already exist with this id, and is different")
+        }
+        if (!key.secretKey) {
+          key.secretKey = existingKey.secretKey; // Assign key
+        }
+        return key as any as T; // Already save, TODO fix types
       }
     }
 
-    const ser = serialize(keyWithMeta);
+    const ser = serialize(key);
     const publicKeyString = key.publicKey.toString('base64');
     await this.groupStore.put(path, Buffer.from(ser), { valueEncoding: 'view' }) // TODO fix types, are just wrong 
     await this.keyStore.put(publicKeyString, Buffer.from(ser), { valueEncoding: 'view' }) // TODO fix types, are just wrong 
-    this._cache.set(path, keyWithMeta)
-    this._cache.set(publicKeyString, keyWithMeta)
-    return keyWithMeta;
+    this._cache.set(path, key)
+    this._cache.set(publicKeyString, key)
+    return key as any as T; // TODO fix types
   }
 
   async getKeyByPath<T extends KeyWithMeta>(id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519PublicKey, type: WithType<T> = SignKeyWithMeta as any, group = DEFAULT_KEY_GROUP): Promise<T> { // TODO fix types of type

@@ -417,28 +417,9 @@ export class OrbitDB {
         logger.debug(`Received exchange heades request for topic: ${replicationTopic}, address: ${address}`)
       }
       else if (msg instanceof KeyResponseMessage) {
-        const pksk = (key: KeyWithMeta): { publicKey: Ed25519PublicKey, secretKey: Ed25519SecretKey } | { publicKey: X25519PublicKey, secretKey: X25519SecretKey } => {
-          if (key instanceof SignKeyWithMeta) {
-            return {
-              publicKey: key.publicKey,
-              secretKey: key.secretKey
-            }
-          }
-
-          if (key instanceof BoxKeyWithMeta) {
-            return {
-              publicKey: key.publicKey,
-              secretKey: key.secretKey
-            }
-          }
-
-          throw new Error("Unsupported")
-        }
-
-
         await recieveKeys(msg, (keys) => {
           const keysToSave = keys.filter(key => key instanceof SignKeyWithMeta || key instanceof BoxKeyWithMeta);
-          return Promise.all(keysToSave.map(async (key) => this.keystore.saveKey(pksk(key), pksk(key).publicKey.getBuffer(), key.constructor as any, key.group, key.timestamp)))
+          return Promise.all(keysToSave.map((key) => this.keystore.saveKey(key)))
         })
         /*         
         this._keysInFlightResolver?.();

@@ -148,7 +148,7 @@ class Entry {
       e.refs = entry.refs // added in v2
     }
     e.v = entry.data.v
-    e.clock = new Clock(entry.metadata.clockDecrypted.id, entry.metadata.clockDecrypted.time)
+    e.clock = new Clock(entry.clock.id, entry.clock.time)
 
     if (presigned) {
       return e // don't include key/sig information

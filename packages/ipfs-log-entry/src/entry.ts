@@ -5,9 +5,17 @@ import io from '@dao-xyz/orbit-db-io';
 import { IPFS } from 'ipfs-core-types/src/'
 import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider'
 import { arraysEqual, joinUint8Arrays } from '@dao-xyz/io-utils';
-import { Ed25519PublicKey, X25519PublicKey } from 'sodium-plus';
-import { PublicKeyEncryption, DecryptedThing, EncryptedThing, Encryption, MaybeEncrypted } from '@dao-xyz/encryption-utils';
+import { X25519PublicKey } from 'sodium-plus';
+import { PublicKeyEncryption, DecryptedThing, EncryptedThing, MaybeEncrypted } from '@dao-xyz/encryption-utils';
 import { Metadata, MetadataSecure } from './metadata';
+import { Id } from './id';
+
+export interface EntryEncryption {
+  recieverPayload?: X25519PublicKey,
+  recieverIdentity?: X25519PublicKey,
+  recieverClock?: X25519PublicKey,
+  options: PublicKeyEncryption
+}
 
 export interface IOOptions<T> {
   encoder: (data: T) => Uint8Array
@@ -34,6 +42,7 @@ const IpfsNotDefinedError = () => new Error('Ipfs instance not defined')
 export interface EntrySerialized<T> {
   payload: Uint8Array
   metadata: Uint8Array
+  clock: Uint8Array,
   hash?: string // "zd...Foo", we'll set the hash after persisting the entry
   next?: string[]
   refs?: string[] // Array of hashes
@@ -118,11 +127,19 @@ export class Payload<T>
 @variant(0)
 export class Entry<T> {
 
+  @field({ type: MetadataSecure })
+  _id: MaybeEncrypted<Id>
+
+  @field({ type: MaybeEncrypted })
+  _clock: MaybeEncrypted<Clock>
+
   @field({ type: Payload })
   payload: Payload<T>
 
-  @field({ type: MetadataSecure })
-  metadata: MetadataSecure
+  /*  @field({ type: MetadataSecure })
+   metadata: MetadataSecure */
+
+
 
   @field({ type: option(vec('String')) })
   next?: string[]
@@ -140,6 +157,7 @@ export class Entry<T> {
   constructor(obj?: {
     payload: Payload<T>
     metadata: MetadataSecure
+    clock: MaybeEncrypted<Clock>;
     next?: string[]
     refs?: string[] // Array of hashes
     hash?: string // "zd...Foo", we'll set the hash after persisting the entry
@@ -147,6 +165,7 @@ export class Entry<T> {
     if (obj) {
       this.payload = obj.payload;
       this.metadata = obj.metadata;
+      this._clock = obj.clock
       this.next = obj.next;
       this.refs = obj.refs;
       this.hash = obj.hash;
@@ -158,6 +177,7 @@ export class Entry<T> {
     const encryption = props instanceof Entry ? props.payload._encryption : props.encryption;
     this.payload.init(encoding, encryption);
     this.metadata.init(encryption);
+    this._clock.init(encryption);
     return this;
   }
 
@@ -165,13 +185,22 @@ export class Entry<T> {
     return {
       payload: serialize(this.payload),
       metadata: serialize(this.metadata),
+      clock: serialize(this._clock),
       hash: this.hash,
       next: this.next,
       refs: this.refs
     }
   }
 
-  static createDataToSign(id: string, payload: Payload<any>, clock: LamportClock, next?: (any | string)[], refs?: string[]): Buffer { // TODO fix types
+  get clock(): Clock {
+    return this._clock.decrypted.getValue(Clock)
+  }
+
+  async getClock(): Promise<Clock> {
+    return (await this._clock.decrypt()).getValue(Clock);
+  }
+
+  static createDataToSign(id: string, payload: Payload<any>, clock: MaybeEncrypted<Clock>, next?: (any | string)[], refs?: string[]): Buffer { // TODO fix types
     const arrays: Uint8Array[] = [new Uint8Array(Buffer.from(id)), serialize(payload), serialize(clock)];
     if (next) {
       next.forEach((n) => {
@@ -187,12 +216,12 @@ export class Entry<T> {
   }
 
   async createDataToSign(): Promise<Buffer> {
-    return Entry.createDataToSign(await this.metadata.id, this.payload, await this.metadata.clock, this.next, this.refs)
+    return Entry.createDataToSign(await this.metadata.id, this.payload, this._clock, this.next, this.refs)
   }
 
 
   equals(other: Entry<T>) {
-    return other.hash === this.hash && this.metadata.equals(other.metadata) && arraysEqual(this.next, other.next) && arraysEqual(this.refs, other.refs) && this.payload.equals(other.payload)
+    return other.hash === this.hash && this.metadata.equals(other.metadata) && arraysEqual(this.next, other.next) && arraysEqual(this.refs, other.refs) && this.payload.equals(other.payload) && this.clock.equals(other.clock)
   }
 
   /**
@@ -209,7 +238,7 @@ export class Entry<T> {
    * console.log(entry)
    * // { hash: null, payload: "hello", next: [] }
    */
-  static async create<T>(options: { ipfs: IPFS, identity: Identity, logId: string, data: T, next?: (Entry<T> | string)[], encodingOptions?: IOOptions<T>, clock?: Clock, refs?: string[], pin?: boolean, assertAllowed?: (entryData: Payload<T>, identity: IdentitySerializable) => Promise<void>, encryption?: Encryption }) {
+  static async create<T>(options: { ipfs: IPFS, identity: Identity, logId: string, data: T, next?: (Entry<T> | string)[], encodingOptions?: IOOptions<T>, clock?: Clock, refs?: string[], pin?: boolean, assertAllowed?: (entryData: Payload<T>, identity: IdentitySerializable) => Promise<void>, encryption?: EntryEncryption }) {
     if (!options.encodingOptions || !options.refs || !options.next) {
       options = {
         ...options,
@@ -240,10 +269,13 @@ export class Entry<T> {
     const id = options.logId; // For determining a unique chain
     const identitySerializable = options.identity.toSerializable();
     const clock = options.clock || new Clock(new Uint8Array(options.identity.publicKey.getBuffer()));
-
+    const clockMaybeEncrypted = options.encryption?.recieverClock ? await new DecryptedThing<Clock>({ data: serialize(clock) }).init(options.encryption.options).encrypt(options.encryption?.recieverClock) : new DecryptedThing<Clock>({
+      data: serialize(clock)
+    })
 
     const entry: Entry<T> = new Entry<T>({
       payload,
+      clock: clockMaybeEncrypted,
       metadata: null, // TODO pass identity with signature without signature?
       hash: null, // "zd...Foo", we'll set the hash after persisting the entry
       next: nexts, // Array of hashes
@@ -265,11 +297,11 @@ export class Entry<T> {
     if (options.encryption) {
       entry.payload = await new Payload({
         data: decryptedData
-      }).init(options.encodingOptions, options.encryption.options).encrypt(options.encryption.recieverPayload);
+      }).init(options.encodingOptions, options.encryption.options).encrypt(options.encryption?.recieverPayload);
     }
 
     // Sign id, encrypted payload, clock, nexts, refs 
-    const signature = await options.identity.provider.sign(Entry.createDataToSign(id, entry.payload, clock, entry.next, entry.refs), identitySerializable)
+    const signature = await options.identity.provider.sign(Entry.createDataToSign(id, entry.payload, clockMaybeEncrypted, entry.next, entry.refs), identitySerializable)
 
     // Create encrypted metadata with data, and encrypt it
     entry.metadata = new MetadataSecure({
@@ -277,8 +309,7 @@ export class Entry<T> {
         data: serialize(new Metadata({
           id,
           identity: identitySerializable,
-          signature,
-          clock
+          signature
         }))
       })
     })
@@ -347,11 +378,24 @@ export class Entry<T> {
    * @returns 
    */
   static toEntryNoHash<T>(entry: Entry<T> | EntrySerialized<T>): Entry<T> {
+    let clock: MaybeEncrypted<Clock> = undefined;
+    let payload: Payload<T> = undefined;
+    let metadata: MetadataSecure = undefined;
+    if (entry instanceof Entry) {
+      clock = entry._clock;
+      payload = entry.payload;
+      metadata = entry.metadata
+    }
+    else {
+      clock = deserialize<MaybeEncrypted<Clock>>(Buffer.from(entry.clock), MaybeEncrypted);
+      payload = deserialize<Payload<T>>(Buffer.from(entry.payload), Payload);
+      metadata = deserialize(Buffer.from(entry.metadata), MetadataSecure);
+    }
     const e: Entry<T> = new Entry<T>({
       hash: null,
-      // TODO improve performance (unecessary cloning)
-      payload: entry.payload instanceof Uint8Array ? deserialize<Payload<T>>(Buffer.from(entry.payload), Payload) : entry.payload,
-      metadata: entry.metadata instanceof Uint8Array ? deserialize(Buffer.from(entry.metadata), MetadataSecure) : entry.metadata,
+      clock,
+      payload,
+      metadata,
       next: entry.next,
       refs: entry.refs
     })
@@ -404,8 +448,8 @@ export class Entry<T> {
    * @returns {number} 1 if a is greater, -1 is b is greater
    */
   static compare<T>(a: Entry<T>, b: Entry<T>) {
-    const aClock = a.metadata.clockDecrypted;
-    const bClock = b.metadata.clockDecrypted;
+    const aClock = a.clock;
+    const bClock = b.clock;
     const distance = Clock.compare(aClock, bClock)
     if (distance === 0) return aClock.id < bClock.id ? -1 : 1
     return distance
@@ -447,7 +491,7 @@ export class Entry<T> {
       prev = parent
       parent = values.find((e) => Entry.isParent(prev, e))
     }
-    stack = stack.sort((a, b) => Clock.compare(a.metadata.clockDecrypted, b.metadata.clockDecrypted))
+    stack = stack.sort((a, b) => Clock.compare(a.clock, b.clock))
     return stack
   }
 

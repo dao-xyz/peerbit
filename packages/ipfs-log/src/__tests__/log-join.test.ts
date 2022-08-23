@@ -335,7 +335,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         ]
 
         const transformed = log4.values.map((e) => {
-          return { payload: e.payload.value, id: e.metadata.idDecrypted, clock: e.metadata.clockDecrypted }
+          return { payload: e.payload.value, id: e.metadata.idDecrypted, clock: e.clock }
         })
 
         assert.strictEqual(log4.length, 13)

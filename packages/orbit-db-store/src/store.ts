@@ -254,14 +254,14 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
     try {
       const onReplicationQueued = async (entry: Entry<T>) => {
         // Update the latest entry state (latest is the entry with largest clock time)
-        this._recalculateReplicationMax((await entry.metadata.clock).time)
+        this._recalculateReplicationMax((await entry.clock).time)
         this.events.emit('replicate', this.address.toString(), entry)
       }
 
       const onReplicationProgress = async (entry: Entry<T>) => {
         const previousProgress = this.replicationStatus.progress
         const previousMax = this.replicationStatus.max
-        this._recalculateReplicationStatus((await entry.metadata.clock).time)
+        this._recalculateReplicationStatus((await entry.clock).time)
         if (this._oplog.length + 1 > this.replicationStatus.progress ||
           this.replicationStatus.progress > previousProgress ||
           this.replicationStatus.max > previousMax) {
@@ -459,7 +459,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
 
     // Update the replication status from the heads
     for (const head of heads) {
-      const time = (await head.metadata.clock).time
+      const time = (await head.clock).time
       this._recalculateReplicationMax(time)
     }
 
@@ -506,7 +506,8 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
       if (!identityProvider) throw new Error('Identity-provider is required, cannot verify entry')
 
       // TODO Fix types
-      const canAppend = await this.access.canAppend(head.payload.init(this._oplog._encoding, this._oplog._encryption), () => head.metadata.init(this._oplog._encryption).identity, identityProvider as any)
+      const identityResolver = () => head.metadata.init(this._oplog._encryption).identity;
+      const canAppend = await this.access.canAppend(head.payload.init(this._oplog._encoding, this._oplog._encryption), identityResolver, identityProvider as any)
       if (!canAppend) {
         logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
         return Promise.resolve(null)
@@ -560,7 +561,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
 
     this.events.emit('load', this.address.toString()) // TODO emits inconsistent params, missing heads param
 
-    const maxClock = (res, val: Entry<any>) => Math.max(res, val.metadata.clockDecrypted.time)
+    const maxClock = (res, val: Entry<any>) => Math.max(res, val.clock.time)
     this.sync([])
 
     const queue = (await this._cache.get(this.queuePath)) as string[]
@@ -617,7 +618,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
     }
   }
 
-  async _addOperation(data, options: { onProgressCallback?: (any) => void, pin?: boolean, reciever?: X25519PublicKey, recieverPayload?: X25519PublicKey, recieverIdentity?: X25519PublicKey } = {}) {
+  async _addOperation(data, options: { onProgressCallback?: (any) => void, pin?: boolean, reciever?: X25519PublicKey, recieverPayload?: X25519PublicKey, recieverIdentity?: X25519PublicKey, recieverClock?: X25519PublicKey } = {}) {
     const addOperation = async () => {
       if (this._oplog) {
         // check local cache for latest heads
@@ -626,9 +627,10 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
         }
         const recieverPayload = options.recieverPayload ? options.recieverPayload : options.reciever
         const recieverIdentity = options.recieverIdentity ? options.recieverIdentity : options.reciever
+        const recieverClock = options.recieverClock ? options.recieverClock : options.reciever
 
-        const entry = await this._oplog.append(data, { pointerCount: this.options.referenceCount, pin: options.pin, recieverPayload, recieverIdentity })
-        this._recalculateReplicationStatus((await entry.metadata.clock).time)
+        const entry = await this._oplog.append(data, { pointerCount: this.options.referenceCount, pin: options.pin, recieverPayload, recieverIdentity, recieverClock })
+        this._recalculateReplicationStatus((await entry.clock).time)
         await this._cache.setBinary(this.localHeadsPath, new HeadsCache({ heads: [entry] }))
         await this._updateIndex([entry])
 
@@ -683,7 +685,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
 
   /* Loading progress callback */
   _onLoadProgress(entry: Entry<any>) {
-    this._recalculateReplicationStatus(entry.metadata.clockDecrypted.time)
+    this._recalculateReplicationStatus(entry.clock.time)
     this.events.emit('load.progress', this.address.toString(), entry.hash, entry, this.replicationStatus.progress, this.replicationStatus.max)
   }
 }

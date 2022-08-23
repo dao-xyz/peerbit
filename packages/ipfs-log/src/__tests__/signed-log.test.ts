@@ -146,7 +146,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log2.append('two');
         (log2.values[0].metadata._metadata as DecryptedThing<Metadata>)._data = serialize(new Metadata({
           id: await log2.values[0].metadata.id,
-          clock: await log2.values[0].metadata.clock,
           signature: await log1.values[0].metadata.signature,
           identity: await log2.values[0].metadata.identity
         }))
