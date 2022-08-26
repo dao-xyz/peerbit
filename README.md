@@ -1,9 +1,8 @@
 # TrustDB
 A peer-to-peer database supporting, encryption, sharding and discoverability (searching). Peers are a organizing themselves into "trust" regions, hence the name "TrustDB". Within a trust region, secret information can be shared freely, this allow peers to create locally centralized database clusters with efficient replication, sharding, query yet still allowing cross trust region (low trust) activities, like relying encrypted and signed messages.
 
-This is a fork of OrbitDB where the codebase is ported to Typescript. Function wise, sharding and query has been introduced into separate modules that can be used to build scalable decentralized databases.
-
-## --> WIP <--  Use with caution
+## 🚧 WIP 🚧  Use with caution
+Below are descriptions of some modules
 
 ## BPayload [./packages/bpayload](bpayload)
 - A generic payload class which you can extend and build binary serialization routines to and from with (@dao-xyz/borsh-ts). For example; Documents that are stored in the  BDocstore [./packages/orbit-db-bdocstore](bdocstore) could/should extend this class so when you are writing or querying data, you can be sure that results with be succesfully be deserialized with BinaryPayload class.
