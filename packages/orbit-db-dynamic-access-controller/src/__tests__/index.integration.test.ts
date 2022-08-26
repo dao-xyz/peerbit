@@ -1,13 +1,13 @@
 import { field } from "@dao-xyz/borsh";
-import { BinaryDocumentStore, BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
+import { BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
 import { disconnectPeers, getConnectedPeers, getPeer, Peer } from '@dao-xyz/peer-test-utils';
 import { DynamicAccessController, DYNAMIC_ACCESS_CONTROLER } from "..";
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
 import { delay, waitFor } from '@dao-xyz/time';
-import { AccessError } from "@dao-xyz/ipfs-log";
 import { P2PTrust } from "@dao-xyz/orbit-db-trust-web";
 import { DocumentQueryRequest, QueryRequestV0, QueryResponseV0 } from "@dao-xyz/bquery";
+import { AccessError } from "@dao-xyz/encryption-utils";
 
 class Document {
 
@@ -64,7 +64,7 @@ const loadTrust = async (peer: Peer, cid: string) => {
 }
 describe('index', () => {
 
-    test('can write from trust web', async () => {
+    it('can write from trust web', async () => {
         const [peer, peer2] = await getConnectedPeers(2)
         const l0aTrust = await getTrust(peer);
         let options = new BinaryDocumentStoreOptions({ indexBy: '_id', objectType: Document.name });
@@ -91,7 +91,7 @@ describe('index', () => {
 
 
     describe('conditions', () => {
-        test('publickey', async () => {
+        it('publickey', async () => {
             const [peer, peer2] = await getConnectedPeers(2)
             const l0aTrust = await getTrust(peer);
             let options = new BinaryDocumentStoreOptions({ indexBy: '_id', objectType: Document.name });
@@ -124,7 +124,7 @@ describe('index', () => {
         })
 
 
-        test('any access', async () => {
+        it('any access', async () => {
             const [peer, peer2] = await getConnectedPeers(2)
             const l0aTrust = await getTrust(peer);
             let options = new BinaryDocumentStoreOptions({ indexBy: '_id', objectType: Document.name });
@@ -154,7 +154,7 @@ describe('index', () => {
         })
     })
 
-    test('append all', async () => {
+    it('append all', async () => {
         const [peer, peer2] = await getConnectedPeers(2)
         const l0aTrust = await getTrust(peer);
         let options = new BinaryDocumentStoreOptions({ indexBy: '_id', objectType: Document.name });
@@ -180,7 +180,7 @@ describe('index', () => {
         await disconnectPeers([peer, peer2])
     })
 
-    test('on memory exceeded', async () => {
+    it('on memory exceeded', async () => {
 
         const peer = await getPeer()
         const l0aTrust = await getTrust(peer);
@@ -195,7 +195,7 @@ describe('index', () => {
     })
 
 
-    test('manifests are unique', async () => {
+    it('manifests are unique', async () => {
 
         const [peer] = await getConnectedPeers(1)
         const l0aTrust = await getTrust(peer);
@@ -208,7 +208,7 @@ describe('index', () => {
 
     })
 
-    test('can query', async () => {
+    it('can query', async () => {
 
         const [peer, peer2] = await getConnectedPeers(2)
         const l0aTrust = await getTrust(peer);

@@ -1,32 +1,33 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="utf-8">
-    <title>JSDoc: Source: log.js</title>
 
-    <script src="scripts/prettify/prettify.js"> </script>
-    <script src="scripts/prettify/lang-css.js"> </script>
-    <!--[if lt IE 9]>
+<head>
+  <meta charset="utf-8">
+  <title>JSDoc: Source: log.js</title>
+
+  <script src="scripts/prettify/prettify.js"> </script>
+  <script src="scripts/prettify/lang-css.js"> </script>
+  <!--[if lt IE 9]>
       <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
     <![endif]-->
-    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
-    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+  <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+  <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
 </head>
 
 <body>
 
-<div id="main">
+  <div id="main">
 
     <h1 class="page-title">Source: log.js</h1>
 
-    
 
 
 
-    
+
+
     <section>
-        <article>
-            <pre class="prettyprint source linenums"><code>'use strict'
+      <article>
+        <pre class="prettyprint source linenums"><code>'use strict'
 
 const pMap = require('p-map')
 const GSet = require('./g-set')
@@ -236,7 +237,7 @@ class Log extends GSet {
 
     // Add an entry to the stack and traversed nodes index
     const addToStack = entry => {
-      // If we've already processed the entry, don't add it to the stack
+      // If we've already processed the Entry<T>, don't add it to the stack
       if (!entry || traversed[entry.hash]) {
         return
       }
@@ -331,7 +332,7 @@ class Log extends GSet {
 
     const canAppend = await this._access.canAppend(entry, this._identity.provider)
     if (!canAppend) {
-      throw new Error(`Could not append entry, key "${this._identity.id}" is not allowed to write to the log`)
+      throw new Error(`Could not append Entry<T>, key "${this._identity.id}" is not allowed to write to the log`)
     }
 
     this._entryIndex.set(entry.hash, entry)
@@ -429,14 +430,14 @@ class Log extends GSet {
     const permitted = async (entry) => {
       const canAppend = await this._access.canAppend(entry, identityProvider)
       if (!canAppend) {
-        throw new Error(`Could not append entry, key "${entry.identity.id}" is not allowed to write to the log`)
+        throw new Error(`Could not append Entry<T>, key "${entry.identity.id}" is not allowed to write to the log`)
       }
     }
 
     // Verify signature for each entry and throws if there's an invalid signature
     const verify = async (entry) => {
-      const isValid = await Entry.verify(identityProvider, entry)
-      const publicKey = entry.identity ? entry.identity.publicKey : entry.key
+      const isValid = await entry.data.verify(identityProvider, entry)
+      const publicKey = entry.identity ? entry.identity.publicKey : entry.data.key
       if (!isValid) throw new Error(`Could not validate signature "${entry.sig}" for entry "${entry.hash}" and key "${publicKey}"`)
     }
 
@@ -537,7 +538,7 @@ class Log extends GSet {
         padding = len > 1 ? padding.fill('  ') : padding
         padding = len > 0 ? padding.concat(['└─']) : padding
         /* istanbul ignore next */
-        return padding.join('') + (payloadMapper ? payloadMapper(e.payload) : e.payload)
+        return padding.join('') + (payloadMapper ? payloadMapper(e.payload.value) : e.payload.value)
       })
       .join('\n')
   }
@@ -570,7 +571,7 @@ class Log extends GSet {
    * @param {AccessController} options.access The access controller instance
    * @param {number} options.length How many items to include in the log
    * @param {Array&lt;Entry>} options.exclude Entries to not fetch (cached)
-   * @param {function(hash, entry, parent, depth)} options.onProgressCallback
+   * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @returns {Promise&lt;Log>}
    */
@@ -592,7 +593,7 @@ class Log extends GSet {
    * @param {AccessController} options.access The access controller instance
    * @param {number} options.length How many entries to include in the log
    * @param {Array&lt;Entry>} options.exclude Entries to not fetch (cached)
-   * @param {function(hash, entry, parent, depth)} options.onProgressCallback
+   * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise&lt;Log>} New Log
    */
@@ -612,7 +613,7 @@ class Log extends GSet {
    * @param {Object} options
    * @param {AccessController} options.access The access controller instance
    * @param {number} options.length How many entries to include in the log
-   * @param {function(hash, entry, parent, depth)} [options.onProgressCallback]
+   * @param {function(hash, entry,  parent, depth)} [options.onProgressCallback]
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise&lt;Log>} New Log
    */
@@ -633,7 +634,7 @@ class Log extends GSet {
    * @param {AccessController} options.access The access controller instance
    * @param {number} options.length How many entries to include. Default: infinite.
    * @param {Array&lt;Entry>} options.exclude Entries to not fetch (cached)
-   * @param {function(hash, entry, parent, depth)} [options.onProgressCallback]
+   * @param {function(hash, entry,  parent, depth)} [options.onProgressCallback]
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise&lt;Log>} New Log
    */
@@ -655,7 +656,7 @@ class Log extends GSet {
    * @returns {Array&lt;Entry>}
    */
   static findHeads (entries) {
-    const indexReducer = (res, entry, idx, arr) => {
+    const indexReducer = (res, entry,  idx, arr) => {
       const addToResult = e => (res[e] = entry.hash)
       entry.next.forEach(addToResult)
       return res
@@ -721,7 +722,7 @@ class Log extends GSet {
   static findTailHashes (entries) {
     const hashes = {}
     const addToIndex = e => (hashes[e.hash] = true)
-    const reduceTailHashes = (res, entry, idx, arr) => {
+    const reduceTailHashes = (res, entry,  idx, arr) => {
       const addToResult = (e) => {
         /* istanbul ignore else */
         if (hashes[e] === undefined) {
@@ -766,25 +767,40 @@ module.exports.Sorting = Sorting
 module.exports.Entry = Entry
 module.exports.AccessController = AccessController
 </code></pre>
-        </article>
+      </article>
     </section>
 
 
 
 
-</div>
+  </div>
 
-<nav>
-    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="GSet.html">GSet</a></li><li><a href="Log.html">Log</a></li></ul><h3>Global</h3><ul><li><a href="global.html#LastWriteWins">LastWriteWins</a></li><li><a href="global.html#NoZeroes">NoZeroes</a></li><li><a href="global.html#SortByClockId">SortByClockId</a></li><li><a href="global.html#SortByClocks">SortByClocks</a></li><li><a href="global.html#SortByEntryHash">SortByEntryHash</a></li></ul>
-</nav>
+  <nav>
+    <h2><a href="index.html">Home</a></h2>
+    <h3>Classes</h3>
+    <ul>
+      <li><a href="GSet.html">GSet</a></li>
+      <li><a href="Log.html">Log</a></li>
+    </ul>
+    <h3>Global</h3>
+    <ul>
+      <li><a href="global.html#LastWriteWins">LastWriteWins</a></li>
+      <li><a href="global.html#NoZeroes">NoZeroes</a></li>
+      <li><a href="global.html#SortByClockId">SortByClockId</a></li>
+      <li><a href="global.html#SortByClocks">SortByClocks</a></li>
+      <li><a href="global.html#SortByEntryHash">SortByEntryHash</a></li>
+    </ul>
+  </nav>
 
-<br class="clear">
+  <br class="clear">
 
-<footer>
-    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 3.6.6</a> on Fri Dec 11 2020 17:11:17 GMT-0500 (Eastern Standard Time)
-</footer>
+  <footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 3.6.6</a> on Fri Dec 11 2020 17:11:17
+    GMT-0500 (Eastern Standard Time)
+  </footer>
 
-<script> prettyPrint(); </script>
-<script src="scripts/linenumber.js"> </script>
+  <script> prettyPrint(); </script>
+  <script src="scripts/linenumber.js"> </script>
 </body>
+
 </html>

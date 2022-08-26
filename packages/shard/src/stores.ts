@@ -1,26 +1,5 @@
 import { OrbitDB } from "@dao-xyz/orbit-db";
-import { BStoreOptions } from '@dao-xyz/orbit-db-bstores'
-import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store'
 
-import { Constructor, variant } from "@dao-xyz/borsh";
-import CounterStore from "orbit-db-counterstore";
-
-@variant([0, 4])
-export class CounterStoreOptions extends BStoreOptions<CounterStore> {
-
-    constructor() {
-        super();
-    }
-
-    async newStore(address: string, orbitDB: OrbitDB, options: IQueryStoreOptions<any, any>): Promise<CounterStore> {
-        return orbitDB.counter(address, options)
-    }
-
-
-    get identifier(): string {
-        return 'counter'
-    }
-}
 
 /**
  * We have to provide all stores implementations in a sharded compatible form, so that

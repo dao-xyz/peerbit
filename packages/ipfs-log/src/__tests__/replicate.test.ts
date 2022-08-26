@@ -2,8 +2,9 @@ const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
-const Keystore = require('orbit-db-keystore')
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
+import { assertPayload } from './utils/assert'
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
 const {
@@ -17,14 +18,14 @@ const {
 } = require('orbit-db-test-utils')
 
 Object.keys(testAPIs).forEach((IPFS) => {
-  describe('ipfs-log - Replication (' + IPFS + ')', function () {
+  describe('ipfs-log - Replication', function () {
     jest.setTimeout(config.timeout * 6)
 
-    let ipfsd1, ipfsd2, ipfs1, ipfs2, id1, id2, testIdentity, testIdentity2
+    let ipfsd1, ipfsd2, ipfs1, ipfs2, id1: Identity, id2: Identity, testIdentity: Identity, testIdentity2: Identity
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
 
-    let keystore, signingKeystore
+    let keystore: Keystore, signingKeystore: Keystore
 
     beforeAll(async () => {
       rmrf.sync(identityKeysPath)
@@ -48,8 +49,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
       signingKeystore = new Keystore(signingKeysPath)
 
       // Create an identity for each peers
-      testIdentity = await Identities.createIdentity({ id: 'userB', keystore, signingKeystore })
-      testIdentity2 = await Identities.createIdentity({ id: 'userA', keystore, signingKeystore })
+      testIdentity = await Identities.createIdentity({ id: new Uint8Array([1]), keystore, signingKeystore })
+      testIdentity2 = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
     })
 
     afterAll(async () => {
@@ -67,7 +68,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const channel = 'XXX'
       const logId = 'A'
 
-      let log1, log2, input1, input2
+      let log1: Log<string>, log2: Log<string>, input1: Log<string>, input2: Log<string>
       const buffer1: string[] = []
       const buffer2: string[] = []
       let processing = 0
@@ -81,7 +82,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         processing++
         process.stdout.write('\r')
         process.stdout.write(`> Buffer1: ${buffer1.length} - Buffer2: ${buffer2.length}`)
-        const log = await Log.fromMultihash(ipfs1, testIdentity, hash, {})
+        const log = await Log.fromMultihash<string>(ipfs1, testIdentity, hash, {})
         await log1.join(log)
         processing--
       }
@@ -95,7 +96,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         processing++
         process.stdout.write('\r')
         process.stdout.write(`> Buffer1: ${buffer1.length} - Buffer2: ${buffer2.length}`)
-        const log = await Log.fromMultihash(ipfs2, testIdentity2, hash, {})
+        const log = await Log.fromMultihash<string>(ipfs2, testIdentity2, hash, {})
         await log2.join(log)
         processing--
       }
@@ -114,7 +115,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await ipfs2.pubsub.unsubscribe(channel, handleMessage2)
       })
 
-      test('replicates logs', async () => {
+      it('replicates logs', async () => {
         await waitForPeers(ipfs1, [id2], channel)
 
         for (let i = 1; i <= amount; i++) {
@@ -146,7 +147,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         console.log('Waiting for all to process')
         await whileProcessingMessages(config.timeout * 2)
 
-        const result = new Log(ipfs1, testIdentity, { logId })
+        const result = new Log<string>(ipfs1, testIdentity, { logId })
         await result.join(log1)
         await result.join(log2)
 
@@ -155,14 +156,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(result.length, amount * 2)
         assert.strictEqual(log1.length, amount)
         assert.strictEqual(log2.length, amount)
-        assert.strictEqual(result.values[0].payload, 'A1')
-        assert.strictEqual(result.values[1].payload, 'B1')
-        assert.strictEqual(result.values[2].payload, 'A2')
-        assert.strictEqual(result.values[3].payload, 'B2')
-        assert.strictEqual(result.values[99].payload, 'B50')
-        assert.strictEqual(result.values[100].payload, 'A51')
-        assert.strictEqual(result.values[198].payload, 'A100')
-        assert.strictEqual(result.values[199].payload, 'B100')
+        assertPayload(result.values[0].payload.value, 'A1')
+        assertPayload(result.values[1].payload.value, 'B1')
+        assertPayload(result.values[2].payload.value, 'A2')
+        assertPayload(result.values[3].payload.value, 'B2')
+        assertPayload(result.values[99].payload.value, 'B50')
+        assertPayload(result.values[100].payload.value, 'A51')
+        assertPayload(result.values[198].payload.value, 'A100')
+        assertPayload(result.values[199].payload.value, 'B100')
       })
     })
   })

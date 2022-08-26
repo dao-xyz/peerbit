@@ -1,23 +1,22 @@
-import { IdentitySerializable } from "./identity"
-
+import { Identity, IdentitySerializable } from "./identity"
 export abstract class IdentityProvider {
   /* Return id of identity (to be signed by orbit-db public key) */
-  async getId(options: { id?: string } = {}): Promise<string> {
+  async getId(options: { id?: Uint8Array } = {}): Promise<Uint8Array> {
     throw new Error("Not implemented")
   }
 
   /* Return signature of a OrbitDB public key signature */
-  sign(data: Uint8Array, options: { id?: string } = {}): Promise<string> | string {
+  sign(data: string | Uint8Array | Buffer, options: { id?: Uint8Array } = {}): Promise<Uint8Array> | Uint8Array {
     throw new Error("Not implemented")
 
   }
 
   /* Verify a signature of a OrbitDB public key signature */
-  static async verifyIdentity(identity: IdentitySerializable): Promise<boolean> {
+  static async verifyIdentity(identity: Identity | IdentitySerializable): Promise<boolean> {
     throw new Error("Not implemented")
   }
 
-  static async verify(signature: string, data: string | Uint8Array, publicKey: string): Promise<boolean> {
+  static async verify(signature: Uint8Array, data: Uint8Array, publicKey: Uint8Array): Promise<boolean> {
     throw new Error("Not implemented")
   }
 

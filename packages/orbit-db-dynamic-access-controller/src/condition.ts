@@ -1,5 +1,8 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Entry } from '@dao-xyz/ipfs-log';
+import { MaybeEncrypted } from "@dao-xyz/encryption-utils";
+import { U8IntArraySerializer, arraysEqual } from '@dao-xyz/io-utils';
+import { Payload } from "@dao-xyz/ipfs-log-entry";
+import { IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
 
 @variant(0)
 export class Network {
@@ -11,35 +14,35 @@ export class Network {
     rpc: string;
 }
 
-export class AccessCondition {
+export class AccessCondition<T> {
 
-    async allowed(entry: Entry<any>): Promise<boolean> {
+    async allowed(_entry: MaybeEncrypted<Payload<T>>, _identity: MaybeEncrypted<IdentitySerializable>): Promise<boolean> {
         throw new Error("Not implemented")
     }
 }
 
 @variant([0, 0])
-export class AnyAccessCondition extends AccessCondition {
+export class AnyAccessCondition<T> extends AccessCondition<T> {
     constructor() {
         super();
     }
-    async allowed(entry: Entry<any>): Promise<boolean> {
+    async allowed(_entry: MaybeEncrypted<Payload<T>>, _identity: MaybeEncrypted<IdentitySerializable>): Promise<boolean> {
         return true;
     }
 }
 
 @variant([0, 1])
-export class PublicKeyAccessCondition extends AccessCondition {
+export class PublicKeyAccessCondition<T> extends AccessCondition<T> {
 
     @field({ type: 'String' })
     type: string
 
-    @field({ type: 'String' })
-    key: string
+    @field(U8IntArraySerializer)
+    key: Uint8Array
 
     constructor(options?: {
         type: string,
-        key: string
+        key: Uint8Array
     }) {
         super();
         if (options) {
@@ -48,8 +51,9 @@ export class PublicKeyAccessCondition extends AccessCondition {
         }
     }
 
-    async allowed(entry: Entry<any>): Promise<boolean> {
-        return this.type === entry.identity.type && this.key === entry.identity.id
+    async allowed(_payload: MaybeEncrypted<Payload<T>>, identity: MaybeEncrypted<IdentitySerializable>): Promise<boolean> {
+        const i = (await identity.decrypt()).getValue(IdentitySerializable);
+        return this.type === i.type && arraysEqual(this.key, i.id)
     }
 }
 

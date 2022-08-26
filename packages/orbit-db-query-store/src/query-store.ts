@@ -8,9 +8,9 @@ import { IPFS as IPFSInstance } from "ipfs-core-types";
 export const getQueryTopic = (region: string): string => {
     return region + '/query';
 }
-export type IQueryStoreOptions<T, X extends Index<T>> = IStoreOptions<T, X> & { queryRegion?: string, subscribeToQueries: boolean };
+export type IQueryStoreOptions<T, X, I extends Index<T, X>> = IStoreOptions<T, X, I> & { queryRegion?: string, subscribeToQueries: boolean };
 
-export class QueryStore<T, X extends Index<T>, O extends IQueryStoreOptions<T, X>> extends Store<T, X, O> {
+export class QueryStore<T, X, I extends Index<T, X>, O extends IQueryStoreOptions<T, X, I>> extends Store<T, X, I, O> {
 
     _subscribed: boolean = false
     queryRegion?: string;

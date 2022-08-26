@@ -4,7 +4,7 @@ const IPFSRepo = require('ipfs-repo')
 const DatastoreLevel = require('datastore-level')
 const Log = require('../src/log')
 import { IdentityProvider } from '@dao-xyz/orbit-db-identity-provider'
-const Keystore = require('orbit-db-keystore')
+const Keystore = require('@dao-xyz/orbit-db-keystore')
 // State
 let ipfs
 let log
@@ -64,63 +64,63 @@ const run = (() => {
       console.log(e)
     }
 
-    const onDataUpdated = (hash, entry, resultLength) => {
-      entriesLoadedPerSecond++
-      lastTenSeconds++
-      total = resultLength
-      process.stdout.write('\rLoading ' + total + ' / ' + count)
-    }
+    const onDataUpdated = (hash, Entry < T >, resultLength) => {
+  entriesLoadedPerSecond++
+  lastTenSeconds++
+  total = resultLength
+  process.stdout.write('\rLoading ' + total + ' / ' + count)
+}
 
-    const outputMetrics = () => {
-      totalLoaded = total - totalLoaded
-      seconds++
-      if (seconds % 10 === 0) {
-        console.log(`--> Average of ${lastTenSeconds / 10} e/s in the last 10 seconds`)
-        if (lastTenSeconds === 0) throw new Error('Problems!')
-        lastTenSeconds = 0
-      }
-      console.log(`\n${entriesLoadedPerSecond} entries loaded per second, ${totalLoaded} loaded in ${seconds} seconds (Entry count: ${total})`)
-      entriesLoadedPerSecond = 0
-    }
+const outputMetrics = () => {
+  totalLoaded = total - totalLoaded
+  seconds++
+  if (seconds % 10 === 0) {
+    console.log(`--> Average of ${lastTenSeconds / 10} e/s in the last 10 seconds`)
+    if (lastTenSeconds === 0) throw new Error('Problems!')
+    lastTenSeconds = 0
+  }
+  console.log(`\n${entriesLoadedPerSecond} entries loaded per second, ${totalLoaded} loaded in ${seconds} seconds (Entry count: ${total})`)
+  entriesLoadedPerSecond = 0
+}
 
-    // Output metrics at 1 second interval
-    setInterval(outputMetrics, 1000)
+// Output metrics at 1 second interval
+setInterval(outputMetrics, 1000)
 
-    const dt2 = new Date().getTime()
+const dt2 = new Date().getTime()
 
-    if (global.gc) {
-      global.gc()
-    } else {
-      console.warn('Start benchmark with --expose-gc flag')
-    }
+if (global.gc) {
+  global.gc()
+} else {
+  console.warn('Start benchmark with --expose-gc flag')
+}
 
-    const m1 = process.memoryUsage()
+const m1 = process.memoryUsage()
 
-    await Log.fromEntryHash(ipfs, log._identity, log.heads.map(e => e.hash), {
-      logId: log._id,
-      length: -1,
-      exclude: [],
-      onProgressCallback: onDataUpdated
-    })
+await Log.fromEntryHash(ipfs, log._identity, log.heads.map(e => e.hash), {
+  logId: log._id,
+  length: -1,
+  exclude: [],
+  onProgressCallback: onDataUpdated
+})
 
-    outputMetrics()
-    const et = new Date().getTime()
-    console.log('Loading took:', (et - dt2), 'ms')
+outputMetrics()
+const et = new Date().getTime()
+console.log('Loading took:', (et - dt2), 'ms')
 
-    const m2 = process.memoryUsage()
-    const usedDelta = m1.heapUsed && Math.abs(m1.heapUsed - m2.heapUsed) / m1.heapUsed * 100
-    const totalDelta = m1.heapTotal && Math.abs(m1.heapTotal - m2.heapTotal) / m1.heapTotal * 100
+const m2 = process.memoryUsage()
+const usedDelta = m1.heapUsed && Math.abs(m1.heapUsed - m2.heapUsed) / m1.heapUsed * 100
+const totalDelta = m1.heapTotal && Math.abs(m1.heapTotal - m2.heapTotal) / m1.heapTotal * 100
 
-    let usedOutput = `Memory Heap Used: ${(m2.heapUsed / 1024 / 1024).toFixed(2)} MB`
-    usedOutput += ` (${m2.heapUsed > m1.heapUsed ? '+' : '-'}${usedDelta.toFixed(2)}%)`
-    let totalOutput = `Memory Heap Total: ${(m2.heapTotal / 1024 / 1024).toFixed(2)} MB`
-    totalOutput += ` (${m2.heapTotal > m1.heapTotal ? '+' : '-'}${totalDelta.toFixed(2)}%)`
+let usedOutput = `Memory Heap Used: ${(m2.heapUsed / 1024 / 1024).toFixed(2)} MB`
+usedOutput += ` (${m2.heapUsed > m1.heapUsed ? '+' : '-'}${usedDelta.toFixed(2)}%)`
+let totalOutput = `Memory Heap Total: ${(m2.heapTotal / 1024 / 1024).toFixed(2)} MB`
+totalOutput += ` (${m2.heapTotal > m1.heapTotal ? '+' : '-'}${totalDelta.toFixed(2)}%)`
 
-    console.log(usedOutput)
-    console.log(totalOutput)
+console.log(usedOutput)
+console.log(totalOutput)
 
-    process.exit(0)
+process.exit(0)
   })
-})()
+}) ()
 
 module.exports = run

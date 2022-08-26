@@ -3,7 +3,7 @@ const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
 import { SortByEntryHash } from '../log-sorting'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 
 // Test utils
 const {
@@ -13,10 +13,10 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity
+let ipfsd, ipfs, testIdentity: Identity
 
 Object.keys(testAPIs).forEach(IPFS => {
-  describe('Log - Join Concurrent Entries (' + IPFS + ')', function () {
+  describe('Log - Join Concurrent Entries', function () {
     jest.setTimeout(config.timeout)
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
@@ -26,7 +26,8 @@ Object.keys(testAPIs).forEach(IPFS => {
       rmrf.sync(signingKeysPath)
       await fs.copy(identityKeyFixtures(__dirname), identityKeysPath)
       await fs.copy(signingKeyFixtures(__dirname), signingKeysPath)
-      testIdentity = await Identities.createIdentity({ id: 'userA', identityKeysPath, signingKeysPath })
+      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), identityKeysPath, signingKeysPath })
+
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })
@@ -40,14 +41,15 @@ Object.keys(testAPIs).forEach(IPFS => {
     })
 
     describe('join ', () => {
-      let log1, log2
+      let log1: Log<string>, log2: Log<string>
 
       beforeAll(async () => {
+
         log1 = new Log(ipfs, testIdentity, { logId: 'A', sortFn: SortByEntryHash })
         log2 = new Log(ipfs, testIdentity, { logId: 'A', sortFn: SortByEntryHash })
       })
 
-      test('joins consistently', async () => {
+      it('joins consistently', async () => {
         for (let i = 0; i < 10; i++) {
           await log1.append('hello1-' + i)
           await log2.append('hello2-' + i)
@@ -61,10 +63,10 @@ Object.keys(testAPIs).forEach(IPFS => {
 
         assert.strictEqual(hash1, hash2)
         assert.strictEqual(log1.length, 20)
-        assert.deepStrictEqual(log1.values.map(e => e.payload), log2.values.map(e => e.payload))
+        assert.deepStrictEqual(log1.values.map(e => e.payload.value), log2.values.map(e => e.payload.value))
       })
 
-      test('Concurrently appending same payload after join results in same state', async () => {
+      it('Concurrently appending same payload after join results in same state', async () => {
         for (let i = 10; i < 20; i++) {
           await log1.append('hello1-' + i)
           await log2.append('hello2-' + i)
@@ -82,16 +84,16 @@ Object.keys(testAPIs).forEach(IPFS => {
         assert.strictEqual(hash1, hash2)
         assert.strictEqual(log1.length, 41)
         assert.strictEqual(log2.length, 41)
-        assert.deepStrictEqual(log1.values.map(e => e.payload), log2.values.map(e => e.payload))
+        assert.deepStrictEqual(log1.values.map(e => e.payload.value), log2.values.map(e => e.payload.value))
       })
 
-      test('Joining after concurrently appending same payload joins entry once', async () => {
+      it('Joining after concurrently appending same payload joins entry once', async () => {
         await log1.join(log2)
         await log2.join(log1)
 
         assert.strictEqual(log1.length, log2.length)
         assert.strictEqual(log1.length, 41)
-        assert.deepStrictEqual(log1.values.map(e => e.payload), log2.values.map(e => e.payload))
+        assert.deepStrictEqual(log1.values.map(e => e.payload.value), log2.values.map(e => e.payload.value))
       })
     })
   })

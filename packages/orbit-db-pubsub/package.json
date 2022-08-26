@@ -2,7 +2,31 @@
   "name": "@dao-xyz/orbit-db-pubsub",
   "version": "0.6.11",
   "description": "Message propagation module for orbit-db",
-  "main": "index.js",
+  "type": "module",
+  "sideEffects": false,
+  "main": "lib/cjs/index.js",
+  "module": "lib/esm/index.mjs",
+  "types": "lib/esm/index.d.ts",
+  "exports": {
+    "import": "./lib/esm/index.mjs",
+    "require": "./lib/cjs/index.js"
+  },
+  "files": [
+    "lib",
+    "src",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "shx rm -rf lib/*",
+    "build": "yarn clean && tsc -p tsconfig.json; tsc-esm -p tsconfig.json && tsc -p tsconfig.cjs.json",
+    "postbuild": "echo '{\"type\":\"commonjs\"}' | node ../../node_modules/.bin/json > lib/cjs/package.json && echo '{\"type\":\"module\"} ' | node ../../node_modules/.bin/json > lib/esm/package.json",
+    "test": "node ../../node_modules/.bin/jest test  -c  ../../jest.config.cjs --runInBand --forceExit",
+    "test:unit": "node ../../node_modules/.bin/jest test  -c  ../../jest.config.unit.cjs --runInBand --forceExit",
+    "test:integration": "node ../node_modules/.bin/jest test -c  ../jest.config.integration.cjs --runInBand --forceExit"
+  },
   "homepage": "https://github.com/orbitdb/orbit-db-pubsub",
   "bugs": "https://github.com/orbitdb/orbit-db-pubsub/issues",
   "keywords": [
@@ -10,15 +34,6 @@
     "orbit-db",
     "pubsub"
   ],
-  "files": [
-    "*"
-  ],
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "publishConfig": {
-    "access": "public"
-  },
   "author": "Haad",
   "contributors": [
     "haadcode",
@@ -35,6 +50,5 @@
   },
   "localMaintainers": [
     "dao.xyz"
-  ],
-  "gitHead": "d10b89ef1a120a58e1a7e92aadcc2bb536a37e3e"
+  ]
 }

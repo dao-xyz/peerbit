@@ -1,11 +1,11 @@
 const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
-import { LamportClock as Clock } from '../lamport-clock'
-import { Entry } from '../entry'
+import { Entry, LamportClock as Clock } from '@dao-xyz/ipfs-log-entry';
 import { Log } from '../log'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
-const Keystore = require('orbit-db-keystore')
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
+import { assertPayload } from './utils/assert'
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
 const {
@@ -15,14 +15,14 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity, testIdentity2, testIdentity3, testIdentity4
+let ipfsd, ipfs, testIdentity: Identity, testIdentity2: Identity, testIdentity3: Identity, testIdentity4: Identity
 
 const last = (arr) => {
   return arr[arr.length - 1]
 }
 
 Object.keys(testAPIs).forEach((IPFS) => {
-  describe('Log - Join (' + IPFS + ')', function () {
+  describe('Log - Join', function () {
     jest.setTimeout(config.timeout)
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
@@ -38,11 +38,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
 
-      testIdentity = await Identities.createIdentity({ id: 'userC', keystore, signingKeystore })
-      testIdentity2 = await Identities.createIdentity({ id: 'userB', keystore, signingKeystore })
-      testIdentity3 = await Identities.createIdentity({ id: 'userD', keystore, signingKeystore })
-      testIdentity4 = await Identities.createIdentity({ id: 'userA', keystore, signingKeystore })
-
+      // The ids are choosen so that the tests plays out "nicely", specifically the logs clock id sort will reflect the testIdentity suffix
+      testIdentity = await Identities.createIdentity({ id: new Uint8Array([1]), keystore, signingKeystore })
+      testIdentity2 = await Identities.createIdentity({ id: new Uint8Array([3]), keystore, signingKeystore })
+      testIdentity3 = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
+      testIdentity4 = await Identities.createIdentity({ id: new Uint8Array([2]), keystore, signingKeystore })
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })
@@ -57,7 +57,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     describe('join', () => {
-      let log1, log2, log3, log4
+      let log1: Log<string>, log2: Log<string>, log3: Log<string>, log4: Log<string>
 
       beforeEach(async () => {
         log1 = new Log(ipfs, testIdentity, { logId: 'X' })
@@ -66,7 +66,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
         log4 = new Log(ipfs, testIdentity4, { logId: 'X' })
       })
 
-      test('joins logs', async () => {
+
+      it('joins logs', async () => {
         const items1: Entry<string>[] = []
         const items2: Entry<string>[] = []
         const items3: Entry<string>[] = []
@@ -75,9 +76,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const prev1 = last(items1)
           const prev2 = last(items2)
           const prev3 = last(items3)
-          const n1 = await Entry.create(ipfs, testIdentity, 'X', 'entryA' + i, [prev1])
-          const n2 = await Entry.create(ipfs, testIdentity2, 'X', 'entryB' + i, [prev2, n1])
-          const n3 = await Entry.create(ipfs, testIdentity3, 'X', 'entryC' + i, [prev3, n1, n2])
+          const n1 = await Entry.create({ ipfs, identity: testIdentity, logId: 'X', data: 'entryA' + i, next: [prev1] })
+          const n2 = await Entry.create({ ipfs, identity: testIdentity2, logId: 'X', data: 'entryB' + i, next: [prev2, n1] })
+          const n3 = await Entry.create({ ipfs, identity: testIdentity3, logId: 'X', data: 'entryC' + i, next: [prev3, n1, n2] })
           items1.push(n1)
           items2.push(n2)
           items3.push(n3)
@@ -95,15 +96,15 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await logA.join(logB)
 
         assert.strictEqual(logA.length, items3.length + items2.length + items1.length)
-        // The last entry, 'entryC100', should be the only head
+        // The last Entry<T>, 'entryC100', should be the only head
         // (it points to entryB100, entryB100 and entryC99)
         assert.strictEqual(logA.heads.length, 1)
       })
 
-      test('throws an error if first log is not defined', async () => {
+      it('throws an error if first log is not defined', async () => {
         let err
         try {
-          await log1.join()
+          await log1.join(undefined)
         } catch (e) {
           err = e
         }
@@ -111,10 +112,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(err.message, 'Log instance not defined')
       })
 
-      test('throws an error if passed argument is not an instance of Log', async () => {
+      it('throws an error if passed argument is not an instance of Log', async () => {
         let err
         try {
-          await log1.join({})
+          await log1.join({} as any)
         } catch (e) {
           err = e
         }
@@ -122,7 +123,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(err.message, 'Given argument is not an instance of Log')
       })
 
-      test('joins only unique items', async () => {
+      it('joins only unique items', async () => {
         await log1.append('helloA1')
         await log1.append('helloA2')
         await log2.append('helloB1')
@@ -135,13 +136,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
         ]
 
         assert.strictEqual(log1.length, 4)
-        assert.deepStrictEqual(log1.values.map((e) => e.payload), expectedData)
+        assert.deepStrictEqual(log1.values.map((e) => e.payload.value), expectedData)
 
         const item = last(log1.values)
         assert.strictEqual(item.next.length, 1)
       })
 
-      test('joins logs two ways', async () => {
+      it('joins logs two ways', async () => {
         await log1.append('helloA1')
         await log1.append('helloA2')
         await log2.append('helloB1')
@@ -154,11 +155,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
         ]
 
         assert.deepStrictEqual(log1.values.map((e) => e.hash), log2.values.map((e) => e.hash))
-        assert.deepStrictEqual(log1.values.map((e) => e.payload), expectedData)
-        assert.deepStrictEqual(log2.values.map((e) => e.payload), expectedData)
+        assert.deepStrictEqual(log1.values.map((e) => e.payload.value), expectedData)
+        assert.deepStrictEqual(log2.values.map((e) => e.payload.value), expectedData)
       })
 
-      test('joins logs twice', async () => {
+      it('joins logs twice', async () => {
         await log1.append('helloA1')
         await log2.append('helloB1')
         await log2.join(log1)
@@ -172,10 +173,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
         ]
 
         assert.strictEqual(log2.length, 4)
-        assert.deepStrictEqual(log2.values.map((e) => e.payload), expectedData)
+        assert.deepStrictEqual(log2.values.map((e) => e.payload.value), expectedData)
       })
 
-      test('joins 2 logs two ways', async () => {
+      it('joins 2 logs two ways', async () => {
         await log1.append('helloA1')
         await log2.append('helloB1')
         await log2.join(log1)
@@ -189,52 +190,52 @@ Object.keys(testAPIs).forEach((IPFS) => {
         ]
 
         assert.strictEqual(log2.length, 4)
-        assert.deepStrictEqual(log2.values.map((e) => e.payload), expectedData)
+        assert.deepStrictEqual(log2.values.map((e) => e.payload.value), expectedData)
       })
 
-      test('joins 2 logs two ways and has the right heads at every step', async () => {
+      it('joins 2 logs two ways and has the right heads at every step', async () => {
         await log1.append('helloA1')
         assert.strictEqual(log1.heads.length, 1)
-        assert.strictEqual(log1.heads[0].payload, 'helloA1')
+        assertPayload(log1.heads[0].payload.value, 'helloA1')
 
         await log2.append('helloB1')
         assert.strictEqual(log2.heads.length, 1)
-        assert.strictEqual(log2.heads[0].payload, 'helloB1')
+        assertPayload(log2.heads[0].payload.value, 'helloB1')
 
         await log2.join(log1)
         assert.strictEqual(log2.heads.length, 2)
-        assert.strictEqual(log2.heads[0].payload, 'helloB1')
-        assert.strictEqual(log2.heads[1].payload, 'helloA1')
+        assertPayload(log2.heads[0].payload.value, 'helloB1')
+        assertPayload(log2.heads[1].payload.value, 'helloA1')
 
         await log1.join(log2)
         assert.strictEqual(log1.heads.length, 2)
-        assert.strictEqual(log1.heads[0].payload, 'helloB1')
-        assert.strictEqual(log1.heads[1].payload, 'helloA1')
+        assertPayload(log1.heads[0].payload.value, 'helloB1')
+        assertPayload(log1.heads[1].payload.value, 'helloA1')
 
         await log1.append('helloA2')
         assert.strictEqual(log1.heads.length, 1)
-        assert.strictEqual(log1.heads[0].payload, 'helloA2')
+        assertPayload(log1.heads[0].payload.value, 'helloA2')
 
         await log2.append('helloB2')
         assert.strictEqual(log2.heads.length, 1)
-        assert.strictEqual(log2.heads[0].payload, 'helloB2')
+        assertPayload(log2.heads[0].payload.value, 'helloB2')
 
         await log2.join(log1)
         assert.strictEqual(log2.heads.length, 2)
-        assert.strictEqual(log2.heads[0].payload, 'helloB2')
-        assert.strictEqual(log2.heads[1].payload, 'helloA2')
+        assertPayload(log2.heads[0].payload.value, 'helloB2')
+        assertPayload(log2.heads[1].payload.value, 'helloA2')
       })
 
-      test('joins 4 logs to one', async () => {
+      it('joins 4 logs to one', async () => {
         // order determined by identity's publicKey
         await log1.append('helloA1')
         await log1.append('helloA2')
 
-        await log3.append('helloB1')
-        await log3.append('helloB2')
+        await log2.append('helloB1')
+        await log2.append('helloB2')
 
-        await log2.append('helloC1')
-        await log2.append('helloC2')
+        await log3.append('helloC1')
+        await log3.append('helloC2')
 
         await log4.append('helloD1')
         await log4.append('helloD2')
@@ -254,10 +255,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
         ]
 
         assert.strictEqual(log1.length, 8)
-        assert.deepStrictEqual(log1.values.map(e => e.payload), expectedData)
+        assert.deepStrictEqual(log1.values.map(e => e.payload.value), expectedData)
       })
 
-      test('joins 4 logs to one is commutative', async () => {
+      it('joins 4 logs to one is commutative', async () => {
         await log1.append('helloA1')
         await log1.append('helloA2')
         await log2.append('helloB1')
@@ -274,10 +275,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log2.join(log4)
 
         assert.strictEqual(log1.length, 8)
-        assert.deepStrictEqual(log1.values.map(e => e.payload), log2.values.map(e => e.payload))
+        assert.deepStrictEqual(log1.values.map(e => e.payload.value), log2.values.map(e => e.payload.value))
       })
 
-      test('joins logs and updates clocks', async () => {
+      it('joins logs and updates clocks', async () => {
         await log1.append('helloA1')
         await log2.append('helloB1')
         await log2.join(log1)
@@ -318,30 +319,30 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.deepStrictEqual(log4.clock.time, 8)
 
         const expectedData = [
-          { payload: 'helloA1', id: 'X', clock: new Clock(testIdentity.publicKey, 1) },
-          { payload: 'helloB1', id: 'X', clock: new Clock(testIdentity2.publicKey, 1) },
-          { payload: 'helloD1', id: 'X', clock: new Clock(testIdentity4.publicKey, 1) },
-          { payload: 'helloA2', id: 'X', clock: new Clock(testIdentity.publicKey, 2) },
-          { payload: 'helloB2', id: 'X', clock: new Clock(testIdentity2.publicKey, 2) },
-          { payload: 'helloD2', id: 'X', clock: new Clock(testIdentity4.publicKey, 2) },
-          { payload: 'helloC1', id: 'X', clock: new Clock(testIdentity3.publicKey, 3) },
-          { payload: 'helloC2', id: 'X', clock: new Clock(testIdentity3.publicKey, 4) },
-          { payload: 'helloD3', id: 'X', clock: new Clock(testIdentity4.publicKey, 5) },
-          { payload: 'helloD4', id: 'X', clock: new Clock(testIdentity4.publicKey, 6) },
-          { payload: 'helloA5', id: 'X', clock: new Clock(testIdentity.publicKey, 7) },
-          { payload: 'helloD5', id: 'X', clock: new Clock(testIdentity4.publicKey, 7) },
-          { payload: 'helloD6', id: 'X', clock: new Clock(testIdentity4.publicKey, 8) }
+          { payload: 'helloA1', id: 'X', clock: new Clock(new Uint8Array(testIdentity.publicKey.getBuffer()), 1) },
+          { payload: 'helloB1', id: 'X', clock: new Clock(new Uint8Array(testIdentity2.publicKey.getBuffer()), 1) },
+          { payload: 'helloD1', id: 'X', clock: new Clock(new Uint8Array(testIdentity4.publicKey.getBuffer()), 1) },
+          { payload: 'helloA2', id: 'X', clock: new Clock(new Uint8Array(testIdentity.publicKey.getBuffer()), 2) },
+          { payload: 'helloB2', id: 'X', clock: new Clock(new Uint8Array(testIdentity2.publicKey.getBuffer()), 2) },
+          { payload: 'helloD2', id: 'X', clock: new Clock(new Uint8Array(testIdentity4.publicKey.getBuffer()), 2) },
+          { payload: 'helloC1', id: 'X', clock: new Clock(new Uint8Array(testIdentity3.publicKey.getBuffer()), 3) },
+          { payload: 'helloC2', id: 'X', clock: new Clock(new Uint8Array(testIdentity3.publicKey.getBuffer()), 4) },
+          { payload: 'helloD3', id: 'X', clock: new Clock(new Uint8Array(testIdentity4.publicKey.getBuffer()), 5) },
+          { payload: 'helloD4', id: 'X', clock: new Clock(new Uint8Array(testIdentity4.publicKey.getBuffer()), 6) },
+          { payload: 'helloA5', id: 'X', clock: new Clock(new Uint8Array(testIdentity.publicKey.getBuffer()), 7) },
+          { payload: 'helloD5', id: 'X', clock: new Clock(new Uint8Array(testIdentity4.publicKey.getBuffer()), 7) },
+          { payload: 'helloD6', id: 'X', clock: new Clock(new Uint8Array(testIdentity4.publicKey.getBuffer()), 8) }
         ]
 
         const transformed = log4.values.map((e) => {
-          return { payload: e.payload, id: e.id, clock: e.clock }
+          return { payload: e.payload.value, id: e.id, clock: e.clock }
         })
 
         assert.strictEqual(log4.length, 13)
         assert.deepStrictEqual(transformed, expectedData)
       })
 
-      test('joins logs from 4 logs', async () => {
+      it('joins logs from 4 logs', async () => {
         await log1.append('helloA1')
         await log1.join(log2)
         await log2.append('helloB1')
@@ -351,12 +352,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         await log1.join(log3)
         assert.strictEqual(log1.id, 'X')
-        assert.strictEqual(log1.clock.id, testIdentity.publicKey)
+        assert.strictEqual(log1.clock.id, new Uint8Array(testIdentity.publicKey.getBuffer()))
         assert.strictEqual(log1.clock.time, 2)
 
         await log3.join(log1)
         assert.strictEqual(log3.id, 'X')
-        assert.strictEqual(log3.clock.id, testIdentity3.publicKey)
+        assert.strictEqual(log3.clock.id, new Uint8Array(testIdentity3.publicKey.getBuffer()))
         assert.strictEqual(log3.clock.time, 2)
 
         await log3.append('helloC1')
@@ -388,7 +389,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         ]
 
         assert.strictEqual(log4.length, 10)
-        assert.deepStrictEqual(log4.values.map((e) => e.payload), expectedData)
+        assert.deepStrictEqual(log4.values.map((e) => e.payload.value), expectedData)
       })
 
       describe('takes length as an argument', () => {
@@ -399,7 +400,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           await log2.append('helloB2')
         })
 
-        test('joins only specified amount of entries - one entry', async () => {
+        it('joins only specified amount of entries - one entry', async () => {
           await log1.join(log2, 1)
 
           const expectedData = [
@@ -408,11 +409,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const lastEntry = last(log1.values)
 
           assert.strictEqual(log1.length, 1)
-          assert.deepStrictEqual(log1.values.map((e) => e.payload), expectedData)
+          assert.deepStrictEqual(log1.values.map((e) => e.payload.value), expectedData)
           assert.strictEqual(lastEntry.next.length, 1)
         })
 
-        test('joins only specified amount of entries - two entries', async () => {
+        it('joins only specified amount of entries - two entries', async () => {
           await log1.join(log2, 2)
 
           const expectedData = [
@@ -421,11 +422,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const lastEntry = last(log1.values)
 
           assert.strictEqual(log1.length, 2)
-          assert.deepStrictEqual(log1.values.map((e) => e.payload), expectedData)
+          assert.deepStrictEqual(log1.values.map((e) => e.payload.value), expectedData)
           assert.strictEqual(lastEntry.next.length, 1)
         })
 
-        test('joins only specified amount of entries - three entries', async () => {
+        it('joins only specified amount of entries - three entries', async () => {
           await log1.join(log2, 3)
 
           const expectedData = [
@@ -434,11 +435,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const lastEntry = last(log1.values)
 
           assert.strictEqual(log1.length, 3)
-          assert.deepStrictEqual(log1.values.map((e) => e.payload), expectedData)
+          assert.deepStrictEqual(log1.values.map((e) => e.payload.value), expectedData)
           assert.strictEqual(lastEntry.next.length, 1)
         })
 
-        test('joins only specified amount of entries - (all) four entries', async () => {
+        it('joins only specified amount of entries - (all) four entries', async () => {
           await log1.join(log2, 4)
 
           const expectedData = [
@@ -447,7 +448,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const lastEntry = last(log1.values)
 
           assert.strictEqual(log1.length, 4)
-          assert.deepStrictEqual(log1.values.map((e) => e.payload), expectedData)
+          assert.deepStrictEqual(log1.values.map((e) => e.payload.value), expectedData)
           assert.strictEqual(lastEntry.next.length, 1)
         })
       })

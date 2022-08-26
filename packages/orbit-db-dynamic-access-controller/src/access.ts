@@ -2,9 +2,9 @@ import { field, option, variant, vec } from "@dao-xyz/borsh"
 import { serialize } from "@dao-xyz/borsh"
 import { AccessCondition } from "./condition"
 import { BinaryPayload } from '@dao-xyz/bpayload';
-import bs58 from 'bs58';
 export enum AccessType {
     Admin = 0,
+    Read = 1,
     /* Add = 1,
     Remove = 2,
     ModifySelf = 3, */
@@ -27,9 +27,9 @@ export class Access extends AccessData {
     accessTypes: AccessType[]
 
     @field({ type: AccessCondition })
-    accessCondition: AccessCondition
+    accessCondition: AccessCondition<any>
 
-    constructor(options?: { accessTypes: AccessType[], accessCondition: AccessCondition }) {
+    constructor(options?: { accessTypes: AccessType[], accessCondition: AccessCondition<any> }) {
         super();
         if (options) {
             Object.assign(this, options);
@@ -41,10 +41,10 @@ export class Access extends AccessData {
         if (!this.accessTypes || !this.accessCondition) {
             throw new Error("Not initialized");
         }
-        return bs58.encode(Buffer.from(serialize(new Access({
+        return Buffer.from(serialize(new Access({
             accessCondition: this.accessCondition,
             accessTypes: this.accessTypes
-        }))))
+        }))).toString('base64')
     }
 
     initialize(): Access {

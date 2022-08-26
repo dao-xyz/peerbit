@@ -1,5 +1,5 @@
 import path from 'path'
-import io from 'orbit-db-io'
+import io from '@dao-xyz/orbit-db-io'
 
 // Creates a DB manifest file and saves it in IPFS
 export const createDBManifest = async (ipfs, name, type, accessControllerAddress, options) => {

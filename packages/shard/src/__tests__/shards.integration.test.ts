@@ -6,8 +6,9 @@ import { connectPeers, disconnectPeers } from '@dao-xyz/peer-test-utils';
 import { delay, waitFor, waitForAsync } from '@dao-xyz/time';
 import { P2PTrust } from '@dao-xyz/orbit-db-trust-web'
 import { MemoryLimitExceededError } from '../errors';
-import { AccessError } from '@dao-xyz/ipfs-log';
 import v8 from 'v8';
+import { RecursiveShardDBInterface } from '../interface';
+import { AccessError } from '@dao-xyz/encryption-utils';
 
 const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 
@@ -33,16 +34,14 @@ const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 
 describe('cluster', () => {
     describe('trust', () => {
-        test('add trustee', async () => {
-
+        it('add trustee', async () => {
             let [peer, peer2] = await getConnectedPeers(2);
             let l0a = await documentStoreShard();
             await l0a.init(peer);
             expect(l0a.cid).toBeDefined();
             expect(l0a.trust).toBeInstanceOf(P2PTrust);
             expect((l0a.trust as P2PTrust).rootTrust).toBeDefined();
-            expect((l0a.trust as P2PTrust).rootTrust.id === peer.orbitDB.identity.id)
-
+            expect((l0a.trust as P2PTrust).rootTrust.equals(peer.orbitDB.identity))
 
             let newTrustee = peer2.orbitDB.identity;
             await l0a.trust.addTrust(newTrustee);
@@ -51,13 +50,11 @@ describe('cluster', () => {
             await l0b.trust.load(1);
             expect(l0b.trust.db.size).toEqual(1)
             await disconnectPeers([peer, peer2]);
-
-
         })
     })
 
     describe('manifest', () => {
-        test('save load', async () => {
+        it('save load', async () => {
 
             let [peer, peer2] = await getConnectedPeers(2);
             let l1 = (await peer.node.id()).addresses[0];
@@ -67,13 +64,13 @@ describe('cluster', () => {
             await l0.init(peer);
             expect(l0.cid).toBeDefined();
             let loadedShard = await Shard.loadFromCID<BinaryFeedStoreInterface>(l0.cid, peer2.node);
-            expect(loadedShard.interface.db.address).toEqual(l0.interface.db.address);
+            expect(loadedShard.interface.address).toEqual(l0.interface.address);
             await disconnectPeers([peer, peer2]);
         })
     })
 
     describe('recursive shard', () => {
-        test('peer backward connect', async () => {
+        it('peer backward connect', async () => {
 
             let [peer, peer2] = await getConnectedPeers(2)
 
@@ -91,7 +88,7 @@ describe('cluster', () => {
         })
 
 
-        test('backward connect filter unique', async () => {
+        it('backward connect filter unique', async () => {
 
             let [peer, peer2] = await getConnectedPeers(2)
 
@@ -113,7 +110,7 @@ describe('cluster', () => {
             disconnectPeers([peer, peer2]);
         })
 
-        test('backward connect no job is same peer', async () => {
+        it('backward connect no job is same peer', async () => {
 
             let [peer] = await getConnectedPeers(2)
 
@@ -134,7 +131,7 @@ describe('cluster', () => {
     })
 
     describe('resiliance', () => {
-        test('connect to remote', async () => {
+        it('connect to remote', async () => {
 
             let [peer, peer2] = await getConnectedPeers(2);
 
@@ -150,17 +147,17 @@ describe('cluster', () => {
 
 
             // --- Load assert, from another peer
-            await l0.init(peer2)
-            await l0.interface.load(1);
-            expect(Object.keys(l0.interface.db.index._index).length).toEqual(1);
-            let feedStoreLoaded = await l0.interface.loadShard(documentStore.cid, peer2);
-            await feedStoreLoaded.interface.load(1);
-            await waitFor(() => Object.keys(feedStoreLoaded.interface.db.index._index).length == 1)
+            const l0b = await Shard.loadFromCID(l0.cid, peer2.orbitDB._ipfs);
+            await l0b.init(peer2)
+            await (l0b.interface as RecursiveShardDBInterface<DocumentStoreInterface>).load();
+            await waitFor(() => Object.keys((l0b.interface as RecursiveShardDBInterface<DocumentStoreInterface>).db.index._index).length === 1);
+            let feedStoreLoaded = await (l0b.interface as RecursiveShardDBInterface<DocumentStoreInterface>).loadShard(documentStore.cid, peer2);
+            await feedStoreLoaded.interface.load();
+            await waitFor(() => Object.keys(feedStoreLoaded.interface.db.index._index).length === 1);
             await disconnectPeers([peer, peer2]);
-
         })
 
-        test('first peer drop, data still alive because 2nd peer is up', async () => {
+        it('first peer drop, data still alive because 2nd peer is up', async () => {
             let [peer, peer2, peer3] = await getConnectedPeers(3);
 
             // Create Root shard
@@ -176,7 +173,7 @@ describe('cluster', () => {
             const l0b = await Shard.loadFromCID<DocumentStoreInterface>(l0a.cid, peer2.node);
             await l0b.replicate(peer2);
             await l0b.interface.load(1);
-            expect(Object.keys(l0b.interface.db.index._index).length).toEqual(1);
+            await waitFor(() => Object.keys(l0b.interface.db.index._index).length === 1);
 
 
             // Drop 1 peer and make sure a third peer can access data
@@ -184,7 +181,7 @@ describe('cluster', () => {
             const l0c = await Shard.loadFromCID<DocumentStoreInterface>(l0a.cid, peer3.node);
             await l0c.init(peer3)
             await l0c.interface.load(1);
-            expect(Object.keys(l0c.interface.db.index._index).length).toEqual(1);
+            await waitFor(() => Object.keys(l0c.interface.db.index._index).length === 1);
             await disconnectPeers([peer2, peer3]);
         })
     })
@@ -192,7 +189,7 @@ describe('cluster', () => {
 
     /* describe('presharding', () => {
 
-        test('nested block store', async () => {
+        it('nested block store', async () => {
 
 
             let peers = await getPeersSameIdentity(2, 100000000);
@@ -228,9 +225,11 @@ describe('cluster', () => {
            WHILE PARNET
        SUBSCRICE ?
     */
+
+
     describe('peer', () => {
 
-        test('peer counter from 1 replicator', async () => {
+        it('peer counter from 1 replicator', async () => {
             let [peer, peer2] = await getConnectedPeers(2);
             let l0a = await shardStoreShard();
             await l0a.replicate(peer);
@@ -241,7 +240,7 @@ describe('cluster', () => {
             await disconnectPeers([peer, peer2]);
         })
 
-        test('peer counter from 2 replicators', async () => {
+        it('peer counter from 2 replicators', async () => {
             let [peer, peer2, peer3] = await getConnectedPeers(3);
             let l0a = await shardStoreShard();
             await l0a.replicate(peer);
@@ -255,7 +254,7 @@ describe('cluster', () => {
             await disconnectPeers([peer, peer2, peer3]);
         })
 
-        test('peer counter from 2 replicators, but one is offline', async () => {
+        it('peer counter from 2 replicators, but one is offline', async () => {
             let [peer, peer2, peer3] = await getConnectedPeers(3);
             let l0a = await shardStoreShard();
             await l0a.replicate(peer);
@@ -266,14 +265,14 @@ describe('cluster', () => {
             let l0c = await Shard.loadFromCID(l0a.cid, peer3.node);
             await l0c.init(peer3);
             await delay(5000);
-            waitForAsync(async () => (await l0c.shardPeerInfo.getPeers()).length == 2);
+            await waitForAsync(async () => (await l0c.shardPeerInfo.getPeers()).length == 2);
             await disconnectPeers([peer2]);
-            waitForAsync(async () => (await l0c.shardPeerInfo.getPeers()).length == 1);
+            await waitForAsync(async () => (await l0c.shardPeerInfo.getPeers()).length == 1);
             await disconnectPeers([peer, peer3]);
         })
 
 
-        test('request replicate', async () => {
+        it('request replicate', async () => {
             let peer = await getPeer();
             let peer2 = await getPeer(undefined, false);
             await connectPeers(peer, peer2);
@@ -288,7 +287,6 @@ describe('cluster', () => {
             await l0b.init(peer2)
 
             expect(await l0a.shardPeerInfo.getPeers()).toHaveLength(0)
-            expect(await l0b.shardPeerInfo.getPeers()).toHaveLength(0)
 
             expect(l0a.trust.rootTrust.id === l0b.trust.rootTrust.id);            // Replication step
             let replicationCallback = false
@@ -302,7 +300,7 @@ describe('cluster', () => {
             await disconnectPeers([peer, peer2]);
         })
 
-        test('trust web reuse closing shards', async () => {
+        it('trust web reuse closing shards', async () => {
             let peer = await getPeer();
             let l0a = await shardStoreShard();
             await l0a.init(peer);
@@ -311,9 +309,9 @@ describe('cluster', () => {
             await l0b.init(peer);
             expect(peer.trustWebs.size).toEqual(1);
             const hashCode = l0a.trust.hashCode();
-            expect(peer.trustWebs.get(hashCode).shards).toHaveLength(2);
+            expect(peer.trustWebs.get(hashCode).shards.size).toEqual(2);
             await l0b.close();
-            expect(peer.trustWebs.get(hashCode).shards).toHaveLength(1);
+            expect(peer.trustWebs.get(hashCode).shards.size).toEqual(1);
             await l0a.close();
             expect(peer.trustWebs.has(hashCode)).toBeFalsy();
             expect(l0a.trust).toEqual(l0b.trust);
@@ -324,7 +322,7 @@ describe('cluster', () => {
 
     describe('peer', () => {
         describe('options', () => {
-            test('isServer=false no subscriptions on idle on shardStoreShard', async () => {
+            it('isServer=false no subscriptions on idle on shardStoreShard', async () => {
                 let peerNonServer = await getPeer(undefined, false);
                 let l0 = await shardStoreShard();
                 await l0.init(peerNonServer);
@@ -333,7 +331,7 @@ describe('cluster', () => {
                 await disconnectPeers([peerNonServer]);
             })
 
-            test('isServer=false no subscriptions on idle on documentStoreShard', async () => {
+            it('isServer=false no subscriptions on idle on documentStoreShard', async () => {
 
                 let peerNonServer = await getPeer(undefined, false);
                 let l0 = await documentStoreShard();
@@ -344,7 +342,7 @@ describe('cluster', () => {
             })
 
 
-            test('isServer=false can write', async () => {
+            it('isServer=false can write', async () => {
 
                 let peerServer = await getPeer(undefined, true);
                 let peerNonServer = await getPeer(undefined, false);
@@ -363,11 +361,12 @@ describe('cluster', () => {
                 expect(subscriptions.length).toEqual(0); // non server should not have any subscriptions idle
                 await delay(3000)
                 await l0Write.interface.load();
-                await l0Write.interface.write((x) => l0Write.interface.db.put(x), new Document({
-                    id: 'hello'
-                }))
+                await l0Write.interface.db.put(new Document({ id: 'hello' }))
+                /*  await l0Write.interface.write((x) => l0Write.interface.db.put(x), new Document({
+                     id: 'hello'
+                 })) */
 
-                await l0.interface.load();
+                //  await l0.interface.load();
                 await waitFor(() => l0.interface.db.size > 0);
                 subscriptions = await peerNonServer.node.pubsub.ls();
                 expect(subscriptions.length).toEqual(0);  // non server should not have any subscriptions after write
@@ -375,7 +374,7 @@ describe('cluster', () => {
             })
         });
         describe('leader', () => {
-            test('no leader, since no peers', async () => {
+            it('no leader, since no peers', async () => {
 
                 let [peer] = await getConnectedPeers(1)
 
@@ -389,7 +388,7 @@ describe('cluster', () => {
                 disconnectPeers([peer]);
             })
 
-            test('always leader, since 1 peer', async () => {
+            it('always leader, since 1 peer', async () => {
 
                 let [peer] = await getConnectedPeers(1)
 
@@ -404,7 +403,7 @@ describe('cluster', () => {
                 await disconnectPeers([peer]);
             })
 
-            test('1 leader if two peers', async () => {
+            it('1 leader if two peers', async () => {
 
                 let [peer, peer2] = await getConnectedPeers(2)
 
@@ -430,31 +429,70 @@ describe('cluster', () => {
     })
 
     describe('query', () => {
-        test('query subscription are combined', async () => {
+        it('query subscription are combined', async () => {
 
             let [peer] = await getConnectedPeers(1)
 
             // Create Root shard
-
             let l0 = await shardStoreShard();
             await l0.replicate(peer);
+
             // Create 2 feed stores
-            let feedStore1 = await (await documentStoreShard()).init(peer, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
+            let feedStore1 = await (await documentStoreShard()).init(peer, l0.cid);
             await feedStore1.replicate(peer);
-            let feedStore2 = await (await documentStoreShard()).init(peer, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
+            let feedStore2 = await (await documentStoreShard()).init(peer, l0.cid);
             await feedStore2.replicate(peer);
+
             const subscriptions = await peer.node.pubsub.ls();
-            expect(subscriptions.filter(x => x.endsWith("/query"))).toHaveLength(1);
-            disconnectPeers([peer]);
+            expect(subscriptions).toHaveLength(2); // 1 channel for queries, 1 channel for replication
+            await disconnectPeers([peer]);
         })
     })
 
     // TODO: Autosharding on new data
     // TODO: Sharding if overflow
 
-    describe('sharding', () => {
+    /* describe('sharding', () => {
 
-        test('memory left peer info', async () => {
+        describe('encryption', () => {
+            it('keys are shared', async () => {
+
+                TODO FIX TEST
+                let peer = await getPeer();
+                let peer2 = await getPeer(undefined, false);
+                await connectPeers(peer, peer2);
+
+                let l0a = await shardStoreShard();
+                await l0a.init(peer);
+                await l0a.trust.load();
+                await l0a.trust.addTrust(peer2.orbitDB.identity);
+                await waitFor(() => l0a.trust.db.size == 1)// add some delay because trust db is not synchronous
+
+                let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
+                await l0b.init(peer2)
+
+                expect(await l0a.shardPeerInfo.getPeers()).toHaveLength(0)
+                expect(l0a.trust.rootTrust.id === l0b.trust.rootTrust.id);
+
+                // Replication step
+                let replicationCallback = false
+                await Shard.subscribeForReplication(peer, l0a.trust, () => { replicationCallback = true });
+                await delay(5000); // Pubsub is flaky, wait some time before requesting shard
+                await l0b.requestReplicate();
+
+
+                //  --------------
+                expect(await l0b.shardPeerInfo.getPeers()).toHaveLength(1)
+                expect(replicationCallback);
+                // add some delay because replication might take some time and is not synchronous
+                await disconnectPeers([peer, peer2]);
+            })
+        })
+    }) */
+
+    describe('trigger', () => {
+
+        it('memory left peer info', async () => {
             let peer = await getPeer()
 
             // Create Root shard
@@ -472,7 +510,7 @@ describe('cluster', () => {
             disconnectPeers([peer]);
         })
 
-        test('memory runs out, prevent replicating', async () => {
+        it('memory runs out, prevent replicating', async () => {
             let peer = await getPeer()
 
             // Create Root shard
@@ -497,7 +535,7 @@ describe('cluster', () => {
         // alternative solution 
         // shard everything as soon as a peer runs out of memory, to let the peer still be alive
         // replication is only something that is invoked when a peer goes down or a new shard is created and reducancy is to be built
-        test('memory runs out, will request sharding', async () => {
+        it('memory runs out, will request sharding', async () => {
             let [peerLowMemory, peerSupporting, peerNew] = await getConnectedPeers(3)
 
             // Create Root shard
@@ -539,7 +577,6 @@ describe('cluster', () => {
             await waitFor(() => Object.keys((peerSupporting.supportJobs.values().next().value.shard.interface as DocumentStoreInterface).db.index._index).length == 1);
             await disconnectPeers([peerLowMemory, peerSupporting, peerNew]);
         })
-
-
     })
-});
+
+})

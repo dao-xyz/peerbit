@@ -1,4 +1,4 @@
-export const findUniques = (value, key) => {
+export const findUniques = <T>(value: T[], key: string): T[] => {
   // Create an index of the collection
   const uniques = {}
   const get = e => uniques[e]

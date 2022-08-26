@@ -1,10 +1,12 @@
 
 import assert from 'assert'
-import { Store, DefaultOptions } from '../store'
-
-import { default as Cache } from 'orbit-db-cache'
-const Keystore = require("orbit-db-keystore");
+import { Store, DefaultOptions, HeadsCache } from '../store'
+import { default as Cache } from '@dao-xyz/orbit-db-cache'
+import { Keystore } from "@dao-xyz/orbit-db-keystore"
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log-entry'
+import { createStore } from './storage'
+
 
 // Test utils
 const {
@@ -14,10 +16,9 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-const storage = require('orbit-db-storage-adapter')(require('memdown'))
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`addOperation ${IPFS}`, function () {
-    let ipfsd, ipfs, testIdentity, identityStore, store, cacheStore
+    let ipfsd, ipfs, testIdentity, identityStore, store: Store<any, any, any, any>, cacheStore
 
     jest.setTimeout(config.timeout);
 
@@ -26,13 +27,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     beforeAll(async () => {
-      identityStore = await storage.createStore('identity')
+      identityStore = await createStore('identity')
       const keystore = new Keystore(identityStore)
 
-      cacheStore = await storage.createStore('cache')
+      cacheStore = await createStore('cache')
       const cache = new Cache(cacheStore)
 
-      testIdentity = await Identities.createIdentity({ id: 'userA', keystore })
+      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore })
       ipfsd = await startIpfs(IPFS, ipfsConfig.daemon1)
       ipfs = ipfsd.api
 
@@ -54,41 +55,48 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await identityStore.open()
     })
 
-    test('adds an operation and triggers the write event', (done) => {
+    it('adds an operation and triggers the write event', (done) => {
       const data = { data: 12345 }
-
-      store.events.on('write', (address, entry, heads) => {
+      store.events.on('write', (topic, address, entry, heads) => {
         assert.strictEqual(heads.length, 1)
         assert.strictEqual(address, 'test-address')
-        assert.strictEqual(entry.payload, data)
+        assert.deepStrictEqual(entry.payload.value, data)
         assert.strictEqual(store.replicationStatus.progress, 1)
         assert.strictEqual(store.replicationStatus.max, 1)
         assert.strictEqual(store.address.root, store._index.id)
         assert.deepStrictEqual(store._index._index, heads)
-        store._cache.get(store.localHeadsPath).then((localHeads) => {
-          assert.deepStrictEqual(localHeads[0].payload, data)
-          // TODO: Cache not returning LamportClock type for clock
-          // assert.deepStrictEqual(localHeads, heads)
+        store._cache.getBinary(store.localHeadsPath, HeadsCache).then((localHeads) => {
+          localHeads.heads[0].init({
+            encoding: JSON_ENCODING_OPTIONS
+          });
+          assert.deepStrictEqual(localHeads.heads[0].payload.value, data)
+          assert(localHeads.heads[0].equals(heads[0]))
+          assert.strictEqual(heads.length, 1)
+          assert.strictEqual(localHeads.heads.length, 1)
           store.events.removeAllListeners('write')
           done()
         })
       })
       store._addOperation(data)
+
     })
 
-    test('adds multiple operations and triggers multiple write events', async () => {
+    it('adds multiple operations and triggers multiple write events', async () => {
       const writes = 3
       let eventsFired = 0
 
-      store.events.on('write', (address, entry, heads) => {
+      store.events.on('write', (topic, address, entry, heads) => {
         eventsFired++
         if (eventsFired === writes) {
           assert.strictEqual(heads.length, 1)
           assert.strictEqual(store.replicationStatus.progress, writes)
           assert.strictEqual(store.replicationStatus.max, writes)
           assert.strictEqual(store._index._index.length, writes)
-          store._cache.get(store.localHeadsPath).then((localHeads) => {
-            assert.deepStrictEqual(localHeads[0].payload, store._index._index[2].payload)
+          store._cache.getBinary(store.localHeadsPath, HeadsCache).then((localHeads) => {
+            localHeads.heads[0].init({
+              encoding: JSON_ENCODING_OPTIONS
+            });
+            assert.deepStrictEqual(localHeads.heads[0].payload.value, store._index._index[2].payload.value)
             store.events.removeAllListeners('write')
             return Promise.resolve()
           })
@@ -100,7 +108,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       }
     })
 
-    test('Shows that batch writing is not yet implemented', async () => {
+    it('Shows that batch writing is not yet implemented', async () => {
       try {
         await store._addOperationBatch({})
       } catch (e) {

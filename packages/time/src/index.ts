@@ -1,49 +1,57 @@
-export const delay = (ms: number, stopperCallback?: (stopper: () => void) => void) => {
+export class TimeoutError extends Error {
+    constructor(message: string) {
+        super(message);
+    }
+}
+export const delay = (ms: number, options?: { stopperCallback?: (stopper: () => void) => void }) => {
     return new Promise((res, rej) => {
-        if (stopperCallback)
-            stopperCallback(() => res(true));
+        if (options?.stopperCallback)
+            options?.stopperCallback(() => res(true));
         setTimeout(res, ms)
     })
 };
 
 
-export const waitFor = async (fn: () => boolean | Promise<boolean>, timeout: number = 10 * 1000, stopperCallback?: (stopper: () => void) => void) => {
+export const waitFor = async <T>(fn: () => T, options: { timeout: number, stopperCallback?: (stopper: () => void) => void, delayInterval } = { timeout: 10 * 1000, delayInterval: 50 }): Promise<T> => {
 
     let startTime = +new Date;
     let stop = false
-    if (stopperCallback) {
+    if (options.stopperCallback) {
         const stopper = () => { stop = true }
-        stopperCallback(stopper);
+        options.stopperCallback(stopper);
     }
-    while (+new Date - startTime < timeout) {
+    while (+new Date - startTime < options.timeout) {
         if (stop) {
             return;
         }
-        if (await fn()) {
-            return;
+        const result = fn();
+        if (result) {
+            return result;
         }
-        await delay(50);
+        await delay(options.delayInterval);
 
     }
-    throw new Error("Timed out")
+    throw new TimeoutError("Timed out")
 
 };
-export const waitForAsync = async (fn: () => Promise<boolean>, timeout: number = 10 * 1000, stopperCallback?: (stopper: () => void) => void) => {
+
+export const waitForAsync = async<T>(fn: () => Promise<T>, options: { timeout: number, stopperCallback?: (stopper: () => void) => void, delayInterval } = { timeout: 10 * 1000, delayInterval: 50 }): Promise<T> => {
 
     let startTime = +new Date;
     let stop = false
-    if (stopperCallback) {
+    if (options.stopperCallback) {
         const stopper = () => { stop = true }
-        stopperCallback(stopper);
+        options.stopperCallback(stopper);
     }
-    while (+new Date - startTime < timeout) {
+    while (+new Date - startTime < options.timeout) {
         if (stop) {
             return;
         }
-        if (await fn()) {
-            return;
+        const result = await fn();
+        if (result) {
+            return result;
         }
-        await delay(50);
+        await delay(options.delayInterval);
     }
-    throw new Error("Timed out")
+    throw new TimeoutError("Timed out")
 };

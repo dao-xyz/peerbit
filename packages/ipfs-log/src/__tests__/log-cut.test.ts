@@ -2,8 +2,9 @@ const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
-const Keystore = require('orbit-db-keystore')
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
+import { assertPayload } from './utils/assert'
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
 const {
@@ -13,10 +14,10 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity
+let ipfsd, ipfs, testIdentity: Identity
 
 Object.keys(testAPIs).forEach((IPFS) => {
-  describe('Log - Cut (' + IPFS + ')', function () {
+  describe('Log - Cut', function () {
     jest.setTimeout(config.timeout)
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
@@ -32,7 +33,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
 
-      testIdentity = await Identities.createIdentity({ id: 'userA', keystore, signingKeystore })
+      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
+
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })
@@ -47,24 +49,24 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
 
-    test('cut back to max oplog length', async () => {
-      const log = new Log(ipfs, testIdentity, { logId: 'A', recycle: { maxOplogLength: 1 } })
+    it('cut back to max oplog length', async () => {
+      const log = new Log<string>(ipfs, testIdentity, { logId: 'A', recycle: { maxOplogLength: 1 } })
       await log.append('hello1')
       await log.append('hello2')
       await log.append('hello3')
       assert.strictEqual(log.length, 1);
-      assert.strictEqual(log.values[0].payload, 'hello3');
+      assertPayload(log.values[0].payload.value, 'hello3');
     })
 
-    test('cut back to cut length', async () => {
-      const log = new Log(ipfs, testIdentity, { logId: 'A', recycle: { maxOplogLength: 3, cutOplogToLength: 1 } })
+    it('cut back to cut length', async () => {
+      const log = new Log<string>(ipfs, testIdentity, { logId: 'A', recycle: { maxOplogLength: 3, cutOplogToLength: 1 } })
       await log.append('hello1')
       await log.append('hello2')
       await log.append('hello3')
       assert.strictEqual(log.length, 3);
       await log.append('hello4')
       assert.strictEqual(log.length, 1); // We exceed 'maxOplogLength' and cut back to 'cutOplogToLength'
-      assert.strictEqual(log.values[0].payload, 'hello4');
+      assertPayload(log.values[0].payload.value, 'hello4');
     })
   })
 })

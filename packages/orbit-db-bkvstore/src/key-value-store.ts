@@ -5,11 +5,16 @@ import bs58 from 'bs58';
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store'
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores'
-export type IKeyValueStoreOptions<T> = IQueryStoreOptions<T, KeyValueIndex<T>> & { clazz: Constructor<T> }
+export type IKeyValueStoreOptions<T> = IQueryStoreOptions<Operation<T>, T, KeyValueIndex<T>> & { clazz: Constructor<T> }
 
 export const BINARY_KEYVALUE_STORE_TYPE = 'bkv_store';
 
 
+export interface Operation<T> {
+  op: string
+  key: string
+  value: string
+}
 
 
 @variant([0, 1])
@@ -46,7 +51,7 @@ const defaultOptions = <T>(options: IKeyValueStoreOptions<T>): any => {
   if (!options.Index) Object.assign(options, { Index: KeyValueIndex })
   return options;
 }
-export class BinaryKeyValueStore<T> extends Store<T, KeyValueIndex<T>, IKeyValueStoreOptions<T>> {
+export class BinaryKeyValueStore<T> extends Store<Operation<T>, T, KeyValueIndex<T>, IKeyValueStoreOptions<T>> {
 
   _type: string;
 

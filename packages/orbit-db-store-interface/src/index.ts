@@ -27,7 +27,7 @@ export class DBInterface extends BinaryPayload {
 
     }
 
-    async init(_orbitDB: OrbitDB, _options: IStoreOptions<any, any>): Promise<void> {
+    async init(_orbitDB: OrbitDB, _options: IStoreOptions<any, any, any>): Promise<void> {
         throw new Error("Not implemented")
     }
 
@@ -44,7 +44,7 @@ export class DBInterface extends BinaryPayload {
 // Every interface has to have its own variant, else DBInterface can not be
 // used as a deserialization target.
 @variant([0, 0])
-export abstract class SingleDBInterface<T, B extends Store<T, any, IStoreOptions<T, any>>> extends DBInterface {
+export abstract class SingleDBInterface<T, B extends Store<any, any, any, any>> extends DBInterface {
 
     @field({ type: 'String' })
     name: string;
@@ -57,7 +57,7 @@ export abstract class SingleDBInterface<T, B extends Store<T, any, IStoreOptions
 
     db: B;
     _orbitDB: OrbitDB
-    _options: IStoreOptions<T, any>
+    _options: IStoreOptions<T, T, any>
 
     constructor(opts?: {
         name: string;
@@ -72,11 +72,11 @@ export abstract class SingleDBInterface<T, B extends Store<T, any, IStoreOptions
         }
     }
 
-    get options(): IStoreOptions<T, any> {
+    get options(): IStoreOptions<T, T, any> {
         return this._options;
     }
 
-    async init(orbitDB: OrbitDB, options: IStoreOptions<T, any>): Promise<void> {
+    async init(orbitDB: OrbitDB, options: IStoreOptions<T, T, any>): Promise<void> {
         this.db = undefined;
         this._options = options;
         this._orbitDB = orbitDB;
@@ -116,20 +116,26 @@ export abstract class SingleDBInterface<T, B extends Store<T, any, IStoreOptions
     }
 
 
+    // TODO this function shopuld perhaps live in the "orbit-db" package and be renamed to something appropiate
     /**
-     * Write to DB without fully loadung it
+     * Write to DB without fully loading it
      * @param write 
      * @param obj 
      * @param unsubscribe 
      * @returns 
      */
     async write(write: (obj: T) => Promise<any>, obj: T, unsubscribe: boolean = true): Promise<B> {
-        let topic = this.address.toString();
+        let topic = Store.getReplicationTopic(this.address, this._options);
         let subscribed = !!this._orbitDB._pubsub._subscriptions[topic];
-        let directConnectionsFromWrite = {};
+        let directConnectionsFromWrite: { [peer: string]: string } = {};
+        let preExistingConnections = new Set();
         if (!subscribed) {
-            await this._orbitDB._pubsub.subscribe(topic, this._orbitDB._onMessage.bind(this._orbitDB), (address: string, peer: any) => {
-                this._orbitDB._onPeerConnected(address, peer);
+            await this._orbitDB._pubsub.subscribe(topic, this._orbitDB._onMessage.bind(this._orbitDB), async (address: string, peer: string) => {
+                if (this._orbitDB._directConnections[peer]) {
+                    preExistingConnections.add(peer);
+                }
+                await this._orbitDB.getChannel(peer)
+                //this._orbitDB._onPeerConnected(topic, peer);
                 directConnectionsFromWrite[peer] = address;
             })
         }
@@ -138,11 +144,11 @@ export abstract class SingleDBInterface<T, B extends Store<T, any, IStoreOptions
             // TODO: could cause sideeffects if there is another write that wants to access the topic
             await this._orbitDB._pubsub.unsubscribe(topic);
 
-            const removeDirectConnect = e => {
-                const conn = this._orbitDB._directConnections[e];
-                if (conn) {
-                    this._orbitDB._directConnections[e].close()
-                    delete this._orbitDB._directConnections[e]
+            const removeDirectConnect = peer => {
+                const conn = this._orbitDB._directConnections[peer];
+                if (conn && !preExistingConnections.has(peer)) {
+                    this._orbitDB._directConnections[peer].close()
+                    delete this._orbitDB._directConnections[peer]
                 }
 
             }

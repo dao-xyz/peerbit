@@ -2,12 +2,11 @@ import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { AnyPeer, PeerOptions } from '../peer';
 import { RecursiveShardDBInterface } from '../interface';
 import { SingleDBInterface, DBInterface, } from '@dao-xyz/orbit-db-store-interface';
-import BN from 'bn.js';
-import { Constructor, field, variant } from '@dao-xyz/borsh';
+import { field, variant } from '@dao-xyz/borsh';
 import { BinaryDocumentStore, BinaryDocumentStoreOptions } from '@dao-xyz/orbit-db-bdocstore';
-import { BinaryFeedStoreOptions, BinaryFeedStore } from '@dao-xyz/orbit-db-bfeedstore';
+import { BinaryFeedStore } from '@dao-xyz/orbit-db-bfeedstore';
 import { v4 as uuid } from 'uuid';
-import { NoResourceRequirements, ResourceRequirements, Shard } from '../shard';
+import { NoResourceRequirements, Shard } from '../shard';
 import { getPeer as getPeerTest, getConnectedPeers as getConnectedPeersTest, Peer } from '@dao-xyz/peer-test-utils';
 import { P2PTrust } from '@dao-xyz/orbit-db-trust-web';
 import { OrbitDB } from '@dao-xyz/orbit-db';
@@ -83,7 +82,7 @@ export class BinaryFeedStoreInterface extends SingleDBInterface<Document, Binary
 
 @variant([1, 1])
 export class DocumentStoreInterface extends SingleDBInterface<Document, BinaryDocumentStore<Document>> {
-    init(orbitDB: OrbitDB, options: IStoreOptions<Document, any>): Promise<void> {
+    init(orbitDB: OrbitDB, options: IStoreOptions<Document, any, any>): Promise<void> {
         return super.init(orbitDB, {
             ...options, typeMap: {
                 [Document.name]: Document

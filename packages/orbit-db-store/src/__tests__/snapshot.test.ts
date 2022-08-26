@@ -1,9 +1,11 @@
 import assert from 'assert'
 
-import { default as Cache } from 'orbit-db-cache'
-const Keystore = require('orbit-db-keystore');
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { default as Cache } from '@dao-xyz/orbit-db-cache'
+import { Keystore } from '@dao-xyz/orbit-db-keystore';
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { Store, DefaultOptions } from '../store'
+import { Entry } from '@dao-xyz/ipfs-log-entry';
+import { createStore } from './storage';
 
 // Test utils
 const {
@@ -13,11 +15,9 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-const storage = require('orbit-db-storage-adapter')(require('memdown'))
-
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`Snapshots ${IPFS}`, function () {
-    let ipfsd, ipfs, testIdentity, identityStore, store, cacheStore
+    let ipfsd, ipfs, testIdentity: Identity, identityStore, store: Store<any, any, any, any>, cacheStore
 
     jest.setTimeout(config.timeout)
 
@@ -26,13 +26,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     beforeAll(async () => {
-      identityStore = await storage.createStore('identity')
+      identityStore = await createStore('identity')
       const keystore = new Keystore(identityStore)
 
-      cacheStore = await storage.createStore('cache')
+      cacheStore = await createStore('cache')
       const cache = new Cache(cacheStore)
 
-      testIdentity = await Identities.createIdentity({ id: 'userA', keystore })
+      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore })
       ipfsd = await startIpfs(IPFS, ipfsConfig.daemon1)
       ipfs = ipfsd.api
 
@@ -54,7 +54,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await identityStore.open()
     })
 
-    test('Saves a local snapshot', async () => {
+    it('Saves a local snapshot', async () => {
       const writes = 10
 
       for (let i = 0; i < writes; i++) {
@@ -62,12 +62,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
       }
       const snapshot = await store.saveSnapshot()
       assert.strictEqual(snapshot[0].path.length, 46)
-      assert.strictEqual(snapshot[0].hash.length, 46)
-      assert.strictEqual(snapshot[0].path, snapshot[0].hash)
+      assert.strictEqual(snapshot[0].cid.toString().length, 46)
+      assert.strictEqual(snapshot[0].path, snapshot[0].cid.toString())
       assert.strictEqual(snapshot[0].size > writes * 200, true)
     })
 
-    test('Successfully loads a saved snapshot', async () => {
+    it('Successfully loads a saved snapshot', async () => {
       const writes = 10
 
       for (let i = 0; i < writes; i++) {
@@ -78,8 +78,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.strictEqual(storeFromSnapshot.index._index.length, 10)
 
       for (let i = 0; i < writes; i++) {
-        assert.strictEqual(storeFromSnapshot.index._index[i].payload.step, i)
+        assert.strictEqual((storeFromSnapshot.index._index[i] as Entry<any>).payload.value.step, i)
       }
     })
+
+    // TODO test resume unfishid replication
   })
 })

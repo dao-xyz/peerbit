@@ -72,7 +72,7 @@ export const query = async (pubsub: PubSubAPI, topic: string, query: QueryReques
     }
     await pubsub.publish(topic, serialize(query));
     if (waitForAmount != undefined) {
-        await waitFor(() => results >= waitForAmount, maxAggregationTime)
+        await waitFor(() => results >= waitForAmount, { timeout: maxAggregationTime, delayInterval: 50 })
     }
     else {
         await delay(maxAggregationTime);

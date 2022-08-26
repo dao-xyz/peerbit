@@ -1,7 +1,7 @@
 import { PayloadOperation, applyOperations, StringLogEntry } from "../string-index";
 
 describe('operations', () => {
-    test('add', () => {
+    it('add', () => {
         const operations: PayloadOperation[] = [
             {
                 index: {
@@ -34,7 +34,7 @@ describe('operations', () => {
         expect(string).toEqual('hello world');
     })
 
-    test('replace', () => {
+    it('replace', () => {
         const operations: PayloadOperation[] = [
             {
                 index: {
@@ -73,7 +73,7 @@ describe('operations', () => {
         expect(string).toEqual('hello world');
     })
 
-    test('delete', () => {
+    it('delete', () => {
         const operations: PayloadOperation[] = [
             {
                 index: {

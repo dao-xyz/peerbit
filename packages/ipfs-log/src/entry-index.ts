@@ -1,18 +1,20 @@
-export class EntryIndex {
+import { Entry } from "@dao-xyz/ipfs-log-entry"
+
+export class EntryIndex<T> {
   _cache: any
   constructor(entries = {}) {
     this._cache = entries
   }
 
-  set(k, v) {
+  set(k: string, v: Entry<T>) {
     this._cache[k] = v
   }
 
-  get(k) {
+  get(k: string): Entry<T> {
     return this._cache[k]
   }
 
-  delete(k) {
+  delete(k: string) {
     return delete this._cache[k]
   }
 

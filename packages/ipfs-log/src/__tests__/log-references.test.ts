@@ -1,9 +1,9 @@
 const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 import { Log } from '../log'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
-const Keystore = require('orbit-db-keystore')
 
 // Test utils
 const {
@@ -13,10 +13,10 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity
+let ipfsd, ipfs, testIdentity: Identity
 
 Object.keys(testAPIs).forEach((IPFS) => {
-  describe('Log - References (' + IPFS + ')', function () {
+  describe('Log - References', function () {
     jest.setTimeout(config.timeout * 4)
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
@@ -32,7 +32,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
 
-      testIdentity = await Identities.createIdentity({ id: 'userA', keystore, signingKeystore })
+      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })
@@ -46,7 +46,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await signingKeystore?.close()
     })
     describe('References', () => {
-      test('creates entries with references', async () => {
+      it('creates entries with references', async () => {
         const amount = 64
         const maxReferenceDistance = 2
         const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
@@ -55,19 +55,19 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log4 = new Log(ipfs, testIdentity, { logId: 'D' })
 
         for (let i = 0; i < amount; i++) {
-          await log1.append(i.toString(), maxReferenceDistance)
+          await log1.append(i.toString(), { pointerCount: maxReferenceDistance })
         }
 
         for (let i = 0; i < amount * 2; i++) {
-          await log2.append(i.toString(), Math.pow(maxReferenceDistance, 2))
+          await log2.append(i.toString(), { pointerCount: Math.pow(maxReferenceDistance, 2) })
         }
 
         for (let i = 0; i < amount * 3; i++) {
-          await log3.append(i.toString(), Math.pow(maxReferenceDistance, 3))
+          await log3.append(i.toString(), { pointerCount: Math.pow(maxReferenceDistance, 3) })
         }
 
         for (let i = 0; i < amount * 4; i++) {
-          await log4.append(i.toString(), Math.pow(maxReferenceDistance, 4))
+          await log4.append(i.toString(), { pointerCount: Math.pow(maxReferenceDistance, 4) })
         }
 
         assert.strict.equal(log1.values[log1.length - 1].next?.length, 1)
@@ -104,10 +104,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
         ]
 
         for (const input of inputs) {
-          const test = async (amount, referenceCount, refLength) => {
+          const test = async (amount: number, referenceCount: number, refLength: number) => {
             const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
             for (let i = 0; i < amount; i++) {
-              await log1.append((i + 1).toString(), referenceCount)
+              await log1.append((i + 1).toString(), { pointerCount: referenceCount })
             }
 
             assert.strict.equal(log1.values.length, input.amount)

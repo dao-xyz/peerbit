@@ -2,13 +2,8 @@
 /// <reference path="./LogEntry.d.ts" />
 declare module 'orbit-db' {
     import { Store } from '@dao-xyz/orbit-db-store';
-    import KeyValueStore from "orbit-db-kvstore";
-    import FeedStore from "orbit-db-feedstore";
-    import EventStore from "orbit-db-eventstore";
-    import DocumentStore from "orbit-db-docstore";
-    import CounterStore from "orbit-db-counterstore";
-    import { Keystore } from "orbit-db-keystore";
-    import Cache from "orbit-db-cache";
+    import { Keystore } from "@dao-xyz/orbit-db-keystore";
+    import Cache from "@dao-xyz/orbit-db-cache";
     import { Identity } from "@dao-xyz/orbit-db-identity-provider";
     import * as IPFS from "ipfs";
     import * as elliptic from "elliptic";
@@ -60,30 +55,20 @@ declare module 'orbit-db' {
             directory?: string,
             peerId?: string,
             keystore?: Keystore,
-            cache?: Cache<any>,
+            cache?: Cache,
             identity?: Identity
             broker?: any,
         }): Promise<OrbitDB>
 
-        create(name: string, type: TStoreType, options?: ICreateOptions): Promise<Store>;
+        create(name: string, type: string, options?: ICreateOptions): Promise<Store>;
 
         open<T extends Store>(address: string, options?: IOpenOptions): Promise<T>;
 
         disconnect(): Promise<void>;
         stop(): Promise<void>;
+        determineAddress(name: string, type: string, options?: ICreateOptions): Promise<OrbitDBAddress>
 
-        feed<T>(address: string, options?: IStoreOptions): Promise<FeedStore<T>>;
-        log<T>(address: string, options?: IStoreOptions): Promise<EventStore<T>>;
-        eventlog<T>(address: string, options?: IStoreOptions): Promise<EventStore<T>>;
-        keyvalue<T>(address: string, options?: IStoreOptions): Promise<KeyValueStore<T>>;
-        kvstore<T>(address: string, options?: IStoreOptions): Promise<KeyValueStore<T>>;
-        counter(address: string, options?: IStoreOptions): Promise<CounterStore>;
-        docs<T>(address: string, options?: IStoreOptions): Promise<DocumentStore<T>>;
-        docstore<T>(address: string, options?: IStoreOptions): Promise<DocumentStore<T>>;
-
-        determineAddress(name: string, type: TStoreType, options?: ICreateOptions): Promise<OrbitDBAddress>
-
-        static isValidType(type: TStoreType): boolean;
+        static isValidType(type: string): boolean;
         static addDatabaseType(type: string, store: typeof Store): void;
         static getDatabaseTypes(): {};
         static isValidAddress(address: string): boolean;

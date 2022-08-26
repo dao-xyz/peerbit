@@ -3,7 +3,7 @@ import { Store } from '@dao-xyz/orbit-db-store';
 const MAX_REPLICATION_WAIT_TIME = 15 * 1000;
 
 
-export const waitForReplicationEvents = async (store: Store<any, any, any>, waitForReplicationEventsCount: number) => {
+export const waitForReplicationEvents = async (store: Store<any, any, any, any>, waitForReplicationEventsCount: number) => {
     /*
         * This method is flaky
         * First we check the progress of replicatoin

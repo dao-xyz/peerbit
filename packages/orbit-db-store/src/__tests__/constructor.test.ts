@@ -1,8 +1,8 @@
 import assert from 'assert'
 import { Store, DefaultOptions } from '../store'
-import { default as Cache } from 'orbit-db-cache'
-const Keystore = require("orbit-db-keystore");
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { default as Cache } from '@dao-xyz/orbit-db-cache'
+import { Keystore } from "@dao-xyz/orbit-db-keystore"
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 
 // Test utils
 import {
@@ -11,12 +11,12 @@ import {
   startIpfs,
   stopIpfs
 } from 'orbit-db-test-utils'
+import { createStore } from './storage'
 
-const storage = require('orbit-db-storage-adapter')(require('memdown'))
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`Constructor ${IPFS}`, function () {
-    let ipfs, testIdentity, identityStore, store, storeWithCache, cacheStore
+    let ipfs, testIdentity: Identity, identityStore, store, storeWithCache, cacheStore
 
     jest.setTimeout(config.timeout);
 
@@ -25,13 +25,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     beforeAll(async () => {
-      identityStore = await storage.createStore('identity')
+      identityStore = await createStore('identity')
       const keystore = new Keystore(identityStore)
 
-      cacheStore = await storage.createStore('cache')
+      cacheStore = await createStore('cache')
       const cache = new Cache(cacheStore)
 
-      testIdentity = await Identities.createIdentity({ id: 'userA', keystore })
+      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore })
       ipfs = await startIpfs(IPFS, ipfsConfig.daemon1)
 
       const address = 'test-address'
@@ -48,7 +48,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await cacheStore?.close()
     })
 
-    test('creates a new Store instance', async () => {
+    it('creates a new Store instance', async () => {
       assert.strictEqual(typeof store.options, 'object')
       assert.strictEqual(typeof store._type, 'string')
       assert.strictEqual(typeof store.id, 'string')
@@ -66,7 +66,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.strictEqual(typeof store._loader, 'object')
     })
 
-    test('properly defines a cache', async () => {
+    it('properly defines a cache', async () => {
       assert.strictEqual(typeof storeWithCache._cache, 'object')
     })
   })

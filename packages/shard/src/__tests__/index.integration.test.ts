@@ -3,7 +3,7 @@ import * as ipfs from 'ipfs';
 import fs from 'fs';
 
 describe('node', () => {
-  /*   test('local', async () => {
+  /*   it('local', async () => {
       const blobby = new Blobby();
       await blobby.create(true);
       let cid = await blobby.addNewPiece("QmNR2n4zywCV61MeMLB6JwPueAPqheqpfiA4fLPMxouEmQ")
@@ -12,7 +12,7 @@ describe('node', () => {
       await blobby.disconnect();
     });
    */
-  test('global', async () => {
+  it('global', async () => {
     /* let nodeRoots = [1, 2].map(x => './ipfs-' + x);
     nodeRoots.forEach((n) => {
       try {

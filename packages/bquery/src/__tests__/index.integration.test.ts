@@ -1,7 +1,6 @@
 import * as IPFS from 'ipfs';
 import { query, QueryRequestV0, QueryResponseV0 } from "../query"
 import { v4 as uuid } from 'uuid';
-import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import { Message } from "ipfs-core-types/src/pubsub";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { DocumentQueryRequest, FieldStringMatchQuery } from "../document-query";
@@ -25,7 +24,7 @@ class NumberResult extends BinaryPayload {
 
 describe('query', () => {
 
-  test('any', async () => {
+  it('any', async () => {
 
     const [a, b] = await getConnectedPeers(2);
 
@@ -63,7 +62,7 @@ describe('query', () => {
   })
 
 
-  test('timeout', async () => {
+  it('timeout', async () => {
     const [a, b] = await getConnectedPeers(2);
     let maxAggrergationTime = 2000;
 

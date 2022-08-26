@@ -77,12 +77,12 @@ class Entry {
       clock: clock || new Clock(identity.publicKey)
     }
 
-    const signature = await identity.provider.sign(identity, Entry.toBuffer(entry))
+    const signature = await identity.provider.sign(Entry.toBuffer(entry),identity)
 
-    entry.key = identity.publicKey
+    entry.data.key = identity.publicKey
     entry.identity = identity.toSerializable()
     entry.sig = signature
-    entry.hash = await Entry.toMultihash(ipfs, entry, pin)
+    entry.hash = await Entry.toMultihash(ipfs, entry,  pin)
 
     return entry
   }
@@ -97,12 +97,12 @@ class Entry {
   static async verify (identityProvider, entry) {
     if (!identityProvider) throw new Error('Identity-provider is required, cannot verify entry')
     if (!Entry.isEntry(entry)) throw new Error('Invalid Log entry')
-    if (!entry.key) throw new Error("Entry doesn't have a key")
+    if (!entry.data.key) throw new Error("Entry doesn't have a key")
     if (!entry.sig) throw new Error("Entry doesn't have a signature")
 
     const e = Entry.toEntry(entry, { presigned: true })
-    const verifier = entry.v &lt; 1 ? 'v0' : 'v1'
-    return identityProvider.verify(entry.sig, entry.key, Entry.toBuffer(e), verifier)
+    const verifier = entry.data.v &lt; 1 ? 'v0' : 'v1'
+    return identityProvider.verify(entry.sig, entry.data.key, Entry.toBuffer(e), verifier)
   }
 
   /**
@@ -111,7 +111,7 @@ class Entry {
    * @return {Buffer} The buffer
    */
   static toBuffer (entry) {
-    const stringifiedEntry = entry.v === 0 ? JSON.stringify(entry) : stringify(entry)
+    const stringifiedEntry = entry.data.v === 0 ? JSON.stringify(entry) : stringify(entry)
     return Buffer.from(stringifiedEntry)
   }
 
@@ -126,7 +126,7 @@ class Entry {
    * // "Qm...Foo"
    * @deprecated
    */
-  static async toMultihash (ipfs, entry, pin = false) {
+  static async toMultihash (ipfs, entry,  pin = false) {
     if (!ipfs) throw IpfsNotDefinedError()
     if (!Entry.isEntry(entry)) throw new Error('Invalid object format, cannot generate entry hash')
 
@@ -139,22 +139,22 @@ class Entry {
     const e = {
       hash: includeHash ? entry.hash : null,
       id: entry.id,
-      payload: entry.payload,
+      payload: entry.payload.value,
       next: entry.next
     }
 
-    const v = entry.v
+    const v = entry.data.v
     if (v > 1) {
       e.refs = entry.refs // added in v2
     }
-    e.v = entry.v
+    e.v = entry.data.v
     e.clock = new Clock(entry.clock.id, entry.clock.time)
 
     if (presigned) {
       return e // don't include key/sig information
     }
 
-    e.key = entry.key
+    e.key = entry.data.key
     if (v > 0) {
       e.identity = entry.identity // added in v1
     }

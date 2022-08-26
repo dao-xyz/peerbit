@@ -1,13 +1,14 @@
 import { variant } from '@dao-xyz/borsh';
-import { Entry } from '@dao-xyz/ipfs-log';
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { BinaryDocumentStore, BinaryDocumentStoreOptions } from '@dao-xyz/orbit-db-bdocstore';
+import { IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
 import { SingleDBInterface } from '@dao-xyz/orbit-db-store-interface';
 import { P2PTrust, TRUST_WEB_ACCESS_CONTROLLER } from '@dao-xyz/orbit-db-trust-web';
 import { Access, AccessData, AccessType } from './access';
-
-export type ACLInterfaceOptions = IQueryStoreOptions<Access, any> & {
+import { Payload } from '@dao-xyz/ipfs-log-entry'
+import { MaybeEncrypted } from '@dao-xyz/encryption-utils';
+export type ACLInterfaceOptions = IQueryStoreOptions<Access, any, any> & {
     trustResolver: () => P2PTrust, appendAll: boolean, subscribeToQueries: boolean,
     cache: boolean,
     create: boolean,
@@ -33,7 +34,7 @@ export class ACLInterface extends SingleDBInterface<Access, BinaryDocumentStore<
     async init(orbitDB: OrbitDB, options: ACLInterfaceOptions): Promise<void> {
         options = {
             ...options,
-            queryRegion: undefined,// Prevent query region to be set (will fallback to db specific queries (not global))
+            //queryRegion: undefined,// Prevent query region to be set (will fallback to db specific queries (not global))
             accessController: {
                 type: TRUST_WEB_ACCESS_CONTROLLER,
                 trustResolver: options.trustResolver,
@@ -58,15 +59,15 @@ export class ACLInterface extends SingleDBInterface<Access, BinaryDocumentStore<
 
     // custom can append
 
-    async allowed(entry: Entry<any>): Promise<boolean> {
+    async allowed(entry: MaybeEncrypted<Payload<any>>, identity: MaybeEncrypted<IdentitySerializable>): Promise<boolean> {
         // TODO, improve, caching etc
 
         // Else check whether its trusted by this access controller
-        for (const value of Object.values(this.db._index._index)) {
-            const access = value.payload.value;
+        for (const value of Object.values(this.db.index._index)) {
+            const access = value.value;
             if (access.accessTypes.find((x) => x === AccessType.Admin) !== undefined) {
                 // check condition
-                if (access.accessCondition.allowed(entry)) {
+                if (access.accessCondition.allowed(entry, identity)) {
                     return true;
                 }
                 continue;

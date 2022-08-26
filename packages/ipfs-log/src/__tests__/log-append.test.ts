@@ -2,8 +2,9 @@ const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
-const Keystore = require('orbit-db-keystore')
+import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
+import { assertPayload } from './utils/assert'
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
 const {
@@ -13,15 +14,14 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity
+let ipfsd, ipfs, testIdentity: Identity
 
 Object.keys(testAPIs).forEach((IPFS) => {
-  describe('Log - Append (' + IPFS + ')', function () {
+  describe('Log - Append', function () {
     jest.setTimeout(config.timeout)
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
-
-    let keystore, signingKeystore
+    let keystore: Keystore, signingKeystore
 
     beforeAll(async () => {
       rmrf.sync(identityKeysPath)
@@ -32,7 +32,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
 
-      testIdentity = await Identities.createIdentity({ id: 'userA', keystore, signingKeystore })
+      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })
@@ -47,38 +47,38 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     describe('append one', () => {
-      let log
+      let log: Log<string>
 
       beforeEach(async () => {
         log = new Log(ipfs, testIdentity, { logId: 'A' })
         await log.append('hello1')
       })
 
-      test('added the correct amount of items', () => {
+      it('added the correct amount of items', () => {
         assert.strictEqual(log.length, 1)
       })
 
-      test('added the correct values', async () => {
+      it('added the correct values', async () => {
         log.values.forEach((entry) => {
-          assert.strictEqual(entry.payload, 'hello1')
+          assertPayload(entry.payload.value, 'hello1')
         })
       })
 
-      test('added the correct amount of next pointers', async () => {
+      it('added the correct amount of next pointers', async () => {
         log.values.forEach((entry) => {
           assert.strictEqual(entry.next.length, 0)
         })
       })
 
-      test('has the correct heads', async () => {
+      it('has the correct heads', async () => {
         log.heads.forEach((head) => {
           assert.strictEqual(head.hash, log.values[0].hash)
         })
       })
 
-      test('updated the clocks correctly', async () => {
+      it('updated the clocks correctly', async () => {
         log.values.forEach((entry) => {
-          assert.strictEqual(entry.clock.id, testIdentity.publicKey)
+          assert.deepStrictEqual(entry.clock.id, new Uint8Array(testIdentity.publicKey.getBuffer()))
           assert.strictEqual(entry.clock.time, 1)
         })
       })
@@ -88,12 +88,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const amount = 100
       const nextPointerAmount = 64
 
-      let log
+      let log: Log<string>
 
       beforeAll(async () => {
         log = new Log(ipfs, testIdentity, { logId: 'A' })
         for (let i = 0; i < amount; i++) {
-          await log.append('hello' + i, nextPointerAmount)
+          await log.append('hello' + i, { pin: false, pointerCount: nextPointerAmount })
           // Make sure the log has the right heads after each append
           const values = log.values
           assert.strictEqual(log.heads.length, 1)
@@ -101,24 +101,24 @@ Object.keys(testAPIs).forEach((IPFS) => {
         }
       })
 
-      test('added the correct amount of items', () => {
+      it('added the correct amount of items', () => {
         assert.strictEqual(log.length, amount)
       })
 
-      test('added the correct values', async () => {
+      it('added the correct values', async () => {
         log.values.forEach((entry, index) => {
-          assert.strictEqual(entry.payload, 'hello' + index)
+          assertPayload(entry.payload.value, 'hello' + index)
         })
       })
 
-      test('updated the clocks correctly', async () => {
+      it('updated the clocks correctly', async () => {
         log.values.forEach((entry, index) => {
           assert.strictEqual(entry.clock.time, index + 1)
-          assert.strictEqual(entry.clock.id, testIdentity.publicKey)
+          assert.deepStrictEqual(entry.clock.id, new Uint8Array(testIdentity.publicKey.getBuffer()))
         })
       })
 
-      test('added the correct amount of refs pointers', async () => {
+      it('added the correct amount of refs pointers', async () => {
         log.values.forEach((entry, index) => {
           assert.strictEqual(entry.refs.length, index > 0 ? Math.ceil(Math.log2(Math.min(nextPointerAmount, index))) : 0)
         })

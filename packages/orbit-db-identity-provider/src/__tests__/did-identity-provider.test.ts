@@ -5,15 +5,15 @@ import { Identity, Signatures } from "../identity"
 const assert = require('assert')
 const path = require('path')
 const rmrf = require('rimraf')
-const { Ed25519Provider } = require('key-did-provider-ed25519')
+import { Ed25519Provider } from 'key-did-provider-ed25519'
+import { Ed25519PublicKey } from 'sodium-plus'
 const { default: KeyResolver } = require('key-did-resolver')
-const Keystore = require('orbit-db-keystore')
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 const keypath = path.resolve(__dirname, 'keys')
 
-let keystore
-
+let keystore: Keystore
 const seed = new Uint8Array([157, 94, 116, 198, 19, 248, 93, 239, 173, 82, 245, 222, 199, 7, 183, 177, 123, 238, 83, 240, 143, 188, 87, 191, 33, 95, 58, 136, 46, 218, 219, 245])
-const didStr = 'did:key:z6MkpnTJwrrVuphNh1uKb5DB7eRxvqniVaSDUHU6jtGVmn3r'
+const didStr = new Uint8Array([100, 105, 100, 58, 107, 101, 121, 58, 122, 54, 77, 107, 112, 110, 84, 74, 119, 114, 114, 86, 117, 112, 104, 78, 104, 49, 117, 75, 98, 53, 68, 66, 55, 101, 82, 120, 118, 113, 110, 105, 86, 97, 83, 68, 85, 72, 85, 54, 106, 116, 71, 86, 109, 110, 51, 114]);
 
 const type = DIDIdentityProvider.type
 describe('DID Identity Provider', function () {
@@ -30,59 +30,59 @@ describe('DID Identity Provider', function () {
   })
 
   describe('create an DID identity', () => {
-    let identity
+    let identity: Identity
 
     beforeAll(async () => {
       const didProvider = new Ed25519Provider(seed)
       identity = await Identities.createIdentity({ type, keystore, didProvider })
     })
 
-    test('has the correct id', async () => {
-      assert.strictEqual(identity.id, didStr)
+    it('has the correct id', async () => {
+      assert.deepStrictEqual(identity.id, didStr)
     })
 
-    test('created a key for id in keystore', async () => {
-      const key = await keystore.getKey(didStr)
+    it('created a key for id in keystore', async () => {
+      const key = await keystore.getKeyByPath(didStr)
       assert.notStrictEqual(key, undefined)
     })
 
-    test('has the correct public key', async () => {
-      const signingKey = await keystore.getKey(didStr)
+    it('has the correct public key', async () => {
+      const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(didStr)
       assert.notStrictEqual(signingKey, undefined)
-      assert.strictEqual(identity.publicKey, keystore.getPublic(signingKey))
+      assert.deepStrictEqual(identity.publicKey, signingKey.publicKey);
     })
 
-    test('has a signature for the id', async () => {
-      const signingKey = await keystore.getKey(didStr)
-      const idSignature = await keystore.sign(signingKey, didStr)
-      const verifies = await Keystore.verify(idSignature, identity.publicKey, didStr)
+    it('has a signature for the id', async () => {
+      const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(didStr)
+      const idSignature = await keystore.sign(didStr, signingKey)
+      const verifies = await Keystore.verify(idSignature, identity.publicKey, new Uint8Array(Buffer.from(didStr)))
       assert.strictEqual(verifies, true)
-      assert.strictEqual(identity.signatures.id, idSignature)
+      assert.deepStrictEqual(identity.signatures.id, idSignature)
     })
 
-    test('has a signature for the publicKey', async () => {
-      const signingKey = await keystore.getKey(didStr)
-      const idSignature = await keystore.sign(signingKey, didStr)
+    it('has a signature for the publicKey', async () => {
+      const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(didStr)
+      const idSignature = await keystore.sign(didStr, signingKey)
       assert.notStrictEqual(idSignature, undefined)
     })
   })
 
   describe('verify identity', () => {
-    let identity
+    let identity: Identity
 
     beforeAll(async () => {
       const didProvider = new Ed25519Provider(seed)
       identity = await Identities.createIdentity({ type, keystore, didProvider })
     })
 
-    test('DID identity verifies', async () => {
+    it('DID identity verifies', async () => {
       const verified = await Identities.verifyIdentity(identity)
       assert.strictEqual(verified, true)
     })
 
-    test('DID identity with incorrect id does not verify', async () => {
+    it('DID identity with incorrect id does not verify', async () => {
       const identity2 = new Identity({
-        id: 'NotAnId', publicKey: identity.publicKey, signatures: identity.signatures, type: identity.type, provider: identity.provider
+        id: new Uint8Array([1, 1, 1]), publicKey: identity.publicKey, signatures: identity.signatures, type: identity.type, provider: identity.provider
       })
       const verified = await Identities.verifyIdentity(identity2)
       assert.strictEqual(verified, false)
@@ -90,30 +90,30 @@ describe('DID Identity Provider', function () {
   })
 
   describe('sign data with an identity', () => {
-    let identity
-    const data = 'hello friend'
+    let identity: Identity
+    const data = new Uint8Array(Buffer.from('hello friend'))
 
     beforeAll(async () => {
       const didProvider = new Ed25519Provider(seed)
       identity = await Identities.createIdentity({ type, keystore, didProvider })
     })
 
-    test('sign data', async () => {
-      const signingKey = await keystore.getKey(identity.id)
-      const expectedSignature = await keystore.sign(signingKey, data)
-      const signature = await identity.provider.sign(identity, data, keystore)
-      assert.strictEqual(signature, expectedSignature)
+    it('sign data', async () => {
+      const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(identity.id)
+      const expectedSignature = await keystore.sign(data, signingKey)
+      const signature = await identity.provider.sign(data, identity)
+      assert.deepStrictEqual(signature, expectedSignature)
     })
 
-    test('throws an error if private key is not found from keystore', async () => {
+    it('throws an error if private key is not found from keystore', async () => {
       // Remove the key from the keystore (we're using a mock storage in these tests)
       const modifiedIdentity = new Identity({
-        id: 'this id does not exist', publicKey: identity.publicKey, signatures: new Signatures({ id: '<sig>', publicKey: identity.signatures.publicKey }), type: identity.type, provider: identity.provider
+        id: new Uint8Array([1, 1, 1]), publicKey: identity.publicKey, signatures: new Signatures({ id: new Uint8Array([1, 1, 1]), publicKey: identity.signatures.publicKey }), type: identity.type, provider: identity.provider
       })
       let signature
       let err
       try {
-        signature = await identity.provider.sign(modifiedIdentity, data, keystore)
+        signature = await identity.provider.sign(data, modifiedIdentity)
       } catch (e) {
         err = e.toString()
       }
@@ -122,23 +122,23 @@ describe('DID Identity Provider', function () {
     })
 
     describe('verify data signed by an identity', () => {
-      const data = 'hello friend'
-      let identity
-      let signature
+      const data = new Uint8Array(Buffer.from('hello friend'))
+      let identity: Identity
+      let signature: Uint8Array
 
       beforeAll(async () => {
         const didProvider = new Ed25519Provider(seed)
         identity = await Identities.createIdentity({ type, keystore, didProvider })
-        signature = await identity.provider.sign(identity, data, keystore)
+        signature = await identity.provider.sign(data, identity)
       })
 
-      test('verifies that the signature is valid', async () => {
+      it('verifies that the signature is valid', async () => {
         const verified = await identity.provider.verify(signature, identity.publicKey, data)
         assert.strictEqual(verified, true)
       })
 
-      test('doesn\'t verify invalid signature', async () => {
-        const verified = await identity.provider.verify('invalid', identity.publicKey, data)
+      it('doesn\'t verify invalid signature', async () => {
+        const verified = await identity.provider.verify(new Uint8Array([1, 1, 1]), identity.publicKey, data)
         assert.strictEqual(verified, false)
       })
     })

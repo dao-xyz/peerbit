@@ -1,10 +1,11 @@
 import { Identity, IdentitySerializable } from './identity';
 import { IdentityProvider } from './identity-provider-interface'
-import Keystore from 'orbit-db-keystore'
-const type = 'orbitdb'
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { Ed25519PublicKey } from 'sodium-plus';
+import { joinUint8Arrays } from '@dao-xyz/io-utils';
 
 export class OrbitDBIdentityProvider extends IdentityProvider {
-  _keystore: any;
+  _keystore: Keystore;
   constructor(keystore) {
     super()
     if (!keystore) {
@@ -14,47 +15,49 @@ export class OrbitDBIdentityProvider extends IdentityProvider {
   }
 
   // Returns the type of the identity provider
-  static get type() { return type }
+  static get type() { return 'orbitdb' }
 
-  async getId(options: { id?: string } = {}) {
+  async getId(options: { id?: Uint8Array } = {}) {
     const id = options.id
     if (!id) {
       throw new Error('id is required')
     }
 
     const keystore = this._keystore
-    const key = await keystore.getKey(id) || await keystore.createKey(id)
-    return Buffer.from(key.public.marshal()).toString('hex')
+    const idString = Buffer.from(id).toString('base64');
+    const existingKey = await keystore.getKeyByPath(idString, SignKeyWithMeta);
+    const key = (existingKey) || (await keystore.createKey(idString, SignKeyWithMeta))
+    return new Uint8Array(key.publicKey.getBuffer());
   }
 
-  async sign(data, options: { id?: string } = {}) {
+  async sign(data: string | Uint8Array | Buffer, options: { id?: Uint8Array } = {}) {
     const id = options.id
     if (!id) {
       throw new Error('id is required')
     }
     const keystore = this._keystore
-    const key = await keystore.getKey(id)
+    const idString = Buffer.from(id).toString('base64');
+    const key = await keystore.getKeyByPath(idString, SignKeyWithMeta)
     if (!key) {
-      throw new Error(`Signing key for '${id}' not found`)
+      throw new Error(`Signing key for '${idString}' not found`)
     }
-
-    return keystore.sign(key, data)
+    return keystore.sign(data, key);
   }
 
-  static async verify(signature: string, data: string | Uint8Array, publicKey: string): Promise<boolean> {
-    return (Keystore as any).verify(
+  static async verify(signature: Uint8Array, data: Uint8Array, publicKey: Uint8Array): Promise<boolean> {
+    return Keystore.verify(
       signature,
+      new Ed25519PublicKey(Buffer.from(publicKey)),
       data,
-      publicKey
     )
   }
 
-  static async verifyIdentity(identity: IdentitySerializable) {
+  static async verifyIdentity(identity: Identity | IdentitySerializable) {
     // Verify that identity was signed by the ID
     return OrbitDBIdentityProvider.verify(
       identity.signatures.publicKey,
-      identity.id,
-      identity.publicKey + identity.signatures.id
+      new Uint8Array(Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id])),
+      identity.id
     )
   }
 }

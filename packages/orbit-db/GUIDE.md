@@ -321,7 +321,7 @@ class OtherAccessController extends AccessController {
 
     async canAppend(entry, identityProvider) {
       // logic to determine if entry can be added, for example:
-      if (entry.payload === "hello world" && entry.identity.id === identity.id && identityProvider.verifyIdentity(entry.identity))
+      if (entry.payload.value === "hello world" && entry.identity.id === identity.id && identityProvider.verifyIdentity(entry.identity))
         return true
 
       return false
@@ -374,7 +374,7 @@ main()
 
 **NOTE ON PERSISTENCY**
 
-OrbitDB does not automatically pin content added to IPFS. This means that if garbage collection is triggered, any unpinned content will be erased. To pin the entry, pass the optional `{ pin: true }` in the arguments:
+OrbitDB does not automatically pin content added to IPFS. This means that if garbage collection is triggered, any unpinned content will be erased. To pin the Entry<T>, pass the optional `{ pin: true }` in the arguments:
 
 ```js
 await db.put('name', 'hello', { pin: true })

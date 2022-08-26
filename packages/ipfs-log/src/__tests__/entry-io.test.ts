@@ -1,11 +1,10 @@
 import { EntryIO } from "../entry-io"
 import { Log } from "../log"
-
+import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
-const Keystore = require('orbit-db-keystore')
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
 const {
@@ -20,7 +19,7 @@ let ipfsd, ipfs, testIdentity, testIdentity2, testIdentity3, testIdentity4
 const last = arr => arr[arr.length - 1]
 
 Object.keys(testAPIs).forEach((IPFS) => {
-  describe('Entry - Persistency (' + IPFS + ')', function () {
+  describe('Entry - Persistency', function () {
     jest.setTimeout(config.timeout)
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
@@ -59,7 +58,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await signingKeystore?.close()
     })
 
-    test('log with one entry', async () => {
+    it('log with one entry', async () => {
       const log = new Log(ipfs, testIdentity, { logId: 'X' })
       await log.append('one')
       const hash = log.values[0].hash
@@ -67,7 +66,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.strictEqual(res.length, 1)
     })
 
-    test('log with 2 entries', async () => {
+    it('log with 2 entries', async () => {
       const log = new Log(ipfs, testIdentity, { logId: 'X' })
       await log.append('one')
       await log.append('two')
@@ -76,7 +75,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.strictEqual(res.length, 2)
     })
 
-    test('loads max 1 entry from a log of 2 entry', async () => {
+    it('loads max 1 entry from a log of 2 entry', async () => {
       const log = new Log(ipfs, testIdentity, { logId: 'X' })
       await log.append('one')
       await log.append('two')
@@ -85,7 +84,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.strictEqual(res.length, 1)
     })
 
-    test('log with 100 entries', async () => {
+    it('log with 100 entries', async () => {
       const count = 100
       const log = new Log(ipfs, testIdentity, { logId: 'X' })
       for (let i = 0; i < count; i++) {
@@ -96,7 +95,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.strictEqual(result.length, count)
     })
 
-    test('load only 42 entries from a log with 100 entries', async () => {
+    it('load only 42 entries from a log with 100 entries', async () => {
       const count = 100
       const log = new Log(ipfs, testIdentity, { logId: 'X' })
       let log2 = new Log(ipfs, testIdentity, { logId: 'X' })
@@ -114,7 +113,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.strictEqual(result.length, 42)
     })
 
-    test('load only 99 entries from a log with 100 entries', async () => {
+    it('load only 99 entries from a log with 100 entries', async () => {
       const count = 100
       const log = new Log(ipfs, testIdentity, { logId: 'X' })
       let log2 = new Log(ipfs, testIdentity, { logId: 'X' })
@@ -132,7 +131,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.strictEqual(result.length, 99)
     })
 
-    test('load only 10 entries from a log with 100 entries', async () => {
+    it('load only 10 entries from a log with 100 entries', async () => {
       const count = 100
       const log = new Log(ipfs, testIdentity, { logId: 'X' })
       let log2 = new Log(ipfs, testIdentity, { logId: 'X' })
@@ -158,7 +157,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.strictEqual(result.length, 10)
     })
 
-    test('load only 10 entries and then expand to max from a log with 100 entries', async () => {
+    it('load only 10 entries and then expand to max from a log with 100 entries', async () => {
       const count = 30
 
       const log = new Log(ipfs, testIdentity, { logId: 'X' })
@@ -183,8 +182,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await log4.join(log2)
       await log4.join(log3)
 
-      const values3 = log3.values.map((e) => e.payload)
-      const values4 = log4.values.map((e) => e.payload)
+      const values3 = log3.values.map((e) => e.payload.value)
+      const values4 = log4.values.map((e) => e.payload.value)
 
       assert.deepStrictEqual(values3, values4)
     })

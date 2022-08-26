@@ -616,7 +616,7 @@ Emitted before replicating a part of the database with a peer.
 
 #### `replicate.progress`
 ```javascript
-db.events.on('replicate.progress', (address, hash, entry, progress, have) => ... )
+db.events.on('replicate.progress', (address, hash, entry,  progress, have) => ... )
 ```
 
 Emitted while replicating a database. *address* is id of the database that emitted the event. *hash* is the multihash of the entry that was just loaded. *entry* is the database operation entry. *progress* is the current progress. *have* is a map of database pieces we have.
@@ -630,7 +630,7 @@ Emitted before loading the database.
 
 #### `load.progress`
 ```javascript
-db.events.on('load.progress', (address, hash, entry, progress, total) => ... )
+db.events.on('load.progress', (address, hash, entry,  progress, total) => ... )
 ```
 
 Emitted while loading the local database, once for each entry. *dbname* is the name of the database that emitted the event. *hash* is the multihash of the entry that was just loaded. *entry* is the database operation entry. *progress* is a sequential number starting from 0 upon calling `load()`.
@@ -644,7 +644,7 @@ Emitted after fully loading the local database.
 
 ### `write`
 ```javascript
-db.events.on('write', (address, entry, heads) => ... )
+db.events.on('write', (topic, address, entry,  heads) => ... )
 ```
 
 Emitted after an entry was added locally to the database. *hash* is the IPFS hash of the latest state of the database. *entry* is the added database op.

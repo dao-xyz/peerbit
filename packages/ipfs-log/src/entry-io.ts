@@ -1,13 +1,14 @@
 import pMap from 'p-map'
 import pDoWhilst from 'p-do-whilst'
-import { Entry } from './entry'
+import { Entry } from '@dao-xyz/ipfs-log-entry';
 import { IPFS } from 'ipfs-core-types/src/'
+import { PublicKeyEncryption } from '@dao-xyz/encryption-utils';
 
 const hasItems = arr => arr && arr.length > 0
 
 
-export interface EntryFetchOptions<T> { length?: number, timeout?: number, exclude?: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency?: number }
-interface EntryFetchStrictOptions<T> { length: number, timeout?: number, exclude: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency: number }
+export interface EntryFetchOptions<T> { length?: number, timeout?: number, exclude?: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency?: number, encryption?: PublicKeyEncryption }
+interface EntryFetchStrictOptions<T> { length: number, timeout?: number, exclude: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency: number, encryption?: PublicKeyEncryption }
 
 export interface EntryFetchAllOptions<T> extends EntryFetchOptions<T> { shouldExclude?: (string) => boolean, onStartProgressCallback?: any, delay?: number }
 interface EntryFetchAllStrictOptions<T> extends EntryFetchStrictOptions<T> { shouldExclude?: (string) => boolean, onStartProgressCallback?: any, delay: number }
@@ -71,7 +72,7 @@ export class EntryIO {
    * @param {Number} [depth=0] Current depth of the recursion
    * @param {function(entry)} shouldExclude A function that can be passed to determine whether a specific hash should be excluded, ie. not fetched. The function should return true to indicate exclusion, otherwise return false.
    * @param {function(entry)} onProgressCallback Called when an entry was fetched
-   * @returns {Promise<Array<Entry>>}
+   * @returns {Promise<Array<Entry<T>>>}
    */
   static async fetchAll<T>(ipfs: IPFS, hashes: string | string[], options: EntryFetchAllOptions<T>) {
     options = strictFetchOptions(options);
@@ -90,13 +91,13 @@ export class EntryIO {
     const loadingQueueHasMore = () => Object.values(loadingQueue).find(hasItems) !== undefined
 
     // Add a multihash to the loading queue
-    const addToLoadingQueue = (e, idx) => {
-      if (!loadingCache[e] && !shouldExclude(e)) {
+    const addToLoadingQueue = (e: Entry<T> | string, idx: number) => {
+      if (!loadingCache[e["hash"] || e] && !shouldExclude(e)) {
         if (!loadingQueue[idx]) loadingQueue[idx] = []
         if (!loadingQueue[idx].includes(e)) {
           loadingQueue[idx].push(e)
         }
-        loadingCache[e] = true
+        loadingCache[e["hash"] || e] = true
       }
     }
 
@@ -136,14 +137,15 @@ export class EntryIO {
           }, options.timeout)
           : null
 
-        const addToResults = (entry) => {
+        const addToResults = async (entry: Entry<T>) => {
           if (Entry.isEntry(entry) && !cache[entry.hash] && !shouldExclude(entry.hash)) {
-            const ts = entry.clock.time
+            entry.init({ encryption: options.encryption, encoding: undefined });
+            const ts = (await entry.getClock()).time
 
             // Update min/max clocks
             maxClock = Math.max(maxClock, ts)
             minClock = result.length > 0
-              ? Math.min(result[result.length - 1].clock.time, minClock)
+              ? Math.min((await result[result.length - 1].clock).time, minClock)
               : maxClock
 
             const isLater = (result.length >= options.length && ts >= minClock)
@@ -186,19 +188,20 @@ export class EntryIO {
 
         try {
           // Load the entry
-          const entry = await Entry.fromMultihash(ipfs, hash)
+          const entry = await Entry.fromMultihash<T>(ipfs, hash)
           // Simulate network latency (for debugging purposes)
           if (options.delay > 0) {
             const sleep = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms))
             await sleep(options.delay)
           }
           // Add it to the results
-          addToResults(entry)
+          await addToResults(entry)
           resolve(undefined)
         } catch (e) {
           reject(e)
         } finally {
           clearTimeout(timer)
+
         }
       })
     }

@@ -9,13 +9,13 @@ import { OrbitDB } from "@dao-xyz/orbit-db";
 import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store';
 
 
-export class BStoreOptions<B extends Store<any, any, any>> {
+export class BStoreOptions<B extends Store<any, any, any, any>> {
 
     constructor() {
 
     }
 
-    async newStore(_address: string, _orbitDB: OrbitDB, _options: IStoreOptions<any, any>): Promise<B> {
+    async newStore(_address: string, _orbitDB: OrbitDB, _options: IStoreOptions<any, any, any>): Promise<B> {
         throw new Error("Not implemented")
     }
 
