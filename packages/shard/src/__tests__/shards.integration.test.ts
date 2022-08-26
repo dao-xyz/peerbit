@@ -6,9 +6,9 @@ import { connectPeers, disconnectPeers } from '@dao-xyz/peer-test-utils';
 import { delay, waitFor, waitForAsync } from '@dao-xyz/time';
 import { P2PTrust } from '@dao-xyz/orbit-db-trust-web'
 import { MemoryLimitExceededError } from '../errors';
-import { AccessError } from '@dao-xyz/ipfs-log';
 import v8 from 'v8';
 import { RecursiveShardDBInterface } from '../interface';
+import { AccessError } from '@dao-xyz/encryption-utils';
 
 const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 

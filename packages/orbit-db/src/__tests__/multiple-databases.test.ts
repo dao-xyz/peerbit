@@ -54,7 +54,7 @@ const databaseInterfaces = [
 ]
 
 Object.keys(testAPIs).forEach(API => {
-  describe(`orbit-db - Multiple Databases (${API})`, function () {
+  describe(`orbit-db - Multiple Databases`, function () {
     jest.setTimeout(config.timeout)
 
     let ipfsd1, ipfsd2, ipfs1, ipfs2

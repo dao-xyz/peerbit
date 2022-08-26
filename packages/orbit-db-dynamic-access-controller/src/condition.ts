@@ -1,4 +1,5 @@
 import { field, variant } from "@dao-xyz/borsh";
+import { MaybeEncrypted } from "@dao-xyz/encryption-utils";
 import { U8IntArraySerializer, arraysEqual } from '@dao-xyz/io-utils';
 import { Payload } from "@dao-xyz/ipfs-log-entry";
 import { IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
@@ -15,7 +16,7 @@ export class Network {
 
 export class AccessCondition<T> {
 
-    async allowed(_entry: Payload<T>, _identity: IdentitySerializable): Promise<boolean> {
+    async allowed(_entry: MaybeEncrypted<Payload<T>>, _identity: MaybeEncrypted<IdentitySerializable>): Promise<boolean> {
         throw new Error("Not implemented")
     }
 }
@@ -25,7 +26,7 @@ export class AnyAccessCondition<T> extends AccessCondition<T> {
     constructor() {
         super();
     }
-    async allowed(_entry: Payload<T>, _identity: IdentitySerializable): Promise<boolean> {
+    async allowed(_entry: MaybeEncrypted<Payload<T>>, _identity: MaybeEncrypted<IdentitySerializable>): Promise<boolean> {
         return true;
     }
 }
@@ -50,8 +51,9 @@ export class PublicKeyAccessCondition<T> extends AccessCondition<T> {
         }
     }
 
-    async allowed(_payload: Payload<T>, identity: IdentitySerializable): Promise<boolean> {
-        return this.type === identity.type && arraysEqual(this.key, identity.id)
+    async allowed(_payload: MaybeEncrypted<Payload<T>>, identity: MaybeEncrypted<IdentitySerializable>): Promise<boolean> {
+        const i = (await identity.decrypt()).getValue(IdentitySerializable);
+        return this.type === i.type && arraysEqual(this.key, i.id)
     }
 }
 

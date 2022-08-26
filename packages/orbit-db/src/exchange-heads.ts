@@ -3,7 +3,7 @@ import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Message } from './message';
 import { HeadsCache, Store } from '@dao-xyz/orbit-db-store';
 import Logger from 'logplease'
-import { DecryptedThing, UnsignedMessage } from '@dao-xyz/encryption-utils';
+import { DecryptedThing, MaybeSigned } from '@dao-xyz/encryption-utils';
 import { Ed25519PublicKey } from 'sodium-plus';
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
@@ -73,7 +73,7 @@ export const exchangeHeads = async (channel: any, topic: string, getStore: (addr
     logger.debug(`Send latest heads of '${topic}':\n`, JSON.stringify(heads.map(e => e.hash), null, 2))
     if (heads) {
       const message = new ExchangeHeadsMessage({ replicationTopic: topic, address: storeAddress, heads: heads });
-      const signedMessage = await new UnsignedMessage({ data: serialize(message) }).sign(sign)
+      const signedMessage = await new MaybeSigned({ data: serialize(message) }).sign(sign)
       const decryptedMessage = new DecryptedThing({
         data: serialize(signedMessage)
       })

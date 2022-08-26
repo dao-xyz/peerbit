@@ -1,4 +1,5 @@
-import { BinaryReader, BinaryWriter, Constructor, deserialize, field, serialize, variant } from '@dao-xyz/borsh';
+export * from './errors';
+import { BinaryReader, BinaryWriter, Constructor, deserialize, field, option, serialize, variant } from '@dao-xyz/borsh';
 import { U8IntArraySerializer } from '@dao-xyz/io-utils';
 import { X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519SecretKey, CryptographyKey } from 'sodium-plus';
 import { arraysEqual } from '@dao-xyz/io-utils'
@@ -31,78 +32,6 @@ export const bufferSerializer = (clazz: Constructor<GetBuffer>) => {
         }
     }
 }
-
-/* export const Ed25519PublicKeySerializer = {
-    serialize: (obj: Ed25519PublicKey, writer: BinaryWriter) => {
-        const buffer = obj.getBuffer();
-        writer.writeU32(buffer.length);
-        for (let i = 0; i < buffer.length; i++) {
-            writer.writeU8(buffer[i])
-        }
-    },
-    deserialize: (reader: BinaryReader) => {
-        const len = reader.readU32();
-        const arr = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-            arr[i] = reader.readU8();
-        }
-        return new Ed25519PublicKey(Buffer.from(arr));
-    }
-}
-
-export const X25519PublicKeySerializer = {
-    serialize: (obj: X25519PublicKey, writer: BinaryWriter) => {
-        const buffer = obj.getBuffer();
-        writer.writeU32(buffer.length);
-        for (let i = 0; i < buffer.length; i++) {
-            writer.writeU8(buffer[i])
-        }
-    },
-    deserialize: (reader: BinaryReader) => {
-        const len = reader.readU32();
-        const arr = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-            arr[i] = reader.readU8();
-        }
-        return new X25519PublicKey(Buffer.from(arr));
-    }
-}
-
-export const X25519SecretKeySerializer = {
-    serialize: (obj: X25519SecretKey, writer: BinaryWriter) => {
-        const buffer = obj.getBuffer();
-        writer.writeU32(buffer.length);
-        for (let i = 0; i < buffer.length; i++) {
-            writer.writeU8(buffer[i])
-        }
-    },
-    deserialize: (reader: BinaryReader) => {
-        const len = reader.readU32();
-        const arr = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-            arr[i] = reader.readU8();
-        }
-        return new X25519PublicKey(Buffer.from(arr));
-    }
-}
-
-export const CryptographyKeySerializer = {
-    serialize: (obj: CryptographyKey, writer) => {
-        const buffer = obj.getBuffer();
-        writer.writeU32(buffer.length);
-        buffer.forEach((value) => {
-            writer.writeU8(value)
-        })
-    },
-    deserialize: (reader) => {
-        const len = reader.readU32();
-        const arr = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-            arr[i] = reader.readU8();
-        }
-        return new CryptographyKey(Buffer.from(arr));
-    }
-} */
 
 
 @variant(0)
@@ -147,11 +76,11 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
     @field(U8IntArraySerializer)
     _data: Uint8Array;
 
-    constructor(props?: { data: Uint8Array }) {
+    constructor(props?: { data?: Uint8Array, value?: T }) {
         super();
         if (props) {
             this._data = props.data;
-
+            this._value = props.value
         }
     }
 
@@ -237,10 +166,22 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
         if (this._decrypted) {
             return this._decrypted
         }
+
+        if (!this._encryption) {
+            throw new Error("Not initialized");
+        }
+        if (!this._encrypted || !this._senderPublicKey || !this._recieverPublicKey) {
+            throw new Error("X");
+        }
+
         let der: any = this;
         let counter = 0;
         while (der instanceof EncryptedThing) {
-            der = deserialize(Buffer.from(await this._encryption.decrypt(this._encrypted, this._senderPublicKey, this._recieverPublicKey)), DecryptedThing)
+            const decrypted = await this._encryption.decrypt(this._encrypted, this._senderPublicKey, this._recieverPublicKey);
+            if (!decrypted) {
+                throw new Error("Y");
+            }
+            der = deserialize(Buffer.from(decrypted), DecryptedThing)
             counter += 1;
             if (counter >= 10) {
                 throw new Error("Unexpected decryption behaviour, data seems to always be in encrypted state")
@@ -266,8 +207,95 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
     }
 }
 
+@variant(0)
+export class SignatureWithKey {
+
+    @field(U8IntArraySerializer)
+    signature: Uint8Array
+
+    @field(bufferSerializer(Ed25519PublicKey))
+    publicKey: Ed25519PublicKey
+
+    constructor(props?: {
+        signature: Uint8Array,
+        publicKey: Ed25519PublicKey
+    }) {
+        if (props) {
+            this.signature = props.signature;
+            this.publicKey = props.publicKey
+        }
+    }
+
+    equals(other: SignatureWithKey): boolean {
+        if (!arraysEqual(this.signature, other.signature)) {
+            return false;
+        }
+        return Buffer.compare(this.publicKey.getBuffer(), other.publicKey.getBuffer()) === 0;
+    }
+}
 
 @variant(0)
+export class MaybeSigned<T>  {
+
+    @field(U8IntArraySerializer)
+    data: Uint8Array
+
+    @field({ type: option(SignatureWithKey) })
+    signature?: SignatureWithKey
+
+    constructor(props?: {
+        data?: Uint8Array,
+        value?: T,
+        signature?: SignatureWithKey
+    }) {
+        if (props) {
+            this.data = props.data;
+            this.signature = props.signature;
+            this._value = props.value;
+        }
+    }
+    _value: T
+    getValue(constructor: Constructor<T>): T {
+        return deserialize(Buffer.from(this.data), constructor)
+    }
+
+    async verify(verifier: (signature: Uint8Array, key: Ed25519PublicKey, data: Uint8Array) => Promise<boolean>): Promise<boolean> {
+        if (!this.signature) {
+            return true;
+        }
+        return verifier(this.signature.signature, this.signature.publicKey, this.data)
+    }
+
+    equals(other: MaybeSigned<T>): boolean {
+        if (!arraysEqual(this.data, other.data)) {
+            return false;
+        }
+        if (!this.signature !== !other.signature) {
+            return false;
+        }
+        if (this.signature && other.signature) {
+            return this.signature.equals(other.signature)
+        }
+        return true;
+    }
+
+
+    /**
+     * In place
+     * @param signer 
+     */
+    async sign(signer: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: Ed25519PublicKey }>): Promise<MaybeSigned<T>> {
+        const signatureResult = await signer(this.data)
+        this.signature = new SignatureWithKey({
+            publicKey: signatureResult.publicKey,
+            signature: signatureResult.signature
+        })
+        return this;
+    }
+
+}
+
+/* @variant(0)
 export class MaybeSigned<T>  {
 
     async open(opener: (bytes: Uint8Array, key: Ed25519PublicKey) => Promise<Uint8Array>, constructor: Constructor<T> | Uint8ArrayConstructor): Promise<T> {
@@ -279,10 +307,10 @@ export class MaybeSigned<T>  {
     }
 
 
-}
+} */
 
 
-@variant(0)
+/* @variant(0)
 export class UnsignedMessage<T> extends MaybeSigned<T> {
 
     @field(U8IntArraySerializer)
@@ -339,4 +367,4 @@ export class SignedMessage<T> extends MaybeSigned<T> {
         }
         return deserialize(data, constructor as Constructor<T>);
     }
-}
+} */

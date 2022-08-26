@@ -3,7 +3,7 @@ import { Entry } from "@dao-xyz/ipfs-log-entry";
 import { JSON_ENCODER } from "@dao-xyz/orbit-db-store";
 import { Store } from "@dao-xyz/orbit-db-store"
 import { OrbitDB } from "../../../orbit-db";
-import { X25519PublicKey } from 'sodium-plus';
+import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry';
 
 // TODO: generalize the Iterator functions and spin to its own module
 export const EVENT_STORE_TYPE = 'event';
@@ -27,7 +27,7 @@ export class EventIndex<T> {
     }
 }
 
-export class EventStore<T> extends Store<T, T, EventIndex<Operation<T>>, any> {
+export class EventStore<T> extends Store<Operation<T>, T, EventIndex<Operation<T>>, any> {
     constructor(ipfs, id, dbname, options: any = {}) {
         if (options.Index === undefined) Object.assign(options, { Index: EventIndex })
         if (options.encoding === undefined) Object.assign(options, { encoding: JSON_ENCODER })
@@ -41,10 +41,7 @@ export class EventStore<T> extends Store<T, T, EventIndex<Operation<T>>, any> {
     add(data, options?: {
         onProgressCallback?: (any: any) => void;
         pin?: boolean;
-        reciever?: X25519PublicKey;
-        recieverPayload?: X25519PublicKey;
-        recieverIdentity?: X25519PublicKey;
-        recieverClock?: X25519PublicKey;
+        reciever?: EncryptionTemplateMaybeEncrypted
     }) {
         return this._addOperation({
             op: 'ADD',

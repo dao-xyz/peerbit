@@ -80,7 +80,7 @@ class Entry {
     const signature = await identity.provider.sign(Entry.toBuffer(entry),identity)
 
     entry.data.key = identity.publicKey
-    entry.metadata.idDecryptedentity = identity.toSerializable()
+    entry.identity = identity.toSerializable()
     entry.sig = signature
     entry.hash = await Entry.toMultihash(ipfs, entry,  pin)
 
@@ -138,7 +138,7 @@ class Entry {
   static toEntry (entry, { presigned = false, includeHash = false } = {}) {
     const e = {
       hash: includeHash ? entry.hash : null,
-      id: entry.metadata.idDecrypted,
+      id: entry.id,
       payload: entry.payload.value,
       next: entry.next
     }
@@ -156,7 +156,7 @@ class Entry {
 
     e.key = entry.data.key
     if (v > 0) {
-      e.identity = entry.metadata.idDecryptedentity // added in v1
+      e.identity = entry.identity // added in v1
     }
     e.sig = entry.sig
     return e

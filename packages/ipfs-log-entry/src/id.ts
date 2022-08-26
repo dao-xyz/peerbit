@@ -4,4 +4,7 @@ import { field, variant } from "@dao-xyz/borsh";
 export class Id {
     @field({ type: 'String' })
     id: string;
+    constructor(props?: { id: string }) {
+        this.id = props?.id;
+    }
 }

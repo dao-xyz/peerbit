@@ -1,4 +1,4 @@
-import { Entry, LamportClock as Clock, LamportClock } from '@dao-xyz/ipfs-log-entry';
+import { EncryptionTemplateMaybeEncrypted, Entry, EntryEncryptionTempate, LamportClock as Clock, LamportClock, MaybeX25519PublicKey } from '@dao-xyz/ipfs-log-entry';
 import { EntryIndex } from "./entry-index"
 import pMap from 'p-map'
 import { GSet } from './g-set'
@@ -11,11 +11,9 @@ import { Identity } from "@dao-xyz/orbit-db-identity-provider"
 import { AccessController, DefaultAccessController } from "./default-access-controller"
 import { isDefined } from './is-defined'
 import { findUniques } from "./find-uniques"
-import { AccessError } from "./errors"
 import { IOOptions } from "@dao-xyz/ipfs-log-entry";
 import { JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log-entry';
-import { X25519PublicKey } from 'sodium-plus'
-import { PublicKeyEncryption } from '@dao-xyz/encryption-utils';
+import { AccessError, PublicKeyEncryption } from '@dao-xyz/encryption-utils';
 
 const { LastWriteWins, NoZeroes } = Sorting
 const randomId = () => new Date().getTime().toString()
@@ -323,7 +321,7 @@ export class Log<T> extends GSet {
    * @param {Entry} entry Entry to add
    * @return {Log} New Log containing the appended value
    */
-  async append(data: T, options: { pointerCount: number, pin?: boolean, recieverPayload?: X25519PublicKey, recieverIdentity?: X25519PublicKey, recieverClock?: X25519PublicKey } = { pointerCount: 1, pin: false }) {
+  async append(data: T, options: { pointerCount: number, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = { pointerCount: 1, pin: false }) {
 
     // Update the clock (find the latest clock)
     const newTime = Math.max(this.clock.time, this.heads.reduce(maxClockTimeReducer, 0)) + 1
@@ -357,7 +355,7 @@ export class Log<T> extends GSet {
     const refs = Array.from(references).map(getHash).filter(isNext)
     // Create the entry and add it to the internal cache
 
-    if ((options.recieverIdentity || options.recieverPayload || options.recieverClock) && !this._encryption) {
+    if (options.reciever && !this._encryption) {
       throw new Error("Message is intended to be encrypted but no encryption methods are provided for the log")
     }
 
@@ -371,18 +369,18 @@ export class Log<T> extends GSet {
         clock: this.clock,
         refs,
         pin: options.pin,
-        assertAllowed: async (entryData, identity) => {
-          const canAppend = await this._access.canAppend(entryData.init(this._encoding, this._encryption), () => Promise.resolve(identity), this._identity.provider);
+        assertAllowed: async (payload, identity) => {
+          const canAppend = await this._access.canAppend(payload, identity, this._identity.provider);
           if (!canAppend) {
             throw new AccessError(`Could not append Entry<T>, key "${this._identity.id}" is not allowed to write to the log`)
           }
         },
         encodingOptions: this._encoding,
-        encryption: (options.recieverIdentity || options.recieverPayload) ? {
+        encryption: (options.reciever) ? {
           options: this._encryption,
-          recieverIdentity: options.recieverIdentity,
-          recieverPayload: options.recieverPayload,
-          recieverClock: options.recieverClock,
+          reciever: {
+            ...options.reciever
+          }
         } : undefined
       }
     )
@@ -478,33 +476,38 @@ export class Log<T> extends GSet {
     if (this.id !== log.id) return
 
     // Get the difference of the logs
-    const newItems = Log.difference(log, this)
+    const newItems = await Log.difference(log, this)
 
     const identityProvider = this._identity.provider
     // Verify if entries are allowed to be added to the log and throws if
     // there's an invalid entry
     const permitted = async (entry: Entry<T>) => {
-      const canAppend = await this._access.canAppend(entry.payload.init(this._encoding, this._encryption), () => entry.metadata.identity, identityProvider)
+      entry.init({
+        encoding: this._encoding,
+        encryption: this._encryption
+      })
+      const canAppend = await this._access.canAppend(entry._payload, entry._identity, identityProvider)
       if (!canAppend) {
-        throw new AccessError(`Could not append Entry<T>, key "${(await entry.metadata.identity).id}" is not allowed to write to the log`)
+        throw new AccessError(`Could not append Entry<T>, key "${(await entry.identity).id}" is not allowed to write to the log`)
       }
     }
 
     // Verify signature for each entry and throws if there's an invalid signature
-    const verify = async (entry: Entry<T>) => {
-      const isValid = await Entry.verify(identityProvider, entry)
-      const identity = await entry.metadata.identity;
-      const signature = await entry.metadata.signature;
-      const publicKey = identity.publicKey
-      if (!isValid) throw new Error(`Could not validate signature "${signature}" for entry "${entry.hash}" and key "${publicKey}"`)
-    }
+    /*   const verify = async (entry: Entry<T>) => {
+        const isValid = await Entry.verify(identityProvider, entry)
+        const identity = await entry.identity;
+        const signature = await entry.signature;
+        const publicKey = identity.publicKey
+        if (!isValid) throw new Error(`Could not validate signature "${signature}" for entry "${entry.hash}" and key "${publicKey}"`)
+      } */
 
     const entriesToJoin = Object.values(newItems)
     await pMap(entriesToJoin, async (e: Entry<T>) => {
       e.init({ encoding: this._encoding, encryption: this._encryption })
       await permitted(e)
-      await verify(e)  // Assumes the access controller is verifying signatures
+      /*  await verify(e)  */ // Assumes the access controller is verifying signatures
     }, { concurrency: this.joinConcurrency })
+
 
     // Update the internal next pointers index
     const addToNextsIndex = e => {
@@ -820,7 +823,7 @@ export class Log<T> extends GSet {
     return entries.reduce(reduceTailHashes, [])
   }
 
-  static difference<T>(a: Log<T>, b: Log<T>) {
+  static async difference<T>(a: Log<T>, b: Log<T>) {
     const stack = Object.keys(a._headsIndex)
     const traversed = {}
     const res: { [key: string]: Entry<T> } = {}
@@ -835,7 +838,7 @@ export class Log<T> extends GSet {
     while (stack.length > 0) {
       const hash = stack.shift()
       const entry = a.get(hash)
-      if (entry && !b.get(hash) && entry.metadata.idDecrypted === b.id) {
+      if (entry && !b.get(hash) && await entry.getId() === await b.id) {
         res[entry.hash] = entry
         traversed[entry.hash] = true
         entry.next.concat(entry.refs).forEach(pushToStack)

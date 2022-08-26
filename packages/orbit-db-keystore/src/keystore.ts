@@ -468,7 +468,7 @@ export class Keystore {
     }
   }
 
-  async sign(arrayLike: string | Uint8Array | Buffer, key: SignKeyWithMeta | Ed25519SecretKey): Promise<Uint8Array> {
+  async sign(arrayLike: string | Uint8Array | Buffer, key: SignKeyWithMeta | Ed25519SecretKey, signHashed: boolean = false): Promise<Uint8Array> {
     key = key instanceof SignKeyWithMeta ? key.secretKey : key;
     if (!key) {
       throw new Error('No signing key given')
@@ -496,7 +496,7 @@ export class Keystore {
    */
 
     const crypto = await _crypto;
-    const signature = await new Uint8Array(await crypto.crypto_sign(Buffer.from(data), key));
+    const signature = await new Uint8Array(await crypto.crypto_sign(signHashed ? await crypto.crypto_generichash(Buffer.from(data)) : Buffer.from(data), key));
     //const verified = await crypto.crypto_sign_verify_detached(data, await crypto.crypto_sign_publickey(key), Buffer.from(signature));
 
     return signature
@@ -560,11 +560,11 @@ export class Keystore {
     } */
   }
 
-  async verify(signature: Uint8Array, publicKey: Ed25519PublicKey, data: Uint8Array) {
-    return Keystore.verify(signature, publicKey, data)
+  async verify(signature: Uint8Array, publicKey: Ed25519PublicKey, data: Uint8Array, signedHash = false) {
+    return Keystore.verify(signature, publicKey, data, signedHash)
   }
 
-  static async verify(signature: Uint8Array, publicKey: Ed25519PublicKey, data: Uint8Array) {
+  static async verify(signature: Uint8Array, publicKey: Ed25519PublicKey, data: Uint8Array, signedHash = false) {
     const signatureString = Buffer.from(signature).toString()
     const cached = verifiedCache.get(signatureString)
     let res = false
@@ -579,7 +579,7 @@ export class Keystore {
 
       try {
         const signedData = await Keystore.open(signature, publicKey);
-        const verified = Buffer.compare(signedData, Buffer.from(data)) === 0;
+        const verified = Buffer.compare(signedData, signedHash ? await crypto.crypto_generichash(Buffer.from(data)) : Buffer.from(data)) === 0;
         res = verified
         if (verified) {
           verifiedCache.set(signatureString, { publicKey, data })

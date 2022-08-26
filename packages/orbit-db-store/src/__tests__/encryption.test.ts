@@ -6,7 +6,8 @@ import { BoxKeyWithMeta, Keystore, KeyWithMeta } from "@dao-xyz/orbit-db-keystor
 import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { Index } from '../store-index'
 import { createStore } from './storage'
-
+import { X25519PublicKey, SodiumPlus } from 'sodium-plus'
+import { AccessError } from '@dao-xyz/encryption-utils'
 
 // Test utils
 const {
@@ -42,7 +43,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
       recieverKey = await keystore.createKey('reciever', BoxKeyWithMeta, undefined, { overwrite: true });
       encryption = (_) => {
         return {
-          decrypt: (data, sender, _reciever) => keystore.decrypt(data, recieverKey, sender),
+          decrypt: async (data, sender, reciever) => {
+            const secret = await keystore.getKeyById<BoxKeyWithMeta>(reciever);
+            if (!secret) {
+              throw new AccessError(); // Do not have this key
+            }
+            return keystore.decrypt(data, secret, sender)
+
+          },
           encrypt: async (data, reciever) => {
             return {
               data: await keystore.encrypt(data, senderKey, reciever),
@@ -72,7 +80,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await identityStore.open()
     })
 
-    it('entry is encrypted is appended', (done) => {
+    it('encrypted entry is appended known key', (done) => {
       const data = { data: 12345 }
 
       store.events.on('write', (topic, address, entry, heads) => {
@@ -88,7 +96,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             encoding: store.logOptions.encoding,
             encryption: store.logOptions.encryption
           });
-          await localHeads.heads[0].payload.decrypt();
+          await localHeads.heads[0].getPayload();
           assert.deepStrictEqual(localHeads.heads[0].payload.value, data)
           assert(localHeads.heads[0].equals(heads[0]))
           assert.strictEqual(heads.length, 1)
@@ -98,9 +106,65 @@ Object.keys(testAPIs).forEach((IPFS) => {
         })
       })
 
-      store._addOperation(data, { reciever: recieverKey.publicKey })
+      store._addOperation(data, {
+        reciever: {
+          clock: recieverKey.publicKey,
+          id: recieverKey.publicKey,
+          identity: recieverKey.publicKey,
+          payload: recieverKey.publicKey,
+          signature: recieverKey.publicKey
+        }
+      })
 
     })
+
+    it('encrypted entry is append unkown key', (done) => {
+      const data = { data: 12345 }
+
+      store.events.on('write', (topic, address, entry, heads) => {
+        assert.strictEqual(heads.length, 1)
+        assert.strictEqual(address, 'test-address')
+        assert.deepStrictEqual(entry.payload.value, data)
+        assert.strictEqual(store.replicationStatus.progress, 1)
+        assert.strictEqual(store.replicationStatus.max, 1)
+        assert.strictEqual(store.address.root, store._index.id)
+        assert.deepStrictEqual(store._index._index, heads)
+        store._cache.getBinary(store.localHeadsPath, HeadsCache).then(async (localHeads) => {
+          localHeads.heads[0].init({
+            encoding: store.logOptions.encoding,
+            encryption: store.logOptions.encryption
+          });
+          try {
+            await localHeads.heads[0].getPayload();
+            assert(false);
+          } catch (error) {
+            expect(error).toBeInstanceOf(AccessError)
+          }
+          assert(localHeads.heads[0].equals(heads[0]))
+          assert.strictEqual(heads.length, 1)
+          assert.strictEqual(localHeads.heads.length, 1)
+          store.events.removeAllListeners('write')
+          done()
+        })
+      })
+      SodiumPlus.auto().then((sodium) => {
+        sodium.crypto_box_keypair().then(kp => sodium.crypto_box_publickey(kp)).then((pk) => {
+          store._addOperation(data, {
+            reciever: {
+              clock: undefined,
+              id: undefined,
+              identity: pk,
+              payload: pk,
+              signature: pk,
+            }
+          })
+        })
+
+      })
+
+
+    })
+
 
 
   })

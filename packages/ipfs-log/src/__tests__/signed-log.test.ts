@@ -3,12 +3,10 @@ const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { AccessController } from '../default-access-controller'
 import { Log } from '../log'
-import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider'
 import { assertPayload } from './utils/assert'
-import { Metadata } from '@dao-xyz/ipfs-log-entry'
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
-import { serialize } from '@dao-xyz/borsh'
-import { DecryptedThing } from '@dao-xyz/encryption-utils'
+import { Entry } from '@dao-xyz/ipfs-log-entry'
 
 // Test utils
 const {
@@ -83,8 +81,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
     it('entries contain an identity', async () => {
       const log = new Log(ipfs, testIdentity, { logId: 'A' })
       await log.append('one')
-      assert.notStrictEqual(await log.values[0].metadata.signature, null)
-      assert.deepStrictEqual(await log.values[0].metadata.identity, testIdentity.toSerializable())
+      assert.notStrictEqual(await log.values[0].signature, null)
+      assert.deepStrictEqual(await log.values[0].identity, testIdentity.toSerializable())
     })
 
     it('doesn\'t sign entries when identity is not defined', async () => {
@@ -128,7 +126,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       try {
         await log1.append('one')
         await log2.append('two')
-        delete (log2.values[0].metadata)._metadata
+        delete (log2.values[0]._signature)
         await log1.join(log2)
       } catch (e) {
         err = e.toString()
@@ -144,18 +142,15 @@ Object.keys(testAPIs).forEach((IPFS) => {
       try {
         await log1.append('one');
         await log2.append('two');
-        (log2.values[0].metadata._metadata as DecryptedThing<Metadata>)._data = serialize(new Metadata({
-          id: await log2.values[0].metadata.id,
-          signature: await log1.values[0].metadata.signature,
-          identity: await log2.values[0].metadata.identity
-        }))
+        let entry: Entry<string> = log2.values[0]
+        entry._signature = await log1.values[0]._signature;
         await log1.join(log2)
       } catch (e) {
         err = e.toString()
       }
 
       const entry = log2.values[0]
-      assert.strictEqual(err, `Error: Could not validate signature "${await entry.metadata.signature}" for entry "${entry.hash}" and key "${(await entry.metadata.identity).publicKey}"`)
+      assert.strictEqual(err, `Error: Could not validate signature "${await entry.signature}" for entry "${entry.hash}" and key "${(await entry.identity).publicKey}"`)
       assert.strictEqual(log1.values.length, 1)
       assertPayload(log1.values[0].payload.value, 'one')
     })
@@ -179,7 +174,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('throws an error upon join if entry doesn\'t have append access', async () => {
       const testACL = {
-        canAppend: async (_entry, identity, _) => Buffer.compare((await identity()).id, testIdentity.id) === 0
+        canAppend: async (_entry, identity, _) => Buffer.compare(Buffer.from(identity.decrypted.getValue(IdentitySerializable).id), Buffer.from(testIdentity.id)) === 0
       } as AccessController<string>;
       const log1 = new Log<string>(ipfs, testIdentity, { logId: 'A', access: testACL })
       const log2 = new Log<string>(ipfs, testIdentity2, { logId: 'A' })

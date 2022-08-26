@@ -3,9 +3,9 @@ const assert = require('assert')
 const rmrf = require('rimraf')
 const { CID } = require('multiformats/cid')
 const { base58btc } = require('multiformats/bases/base58')
-import { Entry, LamportClock as Clock, Payload } from '@dao-xyz/ipfs-log-entry';
+import { Entry, LamportClock as Clock, Payload, Signature } from '@dao-xyz/ipfs-log-entry';
 import { Log } from '../log'
-import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
+import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider'
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
 const fs = require('fs-extra')
 import io from '@dao-xyz/orbit-db-io'
@@ -13,9 +13,9 @@ import io from '@dao-xyz/orbit-db-io'
 // For tiebreaker testing
 import { LastWriteWins } from '../log-sorting';
 import { assertPayload } from './utils/assert'
-import { Metadata, MetadataSecure } from '@dao-xyz/ipfs-log-entry';
 import { DecryptedThing } from '@dao-xyz/encryption-utils';
 import { serialize } from '@dao-xyz/borsh';
+import { Id } from '@dao-xyz/ipfs-log-entry/lib/esm/id';
 const FirstWriteWins = (a, b) => LastWriteWins(a, b) * -1
 
 // Test utils
@@ -160,7 +160,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('creates default public AccessController if not defined', async () => {
         const log = new Log(ipfs, testIdentity)
-        const anyoneCanAppend = await log._access.canAppend('any' as any, () => Promise.resolve(testIdentity.toSerializable()), undefined)
+        const anyoneCanAppend = await log._access.canAppend('any' as any, new DecryptedThing({
+          data: serialize(testIdentity)
+        }), undefined)
         assert.notStrictEqual(log._access, undefined)
         assert.strictEqual(anyoneCanAppend, true)
       })
@@ -242,26 +244,29 @@ Object.keys(testAPIs).forEach((IPFS) => {
       beforeAll(async () => {
         const clock = new Clock(new Uint8Array(testIdentity.publicKey.getBuffer()), 1)
         const clockDecrypted = new DecryptedThing<Clock>({ data: serialize(clock) });
-        const payload = new Payload<string>({
-          data: new DecryptedThing({
+        const payload = new DecryptedThing<Payload<string>>({
+          data: serialize(new Payload<string>({
             data: new Uint8Array(Buffer.from('one'))
-          }),
+          }))
         });
-        const id = 'AAA';
+        const id = new DecryptedThing<Id>({
+          data: serialize(new Id({ id: 'aaa' }))
+        });
+        const identity = new DecryptedThing<IdentitySerializable>({
+          data: serialize(testIdentity.toSerializable())
+        })
         expectedData = new Entry<string>({
           hash: 'zdpuAozwfaZEdTCimGoLbXrz3hsJdCQZATpVgyVDMJLVrACqw',
           payload,
           clock: clockDecrypted,
-          metadata: undefined,
+          id,
+          identity,
+          signature: new DecryptedThing({
+            data: serialize(new Signature({
+              signature: await testIdentity.provider.sign(Entry.createDataToSign(id, payload, clockDecrypted, []), testIdentity)
+            }))
+          }),
           next: [],
-        });
-        expectedData.metadata = new MetadataSecure({
-          metadata: new Metadata({
-            id,
-
-            identity: testIdentity.toSerializable(),
-            signature: await testIdentity.provider.sign(Entry.createDataToSign(id, payload, clockDecrypted, []), testIdentity)
-          })
         });
       })
 

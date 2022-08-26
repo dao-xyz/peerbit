@@ -1,3 +1,4 @@
+import { AccessError } from '@dao-xyz/encryption-utils';
 import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { BoxKeyWithMeta, Keystore } from '@dao-xyz/orbit-db-keystore';
 import { StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store';
@@ -18,13 +19,13 @@ export const replicationTopicAsKeyGroupPublicKeyEncryption = (identity: Identity
                 if (!key) {
                     const newKeys = await requestKey(recieverPublicKey, replicationTopic);
                     if (!newKeys || newKeys.length === 0) {
-                        return undefined;
+                        throw new AccessError("Missing key");
                     }
                     key = newKeys[0];
 
                 }
                 if (key instanceof BoxKeyWithMeta && !key.secretKey) {
-                    throw new Error("Can not open")
+                    throw new AccessError("Got decryption key, but not the secret")
                 }
                 return keystore.decrypt(data, key, senderPublicKey)
             }

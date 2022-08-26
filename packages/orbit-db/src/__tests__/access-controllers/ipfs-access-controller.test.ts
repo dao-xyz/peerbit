@@ -5,6 +5,7 @@ import { OrbitDB } from '../../orbit-db'
 import { IPFSAccessController } from '@dao-xyz/orbit-db-access-controllers';
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
 import { AccessControllers } from '@dao-xyz/orbit-db-access-controllers'
+import { DecryptedThing } from '@dao-xyz/encryption-utils';
 
 // Include test utilities
 const {
@@ -104,7 +105,9 @@ describe(`orbit-db - IPFSAccessController`, function () {
         // ...
         // doesn't matter what we put here, only identity is used for the check
       }
-      const canAppend = await accessController.canAppend(mockEntry.data as any, () => Promise.resolve(id1.toSerializable()), id1.provider)
+      const canAppend = await accessController.canAppend(mockEntry.data as any, new DecryptedThing({
+        value: id1.toSerializable()
+      }), id1.provider)
       assert.strictEqual(canAppend, true)
     })
   })

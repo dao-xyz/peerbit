@@ -29,6 +29,8 @@ export class IdentitySecure {
     }
 }
  */
+
+/* 
 @variant(0)
 export class Metadata {
 
@@ -127,4 +129,4 @@ export class MetadataSecure {
     equals(other: MetadataSecure) {
         return this._metadata.equals(other._metadata);
     }
-}
+} */

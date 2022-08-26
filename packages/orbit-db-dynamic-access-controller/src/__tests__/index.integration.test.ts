@@ -5,9 +5,9 @@ import { DynamicAccessController, DYNAMIC_ACCESS_CONTROLER } from "..";
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
 import { delay, waitFor } from '@dao-xyz/time';
-import { AccessError } from "@dao-xyz/ipfs-log";
 import { P2PTrust } from "@dao-xyz/orbit-db-trust-web";
 import { DocumentQueryRequest, QueryRequestV0, QueryResponseV0 } from "@dao-xyz/bquery";
+import { AccessError } from "@dao-xyz/encryption-utils";
 
 class Document {
 

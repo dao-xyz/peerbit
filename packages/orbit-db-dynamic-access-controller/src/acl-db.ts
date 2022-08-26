@@ -7,6 +7,7 @@ import { SingleDBInterface } from '@dao-xyz/orbit-db-store-interface';
 import { P2PTrust, TRUST_WEB_ACCESS_CONTROLLER } from '@dao-xyz/orbit-db-trust-web';
 import { Access, AccessData, AccessType } from './access';
 import { Payload } from '@dao-xyz/ipfs-log-entry'
+import { MaybeEncrypted } from '@dao-xyz/encryption-utils';
 export type ACLInterfaceOptions = IQueryStoreOptions<Access, any, any> & {
     trustResolver: () => P2PTrust, appendAll: boolean, subscribeToQueries: boolean,
     cache: boolean,
@@ -58,7 +59,7 @@ export class ACLInterface extends SingleDBInterface<Access, BinaryDocumentStore<
 
     // custom can append
 
-    async allowed(entry: Payload<any>, identity: IdentitySerializable): Promise<boolean> {
+    async allowed(entry: MaybeEncrypted<Payload<any>>, identity: MaybeEncrypted<IdentitySerializable>): Promise<boolean> {
         // TODO, improve, caching etc
 
         // Else check whether its trusted by this access controller

@@ -1,4 +1,5 @@
 const EventEmitter = require('events').EventEmitter
+import { MaybeEncrypted } from '@dao-xyz/encryption-utils';
 import { Payload } from '@dao-xyz/ipfs-log-entry';
 import { IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
 
@@ -43,7 +44,7 @@ export abstract class AccessController<T> extends EventEmitter {
     be allowed in the database. Return true if the entry is allowed,
     false is not allowed
   */
-  async canAppend(payload: Payload<T>, identityResolver: () => Promise<IdentitySerializable>, identityProvider): Promise<boolean> {
+  async canAppend(payload: MaybeEncrypted<Payload<T>>, identity: MaybeEncrypted<IdentitySerializable>, identityProvider): Promise<boolean> {
     throw new Error("Not implemented")
   }
 

@@ -2,6 +2,7 @@
 import pSeries from 'p-series'
 import PeerMonitor from 'ipfs-pubsub-peer-monitor'
 import Logger from 'logplease';
+import { v4 as uuid } from 'uuid';
 const logger = Logger.create("pubsub", { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
@@ -15,15 +16,17 @@ export class Message {
   topic?: string;
   data: any;
 }
+export type Subscription = {
+  id: string,
+  topicMonitor: PeerMonitor,
+  onNewPeer: (topic: string, peer: string, subscriptionId: string) => void,
+  onMessage: (topicId: string, content: Uint8Array, from: string) => void
+};
 export class PubSub {
   _ipfs: any;
   _id: any;
   _subscriptions: {
-    [key: string]: {
-      topicMonitor: PeerMonitor,
-      onNewPeer: (topic: string, peer: any) => void,
-      onMessage: (topicId: string, content: Uint8Array, from: string) => void
-    }
+    [key: string]: Subscription
   };
 
   constructor(ipfs, id: string) {
@@ -42,7 +45,7 @@ export class PubSub {
       this._ipfs.setMaxListeners(maxTopicsOpen)
   }
 
-  async subscribe(topic: string, onMessageCallback: (topic: string, content: any, from: any) => void, onNewPeerCallback: (topic: string, peer: string) => void, options = {}) {
+  async subscribe(topic: string, onMessageCallback: (topic: string, content: any, from: any) => void, onNewPeerCallback: (topic: string, peer: string, subscriptionId: string) => void, options = {}): Promise<string> {
     if (!this._subscriptions[topic] && this._ipfs.pubsub) {
       await this._ipfs.pubsub.subscribe(topic, this._handleMessage, options)
 
@@ -51,8 +54,9 @@ export class PubSub {
       topicMonitor.on('join', (peer) => {
         logger.debug(`Peer joined ${topic}:`)
         logger.debug(peer)
-        if (this._subscriptions[topic]) {
-          onNewPeerCallback(topic, peer)
+        const subscription = this._subscriptions[topic];
+        if (subscription) {
+          onNewPeerCallback(topic, peer, subscription.id)
         } else {
           logger.warn('Peer joined a room we don\'t have a subscription for')
           logger.warn(topic, peer)
@@ -62,14 +66,16 @@ export class PubSub {
       topicMonitor.on('leave', (peer) => logger.debug(`Peer ${peer} left ${topic}`))
       topicMonitor.on('error', (e) => logger.error(e))
 
-      this._subscriptions[topic] = {
+      const subscription = {
+        id: uuid(),
         topicMonitor: topicMonitor,
         onMessage: onMessageCallback,
         onNewPeer: onNewPeerCallback
-      }
-
+      };
+      this._subscriptions[topic] = subscription
       topicsOpenCount++
       logger.debug("Topics open:", topicsOpenCount)
+      return subscription.id;
     }
   }
 

@@ -14,14 +14,16 @@ import { OrbitDBAddress } from './orbit-db-address'
 import { createDBManifest } from './db-manifest'
 import { Level } from 'level';
 import { exchangeHeads, ExchangeHeadsMessage, RequestHeadsMessage } from './exchange-heads'
-import { Entry, IOOptions } from '@dao-xyz/ipfs-log-entry'
+import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { serialize, deserialize } from '@dao-xyz/borsh'
 import { Message } from './message'
 import { getCreateChannel } from './channel'
 import { exchangeKeys, KeyResponseMessage, KeyAccessCondition, recieveKeys, requestAndWaitForKeys, RequestKeyMessage, RequestKeyCondition, RequestKeysByKey, RequestKeysByReplicationTopic } from './exchange-keys'
-import { DecryptedThing, MaybeEncrypted, MaybeSigned, PublicKeyEncryption, SignedMessage, UnsignedMessage } from '@dao-xyz/encryption-utils'
-import { Ed25519PublicKey, X25519PublicKey, Ed25519SecretKey, X25519SecretKey } from 'sodium-plus'
+import { DecryptedThing, MaybeEncrypted, MaybeSigned, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
+import { Ed25519PublicKey, X25519PublicKey } from 'sodium-plus'
 import { replicationTopicAsKeyGroupPublicKeyEncryption } from './encryption'
+import LRU from 'lru';
+import { DirectChannel } from '@dao-xyz/ipfs-pubsub-1on1'
 let AccessControllersModule = AccessControllers;
 Logger.setLogLevel('ERROR')
 
@@ -30,10 +32,11 @@ const databaseTypes: { [key: string]: Constructor<Store<any, any, any, any>> } =
 
 const defaultTimeout = 30000 // 30 seconds
 
+export type StoreOperations = 'write' | 'all'
 
 export type Storage = { createStore: (string) => any }
 export type CreateOptions = {
-  AccessControllers?: any, cache?: Cache, keystore?: Keystore, peerId?: string, offline?: boolean, directory?: string, storage?: Storage, broker?: any, canAccessKeys?: KeyAccessCondition, isTrusted?: (key: Ed25519PublicKey, replicationTopic: string) => Promise<boolean>
+  AccessControllers?: any, cache?: Cache, keystore?: Keystore, peerId?: string, offline?: boolean, directory?: string, storage?: Storage, broker?: any, waitForKeysTimout?: number, canAccessKeys?: KeyAccessCondition, isTrusted?: (key: Ed25519PublicKey, replicationTopic: string) => Promise<boolean>
 };
 export type CreateInstanceOptions = CreateOptions & { identity?: Identity, id?: string };
 export class OrbitDB {
@@ -41,15 +44,23 @@ export class OrbitDB {
   identity: Identity;
   id: string;
   _pubsub: PubSub;
-  _directConnections: { [key: string]: any };
+  _directConnections: { [key: string]: DirectChannel };
   directory: string;
   storage: Storage;
   caches: any;
   keystore: Keystore;
   stores: { [topic: string]: { [address: string]: Store<any, any, any, any> } };
+  _waitForKeysTimeout = 10000;
+  _keysInflightMap: Map<string, Promise<any>> = new Map(); // TODO fix types
+  _keyRequestsLRU: LRU = new LRU({
+    max: 100,
+    maxAge: 10000
+  });
+  _subscriptionOpenedForWriteOnly: { [key: string]: DirectChannel[] } = {};
 
   isTrusted: (key: Ed25519PublicKey, replicationTopic: string) => Promise<boolean>
   canAccessKeys: KeyAccessCondition
+
   /*  canAccessKeys?: KeyAccessCondition; */
   /*  keysInFlight?: Promise<void>;
    _keysInFlightResolver?: () => void;
@@ -79,6 +90,9 @@ export class OrbitDB {
     this.canAccessKeys = options.canAccessKeys || (() => Promise.resolve(false));
     this.isTrusted = options.isTrusted || (() => Promise.resolve(true))
     this.stores = {}
+    if (options.waitForKeysTimout) {
+      this._waitForKeysTimeout = options.waitForKeysTimout;
+    }
 
     // AccessControllers module can be passed in to enable
     // testing with orbit-db-access-controller
@@ -159,6 +173,8 @@ export class OrbitDB {
       };
     }
 
+
+
     if (options.identity && options.identity.provider.keystore) {
       options.keystore = options.identity.provider.keystore
     }
@@ -232,7 +248,7 @@ export class OrbitDB {
   }
 
   /* Private methods */
-  async _createStore<T>(type: string, address: Address, options: { identity?: Identity, accessControllerAddress?: string } & IStoreOptions<T, any, any>) {
+  async _createStore<T>(type: string, address: Address, options: { writeOnly?: boolean, identity?: Identity, accessControllerAddress?: string } & IStoreOptions<T, any, any>) {
     // Get the type -> class mapping
     const Store = databaseTypes[type]
 
@@ -322,19 +338,19 @@ export class OrbitDB {
     if (!subscribed && unsubscribe) {
       // TODO: could cause sideeffects if there is another write that wants to access the topic
       await this._pubsub.unsubscribe(topic);
-
+  
       const removeDirectConnect = peer => {
         const conn = this._directConnections[peer];
         if (conn && !preExistingConnections.has(peer)) {
           this._directConnections[peer].close()
           delete this._directConnections[peer]
         }
-
+  
       }
-
+  
       // Close all direct connections to peers
       Object.keys(directConnectionsFromWrite).forEach(removeDirectConnect)
-
+  
       // unbind?
     }
   } */
@@ -362,8 +378,9 @@ export class OrbitDB {
       const maybeEncryptedMessage = deserialize(Buffer.from(data), MaybeEncrypted) as MaybeEncrypted<MaybeSigned<Message>>
       const decrypted = await maybeEncryptedMessage.init(this.encryption).decrypt()
       const signedMessage = decrypted.getValue(MaybeSigned);
-      const msg = await signedMessage.open(this.keystore.open, Message);
-      const sender = signedMessage instanceof SignedMessage ? signedMessage.key : undefined;
+      await signedMessage.verify(this.keystore.verify);
+      const msg = signedMessage.getValue(Message);
+      const sender: Ed25519PublicKey | undefined = signedMessage.signature?.publicKey;
       const checkTrustedSender = async (replicationTopic: string): Promise<boolean> => {
         let isTrusted = false;
         if (sender) {
@@ -452,11 +469,18 @@ export class OrbitDB {
   }
 
   // Callback for when a peer connected to a database
-  async _onPeerConnected(replicationTopic: string, peer: string) {
+  async _onPeerConnected(replicationTopic: string, peer: string, subscriptionId: string) {
     logger.debug(`New peer '${peer}' connected to '${replicationTopic}'`)
 
     // create a channel for sending/receiving messages
-    const channel = await this.getChannel(peer)
+    const channel = await this.getChannel(peer, channel => {
+      let connections = this._subscriptionOpenedForWriteOnly[subscriptionId];
+      if (!connections) {
+        connections = [];
+        this._subscriptionOpenedForWriteOnly[subscriptionId] = connections;
+      }
+      connections.push(channel);
+    })
 
     const getStore = address => this.stores[address]
 
@@ -481,13 +505,18 @@ export class OrbitDB {
   }
 
 
-  async getChannel(peer: string) {
+  async getChannel(peer: string, onChannelCreated?: (channel: DirectChannel) => void) {
     const getDirectConnection = peer => this._directConnections[peer]
-    const onChannelCreated = channel => { this._directConnections[channel._receiverID] = channel }
+    const _onChannelCreated = (channel: DirectChannel) => {
+      this._directConnections[channel._receiverID] = channel;
+      if (onChannelCreated) {
+        onChannelCreated(channel);
+      }
+    }
     const handleMessage = (message: { data: Uint8Array }) => {
       this._onMessage(undefined, message.data, peer)
     }
-    let channel = await getCreateChannel(this._ipfs, peer, getDirectConnection, handleMessage, onChannelCreated);
+    let channel = await getCreateChannel(this._ipfs, peer, getDirectConnection, handleMessage, _onChannelCreated);
     return channel;
   }
 
@@ -793,7 +822,7 @@ export class OrbitDB {
     return OrbitDBAddress.parse(address)
   }
 
-  _keysInflightMap: Map<string, Promise<any>> = new Map(); // TODO fix types
+
   async requestAndWaitForKeys<T extends KeyWithMeta>(replicationTopic: string, condition: RequestKeyCondition<T>): Promise<T[]> {
     const promiseKey = condition.hashcode;
     const existingPromise = this._keysInflightMap.get(promiseKey);
@@ -801,9 +830,14 @@ export class OrbitDB {
       return existingPromise
     }
 
+    let lruCache = this._keyRequestsLRU.get(promiseKey);
+    if (lruCache !== undefined) {
+      return lruCache;
+    }
+
     const promise = new Promise<T[] | undefined>((resolve, reject) => {
       const send = (message: Uint8Array) => this._pubsub.publish(replicationTopic, message)
-      requestAndWaitForKeys(condition, send, this.keystore, this.identity).then((results) => {
+      requestAndWaitForKeys(condition, send, this.keystore, this.identity, this._waitForKeysTimeout).then((results) => {
         if (results?.length > 0) {
           resolve(results);
         }
@@ -816,12 +850,13 @@ export class OrbitDB {
     })
     this._keysInflightMap.set(promiseKey, promise);
     const result = await promise;
+    this._keyRequestsLRU.set(promiseKey, result ? result : null);
     this._keysInflightMap.delete(promiseKey);
     return result;
   }
 
-  async decryptedSignedThing(data: Uint8Array): Promise<DecryptedThing<SignedMessage<Uint8Array>>> {
-    const signedMessage = await (new UnsignedMessage({ data })).sign(await this.getSigner());
+  async decryptedSignedThing(data: Uint8Array): Promise<DecryptedThing<MaybeSigned<Uint8Array>>> {
+    const signedMessage = await (new MaybeSigned({ data })).sign(await this.getSigner());
     return new DecryptedThing({
       data: serialize(signedMessage)
     })

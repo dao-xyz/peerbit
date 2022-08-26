@@ -2,6 +2,7 @@ import { AccessController } from './access-controller-interface'
 import { Entry, Payload } from '@dao-xyz/ipfs-log-entry';
 import io from '@dao-xyz/orbit-db-io'
 import { Identities, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
+import { MaybeEncrypted } from '@dao-xyz/encryption-utils';
 
 const type = 'ipfs'
 
@@ -21,16 +22,18 @@ export class IPFSAccessController<T> extends AccessController<T> {
     return this._write
   }
 
-  async canAppend<T>(_payload: Payload<T>, identityResolver: () => Promise<IdentitySerializable>, identityProvider: Identities) {
+  async canAppend<T>(payload: MaybeEncrypted<Payload<T>>, identityEncrypted: MaybeEncrypted<IdentitySerializable>, identityProvider: Identities) {
     // Allow if access list contain the writer's publicKey or is '*'
     let identity = undefined;
+
     try {
-      identity = await identityResolver();
+      identity = (await identityEncrypted.decrypt()).getValue(IdentitySerializable);
       if (!identityProvider.verifyIdentity(identity)) {
         return false;
       }
     } catch (error) {
-      // Can not access
+      // Can not access identity
+      return this.write.includes('*');
     }
 
     if (this.write.includes('*')) {

@@ -89,7 +89,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const json = fixture.json
         json.heads = await Promise.all(json.heads.map(headHash => Entry.fromMultihash(ipfs, headHash))) as any
         const log = await Log.fromJSON(ipfs, testIdentity, json, {})
-        assert.strictEqual(log.id, data.heads[0].metadata.idDecrypted)
+        assert.strictEqual(log.id, data.heads[0].id)
         assert.strictEqual(log.length, 16)
         assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), fixture.expectedData)
       })
@@ -104,7 +104,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log = await Log.fromJSON(ipfs, testIdentity, json,
           { length: -1, sortFn: FirstWriteWins })
 
-        assert.strictEqual(log.id, data.heads[0].metadata.idDecrypted)
+        assert.strictEqual(log.id, data.heads[0].id)
         assert.strictEqual(log.length, 16)
         assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), firstWriteExpectedData)
       })
@@ -144,7 +144,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         await log1.join(log2)
 
-        assert.strictEqual(log1.id, data.heads[0].metadata.idDecrypted)
+        assert.strictEqual(log1.id, data.heads[0].id)
         assert.strictEqual(log1.length, 16)
         assert.deepStrictEqual(log1.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), fixture.expectedData)
       })
@@ -160,7 +160,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         await log1.join(log2)
 
-        assert.strictEqual(log1.id, data.heads[0].metadata.idDecrypted)
+        assert.strictEqual(log1.id, data.heads[0].id)
         assert.strictEqual(log1.length, 16)
         assert.deepStrictEqual(log1.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), firstWriteExpectedData)
       })
@@ -188,7 +188,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const data = fixture.log
 
         const log = await Log.fromEntry<string>(ipfs, testIdentity, data.heads, { length: -1 })
-        assert.strictEqual(log.id, data.heads[0].metadata.idDecrypted)
+        assert.strictEqual(log.id, data.heads[0].id)
         assert.strictEqual(log.length, 16)
         assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), fixture.expectedData)
       })
@@ -199,7 +199,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         const log = await Log.fromEntry<string>(ipfs, testIdentity, data.heads,
           { length: -1, sortFn: FirstWriteWins })
-        assert.strictEqual(log.id, data.heads[0].metadata.idDecrypted)
+        assert.strictEqual(log.id, data.heads[0].id)
         assert.strictEqual(log.length, 16)
         assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), firstWriteExpectedData)
       })
@@ -209,13 +209,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const data = fixture.log
         const log1 = await Log.fromEntry<string>(ipfs, testIdentity, data.heads,
           { length: data.heads.length })
-        assert.strictEqual(log1.id, data.heads[0].metadata.idDecrypted)
+        assert.strictEqual(log1.id, data.heads[0].id)
         assert.strictEqual(log1.length, data.heads.length)
         assertPayload(log1.values[0].payload.value, 'entryC0')
         assertPayload(log1.values[1].payload.value, 'entryA10')
 
         const log2 = await Log.fromEntry<string>(ipfs, testIdentity, data.heads, { length: 4 })
-        assert.strictEqual(log2.id, data.heads[0].metadata.idDecrypted)
+        assert.strictEqual(log2.id, data.heads[0].id)
         assert.strictEqual(log2.length, 4)
         assertPayload(log2.values[0].payload.value, 'entryC0')
         assertPayload(log2.values[1].payload.value, 'entryA8')
@@ -223,7 +223,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assertPayload(log2.values[3].payload.value, 'entryA10')
 
         const log3 = await Log.fromEntry<string>(ipfs, testIdentity, data.heads, { length: 7 })
-        assert.strictEqual(log3.id, data.heads[0].metadata.idDecrypted)
+        assert.strictEqual(log3.id, data.heads[0].id)
         assert.strictEqual(log3.length, 7)
         assertPayload(log3.values[0].payload.value, 'entryB5')
         assertPayload(log3.values[1].payload.value, 'entryA6')

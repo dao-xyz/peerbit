@@ -3,6 +3,7 @@ import { Entry, Payload } from '@dao-xyz/ipfs-log-entry';
 
 import io from '@dao-xyz/orbit-db-io'
 import { IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
+import { MaybeEncrypted } from "@dao-xyz/encryption-utils";
 const Buffer = require('safe-buffer/').Buffer
 const type = 'legacy-ipfs'
 
@@ -21,11 +22,10 @@ export class LegacyIPFSAccessController<T> extends AccessController<T> {
     return this._write
   }
 
-  async canAppend<T>(payload: Payload<T>, identityResolver: () => Promise<IdentitySerializable>, identityProvider) {
+  async canAppend<T>(_payload: MaybeEncrypted<Payload<T>>, identity: MaybeEncrypted<IdentitySerializable>, identityProvider) {
 
-    await payload.decrypt()
 
-    const publicKey = (await identityResolver()).publicKey
+    const publicKey = (await identity.decrypt()).getValue(IdentitySerializable).publicKey
     if (this.write.includes(publicKey) ||
       this.write.includes('*')) {
       return true

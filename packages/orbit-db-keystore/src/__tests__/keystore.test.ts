@@ -170,7 +170,7 @@ describe('keystore', () => {
     })
 
     it('will return secret key if missing when saving', async () => {
-      const id = 'overwrite key'
+      const id = 'overwrite key 2'
       let keyWithMeta = new BoxKeyWithMeta({
         secretKey: new X25519SecretKey(Buffer.from(new Array(32).fill(0))),
         publicKey: new X25519PublicKey(Buffer.from(new Array(32).fill(0))),
@@ -373,9 +373,8 @@ describe('keystore', () => {
     })
 
     it('signs data', async () => {
-      const expectedSignature = new Uint8Array([44, 124, 192, 165, 144, 131, 28, 203, 80, 254, 104, 109, 85, 68, 167, 227, 146, 52, 54, 237, 101, 248, 191, 179, 23, 251, 90, 131, 0, 6, 15, 182, 71, 131, 153, 198, 238, 242, 201, 74, 184, 130, 34, 250, 254, 15, 116, 150, 195, 128, 104, 45, 214, 129, 70, 30, 157, 139, 140, 19, 16, 189, 191, 1, 100, 97, 116, 97, 32, 100, 97, 116, 97, 32, 100, 97, 116, 97])
       const signature = await keystore.sign(Buffer.from('data data data'), key)
-      assert.deepStrictEqual(signature, expectedSignature)
+      expect(signature).toMatchSnapshot('signature');
     })
 
     it('throws an error if no key is passed', async () => {

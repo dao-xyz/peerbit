@@ -71,29 +71,30 @@ Object.keys(testAPIs).forEach((IPFS) => {
         log2 = new Log(ipfs, testIdentity2, logOptions)
       })
 
-      it('join encrypted identities', async () => {
+      it('join encrypted identities only with knowledge of id and clock', async () => {
         const nullKey = new X25519PublicKey(Buffer.from(new Array(32).fill(0)))
-        await log1.append('helloA1', { recieverClock: nullKey, recieverIdentity: nullKey, recieverPayload: nullKey, pointerCount: 1 })
-        await log1.append('helloA2', { recieverClock: nullKey, recieverIdentity: nullKey, recieverPayload: nullKey, pointerCount: 1 })
-        await log2.append('helloB1', { recieverClock: nullKey, recieverIdentity: nullKey, recieverPayload: nullKey, pointerCount: 1 })
-        await log2.append('helloB2', { recieverClock: nullKey, recieverIdentity: nullKey, recieverPayload: nullKey, pointerCount: 1 })
+        await log1.append('helloA1', { reciever: { id: undefined, clock: undefined, identity: nullKey, payload: nullKey, signature: nullKey }, pointerCount: 1 })
+        await log1.append('helloA2', { reciever: { id: undefined, clock: undefined, identity: nullKey, payload: nullKey, signature: nullKey }, pointerCount: 1 })
+        await log2.append('helloB1', { reciever: { id: undefined, clock: undefined, identity: nullKey, payload: nullKey, signature: nullKey }, pointerCount: 1 })
+        await log2.append('helloB2', { reciever: { id: undefined, clock: undefined, identity: nullKey, payload: nullKey, signature: nullKey }, pointerCount: 1 })
 
         // Remove decrypted caches of the log2 values
         log2.values.forEach((value) => {
-          value.metadata._metadata.clear();
+          value._id.clear();
+          value._identity.clear();
           value._clock.clear();
-          value.payload._data.clear();
+          value._payload.clear();
+          value._signature.clear();
+          value._clock.clear();
+          /*  value.init({
+             encoding: log2._encoding,
+             encryption: log2._encryption
+           }) */
+
         })
 
         await log1.join(log2)
-
-        const expectedData = [
-          'helloA1', 'helloB1', 'helloA2', 'helloB2'
-        ]
-
         assert.strictEqual(log1.length, 4)
-        assert.deepStrictEqual(log1.values.map((e) => e.payload.value), expectedData)
-
         const item = last(log1.values)
         assert.strictEqual(item.next.length, 1)
       })

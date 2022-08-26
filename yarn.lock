@@ -13024,13 +13024,6 @@ ipfs-http-server@^0.11.3:
   optionalDependencies:
     prom-client "^14.0.1"
 
-ipfs-pubsub-1on1@0.0.8:
-  version "0.0.8"
-  resolved "https://registry.yarnpkg.com/ipfs-pubsub-1on1/-/ipfs-pubsub-1on1-0.0.8.tgz#931809008b61218e7a882ec2e5666c04841b2055"
-  integrity sha512-f5pBfjkWSExrG1i63dZo7e1d0E+wN+WlHPQmU+7QP51q2zn2ycQReDbdPXP3JEi36/vqF6KAPB5SIFKyO0KgMA==
-  dependencies:
-    safe-buffer "~5.2.1"
-
 ipfs-pubsub-peer-monitor@~0.0.5:
   version "0.0.10"
   resolved "https://registry.yarnpkg.com/ipfs-pubsub-peer-monitor/-/ipfs-pubsub-peer-monitor-0.0.10.tgz#42b148ed53858a2c9391ca7730f9b5b50f753a0d"
@@ -17835,11 +17828,6 @@ orbit-db-keystore@^1.0.0:
     mkdirp "^0.5.5"
     reachdown "^1.1.0"
     safe-buffer "^5.2.1"
-
-orbit-db-test-utils@^1.0.2, orbit-db-test-utils@^1.0.3:
-  version "1.4.1"
-  resolved "https://registry.yarnpkg.com/orbit-db-test-utils/-/orbit-db-test-utils-1.4.1.tgz#1cbc9415923b33594ead2d1f65649528ba536ef4"
-  integrity sha512-qhoAZSHOAC24Ha+mKI7N2M3pIuPWoSxnY3Jyt5uGELjvViZVRX3WsO0KdAtC255I7HEw1mW30PSfWr0QSvW65A==
 
 orbit-db-test-utils@^1.3.0:
   version "1.3.0"

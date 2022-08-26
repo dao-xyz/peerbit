@@ -2,8 +2,8 @@ import path from 'path'
 import { EventEmitter } from 'events'
 import mapSeries from 'p-each-series'
 import { default as PQueue } from 'p-queue'
-import { Log, ISortFunction, RecycleOptions, AccessError, LogOptions } from '@dao-xyz/ipfs-log'
-import { Payload, IOOptions } from '@dao-xyz/ipfs-log-entry'
+import { Log, ISortFunction, RecycleOptions, LogOptions } from '@dao-xyz/ipfs-log'
+import { Payload, IOOptions, EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Index } from './store-index'
 import { Replicator } from './replicator'
@@ -21,7 +21,7 @@ import { serialize, deserialize } from '@dao-xyz/borsh';
 import { Snapshot } from './snapshot'
 import { X25519PublicKey } from 'sodium-plus';
 import { arraysEqual } from '@dao-xyz/io-utils'
-import { PublicKeyEncryption } from '@dao-xyz/encryption-utils'
+import { AccessError, MaybeEncrypted, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
 
 export type Constructor<T> = new (...args: any[]) => T;
 
@@ -178,7 +178,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
   _ipfs: IPFS;
   _cache: Cache;
   access: AccessController<T>;
-  _oplog: Log<any>;
+  _oplog: Log<T>;
   _queue: PQueue<any, any>
   _index: I;
   _replicationStatus: ReplicationInfo;
@@ -219,7 +219,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
 
     // Access mapping
     this.access = options.accessController || {
-      canAppend: async (entry: Payload<T>, entryIdentity: IdentitySerializable, _identityProvider: Identities) => (Buffer.compare(entryIdentity.publicKey.getBuffer(), identity.publicKey.getBuffer()) === 0),
+      canAppend: async (payload: MaybeEncrypted<Payload<T>>, entryIdentity: MaybeEncrypted<IdentitySerializable>, _identityProvider: Identities) => true,
       type: undefined,
       address: undefined,
       close: undefined,
@@ -254,7 +254,8 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
     try {
       const onReplicationQueued = async (entry: Entry<T>) => {
         // Update the latest entry state (latest is the entry with largest clock time)
-        this._recalculateReplicationMax((await entry.clock).time)
+        await entry.getClock();
+        this._recalculateReplicationMax(entry.clock.time)
         this.events.emit('replicate', this.address.toString(), entry)
       }
 
@@ -506,11 +507,18 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
       if (!identityProvider) throw new Error('Identity-provider is required, cannot verify entry')
 
       // TODO Fix types
-      const identityResolver = () => head.metadata.init(this._oplog._encryption).identity;
-      const canAppend = await this.access.canAppend(head.payload.init(this._oplog._encoding, this._oplog._encryption), identityResolver, identityProvider as any)
-      if (!canAppend) {
-        logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
-        return Promise.resolve(null)
+      head.init({
+        encoding: this._oplog._encoding,
+        encryption: this._oplog._encryption
+      })
+      try {
+        const canAppend = await this.access.canAppend(head._payload, head._identity, identityProvider as any)
+        if (!canAppend) {
+          logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
+          return Promise.resolve(null)
+        }
+      } catch (error) {
+        return Promise.resolve(null);
       }
 
       const logEntry = Entry.toEntryNoHash(head)
@@ -606,8 +614,8 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
   }
 
   async syncLocal() {
-    const localHeads = (await this._cache.getBinary(this.localHeadsPath, HeadsCache))?.heads || []
-    const remoteHeads = (await this._cache.getBinary(this.remoteHeadsPath, HeadsCache))?.heads || []
+    const localHeads = (await this._cache.getBinary<HeadsCache<T>>(this.localHeadsPath, HeadsCache))?.heads || []
+    const remoteHeads = (await this._cache.getBinary<HeadsCache<T>>(this.remoteHeadsPath, HeadsCache))?.heads || []
     const heads = localHeads.concat(remoteHeads)
     for (let i = 0; i < heads.length; i++) {
       const head = heads[i]
@@ -618,18 +626,16 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
     }
   }
 
-  async _addOperation(data, options: { onProgressCallback?: (any) => void, pin?: boolean, reciever?: X25519PublicKey, recieverPayload?: X25519PublicKey, recieverIdentity?: X25519PublicKey, recieverClock?: X25519PublicKey } = {}) {
+  async _addOperation(data: T, options: { onProgressCallback?: (any) => void, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = {}) {
     const addOperation = async () => {
       if (this._oplog) {
         // check local cache for latest heads
         if (this.options.syncLocal) {
           await this.syncLocal()
         }
-        const recieverPayload = options.recieverPayload ? options.recieverPayload : options.reciever
-        const recieverIdentity = options.recieverIdentity ? options.recieverIdentity : options.reciever
-        const recieverClock = options.recieverClock ? options.recieverClock : options.reciever
-
-        const entry = await this._oplog.append(data, { pointerCount: this.options.referenceCount, pin: options.pin, recieverPayload, recieverIdentity, recieverClock })
+        const entry = await this._oplog.append(data, {
+          pointerCount: this.options.referenceCount, pin: options.pin, reciever: options.reciever
+        })
         this._recalculateReplicationStatus((await entry.clock).time)
         await this._cache.setBinary(this.localHeadsPath, new HeadsCache({ heads: [entry] }))
         await this._updateIndex([entry])

@@ -16,6 +16,7 @@ import { Access, AccessData } from './access';
 import { P2PTrust } from "@dao-xyz/orbit-db-trust-web";
 export * from './access';
 import isNode from 'is-node';
+import { MaybeEncrypted } from "@dao-xyz/encryption-utils";
 let v8 = undefined;
 if (isNode) {
     v8 = require('v8');
@@ -50,7 +51,7 @@ export type AccessVerifier = (identity: IdentitySerializable) => Promise<boolean
 
 export const DYNAMIC_ACCESS_CONTROLER = 'dynamic-access-controller';
 
-export type OnMemoryExceededCallback<T> = (payload: Payload<T>, identity: IdentitySerializable) => void;
+export type OnMemoryExceededCallback<T> = (payload: MaybeEncrypted<Payload<T>>, identity: IdentitySerializable) => void;
 export class DynamicAccessController<T, B extends Store<T, any, any, any>> extends AccessController<T> {
 
     aclDB: ACLInterface;
@@ -125,8 +126,8 @@ export class DynamicAccessController<T, B extends Store<T, any, any, any>> exten
     }
 
 
-    async canAppend(payload: Payload<T>, identityResolver: () => Promise<IdentitySerializable>, identityProvider: Identities) {
-        const identity = await identityResolver();
+    async canAppend(payload: MaybeEncrypted<Payload<T>>, identityEncrypted: MaybeEncrypted<IdentitySerializable>, identityProvider: Identities) {
+        const identity = (await identityEncrypted.decrypt()).getValue(IdentitySerializable);
         if (!identityProvider.verifyIdentity(identity)) {
             return false;
         }
@@ -149,7 +150,7 @@ export class DynamicAccessController<T, B extends Store<T, any, any, any>> exten
             return true;
         }
 
-        if (await this.aclDB.allowed(payload, identity)) {
+        if (await this.aclDB.allowed(payload, identityEncrypted)) {
             return true; // Creator of entry does not own NFT or token, or publickey etc
         }
         return false;

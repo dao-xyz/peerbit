@@ -31,7 +31,7 @@
     "@dao-xyz/encryption-utils": "^0.0.1",
     "@dao-xyz/orbit-db-identity-provider": "^0.5.10",
     "@dao-xyz/orbit-db-store": "^0.0.20",
-    "ipfs-pubsub-1on1": "0.0.8",
+    "@dao-xyz/ipfs-pubsub-1on1": "^0.0.8",
     "is-node": "^1.0.2",
     "localstorage-down": "^0.6.7",
     "logplease": "^1.2.14",

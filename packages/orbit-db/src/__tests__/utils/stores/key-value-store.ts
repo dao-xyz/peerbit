@@ -2,7 +2,7 @@ import { Log } from "@dao-xyz/ipfs-log";
 import { JSON_ENCODER } from "@dao-xyz/orbit-db-store";
 import { Store } from "@dao-xyz/orbit-db-store"
 import { OrbitDB } from "../../../orbit-db";
-import { X25519PublicKey } from 'sodium-plus';
+import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry';
 
 export const KEY_VALUE_STORE_TYPE = 'keyvalue';
 
@@ -60,7 +60,7 @@ export class KeyValueStore extends Store<any, any, any, any> {
     set(key, data, options?: {
         onProgressCallback?: (any: any) => void;
         pin?: boolean;
-        reciever?: X25519PublicKey;
+        reciever?: EncryptionTemplateMaybeEncrypted;
     }) {
         return this.put(key, data, options)
     }
@@ -68,7 +68,7 @@ export class KeyValueStore extends Store<any, any, any, any> {
     put(key, data, options?: {
         onProgressCallback?: (any: any) => void;
         pin?: boolean;
-        reciever?: X25519PublicKey;
+        reciever?: EncryptionTemplateMaybeEncrypted;
     }) {
         return this._addOperation({
             op: 'PUT',
@@ -80,7 +80,7 @@ export class KeyValueStore extends Store<any, any, any, any> {
     del(key, options?: {
         onProgressCallback?: (any: any) => void;
         pin?: boolean;
-        reciever?: X25519PublicKey;
+        reciever?: EncryptionTemplateMaybeEncrypted;
     }) {
         return this._addOperation({
             op: 'DEL',

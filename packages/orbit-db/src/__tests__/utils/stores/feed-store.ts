@@ -1,8 +1,7 @@
 import { Log } from "@dao-xyz/ipfs-log";
 import { OrbitDB } from "../../../orbit-db";
 import { EventStore } from "./event-store"
-import { X25519PublicKey } from 'sodium-plus';
-
+import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry';
 export const FEED_STORE_TYPE = 'feed';
 class FeedIndex {
     _index: any;
@@ -40,7 +39,7 @@ export class FeedStore<T> extends EventStore<T> {
     remove(hash, options?: {
         onProgressCallback?: (any: any) => void;
         pin?: boolean;
-        reciever?: X25519PublicKey;
+        reciever?: EncryptionTemplateMaybeEncrypted;
     }) {
         return this.del(hash, options)
     }
@@ -48,7 +47,7 @@ export class FeedStore<T> extends EventStore<T> {
     del(hash, options?: {
         onProgressCallback?: (any: any) => void;
         pin?: boolean;
-        reciever?: X25519PublicKey;
+        reciever?: EncryptionTemplateMaybeEncrypted;
     }) {
         const operation = {
             op: 'DEL',

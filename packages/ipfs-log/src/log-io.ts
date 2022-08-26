@@ -166,7 +166,7 @@ export class LogIO {
     // Add the input entries at the beginning of the array and remove
     // as many elements from the array before inserting the original entries
     const entries = replaceInFront(sliced, missingSourceEntries)
-    const logId = await entries[entries.length - 1].metadata.id
+    const logId = await entries[entries.length - 1].id
     return { logId, entries }
   }
 }

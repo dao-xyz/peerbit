@@ -14,6 +14,7 @@ import { PublicKey, TrustData } from "@dao-xyz/identity";
 import { arraysEqual } from "@dao-xyz/io-utils";
 
 import isNode from 'is-node';
+import { MaybeEncrypted } from "@dao-xyz/encryption-utils";
 let v8 = undefined;
 if (isNode) {
     v8 = require('v8');
@@ -52,7 +53,7 @@ export const getTargetPath = (start: PublicKey, target: (key: PublicKey) => bool
            } */
 
         // Assumed message is signed
-        let truster = trust.entry.metadata.decrypted._identity;
+        let truster = trust.entry.identity;
         let trustRelation = trust.value;
         trustRelation.truster = truster;
         let key = truster.toString();
@@ -251,17 +252,18 @@ export class TrustWebAccessController extends AccessController<any> {
 
     }
 
-    async canAppend(_payload: Payload<any>, identityResolver: () => Promise<IdentitySerializable>, identityProvider: Identities): Promise<boolean> {
+    async canAppend(payload: MaybeEncrypted<Payload<any>>, identity: MaybeEncrypted<IdentitySerializable>, identityProvider: Identities): Promise<boolean> {
 
-        const identity = await identityResolver();
-        if (!identityProvider.verifyIdentity(identity)) {
+        await identity.decrypt();
+        const identityDecrypted = identity.decrypted.getValue(IdentitySerializable);
+        if (!identityProvider.verifyIdentity(identityDecrypted)) {
             return false;
         }
         if (this._appendAll) {
             return true;
         }
 
-        const isTrusted = this._trustResolver().isTrusted(identity)
+        const isTrusted = this._trustResolver().isTrusted(identityDecrypted)
         return isTrusted;
     }
 

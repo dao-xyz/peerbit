@@ -8,6 +8,7 @@ import { OrbitDB } from '../orbit-db'
 import { EventStore, EVENT_STORE_TYPE, Operation } from './utils/stores/event-store'
 import { IStoreOptions } from '@dao-xyz/orbit-db-store';
 import { X25519PublicKey } from 'sodium-plus';
+import { AccessError } from '@dao-xyz/encryption-utils'
 // Include test utilities
 const {
   config,
@@ -24,10 +25,9 @@ const orbitdbPath3 = './orbitdb/tests/replication/3'
 
 const dbPath1 = './orbitdb/tests/replication/1/db1'
 const dbPath2 = './orbitdb/tests/replication/2/db2'
-const dbPath3 = './orbitdb/tests/replication/3/db2'
-
+const dbPath3 = './orbitdb/tests/replication/3/db3'
 const testHello = async (addToDB: EventStore<string>, readFromDB: EventStore<string>, reciever: X25519PublicKey, timer: any) => {
-  await addToDB.add('hello', { reciever })
+  await addToDB.add('hello', { reciever: { clock: reciever, id: reciever, identity: reciever, payload: reciever, signature: reciever } })
   let finished = false;
   await new Promise((resolve, reject) => {
     let replicatedEventCount = 0
@@ -45,7 +45,7 @@ const testHello = async (addToDB: EventStore<string>, readFromDB: EventStore<str
         const entries: Entry<Operation<string>>[] = readFromDB.iterator({ limit: -1 }).collect()
         try {
           assert.equal(entries.length, 1)
-          await entries[0].payload.decrypt();
+          await entries[0].getPayload();
           assert.equal(entries[0].payload.value.value, 'hello')
           assert.equal(replicatedEventCount, 1)
         } catch (error) {
@@ -58,7 +58,7 @@ const testHello = async (addToDB: EventStore<string>, readFromDB: EventStore<str
 }
 
 Object.keys(testAPIs).forEach(API => {
-  describe(`orbit-db - encryption (${API})`, function () {
+  describe(`orbit-db - encryption`, function () {
     jest.setTimeout(config.timeout * 2)
 
     let ipfsd1, ipfsd2, ipfsd3, ipfs1, ipfs2, ipfs3
@@ -93,6 +93,9 @@ Object.keys(testAPIs).forEach(API => {
 
       if (ipfsd2)
         await stopIpfs(ipfsd2)
+
+      if (ipfsd3)
+        await stopIpfs(ipfsd3)
     })
 
     beforeEach(async () => {
@@ -100,17 +103,19 @@ Object.keys(testAPIs).forEach(API => {
 
       rmrf.sync(orbitdbPath1)
       rmrf.sync(orbitdbPath2)
+      rmrf.sync(orbitdbPath3)
       rmrf.sync(dbPath1)
       rmrf.sync(dbPath2)
+      rmrf.sync(dbPath3)
 
       orbitdb1 = await OrbitDB.createInstance(ipfs1, {
         directory: orbitdbPath1, canAccessKeys: (requester, _keyToAccess) => {
           const comp = Buffer.compare(requester.getBuffer(), orbitdb2.identity.publicKey.getBuffer());
           return Promise.resolve(comp === 0) // allow orbitdb1 to share keys with orbitdb2
-        }
+        }, waitForKeysTimout: 1000
       })
-      orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2 })
-      orbitdb3 = await OrbitDB.createInstance(ipfs3, { directory: orbitdbPath3 })
+      orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2, waitForKeysTimout: 1000 })
+      orbitdb3 = await OrbitDB.createInstance(ipfs3, { directory: orbitdbPath3, waitForKeysTimout: 1000 })
 
       recieverKey = await orbitdb2.keystore.createKey('sender', BoxKeyWithMeta);
 
@@ -185,8 +190,6 @@ Object.keys(testAPIs).forEach(API => {
       console.log("Waiting for peers to connect")
 
       await waitForPeers(ipfs3, [orbitdb1.id], db1.address.toString())
-      // Set 'sync' flag on. It'll prevent creating a new local database and rather
-      // fetch the database from the network
       options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath3, sync: true })
 
       const db3Key = await orbitdb3.keystore.createKey('unknown', BoxKeyWithMeta, db1.replicationTopic);
@@ -221,27 +224,20 @@ Object.keys(testAPIs).forEach(API => {
       assert.deepStrictEqual(db1Key.publicKey.getBuffer(), reciever.publicKey.getBuffer());
     })
 
-    it('can relay with end to end encryption with public identities', async () => {
+    it('can relay with end to end encryption with public id and clock (E2EE-weak)', async () => {
 
       console.log("Waiting for peers to connect")
 
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
       await waitForPeers(ipfs3, [orbitdb1.id], db1.address.toString())
 
-      const relayKey = await orbitdb1.keystore.createKey('relay', BoxKeyWithMeta, db1.replicationTopic);
-
       options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true })
       db2 = await orbitdb2.open(db1.address.toString(), { ...options, encryption: orbitdb2.replicationTopicEncryption() })
 
-      options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath3, sync: true })
-      db3 = await orbitdb3.open(db1.address.toString(), { ...options, encryption: orbitdb3.replicationTopicEncryption() })
+      const client3Key = await orbitdb3.keystore.createKey('unknown', BoxKeyWithMeta);
 
-      const db3Key = await orbitdb3.keystore.createKey('unknown', BoxKeyWithMeta, db1.replicationTopic);
-      await orbitdb3.keystore.saveKey(relayKey);
-
-      await db2.add('hello', { recieverPayload: db3Key.publicKey, recieverIdentity: relayKey.publicKey, recieverClock: undefined })
+      await db2.add('hello', { reciever: { id: undefined, clock: undefined, identity: client3Key.publicKey, payload: client3Key.publicKey, signature: client3Key.publicKey } })
       let finishedRelay = false;
-      let finishedEnd = false;
 
       await new Promise((resolve, reject) => {
         let replicatedEventCount = 0
@@ -250,9 +246,55 @@ Object.keys(testAPIs).forEach(API => {
           replicatedEventCount++
           // Once db2 has finished replication, make sure it has all elements
           // and process to the asserts below
-          const all = db2.iterator({ limit: -1 }).collect().length
+          const all = db1.iterator({ limit: -1 }).collect().length
           finishedRelay = (all === 1)
         })
+
+
+        timer = setInterval(async () => {
+          if (finishedRelay) {
+            clearInterval(timer)
+
+
+            const entriesRelay: Entry<Operation<string>>[] = db1.iterator({ limit: -1 }).collect()
+            try {
+              assert.equal(entriesRelay.length, 1)
+              try {
+                await entriesRelay[0].getPayload(); // should fail, since relay can not see the message
+                assert(false);
+              } catch (error) {
+                expect(error).toBeInstanceOf(AccessError);
+              }
+              assert.equal(replicatedEventCount, 1)
+            } catch (error) {
+              reject(error)
+            }
+
+
+            const sender: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
+            try {
+              assert.equal(sender.length, 1)
+              await sender[0].getPayload();
+              assert.equal(sender[0].payload.value.value, 'hello')
+              assert.equal(replicatedEventCount, 1)
+            } catch (error) {
+              reject(error)
+            }
+            resolve(true)
+          }
+        }, 100)
+      })
+
+
+      // Now close db2 and open db3 and make sure message are available
+
+      await db2.drop();
+      options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath3, sync: true })
+      db3 = await orbitdb3.open(db1.address.toString(), { ...options, encryption: orbitdb3.replicationTopicEncryption() })
+
+      let finishedEnd = false;
+      await new Promise((resolve, reject) => {
+        let replicatedEventCount = 0
 
         db3.events.on('replicated', (address, length) => {
           replicatedEventCount++
@@ -262,64 +304,23 @@ Object.keys(testAPIs).forEach(API => {
           finishedEnd = (all === 1)
         })
 
+
         timer = setInterval(async () => {
-          if (finishedEnd && finishedRelay) {
+          if (finishedEnd) {
             clearInterval(timer)
-
-
-            const entriesRelay: Entry<Operation<string>>[] = db1.iterator({ limit: -1 }).collect()
+            const entriesRelay: Entry<Operation<string>>[] = db3.iterator({ limit: -1 }).collect()
             try {
               assert.equal(entriesRelay.length, 1)
-              try {
-                await entriesRelay[0].payload.decrypt(); // should fail, since relay can not see the message
-                assert(false);
-              } catch (error) {
-
-              }
+              await entriesRelay[0].getPayload(); // should pass since orbitdb3 got encryption key
               assert.equal(replicatedEventCount, 1)
             } catch (error) {
               reject(error)
             }
-
-
-            const entriesReciever: Entry<Operation<string>>[] = db3.iterator({ limit: -1 }).collect()
-            try {
-              assert.equal(entriesReciever.length, 1)
-              await entriesReciever[0].payload.decrypt();
-              assert.equal(entriesReciever[0].payload.value, 'hello')
-              assert.equal(replicatedEventCount, 1)
-            } catch (error) {
-              reject(error)
-            }
-            resolve(true)
+            resolve(true);
           }
         }, 100)
       })
+
     })
-
-
-
-    // Test send data with ed pubkey reciever
-    /*  it('can ask for encryption public key from signature public key', async () => {
- 
-       console.log("Waiting for peers to connect")
- 
-       await waitForPeers(ipfs3, [orbitdb1.id], db1.address.toString())
- 
-       const db1Key = await orbitdb1.keystore.createKey('unknown', BoxKeyWithMeta, db1.replicationTopic);
- 
-       // Open store from orbitdb3 so that both client 1 and 2 is listening to the replication topic
-       options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true })
-       await orbitdb2.open(db1.address.toString(), { ...options, encryption: orbitdb2.replicationTopicEncryption() })
- 
-       const reciever = await orbitdb2.getEncryptionKey(db1.replicationTopic);
- 
-       assert(!!reciever.secretKey); // because client 1 is not trusted by 3
-       assert.deepStrictEqual(db1Key.publicKey.getBuffer(), reciever.publicKey.getBuffer());
- 
-     })
-  */
-    // 
-
   })
 })

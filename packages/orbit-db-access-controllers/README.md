@@ -27,7 +27,7 @@ class OtherAccessController extends AccessController {
 
   async canAppend(entry, identityProvider) {
     // logic to determine if entry can be added, for example:
-    if (entry.payload === "hello world" && entry.metadata.idDecryptedentity.id === identity.id && identityProvider.verifyIdentity(entry.metadata.idDecryptedentity))
+    if (entry.payload === "hello world" && entry.identity.id === identity.id && identityProvider.verifyIdentity(entry.identity))
       return true
 
     return false
