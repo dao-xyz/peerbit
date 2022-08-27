@@ -14,13 +14,15 @@ export class Message {
   from: string;
   topicIDs?: string[];
   topic?: string;
-  data: any;
+  data: Buffer;
 }
+
 export type Subscription = {
   id: string,
   topicMonitor: PeerMonitor,
   onNewPeer: (topic: string, peer: string, subscriptionId: string) => void,
-  onMessage: (topicId: string, content: Uint8Array, from: string) => void
+  onMessage: (topicId: string, content: Uint8Array, from: string) => void,
+  dependencies: Set<string>
 };
 export class PubSub {
   _ipfs: any;
@@ -45,8 +47,9 @@ export class PubSub {
       this._ipfs.setMaxListeners(maxTopicsOpen)
   }
 
-  async subscribe(topic: string, onMessageCallback: (topic: string, content: any, from: any) => void, onNewPeerCallback: (topic: string, peer: string, subscriptionId: string) => void, options = {}): Promise<string> {
-    if (!this._subscriptions[topic] && this._ipfs.pubsub) {
+  async subscribe(topic: string, subscriberId: string, onMessageCallback: (topic: string, content: any, from: any) => void, onNewPeerCallback: (topic: string, peer: string, subscriptionId: string) => void, options = {}): Promise<string> {
+    let existingSubscription = this._subscriptions[topic];
+    if (!existingSubscription && this._ipfs.pubsub) {
       await this._ipfs.pubsub.subscribe(topic, this._handleMessage, options)
 
       const topicMonitor = new PeerMonitor(this._ipfs.pubsub, topic)
@@ -65,28 +68,37 @@ export class PubSub {
 
       topicMonitor.on('leave', (peer) => logger.debug(`Peer ${peer} left ${topic}`))
       topicMonitor.on('error', (e) => logger.error(e))
-
-      const subscription = {
-        id: uuid(),
+      const id = uuid();
+      this._subscriptions[topic] = {
+        id,
         topicMonitor: topicMonitor,
         onMessage: onMessageCallback,
-        onNewPeer: onNewPeerCallback
-      };
-      this._subscriptions[topic] = subscription
+        onNewPeer: onNewPeerCallback,
+        dependencies: new Set([subscriberId])
+      }
       topicsOpenCount++
       logger.debug("Topics open:", topicsOpenCount)
-      return subscription.id;
+      return id;
     }
+    else {
+      existingSubscription.dependencies.add(subscriberId);
+      return existingSubscription.id;
+    }
+
   }
 
-  async unsubscribe(hash) {
-    if (this._subscriptions[hash]) {
-      await this._ipfs.pubsub.unsubscribe(hash, this._handleMessage)
-      this._subscriptions[hash].topicMonitor.stop()
-      delete this._subscriptions[hash]
-      logger.debug(`Unsubscribed from '${hash}'`)
-      topicsOpenCount--
-      logger.debug("Topics open:", topicsOpenCount)
+  async unsubscribe(hash: string, subscriberId: string, ignoreDependencies = false) {
+    const subscription = this._subscriptions[hash];
+    if (subscription) {
+      subscription.dependencies.delete(subscriberId);
+      if (subscription.dependencies.size === 0 || ignoreDependencies) {
+        await this._ipfs.pubsub.unsubscribe(hash, this._handleMessage)
+        this._subscriptions[hash].topicMonitor.stop()
+        delete this._subscriptions[hash]
+        logger.debug(`Unsubscribed from '${hash}'`)
+        topicsOpenCount--
+        logger.debug("Topics open:", topicsOpenCount)
+      }
     }
   }
 

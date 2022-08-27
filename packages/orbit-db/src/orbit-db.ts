@@ -286,7 +286,7 @@ export class OrbitDB {
     // and the p2p network
     if (opts.replicate && this._pubsub) {
       if (!this._pubsub._subscriptions[store.replicationTopic]) {
-        await this._pubsub.subscribe(store.replicationTopic, this._onMessage.bind(this), this._onPeerConnected.bind(this))
+        await this._pubsub.subscribe(store.replicationTopic, store.id, this._onMessage.bind(this), this._onPeerConnected.bind(this))
       }
       else {
 
@@ -527,7 +527,7 @@ export class OrbitDB {
 
     // Unsubscribe from pubsub
     if (this._pubsub) {
-      await this._pubsub.unsubscribe(address)
+      await this._pubsub.unsubscribe(address, db.id)
     }
 
     const dir = db && db.options.directory ? db.options.directory : this.directory

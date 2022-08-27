@@ -19,7 +19,7 @@ npm install orbit-db-pubsub
 
 ### API
 
-#### subscribe(topic, onMessageHandler, onNewPeerHandler)
+#### subscribe(topic, subscriberId, onMessageHandler, onNewPeerHandler)
 
 Listen for new messages in `topic`
 
@@ -29,9 +29,9 @@ Listen for new messages in `topic`
 
 Returns a promise.
 
-#### unsubscribe(topic)
+#### unsubscribe(topic, subscriberId)
 
-Stop listening for new messages in `topic`
+Stop listening for new messages in `topic` for subscriber with `subscribereId`. If there are no subscribers left on this topic, then the channel with close (ipfs pubsub channel)
 
 Returns a promise.
 
