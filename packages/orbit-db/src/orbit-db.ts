@@ -33,7 +33,6 @@ const databaseTypes: { [key: string]: Constructor<Store<any, any, any, any>> } =
 const defaultTimeout = 30000 // 30 seconds
 
 export type StoreOperations = 'write' | 'all'
-
 export type Storage = { createStore: (string) => any }
 export type CreateOptions = {
   AccessControllers?: any, cache?: Cache, keystore?: Keystore, peerId?: string, offline?: boolean, directory?: string, storage?: Storage, broker?: any, waitForKeysTimout?: number, canAccessKeys?: KeyAccessCondition, isTrusted?: (key: Ed25519PublicKey, replicationTopic: string) => Promise<boolean>
@@ -44,7 +43,10 @@ export class OrbitDB {
   identity: Identity;
   id: string;
   _pubsub: PubSub;
-  _directConnections: { [key: string]: DirectChannel };
+
+  _directConnections: { [key: string]: { channel: DirectChannel, dependencies: Set<string> } };
+  _directConnectionsByTopic: { [key: string]: DirectChannel[] } = {};
+
   directory: string;
   storage: Storage;
   caches: any;
@@ -206,7 +208,7 @@ export class OrbitDB {
   async disconnect() {
     // Close a direct connection and remove it from internal state
     const removeDirectConnect = e => {
-      this._directConnections[e].close()
+      this._directConnections[e].channel.close()
       delete this._directConnections[e]
     }
 
@@ -473,16 +475,16 @@ export class OrbitDB {
     logger.debug(`New peer '${peer}' connected to '${replicationTopic}'`)
 
     // create a channel for sending/receiving messages
-    const channel = await this.getChannel(peer, channel => {
+    const channel = await this.getChannel(peer, subscriptionId)/* , channel => {
       let connections = this._subscriptionOpenedForWriteOnly[subscriptionId];
       if (!connections) {
         connections = [];
         this._subscriptionOpenedForWriteOnly[subscriptionId] = connections;
       }
       connections.push(channel);
-    })
+    }) */
 
-    const getStore = address => this.stores[address]
+    const getStore = (address: string) => this.stores[address]
 
     // Request key for decrypting messages
     /* this.setKeysInFlight();
@@ -505,14 +507,29 @@ export class OrbitDB {
   }
 
 
-  async getChannel(peer: string, onChannelCreated?: (channel: DirectChannel) => void) {
-    const getDirectConnection = peer => this._directConnections[peer]
+  async getChannel(peer: string, dependencyId?: string, onChannelCreated?: (channel: DirectChannel) => void) {
+    const getDirectConnection = (peer: string) => this._directConnections[peer]?.channel
     const _onChannelCreated = (channel: DirectChannel) => {
-      this._directConnections[channel._receiverID] = channel;
+      if (!dependencyId) {
+        throw new Error("Depeny id is required for new channels");
+      }
+      this._directConnections[channel.recieverId] = {
+        channel,
+        dependencies: new Set([dependencyId])
+      }
+
+      let directConnectionsByTopic = this._directConnectionsByTopic[dependencyId];
+      if (!directConnectionsByTopic) {
+        this._directConnectionsByTopic[dependencyId] = []
+        directConnectionsByTopic = this._directConnectionsByTopic[dependencyId]
+      }
+      directConnectionsByTopic.push(channel);
+
       if (onChannelCreated) {
         onChannelCreated(channel);
       }
     }
+
     const handleMessage = (message: { data: Uint8Array }) => {
       this._onMessage(undefined, message.data, peer)
     }
@@ -526,8 +543,26 @@ export class OrbitDB {
     logger.debug(`Close ${address}`)
 
     // Unsubscribe from pubsub
+    let subscriptionId = undefined;
     if (this._pubsub) {
-      await this._pubsub.unsubscribe(address, db.id)
+      subscriptionId = await this._pubsub.unsubscribe(db.replicationTopic, db.id)
+    }
+
+    // Unsubscribe for direction connection
+    if (subscriptionId) {
+      const connectionsCausedByStore = this._directConnectionsByTopic[subscriptionId];
+      if (connectionsCausedByStore) {
+        connectionsCausedByStore.forEach((connection) => {
+          this._directConnections[connection.recieverId].dependencies.delete(subscriptionId);
+          if (this._directConnections[connection.recieverId].dependencies.size === 0) {
+            this._directConnections[connection.recieverId]?.channel.close();
+          }
+        })
+        delete this._directConnectionsByTopic[subscriptionId];
+      }
+    }
+    else {
+      logger.warning("No subscription from db with id: " + db.id + ", found when unsubscribing")
     }
 
     const dir = db && db.options.directory ? db.options.directory : this.directory
@@ -538,7 +573,7 @@ export class OrbitDB {
       if (!cache.handlers.size) await cache.cache.close()
     }
 
-    delete this.stores[address]
+    delete this.stores[db.replicationTopic][address]
   }
 
   async _onDrop(db: Store<any, any, any, any>) {

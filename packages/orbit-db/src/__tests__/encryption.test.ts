@@ -287,7 +287,6 @@ Object.keys(testAPIs).forEach(API => {
 
 
       // Now close db2 and open db3 and make sure message are available
-
       await db2.drop();
       options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath3, sync: true })
       db3 = await orbitdb3.open(db1.address.toString(), { ...options, encryption: orbitdb3.replicationTopicEncryption() })
@@ -320,7 +319,6 @@ Object.keys(testAPIs).forEach(API => {
           }
         }, 100)
       })
-
     })
   })
 })

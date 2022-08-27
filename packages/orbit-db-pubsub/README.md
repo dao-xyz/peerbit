@@ -21,7 +21,7 @@ npm install orbit-db-pubsub
 
 #### subscribe(topic, subscriberId, onMessageHandler, onNewPeerHandler)
 
-Listen for new messages in `topic`
+Listen for new messages in `topic`. If the topic is already subscribed to, 
 
 `onMessageHandler` gets called when a message is received with signature `(topic, data)`
 

@@ -3,6 +3,7 @@ const assert = require('assert')
 const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
 import { OrbitDB } from '../orbit-db'
+import { EventStore, EVENT_STORE_TYPE } from './utils/stores'
 
 // Include test utilities
 const {
@@ -16,68 +17,46 @@ const {
 
 const dbPath1 = './orbitdb/tests/multiple-databases/1'
 const dbPath2 = './orbitdb/tests/multiple-databases/2'
+const dbPath3 = './orbitdb/tests/multiple-databases/3'
 
-const databaseInterfaces = [
-  {
-    name: 'logdb',
-    open: async (orbitdb, address, options) => await orbitdb.log(address, options),
-    write: async (db, index) => await db.add('hello' + index),
-    query: (db) => db.iterator({ limit: -1 }).collect().length,
-  },
-  {
-    name: 'feed',
-    open: async (orbitdb, address, options) => await orbitdb.feed(address, options),
-    write: async (db, index) => await db.add('hello' + index),
-    query: (db) => db.iterator({ limit: -1 }).collect().length,
-  },
-  {
-    name: 'key-value',
-    open: async (orbitdb, address, options) => await orbitdb.keyvalue(address, options),
-    write: async (db, index) => await db.put('hello', index),
-    query: (db) => db.get('hello'),
-  },
-  {
-    name: 'counterdb',
-    open: async (orbitdb, address, options) => await orbitdb.counter(address, options),
-    write: async (db, index) => await db.inc(1),
-    query: (db) => db.value,
-  },
-  {
-    name: 'documents',
-    open: async (orbitdb, address, options) => await orbitdb.docs(address, options),
-    write: async (db, index) => await db.put({ _id: 'hello', testing: index }),
-    query: (db) => {
-      const docs = db.get('hello')
-      return docs ? docs[0].testing : 0
-    },
-  },
-]
 
 Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Multiple Databases`, function () {
     jest.setTimeout(config.timeout)
 
-    let ipfsd1, ipfsd2, ipfs1, ipfs2
-    let orbitdb1, orbitdb2, db1, db2, db3, db4
+    let ipfsd1, ipfsd2, ipfsd3, ipfs1, ipfs2, ipfs3
+    let orbitdb1: OrbitDB, orbitdb2: OrbitDB, orbitdb3: OrbitDB
 
-    let localDatabases = []
-    let remoteDatabases = []
+    let localDatabases: EventStore<string>[] = []
+    let remoteDatabasesA: EventStore<string>[] = []
+    let remoteDatabasesB: EventStore<string>[] = []
+
+    const dbCount = 2;
 
     // Create two IPFS instances and two OrbitDB instances (2 nodes/peers)
     beforeAll(async () => {
       rmrf.sync(dbPath1)
       rmrf.sync(dbPath2)
+      rmrf.sync(dbPath3)
 
       ipfsd1 = await startIpfs(API, config.daemon1)
       ipfsd2 = await startIpfs(API, config.daemon2)
+      ipfsd3 = await startIpfs(API, config.daemon3)
+
       ipfs1 = ipfsd1.api
       ipfs2 = ipfsd2.api
+      ipfs3 = ipfsd3.api
+
       // Connect the peers manually to speed up test times
       const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
       await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
+      await connectPeers(ipfs2, ipfs3, { filter: isLocalhostAddress })
+
       console.log("Peers connected")
       orbitdb1 = await OrbitDB.createInstance(ipfs1, { directory: dbPath1 })
       orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: dbPath2 })
+      orbitdb3 = await OrbitDB.createInstance(ipfs3, { directory: dbPath3 })
+
     })
 
     afterAll(async () => {
@@ -87,11 +66,17 @@ Object.keys(testAPIs).forEach(API => {
       if (orbitdb2)
         await orbitdb2.stop()
 
+      if (orbitdb3)
+        await orbitdb3.stop()
+
       if (ipfsd1)
         await stopIpfs(ipfsd1)
 
       if (ipfsd2)
         await stopIpfs(ipfsd2)
+
+      if (ipfsd3)
+        await stopIpfs(ipfsd3)
     })
 
     beforeEach(async () => {
@@ -99,7 +84,9 @@ Object.keys(testAPIs).forEach(API => {
       // Set write access for both clients
       options.write = [
         orbitdb1.identity.publicKey,
-        orbitdb2.identity.publicKey
+        orbitdb2.identity.publicKey,
+        orbitdb3.identity.publicKey
+
       ],
 
         console.log("Creating databases and waiting for peers to connect")
@@ -108,26 +95,33 @@ Object.keys(testAPIs).forEach(API => {
       options = Object.assign({}, options, { create: true })
 
       // Open the databases on the first node
-      for (let dbInterface of databaseInterfaces) {
-        const db = await dbInterface.open(orbitdb1, dbInterface.name, options)
+      for (let i = 0; i < dbCount; i++) {
+        const db = await orbitdb1.create('local-' + i, EVENT_STORE_TYPE, options)
         localDatabases.push(db)
       }
+      for (let i = 0; i < dbCount; i++) {
+        const db = await orbitdb2.open(localDatabases[i].address.toString(), { type: EVENT_STORE_TYPE, directory: dbPath2, ...options })
+        remoteDatabasesA.push(db)
+      }
 
-      for (let [index, dbInterface] of databaseInterfaces.entries()) {
-        const address = localDatabases[index].address.toString()
-        const db = await dbInterface.open(orbitdb2, address, options)
-        remoteDatabases.push(db)
+      for (let i = 0; i < dbCount; i++) {
+        const db = await orbitdb3.open(localDatabases[i].address.toString(), { type: EVENT_STORE_TYPE, directory: dbPath3, ...options })
+        remoteDatabasesB.push(db)
       }
 
       // Wait for the peers to connect
       await waitForPeers(ipfs1, [orbitdb2.id], localDatabases[0].address.toString())
       await waitForPeers(ipfs2, [orbitdb1.id], localDatabases[0].address.toString())
-
+      await waitForPeers(ipfs3, [orbitdb1.id], localDatabases[0].address.toString())
       console.log("Peers connected")
+
     })
 
     afterEach(async () => {
-      for (let db of remoteDatabases)
+      for (let db of remoteDatabasesA)
+        await db.drop()
+
+      for (let db of remoteDatabasesB)
         await db.drop()
 
       for (let db of localDatabases)
@@ -144,34 +138,63 @@ Object.keys(testAPIs).forEach(API => {
 
       // Write entries to each database
       console.log("Writing to databases")
-      for (let index = 0; index < databaseInterfaces.length; index++) {
-        const dbInterface = databaseInterfaces[index]
+      for (let index = 0; index < dbCount; index++) {
         const db = localDatabases[index]
-        await mapSeries(entryArr, val => dbInterface.write(db, val))
+        await mapSeries(entryArr, val => db.add('hello-' + val))
       }
 
       // Function to check if all databases have been replicated
       const allReplicated = () => {
-        return remoteDatabases.every(db => db._oplog.length === entryCount)
+        return remoteDatabasesA.every(db => db._oplog.length === entryCount) && remoteDatabasesB.every(db => db._oplog.length === entryCount)
       }
 
       console.log("Waiting for replication to finish")
 
-      return new Promise((resolve, reject) => {
+      // check data
+      await new Promise((resolve, reject) => {
         const interval = setInterval(() => {
           if (allReplicated()) {
             clearInterval(interval)
             // Verify that the databases contain all the right entries
-            databaseInterfaces.forEach((dbInterface, index) => {
-              const db = remoteDatabases[index]
-              const result = dbInterface.query(db)
-              assert.equal(result, entryCount)
-              assert.equal(db._oplog.length, entryCount)
+            remoteDatabasesA.forEach((db) => {
+              try {
+                const result = db.iterator({ limit: -1 }).collect().length;
+                assert.equal(result, entryCount)
+                assert.equal(db._oplog.length, entryCount)
+              } catch (error) {
+                reject(error)
+              }
+            })
+
+            remoteDatabasesB.forEach((db) => {
+              try {
+                const result = db.iterator({ limit: -1 }).collect().length;
+                assert.equal(result, entryCount)
+                assert.equal(db._oplog.length, entryCount)
+              } catch (error) {
+                reject(error)
+              }
             })
             resolve(true)
           }
         }, 200)
       })
+
+      // check gracefully shut down (with no leak)
+      let directConnections = 2;
+      assert.strictEqual((await orbitdb3._ipfs.pubsub.ls()).length, directConnections + dbCount);
+      for (let i = 0; i < dbCount; i++) {
+        await remoteDatabasesB[i].drop();
+        const connections = (await orbitdb3._ipfs.pubsub.ls()).length;
+        if (i < dbCount - 1) {
+          assert.strictEqual(connections, dbCount - i + directConnections)
+        }
+        else {
+          // Direct connection should close because no databases "in common" are open
+          assert.strictEqual(connections, dbCount - i + directConnections)
+        }
+      }
+
     })
   })
 })

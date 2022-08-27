@@ -87,7 +87,7 @@ export class PubSub {
 
   }
 
-  async unsubscribe(hash: string, subscriberId: string, ignoreDependencies = false) {
+  async unsubscribe(hash: string, subscriberId: string, ignoreDependencies = false): Promise<string> {
     const subscription = this._subscriptions[hash];
     if (subscription) {
       subscription.dependencies.delete(subscriberId);
@@ -99,7 +99,9 @@ export class PubSub {
         topicsOpenCount--
         logger.debug("Topics open:", topicsOpenCount)
       }
+      return subscription.id
     }
+    return undefined
   }
 
   publish(topic: string, payload: Uint8Array, options = {}) {
