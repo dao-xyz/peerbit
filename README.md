@@ -3,7 +3,7 @@
 <img src="./manatee.png" alt="Image" width="200" height="auto" style="display: block; margin: 0 auto; margin-bottom: 20px" />
 
 
-A peer-to-peer database supporting, encryption, sharding and discoverability (searching). Peers are a organizing themselves into "trust" regions, hence the name "TrustDB". Within a trust region, secret information can be shared freely, this allow peers to create locally centralized database clusters with efficient replication, sharding, query yet still allowing cross trust region (low trust) activities, like relying encrypted and signed messages.
+Originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS supporting, encryption, sharding and discoverability (searching). Peers are a organizing themselves into "trust" regions, hence the name "TrustDB". Within a trust region, secret information can be shared freely, this allow peers to create locally centralized database clusters with efficient replication, sharding, query yet still allowing cross trust region (low trust) activities, like relying encrypted and signed messages.
 
 ## 🚧 WIP 🚧  Use with caution
 Below are descriptions of some modules
