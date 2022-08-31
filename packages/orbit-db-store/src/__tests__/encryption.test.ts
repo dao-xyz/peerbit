@@ -87,8 +87,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(heads.length, 1)
         assert.strictEqual(address, 'test-address')
         assert.deepStrictEqual(entry.payload.value, data)
-        assert.strictEqual(store.replicationStatus.progress, 1)
-        assert.strictEqual(store.replicationStatus.max, 1)
+        assert.strictEqual(store.replicationStatus.progress, 1n)
+        assert.strictEqual(store.replicationStatus.max, 1n)
         assert.strictEqual(store.address.root, store._index.id)
         assert.deepStrictEqual(store._index._index, heads)
         store._cache.getBinary(store.localHeadsPath, HeadsCache).then(async (localHeads) => {
@@ -125,8 +125,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(heads.length, 1)
         assert.strictEqual(address, 'test-address')
         assert.deepStrictEqual(entry.payload.value, data)
-        assert.strictEqual(store.replicationStatus.progress, 1)
-        assert.strictEqual(store.replicationStatus.max, 1)
+        assert.strictEqual(store.replicationStatus.progress, 1n)
+        assert.strictEqual(store.replicationStatus.max, 1n)
         assert.strictEqual(store.address.root, store._index.id)
         assert.deepStrictEqual(store._index._index, heads)
         store._cache.getBinary(store.localHeadsPath, HeadsCache).then(async (localHeads) => {

@@ -1,14 +1,14 @@
 export class ReplicationInfo {
-  progress: number;
-  max: number;
+  progress: bigint;
+  max: bigint;
   constructor() {
-    this.progress = 0
-    this.max = 0
+    this.progress = 0n
+    this.max = 0n
   }
 
   reset() {
-    this.progress = 0
-    this.max = 0
+    this.progress = 0n
+    this.max = 0n
   }
 }
 

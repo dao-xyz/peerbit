@@ -9,7 +9,7 @@ export class ContextMatchQuery extends Query {
 @variant(0)
 export class StoreAddressMatchQuery extends ContextMatchQuery {
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     address: string
 
     constructor(opts?: {

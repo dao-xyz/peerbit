@@ -2,7 +2,7 @@ import { DirectChannel } from '@dao-xyz/ipfs-pubsub-1on1'
 import Logger from 'logplease'
 const logger = Logger.create('channel', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
-export const getCreateChannel = async (ipfs, peer: string, getDirectConnection: (peer: string) => DirectChannel, onMessage: (message: { data: Uint8Array }) => void, onChannelCreated): Promise<DirectChannel> => {
+export const getOrCreateChannel = async (ipfs, peer: string, getDirectConnection: (peer: string) => DirectChannel, onMessage: (message: { data: Uint8Array }) => void, onChannelCreated): Promise<DirectChannel> => {
 
     let channel = getDirectConnection(peer)
     if (!channel) {

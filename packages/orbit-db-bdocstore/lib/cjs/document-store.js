@@ -8,15 +8,6 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -39,15 +30,15 @@ let BinaryDocumentStoreOptions = class BinaryDocumentStoreOptions extends orbit_
             Object.assign(this, opts);
         }
     }
-    newStore(address, orbitDB, options) {
-        return __awaiter(this, void 0, void 0, function* () {
-            let clazz = options.typeMap[this.objectType];
-            if (!clazz) {
-                throw new Error(`Undefined type: ${this.objectType}`);
-            }
-            return orbitDB.open(address, Object.assign(Object.assign({}, options), {
+    async newStore(address, orbitDB, options) {
+        let clazz = options.typeMap[this.objectType];
+        if (!clazz) {
+            throw new Error(`Undefined type: ${this.objectType}`);
+        }
+        return orbitDB.open(address, {
+            ...options, ...{
                 clazz, create: true, type: exports.BINARY_DOCUMENT_STORE_TYPE, indexBy: this.indexBy
-            }));
+            }
         });
     }
     get identifier() {
@@ -55,11 +46,11 @@ let BinaryDocumentStoreOptions = class BinaryDocumentStoreOptions extends orbit_
     }
 };
 __decorate([
-    (0, borsh_1.field)({ type: 'String' }),
+    (0, borsh_1.field)({ type: 'string' }),
     __metadata("design:type", String)
 ], BinaryDocumentStoreOptions.prototype, "indexBy", void 0);
 __decorate([
-    (0, borsh_1.field)({ type: 'String' }),
+    (0, borsh_1.field)({ type: 'string' }),
     __metadata("design:type", String)
 ], BinaryDocumentStoreOptions.prototype, "objectType", void 0);
 BinaryDocumentStoreOptions = __decorate([
@@ -108,21 +99,11 @@ class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore {
             .filter(filter)
             .map(mapper);
     }
-    load(amount, opts) {
-        const _super = Object.create(null, {
-            load: { get: () => super.load }
-        });
-        return __awaiter(this, void 0, void 0, function* () {
-            yield _super.load.call(this, amount, opts);
-        });
+    async load(amount, opts) {
+        await super.load(amount, opts);
     }
-    close() {
-        const _super = Object.create(null, {
-            close: { get: () => super.close }
-        });
-        return __awaiter(this, void 0, void 0, function* () {
-            yield _super.close.call(this);
-        });
+    async close() {
+        await super.close();
     }
     queryDocuments(mapper) {
         // Whether we return the full operation data or just the db value
@@ -133,7 +114,7 @@ class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore {
     queryHandler(query) {
         const documentQuery = query.type;
         let filters = documentQuery.queries.filter(q => q instanceof bquery_1.FieldQuery);
-        let results = this.queryDocuments(doc => (filters === null || filters === void 0 ? void 0 : filters.length) > 0 ? filters.map(f => {
+        let results = this.queryDocuments(doc => filters?.length > 0 ? filters.map(f => {
             if (f instanceof bquery_1.FieldQuery) {
                 return f.apply(doc.value);
             }
@@ -165,11 +146,12 @@ class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore {
                 return 0;
             });
         }
+        // TODO check conversions
         if (documentQuery.offset) {
-            results = results.slice(documentQuery.offset.toNumber());
+            results = results.slice(Number(documentQuery.offset));
         }
         if (documentQuery.size) {
-            results = results.slice(0, documentQuery.size.toNumber());
+            results = results.slice(0, Number(documentQuery.size));
         }
         return Promise.resolve(results.map(r => new bquery_1.ResultWithSource({
             source: r

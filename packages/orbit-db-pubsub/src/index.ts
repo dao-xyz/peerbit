@@ -1,6 +1,6 @@
 
 import pSeries from 'p-series'
-import PeerMonitor from 'ipfs-pubsub-peer-monitor'
+import { IpfsPubsubPeerMonitor } from '@dao-xyz/ipfs-pubsub-peer-monitor'
 import Logger from 'logplease';
 import { v4 as uuid } from 'uuid';
 const logger = Logger.create("pubsub", { color: Logger.Colors.Yellow })
@@ -19,8 +19,8 @@ export class Message {
 
 export type Subscription = {
   id: string,
-  topicMonitor: PeerMonitor,
-  onNewPeer: (topic: string, peer: string, subscriptionId: string) => void,
+  topicMonitor: IpfsPubsubPeerMonitor,
+  onNewPeer: (topic: string, peer: string, fromSubscription: Subscription) => void,
   onMessage: (topicId: string, content: Uint8Array, from: string) => void,
   dependencies: Set<string>
 };
@@ -47,19 +47,28 @@ export class PubSub {
       this._ipfs.setMaxListeners(maxTopicsOpen)
   }
 
-  async subscribe(topic: string, subscriberId: string, onMessageCallback: (topic: string, content: any, from: any) => void, onNewPeerCallback: (topic: string, peer: string, subscriptionId: string) => void, options = {}): Promise<string> {
+  /**
+   * 
+   * @param topic 
+   * @param subscriberId 
+   * @param onMessageCallback 
+   * @param onNewPeerCallback 
+   * @param options 
+   * @returns The subscription id
+   */
+  async subscribe(topic: string, subscriberId: string, onMessageCallback: (topic: string, content: any, from: any) => void, onNewPeerCallback: (topic: string, peer: string, fromSubscription: Subscription) => void, options = {}): Promise<Subscription> {
     let existingSubscription = this._subscriptions[topic];
     if (!existingSubscription && this._ipfs.pubsub) {
       await this._ipfs.pubsub.subscribe(topic, this._handleMessage, options)
 
-      const topicMonitor = new PeerMonitor(this._ipfs.pubsub, topic)
+      const topicMonitor = new IpfsPubsubPeerMonitor(this._ipfs.pubsub, topic)
 
       topicMonitor.on('join', (peer) => {
         logger.debug(`Peer joined ${topic}:`)
         logger.debug(peer)
         const subscription = this._subscriptions[topic];
         if (subscription) {
-          onNewPeerCallback(topic, peer, subscription.id)
+          onNewPeerCallback(topic, peer, subscription)
         } else {
           logger.warn('Peer joined a room we don\'t have a subscription for')
           logger.warn(topic, peer)
@@ -69,20 +78,21 @@ export class PubSub {
       topicMonitor.on('leave', (peer) => logger.debug(`Peer ${peer} left ${topic}`))
       topicMonitor.on('error', (e) => logger.error(e))
       const id = uuid();
-      this._subscriptions[topic] = {
+      const subscription = {
         id,
         topicMonitor: topicMonitor,
         onMessage: onMessageCallback,
         onNewPeer: onNewPeerCallback,
         dependencies: new Set([subscriberId])
-      }
+      };
+      this._subscriptions[topic] = subscription
       topicsOpenCount++
       logger.debug("Topics open:", topicsOpenCount)
-      return id;
+      return subscription;
     }
     else {
       existingSubscription.dependencies.add(subscriberId);
-      return existingSubscription.id;
+      return existingSubscription;
     }
 
   }
@@ -104,7 +114,7 @@ export class PubSub {
     return undefined
   }
 
-  publish(topic: string, payload: Uint8Array, options = {}) {
+  publish(topic: string, payload: Buffer | Uint8Array, options = {}) {
     if (this._subscriptions[topic] && this._ipfs.pubsub) {
       /*       let payload;
        */      //Buffer should be already serialized. Everything else will get serialized as json if not buffer, string.
@@ -113,7 +123,7 @@ export class PubSub {
        } else {
          payload = JSON.stringify(message);
        } */
-      this._ipfs.pubsub.publish(topic, Buffer.from(payload), options)
+      this._ipfs.pubsub.publish(topic, Buffer.isBuffer(payload) ? payload : Buffer.from(payload), options)
     }
   }
 

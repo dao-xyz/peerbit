@@ -22,10 +22,10 @@ export type IBinaryDocumentStoreOptions<T> = IQueryStoreOptions<Operation, Index
 @variant([0, 0])
 export class BinaryDocumentStoreOptions<T extends BinaryPayload> extends BStoreOptions<BinaryDocumentStore<T>> {
 
-  @field({ type: 'String' })
+  @field({ type: 'string' })
   indexBy: string;
 
-  @field({ type: 'String' })
+  @field({ type: 'string' })
   objectType: string;
 
   constructor(opts: {
@@ -160,12 +160,13 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
         return 0;
       })
     }
+    // TODO check conversions
     if (documentQuery.offset) {
-      results = results.slice(documentQuery.offset.toNumber());
+      results = results.slice(Number(documentQuery.offset));
     }
 
     if (documentQuery.size) {
-      results = results.slice(0, documentQuery.size.toNumber());
+      results = results.slice(0, Number(documentQuery.size));
     }
     return Promise.resolve(results.map(r => new ResultWithSource({
       source: r

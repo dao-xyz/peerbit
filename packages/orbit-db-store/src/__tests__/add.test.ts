@@ -1,5 +1,5 @@
 
-import assert from 'assert'
+import assert, { rejects } from 'assert'
 import { Store, DefaultOptions, HeadsCache } from '../store'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
 import { Keystore } from "@dao-xyz/orbit-db-keystore"
@@ -61,8 +61,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(heads.length, 1)
         assert.strictEqual(address, 'test-address')
         assert.deepStrictEqual(entry.payload.value, data)
-        assert.strictEqual(store.replicationStatus.progress, 1)
-        assert.strictEqual(store.replicationStatus.max, 1)
+        assert.strictEqual(store.replicationStatus.progress, 1n)
+        assert.strictEqual(store.replicationStatus.max, 1n)
         assert.strictEqual(store.address.root, store._index.id)
         assert.deepStrictEqual(store._index._index, heads)
         store._cache.getBinary(store.localHeadsPath, HeadsCache).then((localHeads) => {
@@ -77,7 +77,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
           done()
         })
       })
-      store._addOperation(data)
+      store._addOperation(data).catch(error => {
+        rejects(error);
+      })
 
     })
 
@@ -89,9 +91,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         eventsFired++
         if (eventsFired === writes) {
           assert.strictEqual(heads.length, 1)
-          assert.strictEqual(store.replicationStatus.progress, writes)
-          assert.strictEqual(store.replicationStatus.max, writes)
-          assert.strictEqual(store._index._index.length, writes)
+          assert.strictEqual(store.replicationStatus.progress, BigInt(writes))
+          assert.strictEqual(store.replicationStatus.max, BigInt(writes))
+          assert.strictEqual(store._index._index.length, BigInt(writes))
           store._cache.getBinary(store.localHeadsPath, HeadsCache).then((localHeads) => {
             localHeads.heads[0].init({
               encoding: JSON_ENCODING_OPTIONS

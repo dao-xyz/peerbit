@@ -33,7 +33,7 @@ let BinaryKeyValueStoreOptions = class BinaryKeyValueStoreOptions extends BStore
     }
 };
 __decorate([
-    field({ type: 'String' }),
+    field({ type: 'string' }),
     __metadata("design:type", String)
 ], BinaryKeyValueStoreOptions.prototype, "objectType", void 0);
 BinaryKeyValueStoreOptions = __decorate([

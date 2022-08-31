@@ -51,7 +51,7 @@ export class IdentitySerializable {
   @field({ type: Signatures })
   signatures: Signatures;
 
-  @field({ type: 'String' })
+  @field({ type: 'string' })
   type: string;
 
   constructor(

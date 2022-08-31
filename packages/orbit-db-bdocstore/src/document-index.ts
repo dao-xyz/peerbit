@@ -11,7 +11,7 @@ export class Operation { }
 @variant(0)
 export class PutOperation extends Operation {
 
-  @field({ type: 'String' })
+  @field({ type: 'string' })
   key: string
 
   @field(U8IntArraySerializer)
@@ -49,7 +49,7 @@ export class PutAllOperation extends Operation {
 @variant(2)
 export class DeleteOperation extends Operation {
 
-  @field({ type: 'String' })
+  @field({ type: 'string' })
   key: string
 
   constructor(props?: {

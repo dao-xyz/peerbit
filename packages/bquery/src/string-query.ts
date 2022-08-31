@@ -1,6 +1,5 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh";
 import { ResultCoordinates } from "./result";
-import BN from 'bn.js';
 import { MultipleQueriesType, Query, QueryType } from "./query-interface";
 import { ContextMatchQuery } from "./context";
 
@@ -8,7 +7,7 @@ import { ContextMatchQuery } from "./context";
 @variant(2)
 export class StringMatchQuery extends Query {
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     value: string
 
     @field({ type: 'u8' })
@@ -35,14 +34,14 @@ export class StringMatchQuery extends Query {
 export class RangeCoordinate {
 
     @field({ type: 'u64' })
-    offset: BN;
+    offset: bigint;
 
     @field({ type: 'u64' })
-    length: BN;
+    length: bigint;
 
     constructor(opts?: {
-        offset: BN;
-        length: BN;
+        offset: bigint;
+        length: bigint;
     }) {
         if (opts) {
             Object.assign(this, opts);

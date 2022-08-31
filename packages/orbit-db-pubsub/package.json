@@ -44,7 +44,7 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "ipfs-pubsub-peer-monitor": "~0.0.5",
+    "@dao-xyz/ipfs-pubsub-peer-monitor": "^0.0.8",
     "logplease": "~1.2.14",
     "p-series": "^1.1.0"
   },

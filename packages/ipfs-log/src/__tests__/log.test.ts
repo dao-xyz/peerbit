@@ -15,7 +15,7 @@ import { LastWriteWins } from '../log-sorting';
 import { assertPayload } from './utils/assert'
 import { DecryptedThing } from '@dao-xyz/encryption-utils';
 import { serialize } from '@dao-xyz/borsh';
-import { Id } from '@dao-xyz/ipfs-log-entry/lib/esm/id';
+import { Id } from '@dao-xyz/ipfs-log-entry';
 const FirstWriteWins = (a, b) => LastWriteWins(a, b) * -1
 
 // Test utils

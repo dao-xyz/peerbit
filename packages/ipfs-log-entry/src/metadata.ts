@@ -34,7 +34,7 @@ export class IdentitySecure {
 @variant(0)
 export class Metadata {
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     _id: string // For determining a unique chain
 
     @field({ type: IdentitySerializable })

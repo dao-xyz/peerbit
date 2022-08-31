@@ -21,7 +21,7 @@ export interface Operation<T> {
 export class BinaryKeyValueStoreOptions<T> extends BStoreOptions<BinaryKeyValueStore<T>> {
 
 
-  @field({ type: 'String' })
+  @field({ type: 'string' })
   objectType: string;
 
   constructor(opts: {

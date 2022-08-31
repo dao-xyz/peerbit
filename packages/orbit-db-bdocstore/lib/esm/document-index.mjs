@@ -26,7 +26,7 @@ let PutOperation = class PutOperation extends Operation {
     }
 };
 __decorate([
-    field({ type: 'String' }),
+    field({ type: 'string' }),
     __metadata("design:type", String)
 ], PutOperation.prototype, "key", void 0);
 __decorate([
@@ -64,7 +64,7 @@ let DeleteOperation = class DeleteOperation extends Operation {
     }
 };
 __decorate([
-    field({ type: 'String' }),
+    field({ type: 'string' }),
     __metadata("design:type", String)
 ], DeleteOperation.prototype, "key", void 0);
 DeleteOperation = __decorate([

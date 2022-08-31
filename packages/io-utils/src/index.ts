@@ -17,15 +17,6 @@ export const U8IntArraySerializer = {
     }
 };
 
-export const U64Serializer = {
-    serialize: (value: number, writer: BinaryWriter) => {
-        writer.writeU64(value);
-    },
-    deserialize: (reader: BinaryReader) => {
-        return reader.readU64().toNumber();
-    }
-}
-
 export const U8IntArraySerializerOptional = {
     serialize: (obj: Uint8Array, writer) => {
         if (!obj) {

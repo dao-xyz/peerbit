@@ -2,7 +2,7 @@ const fs = (typeof window === 'object' || typeof self === 'object') ? null : eva
 import { Level } from 'level';
 import LRU from 'lru';
 import { variant, field, serialize, deserialize, option, Constructor } from '@dao-xyz/borsh';
-import { U64Serializer, U8IntArraySerializer } from '@dao-xyz/io-utils';
+import { U8IntArraySerializer } from '@dao-xyz/io-utils';
 import { SodiumPlus, X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519SecretKey } from 'sodium-plus';
 import { waitFor } from '@dao-xyz/time';
 import { bufferSerializer } from '@dao-xyz/encryption-utils';
@@ -74,15 +74,15 @@ export class EncryptedMessage {
 @variant(0)
 export class KeyWithMeta {
 
-  @field({ type: 'String' })
+  @field({ type: 'string' })
   group: string
 
-  @field(U64Serializer)
-  timestamp: number
+  @field({ type: 'u64' })
+  timestamp: bigint
 
   constructor(props?: {
     group: string,
-    timestamp: number
+    timestamp: bigint
   }) {
     if (props) {
       this.group = props.group
@@ -117,7 +117,7 @@ export class SignKeyWithMeta extends KeyWithMeta {
     publicKey: Ed25519PublicKey,
     secretKey?: Ed25519SecretKey,
     group: string,
-    timestamp: number
+    timestamp: bigint
   }) {
     super({ group: props?.group, timestamp: props?.timestamp })
     if (props) {
@@ -177,7 +177,7 @@ export class BoxKeyWithMeta extends KeyWithMeta {
     publicKey: X25519PublicKey,
     secretKey?: X25519SecretKey,
     group: string,
-    timestamp: number
+    timestamp: bigint
   }) {
     super({ group: props?.group, timestamp: props?.timestamp })
     if (props) {

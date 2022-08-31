@@ -64,7 +64,7 @@ export class DynamicAccessController<T, B extends Store<T, any, any, any>> exten
     _heapSizeLimit: () => number;
     _onMemoryExceeded: OnMemoryExceededCallback<T>;
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     name: string;
 
     constructor(options?: { orbitDB: OrbitDB, name: string, heapSizeLimit: () => number, onMemoryExceeded: OnMemoryExceededCallback<T>, appendAll?: boolean, trustResolver: () => P2PTrust, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>, storeOptions: ACLInterfaceOptions }) {
@@ -195,7 +195,7 @@ export class SignedAccessRequest {
     @field({ type: IdentitySerializable })
     identity: IdentitySerializable
 
-    @field({ type: option('String') })
+    @field({ type: option('string') })
     signature: string;
 
 

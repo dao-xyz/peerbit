@@ -42,7 +42,7 @@
         "yaml": "^1.10.2"
     },
     "dependencies": {
-        "@dao-xyz/borsh": "^2.1.6",
+        "@dao-xyz/borsh": "^3.1.0",
         "@dao-xyz/orbit-db": "^0.29.16",
         "@dao-xyz/orbit-db-bdocstore": "^0.0.74",
         "@dao-xyz/orbit-db-bfeedstore": "^0.0.58",
@@ -52,7 +52,6 @@
         "@dao-xyz/orbit-db-pubsub": "^0.6.11",
         "@dao-xyz/orbit-db-store-interface": "^0.0.21",
         "@dao-xyz/time": "^0.0.11",
-        "bn.js": "^5.2.0",
         "buffer": "^6.0.3",
         "crypto-browserify": "^3.12.0",
         "@dao-xyz/orbit-db-access-controllers": "^0.3.2",

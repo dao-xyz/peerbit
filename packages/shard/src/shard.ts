@@ -1,6 +1,5 @@
 import { Constructor, deserialize, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
 import { OrbitDB } from "@dao-xyz/orbit-db";
-import BN from 'bn.js';
 import { DBInterface } from "@dao-xyz/orbit-db-store-interface";
 import { BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
@@ -35,17 +34,17 @@ Logger.setLogLevel('ERROR')
 export class ReplicationRequest {
 
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     shardChainName: string
 
     @field({ type: 'u64' })
-    index: BN
+    index: bigint
 
     @field({ type: option(BStoreOptions) })
     storeOptions: BStoreOptions<any> | undefined;
 
     @field({ type: 'u64' })
-    shardSize: BN
+    shardSize: bigint
 
     constructor(obj?: ReplicationRequest) {
         if (obj) {
@@ -71,10 +70,10 @@ export class NoResourceRequirements extends ResourceRequirements { }
 @variant("shard")
 export class Shard<T extends DBInterface> extends BinaryPayload {
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     id: string
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     cluster: string
 
     @field({ type: P2PTrust })
@@ -86,18 +85,11 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
     @field({ type: DBInterface })
     interface: T; // the actual data dbs, all governed by the shard
 
-    @field({ type: option('String') })
+    @field({ type: option('string') })
     parentShardCID: string | undefined; // one of the shards in the parent cluster
 
-    @field({
-        serialize: (value, writer) => {
-            writer.writeU64(value);
-        },
-        deserialize: (reader) => {
-            return reader.readU64().toNumber();
-        }
-    })
-    shardIndex: number // 0, 1, 2... this index will change the IFPS hash of this shard serialized. This means we can iterate shards without actually saving them in a DB
+    @field({ type: 'u64' })
+    shardIndex: bigint // 0, 1, 2... this index will change the IFPS hash of this shard serialized. This means we can iterate shards without actually saving them in a DB
 
     shardPeerInfo: ShardPeerInfo | undefined;
 
@@ -115,13 +107,13 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
         address: string
         parentShardCID: string
         trust: P2PTrust
-        shardIndex: number
+        shardIndex: bigint
     } | {
         id: string,
         cluster: string
         interface: T
         resourceRequirements: ResourceRequirements
-        shardIndex?: number
+        shardIndex?: bigint
         trust?: P2PTrust
 
     }) {
@@ -133,7 +125,7 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
         }
 
         if (!this.shardIndex) {
-            this.shardIndex = 0;
+            this.shardIndex = 0n;
         }
 
     }
@@ -357,7 +349,7 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
     }
 
     _requestingReplicationPromise: Promise<void>;
-    async requestReplicate(shardIndex?: number): Promise<void> {
+    async requestReplicate(shardIndex?: bigint): Promise<void> {
         let shard = this as Shard<T>;
         if (shardIndex !== undefined) {
             shard = await this.createShardWithIndex(shardIndex);
@@ -380,10 +372,10 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
 
     async requestNewShard(): Promise<void> {
 
-        return this.requestReplicate(this.shardIndex + 1)
+        return this.requestReplicate(this.shardIndex + 1n)
     }
 
-    async createShardWithIndex(shardIndex: number, peer: AnyPeer = this.peer): Promise<Shard<T>> {
+    async createShardWithIndex(shardIndex: bigint, peer: AnyPeer = this.peer): Promise<Shard<T>> {
         const shard = new Shard<T>({
             shardIndex,
             id: this.id,

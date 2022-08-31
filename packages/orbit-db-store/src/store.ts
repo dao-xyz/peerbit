@@ -19,14 +19,16 @@ import stringify from 'json-stringify-deterministic'
 import { AccessController } from '@dao-xyz/orbit-db-access-controllers'
 import { serialize, deserialize } from '@dao-xyz/borsh';
 import { Snapshot } from './snapshot'
-import { X25519PublicKey } from 'sodium-plus';
-import { arraysEqual } from '@dao-xyz/io-utils'
 import { AccessError, MaybeEncrypted, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
 
 export type Constructor<T> = new (...args: any[]) => T;
 
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
 Logger.setLogLevel('ERROR')
+
+const bigIntMax = (...args) => args.reduce((m, e) => e > m ? e : m);
+const bigIntMin = (...args) => args.reduce((m, e) => e < m ? e : m);
+
 
 @variant(0)
 export class HeadsCache<T> {
@@ -120,10 +122,10 @@ export interface IStoreOptions<T, X, I extends Index<T, X>> extends ICreateOptio
   syncLocal?: boolean,
   sortFn?: ISortFunction,
   cache?: any;
+  writeOnly?: boolean,
   accessController?: { type: string, skipManifest?: boolean } & any,
   recycle?: RecycleOptions,
   typeMap?: { [key: string]: Constructor<any> },
-  onlyObserver?: boolean,
 
   onClose?: (store: Store<T, X, I, any>) => void,
   onDrop?: (store: Store<T, X, I, any>) => void,
@@ -150,7 +152,6 @@ export const DefaultOptions: IStoreOptions<any, any, Index<any, any>> = {
   replicationConcurrency: 32,
   syncLocal: false,
   sortFn: undefined,
-  onlyObserver: false,
   typeMap: {},
   nameResolver: (name: string) => name,
   encoding: JSON_ENCODER
@@ -547,7 +548,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
     const buf = Buffer.from(serialize(new Snapshot({
       id: snapshotData.id,
       heads: snapshotData.heads,
-      size: snapshotData.values.length,
+      size: BigInt(snapshotData.values.length),
       values: snapshotData.values,
       type: this.type
     })))
@@ -569,7 +570,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
 
     this.events.emit('load', this.address.toString()) // TODO emits inconsistent params, missing heads param
 
-    const maxClock = (res, val: Entry<any>) => Math.max(res, val.clock.time)
+    const maxClock = (res: bigint, val: Entry<any>): bigint => bigIntMax(res, val.clock.time)
     this.sync([])
 
     const queue = (await this._cache.get(this.queuePath)) as string[]
@@ -589,7 +590,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
 
       // Fetch the entries
       // Timeout 1 sec to only load entries that are already fetched (in order to not get stuck at loading)
-      this._recalculateReplicationMax(snapshotData.values.reduce(maxClock, 0))
+      this._recalculateReplicationMax(snapshotData.values.reduce(maxClock, 0n))
       if (snapshotData) {
         this._oplog = await Log.fromJSON(this._ipfs, this.identity, snapshotData, {
           access: this.access,
@@ -670,21 +671,22 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
 
   /* Replication Status state updates */
   _recalculateReplicationProgress() {
-    this._replicationStatus.progress = Math.max(
-      Math.min(this._replicationStatus.progress + 1, this._replicationStatus.max),
-      this._oplog ? this._oplog.length : 0
+    this._replicationStatus.progress = bigIntMax(
+      bigIntMin(this._replicationStatus.progress + 1n, this._replicationStatus.max),
+      BigInt(this._oplog ? this._oplog.length : 0)
     )
   }
 
-  _recalculateReplicationMax(max) {
-    this._replicationStatus.max = Math.max.apply(null, [
+  _recalculateReplicationMax(max: bigint | number) {
+    const bigMax = BigInt(max);
+    this._replicationStatus.max = bigIntMax(
       this.replicationStatus.max,
-      this._oplog ? this._oplog.length : 0,
-      (max || 0)
-    ])
+      BigInt(this._oplog ? this._oplog.length : 0),
+      (bigMax || 0n)
+    )
   }
 
-  _recalculateReplicationStatus(maxTotal) {
+  _recalculateReplicationStatus(maxTotal: bigint | number) {
     this._recalculateReplicationMax(maxTotal)
     this._recalculateReplicationProgress()
   }

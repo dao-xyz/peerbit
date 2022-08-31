@@ -40,11 +40,11 @@ let BinaryDocumentStoreOptions = class BinaryDocumentStoreOptions extends BStore
     }
 };
 __decorate([
-    field({ type: 'String' }),
+    field({ type: 'string' }),
     __metadata("design:type", String)
 ], BinaryDocumentStoreOptions.prototype, "indexBy", void 0);
 __decorate([
-    field({ type: 'String' }),
+    field({ type: 'string' }),
     __metadata("design:type", String)
 ], BinaryDocumentStoreOptions.prototype, "objectType", void 0);
 BinaryDocumentStoreOptions = __decorate([
@@ -108,7 +108,7 @@ export class BinaryDocumentStore extends QueryStore {
     queryHandler(query) {
         const documentQuery = query.type;
         let filters = documentQuery.queries.filter(q => q instanceof FieldQuery);
-        let results = this.queryDocuments(doc => (filters === null || filters === void 0 ? void 0 : filters.length) > 0 ? filters.map(f => {
+        let results = this.queryDocuments(doc => filters?.length > 0 ? filters.map(f => {
             if (f instanceof FieldQuery) {
                 return f.apply(doc.value);
             }
@@ -140,11 +140,12 @@ export class BinaryDocumentStore extends QueryStore {
                 return 0;
             });
         }
+        // TODO check conversions
         if (documentQuery.offset) {
-            results = results.slice(documentQuery.offset.toNumber());
+            results = results.slice(Number(documentQuery.offset));
         }
         if (documentQuery.size) {
-            results = results.slice(0, documentQuery.size.toNumber());
+            results = results.slice(0, Number(documentQuery.size));
         }
         return Promise.resolve(results.map(r => new ResultWithSource({
             source: r

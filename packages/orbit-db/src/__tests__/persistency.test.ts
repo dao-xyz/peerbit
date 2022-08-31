@@ -179,7 +179,7 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
             assert.notEqual(hash, null)
             assert.notEqual(entry, null)
 
-            if (progress === entryCount && count === entryCount) {
+            if (progress === BigInt(entryCount) && count === entryCount) {
               setTimeout(() => {
                 resolve(true)
               }, 200)
@@ -296,7 +296,7 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
 
             assert.notEqual(hash, null)
             assert.notEqual(entry, null)
-            if (progress === entryCount && count === entryCount) {
+            if (progress === BigInt(entryCount) && count === entryCount) {
               resolve(true)
             }
           } catch (e) {

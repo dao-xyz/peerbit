@@ -1,4 +1,3 @@
-import * as IPFS from 'ipfs';
 import { query, QueryRequestV0, QueryResponseV0 } from "../query"
 import { v4 as uuid } from 'uuid';
 import { Message } from "ipfs-core-types/src/pubsub";

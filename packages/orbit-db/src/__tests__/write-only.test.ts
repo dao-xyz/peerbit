@@ -2,7 +2,9 @@
 const assert = require('assert')
 const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
-import { Entry } from '@dao-xyz/ipfs-log-entry'
+import { Entry, LamportClock } from '@dao-xyz/ipfs-log-entry'
+import { BoxKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { delay, waitFor } from '@dao-xyz/time'
 import { OrbitDB } from '../orbit-db'
 import { EventStore, EVENT_STORE_TYPE, Operation } from './utils/stores/event-store'
 
@@ -58,7 +60,12 @@ Object.keys(testAPIs).forEach(API => {
             rmrf.sync(dbPath1)
             rmrf.sync(dbPath2)
 
-            orbitdb1 = await OrbitDB.createInstance(ipfs1, { directory: orbitdbPath1 })
+            orbitdb1 = await OrbitDB.createInstance(ipfs1, {
+                directory: orbitdbPath1, canAccessKeys: (requester, _keyToAccess) => {
+                    const comp = Buffer.compare(requester.getBuffer(), orbitdb2.identity.publicKey.getBuffer());
+                    return Promise.resolve(comp === 0) // allow orbitdb1 to share keys with orbitdb2
+                }, waitForKeysTimout: 1000
+            })
             orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2 })
 
             options = {
@@ -71,7 +78,7 @@ Object.keys(testAPIs).forEach(API => {
                 }
             }
 
-            options = Object.assign({}, options, { directory: dbPath1 })
+            options = Object.assign({}, options, { directory: dbPath1, encryption: orbitdb1.replicationTopicEncryption() })
             db1 = await orbitdb1.create('replication-tests', EVENT_STORE_TYPE, options)
         })
 
@@ -95,33 +102,103 @@ Object.keys(testAPIs).forEach(API => {
         it('replicates database of 1 entry', async () => {
             console.log("Waiting for peers to connect")
             await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
-            // Set 'sync' flag on. It'll prevent creating a new local database and rather
-            // fetch the database from the network
-            options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true })
+            options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true, writeOnly: true, encryption: undefined })
             db2 = await orbitdb2.open(db1.address.toString(), options)
-
             let finished = false
-
-            await db1.add('hello')
+            await db1.add('hello');
+            await waitFor(() => db2._oplog.clock.time > 0);
+            await db2.add('world');
 
             await new Promise((resolve, reject) => {
                 let replicatedEventCount = 0
-                db2.events.on('replicated', (address, length) => {
+                db1.events.on('replicated', (address, length) => {
                     replicatedEventCount++
-                    // Once db2 has finished replication, make sure it has all elements
-                    // and process to the asserts below
-                    const all = db2.iterator({ limit: -1 }).collect().length
-                    finished = (all === 1)
+                    const all = db1.iterator({ limit: -1 }).collect().length
+                    finished = (all === 2) // the thing I added + the thing db2 added
+                })
+
+                db2.events.on('replicated', (address, length) => {
+                    reject(); // should not happen since db2 is write only (no reads from peers)
                 })
 
                 timer = setInterval(() => {
                     if (finished) {
                         clearInterval(timer)
-                        const entries: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
+                        const entries1: Entry<Operation<string>>[] = db1.iterator({ limit: -1 }).collect()
                         try {
-                            assert.equal(entries.length, 1)
-                            assert.equal(entries[0].payload.value.value, 'hello')
+                            assert.equal(entries1.length, 2)
+                            assert.equal(entries1[0].clock.time, 1n)
+                            assert.equal(entries1[0].payload.value.value, 'hello')
+                            assert.equal(entries1[1].clock.time, 2n)
+                            assert.equal(entries1[1].payload.value.value, 'world')
                             assert.equal(replicatedEventCount, 1)
+                        } catch (error) {
+                            reject(error)
+                        }
+
+                        const entries2: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
+                        try {
+                            assert.equal(entries2.length, 1)
+                        } catch (error) {
+                            reject(error)
+                        }
+                        resolve(true)
+                    }
+                }, 100)
+            })
+        })
+
+        it('replicates database of 1 entry encrypted', async () => {
+            console.log("Waiting for peers to connect")
+            await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
+            const encryptionKey = await orbitdb1.keystore.createKey('encryption key', BoxKeyWithMeta, db1.replicationTopic);
+            options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true, writeOnly: true, encryption: orbitdb2.replicationTopicEncryption() })
+            db2 = await orbitdb2.open(db1.address.toString(), options)
+            let finished = false
+            await db1.add('hello', {
+                reciever: {
+                    clock: encryptionKey.publicKey,
+                    id: encryptionKey.publicKey,
+                    identity: encryptionKey.publicKey,
+                    payload: encryptionKey.publicKey,
+                    signature: encryptionKey.publicKey
+                }
+            });
+            await waitFor(() => db2._oplog.clock.time > 0);
+
+            // Now the db2 will request sync clocks even though it does not replicate any content
+            await db2.add('world');
+
+            await new Promise((resolve, reject) => {
+                let replicatedEventCount = 0
+                db1.events.on('replicated', (address, length) => {
+                    replicatedEventCount++
+                    const all = db1.iterator({ limit: -1 }).collect().length
+                    finished = (all === 2) // the thing I added + the thing db2 added
+                })
+
+                db2.events.on('replicated', (address, length) => {
+                    reject(); // should not happen since db2 is write only (no reads from peers)
+                })
+
+                timer = setInterval(() => {
+                    if (finished) {
+                        clearInterval(timer)
+                        const entries1: Entry<Operation<string>>[] = db1.iterator({ limit: -1 }).collect()
+                        try {
+                            assert.equal(entries1.length, 2)
+                            assert.equal(entries1[0].clock.time, 1n)
+                            assert.equal(entries1[0].payload.value.value, 'hello')
+                            assert.equal(entries1[1].clock.time, 2n)
+                            assert.equal(entries1[1].payload.value.value, 'world')
+                            assert.equal(replicatedEventCount, 1)
+                        } catch (error) {
+                            reject(error)
+                        }
+
+                        const entries2: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
+                        try {
+                            assert.equal(entries2.length, 1)
                         } catch (error) {
                             reject(error)
                         }

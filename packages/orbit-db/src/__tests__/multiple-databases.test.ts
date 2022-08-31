@@ -187,11 +187,11 @@ Object.keys(testAPIs).forEach(API => {
         await remoteDatabasesB[i].drop();
         const connections = (await orbitdb3._ipfs.pubsub.ls()).length;
         if (i < dbCount - 1) {
-          assert.strictEqual(connections, dbCount - i + directConnections)
+          assert.strictEqual(connections, dbCount - (i + 1) + directConnections)
         }
         else {
           // Direct connection should close because no databases "in common" are open
-          assert.strictEqual(connections, dbCount - i + directConnections)
+          assert.strictEqual(connections, 0)
         }
       }
 

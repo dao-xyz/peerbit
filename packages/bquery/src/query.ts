@@ -7,7 +7,7 @@ import { delay, waitFor } from "@dao-xyz/time";
 @variant(0)
 export class QueryRequestV0 {
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     id: string
 
     @field({ type: QueryType })

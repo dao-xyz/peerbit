@@ -14,13 +14,14 @@ import { findUniques } from "./find-uniques"
 import { IOOptions } from "@dao-xyz/ipfs-log-entry";
 import { JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log-entry';
 import { AccessError, PublicKeyEncryption } from '@dao-xyz/encryption-utils';
+import { bigIntMax } from './utils';
 
 const { LastWriteWins, NoZeroes } = Sorting
 const randomId = () => new Date().getTime().toString()
 const getHash = <T>(e: Entry<T>) => e.hash
 const flatMap = (res, acc) => res.concat(acc)
 const getNextPointers = entry => entry.next
-const maxClockTimeReducer = <T>(res: number, acc: Entry<T>): number => Math.max(res, acc.clock.time)
+const maxClockTimeReducer = <T>(res: bigint, acc: Entry<T>): bigint => bigIntMax(res, acc.clock.time);
 const uniqueEntriesReducer = <T>(res: { [key: string]: Entry<T> }, acc: Entry<T>) => {
   res[acc.hash] = acc
   return res
@@ -31,7 +32,7 @@ export interface RecycleOptions {
   cutOplogToLength?: number, // When oplog shorter, cut to length
 }
 
-export type LogOptions<T> = { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, logId?: string, entries?: Entry<T>[], heads?: any, clock?: any, access?: AccessController<T>, sortFn?: Sorting.ISortFunction, concurrency?: number, recycle?: RecycleOptions };
+export type LogOptions<T> = { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, logId?: string, entries?: Entry<T>[], heads?: any, clock?: LamportClock, access?: AccessController<T>, sortFn?: Sorting.ISortFunction, concurrency?: number, recycle?: RecycleOptions };
 /**
  * @description
  * Log implements a G-Set CRDT and adds ordering.
@@ -150,7 +151,7 @@ export class Log<T> extends GSet {
     this._length = entries.length
 
     // Set the clock
-    const maxTime = Math.max(clock ? clock.time : 0, this.heads.reduce(maxClockTimeReducer, 0))
+    const maxTime = bigIntMax(clock ? clock.time : 0n, this.heads.reduce(maxClockTimeReducer, 0n))
     // Take the given key as the clock id is it's a Key instance,
     // otherwise if key was given, take whatever it is,
     // and if it was null, take the given id as the clock id
@@ -237,7 +238,7 @@ export class Log<T> extends GSet {
   setIdentity(identity: Identity) {
     this._identity = identity
     // Find the latest clock from the heads
-    const time = Math.max(this.clock.time, this.heads.reduce(maxClockTimeReducer, 0))
+    const time = bigIntMax(this.clock.time, this.heads.reduce(maxClockTimeReducer, 0n))
     this._clock = new Clock(new Uint8Array(this._identity.publicKey.getBuffer()), time)
   }
 
@@ -324,7 +325,7 @@ export class Log<T> extends GSet {
   async append(data: T, options: { pointerCount: number, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = { pointerCount: 1, pin: false }) {
 
     // Update the clock (find the latest clock)
-    const newTime = Math.max(this.clock.time, this.heads.reduce(maxClockTimeReducer, 0)) + 1
+    const newTime = bigIntMax(this.clock.time, this.heads.reduce(maxClockTimeReducer, 0n)) + 1n
     this._clock = new Clock(this.clock.id, newTime)
 
     const all = Object.values(this.traverse(this.heads, Math.max(options.pointerCount, this.heads.length)))
@@ -537,8 +538,8 @@ export class Log<T> extends GSet {
     }
 
     // Find the latest clock from the heads
-    const maxClock = Object.values(this._headsIndex).reduce(maxClockTimeReducer, 0)
-    this._clock = new Clock(this.clock.id, Math.max(this.clock.time, maxClock))
+    const maxClock = Object.values(this._headsIndex).reduce(maxClockTimeReducer, 0n)
+    this._clock = new Clock(this.clock.id, bigIntMax(this.clock.time, maxClock))
 
 
     // Join io, crypt options,
@@ -546,11 +547,11 @@ export class Log<T> extends GSet {
   }
 
   tickClock() {
-    this.clock.time += 1;
+    this.clock.time += 1n;
   }
 
   mergeClock(clock: LamportClock): LamportClock {
-    this.clock.time = Math.max(this.clock.time, clock.time)
+    this.clock.time = bigIntMax(this.clock.time, clock.time)
     return new LamportClock(this.clock.id, this.clock.time)
   }
 

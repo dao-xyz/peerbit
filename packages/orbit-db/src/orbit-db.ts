@@ -1,7 +1,7 @@
 import path from 'path'
 import { Address, Constructor, IStoreOptions, Store, StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store'
 import io from '@dao-xyz/orbit-db-io'
-import { PubSub } from '@dao-xyz/orbit-db-pubsub'
+import { PubSub, Subscription } from '@dao-xyz/orbit-db-pubsub'
 import Logger from 'logplease'
 const logger = Logger.create('orbit-db')
 import { Identity, Identities } from '@dao-xyz/orbit-db-identity-provider'
@@ -17,14 +17,16 @@ import { exchangeHeads, ExchangeHeadsMessage, RequestHeadsMessage } from './exch
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { serialize, deserialize } from '@dao-xyz/borsh'
 import { Message } from './message'
-import { getCreateChannel } from './channel'
+import { getOrCreateChannel } from './channel'
 import { exchangeKeys, KeyResponseMessage, KeyAccessCondition, recieveKeys, requestAndWaitForKeys, RequestKeyMessage, RequestKeyCondition, RequestKeysByKey, RequestKeysByReplicationTopic } from './exchange-keys'
-import { DecryptedThing, MaybeEncrypted, MaybeSigned, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
+import { DecryptedThing, EncryptedThing, MaybeEncrypted, MaybeSigned, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
 import { Ed25519PublicKey, X25519PublicKey } from 'sodium-plus'
 import { replicationTopicAsKeyGroupPublicKeyEncryption } from './encryption'
 import LRU from 'lru';
 import { DirectChannel } from '@dao-xyz/ipfs-pubsub-1on1'
+
 let AccessControllersModule = AccessControllers;
+
 Logger.setLogLevel('ERROR')
 
 // Mapping for 'database type' -> Class
@@ -45,33 +47,24 @@ export class OrbitDB {
   _pubsub: PubSub;
 
   _directConnections: { [key: string]: { channel: DirectChannel, dependencies: Set<string> } };
-  _directConnectionsByTopic: { [key: string]: DirectChannel[] } = {};
+  /*   _directConnectionsByTopic: { [key: string]: { [key: string]: DirectChannel } } = {};
+   */
 
   directory: string;
   storage: Storage;
   caches: any;
   keystore: Keystore;
   stores: { [topic: string]: { [address: string]: Store<any, any, any, any> } };
+
   _waitForKeysTimeout = 10000;
   _keysInflightMap: Map<string, Promise<any>> = new Map(); // TODO fix types
-  _keyRequestsLRU: LRU = new LRU({
-    max: 100,
-    maxAge: 10000
-  });
-  _subscriptionOpenedForWriteOnly: { [key: string]: DirectChannel[] } = {};
+  _keyRequestsLRU: LRU = new LRU({ max: 100, maxAge: 10000 });
 
   isTrusted: (key: Ed25519PublicKey, replicationTopic: string) => Promise<boolean>
   canAccessKeys: KeyAccessCondition
 
-  /*  canAccessKeys?: KeyAccessCondition; */
-  /*  keysInFlight?: Promise<void>;
-   _keysInFlightResolver?: () => void;
-   lastRecievedKeyTimestamp: number = 0;
-   _keysInFlightMaxTimeout = 10000; // 10 seconds */
-
   constructor(ipfs: IPFSInstance, identity: Identity, options: CreateOptions = {}) {
     if (!isDefined(ipfs)) { throw new Error('IPFS is a required argument. See https://github.com/orbitdb/orbit-db/blob/master/API.md#createinstance') }
-
     if (!isDefined(identity)) { throw new Error('identity is a required argument. See https://github.com/orbitdb/orbit-db/blob/master/API.md#createinstance') }
 
     this._ipfs = ipfs
@@ -298,12 +291,19 @@ export class OrbitDB {
           await requestKeys(async (message) => this._pubsub.publish(store.replicationTopic, message), this.keystore, this.identity, store.replicationTopic)
     */
         // request heads
+
         const msg = new RequestHeadsMessage({
           address: address.toString(),
           replicationTopic: store.replicationTopic
         });
         await this._pubsub.publish(store.replicationTopic, serialize(await this.decryptedSignedThing(serialize(msg))));
-
+        /*  else {
+           const msg = new RequestLamportClock({
+             address: address.toString(),
+             replicationTopic: store.replicationTopic
+           });
+           await this._pubsub.publish(store.replicationTopic, serialize(await this.decryptedSignedThing(serialize(msg))));
+         } */
       }
     }
 
@@ -374,7 +374,7 @@ export class OrbitDB {
   }
 
   // Callback for receiving a message from the network
-  async _onMessage(_topic: string, data: Uint8Array, peer: string) {
+  async _onMessage(onMessageTopic: string, data: Uint8Array, peer: string) {
     try {
 
       const maybeEncryptedMessage = deserialize(Buffer.from(data), MaybeEncrypted) as MaybeEncrypted<MaybeSigned<Message>>
@@ -413,7 +413,22 @@ export class OrbitDB {
                 continue // this messages was intended for another store
               }
               if (heads.length > 0) {
-                await store.sync(heads)
+                if (store.options.writeOnly) {
+                  // if we are only to write, then only care about others clock
+                  for (const head of heads) {
+                    head.init({
+                      encoding: store._oplog._encoding,
+                      encryption: store._oplog._encryption
+                    })
+                    const clock = await head.getClock();
+                    store._oplog.mergeClock(clock)
+                  }
+                }
+                else {
+                  // Full sync
+                  await store.sync(heads)
+
+                }
               }
               store.events.emit('peer.exchanged', peer, address, heads)
             }
@@ -431,7 +446,7 @@ export class OrbitDB {
         if (!(await checkTrustedSender(replicationTopic))) {
           return;
         }
-        const channel = await this.getChannel(peer)
+        const channel = await this.getChannel(peer, replicationTopic);
         await exchangeHeads(channel, replicationTopic, (address: string) => this.stores[address], await this.getSigner());
         logger.debug(`Received exchange heades request for topic: ${replicationTopic}, address: ${address}`)
       }
@@ -451,7 +466,7 @@ export class OrbitDB {
          * 
          */
 
-        const channel = await this.getChannel(peer)
+        const channel = await this.getChannel(peer, onMessageTopic);
         const getKeysByGroup = <T extends KeyWithMeta>(group: string, type: WithType<T>) => this.keystore.getKeys(group, type);
         const getKeysByPublicKey = (key: Uint8Array) => this.keystore.getKeyById(key);
 
@@ -462,6 +477,39 @@ export class OrbitDB {
         await exchangeKeys(channel, msg, sender, this.canAccessKeys, getKeysByPublicKey, getKeysByGroup, await this.getSigner(), this.encryption)
         logger.debug(`Exchanged keys`)
       }
+      /* else if (msg instanceof RequestLamportClock) {
+      
+        const { replicationTopic, address } = msg
+        if (!(await checkTrustedSender(replicationTopic))) {
+          return;
+        }
+        const channel = await this.getChannel(peer, replicationTopic);
+        const stores = this.stores[replicationTopic];
+        const clock = stores[address]?._oplog.clock;
+        if (!clock) {
+          return;
+        }
+        const response = serialize(new ExchangeLamportClock({
+          replicationTopic,
+          address,
+          clock
+        }));
+        channel.send(Buffer.from(serialize(await msg.encryptionKey ? this.enryptedSignedThing(response, msg.encryptionKey) : this.decryptedSignedThing(response))))
+        logger.debug(`Received exchange clock request for topic: ${replicationTopic}, address: ${address}`)
+      }
+      else if (msg instanceof ExchangeLamportClock) {
+     
+        const { replicationTopic, address } = msg
+        if (!(await checkTrustedSender(replicationTopic))) {
+          return;
+        }
+        const stores = this.stores[replicationTopic];
+        const store = stores[address];
+        if (store) {
+          store._oplog.mergeClock(msg.clock)
+        }
+
+      } */
       else {
         throw new Error("Unexpected message")
       }
@@ -471,11 +519,11 @@ export class OrbitDB {
   }
 
   // Callback for when a peer connected to a database
-  async _onPeerConnected(replicationTopic: string, peer: string, subscriptionId: string) {
+  async _onPeerConnected(replicationTopic: string, peer: string, subscription: Subscription) {
     logger.debug(`New peer '${peer}' connected to '${replicationTopic}'`)
 
     // create a channel for sending/receiving messages
-    const channel = await this.getChannel(peer, subscriptionId)/* , channel => {
+    const channel = await this.getChannel(peer, subscription.topicMonitor.topic)/* , channel => {
       let connections = this._subscriptionOpenedForWriteOnly[subscriptionId];
       if (!connections) {
         connections = [];
@@ -507,35 +555,40 @@ export class OrbitDB {
   }
 
 
-  async getChannel(peer: string, dependencyId?: string, onChannelCreated?: (channel: DirectChannel) => void) {
+  async getChannel(peer: string, fromTopic: string) {
+    // TODO what happens if disconnect and connection to direct connection is happening
+    // simultaneously
     const getDirectConnection = (peer: string) => this._directConnections[peer]?.channel
     const _onChannelCreated = (channel: DirectChannel) => {
-      if (!dependencyId) {
-        throw new Error("Depeny id is required for new channels");
-      }
       this._directConnections[channel.recieverId] = {
         channel,
-        dependencies: new Set([dependencyId])
+        dependencies: new Set([fromTopic])
       }
 
-      let directConnectionsByTopic = this._directConnectionsByTopic[dependencyId];
-      if (!directConnectionsByTopic) {
-        this._directConnectionsByTopic[dependencyId] = []
-        directConnectionsByTopic = this._directConnectionsByTopic[dependencyId]
-      }
-      directConnectionsByTopic.push(channel);
-
-      if (onChannelCreated) {
-        onChannelCreated(channel);
-      }
+      /*  let directConnectionsByTopic = this._directConnectionsByTopic[fromTopic];
+       if (!directConnectionsByTopic) {
+         this._directConnectionsByTopic[fromTopic] = {}
+         directConnectionsByTopic = this._directConnectionsByTopic[fromTopic]
+       }
+       directConnectionsByTopic[channel.recieverId] = channel; */
     }
 
     const handleMessage = (message: { data: Uint8Array }) => {
       this._onMessage(undefined, message.data, peer)
     }
-    let channel = await getCreateChannel(this._ipfs, peer, getDirectConnection, handleMessage, _onChannelCreated);
+    let channel = await getOrCreateChannel(this._ipfs, peer, getDirectConnection, handleMessage, _onChannelCreated);
+
+    this._directConnections[channel.recieverId].dependencies.add(fromTopic);
+    /* let directConnectionsByTopic = this._directConnectionsByTopic[fromTopic];
+    if (!directConnectionsByTopic) {
+      this._directConnectionsByTopic[fromTopic] = {}
+      directConnectionsByTopic = this._directConnectionsByTopic[fromTopic]
+    }
+    directConnectionsByTopic[channel.recieverId] = channel; */
     return channel;
   }
+
+
 
   // Callback when database was closed
   async _onClose(db: Store<any, any, any, any>) {
@@ -549,21 +602,27 @@ export class OrbitDB {
     }
 
     // Unsubscribe for direction connection
-    if (subscriptionId) {
-      const connectionsCausedByStore = this._directConnectionsByTopic[subscriptionId];
+    /* if (subscriptionId) {
+      const connectionsCausedByStore = this._directConnectionsByTopic[db.replicationTopic];
       if (connectionsCausedByStore) {
-        connectionsCausedByStore.forEach((connection) => {
-          this._directConnections[connection.recieverId].dependencies.delete(subscriptionId);
+        const allConnectionsByTopic = Object.values(connectionsCausedByStore);
+        for (const connection of allConnectionsByTopic) {
+          this._directConnections[connection.recieverId].dependencies.delete(db.replicationTopic);
           if (this._directConnections[connection.recieverId].dependencies.size === 0) {
             this._directConnections[connection.recieverId]?.channel.close();
+            delete this._directConnectionsByTopic[db.replicationTopic][connection.recieverId];
           }
-        })
-        delete this._directConnectionsByTopic[subscriptionId];
+        }
+        if (Object.keys(this._directConnectionsByTopic[db.replicationTopic]).length === 0) {
+          delete this._directConnectionsByTopic[db.replicationTopic];
+        }
+
       }
     }
     else {
       logger.warning("No subscription from db with id: " + db.id + ", found when unsubscribing")
-    }
+    } */
+
 
     const dir = db && db.options.directory ? db.options.directory : this.directory
     const cache = this.caches[dir]
@@ -574,6 +633,22 @@ export class OrbitDB {
     }
 
     delete this.stores[db.replicationTopic][address]
+
+    const otherStoresUsingSameReplicaitonTopic = this.stores[db.replicationTopic]
+
+
+    // close all connections with this repplication topic
+    const deleteDirectConnectionsForTopic = Object.keys(otherStoresUsingSameReplicaitonTopic).length === 0;
+    for (const [key, connection] of Object.entries(this._directConnections)) {
+      connection.dependencies.delete(db.replicationTopic);
+      if (deleteDirectConnectionsForTopic && connection.dependencies.size === 0) {
+        await connection?.channel.close();
+        delete this._directConnections[key];
+      }
+      // Delete connection from thing
+    }
+
+
   }
 
   async _onDrop(db: Store<any, any, any, any>) {
@@ -586,7 +661,7 @@ export class OrbitDB {
     const address = db.address.toString()
     const dir = db && db.options.directory ? db.options.directory : this.directory
     await this._requestCache(address, dir, db._cache)
-    this.addStore(db);
+    /*   this.addStore(db); */
   }
 
 
@@ -717,7 +792,8 @@ export class OrbitDB {
   async open(address, options: {
     timeout?: number,
     identity?: Identity,
-    meta?: any
+    meta?: any,
+    writeOnly?: boolean
 
     /* cache?: Cache,
     directory?: string,
@@ -895,6 +971,13 @@ export class OrbitDB {
     return new DecryptedThing({
       data: serialize(signedMessage)
     })
+  }
+
+  async enryptedSignedThing(data: Uint8Array, reciever: X25519PublicKey): Promise<EncryptedThing<MaybeSigned<Uint8Array>>> {
+    const signedMessage = await (new MaybeSigned({ data })).sign(await this.getSigner());
+    return new DecryptedThing<MaybeSigned<Uint8Array>>({
+      data: serialize(signedMessage)
+    }).encrypt(reciever)
   }
 
 

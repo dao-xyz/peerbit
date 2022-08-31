@@ -3,6 +3,7 @@ import pDoWhilst from 'p-do-whilst'
 import { Entry } from '@dao-xyz/ipfs-log-entry';
 import { IPFS } from 'ipfs-core-types/src/'
 import { PublicKeyEncryption } from '@dao-xyz/encryption-utils';
+import { bigIntMin } from './utils';
 
 const hasItems = arr => arr && arr.length > 0
 
@@ -140,16 +141,18 @@ export class EntryIO {
         const addToResults = async (entry: Entry<T>) => {
           if (Entry.isEntry(entry) && !cache[entry.hash] && !shouldExclude(entry.hash)) {
             entry.init({ encryption: options.encryption, encoding: undefined });
-            const ts = (await entry.getClock()).time
 
-            // Update min/max clocks
-            maxClock = Math.max(maxClock, ts)
-            minClock = result.length > 0
-              ? Math.min((await result[result.length - 1].clock).time, minClock)
-              : maxClock
+            // Todo check bigint conversions
+            const ts = Number((await entry.getClock()).time)
+
+            // Update min/max clocks'
+            maxClock = Number(bigIntMin(maxClock, ts))
+            minClock = Number(result.length > 0
+              ? bigIntMin((await result[result.length - 1].clock).time, minClock)
+              : maxClock)
 
             const isLater = (result.length >= options.length && ts >= minClock)
-            const calculateIndex = (idx) => maxClock - ts + ((idx + 1) * idx)
+            const calculateIndex = (idx: number) => maxClock - ts + ((idx + 1) * idx)
 
             // Add the entry to the results if
             // 1) we're fetching all entries

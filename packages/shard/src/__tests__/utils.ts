@@ -26,7 +26,7 @@ const createAnyPeer = async (peer: Peer, isServer: boolean = true, peerCapacity:
 
 }
 export class Document {
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     id: string;
     constructor(opts?: { id: string }) {
         if (opts) {

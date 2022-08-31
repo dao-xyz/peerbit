@@ -1,8 +1,7 @@
 
 import { field, option, variant } from '@dao-xyz/borsh';
-import BN from 'bn.js';
 import { BinaryDocumentStore, BINARY_DOCUMENT_STORE_TYPE, DocumentStoreOptions } from '../document-store';
-import { DocumentQueryRequest, Compare, FieldCompareQuery, QueryRequestV0, QueryResponseV0, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort } from '@dao-xyz/bquery';
+import { DocumentQueryRequest, Compare, FieldBigIntCompareQuery, QueryRequestV0, QueryResponseV0, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort } from '@dao-xyz/bquery';
 import { query } from '@dao-xyz/bquery';
 import { disconnectPeers, getConnectedPeers, Peer } from '@dao-xyz/peer-test-utils';
 import { BinaryPayload } from '@dao-xyz/bpayload';
@@ -10,14 +9,14 @@ import { BinaryPayload } from '@dao-xyz/bpayload';
 @variant("document")//@variant([1, 0])
 class Document extends BinaryPayload {
 
-  @field({ type: 'String' })
+  @field({ type: 'string' })
   id: string;
 
-  @field({ type: option('String') })
+  @field({ type: option('string') })
   name?: string;
 
   @field({ type: option('u64') })
-  number?: BN;
+  number?: bigint;
 
 
   constructor(opts?: Document) {
@@ -27,6 +26,9 @@ class Document extends BinaryPayload {
     }
   }
 }
+
+
+const bigIntSort = (a, b) => (a > b || -(a < b)) as number
 
 
 const documentDbTestSetup = async (): Promise<{
@@ -174,8 +176,8 @@ describe('query', () => {
           key: 'name',
           value: 'hey'
         })],
-        size: new BN(1),
-        offset: new BN(1)
+        size: 1n,
+        offset: 1n
       })
     }),
       (r: QueryResponseV0) => {
@@ -202,20 +204,20 @@ describe('query', () => {
       let doc = new Document({
         id: '1',
         name: 'hey',
-        number: new BN(1)
+        number: 1n
       });
 
       let doc2 = new Document({
         id: '2',
         name: 'hey',
-        number: new BN(2)
+        number: 2n
 
       });
 
       let doc3 = new Document({
         id: '3',
         name: 'hey',
-        number: new BN(3)
+        number: 3n
       });
 
       await blocks.put(doc);
@@ -231,7 +233,7 @@ describe('query', () => {
             key: 'name',
             value: 'hey'
           })],
-          offset: new BN(1),
+          offset: 1n,
           sort: new FieldSort({
             fieldPath: ['number'],
             direction: SortDirection.Ascending
@@ -261,19 +263,19 @@ describe('query', () => {
       let doc = new Document({
         id: '1',
         name: 'hey',
-        number: new BN(1)
+        number: 1n
       });
       let doc2 = new Document({
         id: '2',
         name: 'hey',
-        number: new BN(2)
+        number: 2n
 
       });
 
       let doc3 = new Document({
         id: '3',
         name: 'hey',
-        number: new BN(3)
+        number: 3n
 
       });
 
@@ -290,7 +292,7 @@ describe('query', () => {
             key: 'name',
             value: 'hey'
           })],
-          offset: new BN(1),
+          offset: 1n,
           sort: new FieldSort({
             fieldPath: ['number'],
             direction: SortDirection.Descending
@@ -322,18 +324,18 @@ describe('query', () => {
 
       let doc = new Document({
         id: '1',
-        number: new BN(1)
+        number: 1n
       });
 
       let doc2 = new Document({
         id: '2',
-        number: new BN(2)
+        number: 2n
       });
 
 
       let doc3 = new Document({
         id: '3',
-        number: new BN(3)
+        number: 3n
       });
 
       await blocks.put(doc);
@@ -343,17 +345,17 @@ describe('query', () => {
       let response: QueryResponseV0 = undefined;
       await query(observer.node.pubsub, blocks.queryTopic, new QueryRequestV0({
         type: new DocumentQueryRequest({
-          queries: [new FieldCompareQuery({
+          queries: [new FieldBigIntCompareQuery({
             key: 'number',
             compare: Compare.Equal,
-            value: new BN(2)
+            value: 2n
           })]
         })
       }), (r: QueryResponseV0) => {
         response = r;
       }, 1)
       expect(response.results).toHaveLength(1);
-      expect(((response.results[0] as ResultWithSource).source as Document).number.toNumber()).toEqual(2);
+      expect(((response.results[0] as ResultWithSource).source as Document).number).toEqual(2n);
       await disconnectPeers([creator, observer]);
     });
 
@@ -370,18 +372,18 @@ describe('query', () => {
 
       let doc = new Document({
         id: '1',
-        number: new BN(1)
+        number: 1n
       });
 
       let doc2 = new Document({
         id: '2',
-        number: new BN(2)
+        number: 2n
       });
 
 
       let doc3 = new Document({
         id: '3',
-        number: new BN(3)
+        number: 3n
       });
 
       await blocks.put(doc);
@@ -391,17 +393,17 @@ describe('query', () => {
       let response: QueryResponseV0 = undefined;
       await query(observer.node.pubsub, blocks.queryTopic, new QueryRequestV0({
         type: new DocumentQueryRequest({
-          queries: [new FieldCompareQuery({
+          queries: [new FieldBigIntCompareQuery({
             key: 'number',
             compare: Compare.Greater,
-            value: new BN(2)
+            value: 2n
           })]
         })
       }), (r: QueryResponseV0) => {
         response = r;
       }, 1)
       expect(response.results).toHaveLength(1);
-      expect(((response.results[0] as ResultWithSource).source as Document).number.toNumber()).toEqual(3);
+      expect(((response.results[0] as ResultWithSource).source as Document).number).toEqual(3n);
       await disconnectPeers([creator, observer]);
     });
 
@@ -417,18 +419,18 @@ describe('query', () => {
 
       let doc = new Document({
         id: '1',
-        number: new BN(1)
+        number: 1n
       });
 
       let doc2 = new Document({
         id: '2',
-        number: new BN(2)
+        number: 2n
       });
 
 
       let doc3 = new Document({
         id: '3',
-        number: new BN(3)
+        number: 3n
       });
 
       await blocks.put(doc);
@@ -438,19 +440,19 @@ describe('query', () => {
       let response: QueryResponseV0 = undefined;
       await query(observer.node.pubsub, blocks.queryTopic, new QueryRequestV0({
         type: new DocumentQueryRequest({
-          queries: [new FieldCompareQuery({
+          queries: [new FieldBigIntCompareQuery({
             key: 'number',
             compare: Compare.GreaterOrEqual,
-            value: new BN(2)
+            value: 2n
           })]
         })
       }), (r: QueryResponseV0) => {
         response = r;
       }, 1)
-      response.results.sort((a, b) => ((a as ResultWithSource).source as Document).number.cmp(((b as ResultWithSource).source as Document).number));
+      response.results.sort((a, b) => bigIntSort(((a as ResultWithSource).source as Document).number, ((b as ResultWithSource).source as Document).number));
       expect(response.results).toHaveLength(2);
-      expect(((response.results[0] as ResultWithSource).source as Document).number.toNumber()).toEqual(2);
-      expect(((response.results[1] as ResultWithSource).source as Document).number.toNumber()).toEqual(3);
+      expect(((response.results[0] as ResultWithSource).source as Document).number).toEqual(2n);
+      expect(((response.results[1] as ResultWithSource).source as Document).number).toEqual(3n);
       await disconnectPeers([creator, observer]);
     });
 
@@ -466,18 +468,18 @@ describe('query', () => {
 
       let doc = new Document({
         id: '1',
-        number: new BN(1)
+        number: 1n
       });
 
       let doc2 = new Document({
         id: '2',
-        number: new BN(2)
+        number: 2n
       });
 
 
       let doc3 = new Document({
         id: '3',
-        number: new BN(3)
+        number: 3n
       });
 
       await blocks.put(doc);
@@ -487,17 +489,17 @@ describe('query', () => {
       let response: QueryResponseV0 = undefined;
       await query(observer.node.pubsub, blocks.queryTopic, new QueryRequestV0({
         type: new DocumentQueryRequest({
-          queries: [new FieldCompareQuery({
+          queries: [new FieldBigIntCompareQuery({
             key: 'number',
             compare: Compare.Less,
-            value: new BN(2)
+            value: 2n
           })]
         })
       }), (r: QueryResponseV0) => {
         response = r;
       }, 1)
       expect(response.results).toHaveLength(1);
-      expect(((response.results[0] as ResultWithSource).source as Document).number.toNumber()).toEqual(1);
+      expect(((response.results[0] as ResultWithSource).source as Document).number).toEqual(1n);
       await disconnectPeers([creator, observer]);
     });
 
@@ -513,18 +515,18 @@ describe('query', () => {
 
       let doc = new Document({
         id: '1',
-        number: new BN(1)
+        number: 1n
       });
 
       let doc2 = new Document({
         id: '2',
-        number: new BN(2)
+        number: 2n
       });
 
 
       let doc3 = new Document({
         id: '3',
-        number: new BN(3)
+        number: 3n
       });
 
       await blocks.put(doc);
@@ -534,19 +536,19 @@ describe('query', () => {
       let response: QueryResponseV0 = undefined;
       await query(observer.node.pubsub, blocks.queryTopic, new QueryRequestV0({
         type: new DocumentQueryRequest({
-          queries: [new FieldCompareQuery({
+          queries: [new FieldBigIntCompareQuery({
             key: 'number',
             compare: Compare.LessOrEqual,
-            value: new BN(2)
+            value: 2n
           })]
         })
       }), (r: QueryResponseV0) => {
         response = r;
       }, 1)
-      response.results.sort((a, b) => ((a as ResultWithSource).source as Document).number.cmp(((b as ResultWithSource).source as Document).number));
+      response.results.sort((a, b) => bigIntSort(((a as ResultWithSource).source as Document).number, ((b as ResultWithSource).source as Document).number));
       expect(response.results).toHaveLength(2);
-      expect(((response.results[0] as ResultWithSource).source as Document).number.toNumber()).toEqual(1);
-      expect(((response.results[1] as ResultWithSource).source as Document).number.toNumber()).toEqual(2);
+      expect(((response.results[0] as ResultWithSource).source as Document).number).toEqual(1n);
+      expect(((response.results[1] as ResultWithSource).source as Document).number).toEqual(2n);
       await disconnectPeers([creator, observer]);
     });
   })

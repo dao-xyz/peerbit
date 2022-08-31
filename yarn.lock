@@ -2039,13 +2039,12 @@
     ethereumjs-util "^6.0.0"
     ethers "^4.0.33"
 
-"@dao-xyz/borsh@^2.1.6":
-  version "2.1.6"
-  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-2.1.6.tgz#4063e117c090ba5f9f96d9a5119f0c9a44d250bf"
-  integrity sha512-IBPEHOQTxyjWSrvxEHbjiyC/8F9OOHA+xarT0hCDDZSMtSApuaD8OJG9JJCn3GMksHz+yHdWjx6BGkhveC4a1g==
+"@dao-xyz/borsh@^3.1.0":
+  version "3.1.0"
+  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-3.1.0.tgz#1a1a620c1424470e5f68477165c664a3fbebeb73"
+  integrity sha512-4xaWc086jw2QOpv97mSQUJ308OIQqTYC8YSXWTzL+NQCN6tJgbuEXIw6GegmQvJjcLbH1kd+o5ILvZNQBS8ovQ==
   dependencies:
-    bn.js "^5.2.0"
-    bs58 "^4.0.0"
+    bigint-buffer "^1.1.5"
     text-encoding-utf-8 "^1.0.2"
 
 "@discoveryjs/json-ext@^0.5.0":
@@ -13024,13 +13023,6 @@ ipfs-http-server@^0.11.3:
   optionalDependencies:
     prom-client "^14.0.1"
 
-ipfs-pubsub-peer-monitor@~0.0.5:
-  version "0.0.10"
-  resolved "https://registry.yarnpkg.com/ipfs-pubsub-peer-monitor/-/ipfs-pubsub-peer-monitor-0.0.10.tgz#42b148ed53858a2c9391ca7730f9b5b50f753a0d"
-  integrity sha512-9bwI02MRruP0BDR8Mn4ujboLJhJ+6nm8X6JdGHdM9P1zlfy1MSJQNOXGhk2e1FInEZvFseFLYiCFuSS1BL7BnA==
-  dependencies:
-    p-forever "^2.1.0"
-
 ipfs-repo-migrations@^12.0.1:
   version "12.0.1"
   resolved "https://registry.yarnpkg.com/ipfs-repo-migrations/-/ipfs-repo-migrations-12.0.1.tgz#225f8a46275d1aa07e8fbf1fcd2365ab3e46dbe2"
@@ -17960,10 +17952,10 @@ p-finally@^1.0.0:
   resolved "https://registry.yarnpkg.com/p-finally/-/p-finally-1.0.0.tgz#3fbcfb15b899a44123b34b6dcc18b724336a2cae"
   integrity sha512-LICb2p9CB7FS+0eR1oqWnHhp0FljGLZCWBE9aix0Uye9W8LTQPwMTYVGWQWIw9RdQiDg4+epXQODwIYJtSJaow==
 
-p-forever@^2.1.0:
-  version "2.1.0"
-  resolved "https://registry.yarnpkg.com/p-forever/-/p-forever-2.1.0.tgz#3b8d1de4b572c9c1f8ecf0346cc79e61d024b9ec"
-  integrity sha512-kqZrNBsD8fUPCpZLYJoHTiONQVrdkA2nKwSsTfIr5h7P8jGpSy+Vzkxu6nVcZcz3c/rSx/Ys3AACd/BkMKvqbw==
+p-forever@^3.0.1:
+  version "3.0.1"
+  resolved "https://registry.yarnpkg.com/p-forever/-/p-forever-3.0.1.tgz#a151f56e81adbaf94fb0a927aaceb00e62d1fa84"
+  integrity sha512-EWk+XHjCFLVHhjxfGbW7nQrWbQUcvBf98T0mzz9zk+8JVF9Iw8Fbd1k/qZ2JgMQpMOji+NQrIuBzg0vdNLjxDg==
 
 p-is-promise@^2.0.0:
   version "2.1.0"

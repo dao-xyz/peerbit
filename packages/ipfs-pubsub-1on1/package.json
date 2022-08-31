@@ -29,14 +29,13 @@
     "crdt"
   ],
   "dependencies": {
-    "@dao-xyz/borsh": "^2.1.6",
+    "@dao-xyz/borsh": "^3.1.0",
     "safe-buffer": "~5.2.1",
     "@dao-xyz/io-utils": "^0.0.1"
   },
   "devDependencies": {
     "@mapbox/node-pre-gyp": "^1.0.5",
     "assert": "^2.0.0",
-    "babel-loader": "~8.2.1",
     "eslint": "^7.32.0",
     "fs-extra": "^10.0.0",
     "go-ipfs": "^0.10.0-rc1",
@@ -54,28 +53,6 @@
     "webpack": "^5.37.1",
     "p-map-series": "^2.1.0"
   },
-  "standard": {
-    "env": "mocha",
-    "ignore": [
-      "lib/es5/",
-      "docs/"
-    ]
-  },
-  "contributors": [
-    "haadcode",
-    "aphelionz",
-    "shamb0t",
-    "thiagodelgado111",
-    "mistakia",
-    "satazor",
-    "RichardLitt",
-    "greenkeeperio-bot",
-    "chrisdostert",
-    "zachferland",
-    "kaibakker",
-    "dignifiedquire",
-    "adam-palazzo"
-  ],
   "scripts": {
     "clean": "shx rm -rf lib/*",
     "build": "yarn clean && tsc -p tsconfig.json; tsc-esm -p tsconfig.json && tsc -p tsconfig.cjs.json",

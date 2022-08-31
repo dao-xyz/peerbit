@@ -8,15 +8,6 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -36,21 +27,19 @@ let BinaryKeyValueStoreOptions = class BinaryKeyValueStoreOptions extends orbit_
             Object.assign(this, opts);
         }
     }
-    newStore(address, orbitDB, options) {
-        return __awaiter(this, void 0, void 0, function* () {
-            let clazz = options.typeMap[this.objectType];
-            if (!clazz) {
-                throw new Error(`Undefined type: ${this.objectType}`);
-            }
-            return orbitDB.open(address, Object.assign(Object.assign({}, options), { clazz, create: true, type: exports.BINARY_KEYVALUE_STORE_TYPE }));
-        });
+    async newStore(address, orbitDB, options) {
+        let clazz = options.typeMap[this.objectType];
+        if (!clazz) {
+            throw new Error(`Undefined type: ${this.objectType}`);
+        }
+        return orbitDB.open(address, { ...options, ...{ clazz, create: true, type: exports.BINARY_KEYVALUE_STORE_TYPE } });
     }
     get identifier() {
         return exports.BINARY_KEYVALUE_STORE_TYPE;
     }
 };
 __decorate([
-    (0, borsh_1.field)({ type: 'String' }),
+    (0, borsh_1.field)({ type: 'string' }),
     __metadata("design:type", String)
 ], BinaryKeyValueStoreOptions.prototype, "objectType", void 0);
 BinaryKeyValueStoreOptions = __decorate([

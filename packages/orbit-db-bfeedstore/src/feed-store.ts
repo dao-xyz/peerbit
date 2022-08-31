@@ -21,7 +21,7 @@ export type IBinaryFeedStoreOptions<T> = IQueryStoreOptions<Operation<T>, T, Fee
 export class BinaryFeedStoreOptions<T> extends BStoreOptions<BinaryFeedStore<T>> {
 
 
-  @field({ type: 'String' })
+  @field({ type: 'string' })
   objectType: string;
 
   constructor(opts: {

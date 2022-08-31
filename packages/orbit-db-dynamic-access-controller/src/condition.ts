@@ -7,10 +7,10 @@ import { IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
 @variant(0)
 export class Network {
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     type: string;
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     rpc: string;
 }
 
@@ -34,7 +34,7 @@ export class AnyAccessCondition<T> extends AccessCondition<T> {
 @variant([0, 1])
 export class PublicKeyAccessCondition<T> extends AccessCondition<T> {
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     type: string
 
     @field(U8IntArraySerializer)
@@ -65,11 +65,11 @@ export class TokenAccessCondition extends AccessCondition {
     @field({ type: Network })
     network: Network
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     token: string
 
     @field({ type: 'u64' })
-    amount: BN
+    amount: bigint
 
     constructor() {
         super();
@@ -79,10 +79,10 @@ export class TokenAccessCondition extends AccessCondition {
 
 @variant(0)
 export class NFTPropertyCondition {
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     field: string
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     value: string;
 }
 
@@ -92,7 +92,7 @@ export class NFTAccessCondition extends AccessCondition {
     @field({ type: Network })
     network: Network
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     name: string
 
     @field({ type: option(vec(NFTPropertyCondition)) })

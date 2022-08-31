@@ -20,7 +20,7 @@ export class AccessData extends BinaryPayload {
 @variant(0)
 export class Access extends AccessData {
 
-    @field({ type: option('String') })
+    @field({ type: option('string') })
     id: string
 
     @field({ type: vec('u8') })

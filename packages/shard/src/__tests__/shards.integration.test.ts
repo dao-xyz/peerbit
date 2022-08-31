@@ -570,7 +570,7 @@ describe('cluster', () => {
             expect(peerSupporting.supportJobs.values().next().value.shard.trust).toEqual(l0.trust);
 
             // try write some, and see shard picks up
-            let docStoreAWritable = await docStoreA.createShardWithIndex(1, peerNew);
+            let docStoreAWritable = await docStoreA.createShardWithIndex(1n, peerNew);
             await docStoreAWritable.load();
             await waitFor(() => docStoreAWritable.trust.isTrusted(peerNew.orbitDB.identity));
             await docStoreAWritable.interface.db.put(new Document({ id: 'new' }));

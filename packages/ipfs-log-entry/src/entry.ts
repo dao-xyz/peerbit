@@ -143,15 +143,15 @@ export class Entry<T> implements EntryEncryptionTempate<string, Clock, IdentityS
   @field({ type: MaybeEncrypted })
   _signature: MaybeEncrypted<Signature>
 
-  @field({ type: option(vec('String')) })
+  @field({ type: option(vec('string')) })
   next?: string[]
 
-  @field({ type: option(vec('String')) })
+  @field({ type: option(vec('string')) })
   refs?: string[] // Array of hashes
 
 
 
-  @field({ type: option('String') })
+  @field({ type: option('string') })
   hash?: string // "zd...Foo", we'll set the hash after persisting the entry
 
   static IPLD_LINKS = ['next', 'refs']

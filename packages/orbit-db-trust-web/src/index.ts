@@ -82,7 +82,7 @@ export class P2PTrustRelation extends TrustData {
 
     truster: PublicKey // will be set manually, upon deserialization from the oplog
 
-    /* @field({ type: 'String' }) 
+    /* @field({ type: 'string' }) 
     signature: string */ // Dont need this because its going to be signed anyway (bc orbitdb)
 
     constructor(props?: {

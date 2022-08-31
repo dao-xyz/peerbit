@@ -11,10 +11,10 @@ Logger.setLogLevel('ERROR')
 @variant([0, 0])
 export class ExchangeHeadsMessage<T> extends Message {
 
-  @field({ type: 'String' })
+  @field({ type: 'string' })
   replicationTopic: string;
 
-  @field({ type: 'String' })
+  @field({ type: 'string' })
   address: string;
 
   @field({ type: vec(Entry) })
@@ -37,10 +37,10 @@ export class ExchangeHeadsMessage<T> extends Message {
 @variant([0, 1])
 export class RequestHeadsMessage extends Message {
 
-  @field({ type: 'String' })
+  @field({ type: 'string' })
   replicationTopic: string;
 
-  @field({ type: 'String' })
+  @field({ type: 'string' })
   address: string;
 
   constructor(props?: {

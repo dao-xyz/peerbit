@@ -58,10 +58,10 @@ export class FeedStoreOptions<T> extends StoreOptions<FeedStore<T>> {
 @variant(1)
 export class BinaryDocumentStoreOptions<T> extends StoreOptions<BinaryDocumentStore<T>> {
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     indexBy: string;
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     objectType: string;
 
     constructor(opts: {
@@ -94,7 +94,7 @@ export class BinaryDocumentStoreOptions<T> extends StoreOptions<BinaryDocumentSt
 export class BinaryKeyValueStoreOptions<T> extends StoreOptions<BinaryKeyValueStore<T>> {
 
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     objectType: string;
 
     constructor(opts: {
@@ -126,7 +126,7 @@ export class BinaryKeyValueStoreOptions<T> extends StoreOptions<BinaryKeyValueSt
 export class BinaryFeedStoreOptions<T> extends StoreOptions<BinaryFeedStore<T>> {
 
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     objectType: string;
 
     constructor(opts: {

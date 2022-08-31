@@ -8,15 +8,6 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DocumentIndex = exports.DeleteOperation = exports.PutAllOperation = exports.PutOperation = exports.Operation = void 0;
 const borsh_1 = require("@dao-xyz/borsh");
@@ -38,7 +29,7 @@ let PutOperation = class PutOperation extends Operation {
     }
 };
 __decorate([
-    (0, borsh_1.field)({ type: 'String' }),
+    (0, borsh_1.field)({ type: 'string' }),
     __metadata("design:type", String)
 ], PutOperation.prototype, "key", void 0);
 __decorate([
@@ -76,7 +67,7 @@ let DeleteOperation = class DeleteOperation extends Operation {
     }
 };
 __decorate([
-    (0, borsh_1.field)({ type: 'String' }),
+    (0, borsh_1.field)({ type: 'string' }),
     __metadata("design:type", String)
 ], DeleteOperation.prototype, "key", void 0);
 DeleteOperation = __decorate([
@@ -95,55 +86,53 @@ class DocumentIndex {
         let stringKey = (0, utils_1.asString)(key);
         return this._index[stringKey];
     }
-    updateIndex(oplog) {
-        return __awaiter(this, void 0, void 0, function* () {
-            if (!this.clazz) {
-                throw new Error("Not initialized");
-            }
-            const reducer = (handled, item, idx) => {
-                let payload = item.payload.value;
-                if (payload instanceof PutAllOperation) {
-                    for (const doc of payload.docs) {
-                        if (doc && handled[doc.key] !== true) {
-                            handled[doc.key] = true;
-                            this._index[doc.key] = {
-                                key: (0, utils_1.asString)(doc.key),
-                                value: this.deserializeOrPass(doc.value),
-                                entry: item
-                            };
-                        }
+    async updateIndex(oplog) {
+        if (!this.clazz) {
+            throw new Error("Not initialized");
+        }
+        const reducer = (handled, item, idx) => {
+            let payload = item.payload.value;
+            if (payload instanceof PutAllOperation) {
+                for (const doc of payload.docs) {
+                    if (doc && handled[doc.key] !== true) {
+                        handled[doc.key] = true;
+                        this._index[doc.key] = {
+                            key: (0, utils_1.asString)(doc.key),
+                            value: this.deserializeOrPass(doc.value),
+                            entry: item
+                        };
                     }
                 }
-                else if (payload instanceof PutOperation) {
-                    const key = payload.key;
-                    if (handled[key] !== true) {
-                        handled[key] = true;
-                        this._index[key] = this.deserializeOrItem(item, payload);
-                    }
-                }
-                else if (payload instanceof DeleteOperation) {
-                    const key = payload.key;
-                    if (handled[key] !== true) {
-                        handled[key] = true;
-                        delete this._index[key];
-                    }
-                }
-                else {
-                    // Unknown operation
-                }
-                return handled;
-            };
-            try {
-                oplog.values
-                    .slice()
-                    .reverse()
-                    .reduce(reducer, {});
             }
-            catch (error) {
-                console.error(JSON.stringify(error));
-                throw error;
+            else if (payload instanceof PutOperation) {
+                const key = payload.key;
+                if (handled[key] !== true) {
+                    handled[key] = true;
+                    this._index[key] = this.deserializeOrItem(item, payload);
+                }
             }
-        });
+            else if (payload instanceof DeleteOperation) {
+                const key = payload.key;
+                if (handled[key] !== true) {
+                    handled[key] = true;
+                    delete this._index[key];
+                }
+            }
+            else {
+                // Unknown operation
+            }
+            return handled;
+        };
+        try {
+            oplog.values
+                .slice()
+                .reverse()
+                .reduce(reducer, {});
+        }
+        catch (error) {
+            console.error(JSON.stringify(error));
+            throw error;
+        }
     }
     deserializeOrPass(value) {
         return value instanceof Uint8Array ? (0, borsh_1.deserialize)(Buffer.isBuffer(value) ? value : Buffer.from(value), this.clazz) : value;

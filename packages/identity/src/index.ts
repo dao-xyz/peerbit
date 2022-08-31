@@ -14,7 +14,7 @@ export class PublicKey extends TrustData {
     @field(U8IntArraySerializer)
     id: Uint8Array;
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     type: string;
 
 

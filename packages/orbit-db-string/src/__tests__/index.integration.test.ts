@@ -59,6 +59,7 @@ describe('query', () => {
         }), (r: QueryResponseV0) => {
             response = r;
         }, 1)
+
         expect(response.results).toHaveLength(1);
         expect(((response.results[0]) as ResultWithSource)).toMatchObject(new ResultWithSource({
             source: new StringResultSource({
@@ -135,10 +136,10 @@ describe('query', () => {
             string: 'hello world'
         }));
         expect((result.coordinates as RangeCoordinates).coordinates).toHaveLength(2);
-        expect((result.coordinates as RangeCoordinates).coordinates[0].offset.toNumber()).toEqual('hell'.length);
-        expect((result.coordinates as RangeCoordinates).coordinates[0].length.toNumber()).toEqual('w o'.length);
-        expect((result.coordinates as RangeCoordinates).coordinates[1].offset.toNumber()).toEqual('hello w'.length);
-        expect((result.coordinates as RangeCoordinates).coordinates[1].length.toNumber()).toEqual('orld'.length);
+        expect((result.coordinates as RangeCoordinates).coordinates[0].offset).toEqual(BigInt('hell'.length));
+        expect((result.coordinates as RangeCoordinates).coordinates[0].length).toEqual(BigInt('w o'.length));
+        expect((result.coordinates as RangeCoordinates).coordinates[1].offset).toEqual(BigInt('hello w'.length));
+        expect((result.coordinates as RangeCoordinates).coordinates[1].length).toEqual(BigInt('orld'.length));
         await disconnectPeers([creator, observer]);
 
     });

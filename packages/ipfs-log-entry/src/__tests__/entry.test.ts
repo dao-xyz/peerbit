@@ -130,7 +130,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             signature: await entry1.metadata.signature
           })
         }) */
-        const entry2 = await Entry.create({ ipfs, identity: testIdentity, logId: 'A', data: payload2, next: [entry1], clock: new LamportClock(clock.id, clock.time + 1) })
+        const entry2 = await Entry.create({ ipfs, identity: testIdentity, logId: 'A', data: payload2, next: [entry1], clock: new LamportClock(clock.id, clock.time + 1n) })
         assert.strictEqual(entry2.payload.value, payload2)
         assert.strictEqual(entry2.next.length, 1)
         assert.strictEqual(entry2.hash, expectedHash)

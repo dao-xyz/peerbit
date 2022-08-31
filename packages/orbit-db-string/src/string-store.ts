@@ -4,7 +4,6 @@ import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 import { QueryRequestV0, RangeCoordinate, RangeCoordinates, Result, ResultWithSource, StringMatchQuery } from '@dao-xyz/bquery';
 import { StringQueryRequest } from '@dao-xyz/bquery';
-import BN from 'bn.js';
 import { Range, RangeOptional } from './range';
 import { field, variant } from '@dao-xyz/borsh';
 import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
@@ -92,8 +91,8 @@ export class StringStore extends QueryStore<PayloadOperation, string, StringInde
       const occurances = findAllOccurrences(query.preprocess(content), query.preprocess(query.value));
       return occurances.map(ix => {
         return new RangeCoordinate({
-          offset: new BN(ix),
-          length: new BN(query.value.length)
+          offset: BigInt(ix),
+          length: BigInt(query.value.length)
         })
       })
 
@@ -118,7 +117,7 @@ export class StringStore extends QueryStore<PayloadOperation, string, StringInde
 /* @variant([0, 2]) */
 export class StringResultSource extends BinaryPayload {
 
-  @field({ type: 'String' })
+  @field({ type: 'string' })
   string: string
 
   constructor(prop?: {

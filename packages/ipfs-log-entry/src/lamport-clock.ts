@@ -8,19 +8,17 @@ export class LamportClock {
   @field(U8IntArraySerializer)
   id: Uint8Array;
 
-  @field({
-    serialize: (value, writer) => {
-      writer.writeU64(value);
-    },
-    deserialize: (reader) => {
-      return reader.readU64().toNumber();
-    }
-  })
-  time: number;
+  @field({ type: 'u64' })
+  time: bigint;
 
-  constructor(id: Uint8Array, time?: number) {
+  constructor(id: Uint8Array, time?: bigint | number) {
     this.id = id
-    this.time = time || 0
+    if (!time) {
+      this.time = 0n;
+    }
+    else {
+      this.time = typeof time === 'number' ? BigInt(time) : time
+    }
   }
 
   clone() {
@@ -35,13 +33,14 @@ export class LamportClock {
   static compare(a: LamportClock, b: LamportClock) {
     // Calculate the "distance" based on the clock, ie. lower or greater
     const dist = a.time - b.time
-
+    if (dist > 0) {
+      return 1;
+    }
+    if (dist < 0) {
+      return -1;
+    }
     // If the sequence number is the same (concurrent events),
     // and the IDs are different, take the one with a "lower" id
-    if (dist === 0) {
-      return arraysCompare(a.id, b.id);
-    }
-
-    return dist
+    return arraysCompare(a.id, b.id);
   }
 }

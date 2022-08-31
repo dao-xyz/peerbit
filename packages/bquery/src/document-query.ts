@@ -1,7 +1,5 @@
 import { Constructor, field, option, variant, vec } from "@dao-xyz/borsh";
-import BN from 'bn.js';
-import { ContextMatchQuery } from "./context";
-import { MultipleQueriesType, Query, QueryType } from "./query-interface";
+import { MultipleQueriesType, Query } from "./query-interface";
 
 export enum SortDirection {
     Ascending = 0,
@@ -10,7 +8,7 @@ export enum SortDirection {
 
 export class FieldSort {
 
-    @field({ type: vec('String') })
+    @field({ type: vec('string') })
     fieldPath: string[]
 
     @field({ type: 'u8' })
@@ -38,7 +36,7 @@ export class FieldQuery extends Query {
 @variant(0)
 export class FieldFilterQuery extends FieldQuery {
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     key: string
 
     @field({ type: vec('u8') })
@@ -59,10 +57,10 @@ export class FieldFilterQuery extends FieldQuery {
 @variant(1)
 export class FieldStringMatchQuery extends FieldQuery {
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     key: string
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     value: string
 
     constructor(opts?: {
@@ -88,21 +86,21 @@ export enum Compare {
 }
 
 @variant(2)
-export class FieldCompareQuery extends FieldQuery {
+export class FieldBigIntCompareQuery extends FieldQuery {
 
     @field({ type: 'u8' })
     compare: Compare
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     key: string
 
     @field({ type: 'u64' })
-    value: BN
+    value: bigint
 
 
     constructor(opts?: {
         key: string
-        value: BN,
+        value: bigint,
         compare: Compare
     }) {
         super();
@@ -112,21 +110,21 @@ export class FieldCompareQuery extends FieldQuery {
     }
 
     apply(doc: any): boolean {
-        let value = doc[this.key];
-        if (value instanceof BN == false) {
-            value = new BN(value);
+        let value: bigint | number = doc[this.key];
+        if (typeof value !== 'bigint') {
+            value = BigInt(value)
         }
         switch (this.compare) {
             case Compare.Equal:
-                return value.eq(this.value);
+                return value === this.value;
             case Compare.Greater:
-                return value.gt(this.value);
+                return value > this.value;
             case Compare.GreaterOrEqual:
-                return value.gte(this.value);
+                return value >= this.value;
             case Compare.Less:
-                return value.lt(this.value);
+                return value < this.value;
             case Compare.LessOrEqual:
-                return value.lte(this.value);
+                return value <= this.value;
             default:
                 console.warn("Unexpected compare");
                 return false;
@@ -139,7 +137,7 @@ export class FieldCompareQuery extends FieldQuery {
 @variant(3)
 export class ClassCompareQuery extends FieldQuery {
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     value: string
 
     constructor(opts?: {
@@ -164,17 +162,17 @@ export class ClassCompareQuery extends FieldQuery {
 export class DocumentQueryRequest extends MultipleQueriesType {
 
     @field({ type: option('u64') })
-    offset: BN | undefined;
+    offset: bigint | undefined;
 
     @field({ type: option('u64') })
-    size: BN | undefined;
+    size: bigint | undefined;
 
     @field({ type: option(FieldSort) })
     sort: FieldSort | undefined;
 
     constructor(props?: {
-        offset?: BN
-        size?: BN
+        offset?: bigint
+        size?: bigint
         queries: Query[]
         sort?: FieldSort
 

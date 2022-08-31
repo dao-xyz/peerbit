@@ -94,7 +94,7 @@ export class RequestKeyCondition<T extends KeyWithMeta> {
 @variant(0)
 export class RequestKeysByReplicationTopic<T extends KeyWithMeta> extends RequestKeyCondition<T> {
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     replicationTopic: string;
 
     constructor(props?: {

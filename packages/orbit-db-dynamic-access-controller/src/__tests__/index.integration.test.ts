@@ -11,7 +11,7 @@ import { AccessError } from "@dao-xyz/encryption-utils";
 
 class Document {
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     _id: string;
 
     constructor(props?: { id: string }) {

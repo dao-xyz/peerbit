@@ -26,7 +26,7 @@ export class DirectChannel extends EventEmitter {
   _peers: string[];
   _messageHandler: (msg: { from: string, data: Buffer }) => void;
 
-  constructor(ipfs, receiverID) {
+  constructor(ipfs, receiverID: string) {
     super()
 
     // IPFS instance to use internally
@@ -87,10 +87,10 @@ export class DirectChannel extends EventEmitter {
   /**
    * Close the channel
    */
-  close() {
+  async close(): Promise<void> {
     this._closed = true
     this.removeAllListeners('message')
-    this._ipfs.pubsub.unsubscribe(this._id, this._messageHandler)
+    return this._ipfs.pubsub.unsubscribe(this._id, this._messageHandler)
   }
 
   async _setup() {

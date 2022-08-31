@@ -159,7 +159,7 @@ export class AnyPeer {
 @variant("check")
 export class PeerCheck {
 
-    @field({ type: 'String' })
+    @field({ type: 'string' })
     responseTopic: string
 
     constructor(obj?: { responseTopic: string }) {
@@ -177,26 +177,21 @@ export class PeerInfo {
     @field({ type: IdentitySerializable })
     key: IdentitySerializable
 
-    @field({ type: vec('String') })
+    @field({ type: vec('string') })
     addresses: string[] // address
 
-    @field({
-        serialize: (value, writer) => {
-            writer.writeU64(value);
-        },
-        deserialize: (reader) => {
-            return reader.readU64().toNumber();
-        }
-    })
-    memoryLeft: number
+    @field({ type: 'u64' })
+    memoryLeft: bigint
 
-    constructor(obj?: {
+    constructor(props?: {
         key: IdentitySerializable,
         addresses: string[],
-        memoryLeft: number
+        memoryLeft: bigint
     }) {
-        if (obj) {
-            Object.assign(this, obj);
+        if (props) {
+            this.key = props.key;
+            this.addresses = props.addresses;
+            this.memoryLeft = props.memoryLeft;
         }
     }
 

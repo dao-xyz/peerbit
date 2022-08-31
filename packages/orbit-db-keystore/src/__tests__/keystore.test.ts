@@ -154,7 +154,7 @@ describe('keystore', () => {
       let keyWithMeta = new BoxKeyWithMeta({
         secretKey: undefined,
         publicKey: new X25519PublicKey(Buffer.from(new Array(32).fill(0))),
-        timestamp: +new Date,
+        timestamp: BigInt(+new Date),
         group: '_'
       });
       let savedKey = await keystore.saveKey(keyWithMeta, id)
@@ -174,7 +174,7 @@ describe('keystore', () => {
       let keyWithMeta = new BoxKeyWithMeta({
         secretKey: new X25519SecretKey(Buffer.from(new Array(32).fill(0))),
         publicKey: new X25519PublicKey(Buffer.from(new Array(32).fill(0))),
-        timestamp: +new Date,
+        timestamp: BigInt(+new Date),
         group: '_'
       });
       let savedKey = await keystore.saveKey(keyWithMeta, id)
