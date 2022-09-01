@@ -170,17 +170,11 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
         if (!this._encryption) {
             throw new Error("Not initialized");
         }
-        if (!this._encrypted || !this._senderPublicKey || !this._recieverPublicKey) {
-            throw new Error("X");
-        }
 
         let der: any = this;
         let counter = 0;
         while (der instanceof EncryptedThing) {
             const decrypted = await this._encryption.decrypt(this._encrypted, this._senderPublicKey, this._recieverPublicKey);
-            if (!decrypted) {
-                throw new Error("Y");
-            }
             der = deserialize(Buffer.from(decrypted), DecryptedThing)
             counter += 1;
             if (counter >= 10) {

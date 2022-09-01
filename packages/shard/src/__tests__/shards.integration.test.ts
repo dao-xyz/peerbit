@@ -362,12 +362,8 @@ describe('cluster', () => {
                 await delay(3000)
                 await l0Write.interface.load();
                 await l0Write.interface.db.put(new Document({ id: 'hello' }))
-                /*  await l0Write.interface.write((x) => l0Write.interface.db.put(x), new Document({
-                     id: 'hello'
-                 })) */
-
-                //  await l0.interface.load();
                 await waitFor(() => l0.interface.db.size > 0);
+                await l0Write.close();
                 subscriptions = await peerNonServer.node.pubsub.ls();
                 expect(subscriptions.length).toEqual(0);  // non server should not have any subscriptions after write
                 await disconnectPeers([peerServer, peerNonServer]);
@@ -565,7 +561,7 @@ describe('cluster', () => {
 
             // Check that peer2 started supporting a shard (indexed 1)
             await waitFor(() => peerSupporting.supportJobs.size == 1);
-            expect(peerSupporting.supportJobs.values().next().value.shard.shardIndex).toEqual(1);
+            expect(peerSupporting.supportJobs.values().next().value.shard.shardIndex).toEqual(1n);
             expect(peerSupporting.supportJobs.values().next().value.shard.parentShardCID).toEqual(l0.cid);
             expect(peerSupporting.supportJobs.values().next().value.shard.trust).toEqual(l0.trust);
 

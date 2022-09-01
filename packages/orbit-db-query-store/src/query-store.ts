@@ -30,7 +30,7 @@ export class QueryStore<T, X, I extends Index<T, X>, O extends IQueryStoreOption
 
     public async close(): Promise<void> {
         await this._initializationPromise;
-        await this._ipfs.pubsub.unsubscribe(this.queryTopic);
+        await this._ipfs.pubsub.unsubscribe(this.queryTopic, this._onQueryMessage);
         this._subscribed = false;
         await super.close();
     }
@@ -49,48 +49,50 @@ export class QueryStore<T, X, I extends Index<T, X>, O extends IQueryStoreOption
             return
         }
 
-        this._initializationPromise = this._ipfs.pubsub.subscribe(this.queryTopic, async (msg: Message) => {
-            try {
-                // TODO try catch deserialize parse to properly handle migrations (prevent old clients to break)
-                let query = deserialize(Buffer.from(msg.data), QueryRequestV0);
-                if (query.type instanceof MultipleQueriesType) {
-                    // Handle context queries
-                    for (const q of query.type.queries) {
-                        if (q instanceof StoreAddressMatchQuery) {
-                            if (q.address != this.address.toString()) {
-                                // This query is not for me!
-                                return;
-                            }
-                        }
-                    }
-
-                    // Handle non context queries
-                    const results = await this.queryHandler(query);
-                    if (!results || results.length == 0) {
-                        return;
-                    }
-                    let response = new QueryResponseV0({
-                        results
-                    });
-
-                    let bytes = serialize(response);
-                    await this._ipfs.pubsub.publish(
-                        query.getResponseTopic(this.queryTopic),
-                        bytes
-                    )
-                }
-                else {
-                    // Unsupported query type
-                    return;
-                }
-
-
-            } catch (error) {
-                console.error(error)
-            }
-        })
+        this._initializationPromise = this._ipfs.pubsub.subscribe(this.queryTopic, this._onQueryMessage)
         await this._initializationPromise;
         this._subscribed = true;
+    }
+
+    async _onQueryMessage(msg: Message): Promise<void> {
+
+        try {
+            // TODO try catch deserialize parse to properly handle migrations (prevent old clients to break)
+            let query = deserialize(Buffer.from(msg.data), QueryRequestV0);
+            if (query.type instanceof MultipleQueriesType) {
+                // Handle context queries
+                for (const q of query.type.queries) {
+                    if (q instanceof StoreAddressMatchQuery) {
+                        if (q.address != this.address.toString()) {
+                            // This query is not for me!
+                            return;
+                        }
+                    }
+                }
+
+                // Handle non context queries
+                const results = await this.queryHandler(query);
+                if (!results || results.length == 0) {
+                    return;
+                }
+                let response = new QueryResponseV0({
+                    results
+                });
+
+                let bytes = serialize(response);
+                await this._ipfs.pubsub.publish(
+                    query.getResponseTopic(this.queryTopic),
+                    bytes
+                )
+            }
+            else {
+                // Unsupported query type
+                return;
+            }
+
+        } catch (error) {
+            console.error(error)
+        }
     }
 
     public query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0,) => void, waitForAmount?: number, maxAggregationTime?: number): Promise<void> {

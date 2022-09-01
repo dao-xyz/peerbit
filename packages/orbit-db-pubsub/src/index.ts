@@ -19,9 +19,8 @@ export class Message {
 
 export type Subscription = {
   id: string,
-  topicMonitor: IpfsPubsubPeerMonitor,
-  onNewPeer: (topic: string, peer: string, fromSubscription: Subscription) => void,
   onMessage: (topicId: string, content: Uint8Array, from: string) => void,
+  topicMonitor?: IpfsPubsubPeerMonitor,
   dependencies: Set<string>
 };
 export class PubSub {
@@ -56,44 +55,56 @@ export class PubSub {
    * @param options 
    * @returns The subscription id
    */
-  async subscribe(topic: string, subscriberId: string, onMessageCallback: (topic: string, content: any, from: any) => void, onNewPeerCallback: (topic: string, peer: string, fromSubscription: Subscription) => void, options = {}): Promise<Subscription> {
-    let existingSubscription = this._subscriptions[topic];
-    if (!existingSubscription && this._ipfs.pubsub) {
-      await this._ipfs.pubsub.subscribe(topic, this._handleMessage, options)
-
-      const topicMonitor = new IpfsPubsubPeerMonitor(this._ipfs.pubsub, topic)
-
-      topicMonitor.on('join', (peer) => {
-        logger.debug(`Peer joined ${topic}:`)
-        logger.debug(peer)
-        const subscription = this._subscriptions[topic];
-        if (subscription) {
-          onNewPeerCallback(topic, peer, subscription)
-        } else {
-          logger.warn('Peer joined a room we don\'t have a subscription for')
-          logger.warn(topic, peer)
+  async subscribe(topic: string, subscriberId: string, onMessageCallback: (topic: string, content: any, from: any) => void, monitor?: { onNewPeerCallback: (topic: string, peer: string, fromSubscription: Subscription) => void }, options = {}): Promise<Subscription> {
+    let subscription = this._subscriptions[topic];
+    if (!subscription && this._ipfs.pubsub) {
+      try {
+        await this._ipfs.pubsub.subscribe(topic, this._handleMessage, options)
+        const id = uuid();
+        subscription = {
+          id,
+          topicMonitor: undefined,
+          onMessage: onMessageCallback,
+          dependencies: new Set([subscriberId])
+        };
+        this._subscriptions[topic] = subscription
+        topicsOpenCount++
+        logger.debug("Topics open:", topicsOpenCount)
+      } catch (error) {
+        if (error["message"]?.indexOf("Already subscribed to") != -1) {
+          // Its alright, error for Ipfs-http-client
         }
-      })
+        else {
+          throw error;
+        }
+      }
+    }
 
-      topicMonitor.on('leave', (peer) => logger.debug(`Peer ${peer} left ${topic}`))
-      topicMonitor.on('error', (e) => logger.error(e))
-      const id = uuid();
-      const subscription = {
-        id,
-        topicMonitor: topicMonitor,
-        onMessage: onMessageCallback,
-        onNewPeer: onNewPeerCallback,
-        dependencies: new Set([subscriberId])
-      };
-      this._subscriptions[topic] = subscription
-      topicsOpenCount++
-      logger.debug("Topics open:", topicsOpenCount)
-      return subscription;
+    subscription.dependencies.add(subscriberId);
+
+    // add topic monitor
+    if (!subscription.topicMonitor && monitor) {
+      const buildMonitor = () => {
+        const topicMonitor = new IpfsPubsubPeerMonitor(this._ipfs.pubsub, topic)
+        topicMonitor.on('join', (peer) => {
+          logger.debug(`Peer joined ${topic}:`)
+          logger.debug(peer)
+          const joinSubscription = this._subscriptions[topic];
+          if (joinSubscription) {
+            monitor.onNewPeerCallback(topic, peer, joinSubscription)
+          } else {
+            logger.warn('Peer joined a room we don\'t have a subscription for')
+            logger.warn(topic, peer)
+          }
+        })
+        topicMonitor.on('leave', (peer) => logger.debug(`Peer ${peer} left ${topic}`))
+        topicMonitor.on('error', (e) => logger.error(e))
+        return topicMonitor;
+      }
+      subscription.topicMonitor = buildMonitor();
     }
-    else {
-      existingSubscription.dependencies.add(subscriberId);
-      return existingSubscription;
-    }
+
+    return subscription
 
   }
 
@@ -103,7 +114,7 @@ export class PubSub {
       subscription.dependencies.delete(subscriberId);
       if (subscription.dependencies.size === 0 || ignoreDependencies) {
         await this._ipfs.pubsub.unsubscribe(hash, this._handleMessage)
-        this._subscriptions[hash].topicMonitor.stop()
+        this._subscriptions[hash].topicMonitor?.stop()
         delete this._subscriptions[hash]
         logger.debug(`Unsubscribed from '${hash}'`)
         topicsOpenCount--

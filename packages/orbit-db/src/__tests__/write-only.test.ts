@@ -102,7 +102,7 @@ Object.keys(testAPIs).forEach(API => {
         it('replicates database of 1 entry', async () => {
             console.log("Waiting for peers to connect")
             await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
-            options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true, writeOnly: true, encryption: undefined })
+            options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true, replicate: false, encryption: undefined })
             db2 = await orbitdb2.open(db1.address.toString(), options)
             let finished = false
             await db1.add('hello');
@@ -152,7 +152,7 @@ Object.keys(testAPIs).forEach(API => {
             console.log("Waiting for peers to connect")
             await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
             const encryptionKey = await orbitdb1.keystore.createKey('encryption key', BoxKeyWithMeta, db1.replicationTopic);
-            options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true, writeOnly: true, encryption: orbitdb2.replicationTopicEncryption() })
+            options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true, replicate: false, encryption: orbitdb2.replicationTopicEncryption() })
             db2 = await orbitdb2.open(db1.address.toString(), options)
             let finished = false
             await db1.add('hello', {

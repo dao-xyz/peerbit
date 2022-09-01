@@ -122,7 +122,6 @@ export interface IStoreOptions<T, X, I extends Index<T, X>> extends ICreateOptio
   syncLocal?: boolean,
   sortFn?: ISortFunction,
   cache?: any;
-  writeOnly?: boolean,
   accessController?: { type: string, skipManifest?: boolean } & any,
   recycle?: RecycleOptions,
   typeMap?: { [key: string]: Constructor<any> },
@@ -411,9 +410,6 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
     this._oplog = null
 
     // Database is now closed
-    // TODO: afaik we don't use 'closed' event anymore,
-    // to be removed in future releases
-    this.events.emit('closed', this.address.toString())
     return Promise.resolve()
   }
 

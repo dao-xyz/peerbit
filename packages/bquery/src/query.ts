@@ -51,17 +51,18 @@ export const query = async (pubsub: PubSubAPI, topic: string, query: QueryReques
     // send query and wait for replies in a generator like behaviour
     let responseTopic = query.getResponseTopic(topic);
     let results = 0;
+    const _responseHandler = (msg: Message) => {
+        try {
+            const result = deserialize(Buffer.from(msg.data), QueryResponseV0);
+            responseHandler(result);
+            results += 1;
+        } catch (error) {
+            console.error("failed ot deserialize query response", error);
+            throw error;
+        }
+    };
     try {
-        await pubsub.subscribe(responseTopic, (msg: Message) => {
-            try {
-                const result = deserialize(Buffer.from(msg.data), QueryResponseV0);
-                responseHandler(result);
-                results += 1;
-            } catch (error) {
-                console.error("failed ot deserialize query response", error);
-                throw error;
-            }
-        }, {
+        await pubsub.subscribe(responseTopic, _responseHandler, {
             timeout: maxAggregationTime
         });
     } catch (error) {
@@ -70,6 +71,11 @@ export const query = async (pubsub: PubSubAPI, topic: string, query: QueryReques
             throw new Error("Got unexpected error when query");
         }
     }
+    const signedMessage = await (new MaybeSigned({ data })).sign(await this.getSigner());
+    const maybeEncryptedMessage = new DecryptedThing<MaybeSigned<Uint8Array>>({
+        data: serialize(signedMessage)
+    }).encrypt(reciever)
+
     await pubsub.publish(topic, serialize(query));
     if (waitForAmount != undefined) {
         await waitFor(() => results >= waitForAmount, { timeout: maxAggregationTime, delayInterval: 50 })
@@ -78,5 +84,5 @@ export const query = async (pubsub: PubSubAPI, topic: string, query: QueryReques
         await delay(maxAggregationTime);
 
     }
-    await pubsub.unsubscribe(responseTopic);
+    await pubsub.unsubscribe(responseTopic, _responseHandler);
 }

@@ -21,7 +21,7 @@ export class DBInterface extends BinaryPayload {
         throw new Error("Not implemented")
     }
 
-    close() {
+    async close(): Promise<void> {
         throw new Error("Not implemented")
 
     }
@@ -115,50 +115,6 @@ export abstract class SingleDBInterface<T, B extends Store<any, any, any, any>> 
     }
 
 
-    // TODO this function shopuld perhaps live in the "orbit-db" package and be renamed to something appropiate
-    /**
-     * Write to DB without fully loading it
-     * @param write 
-     * @param obj 
-     * @param unsubscribe 
-     * @returns 
-     */
-    /*  async write(write: (obj: T) => Promise<any>, obj: T, unsubscribe: boolean = true): Promise<B> {
-         let topic = Store.getReplicationTopic(this.address, this._options);
-         let subscribed = !!this._orbitDB._pubsub._subscriptions[topic];
-         let directConnectionsFromWrite: { [peer: string]: string } = {};
-         let preExistingConnections = new Set();
-         if (!subscribed) {
-             await this._orbitDB._pubsub.subscribe(topic, this._orbitDB._onMessage.bind(this._orbitDB), async (address: string, peer: string) => {
-                 if (this._orbitDB._directConnections[peer]) {
-                     preExistingConnections.add(peer);
-                 }
-                 await this._orbitDB.getChannel(peer)
-                 //this._orbitDB._onPeerConnected(topic, peer);
-                 directConnectionsFromWrite[peer] = address;
-             })
-         }
-         await write(obj);
-         if (!subscribed && unsubscribe) {
-             // TODO: could cause sideeffects if there is another write that wants to access the topic
-             await this._orbitDB._pubsub.unsubscribe(topic);
- 
-             const removeDirectConnect = peer => {
-                 const conn = this._orbitDB._directConnections[peer];
-                 if (conn && !preExistingConnections.has(peer)) {
-                     this._orbitDB._directConnections[peer].close()
-                     delete this._orbitDB._directConnections[peer]
-                 }
- 
-             }
- 
-             // Close all direct connections to peers
-             Object.keys(directConnectionsFromWrite).forEach(removeDirectConnect)
- 
-             // unbind?
-         }
-         return this.db
-     } */
 
     /* async query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, region: string, waitForAmount?: number, maxAggregationTime?: number) {
         if (!this.address) {
@@ -170,7 +126,8 @@ export abstract class SingleDBInterface<T, B extends Store<any, any, any, any>> 
 
 
 
-    close() {
+    async close(): Promise<void> {
+        await this.db?.close();
         this.db = undefined;
         this._orbitDB = undefined;
     }

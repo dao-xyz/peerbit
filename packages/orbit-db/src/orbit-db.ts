@@ -243,7 +243,7 @@ export class OrbitDB {
   }
 
   /* Private methods */
-  async _createStore<T>(type: string, address: Address, options: { writeOnly?: boolean, identity?: Identity, accessControllerAddress?: string } & IStoreOptions<T, any, any>) {
+  async _createStore<T>(type: string, address: Address, options: { identity?: Identity, accessControllerAddress?: string } & IStoreOptions<T, any, any>) {
     // Get the type -> class mapping
     const Store = databaseTypes[type]
 
@@ -279,9 +279,11 @@ export class OrbitDB {
     // Subscribe to pubsub to get updates from peers,
     // this is what hooks us into the message propagation layer
     // and the p2p network
-    if (opts.replicate && this._pubsub) {
+    if (this._pubsub) {
       if (!this._pubsub._subscriptions[store.replicationTopic]) {
-        await this._pubsub.subscribe(store.replicationTopic, store.id, this._onMessage.bind(this), this._onPeerConnected.bind(this))
+        await this._pubsub.subscribe(store.replicationTopic, store.id, this._onMessage.bind(this), {
+          onNewPeerCallback: this._onPeerConnected.bind(this)
+        })
       }
       else {
 
@@ -314,48 +316,7 @@ export class OrbitDB {
     return store
   }
 
-  /**
-   * Write to DB without fully loading it
-   * @param write 
-   * @param obj 
-   * @param unsubscribe 
-   * @returns 
-   */
-  /* async writeToStore<T>(store: Store<T, any, any, any>, write: (obj: T) => Promise<any>, obj: T, unsubscribe: boolean = true): Promise<void> {
-    let topic = Store.getReplicationTopic(store.address, store.options);
-    let subscribed = !!this._pubsub._subscriptions[topic];
-    let directConnectionsFromWrite: { [peer: string]: string } = {};
-    let preExistingConnections = new Set();
-    if (!subscribed) {
-      await this._pubsub.subscribe(topic, this._onMessage.bind(this), async (address: string, peer: string) => {
-        if (this._directConnections[peer]) {
-          preExistingConnections.add(peer);
-        }
-        await this.getChannel(peer)
-        //this._orbitDB._onPeerConnected(topic, peer);
-        directConnectionsFromWrite[peer] = address;
-      })
-    }
-    await write(obj);
-    if (!subscribed && unsubscribe) {
-      // TODO: could cause sideeffects if there is another write that wants to access the topic
-      await this._pubsub.unsubscribe(topic);
-  
-      const removeDirectConnect = peer => {
-        const conn = this._directConnections[peer];
-        if (conn && !preExistingConnections.has(peer)) {
-          this._directConnections[peer].close()
-          delete this._directConnections[peer]
-        }
-  
-      }
-  
-      // Close all direct connections to peers
-      Object.keys(directConnectionsFromWrite).forEach(removeDirectConnect)
-  
-      // unbind?
-    }
-  } */
+
 
   // Callback for local writes to the database. We the update to pubsub.
   _onWrite<T>(topic: string, address: string, _entry: Entry<T>, heads: Entry<T>[]) {
@@ -413,7 +374,7 @@ export class OrbitDB {
                 continue // this messages was intended for another store
               }
               if (heads.length > 0) {
-                if (store.options.writeOnly) {
+                if (!store.options.replicate) {
                   // if we are only to write, then only care about others clock
                   for (const head of heads) {
                     head.init({
@@ -792,8 +753,7 @@ export class OrbitDB {
   async open(address, options: {
     timeout?: number,
     identity?: Identity,
-    meta?: any,
-    writeOnly?: boolean
+    meta?: any
 
     /* cache?: Cache,
     directory?: string,

@@ -74,7 +74,7 @@ async function read(ipfs, cid, options: { timeout?: number, links?: string[] } =
   }
 }
 
-async function write(ipfs, format, value, options: { base?: any, pin?: boolean, timeout?: number, format?: string, links?: string[] } = {}) {
+async function write(ipfs, format: string, value, options: { base?: any, pin?: boolean, timeout?: number, format?: string, links?: string[] } = {}) {
   if (options.format === 'dag-pb') format = options.format
   const codec = codecMap[format]
   if (!codec) throw unsupportedCodecError()
