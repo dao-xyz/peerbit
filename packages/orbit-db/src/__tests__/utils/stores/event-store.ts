@@ -4,6 +4,7 @@ import { JSON_ENCODER } from "@dao-xyz/orbit-db-store";
 import { Store } from "@dao-xyz/orbit-db-store"
 import { OrbitDB } from "../../../orbit-db";
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry';
+import { AccessController } from "@dao-xyz/orbit-db-access-controllers";
 
 // TODO: generalize the Iterator functions and spin to its own module
 export const EVENT_STORE_TYPE = 'event';

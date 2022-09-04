@@ -8,7 +8,7 @@ import * as Sorting from './log-sorting'
 import { EntryFetchAllOptions, EntryFetchOptions, strictFetchOptions } from "./entry-io"
 import { IPFS } from "ipfs-core-types/src/"
 import { Identity } from "@dao-xyz/orbit-db-identity-provider"
-import { AccessController, DefaultAccessController } from "./default-access-controller"
+import { CanAppendAccessController, DefaultAccessController } from "./default-access-controller"
 import { isDefined } from './is-defined'
 import { findUniques } from "./find-uniques"
 import { IOOptions } from "@dao-xyz/ipfs-log-entry";
@@ -32,7 +32,7 @@ export interface RecycleOptions {
   cutOplogToLength?: number, // When oplog shorter, cut to length
 }
 
-export type LogOptions<T> = { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, logId?: string, entries?: Entry<T>[], heads?: any, clock?: LamportClock, access?: AccessController<T>, sortFn?: Sorting.ISortFunction, concurrency?: number, recycle?: RecycleOptions };
+export type LogOptions<T> = { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, logId?: string, entries?: Entry<T>[], heads?: any, clock?: LamportClock, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction, concurrency?: number, recycle?: RecycleOptions };
 /**
  * @description
  * Log implements a G-Set CRDT and adds ordering.
@@ -47,7 +47,7 @@ export class Log<T> extends GSet {
   _id: any;
 
   // Access Controller
-  _access: AccessController<T>
+  _access: CanAppendAccessController<T>
   // Identity
 
   _identity: Identity
@@ -664,7 +664,7 @@ export class Log<T> extends GSet {
    * @returns {Promise<Log>}
    */
   static async fromMultihash<T>(ipfs, identity, hash,
-    options?: { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, access?: AccessController<T>, sortFn?: Sorting.ISortFunction } & EntryFetchAllOptions<T>) {
+    options?: { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction } & EntryFetchAllOptions<T>) {
     // TODO: need to verify the entries with 'key'
     const { logId, entries, heads } = await LogIO.fromMultihash(ipfs, hash,
       { length: options?.length, exclude: options?.exclude, shouldExclude: options?.shouldExclude, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback, concurrency: options?.concurrency, sortFn: options?.sortFn })
@@ -706,7 +706,7 @@ export class Log<T> extends GSet {
    * @return {Promise<Log>} New Log
    */
   static async fromJSON<T>(ipfs: IPFS, identity: Identity, json: { id: string, heads: string[] | Entry<T>[] },
-    options?: { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, access?: AccessController<T>, length?: number, timeout?: number, sortFn?: Sorting.ISortFunction, onProgressCallback?: (entry: Entry<T>) => void }) {
+    options?: { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, access?: CanAppendAccessController<T>, length?: number, timeout?: number, sortFn?: Sorting.ISortFunction, onProgressCallback?: (entry: Entry<T>) => void }) {
     // TODO: need to verify the entries with 'key'
     const { logId, entries } = await LogIO.fromJSON(ipfs, json,
       { length: options?.length, encryption: options?.encryption, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback })
@@ -726,7 +726,7 @@ export class Log<T> extends GSet {
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise<Log>} New Log
    */
-  static async fromEntry<T>(ipfs: IPFS, identity: Identity, sourceEntries: Entry<T>[] | Entry<T>, options: EntryFetchOptions<T> & { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, access?: AccessController<T>, sortFn?: Sorting.ISortFunction }) {
+  static async fromEntry<T>(ipfs: IPFS, identity: Identity, sourceEntries: Entry<T>[] | Entry<T>, options: EntryFetchOptions<T> & { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction }) {
     // TODO: need to verify the entries with 'key'
     options = strictFetchOptions(options);
     const { logId, entries } = await LogIO.fromEntry(ipfs, sourceEntries,

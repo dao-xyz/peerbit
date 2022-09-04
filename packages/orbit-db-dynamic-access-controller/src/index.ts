@@ -52,7 +52,7 @@ export type AccessVerifier = (identity: IdentitySerializable) => Promise<boolean
 export const DYNAMIC_ACCESS_CONTROLER = 'dynamic-access-controller';
 
 export type OnMemoryExceededCallback<T> = (payload: MaybeEncrypted<Payload<T>>, identity: IdentitySerializable) => void;
-export class DynamicAccessController<T, B extends Store<T, any, any, any>> extends AccessController<T> {
+export class DynamicAccessController<T, B extends Store<T, any, any, any, any>> extends AccessController<T> {
 
     aclDB: ACLInterface;
     _store: B;
@@ -125,6 +125,22 @@ export class DynamicAccessController<T, B extends Store<T, any, any, any>> exten
         this._store = store;
     }
 
+    async canRead(payload: MaybeEncrypted<Payload<T>>, identityEncrypted: MaybeEncrypted<IdentitySerializable>, identityProvider: Identities): Promise<boolean> {
+        const identity = (await identityEncrypted.decrypt()).getValue(IdentitySerializable);
+        if (!identityProvider.verifyIdentity(identity)) {
+            return false;
+        }
+
+        // Check whether it is trusted by trust web
+        if (await this._storeOptions.trustResolver().isTrusted(identity)) {
+            return true;
+        }
+
+        if (await this.aclDB.canRead(payload, identityEncrypted)) {
+            return true; // Creator of entry does not own NFT or token, or publickey etc
+        }
+        return false;
+    }
 
     async canAppend(payload: MaybeEncrypted<Payload<T>>, identityEncrypted: MaybeEncrypted<IdentitySerializable>, identityProvider: Identities) {
         const identity = (await identityEncrypted.decrypt()).getValue(IdentitySerializable);
@@ -150,7 +166,7 @@ export class DynamicAccessController<T, B extends Store<T, any, any, any>> exten
             return true;
         }
 
-        if (await this.aclDB.allowed(payload, identityEncrypted)) {
+        if (await this.aclDB.canWrite(payload, identityEncrypted)) {
             return true; // Creator of entry does not own NFT or token, or publickey etc
         }
         return false;

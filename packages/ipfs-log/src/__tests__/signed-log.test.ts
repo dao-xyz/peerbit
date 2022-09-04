@@ -1,7 +1,7 @@
 const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
-import { AccessController } from '../default-access-controller'
+import { CanAppendAccessController } from '../default-access-controller'
 import { Log } from '../log'
 import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider'
 import { assertPayload } from './utils/assert'
@@ -156,7 +156,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     it('throws an error if entry doesn\'t have append access', async () => {
-      const denyAccess = { canAppend: (_, __) => false } as AccessController<string>
+      const denyAccess = { canAppend: (_, __) => Promise.resolve(false) } as CanAppendAccessController<string>
       const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
       const log2 = new Log(ipfs, testIdentity2, { logId: 'A', access: denyAccess })
 
@@ -175,7 +175,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     it('throws an error upon join if entry doesn\'t have append access', async () => {
       const testACL = {
         canAppend: async (_entry, identity, _) => Buffer.compare(Buffer.from(identity.decrypted.getValue(IdentitySerializable).id), Buffer.from(testIdentity.id)) === 0
-      } as AccessController<string>;
+      } as CanAppendAccessController<string>;
       const log1 = new Log<string>(ipfs, testIdentity, { logId: 'A', access: testACL })
       const log2 = new Log<string>(ipfs, testIdentity2, { logId: 'A' })
 

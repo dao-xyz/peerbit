@@ -15,6 +15,7 @@ import { arraysEqual } from "@dao-xyz/io-utils";
 
 import isNode from 'is-node';
 import { MaybeEncrypted } from "@dao-xyz/encryption-utils";
+
 let v8 = undefined;
 if (isNode) {
     v8 = require('v8');
@@ -138,7 +139,7 @@ export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocument
                 type: TRUST_WEB_ACCESS_CONTROLLER,
                 trustResolver: () => this,
                 skipManifest: true
-            } as TrustWebAccessControllerOptions
+            } // TODO fix types
         }
     }
 

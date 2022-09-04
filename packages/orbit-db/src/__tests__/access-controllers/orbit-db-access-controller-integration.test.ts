@@ -84,7 +84,7 @@ describe(`orbit-db - OrbitDBAccessController Integration`, function () {
         accessController: {
           type: 'orbitdb',
           write: [id1.id]
-        }
+        } as any
       })
 
       db2 = await orbitdb2.open(db.address, { identity: id2 })

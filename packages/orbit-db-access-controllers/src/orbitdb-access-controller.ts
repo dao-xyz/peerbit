@@ -1,16 +1,17 @@
 import { ensureAddress } from "./utils"
-import { Payload, Id } from '@dao-xyz/ipfs-log-entry';
+import { Payload } from '@dao-xyz/ipfs-log-entry';
 const pMapSeries = require('p-map-series')
-import { AccessController } from './access-controller-interface'
-import { Identity, IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
+import { IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
 import OrbitDB from "orbit-db";
 import { MaybeEncrypted } from "@dao-xyz/encryption-utils";
+import { AccessController } from "./access-controller-interface";
 const type = 'orbitdb'
 export type Options = {
   admin?: Uint8Array
 }
 export class OrbitDBAccessController<T> extends AccessController<T> {
 
+  _db: any;
   _options: Options;
   _orbitdb: OrbitDB;
   constructor(orbitdb, options?: Options) {

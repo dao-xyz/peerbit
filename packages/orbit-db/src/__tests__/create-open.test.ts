@@ -10,6 +10,7 @@ import io from '@dao-xyz/orbit-db-io'
 import { FEED_STORE_TYPE } from './utils/stores'
 import { OrbitDBAddress } from '../orbit-db-address'
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { IPFSAccessController, OrbitDBAccessController } from '@dao-xyz/orbit-db-access-controllers'
 // Include test utilities
 const {
   config,
@@ -169,16 +170,16 @@ Object.keys(testAPIs).forEach(API => {
 
           it('creates an access controller and adds ourselves as writer by default', async () => {
             db = await orbitdb.create('fourth', FEED_STORE_TYPE)
-            assert.deepEqual(db.access.write, [Buffer.from(orbitdb.identity.id).toString('base64')])
+            assert.deepEqual((db.access as IPFSAccessController<any>).write, [Buffer.from(orbitdb.identity.id).toString('base64')])
           })
 
           it('creates an access controller and adds writers', async () => {
             db = await orbitdb.create('fourth', FEED_STORE_TYPE, {
               accessController: {
                 write: ['another-key', 'yet-another-key', orbitdb.identity.id]
-              }
+              } as any
             })
-            assert.deepEqual(db.access.write, ['another-key', 'yet-another-key', Buffer.from(orbitdb.identity.id).toString('base64')])
+            assert.deepEqual((db.access as IPFSAccessController<any>), ['another-key', 'yet-another-key', Buffer.from(orbitdb.identity.id).toString('base64')])
           })
         })
 

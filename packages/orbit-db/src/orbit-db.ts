@@ -6,7 +6,8 @@ import Logger from 'logplease'
 const logger = Logger.create('orbit-db')
 import { Identity, Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
-import { AccessControllers } from '@dao-xyz/orbit-db-access-controllers' // Fix fork
+/* import { AccessControllers } from '@dao-xyz/orbit-db-access-controllers' // Fix fork
+ */
 import Cache from '@dao-xyz/orbit-db-cache'
 import { BoxKeyWithMeta, Keystore, KeyWithMeta, SignKeyWithMeta, WithType } from '@dao-xyz/orbit-db-keystore'
 import { isDefined } from './is-defined'
@@ -21,12 +22,12 @@ import { getOrCreateChannel } from './channel'
 import { exchangeKeys, KeyResponseMessage, KeyAccessCondition, recieveKeys, requestAndWaitForKeys, RequestKeyMessage, RequestKeyCondition, RequestKeysByKey, RequestKeysByReplicationTopic } from './exchange-keys'
 import { DecryptedThing, EncryptedThing, MaybeEncrypted, MaybeSigned, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
 import { Ed25519PublicKey, X25519PublicKey } from 'sodium-plus'
-import { replicationTopicAsKeyGroupPublicKeyEncryption } from './encryption'
 import LRU from 'lru';
 import { DirectChannel } from '@dao-xyz/ipfs-pubsub-1on1'
+import { encryptionWithRequestKey, replicationTopicEncryptionWithRequestKey } from './encryption'
 
-let AccessControllersModule = AccessControllers;
-
+/* let AccessControllersModule = AccessControllers;
+ */
 Logger.setLogLevel('ERROR')
 
 // Mapping for 'database type' -> Class
@@ -45,7 +46,6 @@ export class OrbitDB {
   identity: Identity;
   id: string;
   _pubsub: PubSub;
-
   _directConnections: { [key: string]: { channel: DirectChannel, dependencies: Set<string> } };
   /*   _directConnectionsByTopic: { [key: string]: { [key: string]: DirectChannel } } = {};
    */
@@ -91,14 +91,16 @@ export class OrbitDB {
 
     // AccessControllers module can be passed in to enable
     // testing with orbit-db-access-controller
-    AccessControllersModule = options.AccessControllers || AccessControllers
+    /*     AccessControllersModule = options.AccessControllers || AccessControllers
+     */
   }
 
   static get Pubsub() { return PubSub }
   static get Cache() { return Cache }
   static get Keystore() { return Keystore }
   static get Identities() { return Identities }
-  static get AccessControllers() { return AccessControllersModule }
+  /*   static get AccessControllers() { return AccessControllersModule }
+   */
   static get OrbitDBAddress() { return OrbitDBAddress }
 
   static get Store() { return Store }
@@ -106,29 +108,77 @@ export class OrbitDB {
   get cache() { return this.caches[this.directory].cache }
 
   get encryption(): PublicKeyEncryption {
-    return {
-      decrypt: async (data, senderPublicKey: X25519PublicKey, recieverPublicKey: X25519PublicKey) => this.keystore.decrypt(data, await this.keystore.getKeyById(recieverPublicKey), senderPublicKey),
-      encrypt: async (data, senderPublicKey) => {
-        let key = await this.keystore.getKeyByPath(this.identity.id, BoxKeyWithMeta); // TODO add key rotation, potentially generate new key every call
-        if (!key) {
-          key = await this.keystore.createKey(this.identity.id, BoxKeyWithMeta);
-        }
-
-        return {
-          data: await this.keystore.encrypt(data, key, senderPublicKey),
-          senderPublicKey: key.publicKey
-        }
-      }
-    }
+    return encryptionWithRequestKey(this.identity, this.keystore)
   }
-  /* setKeysInFlight() {
-    this.keysInFlight = new Promise((resolve, _reject) => {
-      this._keysInFlightResolver = resolve;
-      setTimeout(() => {
-        resolve()
-      }, this._keysInFlightMaxTimeout);
+
+  async requestAndWaitForKeys<T extends KeyWithMeta>(replicationTopic: string, condition: RequestKeyCondition<T>): Promise<T[]> {
+    const promiseKey = condition.hashcode;
+    const existingPromise = this._keysInflightMap.get(promiseKey);
+    if (existingPromise) {
+      return existingPromise
+    }
+
+    let lruCache = this._keyRequestsLRU.get(promiseKey);
+    if (lruCache !== undefined) {
+      return lruCache;
+    }
+
+    const promise = new Promise<T[] | undefined>((resolve, reject) => {
+      const send = (message: Uint8Array) => this._pubsub.publish(replicationTopic, message)
+      requestAndWaitForKeys(condition, send, this.keystore, this.identity, this._waitForKeysTimeout).then((results) => {
+        if (results?.length > 0) {
+          resolve(results);
+        }
+        else {
+          resolve(undefined);
+        }
+      }).catch((error) => {
+        reject(error);
+      })
     })
-  } */
+    this._keysInflightMap.set(promiseKey, promise);
+    const result = await promise;
+    this._keyRequestsLRU.set(promiseKey, result ? result : null);
+    this._keysInflightMap.delete(promiseKey);
+    return result;
+  }
+
+  async decryptedSignedThing(data: Uint8Array): Promise<DecryptedThing<MaybeSigned<Uint8Array>>> {
+    const signedMessage = await (new MaybeSigned({ data })).sign(await this.getSigner());
+    return new DecryptedThing({
+      data: serialize(signedMessage)
+    })
+  }
+
+  async enryptedSignedThing(data: Uint8Array, reciever: X25519PublicKey): Promise<EncryptedThing<MaybeSigned<Uint8Array>>> {
+    const signedMessage = await (new MaybeSigned({ data })).sign(await this.getSigner());
+    return new DecryptedThing<MaybeSigned<Uint8Array>>({
+      data: serialize(signedMessage)
+    }).encrypt(reciever)
+  }
+
+  replicationTopicEncryption(): StorePublicKeyEncryption {
+    return replicationTopicEncryptionWithRequestKey(this.identity, this.keystore, (key, replicationTopic) => this.requestAndWaitForKeys<BoxKeyWithMeta>(replicationTopic, new RequestKeysByKey<BoxKeyWithMeta>({
+      key: new Uint8Array(key.getBuffer()),
+      type: BoxKeyWithMeta
+    })))
+  }
+
+
+  async getEncryptionKey(replicationTopic: string): Promise<BoxKeyWithMeta | undefined> {
+    // v0 take some recent
+    const keys = (await this.keystore.getKeys(replicationTopic, BoxKeyWithMeta));
+    let key = keys[0];
+    if (!key) {
+      const keys = await this.requestAndWaitForKeys(replicationTopic, new RequestKeysByReplicationTopic({
+        replicationTopic,
+        type: BoxKeyWithMeta
+      }))
+      key = keys ? keys[0] : undefined;
+    }
+    return key;
+  }
+
 
   static async createInstance(ipfs, options: CreateInstanceOptions = {}) {
     if (!isDefined(ipfs)) { throw new Error('IPFS is a required argument. See https://github.com/orbitdb/orbit-db/blob/master/API.md#createinstance') }
@@ -287,25 +337,12 @@ export class OrbitDB {
       }
       else {
 
-        // Request key for decrypting messages
-        /*   
-         this.setKeysInFlight();
-          await requestKeys(async (message) => this._pubsub.publish(store.replicationTopic, message), this.keystore, this.identity, store.replicationTopic)
-    */
-        // request heads
-
         const msg = new RequestHeadsMessage({
           address: address.toString(),
           replicationTopic: store.replicationTopic
         });
         await this._pubsub.publish(store.replicationTopic, serialize(await this.decryptedSignedThing(serialize(msg))));
-        /*  else {
-           const msg = new RequestLamportClock({
-             address: address.toString(),
-             replicationTopic: store.replicationTopic
-           });
-           await this._pubsub.publish(store.replicationTopic, serialize(await this.decryptedSignedThing(serialize(msg))));
-         } */
+
       }
     }
 
@@ -431,46 +468,10 @@ export class OrbitDB {
         const getKeysByGroup = <T extends KeyWithMeta>(group: string, type: WithType<T>) => this.keystore.getKeys(group, type);
         const getKeysByPublicKey = (key: Uint8Array) => this.keystore.getKeyById(key);
 
-        /*         
-        const senderBoxSecretKey = ((await this.keystore.getKeyByPath(this.identity.id, 'box')) || (await this.keystore.createKey(this.identity.id, 'box'))).key
-         */
-
         await exchangeKeys(channel, msg, sender, this.canAccessKeys, getKeysByPublicKey, getKeysByGroup, await this.getSigner(), this.encryption)
         logger.debug(`Exchanged keys`)
       }
-      /* else if (msg instanceof RequestLamportClock) {
-      
-        const { replicationTopic, address } = msg
-        if (!(await checkTrustedSender(replicationTopic))) {
-          return;
-        }
-        const channel = await this.getChannel(peer, replicationTopic);
-        const stores = this.stores[replicationTopic];
-        const clock = stores[address]?._oplog.clock;
-        if (!clock) {
-          return;
-        }
-        const response = serialize(new ExchangeLamportClock({
-          replicationTopic,
-          address,
-          clock
-        }));
-        channel.send(Buffer.from(serialize(await msg.encryptionKey ? this.enryptedSignedThing(response, msg.encryptionKey) : this.decryptedSignedThing(response))))
-        logger.debug(`Received exchange clock request for topic: ${replicationTopic}, address: ${address}`)
-      }
-      else if (msg instanceof ExchangeLamportClock) {
-     
-        const { replicationTopic, address } = msg
-        if (!(await checkTrustedSender(replicationTopic))) {
-          return;
-        }
-        const stores = this.stores[replicationTopic];
-        const store = stores[address];
-        if (store) {
-          store._oplog.mergeClock(msg.clock)
-        }
 
-      } */
       else {
         throw new Error("Unexpected message")
       }
@@ -484,25 +485,13 @@ export class OrbitDB {
     logger.debug(`New peer '${peer}' connected to '${replicationTopic}'`)
 
     // create a channel for sending/receiving messages
-    const channel = await this.getChannel(peer, subscription.topicMonitor.topic)/* , channel => {
-      let connections = this._subscriptionOpenedForWriteOnly[subscriptionId];
-      if (!connections) {
-        connections = [];
-        this._subscriptionOpenedForWriteOnly[subscriptionId] = connections;
-      }
-      connections.push(channel);
-    }) */
+    const channel = await this.getChannel(peer, subscription.topicMonitor.topic)
 
     const getStore = (address: string) => this.stores[address]
-
-    // Request key for decrypting messages
-    /* this.setKeysInFlight();
-    await requestKeys(channel, this.keystore, this.identity, replicationTopic) */
 
     // Exchange heads
     await exchangeHeads(channel, replicationTopic, getStore, await this.getSigner())
 
-    /* if (getStore(replicationTopic)) { Object.values(getStore(replicationTopic)).forEach(db => db.events.emit('peer', peer)) } */ // TODO remove this (because performance)?
   }
 
   async getSigner() {
@@ -525,13 +514,6 @@ export class OrbitDB {
         channel,
         dependencies: new Set([fromTopic])
       }
-
-      /*  let directConnectionsByTopic = this._directConnectionsByTopic[fromTopic];
-       if (!directConnectionsByTopic) {
-         this._directConnectionsByTopic[fromTopic] = {}
-         directConnectionsByTopic = this._directConnectionsByTopic[fromTopic]
-       }
-       directConnectionsByTopic[channel.recieverId] = channel; */
     }
 
     const handleMessage = (message: { data: Uint8Array }) => {
@@ -540,12 +522,7 @@ export class OrbitDB {
     let channel = await getOrCreateChannel(this._ipfs, peer, getDirectConnection, handleMessage, _onChannelCreated);
 
     this._directConnections[channel.recieverId].dependencies.add(fromTopic);
-    /* let directConnectionsByTopic = this._directConnectionsByTopic[fromTopic];
-    if (!directConnectionsByTopic) {
-      this._directConnectionsByTopic[fromTopic] = {}
-      directConnectionsByTopic = this._directConnectionsByTopic[fromTopic]
-    }
-    directConnectionsByTopic[channel.recieverId] = channel; */
+
     return channel;
   }
 
@@ -561,29 +538,6 @@ export class OrbitDB {
     if (this._pubsub) {
       subscriptionId = await this._pubsub.unsubscribe(db.replicationTopic, db.id)
     }
-
-    // Unsubscribe for direction connection
-    /* if (subscriptionId) {
-      const connectionsCausedByStore = this._directConnectionsByTopic[db.replicationTopic];
-      if (connectionsCausedByStore) {
-        const allConnectionsByTopic = Object.values(connectionsCausedByStore);
-        for (const connection of allConnectionsByTopic) {
-          this._directConnections[connection.recieverId].dependencies.delete(db.replicationTopic);
-          if (this._directConnections[connection.recieverId].dependencies.size === 0) {
-            this._directConnections[connection.recieverId]?.channel.close();
-            delete this._directConnectionsByTopic[db.replicationTopic][connection.recieverId];
-          }
-        }
-        if (Object.keys(this._directConnectionsByTopic[db.replicationTopic]).length === 0) {
-          delete this._directConnectionsByTopic[db.replicationTopic];
-        }
-
-      }
-    }
-    else {
-      logger.warning("No subscription from db with id: " + db.id + ", found when unsubscribing")
-    } */
-
 
     const dir = db && db.options.directory ? db.options.directory : this.directory
     const cache = this.caches[dir]
@@ -833,6 +787,10 @@ export class OrbitDB {
       throw new Error(`Database '${dbAddress}' is type '${manifest.type}' but was opened as '${options.type}'`)
     }
 
+    if (!options.encryption) {
+      options.encryption = this.replicationTopicEncryption();
+    }
+
     // Save the database locally
     await this._addManifestToCache(options.cache, dbAddress)
 
@@ -894,72 +852,5 @@ export class OrbitDB {
   }
 
 
-  async requestAndWaitForKeys<T extends KeyWithMeta>(replicationTopic: string, condition: RequestKeyCondition<T>): Promise<T[]> {
-    const promiseKey = condition.hashcode;
-    const existingPromise = this._keysInflightMap.get(promiseKey);
-    if (existingPromise) {
-      return existingPromise
-    }
 
-    let lruCache = this._keyRequestsLRU.get(promiseKey);
-    if (lruCache !== undefined) {
-      return lruCache;
-    }
-
-    const promise = new Promise<T[] | undefined>((resolve, reject) => {
-      const send = (message: Uint8Array) => this._pubsub.publish(replicationTopic, message)
-      requestAndWaitForKeys(condition, send, this.keystore, this.identity, this._waitForKeysTimeout).then((results) => {
-        if (results?.length > 0) {
-          resolve(results);
-        }
-        else {
-          resolve(undefined);
-        }
-      }).catch((error) => {
-        reject(error);
-      })
-    })
-    this._keysInflightMap.set(promiseKey, promise);
-    const result = await promise;
-    this._keyRequestsLRU.set(promiseKey, result ? result : null);
-    this._keysInflightMap.delete(promiseKey);
-    return result;
-  }
-
-  async decryptedSignedThing(data: Uint8Array): Promise<DecryptedThing<MaybeSigned<Uint8Array>>> {
-    const signedMessage = await (new MaybeSigned({ data })).sign(await this.getSigner());
-    return new DecryptedThing({
-      data: serialize(signedMessage)
-    })
-  }
-
-  async enryptedSignedThing(data: Uint8Array, reciever: X25519PublicKey): Promise<EncryptedThing<MaybeSigned<Uint8Array>>> {
-    const signedMessage = await (new MaybeSigned({ data })).sign(await this.getSigner());
-    return new DecryptedThing<MaybeSigned<Uint8Array>>({
-      data: serialize(signedMessage)
-    }).encrypt(reciever)
-  }
-
-
-  replicationTopicEncryption(): StorePublicKeyEncryption {
-    return replicationTopicAsKeyGroupPublicKeyEncryption(this.identity, this.keystore, (key, replicationTopic) => this.requestAndWaitForKeys<BoxKeyWithMeta>(replicationTopic, new RequestKeysByKey<BoxKeyWithMeta>({
-      key: new Uint8Array(key.getBuffer()),
-      type: BoxKeyWithMeta
-    })))
-  }
-
-
-  async getEncryptionKey(replicationTopic: string): Promise<BoxKeyWithMeta | undefined> {
-    // v0 take some recent
-    const keys = (await this.keystore.getKeys(replicationTopic, BoxKeyWithMeta));
-    let key = keys[0];
-    if (!key) {
-      const keys = await this.requestAndWaitForKeys(replicationTopic, new RequestKeysByReplicationTopic({
-        replicationTopic,
-        type: BoxKeyWithMeta
-      }))
-      key = keys ? keys[0] : undefined;
-    }
-    return key;
-  }
 }

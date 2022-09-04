@@ -1,13 +1,14 @@
-import { AccessController } from './access-controller-interface'
-import { Entry, Payload } from '@dao-xyz/ipfs-log-entry';
+import { Payload } from '@dao-xyz/ipfs-log-entry';
 import io from '@dao-xyz/orbit-db-io'
 import { Identities, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
 import { MaybeEncrypted } from '@dao-xyz/encryption-utils';
+import { AccessController } from './access-controller-interface';
 
 const type = 'ipfs'
 
 export class IPFSAccessController<T> extends AccessController<T> {
   _write: string[];
+  _ipfs: any;
   constructor(ipfs, options?: { write?: (string | Uint8Array)[] }) {
     super()
     this._ipfs = ipfs

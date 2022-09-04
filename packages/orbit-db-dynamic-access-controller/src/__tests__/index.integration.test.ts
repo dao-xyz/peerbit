@@ -1,4 +1,4 @@
-import { field } from "@dao-xyz/borsh";
+import { field, variant } from "@dao-xyz/borsh";
 import { BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
 import { disconnectPeers, getConnectedPeers, getPeer, Peer } from '@dao-xyz/peer-test-utils';
 import { DynamicAccessController, DYNAMIC_ACCESS_CONTROLER } from "..";
@@ -6,17 +6,21 @@ import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
 import { delay, waitFor } from '@dao-xyz/time';
 import { P2PTrust } from "@dao-xyz/orbit-db-trust-web";
-import { DocumentQueryRequest, QueryRequestV0, QueryResponseV0 } from "@dao-xyz/bquery";
+import { DocumentQueryRequest, FieldStringMatchQuery, query, QueryRequestV0, QueryResponseV0, ResultWithSource } from "@dao-xyz/query-protocol";
 import { AccessError } from "@dao-xyz/encryption-utils";
+import { BinaryPayload } from "@dao-xyz/bpayload";
 
-class Document {
+
+@variant("document")
+class Document extends BinaryPayload {
 
     @field({ type: 'string' })
-    _id: string;
+    id: string;
 
     constructor(props?: { id: string }) {
+        super();
         if (props) {
-            this._id = props.id;
+            this.id = props.id;
         }
     }
 }
@@ -67,7 +71,7 @@ describe('index', () => {
     it('can write from trust web', async () => {
         const [peer, peer2] = await getConnectedPeers(2)
         const l0aTrust = await getTrust(peer);
-        let options = new BinaryDocumentStoreOptions({ indexBy: '_id', objectType: Document.name });
+        let options = new BinaryDocumentStoreOptions({ indexBy: 'id', objectType: Document.name });
 
         const l0a = await options.newStore('test', peer.orbitDB, defaultOptions(l0aTrust))
         await l0a.put(new Document({
@@ -94,7 +98,7 @@ describe('index', () => {
         it('publickey', async () => {
             const [peer, peer2] = await getConnectedPeers(2)
             const l0aTrust = await getTrust(peer);
-            let options = new BinaryDocumentStoreOptions({ indexBy: '_id', objectType: Document.name });
+            let options = new BinaryDocumentStoreOptions({ indexBy: 'id', objectType: Document.name });
             const l0a = await options.newStore('test', peer.orbitDB, defaultOptions(l0aTrust))
             await l0a.put(new Document({
                 id: '1'
@@ -127,7 +131,7 @@ describe('index', () => {
         it('any access', async () => {
             const [peer, peer2] = await getConnectedPeers(2)
             const l0aTrust = await getTrust(peer);
-            let options = new BinaryDocumentStoreOptions({ indexBy: '_id', objectType: Document.name });
+            let options = new BinaryDocumentStoreOptions({ indexBy: 'id', objectType: Document.name });
             const l0a = await options.newStore('test', peer.orbitDB, defaultOptions(l0aTrust))
             await l0a.put(new Document({
                 id: '1'
@@ -152,12 +156,51 @@ describe('index', () => {
 
             await disconnectPeers([peer, peer2])
         })
+
+
+        it('read access', async () => {
+            const [peer, peer2] = await getConnectedPeers(2)
+            const l0aTrust = await getTrust(peer);
+            let options = new BinaryDocumentStoreOptions({ indexBy: 'id', objectType: Document.name });
+            const l0a = await options.newStore('test', peer.orbitDB, defaultOptions(l0aTrust))
+            await l0a.put(new Document({
+                id: '1'
+            }));
+
+
+            let results: QueryResponseV0 = undefined;
+            const q = () => query(peer2.node.pubsub, l0a.queryTopic, new QueryRequestV0({
+                type: new DocumentQueryRequest({
+                    queries: [new FieldStringMatchQuery({
+                        key: 'id',
+                        value: '1'
+                    })]
+                })
+            }), (response) => {
+                results = response;
+            }, {
+                maxAggregationTime: 3000
+            })
+            await q();
+            expect(results).toBeUndefined(); // Because no read access
+
+            await (l0a.access as DynamicAccessController<Document, any>).aclDB.db.put(new Access({
+                accessCondition: new AnyAccessCondition(),
+                accessTypes: [AccessType.Read]
+            }).initialize());
+
+            await q();
+            expect(results).toBeDefined(); // Because no read access
+
+
+            await disconnectPeers([peer, peer2])
+        })
     })
 
     it('append all', async () => {
         const [peer, peer2] = await getConnectedPeers(2)
         const l0aTrust = await getTrust(peer);
-        let options = new BinaryDocumentStoreOptions({ indexBy: '_id', objectType: Document.name });
+        let options = new BinaryDocumentStoreOptions({ indexBy: 'id', objectType: Document.name });
         const l0a = await options.newStore('test', peer.orbitDB, defaultOptions(l0aTrust))
         await l0a.put(new Document({
             id: '1'
@@ -184,7 +227,7 @@ describe('index', () => {
 
         const peer = await getPeer()
         const l0aTrust = await getTrust(peer);
-        let options = new BinaryDocumentStoreOptions({ indexBy: '_id', objectType: Document.name });
+        let options = new BinaryDocumentStoreOptions({ indexBy: 'id', objectType: Document.name });
         let memoryExceeded = false;
         const l0a = await options.newStore('test', peer.orbitDB, defaultOptions(l0aTrust, 0, () => memoryExceeded = true))
         await expect(l0a.put(new Document({
@@ -199,7 +242,7 @@ describe('index', () => {
 
         const [peer] = await getConnectedPeers(1)
         const l0aTrust = await getTrust(peer);
-        let options = new BinaryDocumentStoreOptions({ indexBy: '_id', objectType: Document.name });
+        let options = new BinaryDocumentStoreOptions({ indexBy: 'id', objectType: Document.name });
         const l0a = await options.newStore('test', peer.orbitDB, defaultOptions(l0aTrust))
         const l0b = await options.newStore('test-2', peer.orbitDB, defaultOptions(l0aTrust))
         expect(l0a.address).not.toEqual(l0b.address)
@@ -212,7 +255,7 @@ describe('index', () => {
 
         const [peer, peer2] = await getConnectedPeers(2)
         const l0aTrust = await getTrust(peer);
-        let options = new BinaryDocumentStoreOptions({ indexBy: '_id', objectType: Document.name });
+        let options = new BinaryDocumentStoreOptions({ indexBy: 'id', objectType: Document.name });
         const l0a = await options.newStore('test', peer.orbitDB, defaultOptions(l0aTrust));
         await (l0a.access as DynamicAccessController<Document, any>).aclDB.db.put(new Access({
             accessCondition: new AnyAccessCondition(),
@@ -231,7 +274,7 @@ describe('index', () => {
             type: new DocumentQueryRequest({
                 queries: []
             })
-        }), (r) => { resp = r }, 1);
+        }), (r) => { resp = r }, { waitForAmount: 1 });
         await waitFor(() => !!resp);
 
         // Now trusted because append all is 'true'c

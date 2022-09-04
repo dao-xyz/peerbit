@@ -24,7 +24,7 @@
         "packages/time",
         "packages/identity",
         "packages/peer-test-utils",
-        "packages/bquery"
+        "packages/query-protocol"
     ],
     "version": "independent",
     "npmClient": "yarn",

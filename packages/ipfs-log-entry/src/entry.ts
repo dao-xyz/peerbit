@@ -10,7 +10,7 @@ import { PublicKeyEncryption, DecryptedThing, EncryptedThing, MaybeEncrypted } f
 import { Id } from './id';
 import { Signature } from './signature';
 
-export type MaybeX25519PublicKey = (X25519PublicKey | undefined);
+export type MaybeX25519PublicKey = (X25519PublicKey | X25519PublicKey[] | undefined);
 export type EncryptionTemplateMaybeEncrypted = EntryEncryptionTempate<MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey>;
 export interface EntryEncryption {
   reciever: EncryptionTemplateMaybeEncrypted,
@@ -324,8 +324,9 @@ export class Entry<T> implements EntryEncryptionTempate<string, Clock, IdentityS
     });
 
 
-    const maybeEncrypt = async<Q>(thing: Q, reciever?: X25519PublicKey): Promise<MaybeEncrypted<Q>> => {
-      return reciever ? await new DecryptedThing<Q>({ data: serialize(thing), value: thing }).init(options.encryption.options).encrypt(reciever) : new DecryptedThing<Q>({
+    const maybeEncrypt = async<Q>(thing: Q, reciever: X25519PublicKey | X25519PublicKey[] | undefined): Promise<MaybeEncrypted<Q>> => {
+      const recievers = reciever ? (Array.isArray(reciever) ? reciever : [reciever]) : undefined
+      return recievers?.length > 0 ? await new DecryptedThing<Q>({ data: serialize(thing), value: thing }).init(options.encryption.options).encrypt(...recievers) : new DecryptedThing<Q>({
         data: serialize(thing)
       })
     }

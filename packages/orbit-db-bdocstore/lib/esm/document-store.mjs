@@ -11,10 +11,11 @@ import { DeleteOperation, DocumentIndex, Operation, PutAllOperation, PutOperatio
 import pMap from 'p-map';
 import { deserialize, field, serialize, variant } from '@dao-xyz/borsh';
 import { asString } from './utils.mjs';
-import { FieldQuery, ResultWithSource, SortDirection } from '@dao-xyz/bquery';
+import { FieldQuery, FieldStringMatchQuery, ResultWithSource, SortDirection, FieldByteMatchQuery, FieldBigIntCompareQuery, Compare } from '@dao-xyz/query-protocol';
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
 import { OrbitDB } from '@dao-xyz/orbit-db';
+import { arraysEqual } from '@dao-xyz/io-utils';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
 let BinaryDocumentStoreOptions = class BinaryDocumentStoreOptions extends BStoreOptions {
@@ -99,18 +100,49 @@ export class BinaryDocumentStore extends QueryStore {
     async close() {
         await super.close();
     }
-    queryDocuments(mapper) {
+    queryDocuments(filter) {
         // Whether we return the full operation data or just the db value
         return Object.keys(this.index._index)
             .map((e) => this.index.get(e))
-            .filter((doc) => mapper(doc));
+            .filter((doc) => filter(doc));
     }
     queryHandler(query) {
         const documentQuery = query.type;
         let filters = documentQuery.queries.filter(q => q instanceof FieldQuery);
         let results = this.queryDocuments(doc => filters?.length > 0 ? filters.map(f => {
             if (f instanceof FieldQuery) {
-                return f.apply(doc.value);
+                const fv = doc.value[f.key];
+                if (f instanceof FieldStringMatchQuery) {
+                    if (typeof fv !== 'string')
+                        return false;
+                    return fv.toLowerCase().indexOf(f.value.toLowerCase()) !== -1;
+                }
+                if (f instanceof FieldByteMatchQuery) {
+                    if (!Array.isArray(fv))
+                        return false;
+                    return arraysEqual(fv, f.value);
+                }
+                if (f instanceof FieldBigIntCompareQuery) {
+                    let value = fv;
+                    if (typeof value !== 'bigint' && typeof value !== 'number') {
+                        return false;
+                    }
+                    switch (f.compare) {
+                        case Compare.Equal:
+                            return value == f.value; // == because with want bigint == number at some cases
+                        case Compare.Greater:
+                            return value > f.value;
+                        case Compare.GreaterOrEqual:
+                            return value >= f.value;
+                        case Compare.Less:
+                            return value < f.value;
+                        case Compare.LessOrEqual:
+                            return value <= f.value;
+                        default:
+                            console.warn("Unexpected compare");
+                            return false;
+                    }
+                }
             }
             else {
                 throw new Error("Unsupported query type");

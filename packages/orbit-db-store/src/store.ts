@@ -14,9 +14,8 @@ import Cache from '@dao-xyz/orbit-db-cache';
 import { variant, field, vec } from '@dao-xyz/borsh';
 import { IPFS } from 'ipfs-core-types/src/'
 import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider'
-import { OrbitDBAccessController } from '@dao-xyz/orbit-db-access-controllers'
+import { OrbitDBAccessController, AccessController } from '@dao-xyz/orbit-db-access-controllers'
 import stringify from 'json-stringify-deterministic'
-import { AccessController } from '@dao-xyz/orbit-db-access-controllers'
 import { serialize, deserialize } from '@dao-xyz/borsh';
 import { Snapshot } from './snapshot'
 import { AccessError, MaybeEncrypted, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
@@ -122,7 +121,7 @@ export interface IStoreOptions<T, X, I extends Index<T, X>> extends ICreateOptio
   syncLocal?: boolean,
   sortFn?: ISortFunction,
   cache?: any;
-  accessController?: { type: string, skipManifest?: boolean } & any,
+  accessController?: AccessController<T>,
   recycle?: RecycleOptions,
   typeMap?: { [key: string]: Constructor<any> },
 
@@ -177,7 +176,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
   manifestPath: string;
   _ipfs: IPFS;
   _cache: Cache;
-  access: AccessController<T>;
+  access: any; // options
   _oplog: Log<T>;
   _queue: PQueue<any, any>
   _index: I;
@@ -225,7 +224,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
       close: undefined,
       load: undefined,
       save: undefined
-    } as any as OrbitDBAccessController<T> // TODO fix types
+    } as any as AccessController<T> // TODO fix types
 
     // Create the operations log
     this._oplog = new Log<T>(this._ipfs, this.identity, this.logOptions)
@@ -344,8 +343,8 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
       logId: this.id,
       encoding: this.options.encoding,
       encryption: this.options.encryption ? {
-        decrypt: (data, senderPublicKey, recieverPublicKey) => this.options.encryption(this.replicationTopic).decrypt(data, senderPublicKey, recieverPublicKey),
-        encrypt: (data, recieverPublicKey) => this.options.encryption(this.replicationTopic).encrypt(data, recieverPublicKey)
+        getAnySecret: this.options.encryption(this.replicationTopic).getAnySecret,
+        getEncryptionKey: this.options.encryption(this.replicationTopic).getEncryptionKey
       } : undefined, //this.options.encryption
       access: this.access,
       sortFn: this.options.sortFn,

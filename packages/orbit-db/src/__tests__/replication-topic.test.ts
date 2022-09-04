@@ -3,6 +3,7 @@ const assert = require('assert')
 const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
 import { Entry } from '@dao-xyz/ipfs-log-entry'
+import { IPFSAccessController } from '@dao-xyz/orbit-db-access-controllers'
 import { OrbitDB } from '../orbit-db'
 import { EventStore, EVENT_STORE_TYPE, Operation } from './utils/stores/event-store'
 
@@ -97,7 +98,7 @@ Object.keys(testAPIs).forEach(API => {
             orbitdb1.identity.id,
             orbitdb2.identity.id,
           ]
-        }
+        } as any
       }
       const replicationTopicFn = () => 'x';
       const replicationTopic = replicationTopicFn();
@@ -157,7 +158,7 @@ Object.keys(testAPIs).forEach(API => {
             orbitdb1.identity.id,
             orbitdb2.identity.id,
           ]
-        }
+        } as any
       }
       const replicationTopicFn = () => 'x';
       const replicationTopic = replicationTopicFn();

@@ -1,11 +1,9 @@
-import { AccessController } from './access-controller-interface'
 import { AccessControllerManifest } from './access-controller-manifest'
-import { LegacyIPFSAccessController } from './legacy-ipfs-access-controller'
 import { IPFSAccessController } from './ipfs-access-controller'
 import { OrbitDBAccessController } from './orbitdb-access-controller'
-
+import { AccessController } from './access-controller-interface'
+/* 
 const supportedTypes = {
-  'legacy-ipfs': LegacyIPFSAccessController,
   ipfs: IPFSAccessController,
   orbitdb: OrbitDBAccessController
 }
@@ -31,7 +29,7 @@ export class AccessControllers {
 
     if (!options.AccessController.type ||
       typeof options.AccessController.type !== 'string') {
-      throw new Error('Given AccessController class needs to implement: static get type() { /* return a string */}.')
+      throw new Error('Given AccessController class needs to implement: static get type() {}.')
     }
 
     supportedTypes[options.AccessController.type] = options.AccessController
@@ -68,3 +66,4 @@ export class AccessControllers {
     return hash
   }
 }
+ */

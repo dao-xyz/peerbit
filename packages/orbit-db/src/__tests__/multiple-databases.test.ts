@@ -2,8 +2,9 @@
 const assert = require('assert')
 const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
+import { IPFSAccessController } from '@dao-xyz/orbit-db-access-controllers'
 import { OrbitDB } from '../orbit-db'
-import { EventStore, EVENT_STORE_TYPE } from './utils/stores'
+import { EventStore, EVENT_STORE_TYPE, Operation } from './utils/stores'
 
 // Include test utilities
 const {

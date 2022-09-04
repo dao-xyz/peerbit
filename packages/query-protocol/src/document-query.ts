@@ -27,55 +27,58 @@ export class FieldSort {
 
 @variant(1)
 export class FieldQuery extends Query {
+    @field({ type: 'string' })
+    key: string
 
-    public apply(doc: any): boolean {
-        throw new Error("Not implemented")
+    constructor(props?: {
+        key: string
+    }) {
+        super();
+        if (props) {
+            this.key = props.key;
+        }
     }
 }
 
 @variant(0)
-export class FieldFilterQuery extends FieldQuery {
+export class FieldByteMatchQuery extends FieldQuery {
 
-    @field({ type: 'string' })
-    key: string
+
 
     @field({ type: vec('u8') })
     value: Uint8Array
 
-    constructor(opts?: FieldFilterQuery) {
-        super();
-        if (opts) {
-            Object.assign(this, opts)
+    constructor(props?: { key: string, value: Uint8Array }) {
+        super(props);
+        if (props) {
+            this.value = props.value;
         }
     }
 
-    public apply(doc: any): boolean {
+    /* public apply(doc: any): boolean {
         return doc[this.key] === this.value
-    }
+    } */
 }
 
 @variant(1)
 export class FieldStringMatchQuery extends FieldQuery {
 
     @field({ type: 'string' })
-    key: string
-
-    @field({ type: 'string' })
     value: string
 
-    constructor(opts?: {
+    constructor(props?: {
         key: string
         value: string
     }) {
-        super();
-        if (opts) {
-            Object.assign(this, opts)
+        super(props);
+        if (props) {
+            this.value = props.value;
         }
     }
 
-    public apply(doc: any): boolean {
+    /* public apply(doc: any): boolean {
         return (doc[this.key] as string).toLowerCase().indexOf(this.value.toLowerCase()) != -1;
-    }
+    } */
 }
 export enum Compare {
     Equal = 0,
@@ -91,25 +94,23 @@ export class FieldBigIntCompareQuery extends FieldQuery {
     @field({ type: 'u8' })
     compare: Compare
 
-    @field({ type: 'string' })
-    key: string
-
     @field({ type: 'u64' })
     value: bigint
 
 
-    constructor(opts?: {
+    constructor(props?: {
         key: string
         value: bigint,
         compare: Compare
     }) {
-        super();
-        if (opts) {
-            Object.assign(this, opts)
+        super(props);
+        if (props) {
+            this.value = props.value;
+            this.compare = props.compare;
         }
     }
 
-    apply(doc: any): boolean {
+    /* apply(doc: any): boolean {
         let value: bigint | number = doc[this.key];
         if (typeof value !== 'bigint') {
             value = BigInt(value)
@@ -129,10 +130,10 @@ export class FieldBigIntCompareQuery extends FieldQuery {
                 console.warn("Unexpected compare");
                 return false;
         }
-    }
+    } */
 }
 
-
+/* 
 
 @variant(3)
 export class ClassCompareQuery extends FieldQuery {
@@ -148,12 +149,8 @@ export class ClassCompareQuery extends FieldQuery {
             this.value = opts.value;
         }
     }
-
-    apply(doc: Constructor<any>): boolean {
-        return doc.constructor.name === this.value
-    }
 }
-
+ */
 
 
 

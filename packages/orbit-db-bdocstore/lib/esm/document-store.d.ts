@@ -1,7 +1,7 @@
 import { DocumentIndex, IndexedValue, Operation } from './document-index';
 import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { Constructor } from '@dao-xyz/borsh';
-import { QueryRequestV0, Result } from '@dao-xyz/bquery';
+import { QueryRequestV0, Result } from '@dao-xyz/query-protocol';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
@@ -34,7 +34,7 @@ export declare class BinaryDocumentStore<T extends BinaryPayload> extends QueryS
     get(key: any, caseSensitive?: boolean): IndexedValue<T>[];
     load(amount?: number, opts?: {}): Promise<void>;
     close(): Promise<void>;
-    queryDocuments(mapper: ((doc: IndexedValue<T>) => boolean)): IndexedValue<T>[];
+    queryDocuments(filter: ((doc: IndexedValue<T>) => boolean)): IndexedValue<T>[];
     queryHandler(query: QueryRequestV0): Promise<Result[]>;
     batchPut(docs: T[], onProgressCallback: any): Promise<import("ipfs-core-types/src/root").AddResult[]>;
     put(doc: T, options?: {}): Promise<unknown>;

@@ -1,12 +1,15 @@
 export * from './errors';
-import { BinaryReader, BinaryWriter, Constructor, deserialize, field, option, serialize, variant } from '@dao-xyz/borsh';
+import { BinaryReader, BinaryWriter, Constructor, deserialize, field, option, serialize, variant, vec } from '@dao-xyz/borsh';
 import { U8IntArraySerializer } from '@dao-xyz/io-utils';
-import { X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519SecretKey, CryptographyKey } from 'sodium-plus';
+import { X25519PublicKey, Ed25519PublicKey, SodiumPlus, CryptographyKey } from 'sodium-plus';
 import { arraysEqual } from '@dao-xyz/io-utils'
-
+import { X25519SecretKey } from 'sodium-plus';
+const NONCE_LENGTH = 24;
+const _crypto = SodiumPlus.auto();
 export interface PublicKeyEncryption {
-    encrypt: (data: Uint8Array, recieverPublicKey: X25519PublicKey) => Promise<{ data: Uint8Array, senderPublicKey: X25519PublicKey }>,
-    decrypt: (data: Uint8Array, senderPublicKey: X25519PublicKey, recieverPublicKey: X25519PublicKey) => Promise<Uint8Array>
+    getEncryptionKey: () => Promise<X25519SecretKey>
+    getAnySecret: (publicKey: X25519PublicKey[]) => Promise<{ index: number, secretKey: X25519SecretKey } | undefined>
+
 }
 
 
@@ -32,6 +35,8 @@ export const bufferSerializer = (clazz: Constructor<GetBuffer>) => {
         }
     }
 }
+
+
 
 
 @variant(0)
@@ -92,10 +97,27 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
         return deserialize(Buffer.from(this._data), clazz)
     }
 
-    async encrypt(recieverPublicKey: X25519PublicKey): Promise<EncryptedThing<T>> {
+    async encrypt(...recieverPublicKeys: X25519PublicKey[]): Promise<EncryptedThing<T>> {
         const bytes = serialize(this)
-        const { data, senderPublicKey } = await this._encryption.encrypt(Buffer.from(bytes), recieverPublicKey);
-        const enc = new EncryptedThing<T>({ encrypted: data, senderPublicKey, recieverPublicKey })
+        const crypto = await _crypto;
+        const epheremalKey = await crypto.crypto_secretbox_keygen();
+        const nonce = new Uint8Array(await crypto.randombytes_buf(NONCE_LENGTH));
+        const cipher = await crypto.crypto_secretbox(Buffer.from(bytes), Buffer.from(nonce), epheremalKey);
+        const encryptionKey = await this._encryption.getEncryptionKey();
+        const ks = await Promise.all(recieverPublicKeys.map(async recieverPublicKey => {
+            const kNonce = new Uint8Array(await crypto.randombytes_buf(NONCE_LENGTH));
+            return new K({
+                encryptedKey: new CipherWithNonce({
+                    cipher: await crypto.crypto_box(epheremalKey.getBuffer(), Buffer.from(kNonce), encryptionKey, recieverPublicKey),
+                    nonce: kNonce
+                }), recieverPublicKey
+            })
+        }))
+        const enc = new EncryptedThing<T>({
+            encrypted: new Uint8Array(cipher), nonce, envelope: new Envelope({
+                senderPublicKey: await crypto.crypto_box_publickey_from_secretkey(encryptionKey), ks
+            })
+        })
         enc._decrypted = this;
         return enc;
     }
@@ -122,32 +144,137 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
     }
 }
 
+@variant(0)
+export class CipherWithNonce {
+
+
+    @field(U8IntArraySerializer)
+    nonce: Uint8Array
+
+    @field(U8IntArraySerializer)
+    cipher: Uint8Array
+
+    constructor(props?: {
+        nonce: Uint8Array
+        cipher: Uint8Array
+
+    }) {
+        if (props) {
+            this.nonce = props.nonce;
+            this.cipher = props.cipher;
+        }
+    }
+
+    equals(other: CipherWithNonce): boolean {
+        if (other instanceof CipherWithNonce) {
+            return arraysEqual(this.nonce, other.nonce) && arraysEqual(this.cipher, other.cipher);
+        }
+        else {
+            return false;
+        }
+    }
+}
+
+
+@variant(0)
+export class K {
+
+    @field({ type: CipherWithNonce })
+    _encryptedKey: CipherWithNonce;
+
+    @field(bufferSerializer(X25519PublicKey))
+    _recieverPublicKey: X25519PublicKey
+
+    constructor(props?: {
+        encryptedKey: CipherWithNonce,
+        recieverPublicKey: X25519PublicKey;
+    }) {
+        if (props) {
+            this._encryptedKey = props.encryptedKey
+            this._recieverPublicKey = props.recieverPublicKey
+
+        }
+    }
+
+
+    equals(other: K): boolean {
+        if (other instanceof K) {
+            return this._encryptedKey.equals(other._encryptedKey) && Buffer.compare(this._recieverPublicKey.getBuffer(), other._recieverPublicKey.getBuffer()) === 0
+        }
+        else {
+            return false;
+        }
+    }
+
+}
+
+@variant(0)
+export class Envelope {
+    @field(bufferSerializer(X25519PublicKey))
+    _senderPublicKey: X25519PublicKey
+
+    @field({ type: vec(K) })
+    _ks: K[];
+
+
+    constructor(props?: {
+        senderPublicKey: X25519PublicKey
+        ks: K[]
+    }) {
+        if (props) {
+            this._senderPublicKey = props.senderPublicKey;
+            this._ks = props.ks;
+        }
+    }
+
+    equals(other: Envelope): boolean {
+        if (other instanceof Envelope) {
+            if (Buffer.compare(this._senderPublicKey.getBuffer(), other._senderPublicKey.getBuffer()) !== 0) {
+                return false;
+            }
+
+            if (this._ks.length != other._ks.length) {
+                return false;
+            }
+            for (let i = 0; i < this._ks.length; i++) {
+                if (!this._ks[i].equals(other._ks[i])) {
+                    return false;
+                }
+
+            }
+        }
+        else {
+            return false;
+        }
+    }
+}
+
 @variant(1)
 export class EncryptedThing<T> extends MaybeEncrypted<T> {
 
     _encryption: PublicKeyEncryption
 
+
     @field(U8IntArraySerializer)
     _encrypted: Uint8Array;
 
-    @field(bufferSerializer(X25519PublicKey))
-    _senderPublicKey: X25519PublicKey
+    @field(U8IntArraySerializer)
+    _nonce: Uint8Array;
 
-    @field(bufferSerializer(X25519PublicKey))
-    _recieverPublicKey: X25519PublicKey
+    @field({ type: Envelope })
+    _envelope: Envelope
 
-
-    constructor(obj?: {
+    constructor(props?: {
         encrypted: Uint8Array;
-        senderPublicKey: X25519PublicKey;
-        recieverPublicKey: X25519PublicKey;
-
+        nonce: Uint8Array;
+        envelope: Envelope
     }) {
         super();
-        if (obj) {
-            this._encrypted = obj.encrypted;
-            this._senderPublicKey = obj.senderPublicKey;
-            this._recieverPublicKey = obj.recieverPublicKey
+        if (props) {
+            this._encrypted = props.encrypted;
+            this._nonce = props.nonce;
+            this._envelope = props.envelope;
+
         }
     }
 
@@ -170,25 +297,40 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
         if (!this._encryption) {
             throw new Error("Not initialized");
         }
-
-        let der: any = this;
-        let counter = 0;
-        while (der instanceof EncryptedThing) {
-            const decrypted = await this._encryption.decrypt(this._encrypted, this._senderPublicKey, this._recieverPublicKey);
-            der = deserialize(Buffer.from(decrypted), DecryptedThing)
-            counter += 1;
-            if (counter >= 10) {
-                throw new Error("Unexpected decryption behaviour, data seems to always be in encrypted state")
+        const crypto = await _crypto;
+        // We only need to open with one of the keys
+        const key = await this._encryption.getAnySecret(this._envelope._ks.map(k => k._recieverPublicKey))
+        if (key) {
+            const k = this._envelope._ks[key.index];
+            const epheremalKey = new CryptographyKey(await crypto.crypto_box_open(Buffer.from(k._encryptedKey.cipher), Buffer.from(k._encryptedKey.nonce), key.secretKey, this._envelope._senderPublicKey));
+            let der: any = this;
+            let counter = 0;
+            while (der instanceof EncryptedThing) {
+                const decrypted = await crypto.crypto_secretbox_open(Buffer.from(this._encrypted), Buffer.from(this._nonce), epheremalKey);
+                der = deserialize(Buffer.from(decrypted), DecryptedThing)
+                counter += 1;
+                if (counter >= 10) {
+                    throw new Error("Unexpected decryption behaviour, data seems to always be in encrypted state")
+                }
             }
+            this._decrypted = der as DecryptedThing<T>
         }
-        this._decrypted = der as DecryptedThing<T>
         return this._decrypted;
     }
 
 
     equals(other: MaybeEncrypted<T>): boolean {
         if (other instanceof EncryptedThing) {
-            return arraysEqual(this._encrypted, other._encrypted) && Buffer.compare(this._senderPublicKey.getBuffer(), other._senderPublicKey.getBuffer()) === 0 && Buffer.compare(this._recieverPublicKey.getBuffer(), other._recieverPublicKey.getBuffer()) === 0
+            if (!arraysEqual(this._encrypted, other._encrypted)) {
+                return false;
+            }
+            if (!arraysEqual(this._nonce, other._nonce)) {
+                return false;
+            }
+
+            if (!this._envelope.equals(other._envelope)) {
+                return false;
+            }
         }
         else {
             return false;
@@ -201,6 +343,19 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
     }
 }
 
+
+export const verifySignature = async (signature: Uint8Array, publicKey: Ed25519PublicKey, data: Uint8Array, signedHash = false) => {
+    let res = false
+    const crypto = await _crypto;
+    try {
+        const signedData = await crypto.crypto_sign_open(Buffer.from(signature), publicKey);
+        const verified = Buffer.compare(signedData, signedHash ? await crypto.crypto_generichash(Buffer.from(data)) : Buffer.from(data)) === 0;
+        res = verified
+    } catch (error) {
+        return false;
+    }
+    return res
+}
 @variant(0)
 export class SignatureWithKey {
 
@@ -253,12 +408,13 @@ export class MaybeSigned<T>  {
         return deserialize(Buffer.from(this.data), constructor)
     }
 
-    async verify(verifier: (signature: Uint8Array, key: Ed25519PublicKey, data: Uint8Array) => Promise<boolean>): Promise<boolean> {
+    async verify(verifier?: (signature: Uint8Array, key: Ed25519PublicKey, data: Uint8Array) => Promise<boolean>): Promise<boolean> {
         if (!this.signature) {
             return true;
         }
-        return verifier(this.signature.signature, this.signature.publicKey, this.data)
+        return verifier ? verifier(this.signature.signature, this.signature.publicKey, this.data) : verifySignature(this.signature.signature, this.signature.publicKey, this.data)
     }
+
 
     equals(other: MaybeSigned<T>): boolean {
         if (!arraysEqual(this.data, other.data)) {
@@ -287,6 +443,21 @@ export class MaybeSigned<T>  {
         return this;
     }
 
+}
+export const decryptVerifyInto = async <T>(data: Uint8Array, clazz: Constructor<T>, encryption?: PublicKeyEncryption, options: { isTrusted?: (key: Ed25519PublicKey) => Promise<boolean> } = {}) => {
+    const maybeEncrypted = deserialize<MaybeEncrypted<MaybeSigned<any>>>(Buffer.from(data), MaybeEncrypted);
+    const decrypted = await (encryption ? maybeEncrypted.init(encryption) : maybeEncrypted).decrypt();
+    const maybeSigned = decrypted.getValue(MaybeSigned);
+    if (!await maybeSigned.verify()) {
+        return;
+    }
+
+    if (maybeSigned.signature && options.isTrusted) {
+        if (!await options.isTrusted(maybeSigned.signature.publicKey)) {
+            return;
+        }
+    }
+    return deserialize(Buffer.from(maybeSigned.data), clazz);
 }
 
 /* @variant(0)

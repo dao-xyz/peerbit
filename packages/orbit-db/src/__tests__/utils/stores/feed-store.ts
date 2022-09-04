@@ -1,7 +1,8 @@
 import { Log } from "@dao-xyz/ipfs-log";
 import { OrbitDB } from "../../../orbit-db";
-import { EventStore } from "./event-store"
+import { EventStore, Operation } from "./event-store"
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry';
+import { AccessController } from "@dao-xyz/orbit-db-access-controllers";
 export const FEED_STORE_TYPE = 'feed';
 class FeedIndex {
     _index: any;

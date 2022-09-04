@@ -1,5 +1,4 @@
 import { Constructor, deserialize, field, variant, vec } from "@dao-xyz/borsh";
-import { Identity } from "@dao-xyz/orbit-db-identity-provider";
 import { asString, Hashable } from "./utils";
 import { Entry } from "@dao-xyz/ipfs-log-entry";
 import { Log } from "@dao-xyz/ipfs-log";

@@ -43,18 +43,22 @@ Object.keys(testAPIs).forEach((IPFS) => {
       recieverKey = await keystore.createKey('reciever', BoxKeyWithMeta, undefined, { overwrite: true });
       encryption = (_) => {
         return {
-          decrypt: async (data, sender, reciever) => {
-            const secret = await keystore.getKeyById<BoxKeyWithMeta>(reciever);
-            if (!secret) {
-              throw new AccessError(); // Do not have this key
-            }
-            return keystore.decrypt(data, secret, sender)
+          getEncryptionKey: () => Promise.resolve(senderKey.secretKey),
+          getAnySecret: async (publicKeys: X25519PublicKey[]) => {
+            for (let i = 0; i < publicKeys.length; i++) {
+              if (Buffer.compare(publicKeys[i].getBuffer(), senderKey.secretKey.getBuffer()) === 0) {
+                return {
+                  index: i,
+                  secretKey: senderKey.secretKey
+                }
+              }
+              if (Buffer.compare(publicKeys[i].getBuffer(), recieverKey.secretKey.getBuffer()) === 0) {
+                return {
+                  index: i,
+                  secretKey: recieverKey.secretKey
+                }
+              }
 
-          },
-          encrypt: async (data, reciever) => {
-            return {
-              data: await keystore.encrypt(data, senderKey, reciever),
-              senderPublicKey: senderKey.publicKey
             }
           }
         }

@@ -1,10 +1,11 @@
 
 import { field, option, variant } from '@dao-xyz/borsh';
 import { BinaryDocumentStore, BINARY_DOCUMENT_STORE_TYPE, DocumentStoreOptions } from '../document-store';
-import { DocumentQueryRequest, Compare, FieldBigIntCompareQuery, QueryRequestV0, QueryResponseV0, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort } from '@dao-xyz/bquery';
-import { query } from '@dao-xyz/bquery';
+import { DocumentQueryRequest, Compare, FieldBigIntCompareQuery, QueryRequestV0, QueryResponseV0, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort } from '@dao-xyz/query-protocol';
+import { query } from '@dao-xyz/query-protocol';
 import { disconnectPeers, getConnectedPeers, Peer } from '@dao-xyz/peer-test-utils';
 import { BinaryPayload } from '@dao-xyz/bpayload';
+import { IPFSAccessController } from '@dao-xyz/orbit-db-access-controllers';
 
 @variant("document")//@variant([1, 0])
 class Document extends BinaryPayload {
@@ -34,8 +35,8 @@ const bigIntSort = (a, b) => (a > b || -(a < b)) as number
 const documentDbTestSetup = async (): Promise<{
   creator: Peer,
   observer: Peer,
-  documentStoreCreator: BinaryDocumentStore<Document>
-  documentStoreObserver: BinaryDocumentStore<Document>
+  documentStoreCreator: BinaryDocumentStore<Document>/* 
+  documentStoreObserver: BinaryDocumentStore<Document> */
 }> => {
 
 
@@ -44,16 +45,16 @@ const documentDbTestSetup = async (): Promise<{
   // Create store
   let documentStoreCreator = await peer.orbitDB.open('store', { ...{ clazz: Document, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: 'id', subscribeToQueries: true, queryRegion: 'world' } as DocumentStoreOptions<Document> })
   await documentStoreCreator.load();
-  let documentStoreObserver = await observer.orbitDB.open(documentStoreCreator.address.toString(), { ...{ clazz: Document, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: 'id', subscribeToQueries: false, queryRegion: 'world', replicate: false } as DocumentStoreOptions<Document> })
-
+  /*   let documentStoreObserver = await observer.orbitDB.open(documentStoreCreator.address.toString(), { ...{ clazz: Document, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: 'id', subscribeToQueries: false, queryRegion: 'world', replicate: false } as DocumentStoreOptions<Document> })
+   */
   expect(await peer.node.pubsub.ls()).toHaveLength(2); // replication and query topic
   expect(await observer.node.pubsub.ls()).toHaveLength(0);
 
   return {
     creator: peer,
     observer,
-    documentStoreCreator,
-    documentStoreObserver
+    documentStoreCreator/* ,
+    documentStoreObserver */
   }
 }
 
@@ -90,7 +91,7 @@ describe('query', () => {
       })
     }), (r: QueryResponseV0) => {
       response = r;
-    }, 1)
+    }, { waitForAmount: 1 })
     expect(response.results).toHaveLength(2);
     expect(((response.results[0]) as ResultWithSource).source).toMatchObject(doc);
     expect(((response.results[1]) as ResultWithSource).source).toMatchObject(doc2);
@@ -131,7 +132,7 @@ describe('query', () => {
       })
     }), (r: QueryResponseV0) => {
       response = r;
-    }, 1)
+    }, { waitForAmount: 1 })
     expect(response.results).toHaveLength(1);
     expect(((response.results[0]) as ResultWithSource).source).toMatchObject(doc);
 
@@ -182,7 +183,7 @@ describe('query', () => {
     }),
       (r: QueryResponseV0) => {
         response = r;
-      }, 1)
+      }, { waitForAmount: 1 })
     expect(response.results).toHaveLength(1);
     expect(((response.results[0]) as ResultWithSource).source).toMatchObject(doc2);
 
@@ -241,7 +242,7 @@ describe('query', () => {
         })
       }), (r: QueryResponseV0) => {
         response = r;
-      }, 1)
+      }, { waitForAmount: 1 })
       expect(response.results).toHaveLength(2);
       expect(((response.results[0] as ResultWithSource).source as Document).id).toEqual(doc2.id);
       expect(((response.results[1] as ResultWithSource).source as Document).id).toEqual(doc3.id);
@@ -300,7 +301,7 @@ describe('query', () => {
         })
       }), (r: QueryResponseV0) => {
         response = r;
-      }, 1)
+      }, { waitForAmount: 1 })
       expect(response.results).toHaveLength(2);
       expect(((response.results[0] as ResultWithSource).source as Document).id).toEqual(doc2.id);
       expect(((response.results[1] as ResultWithSource).source as Document).id).toEqual(doc.id);
@@ -353,7 +354,7 @@ describe('query', () => {
         })
       }), (r: QueryResponseV0) => {
         response = r;
-      }, 1)
+      }, { waitForAmount: 1 })
       expect(response.results).toHaveLength(1);
       expect(((response.results[0] as ResultWithSource).source as Document).number).toEqual(2n);
       await disconnectPeers([creator, observer]);
@@ -401,7 +402,7 @@ describe('query', () => {
         })
       }), (r: QueryResponseV0) => {
         response = r;
-      }, 1)
+      }, { waitForAmount: 1 })
       expect(response.results).toHaveLength(1);
       expect(((response.results[0] as ResultWithSource).source as Document).number).toEqual(3n);
       await disconnectPeers([creator, observer]);
@@ -448,7 +449,7 @@ describe('query', () => {
         })
       }), (r: QueryResponseV0) => {
         response = r;
-      }, 1)
+      }, { waitForAmount: 1 })
       response.results.sort((a, b) => bigIntSort(((a as ResultWithSource).source as Document).number, ((b as ResultWithSource).source as Document).number));
       expect(response.results).toHaveLength(2);
       expect(((response.results[0] as ResultWithSource).source as Document).number).toEqual(2n);
@@ -497,7 +498,7 @@ describe('query', () => {
         })
       }), (r: QueryResponseV0) => {
         response = r;
-      }, 1)
+      }, { waitForAmount: 1 })
       expect(response.results).toHaveLength(1);
       expect(((response.results[0] as ResultWithSource).source as Document).number).toEqual(1n);
       await disconnectPeers([creator, observer]);
@@ -523,7 +524,6 @@ describe('query', () => {
         number: 2n
       });
 
-
       let doc3 = new Document({
         id: '3',
         number: 3n
@@ -544,7 +544,7 @@ describe('query', () => {
         })
       }), (r: QueryResponseV0) => {
         response = r;
-      }, 1)
+      }, { waitForAmount: 1 })
       response.results.sort((a, b) => bigIntSort(((a as ResultWithSource).source as Document).number, ((b as ResultWithSource).source as Document).number));
       expect(response.results).toHaveLength(2);
       expect(((response.results[0] as ResultWithSource).source as Document).number).toEqual(1n);

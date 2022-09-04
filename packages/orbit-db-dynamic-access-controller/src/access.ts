@@ -5,6 +5,7 @@ import { BinaryPayload } from '@dao-xyz/bpayload';
 export enum AccessType {
     Admin = 0,
     Read = 1,
+    Write = 2
     /* Add = 1,
     Remove = 2,
     ModifySelf = 3, */

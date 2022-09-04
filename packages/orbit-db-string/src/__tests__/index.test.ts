@@ -1,24 +1,25 @@
-import { PayloadOperation, applyOperations, StringLogEntry } from "../string-index";
+import { Range } from "../range";
+import { PayloadOperation, applyOperations } from "../string-index";
 
 describe('operations', () => {
     it('add', () => {
         const operations: PayloadOperation[] = [
             {
-                index: {
+                index: new Range({
                     offset: 0
-                },
+                }),
                 value: 'hello'
             },
             {
-                index: {
+                index: new Range({
                     offset: 'hello'.length
-                },
+                }),
                 value: ' '
             },
             {
-                index: {
+                index: new Range({
                     offset: 'hello '.length,
-                },
+                }),
                 value: 'world'
             }
         ]
@@ -28,7 +29,7 @@ describe('operations', () => {
                 return {
                     hash: ix.toString(),
                     payload: v
-                } as StringLogEntry
+                } as any
             }
         }))
         expect(string).toEqual('hello world');
@@ -37,27 +38,27 @@ describe('operations', () => {
     it('replace', () => {
         const operations: PayloadOperation[] = [
             {
-                index: {
+                index: new Range({
                     offset: 0
-                },
+                }),
                 value: 'hello'
             },
             {
-                index: {
+                index: new Range({
                     offset: 'hello'.length
-                },
+                }),
                 value: 'w'
             },
             {
-                index: {
+                index: new Range({
                     offset: 'hello '.length
-                },
+                }),
                 value: 'world'
             },
             {
-                index: {
+                index: new Range({
                     offset: 'hello'.length
-                },
+                }),
                 value: ' '
             }
         ]
@@ -67,7 +68,7 @@ describe('operations', () => {
                 return {
                     hash: ix.toString(),
                     payload: v
-                } as StringLogEntry
+                } as any
             }
         }))
         expect(string).toEqual('hello world');
@@ -76,17 +77,17 @@ describe('operations', () => {
     it('delete', () => {
         const operations: PayloadOperation[] = [
             {
-                index: {
+                index: new Range({
                     offset: 0,
                     length: 0
-                },
+                }),
                 value: 'hello world'
             },
             {
-                index: {
+                index: new Range({
                     offset: 'hello'.length,
                     length: 'hello world'.length
-                },
+                }),
             }
         ]
 
@@ -95,7 +96,7 @@ describe('operations', () => {
                 return {
                     hash: ix.toString(),
                     payload: v
-                } as StringLogEntry
+                } as any
             }
         }))
         expect(string).toEqual('hello');

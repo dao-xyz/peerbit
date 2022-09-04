@@ -5,7 +5,7 @@ import { Entry, LamportClock as Clock } from '@dao-xyz/ipfs-log-entry';
 import { Log } from '../log'
 import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { assertPayload } from './utils/assert'
-import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { BoxKeyWithMeta, Keystore } from '@dao-xyz/orbit-db-keystore'
 import { X25519PublicKey } from 'sodium-plus'
 // Test utils
 const {
@@ -27,7 +27,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
 
-    let keystore: Keystore, signingKeystore: Keystore
+    let keystore: Keystore, signingKeystore: Keystore,
+      senderKey: BoxKeyWithMeta, recieverKey: BoxKeyWithMeta
 
     beforeAll(async () => {
       rmrf.sync(identityKeysPath)
@@ -38,11 +39,15 @@ Object.keys(testAPIs).forEach((IPFS) => {
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
 
+      senderKey = await keystore.createKey('sender', BoxKeyWithMeta, undefined, { overwrite: true });
+      recieverKey = await keystore.createKey('reciever', BoxKeyWithMeta, undefined, { overwrite: true });
+
       // The ids are choosen so that the tests plays out "nicely", specifically the logs clock id sort will reflect the testIdentity suffix
       testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
       testIdentity2 = await Identities.createIdentity({ id: new Uint8Array([1]), keystore, signingKeystore })
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
+
     })
 
     afterAll(async () => {
@@ -60,11 +65,24 @@ Object.keys(testAPIs).forEach((IPFS) => {
       beforeEach(async () => {
         const logOptions = {
           logId: 'X', encryption: {
-            decrypt: (data, _senderPublicKey) => Promise.resolve(data),
-            encrypt: (data, _recieverPublicKey) => Promise.resolve({
-              data,
-              senderPublicKey: new X25519PublicKey(Buffer.from(new Array(32).fill(9)))
-            })
+            getEncryptionKey: () => Promise.resolve(senderKey.secretKey),
+            getAnySecret: async (publicKeys: X25519PublicKey[]) => {
+              for (let i = 0; i < publicKeys.length; i++) {
+                if (Buffer.compare(publicKeys[i].getBuffer(), senderKey.secretKey.getBuffer()) === 0) {
+                  return {
+                    index: i,
+                    secretKey: senderKey.secretKey
+                  }
+                }
+                if (Buffer.compare(publicKeys[i].getBuffer(), recieverKey.secretKey.getBuffer()) === 0) {
+                  return {
+                    index: i,
+                    secretKey: recieverKey.secretKey
+                  }
+                }
+
+              }
+            }
           }
         };
         log1 = new Log(ipfs, testIdentity, logOptions)
@@ -72,11 +90,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       it('join encrypted identities only with knowledge of id and clock', async () => {
-        const nullKey = new X25519PublicKey(Buffer.from(new Array(32).fill(0)))
-        await log1.append('helloA1', { reciever: { id: undefined, clock: undefined, identity: nullKey, payload: nullKey, signature: nullKey }, pointerCount: 1 })
-        await log1.append('helloA2', { reciever: { id: undefined, clock: undefined, identity: nullKey, payload: nullKey, signature: nullKey }, pointerCount: 1 })
-        await log2.append('helloB1', { reciever: { id: undefined, clock: undefined, identity: nullKey, payload: nullKey, signature: nullKey }, pointerCount: 1 })
-        await log2.append('helloB2', { reciever: { id: undefined, clock: undefined, identity: nullKey, payload: nullKey, signature: nullKey }, pointerCount: 1 })
+        await log1.append('helloA1', { reciever: { id: undefined, clock: undefined, identity: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey }, pointerCount: 1 })
+        await log1.append('helloA2', { reciever: { id: undefined, clock: undefined, identity: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey }, pointerCount: 1 })
+        await log2.append('helloB1', { reciever: { id: undefined, clock: undefined, identity: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey }, pointerCount: 1 })
+        await log2.append('helloB2', { reciever: { id: undefined, clock: undefined, identity: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey }, pointerCount: 1 })
 
         // Remove decrypted caches of the log2 values
         log2.values.forEach((value) => {
@@ -86,10 +103,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
           value._payload.clear();
           value._signature.clear();
           value._clock.clear();
-          /*  value.init({
-             encoding: log2._encoding,
-             encryption: log2._encryption
-           }) */
 
         })
 

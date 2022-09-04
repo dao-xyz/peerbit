@@ -1,14 +1,14 @@
 
 import { StringResultSource, StringStore, STRING_STORE_TYPE } from '../string-store';
-import { QueryRequestV0, QueryResponseV0, ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates, StoreAddressMatchQuery } from '@dao-xyz/bquery';
-import { query } from '@dao-xyz/bquery';
+import { QueryRequestV0, QueryResponseV0, ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates, StoreAddressMatchQuery } from '@dao-xyz/query-protocol';
+import { query } from '@dao-xyz/query-protocol';
 import { disconnectPeers, getConnectedPeers, Peer } from '@dao-xyz/peer-test-utils';
+import { Range } from '../range';
 
 const storeTestSetup = async (): Promise<{
     creator: Peer,
     observer: Peer,
     storeCreator: StringStore
-    storeObserver: StringStore
 }> => {
 
 
@@ -18,16 +18,15 @@ const storeTestSetup = async (): Promise<{
     let storeCreator = await peer.orbitDB.open('store', { ...{ create: true, type: STRING_STORE_TYPE, queryRegion: 'world', subscribeToQueries: true } })
     await storeCreator.load();
     await storeCreator._initializationPromise;
-    let storeObserver = await observer.orbitDB.open(storeCreator.address.toString(), { ...{ create: true, type: STRING_STORE_TYPE, queryRegion: 'world', replicate: false } })
 
     expect(await peer.node.pubsub.ls()).toHaveLength(2); // replication and query topic
-    expect(await observer.node.pubsub.ls()).toHaveLength(0);
+    const observerSubscriptions = await observer.node.pubsub.ls();
+    expect(observerSubscriptions).toHaveLength(0);
 
     return {
         creator: peer,
         observer,
-        storeCreator,
-        storeObserver
+        storeCreator
     }
 }
 
@@ -43,8 +42,8 @@ describe('query', () => {
         } = await storeTestSetup();
 
         let blocks = storeCreator;
-        await blocks.add('hello', { offset: 0 });
-        await blocks.add('world', { offset: 'hello '.length });
+        await blocks.add('hello', new Range({ offset: 0n }));
+        await blocks.add('world', new Range({ offset: BigInt('hello '.length) }));
 
         let response: QueryResponseV0 = undefined;
 
@@ -58,7 +57,7 @@ describe('query', () => {
             })
         }), (r: QueryResponseV0) => {
             response = r;
-        }, 1)
+        }, { waitForAmount: 1 })
 
         expect(response.results).toHaveLength(1);
         expect(((response.results[0]) as ResultWithSource)).toMatchObject(new ResultWithSource({
@@ -79,8 +78,8 @@ describe('query', () => {
         } = await storeTestSetup();
 
         let blocks = storeCreator;
-        await blocks.add('hello', { offset: 0 });
-        await blocks.add('world', { offset: 'hello '.length });
+        await blocks.add('hello', new Range({ offset: 0n }));
+        await blocks.add('world', new Range({ offset: BigInt('hello '.length) }));
 
         let response: QueryResponseV0 = undefined;
 
@@ -90,7 +89,7 @@ describe('query', () => {
             })
         }), (r: QueryResponseV0) => {
             response = r;
-        }, 1)
+        }, { waitForAmount: 1 })
         expect(response.results).toHaveLength(1);
         expect(((response.results[0]) as ResultWithSource)).toMatchObject(new ResultWithSource({
             source: new StringResultSource({
@@ -110,8 +109,8 @@ describe('query', () => {
         } = await storeTestSetup();
 
         let blocks = storeCreator;
-        await blocks.add('hello', { offset: 0 });
-        await blocks.add('world', { offset: 'hello '.length });
+        await blocks.add('hello', new Range({ offset: 0n }));
+        await blocks.add('world', new Range({ offset: BigInt('hello '.length) }));
 
         let response: QueryResponseV0 = undefined;
 
@@ -129,7 +128,7 @@ describe('query', () => {
             })
         }), (r: QueryResponseV0) => {
             response = r;
-        }, 1)
+        }, { waitForAmount: 1 })
         expect(response.results).toHaveLength(1);
         let result = ((response.results[0]) as ResultWithSource);
         expect(result.source).toMatchObject(new StringResultSource({

@@ -3,8 +3,9 @@ const assert = require('assert')
 const mapSeries = require('p-map-series')
 const rmrf = require('rimraf')
 const path = require('path')
+import { IPFSAccessController } from '@dao-xyz/orbit-db-access-controllers'
 import { OrbitDB } from '../orbit-db'
-import { EventStore, EVENT_STORE_TYPE } from './utils/stores/event-store'
+import { EventStore, EVENT_STORE_TYPE, Operation } from './utils/stores/event-store'
 const Cache = require('@dao-xyz/orbit-db-cache')
 
 const localdown = require('localstorage-down')

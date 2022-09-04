@@ -1,5 +1,6 @@
+import { IPFSAccessController } from "@dao-xyz/orbit-db-access-controllers"
 import { OrbitDB } from "../orbit-db"
-import { EventStore, EVENT_STORE_TYPE } from "./utils/stores/event-store"
+import { EventStore, EVENT_STORE_TYPE, Operation } from "./utils/stores/event-store"
 import { KeyValueStore, KEY_VALUE_STORE_TYPE } from "./utils/stores/key-value-store"
 const assert = require('assert')
 const mapSeries = require('p-each-series')

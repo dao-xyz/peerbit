@@ -2,8 +2,11 @@ import { IStoreOptions, Index, Store } from '@dao-xyz/orbit-db-store'
 import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { deserialize, serialize } from '@dao-xyz/borsh';
 import { Message } from 'ipfs-core-types/types/src/pubsub'
-import { QueryRequestV0, QueryResponseV0, Result, query, MultipleQueriesType, StoreAddressMatchQuery } from '@dao-xyz/bquery';
+import { QueryRequestV0, QueryResponseV0, Result, query, MultipleQueriesType, StoreAddressMatchQuery, respond } from '@dao-xyz/query-protocol';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
+import { Ed25519PublicKey, X25519PublicKey } from 'sodium-plus';
+import { decryptVerifyInto } from '@dao-xyz/encryption-utils';
+import { AccessController } from '@dao-xyz/orbit-db-access-controllers';
 
 export const getQueryTopic = (region: string): string => {
     return region + '/query';
@@ -16,7 +19,7 @@ export class QueryStore<T, X, I extends Index<T, X>, O extends IQueryStoreOption
     queryRegion?: string;
     subscribeToQueries: boolean;
     _initializationPromise?: Promise<void>;
-
+    _onQueryMessageBinded: any = undefined;
     constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: O) {
         super(ipfs, id, dbname, options)
         this.queryRegion = options.queryRegion;
@@ -30,7 +33,7 @@ export class QueryStore<T, X, I extends Index<T, X>, O extends IQueryStoreOption
 
     public async close(): Promise<void> {
         await this._initializationPromise;
-        await this._ipfs.pubsub.unsubscribe(this.queryTopic, this._onQueryMessage);
+        await this._ipfs.pubsub.unsubscribe(this.queryTopic, this._onQueryMessageBinded);
         this._subscribed = false;
         await super.close();
     }
@@ -49,7 +52,8 @@ export class QueryStore<T, X, I extends Index<T, X>, O extends IQueryStoreOption
             return
         }
 
-        this._initializationPromise = this._ipfs.pubsub.subscribe(this.queryTopic, this._onQueryMessage)
+        this._onQueryMessageBinded = this._onQueryMessage.bind(this);
+        this._initializationPromise = this._ipfs.pubsub.subscribe(this.queryTopic, this._onQueryMessageBinded)
         await this._initializationPromise;
         this._subscribed = true;
     }
@@ -58,7 +62,9 @@ export class QueryStore<T, X, I extends Index<T, X>, O extends IQueryStoreOption
 
         try {
             // TODO try catch deserialize parse to properly handle migrations (prevent old clients to break)
-            let query = deserialize(Buffer.from(msg.data), QueryRequestV0);
+
+            // Todo add ACL for responses
+            let query = await decryptVerifyInto(msg.data, QueryRequestV0, this._oplog._encryption)
             if (query.type instanceof MultipleQueriesType) {
                 // Handle context queries
                 for (const q of query.type.queries) {
@@ -79,11 +85,14 @@ export class QueryStore<T, X, I extends Index<T, X>, O extends IQueryStoreOption
                     results
                 });
 
-                let bytes = serialize(response);
-                await this._ipfs.pubsub.publish(
-                    query.getResponseTopic(this.queryTopic),
-                    bytes
-                )
+                await respond(this._ipfs.pubsub, this.queryTopic, query, response, {
+                    encryption: this._oplog._encryption, signer: async (bytes) => {
+                        return {
+                            signature: await this._oplog._identity.provider.sign(bytes, this._oplog._identity),
+                            publicKey: this._oplog._identity.publicKey
+                        }
+                    }
+                })
             }
             else {
                 // Unsupported query type
@@ -95,8 +104,17 @@ export class QueryStore<T, X, I extends Index<T, X>, O extends IQueryStoreOption
         }
     }
 
-    public query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0,) => void, waitForAmount?: number, maxAggregationTime?: number): Promise<void> {
-        return query(this._ipfs.pubsub, this.queryTopic, queryRequest, responseHandler, waitForAmount, maxAggregationTime);
+    public query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, options: {
+        signer?: (bytes: Uint8Array) => Promise<{
+            signature: Uint8Array;
+            publicKey: Ed25519PublicKey;
+        }>
+        waitForAmount?: number,
+        maxAggregationTime?: number,
+        recievers?: X25519PublicKey[]
+
+    }): Promise<void> {
+        return query(this._ipfs.pubsub, this.queryTopic, queryRequest, responseHandler, options);
     }
 
     public get queryTopic(): string {

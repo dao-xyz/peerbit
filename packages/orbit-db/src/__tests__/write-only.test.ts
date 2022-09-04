@@ -3,6 +3,7 @@ const assert = require('assert')
 const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
 import { Entry, LamportClock } from '@dao-xyz/ipfs-log-entry'
+import { IPFSAccessController } from '@dao-xyz/orbit-db-access-controllers'
 import { BoxKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { delay, waitFor } from '@dao-xyz/time'
 import { OrbitDB } from '../orbit-db'

@@ -1,6 +1,7 @@
+import { IPFSAccessController } from "@dao-xyz/orbit-db-access-controllers"
 import { Store } from "@dao-xyz/orbit-db-store"
 import { OrbitDB } from "../orbit-db"
-import { EventStore, EVENT_STORE_TYPE } from "./utils/stores/event-store"
+import { EventStore, EVENT_STORE_TYPE, Operation } from "./utils/stores/event-store"
 
 const assert = require('assert')
 const mapSeries = require('p-each-series')
@@ -130,7 +131,7 @@ Object.keys(testAPIs).forEach(API => {
                       orbitdb1.identity.id,
                       orbitdb2.identity.id
                     ]
-                  }
+                  } as any
                 }
 
                 // Get the previous address to make sure nothing mutates it

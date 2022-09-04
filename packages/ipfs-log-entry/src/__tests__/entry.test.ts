@@ -6,6 +6,7 @@ import { Entry, Payload } from '../entry';
 import { BoxKeyWithMeta, Keystore } from '@dao-xyz/orbit-db-keystore'
 import { LamportClock } from '../lamport-clock';
 import { deserialize, serialize } from '@dao-xyz/borsh';
+import { X25519PublicKey } from 'sodium-plus';
 
 // Test utils
 const {
@@ -59,7 +60,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(entry.hash, expectedHash)
         assert.strictEqual(entry.id, 'A')
         assert.deepStrictEqual(entry.clock.id, new Uint8Array(testIdentity.publicKey.getBuffer()))
-        assert.strictEqual(entry.clock.time, 0)
+        assert.strictEqual(entry.clock.time, 0n)
         assert.strictEqual(entry.payload.value, 'hello')
         assert.strictEqual(entry.next.length, 0)
         assert.strictEqual(entry.refs.length, 0)
@@ -73,7 +74,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(entry.payload.value, payload)
         assert.strictEqual(entry.id, 'A')
         assert.deepStrictEqual(entry.clock.id, new Uint8Array(testIdentity.publicKey.getBuffer()))
-        assert.strictEqual(entry.clock.time, 0)
+        assert.strictEqual(entry.clock.time, 0n)
         assert.strictEqual(entry.next.length, 0)
         assert.strictEqual(entry.refs.length, 0)
       })
@@ -93,14 +94,22 @@ Object.keys(testAPIs).forEach((IPFS) => {
               identity: receiverKey.publicKey,
             },
             options: {
-              decrypt: async (data, sender, reciever) => {
-                assert.deepStrictEqual(reciever.getBuffer(), receiverKey.publicKey.getBuffer())
-                return keystore.decrypt(data, receiverKey, sender)
-              },
-              encrypt: async (data, reciever) => {
-                return {
-                  data: await keystore.encrypt(data, senderKey, reciever),
-                  senderPublicKey: senderKey.publicKey
+              getEncryptionKey: () => Promise.resolve(senderKey.secretKey),
+              getAnySecret: async (publicKeys: X25519PublicKey[]) => {
+                for (let i = 0; i < publicKeys.length; i++) {
+                  if (Buffer.compare(publicKeys[i].getBuffer(), senderKey.secretKey.getBuffer()) === 0) {
+                    return {
+                      index: i,
+                      secretKey: senderKey.secretKey
+                    }
+                  }
+                  if (Buffer.compare(publicKeys[i].getBuffer(), receiverKey.secretKey.getBuffer()) === 0) {
+                    return {
+                      index: i,
+                      secretKey: receiverKey.secretKey
+                    }
+                  }
+
                 }
               }
             }
@@ -112,7 +121,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         // We can not have a hash check because nonce of encryption will always change
         assert.strictEqual(entry.id, 'A')
         assert.deepStrictEqual(Buffer.from(entry.clock.id), testIdentity.publicKey.getBuffer())
-        assert.strictEqual(entry.clock.time, 0)
+        assert.strictEqual(entry.clock.time, 0n)
         assert.strictEqual(entry.next.length, 0)
         assert.strictEqual(entry.refs.length, 0)
       })
@@ -135,7 +144,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(entry2.next.length, 1)
         assert.strictEqual(entry2.hash, expectedHash)
         assert.deepStrictEqual(entry2.clock.id, new Uint8Array(testIdentity.publicKey.getBuffer()))
-        assert.strictEqual(entry2.clock.time, 1)
+        assert.strictEqual(entry2.clock.time, 1n)
       })
 
       it('`next` parameter can be an array of strings', async () => {

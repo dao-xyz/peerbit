@@ -1,7 +1,17 @@
-export interface Range {
-    offset: number, length: number
-}
+import { field, option, variant } from "@dao-xyz/borsh"
 
-export interface RangeOptional {
-    offset: number, length?: number
+@variant(0)
+export class Range {
+
+    @field({ type: 'u64' })
+    offset: bigint
+
+    @field({ type: option('u64') })
+    length?: bigint
+    constructor(props?: { offset: bigint | number, length?: bigint | number }) {
+        if (props) {
+            this.offset = typeof props.offset === 'number' ? BigInt(props.offset) : props.offset
+            this.length = typeof props.length === 'number' ? BigInt(props.length) : props.length
+        }
+    }
 }

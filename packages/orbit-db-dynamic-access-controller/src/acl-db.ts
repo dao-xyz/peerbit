@@ -59,13 +59,30 @@ export class ACLInterface extends SingleDBInterface<Access, BinaryDocumentStore<
 
     // custom can append
 
-    async allowed(entry: MaybeEncrypted<Payload<any>>, identity: MaybeEncrypted<IdentitySerializable>): Promise<boolean> {
+    async canRead(entry: MaybeEncrypted<Payload<any>>, identity: MaybeEncrypted<IdentitySerializable>): Promise<boolean> {
         // TODO, improve, caching etc
 
         // Else check whether its trusted by this access controller
         for (const value of Object.values(this.db.index._index)) {
             const access = value.value;
-            if (access.accessTypes.find((x) => x === AccessType.Admin) !== undefined) {
+            if (access.accessTypes.find((x) => x === AccessType.Admin || x === AccessType.Read) !== undefined) {
+                // check condition
+                if (access.accessCondition.allowed(entry, identity)) {
+                    return true;
+                }
+                continue;
+            }
+        }
+        return false;
+    }
+
+    async canWrite(entry: MaybeEncrypted<Payload<any>>, identity: MaybeEncrypted<IdentitySerializable>): Promise<boolean> {
+        // TODO, improve, caching etc
+
+        // Else check whether its trusted by this access controller
+        for (const value of Object.values(this.db.index._index)) {
+            const access = value.value;
+            if (access.accessTypes.find((x) => x === AccessType.Admin || x === AccessType.Write) !== undefined) {
                 // check condition
                 if (access.accessCondition.allowed(entry, identity)) {
                     return true;

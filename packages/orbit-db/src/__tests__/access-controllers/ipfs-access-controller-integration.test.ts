@@ -3,7 +3,7 @@ const rmrf = require('rimraf')
 import { Identities as IdentityProvider, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { OrbitDB } from '../../orbit-db'
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
-import { AccessControllers } from '@dao-xyz/orbit-db-access-controllers'
+import { AccessControllers, IPFSAccessController } from '@dao-xyz/orbit-db-access-controllers'
 import io from '@dao-xyz/orbit-db-io'
 import { FeedStore, FEED_STORE_TYPE } from '../utils/stores'
 // Include test utilities
@@ -75,7 +75,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
         accessController: {
           type: 'ipfs',
           write: [id1.id]
-        }
+        } as any
       })
 
       db2 = await orbitdb2.open(db.address, {
@@ -89,7 +89,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
     })
 
     it('has the correct access rights after creating the database', async () => {
-      assert.deepStrictEqual(db.access.write, [Buffer.from(id1.id).toString('base64')])
+      assert.deepStrictEqual((db.access as any as IPFSAccessController<string>).write, [Buffer.from(id1.id).toString('base64')])
     })
 
     it('makes database use the correct access controller', async () => {

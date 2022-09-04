@@ -1,34 +1,50 @@
-import { AccessError } from '@dao-xyz/encryption-utils';
+import { AccessError, PublicKeyEncryption } from '@dao-xyz/encryption-utils';
 import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { BoxKeyWithMeta, Keystore } from '@dao-xyz/orbit-db-keystore';
 import { StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store';
 import { X25519PublicKey } from 'sodium-plus';
 
-export const replicationTopicAsKeyGroupPublicKeyEncryption = (identity: Identity, keystore: Keystore, requestKey: (key: X25519PublicKey, replicationTopic: string) => Promise<BoxKeyWithMeta[] | undefined>): StorePublicKeyEncryption => {
+export const replicationTopicEncryptionWithRequestKey = (identity: Identity, keystore: Keystore, requestKey?: (key: X25519PublicKey, replicationTopic) => Promise<BoxKeyWithMeta[] | undefined>): StorePublicKeyEncryption => {
     return (replicationTopic: string) => {
-        return {
-            encrypt: async (bytes: Uint8Array, reciever: X25519PublicKey) => {
-                const key = await keystore.getKeyByPath(identity.id, BoxKeyWithMeta) || await keystore.createKey(identity.id, BoxKeyWithMeta)
-                return {
-                    data: await keystore.encrypt(bytes, key, reciever),
-                    senderPublicKey: key.publicKey
-                }
-            },
-            decrypt: async (data: Uint8Array, senderPublicKey: X25519PublicKey, recieverPublicKey: X25519PublicKey) => {
-                let key = await keystore.getKeyById<BoxKeyWithMeta>(recieverPublicKey);
-                if (!key) {
-                    const newKeys = await requestKey(recieverPublicKey, replicationTopic);
-                    if (!newKeys || newKeys.length === 0) {
-                        throw new AccessError("Missing key");
-                    }
-                    key = newKeys[0];
+        return encryptionWithRequestKey(identity, keystore, (key) => requestKey(key, replicationTopic))
+    }
+}
 
+
+export const encryptionWithRequestKey = (identity: Identity, keystore: Keystore, requestKey?: (key: X25519PublicKey) => Promise<BoxKeyWithMeta[] | undefined>): PublicKeyEncryption => {
+
+    return {
+        getAnySecret: async (publicKeys) => {
+            for (let i = 0; i < publicKeys.length; i++) {
+                const key = await keystore.getKeyById(publicKeys[i]);
+                if (key instanceof BoxKeyWithMeta && key.secretKey) {
+                    return {
+                        index: i,
+                        secretKey: key.secretKey
+                    }
                 }
-                if (key instanceof BoxKeyWithMeta && !key.secretKey) {
-                    throw new AccessError("Got decryption key, but not the secret")
-                }
-                return keystore.decrypt(data, key, senderPublicKey)
             }
+            if (requestKey) {
+                for (let i = 0; i < publicKeys.length; i++) {
+                    const newKeys = await requestKey(publicKeys[i]);
+                    if (!newKeys || newKeys.length === 0 || !newKeys[0].secretKey) {
+                        continue;
+                    }
+                    return {
+                        index: i,
+                        secretKey: newKeys[0].secretKey
+                    }
+                }
+            }
+            throw new AccessError("Failed to access key")
+        },
+        getEncryptionKey: async () => {
+            let key = await keystore.getKeyByPath(identity.id, BoxKeyWithMeta); // TODO add key rotation, potentially generate new key every call
+            if (!key) {
+                key = await keystore.createKey(identity.id, BoxKeyWithMeta);
+            }
+            // TODO can secretKey be missing?
+            return key.secretKey;
         }
     }
 }

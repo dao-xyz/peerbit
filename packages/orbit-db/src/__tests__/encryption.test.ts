@@ -9,6 +9,7 @@ import { EventStore, EVENT_STORE_TYPE, Operation } from './utils/stores/event-st
 import { IStoreOptions } from '@dao-xyz/orbit-db-store';
 import { X25519PublicKey } from 'sodium-plus';
 import { AccessError } from '@dao-xyz/encryption-utils'
+import { IPFSAccessController } from '@dao-xyz/orbit-db-access-controllers'
 // Include test utilities
 const {
   config,
@@ -123,12 +124,12 @@ Object.keys(testAPIs).forEach(API => {
         // Set write access for both clients
         accessController: {
           write: ['*']
-        }
+        } as IPFSAccessController<any>
       }
 
       options = Object.assign({}, options, { directory: dbPath1 })
       db1 = await orbitdb1.create('replication-tests', EVENT_STORE_TYPE, {
-        ...options, encryption: orbitdb1.replicationTopicEncryption()
+        ...options
       })
     })
 
@@ -161,7 +162,7 @@ Object.keys(testAPIs).forEach(API => {
       // Set 'sync' flag on. It'll prevent creating a new local database and rather
       // fetch the database from the network
       options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true })
-      db2 = await orbitdb2.open(db1.address.toString(), { ...options, encryption: orbitdb2.replicationTopicEncryption() })
+      db2 = await orbitdb2.open(db1.address.toString(), { ...options })
       await testHello(db1, db2, recieverKey.publicKey, timer)
     })
 
@@ -178,7 +179,7 @@ Object.keys(testAPIs).forEach(API => {
       const unknownKey = await orbitdb1.keystore.createKey('unknown', BoxKeyWithMeta, db1.replicationTopic);
 
       // We expect during opening that keys are exchange
-      db2 = await orbitdb2.open(db1.address.toString(), { ...options, encryption: orbitdb2.replicationTopicEncryption() })
+      db2 = await orbitdb2.open(db1.address.toString(), { ...options })
 
       // ... so that append with reciever key, it the reciever will be able to decrypt
       await testHello(db1, db2, unknownKey.publicKey, timer)
@@ -195,7 +196,7 @@ Object.keys(testAPIs).forEach(API => {
       const db3Key = await orbitdb3.keystore.createKey('unknown', BoxKeyWithMeta, db1.replicationTopic);
 
       // We expect during opening that keys are exchange
-      db3 = await orbitdb3.open(db1.address.toString(), { ...options, encryption: orbitdb3.replicationTopicEncryption() })
+      db3 = await orbitdb3.open(db1.address.toString(), { ...options })
 
       const reciever = await orbitdb1.getEncryptionKey(db1.replicationTopic);
 
@@ -216,7 +217,7 @@ Object.keys(testAPIs).forEach(API => {
 
       // Open store from orbitdb3 so that both client 1 and 2 is listening to the replication topic
       options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true })
-      await orbitdb2.open(db1.address.toString(), { ...options, encryption: orbitdb2.replicationTopicEncryption() })
+      await orbitdb2.open(db1.address.toString(), { ...options })
 
       const reciever = await orbitdb2.getEncryptionKey(db1.replicationTopic);
 
@@ -232,7 +233,7 @@ Object.keys(testAPIs).forEach(API => {
       await waitForPeers(ipfs3, [orbitdb1.id], db1.address.toString())
 
       options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true })
-      db2 = await orbitdb2.open(db1.address.toString(), { ...options, encryption: orbitdb2.replicationTopicEncryption() })
+      db2 = await orbitdb2.open(db1.address.toString(), { ...options })
 
       const client3Key = await orbitdb3.keystore.createKey('unknown', BoxKeyWithMeta);
 
@@ -289,7 +290,7 @@ Object.keys(testAPIs).forEach(API => {
       // Now close db2 and open db3 and make sure message are available
       await db2.drop();
       options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath3, sync: true })
-      db3 = await orbitdb3.open(db1.address.toString(), { ...options, encryption: orbitdb3.replicationTopicEncryption() })
+      db3 = await orbitdb3.open(db1.address.toString(), { ...options })
 
       let finishedEnd = false;
       await new Promise((resolve, reject) => {

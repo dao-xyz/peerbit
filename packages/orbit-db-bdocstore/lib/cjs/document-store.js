@@ -17,10 +17,11 @@ const document_index_1 = require("./document-index");
 const p_map_1 = __importDefault(require("p-map"));
 const borsh_1 = require("@dao-xyz/borsh");
 const utils_1 = require("./utils");
-const bquery_1 = require("@dao-xyz/bquery");
+const query_protocol_1 = require("@dao-xyz/query-protocol");
 const orbit_db_query_store_1 = require("@dao-xyz/orbit-db-query-store");
 const orbit_db_bstores_1 = require("@dao-xyz/orbit-db-bstores");
 const orbit_db_1 = require("@dao-xyz/orbit-db");
+const io_utils_1 = require("@dao-xyz/io-utils");
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
 exports.BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
 let BinaryDocumentStoreOptions = class BinaryDocumentStoreOptions extends orbit_db_bstores_1.BStoreOptions {
@@ -105,18 +106,49 @@ class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore {
     async close() {
         await super.close();
     }
-    queryDocuments(mapper) {
+    queryDocuments(filter) {
         // Whether we return the full operation data or just the db value
         return Object.keys(this.index._index)
             .map((e) => this.index.get(e))
-            .filter((doc) => mapper(doc));
+            .filter((doc) => filter(doc));
     }
     queryHandler(query) {
         const documentQuery = query.type;
-        let filters = documentQuery.queries.filter(q => q instanceof bquery_1.FieldQuery);
+        let filters = documentQuery.queries.filter(q => q instanceof query_protocol_1.FieldQuery);
         let results = this.queryDocuments(doc => filters?.length > 0 ? filters.map(f => {
-            if (f instanceof bquery_1.FieldQuery) {
-                return f.apply(doc.value);
+            if (f instanceof query_protocol_1.FieldQuery) {
+                const fv = doc.value[f.key];
+                if (f instanceof query_protocol_1.FieldStringMatchQuery) {
+                    if (typeof fv !== 'string')
+                        return false;
+                    return fv.toLowerCase().indexOf(f.value.toLowerCase()) !== -1;
+                }
+                if (f instanceof query_protocol_1.FieldByteMatchQuery) {
+                    if (!Array.isArray(fv))
+                        return false;
+                    return (0, io_utils_1.arraysEqual)(fv, f.value);
+                }
+                if (f instanceof query_protocol_1.FieldBigIntCompareQuery) {
+                    let value = fv;
+                    if (typeof value !== 'bigint' && typeof value !== 'number') {
+                        return false;
+                    }
+                    switch (f.compare) {
+                        case query_protocol_1.Compare.Equal:
+                            return value == f.value; // == because with want bigint == number at some cases
+                        case query_protocol_1.Compare.Greater:
+                            return value > f.value;
+                        case query_protocol_1.Compare.GreaterOrEqual:
+                            return value >= f.value;
+                        case query_protocol_1.Compare.Less:
+                            return value < f.value;
+                        case query_protocol_1.Compare.LessOrEqual:
+                            return value <= f.value;
+                        default:
+                            console.warn("Unexpected compare");
+                            return false;
+                    }
+                }
             }
             else {
                 throw new Error("Unsupported query type");
@@ -131,7 +163,7 @@ class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore {
                 return v;
             };
             let direction = 1;
-            if (documentQuery.sort.direction == bquery_1.SortDirection.Descending) {
+            if (documentQuery.sort.direction == query_protocol_1.SortDirection.Descending) {
                 direction = -1;
             }
             results.sort((a, b) => {
@@ -153,7 +185,7 @@ class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore {
         if (documentQuery.size) {
             results = results.slice(0, Number(documentQuery.size));
         }
-        return Promise.resolve(results.map(r => new bquery_1.ResultWithSource({
+        return Promise.resolve(results.map(r => new query_protocol_1.ResultWithSource({
             source: r
         })));
     }

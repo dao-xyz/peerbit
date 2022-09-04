@@ -6,6 +6,7 @@ import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
 import { waitForReplicationEvents } from "./utils";
 import { BinaryPayload } from "@dao-xyz/bpayload";
 import { OrbitDB } from "@dao-xyz/orbit-db";
+import { AccessController } from "@dao-xyz/orbit-db-access-controllers";
 
 // Extends results source in order to be queried
 //@variant([0, 1])
