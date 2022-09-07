@@ -3,6 +3,7 @@ const rmrf = require('rimraf')
 import { Identity } from "@dao-xyz/orbit-db-identity-provider"
 import { Keystore } from "@dao-xyz/orbit-db-keystore"
 import { OrbitDB } from "../orbit-db"
+import { EventStore } from "./utils/stores"
 
 // Include test utilities
 const {
@@ -19,8 +20,7 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Offline mode (${API})`, function () {
     jest.setTimeout(config.timeout)
 
-    let ipfsd1, ipfsd2, ipfs1, ipfs2, orbitdb, db, keystore: Keystore
-    let localDataPath
+    let ipfsd1, ipfsd2, ipfs1, ipfs2, orbitdb
 
     beforeAll(async () => {
       rmrf.sync(dbPath1)

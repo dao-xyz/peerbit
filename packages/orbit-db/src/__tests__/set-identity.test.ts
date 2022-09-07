@@ -5,9 +5,10 @@ const fs = require('fs')
 const assert = require('assert')
 const rmrf = require('rimraf')
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
-import { EVENT_STORE_TYPE } from "./utils/stores"
-const leveldown = require('leveldown')
-const storage = require('orbit-db-storage-adapter')(leveldown)
+import { EventStore } from "./utils/stores"
+import { SimpleAccessController } from "./utils/access"
+import { Level } from "level"
+
 
 // Include test utilities
 const {
@@ -19,6 +20,13 @@ const {
 
 const keysPath = './orbitdb/identity/identitykeys'
 const dbPath = './orbitdb/tests/change-identity'
+
+export const createStore = (path = './keystore'): Level => {
+  if (fs && fs.mkdirSync) {
+    fs.mkdirSync(path, { recursive: true })
+  }
+  return new Level(path, { valueEncoding: 'view' })
+}
 
 Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Set identities (${API})`, function () {
@@ -33,7 +41,7 @@ Object.keys(testAPIs).forEach(API => {
       ipfs = ipfsd.api
 
       if (fs && fs.mkdirSync) fs.mkdirSync(keysPath, { recursive: true })
-      const identityStore = await storage.createStore(keysPath)
+      const identityStore = await createStore(keysPath)
 
       keystore = new Keystore(identityStore)
       identity1 = await Identities.createIdentity({ id: new Uint8Array([0]), keystore })
@@ -51,52 +59,18 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     beforeEach(async () => {
-      options = {}
-      options.accessController = {
-        write: [
-          orbitdb.identity.id,
-          identity1.id
-        ]
-      }
-      options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, overwrite: true })
+      options = Object.assign({}, options, { create: true, overwrite: true })
     })
 
     it('sets identity', async () => {
-      const db = await orbitdb.open('abc', options)
+      const db = await orbitdb.open(new EventStore<string>({
+        name: 'abc',
+        accessController: new SimpleAccessController()
+      }), options)
       assert.equal(db.identity, orbitdb.identity)
       db.setIdentity(identity1)
       assert.equal(db.identity, identity1)
       await db.close()
-    })
-
-    it('writes with new identity with access', async () => {
-      const db = await orbitdb.open('abc', options)
-      assert.equal(db.identity, orbitdb.identity)
-      db.setIdentity(identity1)
-      assert.equal(db.identity, identity1)
-      let err
-      try {
-        await db.add({ hello: '1' })
-      } catch (e) {
-        err = e.message
-      }
-      assert.equal(err, null)
-      await db.drop()
-    })
-
-    it('cannot write with new identity without access', async () => {
-      const db = await orbitdb.open('abc', options)
-      assert.equal(db.identity, orbitdb.identity)
-      db.setIdentity(identity2)
-      assert.equal(db.identity, identity2)
-      let err
-      try {
-        await db.add({ hello: '1' })
-      } catch (e) {
-        err = e.message
-      }
-      assert.equal(err, `Could not append Entry<T>, key "${identity2.id}" is not allowed to write to the log`)
-      await db.drop()
     })
   })
 })

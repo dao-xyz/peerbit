@@ -12,11 +12,12 @@ import {
   stopIpfs
 } from 'orbit-db-test-utils'
 import { createStore } from './storage'
+import { SimpleAccessController } from './utils'
 
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`Constructor ${IPFS}`, function () {
-    let ipfs, testIdentity: Identity, identityStore, store, storeWithCache, cacheStore
+    let ipfs, testIdentity: Identity, identityStore, store: Store<any>, storeWithCache: Store<any>, cacheStore
 
     jest.setTimeout(config.timeout);
 
@@ -34,10 +35,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
       testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore })
       ipfs = await startIpfs(IPFS, ipfsConfig.daemon1)
 
-      const address = 'test-address'
-      store = new Store(ipfs, testIdentity, address, DefaultOptions)
+      store = new Store({ name: 'name', accessController: new SimpleAccessController() })
+      store.init(ipfs, testIdentity, DefaultOptions);
       const options = Object.assign({}, DefaultOptions, { cache })
-      storeWithCache = new Store(ipfs, testIdentity, address, options)
+      storeWithCache = new Store({ name: 'name', accessController: new SimpleAccessController() })
+
+      await storeWithCache.init(ipfs, testIdentity, options);
+
     })
 
     afterAll(async () => {
@@ -50,7 +54,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('creates a new Store instance', async () => {
       assert.strictEqual(typeof store.options, 'object')
-      assert.strictEqual(typeof store._type, 'string')
       assert.strictEqual(typeof store.id, 'string')
       assert.strictEqual(typeof store.address, 'string')
       assert.strictEqual(typeof store.dbname, 'string')
@@ -59,10 +62,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.strictEqual(typeof store._cache, 'undefined')
       assert.strictEqual(typeof store.access, 'object')
       assert.strictEqual(typeof store._oplog, 'object')
-      assert.strictEqual(typeof store._index, 'object')
       assert.strictEqual(typeof store._replicationStatus, 'object')
       assert.strictEqual(typeof store._stats, 'object')
-      assert.strictEqual(typeof store._replication, 'undefined')
       assert.strictEqual(typeof store._loader, 'object')
     })
 

@@ -6,6 +6,7 @@ import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { Store, DefaultOptions } from '../store'
 import { Entry } from '@dao-xyz/ipfs-log-entry';
 import { createStore } from './storage';
+import { SimpleAccessController, SimpleIndex } from './utils';
 
 // Test utils
 const {
@@ -17,8 +18,8 @@ const {
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`Snapshots ${IPFS}`, function () {
-    let ipfsd, ipfs, testIdentity: Identity, identityStore, store: Store<any, any, any, any>, cacheStore
-
+    let ipfsd, ipfs, testIdentity: Identity, identityStore, store: Store<any>, cacheStore
+    let index: SimpleIndex<string>
     jest.setTimeout(config.timeout)
 
     const ipfsConfig = Object.assign({}, config.defaultIpfsConfig, {
@@ -36,9 +37,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
       ipfsd = await startIpfs(IPFS, ipfsConfig.daemon1)
       ipfs = ipfsd.api
 
-      const address = 'test-address'
-      const options = Object.assign({}, DefaultOptions, { cache })
-      store = new Store(ipfs, testIdentity, address, options)
+      index = new SimpleIndex();
+      const options = Object.assign({}, DefaultOptions, { cache, onUpdate: index.updateIndex.bind(index) })
+      store = new Store({ name: 'name', accessController: new SimpleAccessController() })
+      await store.init(ipfs, testIdentity, options);
+
     })
 
     afterAll(async () => {
@@ -74,11 +77,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await store._addOperation({ step: i })
       }
       await store.saveSnapshot()
-      const storeFromSnapshot = await store.loadFromSnapshot()
-      assert.strictEqual(storeFromSnapshot.index._index.length, 10)
+      index._index = [];
+      await store.loadFromSnapshot()
+      assert.strictEqual(index._index.length, 10)
 
       for (let i = 0; i < writes; i++) {
-        assert.strictEqual((storeFromSnapshot.index._index[i] as Entry<any>).payload.value.step, i)
+        assert.strictEqual((index._index[i] as Entry<any>).payload.value.step, i)
       }
     })
 

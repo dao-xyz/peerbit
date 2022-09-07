@@ -57,14 +57,14 @@ export class RequestHeadsMessage extends Message {
 
 
 
-const getHeadsForDatabase = async (store: Store<any, any, any, any>) => {
+const getHeadsForDatabase = async (store: Store<any>) => {
   if (!(store && store._cache)) return []
   const localHeads = (await store._cache.getBinary(store.localHeadsPath, HeadsCache))?.heads || []
   const remoteHeads = (await store._cache.getBinary(store.remoteHeadsPath, HeadsCache))?.heads || []
   return [...localHeads, ...remoteHeads]
 }
 
-export const exchangeHeads = async (channel: any, topic: string, getStore: (address: string) => { [key: string]: Store<any, any, any, any> }, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: Ed25519PublicKey }>) => {
+export const exchangeHeads = async (channel: any, topic: string, getStore: (address: string) => { [key: string]: Store<any> }, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: Ed25519PublicKey }>) => {
 
   // Send the heads if we have any
   const stores = getStore(topic);

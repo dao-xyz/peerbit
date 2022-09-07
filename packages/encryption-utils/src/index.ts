@@ -4,6 +4,7 @@ import { U8IntArraySerializer } from '@dao-xyz/io-utils';
 import { X25519PublicKey, Ed25519PublicKey, SodiumPlus, CryptographyKey } from 'sodium-plus';
 import { arraysEqual } from '@dao-xyz/io-utils'
 import { X25519SecretKey } from 'sodium-plus';
+import { AccessError } from './errors';
 const NONCE_LENGTH = 24;
 const _crypto = SodiumPlus.auto();
 export interface PublicKeyEncryption {
@@ -233,7 +234,7 @@ export class Envelope {
                 return false;
             }
 
-            if (this._ks.length != other._ks.length) {
+            if (this._ks.length !== other._ks.length) {
                 return false;
             }
             for (let i = 0; i < this._ks.length; i++) {
@@ -242,6 +243,7 @@ export class Envelope {
                 }
 
             }
+            return true;
         }
         else {
             return false;
@@ -315,6 +317,9 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
             }
             this._decrypted = der as DecryptedThing<T>
         }
+        else {
+            throw new AccessError("Failed to resolve decryption key");
+        }
         return this._decrypted;
     }
 
@@ -331,6 +336,7 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
             if (!this._envelope.equals(other._envelope)) {
                 return false;
             }
+            return true;
         }
         else {
             return false;

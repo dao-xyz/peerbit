@@ -1,34 +1,47 @@
-import { IStoreOptions, Index, Store } from '@dao-xyz/orbit-db-store'
+import { IStoreOptions, Store, Address } from '@dao-xyz/orbit-db-store'
 import { Identity } from '@dao-xyz/orbit-db-identity-provider';
-import { deserialize, serialize } from '@dao-xyz/borsh';
+import { field, option } from '@dao-xyz/borsh';
 import { Message } from 'ipfs-core-types/types/src/pubsub'
 import { QueryRequestV0, QueryResponseV0, Result, query, MultipleQueriesType, StoreAddressMatchQuery, respond } from '@dao-xyz/query-protocol';
 import { IPFS as IPFSInstance } from "ipfs-core-types";
 import { Ed25519PublicKey, X25519PublicKey } from 'sodium-plus';
 import { decryptVerifyInto } from '@dao-xyz/encryption-utils';
-import { AccessController } from '@dao-xyz/orbit-db-access-controllers';
+import { AccessController } from '@dao-xyz/orbit-db-store';
 
 export const getQueryTopic = (region: string): string => {
     return region + '/query';
 }
-export type IQueryStoreOptions<T, X, I extends Index<T, X>> = IStoreOptions<T, X, I> & { queryRegion?: string, subscribeToQueries: boolean };
+/* export type IQueryStoreOptions<T> = IStoreOptions<T> & { queryRegion?: string, subscribeToQueries: boolean };
+ */
+export type IQueryStoreOptions<T> = IStoreOptions<T> & { subscribeToQueries?: boolean };
+export class QueryStore<T> extends Store<T> {
 
-export class QueryStore<T, X, I extends Index<T, X>, O extends IQueryStoreOptions<T, X, I>> extends Store<T, X, I, O> {
-
-    _subscribed: boolean = false
+    @field({ type: option('string') })
     queryRegion?: string;
-    subscribeToQueries: boolean;
+
+    subscribeToQueries: boolean = true;
+    _subscribed: boolean = false;
     _initializationPromise?: Promise<void>;
     _onQueryMessageBinded: any = undefined;
-    constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: O) {
-        super(ipfs, id, dbname, options)
-        this.queryRegion = options.queryRegion;
-        this.subscribeToQueries = options.subscribeToQueries;
+
+    constructor(properties: { queryRegion?: string, accessController: AccessController<T> }) {
+        super(properties)
+        if (properties) {
+            this.queryRegion = properties.queryRegion;
+            // is this props ser or not??? 
+        }
+    }
+
+    public async init(ipfs: IPFSInstance<{}>, identity: Identity, options: IQueryStoreOptions<T>) {
+        await super.init(ipfs, identity, options)
+        if (options.subscribeToQueries !== undefined) {
+            this.subscribeToQueries = options.subscribeToQueries;
+        }
+
         if (this.subscribeToQueries) {
             this._subscribeToQueries();
         }
     }
-
 
 
     public async close(): Promise<void> {

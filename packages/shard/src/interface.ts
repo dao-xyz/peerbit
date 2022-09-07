@@ -2,15 +2,14 @@
 
 import { variant } from "@dao-xyz/borsh";
 import { IStoreOptions } from '@dao-xyz/orbit-db-store';
-import { BinaryDocumentStore, BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
+import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
 import { Shard } from "./shard";
-import { SingleDBInterface, DBInterface } from '@dao-xyz/orbit-db-store-interface';
 import { OrbitDB } from "@dao-xyz/orbit-db";
 import { AnyPeer } from "./peer";
 
 // Extends results source in order to be queried
 
-@variant([0, 1])
+/* @variant([0, 1])
 export class RecursiveShardDBInterface<T extends DBInterface> extends SingleDBInterface<Shard<T>, BinaryDocumentStore<Shard<T>>> {
 
     constructor(opts?: { name: string; address?: string }) {
@@ -28,32 +27,7 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends SingleDBIn
         options.typeMap[Shard.name] = Shard;
         return await super.init(orbitDB, options);
     }
-    /*  @field({ type: SingleDBInterface })
-     db: SingleDBInterface<Shard<T>, BinaryDocumentStore<Shard<T>>>;
- 
-     constructor(opts?: { db: SingleDBInterface<Shard<T>, BinaryDocumentStore<Shard<T>>> }) {
-         super();
-         if (opts) {
-             Object.assign(this, opts);
-         }
-     }
- 
-     get initialized(): boolean {
-         return this.db.initialized
-     }
- 
-     close() {
-         this.db.close();
-     }
- 
-     async init(peer: AnyPeer,  options: IStoreOptions<Shard<T>, any>): Promise<void> {
-         await this.db.init(peer, options);
-     }
- 
- 
-     async load(waitForReplicationEventsCount = 0): Promise<void> {
-         await this.db.load(waitForReplicationEventsCount);
-     } */
+
 
 
     async loadShard(cid: string, peer: AnyPeer): Promise<Shard<T>> {
@@ -62,10 +36,7 @@ export class RecursiveShardDBInterface<T extends DBInterface> extends SingleDBIn
         await shard.value.init(peer);
         return shard.value;
     }
-    /* get loaded(): boolean {
-        return !!this.db?.loaded;
-    } */
-
 }
 
 
+ */

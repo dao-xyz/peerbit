@@ -1,18 +1,13 @@
 import path from 'path'
-import { Address, Constructor, IStoreOptions, Store, StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store'
-import io from '@dao-xyz/orbit-db-io'
+import { Address, IStoreOptions, Store, StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store'
 import { PubSub, Subscription } from '@dao-xyz/orbit-db-pubsub'
 import Logger from 'logplease'
 const logger = Logger.create('orbit-db')
 import { Identity, Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
-/* import { AccessControllers } from '@dao-xyz/orbit-db-access-controllers' // Fix fork
- */
 import Cache from '@dao-xyz/orbit-db-cache'
 import { BoxKeyWithMeta, Keystore, KeyWithMeta, SignKeyWithMeta, WithType } from '@dao-xyz/orbit-db-keystore'
 import { isDefined } from './is-defined'
-import { OrbitDBAddress } from './orbit-db-address'
-import { createDBManifest } from './db-manifest'
 import { Level } from 'level';
 import { exchangeHeads, ExchangeHeadsMessage, RequestHeadsMessage } from './exchange-heads'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
@@ -29,9 +24,6 @@ import { encryptionWithRequestKey, replicationTopicEncryptionWithRequestKey } fr
 /* let AccessControllersModule = AccessControllers;
  */
 Logger.setLogLevel('ERROR')
-
-// Mapping for 'database type' -> Class
-const databaseTypes: { [key: string]: Constructor<Store<any, any, any, any>> } = {}
 
 const defaultTimeout = 30000 // 30 seconds
 
@@ -54,7 +46,7 @@ export class OrbitDB {
   storage: Storage;
   caches: any;
   keystore: Keystore;
-  stores: { [topic: string]: { [address: string]: Store<any, any, any, any> } };
+  stores: { [topic: string]: { [address: string]: Store<any> } };
 
   _waitForKeysTimeout = 10000;
   _keysInflightMap: Map<string, Promise<any>> = new Map(); // TODO fix types
@@ -101,7 +93,6 @@ export class OrbitDB {
   static get Identities() { return Identities }
   /*   static get AccessControllers() { return AccessControllersModule }
    */
-  static get OrbitDBAddress() { return OrbitDBAddress }
 
   static get Store() { return Store }
 
@@ -293,34 +284,34 @@ export class OrbitDB {
   }
 
   /* Private methods */
-  async _createStore<T>(type: string, address: Address, options: { identity?: Identity, accessControllerAddress?: string } & IStoreOptions<T, any, any>) {
+  async _initializeStore<T, S extends Store<T>>(store: S, options: { identity?: Identity } & IStoreOptions<any>) {
     // Get the type -> class mapping
-    const Store = databaseTypes[type]
+    /* 
+        let accessController
+        if (options.accessControllerAddress) {
+          // Access controller options also gathers some properties from the options, so that if the access controller
+          // does also contain a store (i.e. Store -> AccessController -> Store), we can create this store on the "load" 
+          // method on the AccessController
+          const accessControllerOptions = {
+            storeOptions: {
+              create: options.create, replicate: options.replicate, directory: options.directory, nameResolver: options.nameResolver
+            }, ...options.accessController
+          };
+          accessController = await AccessControllers.resolve(this, options.accessControllerAddress)
+        } */
 
-    if (!Store) { throw new Error(`Invalid database type '${type}'`) }
 
-    let accessController
-    if (options.accessControllerAddress) {
-      // Access controller options also gathers some properties from the options, so that if the access controller
-      // does also contain a store (i.e. Store -> AccessController -> Store), we can create this store on the "load" 
-      // method on the AccessController
-      const accessControllerOptions = {
-        storeOptions: {
-          create: options.create, replicate: options.replicate, directory: options.directory, nameResolver: options.nameResolver
-        }, ...options.accessController
-      };
-      accessController = await AccessControllersModule.resolve(this, options.accessControllerAddress, accessControllerOptions)
-    }
-    const opts = Object.assign({ replicate: true }, options, {
-      accessController: accessController,
-      cache: options.cache,
-      onClose: this._onClose.bind(this),
-      onDrop: this._onDrop.bind(this),
-      onLoad: this._onLoad.bind(this),
-    } as IStoreOptions<any, any, any>)
     const identity = options.identity || this.identity
 
-    const store = new Store(this._ipfs, identity, address, opts)
+    await store.init(this._ipfs, identity, {
+      replicate: true, ...options, ...{
+        cache: options.cache,
+        onClose: this._onClose.bind(this),
+        onDrop: this._onDrop.bind(this),
+        onLoad: this._onLoad.bind(this),
+      }
+    });
+
     store.events.on('write', this._onWrite.bind(this))
 
     // ID of the store is the address as a string
@@ -338,7 +329,7 @@ export class OrbitDB {
       else {
 
         const msg = new RequestHeadsMessage({
-          address: address.toString(),
+          address: store.address.toString(),
           replicationTopic: store.replicationTopic
         });
         await this._pubsub.publish(store.replicationTopic, serialize(await this.decryptedSignedThing(serialize(msg))));
@@ -346,8 +337,9 @@ export class OrbitDB {
       }
     }
 
-    if (accessController.setStore) {
-      accessController.setStore(store);
+    // TODO fix types
+    if (store.access["setStore"]) {
+      store.access["setStore"](store);
     }
 
     return store
@@ -529,7 +521,7 @@ export class OrbitDB {
 
 
   // Callback when database was closed
-  async _onClose(db: Store<any, any, any, any>) {
+  async _onClose(db: Store<any>) {
     const address = db.address.toString()
     logger.debug(`Close ${address}`)
 
@@ -566,13 +558,13 @@ export class OrbitDB {
 
   }
 
-  async _onDrop(db: Store<any, any, any, any>) {
+  async _onDrop(db: Store<any>) {
     const address = db.address.toString()
     const dir = db && db.options.directory ? db.options.directory : this.directory
     await this._requestCache(address, dir, db._cache)
   }
 
-  async _onLoad(db: Store<any, any, any, any>) {
+  async _onLoad(db: Store<any>) {
     const address = db.address.toString()
     const dir = db && db.options.directory ? db.options.directory : this.directory
     await this._requestCache(address, dir, db._cache)
@@ -580,7 +572,7 @@ export class OrbitDB {
   }
 
 
-  /* addStore(store: Store<any, any, any, any>) {
+  /* addStore(store: Store<any>) {
     const storeAddress = store.address.toString();
     if (!storeAddress) { throw new Error("Address undefined") }
    
@@ -591,7 +583,7 @@ export class OrbitDB {
     this.stores[storeAddress] = store;
   }
   */
-  addStore(store: Store<any, any, any, any>) {
+  addStore(store: Store<any>) {
     const replicationTopic = store.replicationTopic;
     if (!this.stores[replicationTopic]) {
       this.stores[replicationTopic] = {};
@@ -604,22 +596,6 @@ export class OrbitDB {
     this.stores[replicationTopic][storeAddress] = store;
   }
 
-  async _determineAddress(name: string, type: string, options: { nameResolver?: (name: string) => string, accessController?: any, onlyHash?: boolean } = {}) {
-    if (!OrbitDB.isValidType(type)) { throw new Error(`Invalid database type '${type}'`) }
-
-    name = options?.nameResolver ? options.nameResolver(name) : name;
-    if (OrbitDBAddress.isValid(name)) { throw new Error('Given database name is an address. Please give only the name of the database!') }
-
-    // Create an AccessController, use IPFS AC as the default
-    options.accessController = Object.assign({}, { name: name, type: 'ipfs' }, options.accessController)
-    const accessControllerAddress = await AccessControllersModule.create(this, options.accessController.type, options.accessController || {})
-
-    // Save the manifest to IPFS
-    const manifestHash = await createDBManifest(this._ipfs, name, type, accessControllerAddress, options)
-
-    // Create the database address
-    return OrbitDBAddress.parse(OrbitDBAddress.join(manifestHash, name))
-  }
 
   /* Create and Open databases */
 
@@ -629,10 +605,9 @@ export class OrbitDB {
       overwrite: false, // whether we should overwrite the existing database if it exists
     }
   */
-  async create(name, type, options: {
+  async create<S extends Store<any>>(store: S, options: {
     timeout?: number,
     identity?: Identity,
-    meta?: any,
     cache?: Cache,
 
 
@@ -650,13 +625,15 @@ export class OrbitDB {
      encoding?: IOOptions<any>;
      encryption?: (keystore: Keystore) => StorePublicKeyEncryption; */
 
-  } & IStoreOptions<any, any, any> = {}) {
+  } & IStoreOptions<any> = {}): Promise<S> {
 
     logger.debug('create()')
-    logger.debug(`Creating database '${name}' as ${type}`)
+    logger.debug(`Creating database '${store.id}' as ${store.constructor.name}`)
 
     // Create the database address
-    const dbAddress = await this._determineAddress(name, type, options)
+
+    // TODO prevent double save (store is also saved on init)
+    const dbAddress = await store.save(this._ipfs, { pin: true });
 
     if (!options.cache)
       options.cache = await this._requestCache(dbAddress.toString(), options.directory)
@@ -672,12 +649,7 @@ export class OrbitDB {
     logger.debug(`Created database '${dbAddress}'`)
 
     // Open the database
-    return this.open(dbAddress, options)
-  }
-
-  async determineAddress(name: string, type: string, options: { nameResolver?: (name: string) => string, accessController?: any, onlyHash?: boolean } = {}) {
-    const opts = Object.assign({}, { onlyHash: true }, options)
-    return this._determineAddress(name, type, opts)
+    return this.open<S>(dbAddress, options)
   }
 
   async _requestCache(address: string, directory: string, existingCache?: Cache) {
@@ -704,10 +676,9 @@ export class OrbitDB {
 
       }
    */
-  async open(address, options: {
+  async open<S extends Store<any>>(from: { toString(): string } | S, options: {
     timeout?: number,
     identity?: Identity,
-    meta?: any
 
     /* cache?: Cache,
     directory?: string,
@@ -721,86 +692,82 @@ export class OrbitDB {
     replicate?: boolean,
     replicationTopic?: string | (() => string),
     encryption?: (keystore: Keystore) => StorePublicKeyEncryption; */
-  } & IStoreOptions<any, any, any> = {}) {
+  } & IStoreOptions<any> = {}): Promise<S> {
     logger.debug('open()')
 
     options = Object.assign({ localOnly: false, create: false }, options)
-    logger.debug(`Open database '${address}'`)
+    logger.debug(`Open database '${from}'`)
 
     // If address is just the name of database, check the options to crate the database
-    if (!OrbitDBAddress.isValid(address)) {
+    if (from instanceof Store) {
       if (!options.create) {
         throw new Error('\'options.create\' set to \'false\'. If you want to create a database, set \'options.create\' to \'true\'.')
-      } else if (options.create && !options.type) {
-        throw new Error(`Database type not provided! Provide a type with 'options.type' (${OrbitDB.databaseTypes.join('|')})`)
-      } else {
-        logger.warn(`Not a valid OrbitDB address '${address}', creating the database`)
-        options.overwrite = options.overwrite ? options.overwrite : true
-        return this.create(address, options.type, options)
       }
+      logger.warn(`Not a valid OrbitDB address '${from}', creating the database`)
+      options.overwrite = options.overwrite ? options.overwrite : true
+      return this.create(from, options)
     }
+    else {
 
-    // Parse the database address
-    const dbAddress = OrbitDBAddress.parse(address)
+      // Parse the database address
+      const address = Address.parse(from)
 
-    // If database is already open, return early by returning the instance
-    // if (this.stores[dbAddress]) {
-    //   return this.stores[dbAddress]
-    // }
+      // If database is already open, return early by returning the instance
+      // if (this.stores[dbAddress]) {
+      //   return this.stores[dbAddress]
+      // }
 
-    options.cache = await this._requestCache(dbAddress.toString(), options.directory)
+      options.cache = await this._requestCache(address.toString(), options.directory)
 
-    // Check if we have the database
-    const haveDB = await this._haveLocalData(options.cache, dbAddress)
+      // Check if we have the database
+      const haveDB = await this._haveLocalData(options.cache, address)
 
-    logger.debug((haveDB ? 'Found' : 'Didn\'t find') + ` database '${dbAddress}'`)
+      logger.debug((haveDB ? 'Found' : 'Didn\'t find') + ` database '${address}'`)
 
-    // If we want to try and open the database local-only, throw an error
-    // if we don't have the database locally
-    if (options.localOnly && !haveDB) {
-      logger.warn(`Database '${dbAddress}' doesn't exist!`)
-      throw new Error(`Database '${dbAddress}' doesn't exist!`)
-    }
-
-    logger.debug(`Loading Manifest for '${dbAddress}'`)
-
-    let manifest
-    try {
-      // Get the database manifest from IPFS
-      manifest = await io.read(this._ipfs, dbAddress.root, { timeout: options.timeout || defaultTimeout })
-      logger.debug(`Manifest for '${dbAddress}':\n${JSON.stringify(manifest, null, 2)}`)
-    } catch (e) {
-      if (e.name === 'TimeoutError' && e.code === 'ERR_TIMEOUT') {
-        console.error(e)
-        throw new Error('ipfs unable to find and fetch manifest for this address.')
-      } else {
-        throw e
+      // If we want to try and open the database local-only, throw an error
+      // if we don't have the database locally
+      if (options.localOnly && !haveDB) {
+        logger.warn(`Database '${address}' doesn't exist!`)
+        throw new Error(`Database '${address}' doesn't exist!`)
       }
+
+      logger.debug(`Loading store for '${address}'`)
+
+      let store: Store<any> = undefined;
+      try {
+        // Get the database manifest from IPFS
+        store = await Store.load(this._ipfs, address, { timeout: options.timeout || defaultTimeout })
+        logger.debug(`Manifest for '${address}':\n${JSON.stringify(store.name, null, 2)}`)
+      } catch (e) {
+        if (e.name === 'TimeoutError' && e.code === 'ERR_TIMEOUT') {
+          console.error(e)
+          throw new Error('ipfs unable to find and fetch store for this address.')
+        } else {
+          throw e
+        }
+      }
+
+      if (store.name !== address.path) {
+        logger.warn(`Store name '${store.name}' and path name '${address.path}' do not match`)
+      }
+
+
+      if (!options.encryption) {
+        options.encryption = this.replicationTopicEncryption();
+      }
+
+      // Save the database locally
+      await this._addManifestToCache(options.cache, address)
+
+      // Open the the database
+      await this._initializeStore(store, options)
+      return store as S;
     }
 
-    if (manifest.name !== dbAddress.path) {
-      logger.warn(`Manifest name '${manifest.name}' and path name '${dbAddress.path}' do not match`)
-    }
-
-    // Make sure the type from the manifest matches the type that was given as an option
-    if (options.type && manifest.type !== options.type) {
-      throw new Error(`Database '${dbAddress}' is type '${manifest.type}' but was opened as '${options.type}'`)
-    }
-
-    if (!options.encryption) {
-      options.encryption = this.replicationTopicEncryption();
-    }
-
-    // Save the database locally
-    await this._addManifestToCache(options.cache, dbAddress)
-
-    // Open the the database
-    options = Object.assign({}, options, { accessControllerAddress: manifest.accessController, meta: manifest.meta })
-    return this._createStore(options.type || manifest.type, dbAddress, options)
   }
 
   // Save the database locally
-  async _addManifestToCache(cache, dbAddress) {
+  async _addManifestToCache(cache, dbAddress: Address) {
     await cache.set(path.join(dbAddress.toString(), '_manifest'), dbAddress.root)
     logger.debug(`Saved manifest to IPFS as '${dbAddress.root}'`)
   }
@@ -808,10 +775,10 @@ export class OrbitDB {
   /**
    * Check if we have the database, or part of it, saved locally
    * @param  {[Cache]} cache [The OrbitDBCache instance containing the local data]
-   * @param  {[OrbitDBAddress]} dbAddress [Address of the database to check]
+   * @param  {[Address]} dbAddress [Address of the database to check]
    * @return {[Boolean]} [Returns true if we have cached the db locally, false if not]
    */
-  async _haveLocalData(cache, dbAddress) {
+  async _haveLocalData(cache, dbAddress: Address) {
     if (!cache) {
       return false
     }
@@ -820,37 +787,5 @@ export class OrbitDB {
     const data = await cache.get(path.join(addr, '_manifest'))
     return data !== undefined && data !== null
   }
-
-  /**
-   * Returns supported database types as an Array of strings
-   * Eg. [ 'counter', 'eventlog', 'feed', 'docstore', 'keyvalue']
-   * @return {[Array]} [Supported database types]
-   */
-  static get databaseTypes() {
-    return Object.keys(databaseTypes)
-  }
-
-  static isValidType(type) {
-    return Object.keys(databaseTypes).includes(type)
-  }
-
-  static addDatabaseType(type, store) {
-    if (databaseTypes[type]) throw new Error(`Type already exists: ${type}`)
-    databaseTypes[type] = store
-  }
-
-  static getDatabaseTypes() {
-    return databaseTypes
-  }
-
-  static isValidAddress(address) {
-    return OrbitDBAddress.isValid(address)
-  }
-
-  static parseAddress(address) {
-    return OrbitDBAddress.parse(address)
-  }
-
-
 
 }

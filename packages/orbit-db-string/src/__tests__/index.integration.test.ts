@@ -15,7 +15,7 @@ const storeTestSetup = async (): Promise<{
     let [peer, observer] = await getConnectedPeers(2);
 
     // Create store
-    let storeCreator = await peer.orbitDB.open('store', { ...{ create: true, type: STRING_STORE_TYPE, queryRegion: 'world', subscribeToQueries: true } })
+    let storeCreator = await peer.orbitDB.open<StringStore>('store', { ...{ create: true, queryRegion: 'world', subscribeToQueries: true } })
     await storeCreator.load();
     await storeCreator._initializationPromise;
 

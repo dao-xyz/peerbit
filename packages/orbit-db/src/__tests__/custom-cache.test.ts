@@ -4,7 +4,7 @@ const rmrf = require('rimraf')
 const path = require('path')
 import { OrbitDB } from '../orbit-db'
 import { createStore } from './storage'
-const CustomCache = require('@dao-xyz/orbit-db-cache')
+import CustomCache from '@dao-xyz/orbit-db-cache'
 
 // Include test utilities
 const {

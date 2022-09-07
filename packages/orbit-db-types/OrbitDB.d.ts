@@ -7,7 +7,7 @@ declare module 'orbit-db' {
     import { Identity } from "@dao-xyz/orbit-db-identity-provider";
     import * as IPFS from "ipfs";
     import * as elliptic from "elliptic";
-    import OrbitDBAddress from 'orbit-db'
+    import Address from 'orbit-db'
     export class OrbitDB {
 
         _ipfs: IPFS;
@@ -66,7 +66,7 @@ declare module 'orbit-db' {
 
         disconnect(): Promise<void>;
         stop(): Promise<void>;
-        determineAddress(name: string, type: string, options?: ICreateOptions): Promise<OrbitDBAddress>
+        determineAddress(name: string, type: string, options?: ICreateOptions): Promise<Address>
 
         static isValidType(type: string): boolean;
         static addDatabaseType(type: string, store: typeof Store): void;

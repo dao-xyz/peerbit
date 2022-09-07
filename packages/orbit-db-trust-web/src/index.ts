@@ -1,11 +1,8 @@
 import { deserialize, field, option, serialize, variant } from "@dao-xyz/borsh";
-import { BinaryDocumentStore, BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
-import { IPFS as IPFSInstance } from 'ipfs-core-types';
-import { SingleDBInterface } from "@dao-xyz/orbit-db-store-interface";
+import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
 import { Identities, Identity, IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
 import { OrbitDB } from "@dao-xyz/orbit-db";
-import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
-import { AccessController, AccessControllers } from "@dao-xyz/orbit-db-access-controllers";
+import { AccessController, Address, IStoreOptions, StoreAccessController } from "@dao-xyz/orbit-db-store";
 import { Payload } from "@dao-xyz/ipfs-log-entry";
 
 import { createHash } from "crypto";
@@ -15,6 +12,7 @@ import { arraysEqual } from "@dao-xyz/io-utils";
 
 import isNode from 'is-node';
 import { MaybeEncrypted } from "@dao-xyz/encryption-utils";
+import { IPFS } from "ipfs-core-types/src";
 
 let v8 = undefined;
 if (isNode) {
@@ -27,7 +25,7 @@ if (isNode) {
  * @param db 
  * @returns 
  */
-export const getTargetPath = (start: PublicKey, target: (key: PublicKey) => boolean, db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>, fullOp: boolean = false): P2PTrustRelation[] => {
+export const getTargetPath = (start: PublicKey, target: (key: PublicKey) => boolean, db: BinaryDocumentStore<P2PTrustRelation>, fullOp: boolean = false): P2PTrustRelation[] => {
 
     /**
      * TODO: Currently very inefficient
@@ -43,10 +41,11 @@ export const getTargetPath = (start: PublicKey, target: (key: PublicKey) => bool
         if (target(current)) {
             return path;
         }
-        let trust = db.db.index.get(PublicKey.from(current).hashCode());
+        let trust = db._index.get(PublicKey.from(current).hashCode());
         if (!trust) {
             return undefined; // no path
         }
+
 
         // TODO: could be multiple but we just follow one path for now
         /*    if (current.equals(trust.value.trustee)) {
@@ -96,7 +95,7 @@ export class P2PTrustRelation extends TrustData {
     }
 
 }
-
+/* 
 @variant([2, 0])
 export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>
 {
@@ -195,6 +194,145 @@ export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocument
     }
 
 
+   
+    isTrusted(trustee: PublicKey | Identity | IdentitySerializable, truster: PublicKey = this.rootTrust): boolean {
+
+        trustee = PublicKey.from(trustee);
+     
+        const trustPath = !!getTrustPath(trustee, truster, this);
+        return trustPath;
+    }
+
+    hashCode(): string {
+        return createHash('sha1').update(serialize(this)).digest('hex')
+    }
+
+
+
+} */
+
+export const getTrustPath = (start: PublicKey, end: PublicKey, db: BinaryDocumentStore<P2PTrustRelation>): P2PTrustRelation[] => {
+    return getTargetPath(start, (key) => end.type === key.type && arraysEqual(end.id, key.id), db)
+}
+
+
+@variant(2)
+export class TrustWebAccessController extends StoreAccessController<BinaryDocumentStore<P2PTrustRelation>> {
+
+    @field({ type: PublicKey })
+    rootTrust: PublicKey
+
+    _appendAll: boolean;
+    _orbitDB: OrbitDB;
+
+    constructor(props?: {
+        name?: string,
+        queryRegion?: string,
+        rootTrust: PublicKey | Identity | IdentitySerializable
+    }) {
+        super(props ? {
+            store: new BinaryDocumentStore({
+                indexBy: 'trustee',
+                name: props?.name ? props?.name : '' + '_trust',
+                accessController: undefined,
+                objectType: P2PTrustRelation.name,
+                queryRegion: props.queryRegion
+            })
+        } : undefined);
+        if (props) {
+            this.rootTrust = PublicKey.from(props.rootTrust);
+        }
+    }
+
+    async init(ipfs: IPFS, identity: Identity, options: IStoreOptions<any>): Promise<void> {
+        return super.init(ipfs, identity, { ...options, fallbackAccessController: this }) // self referencing access controller
+    }
+
+    /* async init(orbitDB: OrbitDB, options: IQueryStoreOptions<any, any, any>): Promise<void> {
+        const storeOptions = this.getStoreOptions(options);
+        await super.init(orbitDB, storeOptions);
+        if (!this.cid) {
+            await this.save(orbitDB._ipfs);
+        }
+    }
+ */
+
+    async canAppend(payload: MaybeEncrypted<Payload<any>>, identity: MaybeEncrypted<IdentitySerializable>, identityProvider: Identities): Promise<boolean> {
+
+        await identity.decrypt();
+        const identityDecrypted = identity.decrypted.getValue(IdentitySerializable);
+        if (!identityProvider.verifyIdentity(identityDecrypted)) {
+            return false;
+        }
+        if (this._appendAll) {
+            return true;
+        }
+
+        const isTrusted = this.isTrusted(identityDecrypted)
+        return isTrusted;
+    }
+
+    getStoreOptions(options: { queryRegion?: string, replicate?: boolean, directory?: string }): IQueryStoreOptions<P2PTrustRelation> {
+        return {
+            subscribeToQueries: options.replicate,
+            replicate: options.replicate,
+            directory: options.directory,
+            typeMap: {
+                [P2PTrustRelation.name]: P2PTrustRelation
+            },
+            queryRegion: options.queryRegion,
+            create: options.replicate,
+            cache: undefined,
+            nameResolver: (name: string) => name,
+            accessController: {
+                skipManifest: true
+            } // TODO fix types
+        } as any
+    }
+
+
+
+    async addTrust(trustee: PublicKey | Identity | IdentitySerializable) {
+        trustee = PublicKey.from(trustee);
+        await this.store.put(new P2PTrustRelation({
+            trustee
+        }));
+    }
+    /* 
+        async save(): Promise<{ address: string }> {
+            if (!this.store) {
+                throw new Error("Not initialized");
+            }
+    
+            let arr = serialize(this);
+            let addResult = await this._orbitDB._ipfs.add(arr)
+            let pinResult = await this._orbitDB._ipfs.pin.add(addResult.cid)
+            this.cid = pinResult.toString();
+            return {
+                address: this.cid
+            };
+        }
+    
+     */
+
+
+    /*  static async loadFromCID(cid: string, node: IPFSInstance): Promise<P2PTrust> {
+         let arr = await node.cat(cid);
+         for await (const obj of arr) {
+             let der = deserialize(Buffer.from(obj), P2PTrust);
+             der.cid = cid;
+             return der;
+         }
+     }
+  */
+    /* get replicationTopic() {
+        if (!this.cid) {
+            throw new Error("Not initialized, replication topic requires known cid");
+        }
+        return this.cid + '-' + 'replication'
+    } */
+
+
     /**
      * Follow trust path back to trust root.
      * Trust root is always trusted.
@@ -211,7 +349,7 @@ export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocument
         /**
          * TODO: Currently very inefficient
          */
-        const trustPath = !!getTrustPath(trustee, truster, this);
+        const trustPath = !!getTrustPath(trustee, truster, this.store);
         return trustPath;
     }
 
@@ -219,83 +357,8 @@ export class P2PTrust extends SingleDBInterface<P2PTrustRelation, BinaryDocument
         return createHash('sha1').update(serialize(this)).digest('hex')
     }
 
-
-
-}
-
-export const getTrustPath = (start: PublicKey, end: PublicKey, db: SingleDBInterface<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>>): P2PTrustRelation[] => {
-    return getTargetPath(start, (key) => end.type === key.type && arraysEqual(end.id, key.id), db)
-}
-
-
-export const TRUST_WEB_ACCESS_CONTROLLER = 'trust-web-access-controller';
-
-export type TrustWebAccessControllerOptions = {
-    trustResolver: () => P2PTrust;
-    skipManifest: true,
-    appendAll?: boolean
-};
-
-export class TrustWebAccessController extends AccessController<any> {
-
-    // MAKE DISJOIN
-    _trustResolver: () => P2PTrust
-    _orbitDB: OrbitDB;
-    _appendAll: boolean;
-    constructor(props?: TrustWebAccessControllerOptions & { orbitDB: OrbitDB }) {
-        super();
-        if (props) {
-            this._appendAll = props.appendAll;
-            this._orbitDB = props.orbitDB;
-            this._trustResolver = props.trustResolver;
-
-        }
-
-    }
-
-    async canAppend(payload: MaybeEncrypted<Payload<any>>, identity: MaybeEncrypted<IdentitySerializable>, identityProvider: Identities): Promise<boolean> {
-
-        await identity.decrypt();
-        const identityDecrypted = identity.decrypted.getValue(IdentitySerializable);
-        if (!identityProvider.verifyIdentity(identityDecrypted)) {
-            return false;
-        }
-        if (this._appendAll) {
-            return true;
-        }
-
-        const isTrusted = this._trustResolver().isTrusted(identityDecrypted)
-        return isTrusted;
-    }
-
-
-    async load(cid: string): Promise<void> {
-        // Nothing to load!
-    }
-
-    async save(): Promise<{ address: string, skipManifest: boolean }> {
-
-        /*    let arr = Uint8Array.from([0]);
-           let addResult = await this._orbitDB._ipfs.add(arr)
-           let pinResult = await this._orbitDB._ipfs.pin.add(addResult.cid)
-           let cid = pinResult.toString(); */
-
-        return {
-            address: '',
-            skipManifest: true
-        };
-    }
-
     async close() {
 
     }
-
-    static get type() { return TRUST_WEB_ACCESS_CONTROLLER } // Return the type for this controller
-
-    static async create(orbitDB: OrbitDB, options: TrustWebAccessControllerOptions): Promise<TrustWebAccessController> {
-        const controller = new TrustWebAccessController({ orbitDB, ...options })
-        return controller;
-    }
 }
 
-AccessControllers.addAccessController({ AccessController: TrustWebAccessController })

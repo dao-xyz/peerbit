@@ -1,13 +1,13 @@
 
 const assert = require('assert')
-const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
 import { Entry, LamportClock } from '@dao-xyz/ipfs-log-entry'
-import { IPFSAccessController } from '@dao-xyz/orbit-db-access-controllers'
 import { BoxKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { delay, waitFor } from '@dao-xyz/time'
+
 import { OrbitDB } from '../orbit-db'
-import { EventStore, EVENT_STORE_TYPE, Operation } from './utils/stores/event-store'
+import { SimpleAccessController } from './utils/access'
+import { EventStore, Operation } from './utils/stores/event-store'
 
 // Include test utilities
 const {
@@ -68,19 +68,11 @@ Object.keys(testAPIs).forEach(API => {
                 }, waitForKeysTimout: 1000
             })
             orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2 })
-
-            options = {
-                // Set write access for both clients
-                accessController: {
-                    write: [
-                        orbitdb1.identity.id,
-                        orbitdb2.identity.id,
-                    ]
-                }
-            }
-
             options = Object.assign({}, options, { directory: dbPath1, encryption: orbitdb1.replicationTopicEncryption() })
-            db1 = await orbitdb1.create('replication-tests', EVENT_STORE_TYPE, options)
+            db1 = await orbitdb1.create(new EventStore<string>({
+                name: 'abc',
+                accessController: new SimpleAccessController()
+            }), options)
         })
 
         afterEach(async () => {
@@ -103,8 +95,8 @@ Object.keys(testAPIs).forEach(API => {
         it('replicates database of 1 entry', async () => {
             console.log("Waiting for peers to connect")
             await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
-            options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true, replicate: false, encryption: undefined })
-            db2 = await orbitdb2.open(db1.address.toString(), options)
+            options = Object.assign({}, options, { create: true, directory: dbPath2, sync: true, replicate: false, encryption: undefined })
+            db2 = await orbitdb2.open<EventStore<string>>(db1.address.toString(), options)
             let finished = false
             await db1.add('hello');
             await waitFor(() => db2._oplog.clock.time > 0);
@@ -153,8 +145,8 @@ Object.keys(testAPIs).forEach(API => {
             console.log("Waiting for peers to connect")
             await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
             const encryptionKey = await orbitdb1.keystore.createKey('encryption key', BoxKeyWithMeta, db1.replicationTopic);
-            options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true, replicate: false, encryption: orbitdb2.replicationTopicEncryption() })
-            db2 = await orbitdb2.open(db1.address.toString(), options)
+            options = Object.assign({}, options, { create: true, directory: dbPath2, sync: true, replicate: false, encryption: orbitdb2.replicationTopicEncryption() })
+            db2 = await orbitdb2.open<EventStore<string>>(db1.address.toString(), options)
             let finished = false
             await db1.add('hello', {
                 reciever: {

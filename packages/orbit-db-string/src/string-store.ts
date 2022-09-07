@@ -6,11 +6,9 @@ import { QueryRequestV0, RangeCoordinate, RangeCoordinates, Result, ResultWithSo
 import { StringQueryRequest } from '@dao-xyz/query-protocol';
 import { Range } from './range';
 import { deserialize, field, serialize, variant } from '@dao-xyz/borsh';
-import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
-import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
-import { OrbitDB } from '@dao-xyz/orbit-db';
+
 import { BinaryPayload } from '@dao-xyz/bpayload';
-import { AccessController, AccessControllers } from '@dao-xyz/orbit-db-access-controllers';
+import { AccessController, IStoreOptions } from '@dao-xyz/orbit-db-store';
 
 export const STRING_STORE_TYPE = 'string_store';
 const findAllOccurrences = (str: string, substr: string): number[] => {
@@ -28,26 +26,9 @@ const findAllOccurrences = (str: string, substr: string): number[] => {
 }
 
 
-export type IStringStoreOptions = IQueryStoreOptions<PayloadOperation, string, StringIndex>;
 
 
-@variant([0, 3])
-export class StringStoreOptions extends BStoreOptions<StringStore> {
-
-  constructor() {
-    super();
-  }
-  async newStore(address: string, orbitDB: OrbitDB, options: IStringStoreOptions): Promise<StringStore> {
-    return orbitDB.open(address, { ...options, ...{ clazz: PayloadOperation, create: true, type: STRING_STORE_TYPE } })
-  }
-
-  get identifier(): string {
-    return STRING_STORE_TYPE
-  }
-}
-
-const defaultOptions = (options: IStringStoreOptions): any => {
-  if (!options.Index) Object.assign(options, { Index: StringIndex })
+const defaultOptions = (options: IStoreOptions<any>): any => {
   if (!options.encoding) {
     options.encoding = {
       decoder: (bytes) => deserialize(Buffer.from(bytes), PayloadOperation),
@@ -57,12 +38,12 @@ const defaultOptions = (options: IStringStoreOptions): any => {
   return options;
 }
 
-export class StringStore extends QueryStore<PayloadOperation, string, any, IStringStoreOptions> {
+export class StringStore extends QueryStore<PayloadOperation> {
 
-  _type: string = undefined;
-  constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IStringStoreOptions) {
-    super(ipfs, id, dbname, defaultOptions(options))
-    this._type = STRING_STORE_TYPE;
+  _index: StringIndex;
+  constructor(properties: { accessController: AccessController<PayloadOperation> }) {
+    super(properties)
+    this._index = new StringIndex();
   }
 
   add(value: string, index: Range, options = {}) {
@@ -137,5 +118,4 @@ export class StringResultSource extends BinaryPayload {
   }
 }
 
-OrbitDB.addDatabaseType(STRING_STORE_TYPE, StringStore as any)
 

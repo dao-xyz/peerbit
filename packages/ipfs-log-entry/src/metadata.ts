@@ -2,7 +2,7 @@ import { LamportClock as Clock, LamportClock } from './lamport-clock'
 import { variant, field, serialize } from '@dao-xyz/borsh';
 
 import { IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider'
-import { arraysEqual, U8IntArraySerializerOptional } from '@dao-xyz/io-utils';
+import { arraysEqual } from '@dao-xyz/io-utils';
 import { X25519PublicKey } from 'sodium-plus';
 import { PublicKeyEncryption, DecryptedThing, EncryptedThing, MaybeEncrypted } from '@dao-xyz/encryption-utils';
 /* 

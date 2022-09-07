@@ -1,13 +1,14 @@
 
 import assert from 'assert'
-import { Store, DefaultOptions, HeadsCache, IStoreOptions, StorePublicKeyEncryption } from '../store'
+import { Store, DefaultOptions, HeadsCache, StorePublicKeyEncryption, IInitializationOptions } from '../store'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
 import { BoxKeyWithMeta, Keystore, KeyWithMeta } from "@dao-xyz/orbit-db-keystore"
 import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
-import { Index } from '../store-index'
 import { createStore } from './storage'
 import { X25519PublicKey, SodiumPlus } from 'sodium-plus'
 import { AccessError } from '@dao-xyz/encryption-utils'
+import { SimpleAccessController, SimpleIndex } from './utils'
+import { Address } from '../io'
 
 // Test utils
 const {
@@ -19,7 +20,8 @@ const {
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`addOperation ${IPFS}`, function () {
-    let ipfsd, ipfs, testIdentity: Identity, keystore: Keystore, identityStore, store: Store<any, any, any, any>, cacheStore, senderKey: BoxKeyWithMeta, recieverKey: BoxKeyWithMeta, encryption: StorePublicKeyEncryption
+    let ipfsd, ipfs, testIdentity: Identity, keystore: Keystore, identityStore, store: Store<any>, cacheStore, senderKey: BoxKeyWithMeta, recieverKey: BoxKeyWithMeta, encryption: StorePublicKeyEncryption
+    let index: SimpleIndex<string>
 
     jest.setTimeout(config.timeout);
 
@@ -37,8 +39,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore })
       ipfsd = await startIpfs(IPFS, ipfsConfig.daemon1)
       ipfs = ipfsd.api
-
-      const address = 'test-address'
+      index = new SimpleIndex();
       senderKey = await keystore.createKey('sender', BoxKeyWithMeta, undefined, { overwrite: true });
       recieverKey = await keystore.createKey('reciever', BoxKeyWithMeta, undefined, { overwrite: true });
       encryption = (_) => {
@@ -46,13 +47,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
           getEncryptionKey: () => Promise.resolve(senderKey.secretKey),
           getAnySecret: async (publicKeys: X25519PublicKey[]) => {
             for (let i = 0; i < publicKeys.length; i++) {
-              if (Buffer.compare(publicKeys[i].getBuffer(), senderKey.secretKey.getBuffer()) === 0) {
+              if (Buffer.compare(publicKeys[i].getBuffer(), senderKey.publicKey.getBuffer()) === 0) {
                 return {
                   index: i,
                   secretKey: senderKey.secretKey
                 }
               }
-              if (Buffer.compare(publicKeys[i].getBuffer(), recieverKey.secretKey.getBuffer()) === 0) {
+              if (Buffer.compare(publicKeys[i].getBuffer(), recieverKey.publicKey.getBuffer()) === 0) {
                 return {
                   index: i,
                   secretKey: recieverKey.secretKey
@@ -63,11 +64,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
           }
         }
       };
-      const options: IStoreOptions<any, any, Index<any, any>> & {
+      const options: IInitializationOptions<any> & {
         cache: Cache;
-      } = Object.assign({}, DefaultOptions, { cache })
+      } = Object.assign({}, DefaultOptions, { cache, onUpdate: index.updateIndex.bind(index) })
       options.encryption = encryption
-      store = new Store(ipfs, testIdentity, address, options)
+      store = new Store({ name: 'name', accessController: new SimpleAccessController() })
+      await store.init(ipfs, testIdentity, options);
 
     })
 
@@ -88,26 +90,29 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const data = { data: 12345 }
 
       store.events.on('write', (topic, address, entry, heads) => {
-        assert.strictEqual(heads.length, 1)
-        assert.strictEqual(address, 'test-address')
-        assert.deepStrictEqual(entry.payload.value, data)
-        assert.strictEqual(store.replicationStatus.progress, 1n)
-        assert.strictEqual(store.replicationStatus.max, 1n)
-        assert.strictEqual(store.address.root, store._index.id)
-        assert.deepStrictEqual(store._index._index, heads)
-        store._cache.getBinary(store.localHeadsPath, HeadsCache).then(async (localHeads) => {
-          localHeads.heads[0].init({
-            encoding: store.logOptions.encoding,
-            encryption: store.logOptions.encryption
-          });
-          await localHeads.heads[0].getPayload();
-          assert.deepStrictEqual(localHeads.heads[0].payload.value, data)
-          assert(localHeads.heads[0].equals(heads[0]))
+        try {
           assert.strictEqual(heads.length, 1)
-          assert.strictEqual(localHeads.heads.length, 1)
-          store.events.removeAllListeners('write')
-          done()
-        })
+          assert(Address.isValid(address))
+          assert.deepStrictEqual(entry.payload.value, data)
+          assert.strictEqual(store.replicationStatus.progress, 1n)
+          assert.strictEqual(store.replicationStatus.max, 1n)
+          assert.deepStrictEqual(index._index, heads)
+          store._cache.getBinary(store.localHeadsPath, HeadsCache).then(async (localHeads) => {
+            localHeads.heads[0].init({
+              encoding: store.logOptions.encoding,
+              encryption: store.logOptions.encryption
+            });
+            await localHeads.heads[0].getPayload();
+            assert.deepStrictEqual(localHeads.heads[0].payload.value, data)
+            assert(localHeads.heads[0].equals(heads[0]))
+            assert.strictEqual(heads.length, 1)
+            assert.strictEqual(localHeads.heads.length, 1)
+            store.events.removeAllListeners('write')
+            done()
+          })
+        } catch (error) {
+          throw error;
+        }
       })
 
       store._addOperation(data, {
@@ -131,8 +136,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.deepStrictEqual(entry.payload.value, data)
         assert.strictEqual(store.replicationStatus.progress, 1n)
         assert.strictEqual(store.replicationStatus.max, 1n)
-        assert.strictEqual(store.address.root, store._index.id)
-        assert.deepStrictEqual(store._index._index, heads)
+        assert.deepStrictEqual(index._index, heads)
         store._cache.getBinary(store.localHeadsPath, HeadsCache).then(async (localHeads) => {
           localHeads.heads[0].init({
             encoding: store.logOptions.encoding,
@@ -163,13 +167,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             }
           })
         })
-
       })
-
-
     })
-
-
-
   })
 })

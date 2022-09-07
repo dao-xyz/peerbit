@@ -1,12 +1,12 @@
 
 
 import { field, variant } from "@dao-xyz/borsh";
-import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store';
+/* import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store';
 import { BStoreOptions } from "@dao-xyz/orbit-db-bstores";
 import { waitForReplicationEvents } from "./utils";
 import { BinaryPayload } from "@dao-xyz/bpayload";
 import { OrbitDB } from "@dao-xyz/orbit-db";
-import { AccessController } from "@dao-xyz/orbit-db-access-controllers";
+import { AccessController } from "@dao-xyz/orbit-db-store";
 
 // Extends results source in order to be queried
 //@variant([0, 1])
@@ -27,7 +27,7 @@ export class DBInterface extends BinaryPayload {
 
     }
 
-    async init(_orbitDB: OrbitDB, _options: IStoreOptions<any, any, any>): Promise<void> {
+    async init(_orbitDB: OrbitDB, _options: IStoreOptions<any>): Promise<void> {
         throw new Error("Not implemented")
     }
 
@@ -44,7 +44,7 @@ export class DBInterface extends BinaryPayload {
 // Every interface has to have its own variant, else DBInterface can not be
 // used as a deserialization target.
 @variant([0, 0])
-export abstract class SingleDBInterface<T, B extends Store<any, any, any, any>> extends DBInterface {
+export abstract class SingleDBInterface<T, B extends Store<any>> extends DBInterface {
 
     @field({ type: 'string' })
     name: string;
@@ -57,7 +57,7 @@ export abstract class SingleDBInterface<T, B extends Store<any, any, any, any>> 
 
     db: B;
     _orbitDB: OrbitDB
-    _options: IStoreOptions<T, T, any>
+    _options: IStoreOptions<T>
 
     constructor(opts?: {
         name: string;
@@ -117,13 +117,7 @@ export abstract class SingleDBInterface<T, B extends Store<any, any, any, any>> 
 
 
 
-    /* async query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, region: string, waitForAmount?: number, maxAggregationTime?: number) {
-        if (!this.address) {
-            throw new Error("Can not query because DB address is unknown")
-        }
-        return query(this._peer.node.pubsub, getQueryTopic(region), queryRequest, responseHandler, waitForAmount, maxAggregationTime)
-    }
-    */
+    
 
 
 
@@ -149,3 +143,12 @@ export abstract class SingleDBInterface<T, B extends Store<any, any, any, any>> 
     }
 
 }
+ */
+
+/* async query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, region: string, waitForAmount?: number, maxAggregationTime?: number) {
+        if (!this.address) {
+            throw new Error("Can not query because DB address is unknown")
+        }
+        return query(this._peer.node.pubsub, getQueryTopic(region), queryRequest, responseHandler, waitForAmount, maxAggregationTime)
+    }
+    */

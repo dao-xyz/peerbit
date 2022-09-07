@@ -1,10 +1,10 @@
 import { Log } from "@dao-xyz/ipfs-log";
-import { OrbitDB } from "../../../orbit-db";
 import { EventStore, Operation } from "./event-store"
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry';
-import { AccessController } from "@dao-xyz/orbit-db-access-controllers";
-export const FEED_STORE_TYPE = 'feed';
-class FeedIndex {
+import { AccessController } from "@dao-xyz/orbit-db-store";
+import { variant } from '@dao-xyz/borsh';
+
+/* class FeedIndex {
     _index: any;
     constructor() {
         this._index = {}
@@ -29,34 +29,40 @@ class FeedIndex {
         }, [])
     }
 }
+ *//* 
+@variant(1)
 export class FeedStore<T> extends EventStore<T> {
-    constructor(ipfs, id, dbname, options) {
-        if (!options) options = {}
-        if (!options.Index) Object.assign(options, { Index: FeedIndex })
-        super(ipfs, id, dbname, options)
-        this._type = FEED_STORE_TYPE
-    }
+ constructor(properties: {
+     name: string;
+     accessController: AccessController<Operation<T>>;
+ }) {
+     super(properties)
+ }
+ async init(ipfs, address, identity, options) {
+     if (!options) options = {}
+     super.init(ipfs, address, identity, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
+ }
 
-    remove(hash, options?: {
-        onProgressCallback?: (any: any) => void;
-        pin?: boolean;
-        reciever?: EncryptionTemplateMaybeEncrypted;
-    }) {
-        return this.del(hash, options)
-    }
+ remove(hash, options?: {
+     onProgressCallback?: (any: any) => void;
+     pin?: boolean;
+     reciever?: EncryptionTemplateMaybeEncrypted;
+ }) {
+     return this.del(hash, options)
+ }
 
-    del(hash, options?: {
-        onProgressCallback?: (any: any) => void;
-        pin?: boolean;
-        reciever?: EncryptionTemplateMaybeEncrypted;
-    }) {
-        const operation = {
-            op: 'DEL',
-            key: null,
-            value: hash
-        }
-        return this._addOperation(operation, options)
-    }
+ del(hash, options?: {
+     onProgressCallback?: (any: any) => void;
+     pin?: boolean;
+     reciever?: EncryptionTemplateMaybeEncrypted;
+ }) {
+     const operation = {
+         op: 'DEL',
+         key: null,
+         value: hash
+     }
+     return this._addOperation(operation, options)
+ }
 }
 
-OrbitDB.addDatabaseType(FEED_STORE_TYPE, FeedStore)
+*/

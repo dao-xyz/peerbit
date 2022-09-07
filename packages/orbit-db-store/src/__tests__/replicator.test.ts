@@ -13,6 +13,7 @@ import {
 import { Replicator } from '../replicator'
 import { DefaultOptions, Store } from '../store'
 import { createStore } from './storage'
+import { SimpleAccessController, SimpleIndex } from './utils'
 
 // Tests timeout
 const timeout = 30000
@@ -22,8 +23,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     jest.setTimeout(timeout);
 
-    let log: Log<string>, ipfsd, ipfs, replicator: Replicator<string>, store: Store<any, any, any, any>, keystore: Keystore, signingKeystore: Keystore, cacheStore
-
+    let log: Log<string>, ipfsd, ipfs, replicator: Replicator<string>, store: Store<any>, keystore: Keystore, signingKeystore: Keystore, cacheStore
+    let index: SimpleIndex<string>
     const { identityKeysPath } = config
 
     beforeAll(async () => {
@@ -37,9 +38,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
       log = new Log(ipfs, testIdentity)
       cacheStore = await createStore('cache')
       const cache = new Cache(cacheStore)
-      const options = Object.assign({}, DefaultOptions, { cache })
-      store = new Store(ipfs, testIdentity, log.id, options)
+      index = new SimpleIndex();
+
+      const options = Object.assign({}, DefaultOptions, { cache, onUpdate: index.updateIndex.bind(index) })
+      store = new Store({ name: 'name', accessController: new SimpleAccessController() })
+      await store.init(ipfs, testIdentity, options);
+
       replicator = new Replicator(store, 123)
+
     })
 
     afterAll(async () => {

@@ -1,14 +1,12 @@
 import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { AnyPeer, PeerOptions } from '../peer';
-import { RecursiveShardDBInterface } from '../interface';
-import { SingleDBInterface, DBInterface, } from '@dao-xyz/orbit-db-store-interface';
 import { field, variant } from '@dao-xyz/borsh';
-import { BinaryDocumentStore, BinaryDocumentStoreOptions } from '@dao-xyz/orbit-db-bdocstore';
+import { BinaryDocumentStore } from '@dao-xyz/orbit-db-bdocstore';
 import { BinaryFeedStore } from '@dao-xyz/orbit-db-bfeedstore';
 import { v4 as uuid } from 'uuid';
 import { NoResourceRequirements, Shard } from '../shard';
 import { getPeer as getPeerTest, getConnectedPeers as getConnectedPeersTest, Peer } from '@dao-xyz/peer-test-utils';
-import { P2PTrust } from '@dao-xyz/orbit-db-trust-web';
+import { TrustWebAccessController } from '@dao-xyz/orbit-db-trust-web';
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { IStoreOptions } from '@dao-xyz/orbit-db-store';
 export const getPeer = async (identity?: Identity, isServer?: boolean, peerCapacity?: number) => getPeerTest(identity).then((peer) => createAnyPeer(peer, isServer, peerCapacity));
@@ -43,43 +41,43 @@ export class Document {
     }
 } */
 
-@variant([1, 0])
+/* @variant([1, 0])
 export class BinaryFeedStoreInterface extends SingleDBInterface<Document, BinaryFeedStore<Document>> {
+ */
+/* @field({ type: SingleDBInterface })
+db: ;
 
-    /* @field({ type: SingleDBInterface })
-    db: ;
-
-    constructor(opts?: { db: SingleDBInterface<Document, BinaryFeedStore<Document>> }) {
-        super();
-        if (opts) {
-            Object.assign(this, opts);
-        }
+constructor(opts?: { db: SingleDBInterface<Document, BinaryFeedStore<Document>> }) {
+    super();
+    if (opts) {
+        Object.assign(this, opts);
     }
-
-    get initialized(): boolean {
-        return !!this.db?.db && !!this.db._peer;
-    }
-
-    get loaded(): boolean {
-        return this.db.loaded
-    }
-
-    close() {
-        this.db.db = undefined;
-    }
-
-    async init(peer: AnyPeer, options: IStoreOptions<Document, any>): Promise<void> {
-        await this.db.init(peer, options);
-    }
-
-    async load(): Promise<void> {
-        await this.db.load();
-    } */
 }
 
+get initialized(): boolean {
+    return !!this.db?.db && !!this.db._peer;
+}
+
+get loaded(): boolean {
+    return this.db.loaded
+}
+
+close() {
+    this.db.db = undefined;
+}
+
+async init(peer: AnyPeer, options: IStoreOptions<Document, any>): Promise<void> {
+    await this.db.init(peer, options);
+}
+
+async load(): Promise<void> {
+    await this.db.load();
+} */
+//}
 
 
 
+/* 
 @variant([1, 1])
 export class DocumentStoreInterface extends SingleDBInterface<Document, BinaryDocumentStore<Document>> {
     init(orbitDB: OrbitDB, options: IStoreOptions<Document, any, any>): Promise<void> {
@@ -90,23 +88,24 @@ export class DocumentStoreInterface extends SingleDBInterface<Document, BinaryDo
         })
     }
 }
+*/
 
-export const documentStoreShard = async (trust?: P2PTrust, indexBy: string = 'id') => new Shard({
+/* 
+export const documentStoreShard = async (trust?: TrustWebAccessController, indexBy: string = 'id') => new Shard({
     id: uuid(),
     cluster: 'x',
     resourceRequirements: new NoResourceRequirements(),
-    interface: new DocumentStoreInterface({
+    store: new BinaryDocumentStore({
         name: 'documents',
-        storeOptions: new BinaryDocumentStoreOptions({
-            indexBy,
-            objectType: Document.name
-        }),
+        indexBy,
+        objectType: Document.name,
+        accessController: 
     }),
     trust
 })
 
 
-export const shardStoreShard = async <T extends DBInterface>(trust?: P2PTrust) => new Shard<RecursiveShardDBInterface<T>>({
+export const shardStoreShard = async <T extends DBInterface>(trust?: TrustWebAccessController) => new Shard<RecursiveShardDBInterface<T>>({
     id: uuid(),
     cluster: 'x',
     resourceRequirements: new NoResourceRequirements(),
@@ -115,3 +114,4 @@ export const shardStoreShard = async <T extends DBInterface>(trust?: P2PTrust) =
     }),
     trust
 })
+ */

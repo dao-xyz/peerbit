@@ -6,6 +6,8 @@ import { Keystore } from "@dao-xyz/orbit-db-keystore"
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log-entry'
 import { createStore } from './storage'
+import { SimpleAccessController, SimpleIndex } from './utils'
+import { Address } from '../io'
 
 
 // Test utils
@@ -18,7 +20,8 @@ const {
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`addOperation ${IPFS}`, function () {
-    let ipfsd, ipfs, testIdentity, identityStore, store: Store<any, any, any, any>, cacheStore
+    let ipfsd, ipfs, testIdentity, identityStore, store: Store<any>, cacheStore
+    let index: SimpleIndex<string>
 
     jest.setTimeout(config.timeout);
 
@@ -37,9 +40,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
       ipfsd = await startIpfs(IPFS, ipfsConfig.daemon1)
       ipfs = ipfsd.api
 
-      const address = 'test-address'
-      const options = Object.assign({}, DefaultOptions, { cache })
-      store = new Store(ipfs, testIdentity, address, options)
+      index = new SimpleIndex();
+      store = new Store({ name: 'name', accessController: new SimpleAccessController() })
+      await store.init(ipfs, testIdentity, Object.assign({}, DefaultOptions, { cache, onUpdate: index.updateIndex.bind(index) }));
+      assert(Address.isValid(store.address));
     })
 
     afterAll(async () => {
@@ -50,21 +54,20 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     afterEach(async () => {
-      await store.drop()
-      await cacheStore.open()
-      await identityStore.open()
+      await store?.drop()
+      await cacheStore?.open()
+      await identityStore?.open()
     })
 
     it('adds an operation and triggers the write event', (done) => {
       const data = { data: 12345 }
       store.events.on('write', (topic, address, entry, heads) => {
         assert.strictEqual(heads.length, 1)
-        assert.strictEqual(address, 'test-address')
+        assert(Address.isValid(address))
         assert.deepStrictEqual(entry.payload.value, data)
         assert.strictEqual(store.replicationStatus.progress, 1n)
         assert.strictEqual(store.replicationStatus.max, 1n)
-        assert.strictEqual(store.address.root, store._index.id)
-        assert.deepStrictEqual(store._index._index, heads)
+        assert.deepStrictEqual(index._index, heads)
         store._cache.getBinary(store.localHeadsPath, HeadsCache).then((localHeads) => {
           localHeads.heads[0].init({
             encoding: JSON_ENCODING_OPTIONS
@@ -93,12 +96,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
           assert.strictEqual(heads.length, 1)
           assert.strictEqual(store.replicationStatus.progress, BigInt(writes))
           assert.strictEqual(store.replicationStatus.max, BigInt(writes))
-          assert.strictEqual(store._index._index.length, BigInt(writes))
+          assert.strictEqual(index._index.length, writes)
           store._cache.getBinary(store.localHeadsPath, HeadsCache).then((localHeads) => {
             localHeads.heads[0].init({
               encoding: JSON_ENCODING_OPTIONS
             });
-            assert.deepStrictEqual(localHeads.heads[0].payload.value, store._index._index[2].payload.value)
+            assert.deepStrictEqual(localHeads.heads[0].payload.value, index._index[2].payload.value)
             store.events.removeAllListeners('write')
             return Promise.resolve()
           })

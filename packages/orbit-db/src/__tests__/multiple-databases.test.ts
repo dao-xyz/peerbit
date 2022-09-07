@@ -2,9 +2,9 @@
 const assert = require('assert')
 const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
-import { IPFSAccessController } from '@dao-xyz/orbit-db-access-controllers'
 import { OrbitDB } from '../orbit-db'
-import { EventStore, EVENT_STORE_TYPE, Operation } from './utils/stores'
+import { SimpleAccessController } from './utils/access'
+import { EventStore } from './utils/stores'
 
 // Include test utilities
 const {
@@ -81,32 +81,26 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     beforeEach(async () => {
-      let options: any = {}
       // Set write access for both clients
-      options.write = [
-        orbitdb1.identity.publicKey,
-        orbitdb2.identity.publicKey,
-        orbitdb3.identity.publicKey
 
-      ],
 
-        console.log("Creating databases and waiting for peers to connect")
+      console.log("Creating databases and waiting for peers to connect")
 
       // Open the databases on the first node
-      options = Object.assign({}, options, { create: true })
+      const options = { create: true }
 
       // Open the databases on the first node
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb1.create('local-' + i, EVENT_STORE_TYPE, options)
+        const db = await orbitdb1.create(new EventStore<string>({ name: 'local-' + i, accessController: new SimpleAccessController() }), options)
         localDatabases.push(db)
       }
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb2.open(localDatabases[i].address.toString(), { type: EVENT_STORE_TYPE, directory: dbPath2, ...options })
+        const db = await orbitdb2.open<EventStore<string>>(localDatabases[i].address.toString(), { directory: dbPath2, ...options })
         remoteDatabasesA.push(db)
       }
 
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb3.open(localDatabases[i].address.toString(), { type: EVENT_STORE_TYPE, directory: dbPath3, ...options })
+        const db = await orbitdb3.open<EventStore<string>>(localDatabases[i].address.toString(), { directory: dbPath3, ...options })
         remoteDatabasesB.push(db)
       }
 

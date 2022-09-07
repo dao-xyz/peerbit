@@ -1,16 +1,14 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
 import { disconnectPeers, getConnectedPeers, getPeer, Peer } from '@dao-xyz/peer-test-utils';
 import { DynamicAccessController, DYNAMIC_ACCESS_CONTROLER } from "..";
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
 import { delay, waitFor } from '@dao-xyz/time';
-import { P2PTrust } from "@dao-xyz/orbit-db-trust-web";
 import { DocumentQueryRequest, FieldStringMatchQuery, query, QueryRequestV0, QueryResponseV0, ResultWithSource } from "@dao-xyz/query-protocol";
 import { AccessError } from "@dao-xyz/encryption-utils";
 import { BinaryPayload } from "@dao-xyz/bpayload";
 
-
+/* 
 @variant("document")
 class Document extends BinaryPayload {
 
@@ -284,4 +282,4 @@ describe('index', () => {
 
 
 
-})
+}) */

@@ -1,24 +1,18 @@
 import { DeleteOperation, DocumentIndex, IndexedValue, Operation, PutAllOperation, PutOperation } from './document-index'
 import pMap from 'p-map'
-import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { Constructor, deserialize, field, serialize, variant } from '@dao-xyz/borsh';
 import { asString } from './utils';
 import { DocumentQueryRequest, FieldQuery, FieldStringMatchQuery, QueryRequestV0, Result, ResultWithSource, SortDirection, FieldByteMatchQuery, FieldBigIntCompareQuery, Compare } from '@dao-xyz/query-protocol';
-import { IPFS as IPFSInstance } from "ipfs-core-types";
-import { QueryStore } from '@dao-xyz/orbit-db-query-store';
-import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store'
-import { BStoreOptions } from '@dao-xyz/orbit-db-bstores'
-import { OrbitDB } from '@dao-xyz/orbit-db';
 import { BinaryPayload } from '@dao-xyz/bpayload';
 import { arraysEqual } from '@dao-xyz/io-utils';
-import { AccessController } from '@dao-xyz/orbit-db-access-controllers';
+import { IStoreOptions, AccessController, Store } from '@dao-xyz/orbit-db-store';
+import { IQueryStoreOptions, QueryStore } from '@dao-xyz/orbit-db-query-store';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement)
-
+/* 
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
 
-export type DocumentStoreOptions<T> = IQueryStoreOptions<Operation, IndexedValue<T>, DocumentIndex<T>> & { indexBy?: string, clazz: Constructor<T> };
-
-export type IBinaryDocumentStoreOptions<T> = IQueryStoreOptions<Operation, IndexedValue<T>, DocumentIndex<T>> & { indexBy?: string, clazz: Constructor<T> };
+export type DocumentStoreOptions<T> = IQueryStoreOptions<Operation> & { indexBy?: string, clazz: Constructor<T> };
+export type IBinaryDocumentStoreOptions<T> = IQueryStoreOptions<Operation> & { indexBy?: string, clazz: Constructor<T> };
 
 @variant([0, 0])
 export class BinaryDocumentStoreOptions<T extends BinaryPayload> extends BStoreOptions<BinaryDocumentStore<T>> {
@@ -46,7 +40,7 @@ export class BinaryDocumentStoreOptions<T extends BinaryPayload> extends BStoreO
     }
     return orbitDB.open(address, {
       ...options, ...{
-        clazz, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: this.indexBy
+        clazz, create: true, indexBy: this.indexBy
       }
     } as DocumentStoreOptions<T>)
   }
@@ -55,11 +49,10 @@ export class BinaryDocumentStoreOptions<T extends BinaryPayload> extends BStoreO
   get identifier(): string {
     return BINARY_DOCUMENT_STORE_TYPE
   }
-}
+} */
 
-const defaultOptions = <T>(options: IBinaryDocumentStoreOptions<T>): IBinaryDocumentStoreOptions<T> => {
-  if (!options["indexBy"]) Object.assign(options, { indexBy: '_id' })
-  if (!options.Index) Object.assign(options, { Index: DocumentIndex })
+const defaultOptions = <T>(options: IStoreOptions<Operation>): IStoreOptions<Operation> => {
+  /*   if (!options["indexBy"]) Object.assign(options, { indexBy: '_id' }) */
   if (!options.encoding) {
     options.encoding = {
       decoder: (bytes) => deserialize(Buffer.from(bytes), Operation),
@@ -68,18 +61,36 @@ const defaultOptions = <T>(options: IBinaryDocumentStoreOptions<T>): IBinaryDocu
   }
   return options
 }
+export type IBStoreOptions<T> = IQueryStoreOptions<T> & { clazz: Constructor<T> }
+export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Operation> {
 
-export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Operation, IndexedValue<T>, DocumentIndex<T>, IBinaryDocumentStoreOptions<T>> {
+  @field({ type: 'string' })
+  indexBy: string;
 
-  _type: string = undefined;
-  constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IBinaryDocumentStoreOptions<T>) {
-    super(ipfs, id, dbname, defaultOptions(options))
-    this._type = BINARY_DOCUMENT_STORE_TYPE;
-    this._index.init(this.options.clazz);
+  @field({ type: 'string' })
+  objectType: string;
+
+  _index: DocumentIndex<T>;
+  constructor(properties: {
+    name?: string,
+    indexBy: string,
+    objectType: string,
+    accessController: AccessController<Operation>,
+    queryRegion?: string
+  }) {
+    super(properties)
+    if (properties) {
+      this.indexBy = properties.indexBy;
+      this.objectType = properties.objectType;
+    }
+    this._index = new DocumentIndex();
   }
-  public get index(): DocumentIndex<T> {
-    return this._index;
+
+  async init(ipfs, identity, options: IBStoreOptions<T>) {
+    this._index.init(options.clazz);
+    await super.init(ipfs, identity, { ...defaultOptions(options), onUpdate: this._index.updateIndex.bind(this._index) })
   }
+
 
   public get(key: any, caseSensitive = false): IndexedValue<T>[] {
     key = key.toString()
@@ -102,22 +113,10 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
       .map(mapper)
   }
 
-
-
-  public async load(amount?: number, opts?: {}): Promise<void> {
-    await super.load(amount, opts);
-  }
-
-  public async close(): Promise<void> {
-    await super.close();
-  }
-
-
-
   queryDocuments(filter: ((doc: IndexedValue<T>) => boolean)): IndexedValue<T>[] {
     // Whether we return the full operation data or just the db value
-    return Object.keys(this.index._index)
-      .map((e) => this.index.get(e))
+    return Object.keys(this._index._index)
+      .map((e) => this._index.get(e))
       .filter((doc) => filter(doc))
   }
 
@@ -212,7 +211,7 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
       return this._addOperationBatch(
         {
           op: 'PUT',
-          key: asString(doc[this.options.indexBy]),
+          key: asString(doc[this.indexBy]),
           value: doc
         },
         true,
@@ -226,12 +225,13 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
   }
 
   public put(doc: T, options = {}) {
-    if (!doc[this.options.indexBy]) { throw new Error(`The provided document doesn't contain field '${this.options.indexBy}'`) }
+    if (!doc[this.indexBy]) { throw new Error(`The provided document doesn't contain field '${this.indexBy}'`) }
+    const ser = serialize(doc);
     return this._addOperation(
       new PutOperation(
         {
-          key: asString(doc[this.options.indexBy]),
-          value: serialize(doc),
+          key: asString(doc[this.indexBy]),
+          value: ser,
 
         })
       , options)
@@ -241,10 +241,10 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
     if (!(Array.isArray(docs))) {
       docs = [docs]
     }
-    if (!(docs.every(d => d[this.options.indexBy]))) { throw new Error(`The provided document doesn't contain field '${this.options.indexBy}'`) }
+    if (!(docs.every(d => d[this.indexBy]))) { throw new Error(`The provided document doesn't contain field '${this.indexBy}'`) }
     return this._addOperation(new PutAllOperation({
       docs: docs.map((value) => new PutOperation({
-        key: asString(value[this.options.indexBy]),
+        key: asString(value[this.indexBy]),
         value: serialize(value)
       }))
     }), options)
@@ -259,11 +259,19 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
   }
 
   public get size(): number {
-    return Object.keys(this.index._index).length
+    return Object.keys(this._index).length
+  }
+  clone(newName: string): BinaryDocumentStore<T> {
+    return new BinaryDocumentStore<T>({
+      accessController: this.access.clone(newName),
+      indexBy: this.indexBy,
+      objectType: this.objectType,
+      name: newName,
+      queryRegion: this.queryRegion
+    })
   }
 }
 
-OrbitDB.addDatabaseType(BINARY_DOCUMENT_STORE_TYPE, BinaryDocumentStore as any)
 
 
 

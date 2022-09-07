@@ -3,7 +3,7 @@ import { Log } from '@dao-xyz/ipfs-log'
 import { IPFS } from 'ipfs-core-types/src/'
 import { Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { Entry } from '@dao-xyz/ipfs-log-entry';
-import { OrbitDBAccessController, AccessController } from '@dao-xyz/orbit-db-access-controllers'
+import { AccessController } from './access-controller';
 
 const getNextAndRefsUnion = e => [...new Set([...e.next, ...e.refs])]
 const flatMap = (res, val) => res.concat(val)

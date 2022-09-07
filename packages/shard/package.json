@@ -54,7 +54,6 @@
         "@dao-xyz/time": "^0.0.11",
         "buffer": "^6.0.3",
         "crypto-browserify": "^3.12.0",
-        "@dao-xyz/orbit-db-access-controllers": "^0.3.2",
         "@dao-xyz/orbit-db-io": "^1.1.0",
         "reflect-metadata": "^0.1.13"
     },

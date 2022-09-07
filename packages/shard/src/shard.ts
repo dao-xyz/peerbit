@@ -1,15 +1,11 @@
 import { Constructor, deserialize, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
 import { OrbitDB } from "@dao-xyz/orbit-db";
-import { DBInterface } from "@dao-xyz/orbit-db-store-interface";
-import { BinaryDocumentStoreOptions } from "@dao-xyz/orbit-db-bdocstore";
-import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
-import { IStoreOptions } from '@dao-xyz/orbit-db-store'
+import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store'
 import { waitForAsync } from "@dao-xyz/time";
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import { delay } from "@dao-xyz/time";
 import { AnyPeer, EMIT_HEALTHCHECK_INTERVAL, PeerInfo, ShardPeerInfo } from "./peer";
 import { IQueryStoreOptions } from "@dao-xyz/orbit-db-query-store";
-import { P2PTrust } from '@dao-xyz/orbit-db-trust-web'
 import { BinaryPayload } from '@dao-xyz/bpayload';
 
 export const SHARD_INDEX = 0;
@@ -18,9 +14,8 @@ export const DEFAULT_QUERY_REGION = 'world';
 export const MIN_REPLICATION_AMOUNT = 1;
 import { MemoryLimitExceededError } from "./errors";
 import Logger from 'logplease';
-import { Entry } from "@dao-xyz/ipfs-log-entry";
-import { DYNAMIC_ACCESS_CONTROLER } from "@dao-xyz/orbit-db-dynamic-access-controller";
 import isNode from 'is-node';
+import { TrustWebAccessController } from "@dao-xyz/orbit-db-trust-web";
 
 let v8 = undefined;
 if (isNode) {
@@ -40,8 +35,8 @@ export class ReplicationRequest {
     @field({ type: 'u64' })
     index: bigint
 
-    @field({ type: option(BStoreOptions) })
-    storeOptions: BStoreOptions<any> | undefined;
+    @field({ type: option(Store) })
+    store: Store<any>
 
     @field({ type: 'u64' })
     shardSize: bigint
@@ -54,7 +49,7 @@ export class ReplicationRequest {
 
 }
 
-export type StoreBuilder<B> = (name: string, defaultOptions: IStoreOptions<any, any, any>, orbitdDB: OrbitDB) => Promise<B>
+export type StoreBuilder<B> = (name: string, defaultOptions: IStoreOptions<any>, orbitdDB: OrbitDB) => Promise<B>
 
 export type Behaviours<St> = {
     newStore: StoreBuilder<St>
@@ -68,7 +63,7 @@ export class NoResourceRequirements extends ResourceRequirements { }
 /* @variant([0, 0]) */
 
 @variant("shard")
-export class Shard<T extends DBInterface> extends BinaryPayload {
+export class Shard<S extends Store<any>> extends BinaryPayload {
 
     @field({ type: 'string' })
     id: string
@@ -76,14 +71,14 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
     @field({ type: 'string' })
     cluster: string
 
-    @field({ type: P2PTrust })
-    trust: P2PTrust; // Infrastructure trust region, i.e. what signers can we trust for data for
+    @field({ type: TrustWebAccessController })
+    trust: TrustWebAccessController; // Infrastructure trust region, i.e. what signers can we trust for data for
 
     @field({ type: ResourceRequirements })
     resourceRequirements: ResourceRequirements
 
-    @field({ type: DBInterface })
-    interface: T; // the actual data dbs, all governed by the shard
+    @field({ type: Store })
+    store: S; // the actual data dbs, all governed by the shard
 
     @field({ type: option('string') })
     parentShardCID: string | undefined; // one of the shards in the parent cluster
@@ -97,31 +92,36 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
 
     cid: string;
 
-    storeOptions: IQueryStoreOptions<T, T, any>
-
+    /* storeOptions: IQueryStoreOptions<T, T, any>
+ */
     constructor(props?: {
         id: string,
         cluster: string
-        interface: T
+        store: S
         resourceRequirements: ResourceRequirements
         address: string
         parentShardCID: string
-        trust: P2PTrust
+        trust: TrustWebAccessController
         shardIndex: bigint
     } | {
         id: string,
         cluster: string
-        interface: T
+        store: S
         resourceRequirements: ResourceRequirements
         shardIndex?: bigint
-        trust?: P2PTrust
+        trust?: TrustWebAccessController
 
     }) {
 
         super();
         if (props) {
 
-            Object.assign(this, props); // TODO fix types, storeOPtions are only partially intialized at best
+            this.id = props.id;
+            this.cluster = props.cluster;
+            this.store = props.store;
+            this.resourceRequirements = props.resourceRequirements;
+            this.shardIndex = props.shardIndex;
+            this.trust = props.trust;
         }
 
         if (!this.shardIndex) {
@@ -129,7 +129,7 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
         }
 
     }
-    get defaultStoreOptions(): IQueryStoreOptions<T, T, any> {
+    /* get defaultStoreOptions(): IQueryStoreOptions<T> {
         if (!this.peer) {
             throw new Error("Not initialized")
         }
@@ -164,31 +164,30 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
             typeMap: {},
             nameResolver: (name: string) => this.getDBName(name)
         }
-    }
+    } */
 
-    async init(from: AnyPeer, parentShardCID?: string): Promise<Shard<T>> {
+    async open(from: AnyPeer): Promise<Shard<S>> {
         // TODO: this is ugly but ok for now
         if (this.peer && this.peer !== from) {
             throw new Error("Reinitialization with different peer might lead to unexpected behaviours. Create a new instance instead")
         }
         //await this.close();
         this.peer = from;
-        this.storeOptions = this.defaultStoreOptions;
+        /*  this.storeOptions = this.defaultStoreOptions; */
 
 
-        if (parentShardCID) {
-            this.parentShardCID = parentShardCID;
-        }
+
 
         if (!this.trust) {
-            this.trust = new P2PTrust({
+            this.trust = new TrustWebAccessController({
                 rootTrust: from.orbitDB.identity.toSerializable()
             })
         }
 
-        if (!this.trust.loaded) { // Since the trust is shared between shards, we dont want to reinitialize already loaded trust
-            await this.trust.init(this.peer.orbitDB, this.storeOptions);
+        if (!this.trust.store.initialized) { // Since the trust is shared between shards, we dont want to reinitialize already loaded trust
+            await this.peer.orbitDB.open(this.trust) // this.storeOptions
         }
+
         const result = await this.peer.getCachedTrustOrSet(this.trust, this);
         this.trust = result.trust;
 
@@ -196,7 +195,7 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
             this.shardPeerInfo = new ShardPeerInfo(this);
         }
 
-        await this.interface.init(this.peer.orbitDB, this.storeOptions);
+        await this.peer.orbitDB.open(this.store); // this.storeOptions
 
 
 
@@ -215,7 +214,7 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
 
         await this.peer?.removeAndCloseCachedTrust(this.trust, this);
         await this.shardPeerInfo?.close();
-        await this.interface.close();
+        await this.store.close();
     }
 
     getQueryTopic(topic: string): string {
@@ -233,8 +232,7 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
         if (this.parentShardCID) {
             parentShard = await Shard.loadFromCID(this.parentShardCID, this.peer.node); //WE CANT LOAD TS IF NOT CONNECTED
             // TODO:  fix to work if parent is a cluster
-            await parentShard.init(this.peer);
-
+            // await parentShard.open(this.peer);
         }
 
         const peerIsSupportingParent = !!this.parentShardCID && this.peer.supportJobs.has(this.parentShardCID)
@@ -308,7 +306,7 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
         // ??? 
     }
  */
-    static async subscribeForReplication(me: AnyPeer, trust: P2PTrust, onReplication?: (shard: Shard<any>) => void): Promise<void> {
+    static async subscribeForReplication(me: AnyPeer, trust: TrustWebAccessController, onReplication?: (shard: Shard<any>) => void): Promise<void> {
         await me.node.pubsub.subscribe(trust.replicationTopic, async (msg: any) => {
             try {
                 let shard = deserialize(Buffer.from(msg.data), Shard);
@@ -349,8 +347,8 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
     }
 
     _requestingReplicationPromise: Promise<void>;
-    async requestReplicate(shardIndex?: bigint): Promise<void> {
-        let shard = this as Shard<T>;
+    /*async requestReplicate(shardIndex?: bigint): Promise<void> {
+        let shard = this as Shard<S>;
         if (shardIndex !== undefined) {
             shard = await this.createShardWithIndex(shardIndex);
         }
@@ -375,19 +373,19 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
         return this.requestReplicate(this.shardIndex + 1n)
     }
 
-    async createShardWithIndex(shardIndex: bigint, peer: AnyPeer = this.peer): Promise<Shard<T>> {
-        const shard = new Shard<T>({
+     async createShardWithIndex(shardIndex: bigint, peer: AnyPeer = this.peer): Promise<Shard<T>> {
+        const shard = new Shard<S>({
             shardIndex,
             id: this.id,
             cluster: this.cluster,
             parentShardCID: this.parentShardCID,
-            interface: this.interface.clone() as T,
+            interface: this.interface.clone(this.cluster + shardIndex),
             resourceRequirements: this.resourceRequirements,
             trust: this.trust,
         })
-        await shard.init(peer, this.parentShardCID);
+        await shard.open(peer);
         return shard;
-    }
+    } */
 
     async replicate(peer: AnyPeer) {
         /// Shard counter might be wrong because someone else could request sharding at the same time
@@ -400,17 +398,17 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
             throw new MemoryLimitExceededError(`Can not replicate with peer heap size limit: ${peer.options.heapSizeLimit} when used heap is: ${usedHeap}`);
         }
 
-        await this.init(peer);
-        await this.load();
+        await this.open(peer);
+        /*     await this.load(); */
         await this.startSupportPeer();
 
     }
-    async load() {
-        if (!this.trust.loaded) { // Since the trust is shared between shards, we dont want to reinitialize already loaded trust
+    /* async load() {
+        if (!this.trust.store.initialized) { // Since the trust is shared between shards, we dont want to reinitialize already loaded trust
             await this.trust.load();
         }
         await this.interface.load();
-    }
+    } */
 
     getDBName(name: string): string {
         return (this.parentShardCID ? this.parentShardCID : '') + '-' + this.id + '-' + this.shardIndex + "-" + name;
@@ -426,7 +424,7 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
     }
 
 
-    static async loadFromCID<T extends DBInterface>(cid: string, node: IPFSInstance) {
+    static async loadFromCID<T extends Store<any>>(cid: string, node: IPFSInstance) {
         let arr = await node.cat(cid);
         for await (const obj of arr) {
             let der = deserialize<Shard<T>>(Buffer.from(obj), Shard);
@@ -436,11 +434,11 @@ export class Shard<T extends DBInterface> extends BinaryPayload {
     }
 
 
-    static get recursiveStoreOption() {
+    /* static get recursiveStoreOption() {
         return new BinaryDocumentStoreOptions<Shard<any>>({
             objectType: Shard.name,
             indexBy: 'cid'
         })
 
-    }
+    } */
 }

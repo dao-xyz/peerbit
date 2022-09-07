@@ -1,7 +1,8 @@
-import { IPFSAccessController } from "@dao-xyz/orbit-db-access-controllers"
+
 import { OrbitDB } from "../orbit-db"
-import { EventStore, EVENT_STORE_TYPE, Operation } from "./utils/stores/event-store"
-import { KeyValueStore, KEY_VALUE_STORE_TYPE } from "./utils/stores/key-value-store"
+import { SimpleAccessController } from "./utils/access"
+import { EventStore, Operation } from "./utils/stores/event-store"
+import { KeyValueStore } from "./utils/stores/key-value-store"
 const assert = require('assert')
 const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
@@ -23,7 +24,7 @@ Object.keys(testAPIs).forEach(API => {
     jest.setTimeout(config.timeout * 3)
 
     let ipfsd1, ipfsd2, ipfs1, ipfs2
-    let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore<string>, db2: EventStore<string>, db3: KeyValueStore, db4: KeyValueStore
+    let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore<string>, db2: EventStore<string>, db3: KeyValueStore<string>, db4: KeyValueStore<string>
 
     beforeAll(async () => {
       rmrf.sync('./orbitdb')
@@ -38,14 +39,13 @@ Object.keys(testAPIs).forEach(API => {
 
       let options: any = {}
       // Set write access for both clients
-      options.write = [
-        orbitdb1.identity.publicKey,
-        orbitdb2.identity.publicKey
-      ]
+
 
       options = Object.assign({}, options)
-      db1 = await orbitdb1.create('replicate-automatically-tests', EVENT_STORE_TYPE, options)
-      db3 = await orbitdb1.create('replicate-automatically-tests-kv', KEY_VALUE_STORE_TYPE, options)
+      db1 = await orbitdb1.create(new EventStore<string>({ name: 'replicate-automatically-tests', accessController: new SimpleAccessController() })
+        , options)
+      db3 = await orbitdb1.create(new KeyValueStore<string>({ name: 'replicate-automatically-tests-kv', accessController: new SimpleAccessController() })
+        , options)
     })
 
     afterAll(async () => {
@@ -84,8 +84,8 @@ Object.keys(testAPIs).forEach(API => {
       await mapSeries(entryArr, (i) => db1.add('hello' + i))
 
       // Open the second database
-      db2 = await orbitdb2.open(db1.address.toString(), { type: EVENT_STORE_TYPE, create: true })
-      db4 = await orbitdb2.open(db3.address.toString(), { type: KEY_VALUE_STORE_TYPE, create: true })
+      db2 = await orbitdb2.open<EventStore<string>>(db1.address.toString(), { create: true })
+      db4 = await orbitdb2.open<KeyValueStore<string>>(db3.address.toString(), { create: true })
 
       // Listen for the 'replicated' events and check that all the entries
       // were replicated to the second database

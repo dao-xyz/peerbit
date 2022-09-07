@@ -7,7 +7,7 @@
         "packages/ipfs-pubsub-peer-monitor",
         "packages/ipfs-log",
         "packages/ipfs-log-entry",
-        "packages/orbit-db-access-controllers",
+        "packages/orbit-db-ipfs-access-controller",
         "packages/orbit-db-store",
         "packages/orbit-db-cache",
         "packages/orbit-db-bstores",

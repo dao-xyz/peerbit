@@ -1,55 +1,34 @@
 import { variant } from '@dao-xyz/borsh';
 import { OrbitDB } from '@dao-xyz/orbit-db';
-import { BinaryDocumentStore, BinaryDocumentStoreOptions } from '@dao-xyz/orbit-db-bdocstore';
-import { IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
-import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store';
-import { SingleDBInterface } from '@dao-xyz/orbit-db-store-interface';
-import { P2PTrust, TRUST_WEB_ACCESS_CONTROLLER } from '@dao-xyz/orbit-db-trust-web';
+import { BinaryDocumentStore, IBStoreOptions } from '@dao-xyz/orbit-db-bdocstore';
+import { Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
+import { TrustWebAccessController } from '@dao-xyz/orbit-db-trust-web';
 import { Access, AccessData, AccessType } from './access';
 import { Payload } from '@dao-xyz/ipfs-log-entry'
 import { MaybeEncrypted } from '@dao-xyz/encryption-utils';
-export type ACLInterfaceOptions = IQueryStoreOptions<Access, any, any> & {
-    trustResolver: () => P2PTrust, appendAll: boolean, subscribeToQueries: boolean,
-    cache: boolean,
-    create: boolean,
-    replicate: boolean,
-    directory: string
-};
+import { PublicKey } from '@dao-xyz/identity';
+
 
 @variant([0, 2])
-export class ACLInterface extends SingleDBInterface<Access, BinaryDocumentStore<Access>>{
+export class ACLInterface extends BinaryDocumentStore<Access> {
 
+    rootTrust: TrustWebAccessController;
     constructor(opts?: {
         name: string;
-        address?: string;
+        appendAll: boolean,
+        rootTrust: PublicKey | Identity | IdentitySerializable
     }) {
-        super({
-            ...opts, storeOptions: new BinaryDocumentStoreOptions<Access>({
-                indexBy: 'id',
-                objectType: AccessData.name
+        super(opts ? {
+            indexBy: 'id',
+            objectType: AccessData.name,
+            accessController: new TrustWebAccessController({
+                name: opts.name,
+                rootTrust: opts.rootTrust,
+                /* skipManifest: true,
+                appendAll: opts.appendAll, */
             })
-        });
-    }
-
-    async init(orbitDB: OrbitDB, options: ACLInterfaceOptions): Promise<void> {
-        options = {
-            ...options,
-            //queryRegion: undefined,// Prevent query region to be set (will fallback to db specific queries (not global))
-            accessController: {
-                type: TRUST_WEB_ACCESS_CONTROLLER,
-                trustResolver: options.trustResolver,
-                skipManifest: true,
-                appendAll: options.appendAll,
-                storeOptions: {
-                    subscribeToQueries: options.subscribeToQueries,
-                    cache: options.subscribeToQueries,
-                    create: options.create,
-                    replicate: options.replicate,
-                    directory: options.directory
-                }
-            }
-        }
-        return await super.init(orbitDB, options)
+        } : undefined);
+        this.rootTrust = this.access as TrustWebAccessController;
     }
 
     // allow anyone write to the ACL db, but assume entry is invalid until a verifier verifies
@@ -63,9 +42,9 @@ export class ACLInterface extends SingleDBInterface<Access, BinaryDocumentStore<
         // TODO, improve, caching etc
 
         // Else check whether its trusted by this access controller
-        for (const value of Object.values(this.db.index._index)) {
+        for (const value of Object.values(this._index)) {
             const access = value.value;
-            if (access.accessTypes.find((x) => x === AccessType.Admin || x === AccessType.Read) !== undefined) {
+            if (access.accessTypes.find((x) => x === AccessType.Any || x === AccessType.Read) !== undefined) {
                 // check condition
                 if (access.accessCondition.allowed(entry, identity)) {
                     return true;
@@ -80,9 +59,9 @@ export class ACLInterface extends SingleDBInterface<Access, BinaryDocumentStore<
         // TODO, improve, caching etc
 
         // Else check whether its trusted by this access controller
-        for (const value of Object.values(this.db.index._index)) {
+        for (const value of Object.values(this._index)) {
             const access = value.value;
-            if (access.accessTypes.find((x) => x === AccessType.Admin || x === AccessType.Write) !== undefined) {
+            if (access.accessTypes.find((x) => x === AccessType.Any || x === AccessType.Write) !== undefined) {
                 // check condition
                 if (access.accessCondition.allowed(entry, identity)) {
                     return true;

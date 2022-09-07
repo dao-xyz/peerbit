@@ -1,15 +1,14 @@
 
 import { Shard } from '../shard';
 import { AnyPeer } from '../peer';
-import { BinaryFeedStoreInterface, DocumentStoreInterface, Document, documentStoreShard, getPeer, shardStoreShard, getConnectedPeers } from './utils';
+import { Document, getPeer, getConnectedPeers } from './utils';
 import { connectPeers, disconnectPeers } from '@dao-xyz/peer-test-utils';
 import { delay, waitFor, waitForAsync } from '@dao-xyz/time';
-import { P2PTrust } from '@dao-xyz/orbit-db-trust-web'
+import { TrustWebAccessController } from '@dao-xyz/orbit-db-trust-web'
 import { MemoryLimitExceededError } from '../errors';
 import v8 from 'v8';
-import { RecursiveShardDBInterface } from '../interface';
 import { AccessError } from '@dao-xyz/encryption-utils';
-
+/* 
 const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 
     let peerAddressesSet = (await from.node.id()).addresses.map(x => x.toString());
@@ -27,9 +26,6 @@ const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 }
 
 
-/* const disconnectPeers = async (peers: AnyPeer[]): Promise<void> => {
-    await Promise.all(peers.map(peer => peer.disconnect()));
-} */
 
 
 describe('cluster', () => {
@@ -39,9 +35,9 @@ describe('cluster', () => {
             let l0a = await documentStoreShard();
             await l0a.init(peer);
             expect(l0a.cid).toBeDefined();
-            expect(l0a.trust).toBeInstanceOf(P2PTrust);
-            expect((l0a.trust as P2PTrust).rootTrust).toBeDefined();
-            expect((l0a.trust as P2PTrust).rootTrust.equals(peer.orbitDB.identity))
+            expect(l0a.trust).toBeInstanceOf(TrustWebAccessController);
+            expect((l0a.trust as TrustWebAccessController).rootTrust).toBeDefined();
+            expect((l0a.trust as TrustWebAccessController).rootTrust.equals(peer.orbitDB.identity))
 
             let newTrustee = peer2.orbitDB.identity;
             await l0a.trust.addTrust(newTrustee);
@@ -187,44 +183,6 @@ describe('cluster', () => {
     })
 
 
-    /* describe('presharding', () => {
-
-        it('nested block store', async () => {
-
-
-            let peers = await getPeersSameIdentity(2, 100000000);
-            let peer = peers[0];
-            let peer2 = peers[1];
-
-            // Create Root shard
-            let l0 = await shardStoreShard<FeedStoreInterface>();
-            await l0.replicate(peer);
-
-            // Create Feed store
-            let feedStore = await (await feedStoreShard()).init(peer, l0);
-            await feedStore.replicate();
-            let feedStoreLoaded = await l0.interface.loadShard(0);
-            await feedStoreLoaded.interface.db.add("xxx");
-            await l0.interface.db.put(feedStoreLoaded);
-
-
-
-            // --- Load assert
-            let l0b = await Shard.loadFromCID<FeedStoreInterface>(l0.cid, peer2.node);
-            await l0b.init(peer2)
-            await l0b.interface.load(1);
-            expect(Object.keys(l0.interface.db._index._index).length).toEqual(1);
-            feedStoreLoaded = await l0b.interface.loadShard(0)
-            expect(Object.keys(feedStoreLoaded.interface.db._index._index).length).toEqual(1);
-            await disconnectPeers(peers);
-        });
-    }) */
-
-    /*    HOW TO WE WORK WITH REPLICATION TOPICS ???
-   
-           WHILE PARNET
-       SUBSCRICE ?
-    */
 
 
     describe('peer', () => {
@@ -445,47 +403,7 @@ describe('cluster', () => {
         })
     })
 
-    // TODO: Autosharding on new data
-    // TODO: Sharding if overflow
-
-    /* describe('sharding', () => {
-
-        describe('encryption', () => {
-            it('keys are shared', async () => {
-
-                TODO FIX TEST
-                let peer = await getPeer();
-                let peer2 = await getPeer(undefined, false);
-                await connectPeers(peer, peer2);
-
-                let l0a = await shardStoreShard();
-                await l0a.init(peer);
-                await l0a.trust.load();
-                await l0a.trust.addTrust(peer2.orbitDB.identity);
-                await waitFor(() => l0a.trust.db.size == 1)// add some delay because trust db is not synchronous
-
-                let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
-                await l0b.init(peer2)
-
-                expect(await l0a.shardPeerInfo.getPeers()).toHaveLength(0)
-                expect(l0a.trust.rootTrust.id === l0b.trust.rootTrust.id);
-
-                // Replication step
-                let replicationCallback = false
-                await Shard.subscribeForReplication(peer, l0a.trust, () => { replicationCallback = true });
-                await delay(5000); // Pubsub is flaky, wait some time before requesting shard
-                await l0b.requestReplicate();
-
-
-                //  --------------
-                expect(await l0b.shardPeerInfo.getPeers()).toHaveLength(1)
-                expect(replicationCallback);
-                // add some delay because replication might take some time and is not synchronous
-                await disconnectPeers([peer, peer2]);
-            })
-        })
-    }) */
-
+    
     describe('trigger', () => {
 
         it('memory left peer info', async () => {
@@ -550,9 +468,7 @@ describe('cluster', () => {
             // add documents to docStore to trigger sharding
             expect(peerSupporting.supportJobs.size).toEqual(0);
             peerLowMemory.options.heapSizeLimit = v8.getHeapStatistics().used_heap_size + 100;
-            /*   await expect(async () => {
-                 
-              }).rejects.toBeInstanceOf(AccessError); */
+
             await expect(async () => {
                 for (let i = 0; i <= 1000; i++) {
                     await docStoreA.interface.db.put(new Document({ id: i.toString() })) // This will eventually fail
@@ -576,3 +492,89 @@ describe('cluster', () => {
     })
 
 })
+ */
+
+
+
+
+
+    /* describe('presharding', () => {
+
+        it('nested block store', async () => {
+
+
+            let peers = await getPeersSameIdentity(2, 100000000);
+            let peer = peers[0];
+            let peer2 = peers[1];
+
+            // Create Root shard
+            let l0 = await shardStoreShard<FeedStoreInterface>();
+            await l0.replicate(peer);
+
+            // Create Feed store
+            let feedStore = await (await feedStoreShard()).init(peer, l0);
+            await feedStore.replicate();
+            let feedStoreLoaded = await l0.interface.loadShard(0);
+            await feedStoreLoaded.interface.db.add("xxx");
+            await l0.interface.db.put(feedStoreLoaded);
+
+
+
+            // --- Load assert
+            let l0b = await Shard.loadFromCID<FeedStoreInterface>(l0.cid, peer2.node);
+            await l0b.init(peer2)
+            await l0b.interface.load(1);
+            expect(Object.keys(l0.interface.db._index._index).length).toEqual(1);
+            feedStoreLoaded = await l0b.interface.loadShard(0)
+            expect(Object.keys(feedStoreLoaded.interface.db._index._index).length).toEqual(1);
+            await disconnectPeers(peers);
+        });
+    }) */
+
+    /*    HOW TO WE WORK WITH REPLICATION TOPICS ???
+   
+           WHILE PARNET
+       SUBSCRICE ?
+    */
+
+
+       // TODO: Autosharding on new data
+    // TODO: Sharding if overflow
+
+    /* describe('sharding', () => {
+
+        describe('encryption', () => {
+            it('keys are shared', async () => {
+
+                TODO FIX TEST
+                let peer = await getPeer();
+                let peer2 = await getPeer(undefined, false);
+                await connectPeers(peer, peer2);
+
+                let l0a = await shardStoreShard();
+                await l0a.init(peer);
+                await l0a.trust.load();
+                await l0a.trust.addTrust(peer2.orbitDB.identity);
+                await waitFor(() => l0a.trust.db.size == 1)// add some delay because trust db is not synchronous
+
+                let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
+                await l0b.init(peer2)
+
+                expect(await l0a.shardPeerInfo.getPeers()).toHaveLength(0)
+                expect(l0a.trust.rootTrust.id === l0b.trust.rootTrust.id);
+
+                // Replication step
+                let replicationCallback = false
+                await Shard.subscribeForReplication(peer, l0a.trust, () => { replicationCallback = true });
+                await delay(5000); // Pubsub is flaky, wait some time before requesting shard
+                await l0b.requestReplicate();
+
+
+                //  --------------
+                expect(await l0b.shardPeerInfo.getPeers()).toHaveLength(1)
+                expect(replicationCallback);
+                // add some delay because replication might take some time and is not synchronous
+                await disconnectPeers([peer, peer2]);
+            })
+        })
+    }) */

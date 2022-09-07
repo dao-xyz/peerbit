@@ -9,55 +9,56 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 };
 import { DeleteOperation, DocumentIndex, Operation, PutAllOperation, PutOperation } from './document-index.mjs';
 import pMap from 'p-map';
-import { deserialize, field, serialize, variant } from '@dao-xyz/borsh';
+import { deserialize, field, serialize } from '@dao-xyz/borsh';
 import { asString } from './utils.mjs';
 import { FieldQuery, FieldStringMatchQuery, ResultWithSource, SortDirection, FieldByteMatchQuery, FieldBigIntCompareQuery, Compare } from '@dao-xyz/query-protocol';
-import { QueryStore } from '@dao-xyz/orbit-db-query-store';
-import { BStoreOptions } from '@dao-xyz/orbit-db-bstores';
-import { OrbitDB } from '@dao-xyz/orbit-db';
 import { arraysEqual } from '@dao-xyz/io-utils';
+import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
+/*
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
-let BinaryDocumentStoreOptions = class BinaryDocumentStoreOptions extends BStoreOptions {
-    constructor(opts) {
-        super();
-        if (opts) {
-            Object.assign(this, opts);
-        }
+
+export type DocumentStoreOptions<T> = IQueryStoreOptions<Operation> & { indexBy?: string, clazz: Constructor<T> };
+export type IBinaryDocumentStoreOptions<T> = IQueryStoreOptions<Operation> & { indexBy?: string, clazz: Constructor<T> };
+
+@variant([0, 0])
+export class BinaryDocumentStoreOptions<T extends BinaryPayload> extends BStoreOptions<BinaryDocumentStore<T>> {
+
+  @field({ type: 'string' })
+  indexBy: string;
+
+  @field({ type: 'string' })
+  objectType: string;
+
+  constructor(opts: {
+    indexBy: string;
+    objectType: string;
+
+  }) {
+    super();
+    if (opts) {
+      Object.assign(this, opts);
     }
-    async newStore(address, orbitDB, options) {
-        let clazz = options.typeMap[this.objectType];
-        if (!clazz) {
-            throw new Error(`Undefined type: ${this.objectType}`);
-        }
-        return orbitDB.open(address, {
-            ...options, ...{
-                clazz, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: this.indexBy
-            }
-        });
+  }
+  async newStore(address: string, orbitDB: OrbitDB, options: IBinaryDocumentStoreOptions<T>): Promise<BinaryDocumentStore<T>> {
+    let clazz = options.typeMap[this.objectType];
+    if (!clazz) {
+      throw new Error(`Undefined type: ${this.objectType}`);
     }
-    get identifier() {
-        return BINARY_DOCUMENT_STORE_TYPE;
-    }
-};
-__decorate([
-    field({ type: 'string' }),
-    __metadata("design:type", String)
-], BinaryDocumentStoreOptions.prototype, "indexBy", void 0);
-__decorate([
-    field({ type: 'string' }),
-    __metadata("design:type", String)
-], BinaryDocumentStoreOptions.prototype, "objectType", void 0);
-BinaryDocumentStoreOptions = __decorate([
-    variant([0, 0]),
-    __metadata("design:paramtypes", [Object])
-], BinaryDocumentStoreOptions);
-export { BinaryDocumentStoreOptions };
+    return orbitDB.open(address, {
+      ...options, ...{
+        clazz, create: true, indexBy: this.indexBy
+      }
+    } as DocumentStoreOptions<T>)
+  }
+
+
+  get identifier(): string {
+    return BINARY_DOCUMENT_STORE_TYPE
+  }
+} */
 const defaultOptions = (options) => {
-    if (!options["indexBy"])
-        Object.assign(options, { indexBy: '_id' });
-    if (!options.Index)
-        Object.assign(options, { Index: DocumentIndex });
+    /*   if (!options["indexBy"]) Object.assign(options, { indexBy: '_id' }) */
     if (!options.encoding) {
         options.encoding = {
             decoder: (bytes) => deserialize(Buffer.from(bytes), Operation),
@@ -67,14 +68,17 @@ const defaultOptions = (options) => {
     return options;
 };
 export class BinaryDocumentStore extends QueryStore {
-    constructor(ipfs, id, dbname, options) {
-        super(ipfs, id, dbname, defaultOptions(options));
-        this._type = undefined;
-        this._type = BINARY_DOCUMENT_STORE_TYPE;
-        this._index.init(this.options.clazz);
+    constructor(properties) {
+        super(properties);
+        if (properties) {
+            this.indexBy = properties.indexBy;
+            this.objectType = properties.objectType;
+        }
+        this._index = new DocumentIndex();
     }
-    get index() {
-        return this._index;
+    async init(ipfs, identity, options) {
+        this._index.init(options.clazz);
+        await super.init(ipfs, identity, { ...defaultOptions(options), onUpdate: this._index.updateIndex.bind(this._index) });
     }
     get(key, caseSensitive = false) {
         key = key.toString();
@@ -94,16 +98,10 @@ export class BinaryDocumentStore extends QueryStore {
             .filter(filter)
             .map(mapper);
     }
-    async load(amount, opts) {
-        await super.load(amount, opts);
-    }
-    async close() {
-        await super.close();
-    }
     queryDocuments(filter) {
         // Whether we return the full operation data or just the db value
-        return Object.keys(this.index._index)
-            .map((e) => this.index.get(e))
+        return Object.keys(this._index._index)
+            .map((e) => this._index.get(e))
             .filter((doc) => filter(doc));
     }
     queryHandler(query) {
@@ -187,7 +185,7 @@ export class BinaryDocumentStore extends QueryStore {
         const mapper = (doc, idx) => {
             return this._addOperationBatch({
                 op: 'PUT',
-                key: asString(doc[this.options.indexBy]),
+                key: asString(doc[this.indexBy]),
                 value: doc
             }, true, idx === docs.length - 1, onProgressCallback);
         };
@@ -195,24 +193,25 @@ export class BinaryDocumentStore extends QueryStore {
             .then(() => this.saveSnapshot());
     }
     put(doc, options = {}) {
-        if (!doc[this.options.indexBy]) {
-            throw new Error(`The provided document doesn't contain field '${this.options.indexBy}'`);
+        if (!doc[this.indexBy]) {
+            throw new Error(`The provided document doesn't contain field '${this.indexBy}'`);
         }
+        const ser = serialize(doc);
         return this._addOperation(new PutOperation({
-            key: asString(doc[this.options.indexBy]),
-            value: serialize(doc),
+            key: asString(doc[this.indexBy]),
+            value: ser,
         }), options);
     }
     putAll(docs, options = {}) {
         if (!(Array.isArray(docs))) {
             docs = [docs];
         }
-        if (!(docs.every(d => d[this.options.indexBy]))) {
-            throw new Error(`The provided document doesn't contain field '${this.options.indexBy}'`);
+        if (!(docs.every(d => d[this.indexBy]))) {
+            throw new Error(`The provided document doesn't contain field '${this.indexBy}'`);
         }
         return this._addOperation(new PutAllOperation({
             docs: docs.map((value) => new PutOperation({
-                key: asString(value[this.options.indexBy]),
+                key: asString(value[this.indexBy]),
                 value: serialize(value)
             }))
         }), options);
@@ -226,8 +225,24 @@ export class BinaryDocumentStore extends QueryStore {
         }), options);
     }
     get size() {
-        return Object.keys(this.index._index).length;
+        return Object.keys(this._index).length;
+    }
+    clone(newName) {
+        return new BinaryDocumentStore({
+            accessController: this.access.clone(newName),
+            indexBy: this.indexBy,
+            objectType: this.objectType,
+            name: newName,
+            queryRegion: this.queryRegion
+        });
     }
 }
-OrbitDB.addDatabaseType(BINARY_DOCUMENT_STORE_TYPE, BinaryDocumentStore);
+__decorate([
+    field({ type: 'string' }),
+    __metadata("design:type", String)
+], BinaryDocumentStore.prototype, "indexBy", void 0);
+__decorate([
+    field({ type: 'string' }),
+    __metadata("design:type", String)
+], BinaryDocumentStore.prototype, "objectType", void 0);
 //# sourceMappingURL=document-store.js.map

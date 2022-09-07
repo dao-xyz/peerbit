@@ -10,7 +10,7 @@ export const EMIT_HEALTHCHECK_INTERVAL = 5000;
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { v4 as uuid } from 'uuid';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
-import { P2PTrust } from "@dao-xyz/orbit-db-trust-web";
+import { TrustWebAccessController } from "@dao-xyz/orbit-db-trust-web";
 import isNode from 'is-node';
 import { arraysEqual } from "@dao-xyz/orbit-db-keystore";
 let v8 = undefined;
@@ -64,7 +64,7 @@ export class AnyPeer {
 
 
     // trust regions that are currently replicated by the peer
-    public trustWebs: Map<string, { trust: P2PTrust, shards: Map<string, Shard<any>> }> = new Map(); // key is the hash of P2PTrust
+    public trustWebs: Map<string, { trust: TrustWebAccessController, shards: Map<string, Shard<any>> }> = new Map(); // key is the hash of P2PTrust
 
     // to know whether we should treat the peer as long lasting or temporary with web restrictions
 
@@ -81,8 +81,8 @@ export class AnyPeer {
         return this.orbitDB._ipfs;
     }
 
-    _getCachedTrustOrSetPromise: Promise<{ trust: P2PTrust, afterShardSave?: () => void }> = undefined;
-    async getCachedTrustOrSet(from: P2PTrust, shard: Shard<any>): Promise<{ trust: P2PTrust, afterShardSave?: () => void }> {
+    _getCachedTrustOrSetPromise: Promise<{ trust: TrustWebAccessController, afterShardSave?: () => void }> = undefined;
+    async getCachedTrustOrSet(from: TrustWebAccessController, shard: Shard<any>): Promise<{ trust: TrustWebAccessController, afterShardSave?: () => void }> {
         await this._getCachedTrustOrSetPromise; // prevent concurrency sideffects
         this._getCachedTrustOrSetPromise = new Promise(async (resolve, reject) => {
             const hashCode = from.hashCode();
@@ -117,7 +117,7 @@ export class AnyPeer {
     }
 
     _removeAndCloseCachedTrust: Promise<void> = undefined;
-    async removeAndCloseCachedTrust(from: P2PTrust, shard: Shard<any>): Promise<void> {
+    async removeAndCloseCachedTrust(from: TrustWebAccessController, shard: Shard<any>): Promise<void> {
         await this._getCachedTrustOrSetPromise; // prevent concurrency sideffects 
         this._removeAndCloseCachedTrust = new Promise(async (resolve, reject) => {
             const hashCode = from.hashCode();
