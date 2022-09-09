@@ -1,5 +1,5 @@
-import { IStoreOptions, Store, Address } from '@dao-xyz/orbit-db-store'
-import { Identity } from '@dao-xyz/orbit-db-identity-provider';
+import { IStoreOptions, Store, Address, IInitializationOptions } from '@dao-xyz/orbit-db-store'
+import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
 import { field, option } from '@dao-xyz/borsh';
 import { Message } from 'ipfs-core-types/types/src/pubsub'
 import { QueryRequestV0, QueryResponseV0, Result, query, MultipleQueriesType, StoreAddressMatchQuery, respond } from '@dao-xyz/query-protocol';
@@ -7,19 +7,19 @@ import { IPFS as IPFSInstance } from "ipfs-core-types";
 import { Ed25519PublicKey, X25519PublicKey } from 'sodium-plus';
 import { decryptVerifyInto } from '@dao-xyz/encryption-utils';
 import { AccessController } from '@dao-xyz/orbit-db-store';
+import { ReadWriteAccessController } from './read-write-access-controller';
 
 export const getQueryTopic = (region: string): string => {
     return region + '/query';
 }
 /* export type IQueryStoreOptions<T> = IStoreOptions<T> & { queryRegion?: string, subscribeToQueries: boolean };
  */
-export type IQueryStoreOptions<T> = IStoreOptions<T> & { subscribeToQueries?: boolean };
 export class QueryStore<T> extends Store<T> {
 
     @field({ type: option('string') })
     queryRegion?: string;
-
     subscribeToQueries: boolean = true;
+
     _subscribed: boolean = false;
     _initializationPromise?: Promise<void>;
     _onQueryMessageBinded: any = undefined;
@@ -29,15 +29,15 @@ export class QueryStore<T> extends Store<T> {
         if (properties) {
             this.queryRegion = properties.queryRegion;
             // is this props ser or not??? 
+
+            if (properties.accessController instanceof ReadWriteAccessController === false) {
+                throw new Error("Expected ReadWriteAccessController for a store that accepts queries");
+            }
         }
     }
 
-    public async init(ipfs: IPFSInstance<{}>, identity: Identity, options: IQueryStoreOptions<T>) {
+    public async init(ipfs: IPFSInstance<{}>, identity: Identity, options: IInitializationOptions<T>) {
         await super.init(ipfs, identity, options)
-        if (options.subscribeToQueries !== undefined) {
-            this.subscribeToQueries = options.subscribeToQueries;
-        }
-
         if (this.subscribeToQueries) {
             this._subscribeToQueries();
         }
@@ -71,13 +71,27 @@ export class QueryStore<T> extends Store<T> {
         this._subscribed = true;
     }
 
-    async _onQueryMessage(msg: Message): Promise<void> {
+    async _onQueryMessage(msg: Message, identity: IdentitySerializable, identityProvider: Identities): Promise<void> {
 
         try {
             // TODO try catch deserialize parse to properly handle migrations (prevent old clients to break)
 
-            // Todo add ACL for responses
-            let query = await decryptVerifyInto(msg.data, QueryRequestV0, this._oplog._encryption)
+
+
+            let query = await decryptVerifyInto(msg.data, QueryRequestV0, this._oplog._encryption, {
+                isTrusted: async (key) => {
+
+                    return (this.access as ReadWriteAccessController<any>).canRead()
+                }
+            })
+
+
+            // ACL
+            if (this.access && !await this.access.canRead(xyz, identity, identityProvider)) {
+                return;
+            }
+
+
             if (query.type instanceof MultipleQueriesType) {
                 // Handle context queries
                 for (const q of query.type.queries) {

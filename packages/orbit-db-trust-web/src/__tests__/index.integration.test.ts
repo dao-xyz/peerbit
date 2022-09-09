@@ -2,6 +2,7 @@ import { getConnectedPeers, disconnectPeers } from '@dao-xyz/peer-test-utils'
 import { PublicKey } from '@dao-xyz/identity';
 import { TrustWebAccessController } from '..';
 import { waitFor } from '@dao-xyz/time';
+import { AccessError } from '@dao-xyz/encryption-utils';
 
 describe('isTrusted', () => {
 
@@ -11,15 +12,16 @@ describe('isTrusted', () => {
         const l0a = new TrustWebAccessController({
             rootTrust: PublicKey.from(peer.orbitDB.identity)
         });
-        await l0a.init(peer.orbitDB._ipfs, peer.orbitDB.identity, { replicate: true });
+
+        await peer.orbitDB.open(l0a);
 
         let peer2Key = peer2.orbitDB.identity;
         await l0a.addTrust(peer2Key);
 
         let l0b: TrustWebAccessController = await TrustWebAccessController.load(peer2.node, l0a.address) as any
-        await l0b.init(peer2.orbitDB._ipfs, peer2.orbitDB.identity, { replicate: true });
+        await peer2.orbitDB.open(l0b);
 
-        await waitFor(() => Object.keys(l0b.store._index).length == 1)
+        await waitFor(() => Object.keys(l0b.store._index._index).length == 1)
 
         let peer3Key = peer3.orbitDB.identity;
         await l0b.addTrust(peer3Key);
@@ -39,15 +41,15 @@ describe('isTrusted', () => {
             rootTrust: peer.orbitDB.identity
         });
 
-        await l0a.init(peer.orbitDB._ipfs, peer.orbitDB.identity, { replicate: true });
+        await peer.orbitDB.open(l0a);
 
         let l0b: TrustWebAccessController = await TrustWebAccessController.load(peer2.node, l0a.address) as any
-        await l0b.init(peer2.orbitDB._ipfs, peer2.orbitDB.identity, { replicate: true });
+        await peer2.orbitDB.open(l0b);
 
         let peer3Key = peer3.orbitDB.identity
 
         // Can not append peer3Key since its not trusted by the root
-        await expect(l0b.addTrust(peer3Key)).rejects.toBeInstanceOf(Error);
+        await expect(l0b.addTrust(peer3Key)).rejects.toBeInstanceOf(AccessError);
         await disconnectPeers([peer, peer2, peer3]);
 
     })

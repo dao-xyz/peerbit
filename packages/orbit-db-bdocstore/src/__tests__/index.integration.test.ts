@@ -1,10 +1,11 @@
 
-import { deserialize, field, option, serialize, variant } from '@dao-xyz/borsh';
+import { Constructor, deserialize, field, option, serialize, variant } from '@dao-xyz/borsh';
 import { BinaryDocumentStore } from '../document-store';
 import { DocumentQueryRequest, Compare, FieldBigIntCompareQuery, QueryRequestV0, QueryResponseV0, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort } from '@dao-xyz/query-protocol';
 import { query } from '@dao-xyz/query-protocol';
 import { disconnectPeers, getConnectedPeers, Peer } from '@dao-xyz/peer-test-utils';
 import { BinaryPayload } from '@dao-xyz/bpayload';
+import { Store } from '@dao-xyz/orbit-db-store';
 import { IPFSAccessController } from '@dao-xyz/orbit-db-ipfs-access-controller';
 
 @variant("document")//@variant([1, 0])
@@ -31,6 +32,7 @@ class Document extends BinaryPayload {
 
 const bigIntSort = (a, b) => (a > b || -(a < b)) as number
 
+const typeMap: { [key: string]: Constructor<any> } = { [Document.name]: Document, };
 
 const documentDbTestSetup = async (): Promise<{
   creator: Peer,
@@ -50,9 +52,11 @@ const documentDbTestSetup = async (): Promise<{
     queryRegion: 'world',
     indexBy: 'id',
     objectType: Document.name
-  }), { ...{ create: true, clazz: Document, subscribeToQueries: true, } })
+  }), { typeMap })
   await documentStoreCreator.load();
-  let _documentStoreObserver = await observer.orbitDB.open(documentStoreCreator.address.toString(), { ...{ clazz: Document, create: true, subscribeToQueries: false, replicate: false, sync: true } })
+  const observerStore = await BinaryDocumentStore.load(observer.orbitDB._ipfs, documentStoreCreator.address);
+  observerStore.subscribeToQueries = false;
+  let _documentStoreObserver = await observer.orbitDB.open(observerStore, { typeMap, replicate: false })
   /*   
    */
   /* expect(await peer.node.pubsub.ls()).toHaveLength(2); // replication and query topic

@@ -1,6 +1,5 @@
 import { PayloadOperation, StringIndex } from './string-index'
 import { IPFS as IPFSInstance } from 'ipfs';
-import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 import { QueryRequestV0, RangeCoordinate, RangeCoordinates, Result, ResultWithSource, StringMatchQuery } from '@dao-xyz/query-protocol';
 import { StringQueryRequest } from '@dao-xyz/query-protocol';
@@ -41,7 +40,7 @@ const defaultOptions = (options: IStoreOptions<any>): any => {
 export class StringStore extends QueryStore<PayloadOperation> {
 
   _index: StringIndex;
-  constructor(properties: { accessController: AccessController<PayloadOperation> }) {
+  constructor(properties: { name?: string, accessController: AccessController<PayloadOperation> }) {
     super(properties)
     this._index = new StringIndex();
   }

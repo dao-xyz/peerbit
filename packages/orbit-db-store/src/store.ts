@@ -20,6 +20,7 @@ import { AccessError, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
 import { Address, load, save } from './io'
 import { AccessController } from './access-controller'
 import { v4 as uuid } from 'uuid';
+import { StoreLike } from './store-like'
 export type Constructor<T> = new (...args: any[]) => T;
 
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
@@ -66,16 +67,6 @@ export interface IStoreOptions<T> {
   directory?: string;
 
   /**
-   * Whether or not to create the database if a valid OrbitDB address is not provided. (Default: false, only if using the OrbitDB#open method, otherwise this is true by default)
-   */
-  create?: boolean;
-
-  /**
-   * Overwrite an existing database (Default: false)
-   */
-  overwrite?: boolean;
-
-  /**
    * Replicate the database with peers, requires IPFS PubSub. (Default: true)
    */
   replicate?: boolean;
@@ -83,7 +74,7 @@ export interface IStoreOptions<T> {
 
   replicationTopic?: string | (() => string),
 
-  cache?: Cache;
+
 
   /**
    * Name to name conditioned some external property
@@ -116,11 +107,12 @@ export interface IInitializationOptions<T> extends IStoreOptions<T> {
   }, */
 
 
-  cache: Cache,
+  resolveCache: (address: Address) => Promise<Cache>,
   onClose?: (store: Store<T>) => void,
   onDrop?: (store: Store<T>) => void,
   onLoad?: (store: Store<T>) => void,
-
+  onWrite?: (topic: string, address: string, _entry: Entry<T>, heads: Entry<T>[]) => void
+  onOpen?: (store: Store<any>) => Promise<void>
 }
 export const JSON_ENCODER = {
   encoder: (obj) => new Uint8Array(Buffer.from(stringify(obj))),
@@ -138,14 +130,14 @@ export const DefaultOptions: IInitializationOptions<any> = {
   typeMap: {},
   /* nameResolver: (name: string) => name, */
   encoding: JSON_ENCODER,
-  cache: undefined,
   onClose: undefined,
   onDrop: undefined,
-  onLoad: undefined
+  onLoad: undefined,
+  resolveCache: undefined
 }
 
 @variant(0)
-export class Store<T> {
+export class Store<T> implements StoreLike<T> {
 
   @field({ type: 'string' })
   name: string;
@@ -203,8 +195,9 @@ export class Store<T> {
   }
 
   async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<T>): Promise<void> {
+
     if (this.access?.init) {
-      await this.access.init(ipfs, identity, options)
+      await this.access.init(ipfs, identity, options);
     }
 
     const address = await this.save(ipfs, { pin: true });
@@ -230,7 +223,7 @@ export class Store<T> {
 
     // External dependencies
     this._ipfs = ipfs
-    this._cache = options.cache
+    this._cache = await options.resolveCache(this.address);
 
     // Create the operations log
     this._oplog = new Log<T>(this._ipfs, this.identity, this.logOptions)
@@ -326,17 +319,29 @@ export class Store<T> {
     })
     this.events.on('write', (topic, address, entry, heads) => {
       this._procEntry(entry)
+      if (this.options.onWrite) {
+        this.options.onWrite(topic, address, entry, heads);
+      }
     })
 
+    if (this.options.onOpen) {
+      await this.options.onOpen(this);
+
+    }
     this.initialized = true;
   }
 
 
+  get oplog(): Log<any> {
+    return this._oplog;
+  }
+  get cache(): Cache {
+    return this._cache;
+  }
 
   get key() {
     return this._key
   }
-
 
   get logOptions(): LogOptions<T> {
     return {
@@ -346,7 +351,7 @@ export class Store<T> {
         getAnySecret: this.options.encryption(this.replicationTopic).getAnySecret,
         getEncryptionKey: this.options.encryption(this.replicationTopic).getEncryptionKey
       } : undefined, //this.options.encryption
-      access: this.access,
+      access: this.access ? this.access : this.fallbackAccess,
       sortFn: this.options.sortFn,
       recycle: this.options.recycle,
     };
@@ -417,6 +422,10 @@ export class Store<T> {
    * @return {[None]}
    */
   async drop() {
+    if (!this._oplog && !this._cache) {
+      return; // already dropped
+    }
+
     if (this.options.onDrop) {
       await this.options.onDrop(this)
     }
@@ -430,8 +439,8 @@ export class Store<T> {
     await this.close()
 
     // Reset
-    this._oplog = new Log(this._ipfs, this.identity, this.logOptions)
-    this._cache = this.options.cache
+    this._oplog = undefined;
+    this._cache = undefined;
   }
 
   async load(amount?: number, opts: { fetchEntryTimeout?: number } = {}) {
@@ -517,7 +526,7 @@ export class Store<T> {
       const hash = await io.write(this._ipfs, Entry.getWriteFormat(), logEntry.serialize(), { links: Entry.IPLD_LINKS }) ///, onlyHash: true
 
       if (hash !== head.hash) {
-        console.warn('"WARNING! Head hash didn\'t match the contents')
+        throw new Error("Head hash didn\'t match the contents")
       }
 
       return head
@@ -529,12 +538,14 @@ export class Store<T> {
       })
   }
 
-  save(ipfs: any, options?: {
+  async save(ipfs: any, options?: {
     format?: string;
     pin?: boolean;
     timeout?: number;
-  }) {
-    return save(ipfs, this, options)
+  }): Promise<Address> {
+    const address = await save(ipfs, this, options)
+    this.address = address;
+    return address;
   }
 
   static load(ipfs: any, address: Address, options?: {
@@ -545,6 +556,19 @@ export class Store<T> {
 
   loadMoreFrom(amount, entries) {
     this._replicator.load(entries)
+  }
+
+  get replicate(): boolean {
+    return this.options.replicate;
+  }
+
+  async getHeads(): Promise<Entry<T>[]> {
+    if (!(this.cache)) {
+      return [];
+    }
+    const localHeads = (await this.cache.getBinary<HeadsCache<T>>(this.localHeadsPath, HeadsCache))?.heads || []
+    const remoteHeads = (await this.cache.getBinary<HeadsCache<T>>(this.remoteHeadsPath, HeadsCache))?.heads || []
+    return [...localHeads, ...remoteHeads]
   }
 
   async saveSnapshot() {

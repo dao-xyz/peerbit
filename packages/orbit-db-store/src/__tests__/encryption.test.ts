@@ -64,9 +64,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           }
         }
       };
-      const options: IInitializationOptions<any> & {
-        cache: Cache;
-      } = Object.assign({}, DefaultOptions, { cache, onUpdate: index.updateIndex.bind(index) })
+      const options: IInitializationOptions<any> = Object.assign({}, DefaultOptions, { resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index) })
       options.encryption = encryption
       store = new Store({ name: 'name', accessController: new SimpleAccessController() })
       await store.init(ipfs, testIdentity, options);
@@ -132,7 +130,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       store.events.on('write', (topic, address, entry, heads) => {
         assert.strictEqual(heads.length, 1)
-        assert.strictEqual(address, 'test-address')
+        assert(Address.isValid(address))
         assert.deepStrictEqual(entry.payload.value, data)
         assert.strictEqual(store.replicationStatus.progress, 1n)
         assert.strictEqual(store.replicationStatus.max, 1n)

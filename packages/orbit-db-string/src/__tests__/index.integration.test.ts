@@ -4,7 +4,7 @@ import { QueryRequestV0, QueryResponseV0, ResultWithSource, StringQueryRequest, 
 import { query } from '@dao-xyz/query-protocol';
 import { disconnectPeers, getConnectedPeers, Peer } from '@dao-xyz/peer-test-utils';
 import { Range } from '../range';
-
+import { IPFSAccessController } from '@dao-xyz/orbit-db-ipfs-access-controller';
 const storeTestSetup = async (): Promise<{
     creator: Peer,
     observer: Peer,
@@ -15,7 +15,15 @@ const storeTestSetup = async (): Promise<{
     let [peer, observer] = await getConnectedPeers(2);
 
     // Create store
-    let storeCreator = await peer.orbitDB.open<StringStore>('store', { ...{ create: true, queryRegion: 'world', subscribeToQueries: true } })
+    const store = new StringStore({
+        name: 'store',
+        accessController: new IPFSAccessController({
+            write: ['*']
+        })
+    });
+    store.queryRegion = 'world';
+
+    let storeCreator = await peer.orbitDB.open<StringStore>(store)
     await storeCreator.load();
     await storeCreator._initializationPromise;
 

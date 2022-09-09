@@ -78,7 +78,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
         identity: id1
       })
 
-      db2 = await orbitdb2.open<EventStore<string>>(db.address, {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db.address), {
         identity: id2
       })
       await db2.load()
@@ -93,7 +93,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
     })
 
     it('makes database use the correct access controller', async () => {
-      const { address } = await db.access.save()
+      const { address } = await (db.access as IPFSAccessController<any>).save()
       assert.strictEqual(acManifest.params.address, address)
     })
 

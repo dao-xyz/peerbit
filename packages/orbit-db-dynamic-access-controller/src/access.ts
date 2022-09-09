@@ -30,7 +30,9 @@ export class Access extends AccessData {
     constructor(options?: { accessTypes: AccessType[], accessCondition: AccessCondition<any> }) {
         super();
         if (options) {
-            Object.assign(this, options);
+            this.accessTypes = options.accessTypes;
+            this.accessCondition = options.accessCondition;
+            this.initialize();
         }
     }
 
@@ -39,10 +41,10 @@ export class Access extends AccessData {
         if (!this.accessTypes || !this.accessCondition) {
             throw new Error("Not initialized");
         }
-        return Buffer.from(serialize(new Access({
-            accessCondition: this.accessCondition,
-            accessTypes: this.accessTypes
-        }))).toString('base64')
+        const a = new Access();
+        a.accessCondition = this.accessCondition;
+        a.accessTypes = this.accessTypes;
+        return Buffer.from(serialize(a)).toString('base64')
     }
 
     initialize(): Access {

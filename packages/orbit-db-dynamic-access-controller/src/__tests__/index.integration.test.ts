@@ -1,4 +1,4 @@
-import { field, variant } from "@dao-xyz/borsh";
+import { Constructor, field, variant } from "@dao-xyz/borsh";
 import { disconnectPeers, getConnectedPeers, getPeer, Peer } from '@dao-xyz/peer-test-utils';
 import { DynamicAccessController, DYNAMIC_ACCESS_CONTROLER } from "..";
 import { Access, AccessType } from "../access";
@@ -7,8 +7,9 @@ import { delay, waitFor } from '@dao-xyz/time';
 import { DocumentQueryRequest, FieldStringMatchQuery, query, QueryRequestV0, QueryResponseV0, ResultWithSource } from "@dao-xyz/query-protocol";
 import { AccessError } from "@dao-xyz/encryption-utils";
 import { BinaryPayload } from "@dao-xyz/bpayload";
+import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
+import { IPFSAccessController } from '@dao-xyz/orbit-db-ipfs-access-controller'
 
-/* 
 @variant("document")
 class Document extends BinaryPayload {
 
@@ -22,8 +23,9 @@ class Document extends BinaryPayload {
         }
     }
 }
+const typeMap: { [key: string]: Constructor<any> } = { [Document.name]: Document, };
 
-const defaultOptions = (trust: P2PTrust, heapSizeLimt = 10e15, onMemoryExceeded?: () => void) => {
+/* const defaultOptions = (trust: P2PTrust, heapSizeLimt = 10e15, onMemoryExceeded?: () => void) => {
     return {
         clazz: Document,
         nameResolver: (n) => n,
@@ -36,56 +38,68 @@ const defaultOptions = (trust: P2PTrust, heapSizeLimt = 10e15, onMemoryExceeded?
             storeOptions: {
                 subscribeToQueries: true,
                 cache: undefined,
-                create: true,
+                
                 replicate: true
             }
         },
         cache: undefined,
-        create: true,
+        
         replicate: true,
         typeMap: {
             [Document.name]: Document
         }
     }
-};
+}; */
 
+/* 
 const getTrust = async (peer: Peer) => {
-    const trust = new P2PTrust({
+    const acl = new DynamicAccessController({
+        name: peer.id,
         rootTrust: peer.orbitDB.identity
     });
-    await trust.init(peer.orbitDB, defaultOptions(trust));
-    await trust.load();
-    return trust
+    await peer.orbitDB.open(acl);
+    return acl
 }
 
 const loadTrust = async (peer: Peer, cid: string) => {
-    const trust = await P2PTrust.loadFromCID(cid, peer.node)
+    const trust = await DynamicAccessController.load(cid, peer.node)
     await trust.init(peer.orbitDB, defaultOptions(trust));
     await trust.load();
     return trust
-}
+} */
 describe('index', () => {
 
     it('can write from trust web', async () => {
         const [peer, peer2] = await getConnectedPeers(2)
-        const l0aTrust = await getTrust(peer);
-        let options = new BinaryDocumentStoreOptions({ indexBy: 'id', objectType: Document.name });
+        const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
+            name: 'test',
+            indexBy: 'id',
+            objectType: Document.name,
+            accessController: new DynamicAccessController({
+                name: 'test-acl',
+                rootTrust: peer.orbitDB.identity
+            })
+        }), { typeMap });
 
-        const l0a = await options.newStore('test', peer.orbitDB, defaultOptions(l0aTrust))
         await l0a.put(new Document({
             id: '1'
         }));
 
-        const l0b = await options.newStore(l0a.address.toString(), peer2.orbitDB, defaultOptions(await loadTrust(peer2, l0aTrust.cid)));
+        const l0b = await peer2.orbitDB.open(await BinaryDocumentStore.load(peer2.orbitDB._ipfs, l0a.address), { typeMap });
+
         await expect(l0b.put(new Document({
             id: 'id'
         }))).rejects.toBeInstanceOf(AccessError); // Not trusted
+        await (l0a.access as DynamicAccessController<Document>).trust.addTrust(peer2.orbitDB.identity);
+        await delay(10000);
+        await waitFor(() => Object.keys((l0b.access as DynamicAccessController<Document>).trust.store._index._index).length === 1);
 
-        await (l0a.access as DynamicAccessController<Document, any>).trust.addTrust(peer2.orbitDB.identity);
-        await (l0b.access as DynamicAccessController<Document, any>).trust.load(1);
         await l0b.put(new Document({
             id: '2'
         })) // Now trusted 
+
+        await waitFor(() => Object.keys(l0a._index._index).length === 2);
+        await waitFor(() => Object.keys(l0b._index._index).length === 2);
 
 
         await disconnectPeers([peer, peer2])
@@ -95,29 +109,35 @@ describe('index', () => {
     describe('conditions', () => {
         it('publickey', async () => {
             const [peer, peer2] = await getConnectedPeers(2)
-            const l0aTrust = await getTrust(peer);
-            let options = new BinaryDocumentStoreOptions({ indexBy: 'id', objectType: Document.name });
-            const l0a = await options.newStore('test', peer.orbitDB, defaultOptions(l0aTrust))
+            const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
+                name: 'test',
+                indexBy: 'id',
+                objectType: Document.name,
+                accessController: new DynamicAccessController({
+                    name: 'test-acl',
+                    rootTrust: peer.orbitDB.identity
+                })
+            }), { typeMap });
             await l0a.put(new Document({
                 id: '1'
             }));
 
 
-            const l0b = await options.newStore(l0a.address.toString(), peer2.orbitDB, defaultOptions(await loadTrust(peer2, l0aTrust.cid)));
+            const l0b = await peer2.orbitDB.open(await BinaryDocumentStore.load(peer2.orbitDB._ipfs, l0a.address), { typeMap });
             await expect(l0b.put(new Document({
                 id: 'id'
             }))).rejects.toBeInstanceOf(AccessError); // Not trusted
 
 
-            await (l0a.access as DynamicAccessController<Document, any>).aclDB.db.put(new Access({
+            await (l0a.access as DynamicAccessController<Document>).acl.store.put(new Access({
                 accessCondition: new PublicKeyAccessCondition({
                     key: peer2.orbitDB.identity.id,
                     type: peer2.orbitDB.identity.type
                 }),
-                accessTypes: [AccessType.Admin]
+                accessTypes: [AccessType.Any]
             }).initialize());
 
-            await (l0b.access as DynamicAccessController<Document, any>).aclDB.load(1);
+            await waitFor(() => Object.keys((l0b.access as DynamicAccessController<Document>).trust.store._index._index).length === 1);
             await l0b.put(new Document({
                 id: '2'
             })) // Now trusted 
@@ -128,26 +148,34 @@ describe('index', () => {
 
         it('any access', async () => {
             const [peer, peer2] = await getConnectedPeers(2)
-            const l0aTrust = await getTrust(peer);
-            let options = new BinaryDocumentStoreOptions({ indexBy: 'id', objectType: Document.name });
-            const l0a = await options.newStore('test', peer.orbitDB, defaultOptions(l0aTrust))
+            const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
+                name: 'test',
+                indexBy: 'id',
+                objectType: Document.name,
+                accessController: new DynamicAccessController({
+                    name: 'test-acl',
+                    rootTrust: peer.orbitDB.identity
+                })
+            }), { typeMap });
             await l0a.put(new Document({
                 id: '1'
             }));
 
 
-            const l0b = await options.newStore(l0a.address.toString(), peer2.orbitDB, defaultOptions(await loadTrust(peer2, l0aTrust.cid)));
+            const l0b = await peer2.orbitDB.open(await BinaryDocumentStore.load(peer2.orbitDB._ipfs, l0a.address), { typeMap });
             await expect(l0b.put(new Document({
                 id: 'id'
             }))).rejects.toBeInstanceOf(AccessError); // Not trusted
 
 
-            await (l0a.access as DynamicAccessController<Document, any>).aclDB.db.put(new Access({
+            const access = new Access({
                 accessCondition: new AnyAccessCondition(),
-                accessTypes: [AccessType.Admin]
-            }).initialize());
+                accessTypes: [AccessType.Any]
+            });
+            expect(access.id).toBeDefined();
+            await (l0a.access as DynamicAccessController<Document>).acl.store.put(access);
 
-            await (l0b.access as DynamicAccessController<Document, any>).aclDB.load(1);
+            await waitFor(() => Object.keys((l0b.access as DynamicAccessController<Document>).acl.store._index._index).length === 1);
             await l0b.put(new Document({
                 id: '2'
             })) // Now trusted 
@@ -158,9 +186,17 @@ describe('index', () => {
 
         it('read access', async () => {
             const [peer, peer2] = await getConnectedPeers(2)
-            const l0aTrust = await getTrust(peer);
-            let options = new BinaryDocumentStoreOptions({ indexBy: 'id', objectType: Document.name });
-            const l0a = await options.newStore('test', peer.orbitDB, defaultOptions(l0aTrust))
+
+            const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
+                name: 'test',
+                indexBy: 'id',
+                objectType: Document.name,
+                accessController: new DynamicAccessController({
+                    name: 'test-acl',
+                    rootTrust: peer.orbitDB.identity
+                })
+            }), { typeMap });
+
             await l0a.put(new Document({
                 id: '1'
             }));
@@ -179,15 +215,18 @@ describe('index', () => {
             }, {
                 maxAggregationTime: 3000
             })
+
             await q();
+
             expect(results).toBeUndefined(); // Because no read access
 
-            await (l0a.access as DynamicAccessController<Document, any>).aclDB.db.put(new Access({
+            await (l0a.access as DynamicAccessController<Document>).acl.store.put(new Access({
                 accessCondition: new AnyAccessCondition(),
                 accessTypes: [AccessType.Read]
             }).initialize());
 
             await q();
+
             expect(results).toBeDefined(); // Because no read access
 
 
@@ -197,37 +236,52 @@ describe('index', () => {
 
     it('append all', async () => {
         const [peer, peer2] = await getConnectedPeers(2)
-        const l0aTrust = await getTrust(peer);
-        let options = new BinaryDocumentStoreOptions({ indexBy: 'id', objectType: Document.name });
-        const l0a = await options.newStore('test', peer.orbitDB, defaultOptions(l0aTrust))
+        const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
+            name: 'test',
+            indexBy: 'id',
+            objectType: Document.name,
+            accessController: new DynamicAccessController({
+                name: 'test-acl',
+                rootTrust: peer.orbitDB.identity
+            })
+        }), { typeMap });
         await l0a.put(new Document({
             id: '1'
         }));
-
-        const l0b = await options.newStore(l0a.address.toString(), peer2.orbitDB, {
-            ...defaultOptions(await loadTrust(peer2, l0aTrust.cid)), accessController: {
-                type: DYNAMIC_ACCESS_CONTROLER,
-                appendAll: true
-            }
-        });
-
+        const dbb = await BinaryDocumentStore.load(peer2.orbitDB._ipfs, l0a.address);
+        (dbb.access as DynamicAccessController<Document>).appendAll = true;
+        const l0b = await peer2.orbitDB.open(dbb, { typeMap });
         await l0b.put(new Document({
             id: '2'
         })) // Now trusted because append all is 'true'
 
         // but entry will not be replicated on l0a since it still respects ACL
         await delay(5000); // Arbritary delay
-        expect(Object.keys(l0a.index._index)).toHaveLength(1);
+        expect(Object.keys(l0a._index._index)).toHaveLength(1);
         await disconnectPeers([peer, peer2])
     })
 
     it('on memory exceeded', async () => {
 
         const peer = await getPeer()
-        const l0aTrust = await getTrust(peer);
-        let options = new BinaryDocumentStoreOptions({ indexBy: 'id', objectType: Document.name });
         let memoryExceeded = false;
-        const l0a = await options.newStore('test', peer.orbitDB, defaultOptions(l0aTrust, 0, () => memoryExceeded = true))
+        const acl = new DynamicAccessController({
+            name: 'test-acl',
+            rootTrust: peer.orbitDB.identity
+        });
+
+        acl.memoryOptions = {
+            heapSizeLimit: () => 0,
+            onMemoryExceeded: () => memoryExceeded = true
+        }
+
+        const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
+            name: 'test',
+            indexBy: 'id',
+            objectType: Document.name,
+            accessController: acl
+        }), { typeMap })
+
         await expect(l0a.put(new Document({
             id: '1'
         }))).rejects.toBeInstanceOf(AccessError);
@@ -239,12 +293,26 @@ describe('index', () => {
     it('manifests are unique', async () => {
 
         const [peer] = await getConnectedPeers(1)
-        const l0aTrust = await getTrust(peer);
-        let options = new BinaryDocumentStoreOptions({ indexBy: 'id', objectType: Document.name });
-        const l0a = await options.newStore('test', peer.orbitDB, defaultOptions(l0aTrust))
-        const l0b = await options.newStore('test-2', peer.orbitDB, defaultOptions(l0aTrust))
+        const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
+            name: 'test',
+            indexBy: 'id',
+            objectType: Document.name,
+            accessController: new DynamicAccessController({
+                name: 'test-acl',
+                rootTrust: peer.orbitDB.identity
+            })
+        }), { typeMap });
+        const l0b = await peer.orbitDB.open(new BinaryDocumentStore({
+            name: 'test',
+            indexBy: 'id',
+            objectType: Document.name,
+            accessController: new DynamicAccessController({
+                name: 'test-acl-2',
+                rootTrust: peer.orbitDB.identity
+            })
+        }), { typeMap })
         expect(l0a.address).not.toEqual(l0b.address)
-        expect((l0a.access as DynamicAccessController<Document, any>).aclDB.address).not.toEqual((l0b.access as DynamicAccessController<Document, any>).aclDB.address)
+        expect((l0a.access as DynamicAccessController<Document>).acl.address).not.toEqual((l0b.access as DynamicAccessController<Document>).acl.address)
         await disconnectPeers([peer])
 
     })
@@ -252,23 +320,26 @@ describe('index', () => {
     it('can query', async () => {
 
         const [peer, peer2] = await getConnectedPeers(2)
-        const l0aTrust = await getTrust(peer);
-        let options = new BinaryDocumentStoreOptions({ indexBy: 'id', objectType: Document.name });
-        const l0a = await options.newStore('test', peer.orbitDB, defaultOptions(l0aTrust));
-        await (l0a.access as DynamicAccessController<Document, any>).aclDB.db.put(new Access({
+        const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
+            name: 'test',
+            indexBy: 'id',
+            objectType: Document.name,
+            accessController: new DynamicAccessController({
+                name: 'test-acl',
+                rootTrust: peer.orbitDB.identity
+            })
+        }), { typeMap });;
+        await (l0a.access as DynamicAccessController<Document>).acl.store.put(new Access({
             accessCondition: new AnyAccessCondition(),
-            accessTypes: [AccessType.Admin]
+            accessTypes: [AccessType.Any]
         }).initialize());
 
-        const l0b = await options.newStore(l0a.address.toString(), peer2.orbitDB, {
-            ...defaultOptions(await loadTrust(peer2, l0aTrust.cid)), accessController: {
-                type: DYNAMIC_ACCESS_CONTROLER,
-                appendAll: true // this is a setting common for a "non-server" peer, since that peer is not concerned about breaking ACL 
-            }
-        });
+        const dbb = await BinaryDocumentStore.load(peer2.orbitDB._ipfs, l0a.address);
+        (dbb.access as DynamicAccessController<Document>).appendAll = true;
+        const l0b = await peer2.orbitDB.open(dbb, { typeMap });
 
         let resp: QueryResponseV0 = undefined;
-        await (l0b.access as DynamicAccessController<Document, any>).aclDB.db.query(new QueryRequestV0({
+        await (l0b.access as DynamicAccessController<Document>).acl.store.query(new QueryRequestV0({
             type: new DocumentQueryRequest({
                 queries: []
             })
@@ -282,4 +353,4 @@ describe('index', () => {
 
 
 
-}) */
+}) 

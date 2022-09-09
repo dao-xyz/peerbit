@@ -5,8 +5,8 @@ import { asString } from './utils';
 import { DocumentQueryRequest, FieldQuery, FieldStringMatchQuery, QueryRequestV0, Result, ResultWithSource, SortDirection, FieldByteMatchQuery, FieldBigIntCompareQuery, Compare } from '@dao-xyz/query-protocol';
 import { BinaryPayload } from '@dao-xyz/bpayload';
 import { arraysEqual } from '@dao-xyz/io-utils';
-import { IStoreOptions, AccessController, Store } from '@dao-xyz/orbit-db-store';
-import { IQueryStoreOptions, QueryStore } from '@dao-xyz/orbit-db-query-store';
+import { AccessController, Store, IInitializationOptions, Address, load } from '@dao-xyz/orbit-db-store';
+import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement)
 /* 
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
@@ -40,7 +40,7 @@ export class BinaryDocumentStoreOptions<T extends BinaryPayload> extends BStoreO
     }
     return orbitDB.open(address, {
       ...options, ...{
-        clazz, create: true, indexBy: this.indexBy
+        clazz,  indexBy: this.indexBy
       }
     } as DocumentStoreOptions<T>)
   }
@@ -51,8 +51,11 @@ export class BinaryDocumentStoreOptions<T extends BinaryPayload> extends BStoreO
   }
 } */
 
-const defaultOptions = <T>(options: IStoreOptions<Operation>): IStoreOptions<Operation> => {
-  /*   if (!options["indexBy"]) Object.assign(options, { indexBy: '_id' }) */
+/* export interface Typed {
+  addTypes: (typeMap: { [name: string]: Constructor<any> }) => void
+}
+ */
+const defaultOptions = <T>(options: IInitializationOptions<Operation>): IInitializationOptions<Operation> => {
   if (!options.encoding) {
     options.encoding = {
       decoder: (bytes) => deserialize(Buffer.from(bytes), Operation),
@@ -61,14 +64,15 @@ const defaultOptions = <T>(options: IStoreOptions<Operation>): IStoreOptions<Ope
   }
   return options
 }
-export type IBStoreOptions<T> = IQueryStoreOptions<T> & { clazz: Constructor<T> }
-export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Operation> {
+export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Operation>/*  implements Typed */ {
 
   @field({ type: 'string' })
   indexBy: string;
 
   @field({ type: 'string' })
   objectType: string;
+
+  _clazz: Constructor<T>;
 
   _index: DocumentIndex<T>;
   constructor(properties: {
@@ -86,8 +90,24 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
     this._index = new DocumentIndex();
   }
 
-  async init(ipfs, identity, options: IBStoreOptions<T>) {
-    this._index.init(options.clazz);
+  /*  addTypes(_typeMap: { [name: string]: Constructor<any>; }) {
+     throw new Error("Not implemented");
+   } */
+
+  async init(ipfs, identity, options: IInitializationOptions<T>) {
+    if (!this._clazz) {
+      if (!options.typeMap)
+        throw new Error("Class not set, " + this.objectType)
+      else {
+        const clazz = options.typeMap[this.objectType];
+        if (!clazz) {
+          throw new Error("Class not set in typemap, " + this.objectType)
+        }
+        this._clazz = clazz;
+      }
+    }
+
+    this._index.init(this._clazz);
     await super.init(ipfs, identity, { ...defaultOptions(options), onUpdate: this._index.updateIndex.bind(this._index) })
   }
 
@@ -269,6 +289,16 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
       name: newName,
       queryRegion: this.queryRegion
     })
+  }
+
+  static async load<T>(ipfs: any, address: Address, options?: {
+    timeout?: number;
+  }): Promise<BinaryDocumentStore<T>> {
+    const instance = await load(ipfs, address, Store, options)
+    if (instance instanceof BinaryDocumentStore === false) {
+      throw new Error("Unexpected")
+    };
+    return instance as BinaryDocumentStore<T>;
   }
 }
 

@@ -42,7 +42,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       index = new SimpleIndex();
       store = new Store({ name: 'name', accessController: new SimpleAccessController() })
-      await store.init(ipfs, testIdentity, Object.assign({}, DefaultOptions, { cache, onUpdate: index.updateIndex.bind(index) }));
+      await store.init(ipfs, testIdentity, Object.assign({}, DefaultOptions, { resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index) }));
       assert(Address.isValid(store.address));
     })
 

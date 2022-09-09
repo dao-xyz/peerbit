@@ -79,7 +79,7 @@ export class BinaryDocumentStoreOptions<T> extends StoreOptions<BinaryDocumentSt
         if (!clazz) {
             throw new Error(`Undefined type: ${this.objectType}`);
         }
-        return orbitDB.open<BinaryDocumentStore<T>>(address, { ...peerOptions.defaultOptions, ...{ clazz, create: true, type: BINARY_DOCUMENT_STORE_TYPE, indexBy: this.indexBy, subscribeToQueries: peerOptions.isServer } } as DocumentStoreOptions<T>)
+        return orbitDB.open<BinaryDocumentStore<T>>(address, { ...peerOptions.defaultOptions, ...{ clazz,  type: BINARY_DOCUMENT_STORE_TYPE, indexBy: this.indexBy, subscribeToQueries: peerOptions.isServer } } as DocumentStoreOptions<T>)
     }
 
     get identifier(): string {
@@ -112,7 +112,7 @@ export class BinaryKeyValueStoreOptions<T> extends StoreOptions<BinaryKeyValueSt
             throw new Error(`Undefined type: ${this.objectType}`);
         }
 
-        return orbitDB.open<BinaryKeyValueStore<T>>(address, { ...peerOptions.defaultOptions, ...{ clazz, create: true, type: BINARY_KEYVALUE_STORE_TYPE } } as any)
+        return orbitDB.open<BinaryKeyValueStore<T>>(address, { ...peerOptions.defaultOptions, ...{ clazz,  type: BINARY_KEYVALUE_STORE_TYPE } } as any)
     }
 
     get identifier(): string {
@@ -144,7 +144,7 @@ export class BinaryFeedStoreOptions<T> extends StoreOptions<BinaryFeedStore<T>> 
             throw new Error(`Undefined type: ${this.objectType}`);
         }
 
-        return orbitDB.open<BinaryFeedStore<T>>(address, { ...peerOptions.defaultOptions, ...{ clazz, create: true, type: BINARY_FEED_STORE_TYPE } } as any)
+        return orbitDB.open<BinaryFeedStore<T>>(address, { ...peerOptions.defaultOptions, ...{ clazz,  type: BINARY_FEED_STORE_TYPE } } as any)
     }
 
     get identifier(): string {

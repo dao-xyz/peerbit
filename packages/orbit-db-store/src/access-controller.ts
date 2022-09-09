@@ -7,9 +7,9 @@ import { MaybeEncrypted } from "@dao-xyz/encryption-utils"
 import { CanAppendAccessController } from "@dao-xyz/ipfs-log"
 import { Payload } from "@dao-xyz/ipfs-log-entry"
 import { Identities, Identity, IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider"
-import { variant } from '@dao-xyz/borsh';
-import { IStoreOptions } from './store';
-import { Address, load, Manifest } from './io';
+import { IInitializationOptions } from './store';
+import { IPFS } from 'ipfs-core-types/src';
+import { Message } from 'ipfs-core-types/src/pubsub';
 
 /**
  * Interface for OrbitDB Access Controllers
@@ -18,20 +18,17 @@ import { Address, load, Manifest } from './io';
  * the methods defined by the interface here.
  */
 
-@variant(0)
 export class AccessController<T> implements CanAppendAccessController<T> {
 
+  init?(ipfs: IPFS, identity: Identity, options: IInitializationOptions<any>): Promise<void>;
   async canAppend(payload: MaybeEncrypted<Payload<T>>, identity: MaybeEncrypted<IdentitySerializable>, identityProvider: Identities): Promise<boolean> {
     throw new Error("Not implemented")
   }
   clone(newName: string): AccessController<T> {
     throw new Error("Not implemented")
   }
-  async init?(ipfs: any, identity: Identity, options: IStoreOptions<T>): Promise<void>;
-  async canRead?(payload: MaybeEncrypted<Payload<T>>, identity: MaybeEncrypted<IdentitySerializable>, identityProvider: Identities): Promise<boolean>;
   async canAccessKeys?(identity: { type: string, key: Uint8Array }): Promise<boolean>;
   async close?(): Promise<void>;
-  async save?(): Promise<{ address: string }>
 
 }
 

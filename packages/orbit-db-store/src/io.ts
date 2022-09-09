@@ -12,7 +12,7 @@ export interface Manifest {
     data: Uint8Array
 }
 
-export interface Addressable { name: string }
+export interface Addressable { get name(): string }
 
 export class Address {
     root: string;

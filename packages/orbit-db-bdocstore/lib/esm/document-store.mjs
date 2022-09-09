@@ -13,6 +13,7 @@ import { deserialize, field, serialize } from '@dao-xyz/borsh';
 import { asString } from './utils.mjs';
 import { FieldQuery, FieldStringMatchQuery, ResultWithSource, SortDirection, FieldByteMatchQuery, FieldBigIntCompareQuery, Compare } from '@dao-xyz/query-protocol';
 import { arraysEqual } from '@dao-xyz/io-utils';
+import { Store, load } from '@dao-xyz/orbit-db-store';
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
 /*
@@ -47,7 +48,7 @@ export class BinaryDocumentStoreOptions<T extends BinaryPayload> extends BStoreO
     }
     return orbitDB.open(address, {
       ...options, ...{
-        clazz, create: true, indexBy: this.indexBy
+        clazz,  indexBy: this.indexBy
       }
     } as DocumentStoreOptions<T>)
   }
@@ -57,8 +58,11 @@ export class BinaryDocumentStoreOptions<T extends BinaryPayload> extends BStoreO
     return BINARY_DOCUMENT_STORE_TYPE
   }
 } */
+/* export interface Typed {
+  addTypes: (typeMap: { [name: string]: Constructor<any> }) => void
+}
+ */
 const defaultOptions = (options) => {
-    /*   if (!options["indexBy"]) Object.assign(options, { indexBy: '_id' }) */
     if (!options.encoding) {
         options.encoding = {
             decoder: (bytes) => deserialize(Buffer.from(bytes), Operation),
@@ -67,7 +71,7 @@ const defaultOptions = (options) => {
     }
     return options;
 };
-export class BinaryDocumentStore extends QueryStore {
+export class BinaryDocumentStore extends QueryStore /*  implements Typed */ {
     constructor(properties) {
         super(properties);
         if (properties) {
@@ -76,8 +80,22 @@ export class BinaryDocumentStore extends QueryStore {
         }
         this._index = new DocumentIndex();
     }
+    /*  addTypes(_typeMap: { [name: string]: Constructor<any>; }) {
+       throw new Error("Not implemented");
+     } */
     async init(ipfs, identity, options) {
-        this._index.init(options.clazz);
+        if (!this._clazz) {
+            if (!options.typeMap)
+                throw new Error("Class not set, " + this.objectType);
+            else {
+                const clazz = options.typeMap[this.objectType];
+                if (!clazz) {
+                    throw new Error("Class not set in typemap, " + this.objectType);
+                }
+                this._clazz = clazz;
+            }
+        }
+        this._index.init(this._clazz);
         await super.init(ipfs, identity, { ...defaultOptions(options), onUpdate: this._index.updateIndex.bind(this._index) });
     }
     get(key, caseSensitive = false) {
@@ -235,6 +253,14 @@ export class BinaryDocumentStore extends QueryStore {
             name: newName,
             queryRegion: this.queryRegion
         });
+    }
+    static async load(ipfs, address, options) {
+        const instance = await load(ipfs, address, Store, options);
+        if (instance instanceof BinaryDocumentStore === false) {
+            throw new Error("Unexpected");
+        }
+        ;
+        return instance;
     }
 }
 __decorate([

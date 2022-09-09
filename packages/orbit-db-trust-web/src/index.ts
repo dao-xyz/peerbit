@@ -2,11 +2,10 @@ import { deserialize, field, option, serialize, variant } from "@dao-xyz/borsh";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
 import { Identities, Identity, IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
 import { OrbitDB } from "@dao-xyz/orbit-db";
-import { AccessController, Address, IStoreOptions, StoreAccessController } from "@dao-xyz/orbit-db-store";
+import { AccessController, Address, IInitializationOptions, IStoreOptions, StoreAccessController } from "@dao-xyz/orbit-db-store";
 import { Payload } from "@dao-xyz/ipfs-log-entry";
 
 import { createHash } from "crypto";
-import { IQueryStoreOptions } from "@dao-xyz/orbit-db-query-store";
 import { PublicKey, TrustData } from "@dao-xyz/identity";
 import { arraysEqual } from "@dao-xyz/io-utils";
 
@@ -216,8 +215,8 @@ export const getTrustPath = (start: PublicKey, end: PublicKey, db: BinaryDocumen
 }
 
 
-@variant(2)
-export class TrustWebAccessController extends StoreAccessController<BinaryDocumentStore<P2PTrustRelation>> {
+@variant([0, 0])
+export class TrustWebAccessController extends StoreAccessController<P2PTrustRelation, BinaryDocumentStore<P2PTrustRelation>, P2PTrustRelation> {
 
     @field({ type: PublicKey })
     rootTrust: PublicKey
@@ -241,21 +240,15 @@ export class TrustWebAccessController extends StoreAccessController<BinaryDocume
         } : undefined);
         if (props) {
             this.rootTrust = PublicKey.from(props.rootTrust);
+            this.store._clazz = P2PTrustRelation;
         }
     }
 
-    async init(ipfs: IPFS, identity: Identity, options: IStoreOptions<any>): Promise<void> {
-        return super.init(ipfs, identity, { ...options, fallbackAccessController: this }) // self referencing access controller
+    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<any>): Promise<void> {
+        const typeMap = options.typeMap ? { ...options.typeMap } : {}
+        typeMap[P2PTrustRelation.name] = P2PTrustRelation;
+        return super.init(ipfs, identity, { ...options, typeMap, fallbackAccessController: this }) // self referencing access controller
     }
-
-    /* async init(orbitDB: OrbitDB, options: IQueryStoreOptions<any, any, any>): Promise<void> {
-        const storeOptions = this.getStoreOptions(options);
-        await super.init(orbitDB, storeOptions);
-        if (!this.cid) {
-            await this.save(orbitDB._ipfs);
-        }
-    }
- */
 
     async canAppend(payload: MaybeEncrypted<Payload<any>>, identity: MaybeEncrypted<IdentitySerializable>, identityProvider: Identities): Promise<boolean> {
 
@@ -272,7 +265,7 @@ export class TrustWebAccessController extends StoreAccessController<BinaryDocume
         return isTrusted;
     }
 
-    getStoreOptions(options: { queryRegion?: string, replicate?: boolean, directory?: string }): IQueryStoreOptions<P2PTrustRelation> {
+    getStoreOptions(options: { queryRegion?: string, replicate?: boolean, directory?: string }): IStoreOptions<P2PTrustRelation> {
         return {
             subscribeToQueries: options.replicate,
             replicate: options.replicate,

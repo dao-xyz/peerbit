@@ -8,7 +8,6 @@ import LRU from 'lru'
 import path from 'path'
 import { Ed25519PublicKey } from 'sodium-plus';
 import { SolanaIdentityProviderOptions } from "./solana-identity-provider"
-import { joinUint8Arrays } from "@dao-xyz/io-utils"
 
 const defaultType = 'orbitdb'
 const identityKeysPath = path.join('./orbitdb', 'identity', 'identitykeys')

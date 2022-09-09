@@ -38,7 +38,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       ipfs = ipfsd.api
 
       index = new SimpleIndex();
-      const options = Object.assign({}, DefaultOptions, { cache, onUpdate: index.updateIndex.bind(index) })
+      const options = Object.assign({}, DefaultOptions, { resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index) })
       store = new Store({ name: 'name', accessController: new SimpleAccessController() })
       await store.init(ipfs, testIdentity, options);
 

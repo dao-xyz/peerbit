@@ -73,7 +73,6 @@ describe(`orbit-db - IPFSAccessController`, function () {
       accessController = new IPFSAccessController({
         write: [id1.id]
       });
-      await accessController.init(orbitdb1._ipfs, orbitdb1.identity, {});
     })
 
     it('creates an access controller', () => {

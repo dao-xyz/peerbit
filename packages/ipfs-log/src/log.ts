@@ -373,7 +373,7 @@ export class Log<T> extends GSet {
         assertAllowed: async (payload, identity) => {
           const canAppend = await this._access.canAppend(payload, identity, this._identity.provider);
           if (!canAppend) {
-            throw new AccessError(`Could not append Entry<T>, key "${this._identity.id}" is not allowed to write to the log`)
+            throw new AccessError(`Could not append entry, key "${this._identity.id}" is not allowed to write to the log`)
           }
         },
         encodingOptions: this._encoding,

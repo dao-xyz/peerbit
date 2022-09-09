@@ -39,7 +39,7 @@ export const createStore = (path = './keystore'): Level => {
   return new Level(path, { valueEncoding: 'view' })
 }
 
-const verifiedCache: { get(string: string): { publicKey: Ed25519PublicKey, data: Uint8Array }, set(string: string, { publicKey: Ed25519PublicKey, data: Uint8Array }) } = new LRU(1000)
+const verifiedCache: { get(string: string): { publicKey: Ed25519PublicKey, data: Uint8Array }, set(string: string, value: { publicKey: Ed25519PublicKey, data: Uint8Array }) } = new LRU(1000)
 const _crypto = SodiumPlus.auto();
 
 const NONCE_LENGTH = 24;

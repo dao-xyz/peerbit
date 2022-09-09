@@ -1,11 +1,9 @@
-import { Constructor, deserialize, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
+import { deserialize, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
 import { OrbitDB } from "@dao-xyz/orbit-db";
 import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store'
-import { waitForAsync } from "@dao-xyz/time";
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import { delay } from "@dao-xyz/time";
 import { AnyPeer, EMIT_HEALTHCHECK_INTERVAL, PeerInfo, ShardPeerInfo } from "./peer";
-import { IQueryStoreOptions } from "@dao-xyz/orbit-db-query-store";
 import { BinaryPayload } from '@dao-xyz/bpayload';
 
 export const SHARD_INDEX = 0;

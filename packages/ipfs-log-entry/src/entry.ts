@@ -149,8 +149,6 @@ export class Entry<T> implements EntryEncryptionTempate<string, Clock, IdentityS
   @field({ type: option(vec('string')) })
   refs?: string[] // Array of hashes
 
-
-
   @field({ type: option('string') })
   hash?: string // "zd...Foo", we'll set the hash after persisting the entry
 
