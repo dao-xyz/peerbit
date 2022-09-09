@@ -1,6 +1,6 @@
 import { Log } from "@dao-xyz/ipfs-log";
 import { Entry } from "@dao-xyz/ipfs-log-entry";
-import { Address, JSON_ENCODER } from "@dao-xyz/orbit-db-store";
+import { Address, JSON_ENCODER, load } from "@dao-xyz/orbit-db-store";
 import { Store } from "@dao-xyz/orbit-db-store"
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry';
 import { Identity } from "@dao-xyz/orbit-db-identity-provider";
@@ -115,4 +115,15 @@ export class EventStore<T> extends Store<Operation<T>> {
         const res = ops.slice(startIndex).slice(0, amount)
         return res
     }
+
+    static async load<T>(ipfs: any, address: Address, options?: {
+        timeout?: number;
+    }): Promise<EventStore<T>> {
+        const instance = await load(ipfs, address, Store, options)
+        if (instance instanceof EventStore === false) {
+            throw new Error("Unexpected")
+        };
+        return instance as EventStore<T>;
+    }
+
 }

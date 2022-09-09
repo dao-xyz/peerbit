@@ -1,5 +1,5 @@
 import { Log } from "@dao-xyz/ipfs-log";
-import { JSON_ENCODER } from "@dao-xyz/orbit-db-store";
+import { Address, JSON_ENCODER, load } from "@dao-xyz/orbit-db-store";
 import { Store } from "@dao-xyz/orbit-db-store"
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry';
 import { AccessController } from "@dao-xyz/orbit-db-store";
@@ -54,7 +54,7 @@ export class KeyValueStore<T> extends Store<Operation<T>> {
         let opts = Object.assign({}, { Index: KeyValueIndex })
         if (options.encoding === undefined) Object.assign(options, { encoding: JSON_ENCODER })
         Object.assign(opts, options)
-        super.init(ipfs, identity, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
+        return super.init(ipfs, identity, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
     }
 
     get all() {
@@ -95,6 +95,16 @@ export class KeyValueStore<T> extends Store<Operation<T>> {
             key: key,
             value: null
         }, options)
+    }
+
+    static async load<T>(ipfs: any, address: Address, options?: {
+        timeout?: number;
+    }): Promise<KeyValueStore<T>> {
+        const instance = await load(ipfs, address, Store, options)
+        if (instance instanceof KeyValueStore === false) {
+            throw new Error("Unexpected")
+        };
+        return instance as KeyValueStore<T>;
     }
 }
 

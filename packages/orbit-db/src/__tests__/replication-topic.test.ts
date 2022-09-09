@@ -103,13 +103,13 @@ Object.keys(testAPIs).forEach(API => {
       }
       const replicationTopicFn = () => 'x';
       const replicationTopic = replicationTopicFn();
-      db1 = await orbitdb1.create(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() })
+      db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() })
         , { ...Object.assign({}, options, { directory: dbPath1 }), replicationTopic })
       await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
 
-      options = Object.assign({}, options, { create: true, directory: dbPath2, sync: true })
-      db2 = await orbitdb2.open<EventStore<string>>(db1.address.toString(), { ...options, replicationTopic: replicationTopicFn })
-      db3 = await orbitdb2.create(new EventStore<string>({ name: 'replication-tests-same-topic', accessController: new SimpleAccessController() }), { ...options, replicationTopic: replicationTopicFn })
+      options = Object.assign({}, options, { directory: dbPath2, sync: true })
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), { ...options, replicationTopic: replicationTopicFn })
+      db3 = await orbitdb2.open(new EventStore<string>({ name: 'replication-tests-same-topic', accessController: new SimpleAccessController() }), { ...options, replicationTopic: replicationTopicFn })
 
       expect(await orbitdb1._ipfs.pubsub.ls()).toStrictEqual([replicationTopic])
       const ls2 = await orbitdb2._ipfs.pubsub.ls();
@@ -156,18 +156,18 @@ Object.keys(testAPIs).forEach(API => {
 
       const replicationTopicFn = () => 'x';
       const replicationTopic = replicationTopicFn();
-      db1 = await orbitdb1.create(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() })
+      db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() })
         , { directory: dbPath1, replicationTopic })
-      db2 = await orbitdb1.create(new EventStore<string>({ name: 'replication-tests-2', accessController: new SimpleAccessController() })
+      db2 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests-2', accessController: new SimpleAccessController() })
         , { directory: dbPath1, replicationTopic })
       db1.add('hello')
       db2.add('world')
 
       await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
 
-      const options = { create: true, directory: dbPath2, sync: true }
-      db3 = await orbitdb2.open<EventStore<string>>(db1.address.toString(), { ...options, replicationTopic: replicationTopicFn })
-      db4 = await orbitdb2.open<EventStore<string>>(db2.address.toString(), { ...options, replicationTopic: replicationTopicFn })
+      const options = { directory: dbPath2, sync: true }
+      db3 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), { ...options, replicationTopic: replicationTopicFn })
+      db4 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db2.address), { ...options, replicationTopic: replicationTopicFn })
 
       expect(await orbitdb1._ipfs.pubsub.ls()).toStrictEqual([replicationTopic])
       const ls2 = await orbitdb2._ipfs.pubsub.ls();

@@ -30,7 +30,7 @@ Object.keys(testAPIs).forEach(API => {
       ipfs = ipfsd.api
       orbitdb1 = await OrbitDB.createInstance(ipfs, { directory: dbPath1 })
       orbitdb2 = await OrbitDB.createInstance(ipfs, { directory: dbPath2 })
-      db = await orbitdb1.create(new EventStore<string>({ name: 'replication status tests', accessController: new SimpleAccessController() })
+      db = await orbitdb1.open(new EventStore<string>({ name: 'replication status tests', accessController: new SimpleAccessController() })
       )
     })
 
@@ -66,7 +66,7 @@ Object.keys(testAPIs).forEach(API => {
       await db.load()
       await db.add('hello2')
 
-      const db2 = await orbitdb2.open(db.address.toString(), { create: false })
+      const db2 = await orbitdb2.open(await EventStore.load(orbitdb2._ipfs, db.address))
       await db2.sync(db._oplog.heads)
 
       return new Promise((resolve, reject) => {

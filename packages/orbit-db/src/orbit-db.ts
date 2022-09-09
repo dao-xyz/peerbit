@@ -1,5 +1,5 @@
 import path from 'path'
-import { Address, IStoreOptions, Store, StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store'
+import { Address, IStoreOptions, Store, StoreLike, StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store'
 import { PubSub, Subscription } from '@dao-xyz/orbit-db-pubsub'
 import Logger from 'logplease'
 const logger = Logger.create('orbit-db')
@@ -46,7 +46,7 @@ export class OrbitDB {
   storage: Storage;
   caches: any;
   keystore: Keystore;
-  stores: { [topic: string]: { [address: string]: Store<any> } };
+  stores: { [topic: string]: { [address: string]: StoreLike<any> } };
 
   _waitForKeysTimeout = 10000;
   _keysInflightMap: Map<string, Promise<any>> = new Map(); // TODO fix types
@@ -283,68 +283,6 @@ export class OrbitDB {
     return new Cache(cacheStorage)
   }
 
-  /* Private methods */
-  async _initializeStore<T, S extends Store<T>>(store: S, options: { identity?: Identity } & IStoreOptions<any>) {
-    // Get the type -> class mapping
-    /* 
-        let accessController
-        if (options.accessControllerAddress) {
-          // Access controller options also gathers some properties from the options, so that if the access controller
-          // does also contain a store (i.e. Store -> AccessController -> Store), we can create this store on the "load" 
-          // method on the AccessController
-          const accessControllerOptions = {
-            storeOptions: {
-              create: options.create, replicate: options.replicate, directory: options.directory, nameResolver: options.nameResolver
-            }, ...options.accessController
-          };
-          accessController = await AccessControllers.resolve(this, options.accessControllerAddress)
-        } */
-
-
-    const identity = options.identity || this.identity
-
-    await store.init(this._ipfs, identity, {
-      replicate: true, ...options, ...{
-        cache: options.cache,
-        onClose: this._onClose.bind(this),
-        onDrop: this._onDrop.bind(this),
-        onLoad: this._onLoad.bind(this),
-      }
-    });
-
-    store.events.on('write', this._onWrite.bind(this))
-
-    // ID of the store is the address as a string
-    this.addStore(store)
-
-    // Subscribe to pubsub to get updates from peers,
-    // this is what hooks us into the message propagation layer
-    // and the p2p network
-    if (this._pubsub) {
-      if (!this._pubsub._subscriptions[store.replicationTopic]) {
-        await this._pubsub.subscribe(store.replicationTopic, store.id, this._onMessage.bind(this), {
-          onNewPeerCallback: this._onPeerConnected.bind(this)
-        })
-      }
-      else {
-
-        const msg = new RequestHeadsMessage({
-          address: store.address.toString(),
-          replicationTopic: store.replicationTopic
-        });
-        await this._pubsub.publish(store.replicationTopic, serialize(await this.decryptedSignedThing(serialize(msg))));
-
-      }
-    }
-
-    // TODO fix types
-    if (store.access["setStore"]) {
-      store.access["setStore"](store);
-    }
-
-    return store
-  }
-
 
 
   // Callback for local writes to the database. We the update to pubsub.
@@ -352,7 +290,7 @@ export class OrbitDB {
     if (!heads) {
       throw new Error("'heads' not defined")
     }
-    if (this._pubsub) {
+    if (this._pubsub && heads.length > 0) {
       this.decryptedSignedThing(serialize(new ExchangeHeadsMessage({
         address,
         heads,
@@ -403,15 +341,15 @@ export class OrbitDB {
                 continue // this messages was intended for another store
               }
               if (heads.length > 0) {
-                if (!store.options.replicate) {
+                if (!store.replicate) {
                   // if we are only to write, then only care about others clock
                   for (const head of heads) {
                     head.init({
-                      encoding: store._oplog._encoding,
-                      encryption: store._oplog._encryption
+                      encoding: store.oplog._encoding,
+                      encryption: store.oplog._encryption
                     })
                     const clock = await head.getClock();
-                    store._oplog.mergeClock(clock)
+                    store.oplog.mergeClock(clock)
                   }
                 }
                 else {
@@ -583,7 +521,7 @@ export class OrbitDB {
     this.stores[storeAddress] = store;
   }
   */
-  addStore(store: Store<any>) {
+  addStore(store: StoreLike<any>) {
     const replicationTopic = store.replicationTopic;
     if (!this.stores[replicationTopic]) {
       this.stores[replicationTopic] = {};
@@ -605,30 +543,32 @@ export class OrbitDB {
       overwrite: false, // whether we should overwrite the existing database if it exists
     }
   */
-  async create<S extends Store<any>>(store: S, options: {
+
+
+  /*  directory?: string,
+   onlyHash?: boolean,
+   overwrite?: boolean,
+   accessController?: any,
+   create?: boolean,
+   type?: string,
+   localOnly?: boolean,
+   replicationConcurrency?: number,
+   replicate?: boolean,
+   replicationTopic?: string | (() => string),
+ 
+   encoding?: IOOptions<any>;
+   encryption?: (keystore: Keystore) => StorePublicKeyEncryption; */
+  /* async create<S extends StoreLike<any>>(store: S, options: {
     timeout?: number,
     identity?: Identity,
     cache?: Cache,
 
 
-    /*  directory?: string,
-     onlyHash?: boolean,
-     overwrite?: boolean,
-     accessController?: any,
-     create?: boolean,
-     type?: string,
-     localOnly?: boolean,
-     replicationConcurrency?: number,
-     replicate?: boolean,
-     replicationTopic?: string | (() => string),
-   
-     encoding?: IOOptions<any>;
-     encryption?: (keystore: Keystore) => StorePublicKeyEncryption; */
 
   } & IStoreOptions<any> = {}): Promise<S> {
 
     logger.debug('create()')
-    logger.debug(`Creating database '${store.id}' as ${store.constructor.name}`)
+    logger.debug(`Creating database '${store.name}' as ${store.constructor.name}`)
 
     // Create the database address
 
@@ -640,8 +580,7 @@ export class OrbitDB {
 
     // Check if we have the database locally
     const haveDB = await this._haveLocalData(options.cache, dbAddress)
-
-    if (haveDB && !options.overwrite) { throw new Error(`Database '${dbAddress}' already exists!`) }
+    if (haveDB) { throw new Error(`Database '${dbAddress}' already exists!`) }
 
     // Save the database locally
     await this._addManifestToCache(options.cache, dbAddress)
@@ -649,8 +588,8 @@ export class OrbitDB {
     logger.debug(`Created database '${dbAddress}'`)
 
     // Open the database
-    return this.open<S>(dbAddress, options)
-  }
+    return this.open<S>(store, options)
+  } */
 
   async _requestCache(address: string, directory: string, existingCache?: Cache) {
     const dir = directory || this.directory
@@ -671,12 +610,11 @@ export class OrbitDB {
       options = {
         localOnly: false // if set to true, throws an error if database can't be found locally
         create: false // whether to create the database
-        type: TODO
-        overwrite: TODO
+
 
       }
    */
-  async open<S extends Store<any>>(from: { toString(): string } | S, options: {
+  async open<S extends StoreLike<any>>(store: /* string | Address |  */S, options: {
     timeout?: number,
     identity?: Identity,
 
@@ -684,7 +622,6 @@ export class OrbitDB {
     directory?: string,
     accessController?: any,
     onlyHash?: boolean,
-    overwrite?: boolean,
     create?: boolean,
     type?: string,
     localOnly?: boolean,
@@ -696,31 +633,31 @@ export class OrbitDB {
     logger.debug('open()')
 
     options = Object.assign({ localOnly: false, create: false }, options)
-    logger.debug(`Open database '${from}'`)
+    logger.debug(`Open database '${store}'`)
 
     // If address is just the name of database, check the options to crate the database
-    if (from instanceof Store) {
-      if (!options.create) {
-        throw new Error('\'options.create\' set to \'false\'. If you want to create a database, set \'options.create\' to \'true\'.')
-      }
-      logger.warn(`Not a valid OrbitDB address '${from}', creating the database`)
-      options.overwrite = options.overwrite ? options.overwrite : true
-      return this.create(from, options)
-    }
-    else {
+    /*  if (!store.address) {
+ 
+       logger.warn(`Not a valid OrbitDB address '${store}', creating the database`)
+       return this.create(store, options)
+     }
+     else { */
 
-      // Parse the database address
-      const address = Address.parse(from)
+    // Parse the database address
+    /*  const address = store.address;
+     if (!address) {
+       throw new Error("Missing address to open");
+     } */
+    // If database is already open, return early by returning the instance
+    // if (this.stores[dbAddress]) {
+    //   return this.stores[dbAddress]
+    // }
 
-      // If database is already open, return early by returning the instance
-      // if (this.stores[dbAddress]) {
-      //   return this.stores[dbAddress]
-      // }
-
-      options.cache = await this._requestCache(address.toString(), options.directory)
+    const resolveCache = async (address: Address) => {
+      const cache = await this._requestCache(address.toString(), options.directory)
 
       // Check if we have the database
-      const haveDB = await this._haveLocalData(options.cache, address)
+      const haveDB = await this._haveLocalData(cache, address)
 
       logger.debug((haveDB ? 'Found' : 'Didn\'t find') + ` database '${address}'`)
 
@@ -731,38 +668,77 @@ export class OrbitDB {
         throw new Error(`Database '${address}' doesn't exist!`)
       }
 
-      logger.debug(`Loading store for '${address}'`)
-
-      let store: Store<any> = undefined;
-      try {
-        // Get the database manifest from IPFS
-        store = await Store.load(this._ipfs, address, { timeout: options.timeout || defaultTimeout })
-        logger.debug(`Manifest for '${address}':\n${JSON.stringify(store.name, null, 2)}`)
-      } catch (e) {
-        if (e.name === 'TimeoutError' && e.code === 'ERR_TIMEOUT') {
-          console.error(e)
-          throw new Error('ipfs unable to find and fetch store for this address.')
-        } else {
-          throw e
-        }
-      }
-
-      if (store.name !== address.path) {
-        logger.warn(`Store name '${store.name}' and path name '${address.path}' do not match`)
-      }
-
-
-      if (!options.encryption) {
-        options.encryption = this.replicationTopicEncryption();
+      if (haveDB) {
+        throw new Error("Cache already exist for address: " + address.toString())
       }
 
       // Save the database locally
-      await this._addManifestToCache(options.cache, address)
-
-      // Open the the database
-      await this._initializeStore(store, options)
-      return store as S;
+      await this._addManifestToCache(cache, address)
+      return cache;
     }
+
+
+    logger.debug(`Loading store`)
+    /*  let store = store instanceof Store ? store : undefined;
+     if (!store) {
+       try {
+         // Get the database manifest from IPFS
+         store = await Store.load(this._ipfs, address, { timeout: options.timeout || defaultTimeout }) as S
+         logger.debug(`Manifest for '${address}':\n${JSON.stringify(store.name, null, 2)}`)
+       } catch (e) {
+         if (e.name === 'TimeoutError' && e.code === 'ERR_TIMEOUT') {
+           console.error(e)
+           throw new Error('ipfs unable to find and fetch store for this address.')
+         } else {
+           throw e
+         }
+       }
+     } */
+
+    /*  if (store.name !== address.path) {
+       logger.warn(`Store name '${store.name}' and path name '${address.path}' do not match`)
+     } */
+
+    if (!options.encryption) {
+      options.encryption = this.replicationTopicEncryption();
+    }
+
+    // Open the the database
+    await await store.init(this._ipfs, options.identity || this.identity, {
+      replicate: true, ...options, ...{
+        resolveCache,
+        onClose: this._onClose.bind(this),
+        onDrop: this._onDrop.bind(this),
+        onLoad: this._onLoad.bind(this),
+        onWrite: this._onWrite.bind(this),
+        onOpen: async (store) => {
+
+          // ID of the store is the address as a string
+          this.addStore(store)
+
+          // Subscribe to pubsub to get updates from peers,
+          // this is what hooks us into the message propagation layer
+          // and the p2p network
+          if (this._pubsub) {
+            if (!this._pubsub._subscriptions[store.replicationTopic]) {
+              await this._pubsub.subscribe(store.replicationTopic, store.id, this._onMessage.bind(this), {
+                onNewPeerCallback: this._onPeerConnected.bind(this)
+              })
+            }
+            else {
+              const msg = new RequestHeadsMessage({
+                address: store.address.toString(),
+                replicationTopic: store.replicationTopic
+              });
+              await this._pubsub.publish(store.replicationTopic, serialize(await this.decryptedSignedThing(serialize(msg))));
+
+            }
+          }
+        }
+      }
+    });
+    return store as S;
+    /*  } */
 
   }
 

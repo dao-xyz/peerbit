@@ -69,7 +69,7 @@ Object.keys(testAPIs).forEach(API => {
             })
             orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2 })
             options = Object.assign({}, options, { directory: dbPath1, encryption: orbitdb1.replicationTopicEncryption() })
-            db1 = await orbitdb1.create(new EventStore<string>({
+            db1 = await orbitdb1.open(new EventStore<string>({
                 name: 'abc',
                 accessController: new SimpleAccessController()
             }), options)
@@ -95,8 +95,8 @@ Object.keys(testAPIs).forEach(API => {
         it('replicates database of 1 entry', async () => {
             console.log("Waiting for peers to connect")
             await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
-            options = Object.assign({}, options, { create: true, directory: dbPath2, sync: true, replicate: false, encryption: undefined })
-            db2 = await orbitdb2.open<EventStore<string>>(db1.address.toString(), options)
+            options = Object.assign({}, options, { directory: dbPath2, sync: true, replicate: false, encryption: undefined })
+            db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), options)
             let finished = false
             await db1.add('hello');
             await waitFor(() => db2._oplog.clock.time > 0);
@@ -145,8 +145,8 @@ Object.keys(testAPIs).forEach(API => {
             console.log("Waiting for peers to connect")
             await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
             const encryptionKey = await orbitdb1.keystore.createKey('encryption key', BoxKeyWithMeta, db1.replicationTopic);
-            options = Object.assign({}, options, { create: true, directory: dbPath2, sync: true, replicate: false, encryption: orbitdb2.replicationTopicEncryption() })
-            db2 = await orbitdb2.open<EventStore<string>>(db1.address.toString(), options)
+            options = Object.assign({}, options, { directory: dbPath2, sync: true, replicate: false, encryption: orbitdb2.replicationTopicEncryption() })
+            db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), options)
             let finished = false
             await db1.add('hello', {
                 reciever: {

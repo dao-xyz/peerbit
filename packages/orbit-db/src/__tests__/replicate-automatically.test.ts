@@ -42,9 +42,9 @@ Object.keys(testAPIs).forEach(API => {
 
 
       options = Object.assign({}, options)
-      db1 = await orbitdb1.create(new EventStore<string>({ name: 'replicate-automatically-tests', accessController: new SimpleAccessController() })
+      db1 = await orbitdb1.open(new EventStore<string>({ name: 'replicate-automatically-tests', accessController: new SimpleAccessController() })
         , options)
-      db3 = await orbitdb1.create(new KeyValueStore<string>({ name: 'replicate-automatically-tests-kv', accessController: new SimpleAccessController() })
+      db3 = await orbitdb1.open(new KeyValueStore<string>({ name: 'replicate-automatically-tests-kv', accessController: new SimpleAccessController() })
         , options)
     })
 
@@ -84,8 +84,8 @@ Object.keys(testAPIs).forEach(API => {
       await mapSeries(entryArr, (i) => db1.add('hello' + i))
 
       // Open the second database
-      db2 = await orbitdb2.open<EventStore<string>>(db1.address.toString(), { create: true })
-      db4 = await orbitdb2.open<KeyValueStore<string>>(db3.address.toString(), { create: true })
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {})
+      db4 = await orbitdb2.open<KeyValueStore<string>>(await KeyValueStore.load(orbitdb2._ipfs, db3.address), {})
 
       // Listen for the 'replicated' events and check that all the entries
       // were replicated to the second database

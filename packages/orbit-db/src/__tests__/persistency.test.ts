@@ -67,7 +67,7 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
       for (let i = 0; i < entryCount; i++)
         entryArr.push(i)
 
-      db = await orbitdb1.create(new EventStore<string>({ name: dbName, accessController: new SimpleAccessController() }))
+      db = await orbitdb1.open(new EventStore<string>({ name: dbName, accessController: new SimpleAccessController() }))
       address = db.address.toString()
       await mapSeries(entryArr, (i) => db.add('hello' + i))
       await db.close()
@@ -190,7 +190,7 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
 
   describe('load from empty snapshot', function () {
     it('loads database from an empty snapshot', async () => {
-      db = await orbitdb1.create(new EventStore<string>({ name: 'empty-snapshot', accessController: new SimpleAccessController() }))
+      db = await orbitdb1.open(new EventStore<string>({ name: 'empty-snapshot', accessController: new SimpleAccessController() }))
       address = db.address.toString()
       await db.saveSnapshot()
       await db.close()
@@ -210,7 +210,7 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
       for (let i = 0; i < entryCount; i++)
         entryArr.push(i)
 
-      db = await orbitdb1.create(new EventStore<string>({ name: dbName, accessController: new SimpleAccessController() }))
+      db = await orbitdb1.open(new EventStore<string>({ name: dbName, accessController: new SimpleAccessController() }))
       address = db.address.toString()
       await mapSeries(entryArr, (i) => db.add('hello' + i))
       await db.saveSnapshot()

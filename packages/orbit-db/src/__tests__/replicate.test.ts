@@ -74,7 +74,7 @@ Object.keys(testAPIs).forEach(API => {
       }
 
       options = Object.assign({}, options, { directory: dbPath1 })
-      db1 = await orbitdb1.create(new EventStore<string>({ name: 'a', accessController: new SimpleAccessController() })
+      db1 = await orbitdb1.open(new EventStore<string>({ name: 'a', accessController: new SimpleAccessController() })
         , options)
     })
 
@@ -100,8 +100,8 @@ Object.keys(testAPIs).forEach(API => {
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
       // Set 'sync' flag on. It'll prevent creating a new local database and rather
       // fetch the database from the network
-      options = Object.assign({}, options, { create: true, directory: dbPath2, sync: true })
-      db2 = await orbitdb2.open<EventStore<string>>(db1.address.toString(), options)
+      options = Object.assign({}, options, { directory: dbPath2, sync: true })
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), options)
 
       let finished = false
 
@@ -138,8 +138,8 @@ Object.keys(testAPIs).forEach(API => {
       console.log("Waiting for peers to connect")
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
 
-      options = Object.assign({}, options, { create: true, directory: dbPath2, sync: true })
-      db2 = await orbitdb2.open<EventStore<string>>(db1.address.toString(), options)
+      options = Object.assign({}, options, { directory: dbPath2, sync: true })
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), options)
 
       let finished = false
       const entryCount = 100
@@ -185,8 +185,8 @@ Object.keys(testAPIs).forEach(API => {
       console.log("Waiting for peers to connect")
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
 
-      options = Object.assign({}, options, { create: true, directory: dbPath2, sync: true })
-      db2 = await orbitdb2.open<EventStore<string>>(db1.address.toString(), options)
+      options = Object.assign({}, options, { directory: dbPath2, sync: true })
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), options)
 
       let finished = false
       const entryCount = 99
@@ -276,12 +276,11 @@ Object.keys(testAPIs).forEach(API => {
         // Open second instance again
         options = {
           directory: dbPath2,
-          overwrite: true,
           sync: true,
-          create: true
+
         }
 
-        db2 = await orbitdb2.open<EventStore<string>>(db1.address.toString(), options)
+        db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), options)
 
         // Test that none of the entries gets into the replication queue twice
         const replicateSet = new Set()
@@ -367,10 +366,10 @@ Object.keys(testAPIs).forEach(API => {
           directory: dbPath2 + '2',
           overwrite: true,
           sync: true,
-          create: true
+
         }
 
-        db2 = await orbitdb2.open<EventStore<string>>(db1.address.toString(), options)
+        db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), options)
         assert.equal(db1.address.toString(), db2.address.toString())
 
         // Test that none of the entries gets into the replication queue twice

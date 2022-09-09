@@ -45,7 +45,7 @@ Object.keys(testAPIs).forEach(API => {
 
     describe('Drop', function () {
       beforeAll(async () => {
-        db = await orbitdb.create(new EventStore({ name: 'first', accessController: new SimpleAccessController() }))
+        db = await orbitdb.open(new EventStore({ name: 'first', accessController: new SimpleAccessController() }))
         localDataPath = path.join(dbPath)
         assert.equal(fs.existsSync(localDataPath), true)
       })

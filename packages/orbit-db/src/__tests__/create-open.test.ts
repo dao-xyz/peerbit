@@ -9,7 +9,7 @@ import { KeyValueStore } from './utils/stores/key-value-store'
 import io from '@dao-xyz/orbit-db-io'
 import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { SimpleAccessController } from './utils/access'
-import { Address } from '@dao-xyz/orbit-db-store'
+import { Address, Store } from '@dao-xyz/orbit-db-store'
 import { EventStore } from './utils/stores'
 // Include test utilities
 const {
@@ -68,9 +68,9 @@ Object.keys(testAPIs).forEach(API => {
         it('throws an error if database already exists', async () => {
           let err, db
           try {
-            db = await orbitdb.create(new EventStore({ name: 'first', accessController: new SimpleAccessController() })
+            db = await orbitdb.open(new EventStore({ name: 'first', accessController: new SimpleAccessController() })
               , { replicate: false })
-            await orbitdb.create(new EventStore({ name: 'first', accessController: new SimpleAccessController() })
+            await orbitdb.open(new EventStore({ name: 'first', accessController: new SimpleAccessController() })
               , { replicate: false })
           } catch (e) {
             err = e.toString()
@@ -85,7 +85,7 @@ Object.keys(testAPIs).forEach(API => {
         let db: KeyValueStore<string>;
 
         beforeAll(async () => {
-          db = await orbitdb.create(new KeyValueStore<string>({ name: 'second', accessController: new SimpleAccessController() })
+          db = await orbitdb.open(new KeyValueStore<string>({ name: 'second', accessController: new SimpleAccessController() })
             , { replicate: false })
           localDataPath = path.join(dbPath, orbitdb.id, 'cache')
           await db.close()
@@ -124,7 +124,7 @@ Object.keys(testAPIs).forEach(API => {
 
         it('can pass local database directory as an option', async () => {
           const dir = './orbitdb/tests/another-feed'
-          const db2 = await orbitdb.create(new EventStore({ name: 'third', accessController: new SimpleAccessController() })
+          const db2 = await orbitdb.open(new EventStore({ name: 'third', accessController: new SimpleAccessController() })
             , { directory: dir })
           assert.equal(fs.existsSync(dir), true)
           await db2.close()
@@ -134,18 +134,10 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     describe('Open', function () {
-      it('throws an error if trying to open a database with name only and \'create\' is not set to \'true\'', async () => {
-        let err
-        try {
-          let db = await orbitdb.open('XXX', { create: false })
-        } catch (e) {
-          err = e.toString()
-        }
-        assert.equal(err, "Error: 'options.create' set to 'false'. If you want to create a database, set 'options.create' to 'true'.")
-      })
+
 
       it('opens a database - name only', async () => {
-        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { create: true, overwrite: true })
+        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), {})
         assert.equal(db.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db.address.toString().indexOf('zd'), 9)
         assert.equal(db.address.toString().indexOf('abc'), 59)
@@ -154,7 +146,7 @@ Object.keys(testAPIs).forEach(API => {
 
       it('opens a database - with a different identity', async () => {
         const identity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore: orbitdb.keystore })
-        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { create: true, overwrite: true, identity })
+        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { identity })
         assert.equal(db.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db.address.toString().indexOf('zd'), 9)
         assert.equal(db.address.toString().indexOf('abc'), 59)
@@ -164,8 +156,8 @@ Object.keys(testAPIs).forEach(API => {
 
       it('opens the same database - from an address', async () => {
         const identity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore: orbitdb.keystore })
-        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { create: true, overwrite: true, identity })
-        const db2 = await orbitdb.open(db.address)
+        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { identity })
+        const db2 = await orbitdb.open(await Store.load(orbitdb._ipfs, db.address))
         assert.equal(db2.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db2.address.toString().indexOf('zd'), 9)
         assert.equal(db2.address.toString().indexOf('abc'), 59)
@@ -174,22 +166,22 @@ Object.keys(testAPIs).forEach(API => {
       })
 
       it('doesn\'t open a database if we don\'t have it locally', async () => {
-        const db = await orbitdb.open(new EventStore({ name: 'abcabc', accessController: new SimpleAccessController() }), { create: true, overwrite: true })
+        const db = await orbitdb.open(new EventStore({ name: 'abcabc', accessController: new SimpleAccessController() }), {})
         const address = new Address(db.address.root.slice(0, -1) + 'A', 'non-existent')
         await db.drop()
-        return new Promise((resolve, reject) => {
+        return new Promise(async (resolve, reject) => {
           setTimeout(resolve, 900)
-          orbitdb.open(address)
+          orbitdb.open(await Store.load(orbitdb._ipfs, address))
             .then(() => reject(new Error('Shouldn\'t open the database')))
             .catch(reject)
         })
       })
 
       it('throws an error if trying to open a database locally and we don\'t have it', async () => {
-        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { create: true, overwrite: true })
+        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), {})
         const address = new Address(db.address.root.slice(0, -1) + 'A', 'second')
         await db.drop()
-        return orbitdb.open(address, { localOnly: true })
+        return orbitdb.open(await Store.load(orbitdb._ipfs, address), { localOnly: true })
           .then(() => new Error('Shouldn\'t open the database'))
           .catch(e => {
             assert.equal(e.toString(), `Error: Database '${address}' doesn't exist!`)
@@ -197,12 +189,12 @@ Object.keys(testAPIs).forEach(API => {
       })
 
       it('open the database and it has the added entries', async () => {
-        const db = await orbitdb.open(new EventStore({ name: 'ZZZ', accessController: new SimpleAccessController() }), { create: true })
+        const db = await orbitdb.open(new EventStore({ name: 'ZZZ', accessController: new SimpleAccessController() }), {})
         await db.add('hello1')
         await db.add('hello2')
         await db.close()
 
-        const db2 = await orbitdb.open(db.address)
+        const db2 = await orbitdb.open(await Store.load(orbitdb._ipfs, db.address))
 
         await db.load()
         const res = db.iterator({ limit: -1 }).collect()
@@ -222,14 +214,14 @@ Object.keys(testAPIs).forEach(API => {
       })
       it('closes a custom store', async () => {
         const directory = path.join(dbPath, "custom-store")
-        const db = await orbitdb.open(new EventStore({ name: 'xyz', accessController: new SimpleAccessController() }), { create: true, directory })
+        const db = await orbitdb.open(new EventStore({ name: 'xyz', accessController: new SimpleAccessController() }), { directory })
         await db.close()
         assert.strictEqual(db._cache._store.status, 'closed')
       })
 
       it("close load close sets status to 'closed'", async () => {
         const directory = path.join(dbPath, "custom-store")
-        const db = await orbitdb.open(new EventStore({ name: 'xyz', accessController: new SimpleAccessController() }), { create: true, directory })
+        const db = await orbitdb.open(new EventStore({ name: 'xyz', accessController: new SimpleAccessController() }), { directory })
         await db.close()
         await db.load()
         await db.close()
@@ -241,11 +233,11 @@ Object.keys(testAPIs).forEach(API => {
         const directory = path.join(dbPath, "custom-store")
         const directory2 = path.join(dbPath, "custom-store2")
 
-        const db1 = await orbitdb.open(new EventStore({ name: 'xyz1', accessController: new SimpleAccessController() }), { create: true })
-        const db2 = await orbitdb.open(new EventStore({ name: 'xyz2', accessController: new SimpleAccessController() }), { create: true, directory })
-        const db3 = await orbitdb.open(new EventStore({ name: 'xyz3', accessController: new SimpleAccessController() }), { create: true, directory })
-        const db4 = await orbitdb.open(new EventStore({ name: 'xyz4', accessController: new SimpleAccessController() }), { create: true, directory: directory2 })
-        const db5 = await orbitdb.open(new EventStore({ name: 'xyz5', accessController: new SimpleAccessController() }), { create: true })
+        const db1 = await orbitdb.open(new EventStore({ name: 'xyz1', accessController: new SimpleAccessController() }), {})
+        const db2 = await orbitdb.open(new EventStore({ name: 'xyz2', accessController: new SimpleAccessController() }), { directory })
+        const db3 = await orbitdb.open(new EventStore({ name: 'xyz3', accessController: new SimpleAccessController() }), { directory })
+        const db4 = await orbitdb.open(new EventStore({ name: 'xyz4', accessController: new SimpleAccessController() }), { directory: directory2 })
+        const db5 = await orbitdb.open(new EventStore({ name: 'xyz5', accessController: new SimpleAccessController() }), {})
 
         await db1.close()
         await db2.close()

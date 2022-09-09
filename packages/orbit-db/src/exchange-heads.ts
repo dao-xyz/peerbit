@@ -1,7 +1,7 @@
 import { variant, field, vec, serialize } from '@dao-xyz/borsh';
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Message } from './message';
-import { HeadsCache, Store } from '@dao-xyz/orbit-db-store';
+import { HeadsCache, Store, StoreLike } from '@dao-xyz/orbit-db-store';
 import Logger from 'logplease'
 import { DecryptedThing, MaybeSigned } from '@dao-xyz/encryption-utils';
 import { Ed25519PublicKey } from 'sodium-plus';
@@ -57,21 +57,15 @@ export class RequestHeadsMessage extends Message {
 
 
 
-const getHeadsForDatabase = async (store: Store<any>) => {
-  if (!(store && store._cache)) return []
-  const localHeads = (await store._cache.getBinary(store.localHeadsPath, HeadsCache))?.heads || []
-  const remoteHeads = (await store._cache.getBinary(store.remoteHeadsPath, HeadsCache))?.heads || []
-  return [...localHeads, ...remoteHeads]
-}
 
-export const exchangeHeads = async (channel: any, topic: string, getStore: (address: string) => { [key: string]: Store<any> }, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: Ed25519PublicKey }>) => {
+export const exchangeHeads = async (channel: any, topic: string, getStore: (address: string) => { [key: string]: StoreLike<any> }, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: Ed25519PublicKey }>) => {
 
   // Send the heads if we have any
   const stores = getStore(topic);
   for (const [storeAddress, store] of Object.entries(stores)) {
-    const heads = await getHeadsForDatabase(store)
+    const heads = await store.getHeads();
     logger.debug(`Send latest heads of '${topic}':\n`, JSON.stringify(heads.map(e => e.hash), null, 2))
-    if (heads) {
+    if (heads && heads.length > 0) {
       const message = new ExchangeHeadsMessage({ replicationTopic: topic, address: storeAddress, heads: heads });
       const signedMessage = await new MaybeSigned({ data: serialize(message) }).sign(sign)
       const decryptedMessage = new DecryptedThing({

@@ -32,37 +32,37 @@ import { variant } from '@dao-xyz/borsh';
  *//* 
 @variant(1)
 export class FeedStore<T> extends EventStore<T> {
- constructor(properties: {
-     name: string;
-     accessController: AccessController<Operation<T>>;
- }) {
-     super(properties)
- }
- async init(ipfs, address, identity, options) {
-     if (!options) options = {}
-     super.init(ipfs, address, identity, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
- }
+constructor(properties: {
+    name: string;
+    accessController: AccessController<Operation<T>>;
+}) {
+    super(properties)
+}
+async init(ipfs, address, identity, options) {
+    if (!options) options = {}
+    super.init(ipfs, address, identity, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
+}
 
- remove(hash, options?: {
-     onProgressCallback?: (any: any) => void;
-     pin?: boolean;
-     reciever?: EncryptionTemplateMaybeEncrypted;
- }) {
-     return this.del(hash, options)
- }
+remove(hash, options?: {
+    onProgressCallback?: (any: any) => void;
+    pin?: boolean;
+    reciever?: EncryptionTemplateMaybeEncrypted;
+}) {
+    return this.del(hash, options)
+}
 
- del(hash, options?: {
-     onProgressCallback?: (any: any) => void;
-     pin?: boolean;
-     reciever?: EncryptionTemplateMaybeEncrypted;
- }) {
-     const operation = {
-         op: 'DEL',
-         key: null,
-         value: hash
-     }
-     return this._addOperation(operation, options)
- }
+del(hash, options?: {
+    onProgressCallback?: (any: any) => void;
+    pin?: boolean;
+    reciever?: EncryptionTemplateMaybeEncrypted;
+}) {
+    const operation = {
+        op: 'DEL',
+        key: null,
+        value: hash
+    }
+    return this._addOperation(operation, options)
+}
 }
 
 */

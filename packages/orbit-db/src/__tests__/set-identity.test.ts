@@ -59,7 +59,7 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     beforeEach(async () => {
-      options = Object.assign({}, options, { create: true, overwrite: true })
+      options = Object.assign({}, options, {})
     })
 
     it('sets identity', async () => {

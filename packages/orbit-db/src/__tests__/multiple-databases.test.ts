@@ -87,20 +87,20 @@ Object.keys(testAPIs).forEach(API => {
       console.log("Creating databases and waiting for peers to connect")
 
       // Open the databases on the first node
-      const options = { create: true }
+      const options = {}
 
       // Open the databases on the first node
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb1.create(new EventStore<string>({ name: 'local-' + i, accessController: new SimpleAccessController() }), options)
+        const db = await orbitdb1.open(new EventStore<string>({ name: 'local-' + i, accessController: new SimpleAccessController() }), options)
         localDatabases.push(db)
       }
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb2.open<EventStore<string>>(localDatabases[i].address.toString(), { directory: dbPath2, ...options })
+        const db = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, localDatabases[i].address), { directory: dbPath2, ...options })
         remoteDatabasesA.push(db)
       }
 
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb3.open<EventStore<string>>(localDatabases[i].address.toString(), { directory: dbPath3, ...options })
+        const db = await orbitdb3.open<EventStore<string>>(await EventStore.load(orbitdb3._ipfs, localDatabases[i].address), { directory: dbPath3, ...options })
         remoteDatabasesB.push(db)
       }
 
