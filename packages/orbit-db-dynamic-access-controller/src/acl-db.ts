@@ -1,44 +1,43 @@
 import { field, variant } from '@dao-xyz/borsh';
 import { BinaryDocumentStore, Operation } from '@dao-xyz/orbit-db-bdocstore';
-import { Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
-import { TrustWebAccessController } from '@dao-xyz/orbit-db-trust-web';
+import { getFromByToGenerator, RegionAccessController, RelationAccessController } from '@dao-xyz/orbit-db-trust-web';
 import { Access, AccessData, AccessType } from './access';
-import { Entry, Payload } from '@dao-xyz/ipfs-log-entry'
-import { MaybeEncrypted } from '@dao-xyz/encryption-utils';
+import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { PublicKey } from '@dao-xyz/identity';
-import { Address, IInitializationOptions, Store, StoreLike } from '@dao-xyz/orbit-db-store';
+import { Address, IInitializationOptions, StoreLike } from '@dao-xyz/orbit-db-store';
 import { Log } from '@dao-xyz/ipfs-log';
 import Cache from '@dao-xyz/orbit-db-cache';
-import { IPFS } from 'ipfs-core-types/src/index';
-import { Ed25519PublicKey } from 'sodium-plus';
-
 
 @variant(0)
-export class ACLInterface implements StoreLike<Operation> {
+export class AccessStore implements StoreLike<Operation<any>> {
 
-    @field({ type: Store })
-    store: BinaryDocumentStore<AccessData>;
+    @field({ type: BinaryDocumentStore })
+    access: BinaryDocumentStore<AccessData>;
 
 
-    rootTrust: TrustWebAccessController;
+    @field({ type: RelationAccessController })
+    identityGraphController: RelationAccessController;
 
     constructor(opts?: {
         name: string;
-        rootTrust: PublicKey | Identity | IdentitySerializable
+        rootTrust: PublicKey
     }) {
         if (opts) {
-            this.store = new BinaryDocumentStore({
+            this.access = new BinaryDocumentStore({
                 indexBy: 'id',
                 objectType: AccessData.name,
-                accessController: new TrustWebAccessController({
-                    name: opts.name,
-                    rootTrust: opts.rootTrust,
-                    /* skipManifest: true,
-                    appendAll: opts.appendAll, */
+                accessController: new RegionAccessController({
+                    name: opts.name + "_region",
+                    rootTrust: opts.rootTrust
                 })
             })
 
+            this.identityGraphController = new RelationAccessController({ name: opts.name + '_identity' });
         }
+    }
+
+    get trust(): RegionAccessController {
+        return this.access.accessController as RegionAccessController;
     }
 
     // allow anyone write to the ACL db, but assume entry is invalid until a verifier verifies
@@ -48,94 +47,115 @@ export class ACLInterface implements StoreLike<Operation> {
 
     // custom can append
 
-    async canRead(entry: MaybeEncrypted<Payload<any>>, key: Ed25519PublicKey): Promise<boolean> {
+    async canRead(fromKey: PublicKey): Promise<boolean> {
         // TODO, improve, caching etc
 
         // Else check whether its trusted by this access controller
-        for (const value of Object.values(this.store._index._index)) {
-            const access = value.value;
-            if (access instanceof Access) {
-                if (access.accessTypes.find((x) => x === AccessType.Any || x === AccessType.Read) !== undefined) {
-                    // check condition
-                    if (access.accessCondition.allowed(entry, key)) {
-                        return true;
+        const canReadCheck = async (key: PublicKey) => {
+            for (const value of Object.values(this.access._index._index)) {
+                const access = value.value;
+                if (access instanceof Access) {
+                    if (access.accessTypes.find((x) => x === AccessType.Any || x === AccessType.Read) !== undefined) {
+                        // check condition
+                        if (await access.accessCondition.allowed(key)) {
+                            return true;
+                        }
+                        continue;
                     }
-                    continue;
                 }
+            }
+        }
+
+        if (await canReadCheck(fromKey)) {
+            return true;
+        }
+        for await (const trustedByKey of getFromByToGenerator(fromKey, this.identityGraphController.relationGraph)) {
+            if (await canReadCheck(trustedByKey.from)) {
+                return true;
             }
         }
         return false;
     }
 
-    async canWrite(entry: MaybeEncrypted<Payload<any>>, identity: MaybeEncrypted<IdentitySerializable>): Promise<boolean> {
+    async canWrite(fromKey: PublicKey): Promise<boolean> {
         // TODO, improve, caching etc
 
         // Else check whether its trusted by this access controller
-        for (const value of Object.values(this.store._index._index)) {
-            const access = value.value
-            if (access instanceof Access) {
-                if (access.accessTypes.find((x) => x === AccessType.Any || x === AccessType.Write) !== undefined) {
-                    // check condition
-                    if (access.accessCondition.allowed(entry, identity)) {
-                        return true;
+        const canWriteCheck = async (key: PublicKey) => {
+            for (const value of Object.values(this.access._index._index)) {
+                const access = value.value
+                if (access instanceof Access) {
+                    if (access.accessTypes.find((x) => x === AccessType.Any || x === AccessType.Write) !== undefined) {
+                        // check condition
+                        if (await access.accessCondition.allowed(key)) {
+                            return true;
+                        }
+                        continue;
                     }
-                    continue;
                 }
-            }
 
+            }
+        }
+        if (await canWriteCheck(fromKey)) {
+            return true;
+        }
+        for await (const trustedByKey of getFromByToGenerator(fromKey, this.identityGraphController.relationGraph)) {
+            if (await canWriteCheck(trustedByKey.from)) {
+                return true;
+            }
         }
         return false;
     }
 
 
-    async init(ipfs: IPFS<{}>, identity: Identity, options: IInitializationOptions<any>): Promise<void> {
-        this.rootTrust = this.store.access as TrustWebAccessController;
-        this.store._clazz = AccessData;
-        await this.store.access.init(ipfs, identity, options);
-        return this.store.init(ipfs, identity, options)
+    async init(ipfs, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<Access>) {
+        this.access._clazz = AccessData;
+        /* await this.access.accessController.init(ipfs, publicKey, sign, options); */
+        await this.identityGraphController.init(ipfs, publicKey, sign, options);
+        return this.access.init(ipfs, publicKey, sign, options)
     }
 
     close(): Promise<void> {
-        return this.store.close();
+        return this.access.close();
     }
     drop(): Promise<void> {
-        return this.store.drop();
+        return this.access.drop();
     }
     load(): Promise<void> {
-        return this.store.load();
+        return this.access.load();
     }
     save(ipfs: any, options?: { format?: string; pin?: boolean; timeout?: number; }) {
-        return this.store.save(ipfs, options);
+        return this.access.save(ipfs, options);
     }
     sync(heads: Entry<Access>[]): Promise<void> {
-        return this.store.sync(heads);
+        return this.access.sync(heads);
     }
     get replicationTopic(): string {
-        return this.store.replicationTopic;
+        return this.access.replicationTopic;
     }
     get events(): import("events") {
-        return this.store.events;
+        return this.access.events;
     }
     get address(): Address {
-        return this.store.address;
+        return this.access.address;
     }
     get oplog(): Log<Access> {
-        return this.store.oplog;
+        return this.access.oplog;
     }
     get cache(): Cache {
-        return this.store.cache;
+        return this.access.cache;
     }
     get id(): string {
-        return this.store.id;
+        return this.access.id;
     }
     get replicate(): boolean {
-        return this.store.replicate;
+        return this.access.replicate;
     }
-    getHeads(): Promise<Entry<Operation>[]> {
-        return this.store.getHeads();
+    getHeads(): Promise<Entry<Operation<any>>[]> {
+        return this.access.getHeads();
     }
     get name(): string {
-        return this.store.name;
+        return this.access.name;
     }
 
 }

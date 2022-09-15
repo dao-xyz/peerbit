@@ -1,40 +1,18 @@
 export * from './errors';
-import { BinaryReader, BinaryWriter, Constructor, deserialize, field, option, serialize, variant, vec } from '@dao-xyz/borsh';
-import { U8IntArraySerializer } from '@dao-xyz/io-utils';
-import { X25519PublicKey, Ed25519PublicKey, SodiumPlus, CryptographyKey } from 'sodium-plus';
+import { Constructor, deserialize, field, serialize, variant, vec } from '@dao-xyz/borsh';
+import { bufferSerializer, U8IntArraySerializer } from '@dao-xyz/io-utils';
+import { X25519SecretKey, X25519PublicKey, SodiumPlus, CryptographyKey } from 'sodium-plus';
 import { arraysEqual } from '@dao-xyz/io-utils'
-import { X25519SecretKey } from 'sodium-plus';
 import { AccessError } from './errors';
+import { PublicKey } from '@dao-xyz/identity';
+import { MaybeSigned } from '@dao-xyz/identity'
+
 const NONCE_LENGTH = 24;
 const _crypto = SodiumPlus.auto();
 export interface PublicKeyEncryption {
     getEncryptionKey: () => Promise<X25519SecretKey>
     getAnySecret: (publicKey: X25519PublicKey[]) => Promise<{ index: number, secretKey: X25519SecretKey } | undefined>
 
-}
-
-
-export type GetBuffer = {
-    getBuffer(): Buffer
-}
-export const bufferSerializer = (clazz: Constructor<GetBuffer>) => {
-    return {
-        serialize: (obj: GetBuffer, writer: BinaryWriter) => {
-            const buffer = obj.getBuffer();
-            writer.writeU32(buffer.length);
-            for (let i = 0; i < buffer.length; i++) {
-                writer.writeU8(buffer[i])
-            }
-        },
-        deserialize: (reader: BinaryReader) => {
-            const len = reader.readU32();
-            const arr = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                arr[i] = reader.readU8();
-            }
-            return new clazz(Buffer.from(arr));
-        }
-    }
 }
 
 
@@ -280,8 +258,6 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
         }
     }
 
-
-
     _decrypted: DecryptedThing<T>
     get decrypted(): DecryptedThing<T> {
         if (!this._decrypted) {
@@ -349,8 +325,28 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
     }
 }
 
+export const decryptVerifyInto = async <T>(data: Uint8Array, clazz: Constructor<T>, encryption?: PublicKeyEncryption, options: { isTrusted?: (key: PublicKey) => Promise<boolean> } = {}) => {
+    const maybeEncrypted = deserialize<MaybeEncrypted<MaybeSigned<any>>>(Buffer.from(data), MaybeEncrypted);
+    const decrypted = await (encryption ? maybeEncrypted.init(encryption) : maybeEncrypted).decrypt();
+    const maybeSigned = decrypted.getValue(MaybeSigned);
+    if (!await maybeSigned.verify()) {
+        throw new AccessError();
+    }
 
-export const verifySignature = async (signature: Uint8Array, publicKey: Ed25519PublicKey, data: Uint8Array, signedHash = false) => {
+    if (options.isTrusted) {
+        if (!maybeSigned.signature) {
+            throw new AccessError();
+        }
+
+        if (!await options.isTrusted(maybeSigned.signature.publicKey)) {
+            throw new AccessError();
+        }
+    }
+    return deserialize(Buffer.from(maybeSigned.data), clazz);
+}
+/* 
+
+export const verifySignature = async (signature: Uint8Array, publicKey: PublicKey, data: Uint8Array, signedHash = false) => {
     let res = false
     const crypto = await _crypto;
     try {
@@ -362,109 +358,8 @@ export const verifySignature = async (signature: Uint8Array, publicKey: Ed25519P
     }
     return res
 }
-@variant(0)
-export class SignatureWithKey {
 
-    @field(U8IntArraySerializer)
-    signature: Uint8Array
-
-    @field(bufferSerializer(Ed25519PublicKey))
-    publicKey: Ed25519PublicKey
-
-    constructor(props?: {
-        signature: Uint8Array,
-        publicKey: Ed25519PublicKey
-    }) {
-        if (props) {
-            this.signature = props.signature;
-            this.publicKey = props.publicKey
-        }
-    }
-
-    equals(other: SignatureWithKey): boolean {
-        if (!arraysEqual(this.signature, other.signature)) {
-            return false;
-        }
-        return Buffer.compare(this.publicKey.getBuffer(), other.publicKey.getBuffer()) === 0;
-    }
-}
-
-@variant(0)
-export class MaybeSigned<T>  {
-
-    @field(U8IntArraySerializer)
-    data: Uint8Array
-
-    @field({ type: option(SignatureWithKey) })
-    signature?: SignatureWithKey
-
-    constructor(props?: {
-        data?: Uint8Array,
-        value?: T,
-        signature?: SignatureWithKey
-    }) {
-        if (props) {
-            this.data = props.data;
-            this.signature = props.signature;
-            this._value = props.value;
-        }
-    }
-    _value: T
-    getValue(constructor: Constructor<T>): T {
-        return deserialize(Buffer.from(this.data), constructor)
-    }
-
-    async verify(verifier?: (signature: Uint8Array, key: Ed25519PublicKey, data: Uint8Array) => Promise<boolean>): Promise<boolean> {
-        if (!this.signature) {
-            return true;
-        }
-        return verifier ? verifier(this.signature.signature, this.signature.publicKey, this.data) : verifySignature(this.signature.signature, this.signature.publicKey, this.data)
-    }
-
-
-    equals(other: MaybeSigned<T>): boolean {
-        if (!arraysEqual(this.data, other.data)) {
-            return false;
-        }
-        if (!this.signature !== !other.signature) {
-            return false;
-        }
-        if (this.signature && other.signature) {
-            return this.signature.equals(other.signature)
-        }
-        return true;
-    }
-
-
-    /**
-     * In place
-     * @param signer 
-     */
-    async sign(signer: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: Ed25519PublicKey }>): Promise<MaybeSigned<T>> {
-        const signatureResult = await signer(this.data)
-        this.signature = new SignatureWithKey({
-            publicKey: signatureResult.publicKey,
-            signature: signatureResult.signature
-        })
-        return this;
-    }
-
-}
-export const decryptVerifyInto = async <T>(data: Uint8Array, clazz: Constructor<T>, encryption?: PublicKeyEncryption, options: { isTrusted?: (key: Ed25519PublicKey) => Promise<boolean> } = {}) => {
-    const maybeEncrypted = deserialize<MaybeEncrypted<MaybeSigned<any>>>(Buffer.from(data), MaybeEncrypted);
-    const decrypted = await (encryption ? maybeEncrypted.init(encryption) : maybeEncrypted).decrypt();
-    const maybeSigned = decrypted.getValue(MaybeSigned);
-    if (!await maybeSigned.verify()) {
-        return;
-    }
-
-    if (maybeSigned.signature && options.isTrusted) {
-        if (!await options.isTrusted(maybeSigned.signature.publicKey)) {
-            return;
-        }
-    }
-    return deserialize(Buffer.from(maybeSigned.data), clazz);
-}
+*/
 
 /* @variant(0)
 export class MaybeSigned<T>  {

@@ -2,9 +2,8 @@ const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
-import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { assertPayload } from './utils/assert'
-import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
 const {
@@ -14,7 +13,7 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity: Identity
+let ipfsd, ipfs, signKey: SignKeyWithMeta
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe('Log - Cut', function () {
@@ -33,7 +32,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
 
-      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
+      signKey = await keystore.getKeyByPath(new Uint8Array([0]), SignKeyWithMeta);
 
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
@@ -50,7 +49,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
 
     it('cut back to max oplog length', async () => {
-      const log = new Log<string>(ipfs, testIdentity, { logId: 'A', recycle: { maxOplogLength: 1 } })
+      const log = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A', recycle: { maxOplogLength: 1 } })
       await log.append('hello1')
       await log.append('hello2')
       await log.append('hello3')
@@ -59,7 +58,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     it('cut back to cut length', async () => {
-      const log = new Log<string>(ipfs, testIdentity, { logId: 'A', recycle: { maxOplogLength: 3, cutOplogToLength: 1 } })
+      const log = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A', recycle: { maxOplogLength: 3, cutOplogToLength: 1 } })
       await log.append('hello1')
       await log.append('hello2')
       await log.append('hello3')

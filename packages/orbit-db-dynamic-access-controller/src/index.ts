@@ -5,22 +5,22 @@
 // Can remove any entries?
 
 // Relation with enc/dec?
-import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
-import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
+import { field, variant } from "@dao-xyz/borsh";
 import { Entry, Payload } from '@dao-xyz/ipfs-log-entry';
-import { AccessController, Address, IInitializationOptions, IStoreOptions, Store, StoreAccessController, StoreLike } from '@dao-xyz/orbit-db-store';
+import { Address, IInitializationOptions, StoreLike } from '@dao-xyz/orbit-db-store';
 import { OrbitDB } from '@dao-xyz/orbit-db';
-import { ACLInterface } from './acl-db';
-import { Access, AccessData } from './access';
+import { AccessStore } from './acl-db';
+import { Access } from './access';
 export * from './access';
 import isNode from 'is-node';
 import { MaybeEncrypted } from "@dao-xyz/encryption-utils";
 import { PublicKey } from "@dao-xyz/identity";
-import { TrustWebAccessController } from "@dao-xyz/orbit-db-trust-web";
+import { RegionAccessController } from "@dao-xyz/orbit-db-trust-web";
 import { Log } from "@dao-xyz/ipfs-log";
 import Cache from '@dao-xyz/orbit-db-cache';
 import { Operation } from "@dao-xyz/orbit-db-bdocstore";
-import { Ed25519PublicKey } from 'sodium-plus';
+import { ReadWriteAccessController } from "@dao-xyz/orbit-db-query-store";
+
 let v8 = undefined;
 if (isNode) {
     v8 = require('v8');
@@ -48,24 +48,22 @@ export class AccessRequest {
     }
 }
 
-export type AccessVerifier = (identity: IdentitySerializable) => Promise<boolean>
+export type AccessVerifier = (identity: PublicKey) => Promise<boolean>
 
 
 
 
 export const DYNAMIC_ACCESS_CONTROLER = 'dynamic-access-controller';
 
-export type OnMemoryExceededCallback<T> = (payload: MaybeEncrypted<Payload<T>>, identity: IdentitySerializable) => void;
+export type OnMemoryExceededCallback<T> = (payload: MaybeEncrypted<Payload<T>>, identity: PublicKey) => void;
 
-@variant([0, 2])
-export class DynamicAccessController<T> extends AccessController<T> implements StoreLike<Operation> {
+@variant([0, 3])
+export class DynamicAccessController<T> extends ReadWriteAccessController<T> implements StoreLike<Operation<T>> {
 
     /*  _storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>; */
 
-    @field({ type: ACLInterface })
-    _db: ACLInterface
-
-    appendAll: boolean;
+    @field({ type: AccessStore })
+    _db: AccessStore
 
 
     _initializationPromise: Promise<void>;
@@ -74,19 +72,19 @@ export class DynamicAccessController<T> extends AccessController<T> implements S
     _onMemoryExceeded?: OnMemoryExceededCallback<T>;
 
 
-    constructor(properties?: { name: string, rootTrust: PublicKey | Identity | IdentitySerializable }) {
+    constructor(properties?: { name: string, rootTrust: PublicKey }) {
         super();
         if (properties) {
-            this._db = new ACLInterface({
+            this._db = new AccessStore({
                 name: properties.name + "_acl",
                 rootTrust: properties.rootTrust
             })
             /*  this._acldb = ); */
             //subscribeToQueriies to not exist on store options
-            /*           this._storeOptions = Object.assign({}, { typeMap: {}, appendAll: options.appendAll, trustResolver: options?.trustResolver }, options.storeOptions);
+            /*           this._storeOptions = Object.assign({}, { typeMap: {}, allowAll: options.allowAll, trustResolver: options?.trustResolver }, options.storeOptions);
                       
                       this._orbitDB = options?.orbitDB;
-                      this._appendAll = options.appendAll; */
+                      this._allowAll = options.allowAll; */
 
 
         }
@@ -96,16 +94,26 @@ export class DynamicAccessController<T> extends AccessController<T> implements S
         this._onMemoryExceeded = options.onMemoryExceeded;
     }
 
-    //{ heapSizeLimit: () => number, onMemoryExceeded: OnMemoryExceededCallback<T>, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>/* , trust: TrustWebAccessController */ }
+    //{ heapSizeLimit: () => number, onMemoryExceeded: OnMemoryExceededCallback<T>, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>/* , trust: RegionAccessController */ }
     /* this._heapSizeLimit = options.heapSizeLimit;
     this._onMemoryExceeded = options.onMemoryExceeded;
     this._storeAccessCondition = options.storeAccessCondition; */
 
-    get trust(): TrustWebAccessController {
-        return (this._db.store.access as TrustWebAccessController);
+    get trust(): RegionAccessController {
+        return (this._db.access.accessController as RegionAccessController);
     }
 
-    get acl(): ACLInterface {
+
+    get allowAll(): boolean {
+        return this._allowAll;
+    }
+
+    set allowAll(value: boolean) {
+        this._allowAll = value;
+        this._db.trust._allowAll = value;
+    }
+
+    get acl(): AccessStore {
         return this._db;
     }
 
@@ -113,7 +121,7 @@ export class DynamicAccessController<T> extends AccessController<T> implements S
         this._initializationPromise = new Promise(async (resolve, _reject) => {
             let arr = await this._orbitDB._ipfs.cat(cid);
             for await (const obj of arr) {
-                let der = deserialize(Buffer.from(obj), ACLInterface);
+                let der = deserialize(Buffer.from(obj), ACL);
                 this._aclDB = der;
                 await this._acldb.init(this._orbitDB, this._storeOptions);
                 await this._acldb.load();
@@ -146,26 +154,27 @@ export class DynamicAccessController<T> extends AccessController<T> implements S
           this._store = store;
       } */
 
-    async canRead(payload: MaybeEncrypted<Payload<T>>, key: Ed25519PublicKey): Promise<boolean> {
+    async canRead(key: PublicKey): Promise<boolean> {
 
-        // Check whether it is trusted by trust web
-        if (await this._db.rootTrust.isTrusted(key)) {
+        if (this.allowAll) {
             return true;
         }
 
-        if (await this._db.canRead(payload, key)) {
+        // Check whether it is trusted by trust web
+        if (await this._db.trust.isTrusted(key)) {
+            return true;
+        }
+
+        if (await this._db.canRead(key)) {
             return true; // Creator of entry does not own NFT or token, or publickey etc
         }
         return false;
     }
 
-    async canAppend(payload: MaybeEncrypted<Payload<T>>, identityEncrypted: MaybeEncrypted<IdentitySerializable>, identityProvider: Identities) {
-        const identity = (await identityEncrypted.decrypt()).getValue(IdentitySerializable);
-        if (!identityProvider.verifyIdentity(identity)) {
-            return false;
-        }
+    async canAppend(payload: MaybeEncrypted<Payload<T>>, identityEncrypted: MaybeEncrypted<PublicKey>) {
+        const identity = (await identityEncrypted.decrypt()).getValue(PublicKey);
 
-        if (this.appendAll) {
+        if (this.allowAll) {
             return true;
         }
 
@@ -183,11 +192,12 @@ export class DynamicAccessController<T> extends AccessController<T> implements S
 
 
         // Check whether it is trusted by trust web
-        if (await this._db.rootTrust.isTrusted(identity)) {
+        if (await this._db.trust.isTrusted(identity)) {
             return true;
         }
 
-        if (await this._db.canWrite(payload, identityEncrypted)) {
+
+        if (await this._db.canWrite(identity)) {
             return true; // Creator of entry does not own NFT or token, or publickey etc
         }
         return false;
@@ -200,9 +210,9 @@ export class DynamicAccessController<T> extends AccessController<T> implements S
         await this._acldb.close();
     } */
 
-    async init(ipfs, identity, options: IInitializationOptions<Access>) {
+    async init(ipfs, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<Access>) {
         /*  this._trust = options.trust; */
-        return this._db.init(ipfs, identity, options)
+        return this._db.init(ipfs, publicKey, sign, options)
     }
 
     close(): Promise<void> {
@@ -241,7 +251,7 @@ export class DynamicAccessController<T> extends AccessController<T> implements S
     get replicate(): boolean {
         return this._db.replicate;
     }
-    getHeads(): Promise<Entry<Operation>[]> {
+    getHeads(): Promise<Entry<Operation<any>>[]> {
         return this._db.getHeads();
     }
     get name(): string {

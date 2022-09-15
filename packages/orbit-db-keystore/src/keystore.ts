@@ -2,10 +2,9 @@ const fs = (typeof window === 'object' || typeof self === 'object') ? null : eva
 import { Level } from 'level';
 import LRU from 'lru';
 import { variant, field, serialize, deserialize, option, Constructor } from '@dao-xyz/borsh';
-import { U8IntArraySerializer } from '@dao-xyz/io-utils';
+import { U8IntArraySerializer, bufferSerializer } from '@dao-xyz/io-utils';
 import { SodiumPlus, X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519SecretKey } from 'sodium-plus';
 import { waitFor } from '@dao-xyz/time';
-import { bufferSerializer } from '@dao-xyz/encryption-utils';
 import { createHash, Sign } from 'crypto';
 export interface Type<T> extends Function {
   new(...args: any[]): T;
@@ -468,7 +467,7 @@ export class Keystore {
     }
   }
 
-  async sign(arrayLike: string | Uint8Array | Buffer, key: SignKeyWithMeta | Ed25519SecretKey, signHashed: boolean = false): Promise<Uint8Array> {
+  static async sign(arrayLike: string | Uint8Array | Buffer, key: SignKeyWithMeta | Ed25519SecretKey, signHashed: boolean = false): Promise<Uint8Array> {
     key = key instanceof SignKeyWithMeta ? key.secretKey : key;
     if (!key) {
       throw new Error('No signing key given')
@@ -560,9 +559,9 @@ export class Keystore {
     } */
   }
 
-  async verify(signature: Uint8Array, publicKey: Ed25519PublicKey, data: Uint8Array, signedHash = false) {
-    return Keystore.verify(signature, publicKey, data, signedHash)
-  }
+  /*   async verify(signature: Uint8Array, publicKey: Ed25519PublicKey, data: Uint8Array, signedHash = false) {
+      return Keystore.verify(signature, publicKey, data, signedHash)
+    } */
 
   static async verify(signature: Uint8Array, publicKey: Ed25519PublicKey, data: Uint8Array, signedHash = false) {
     const signatureString = Buffer.from(signature).toString()

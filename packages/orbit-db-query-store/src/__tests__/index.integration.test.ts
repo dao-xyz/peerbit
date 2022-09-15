@@ -1,17 +1,15 @@
-import { query, QueryRequestV0, QueryResponseV0, respond } from "../query"
+import { QueryRequestV0, QueryResponseV0, DocumentQueryRequest, FieldStringMatchQuery, StoreAddressMatchQuery, ResultWithSource } from "@dao-xyz/query-protocol"
 import { v4 as uuid } from 'uuid';
 import { Message } from "ipfs-core-types/src/pubsub";
-import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
-import { DocumentQueryRequest, FieldStringMatchQuery } from "../document-query";
-import { ResultWithSource } from "../result";
+import { field, variant } from "@dao-xyz/borsh";
 import { delay, waitFor } from "@dao-xyz/time";
 import { disconnectPeers, getConnectedPeers } from '@dao-xyz/peer-test-utils';
-import { StoreAddressMatchQuery } from '../context';
-import { BinaryPayload } from '@dao-xyz/bpayload';
+import { CustomBinaryPayload } from '@dao-xyz/bpayload';
 import { decryptVerifyInto } from "@dao-xyz/encryption-utils";
+import { query, respond } from "../io";
 
 @variant("number")//@variant([1, 1])
-class NumberResult extends BinaryPayload {
+class NumberResult extends CustomBinaryPayload {
   @field({ type: 'u32' })
   number: number
   constructor(opts?: { number: number }) {
@@ -56,7 +54,7 @@ describe('query', () => {
       results.push((((resp.results[0] as ResultWithSource).source) as NumberResult).number);
     }, { waitForAmount: 1 })
 
-    await waitFor(() => results.length == 1);
+    await waitFor(() => results.length === 1);
     await disconnectPeers([a, b]);
 
   })

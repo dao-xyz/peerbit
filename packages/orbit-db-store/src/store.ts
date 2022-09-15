@@ -12,7 +12,6 @@ import io from '@dao-xyz/orbit-db-io'
 import Cache from '@dao-xyz/orbit-db-cache';
 import { variant, field, vec, option } from '@dao-xyz/borsh';
 import { IPFS } from 'ipfs-core-types/src/'
-import { Identity } from '@dao-xyz/orbit-db-identity-provider'
 import stringify from 'json-stringify-deterministic'
 import { serialize, deserialize } from '@dao-xyz/borsh';
 import { Snapshot } from './snapshot'
@@ -21,6 +20,8 @@ import { Address, load, save } from './io'
 import { AccessController } from './access-controller'
 import { v4 as uuid } from 'uuid';
 import { StoreLike } from './store-like'
+import { Ed25519PublicKeyData, PublicKey } from '@dao-xyz/identity'
+import { Ed25519PublicKey } from 'sodium-plus';
 export type Constructor<T> = new (...args: any[]) => T;
 
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
@@ -143,13 +144,14 @@ export class Store<T> implements StoreLike<T> {
   name: string;
 
   @field({ type: option(AccessController) })
-  access?: AccessController<T>
+  accessController?: AccessController<T>
 
-  fallbackAccess?: AccessController<T>
+  fallbackAccessController?: AccessController<T>
 
   id: string;
   options: IInitializationOptions<T>;
-  identity: Identity;
+  publicKey: PublicKey;
+  sign: (data: Uint8Array) => Promise<Uint8Array>;
   address: Address;
   dbname: string;
   events: EventEmitter;
@@ -177,7 +179,7 @@ export class Store<T> implements StoreLike<T> {
 
     if (properties) {
       this.name = properties.name ? properties.name : uuid();
-      this.access = properties.accessController;
+      this.accessController = properties.accessController;
     }
 
 
@@ -194,10 +196,12 @@ export class Store<T> implements StoreLike<T> {
 
   }
 
-  async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<T>): Promise<void> {
+  async init(ipfs: IPFS, publicKey: PublicKey | Ed25519PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<T>): Promise<void> {
 
-    if (this.access?.init) {
-      await this.access.init(ipfs, identity, options);
+    this.publicKey = publicKey instanceof Ed25519PublicKey ? new Ed25519PublicKeyData({ publicKey }) : publicKey;
+
+    if (this.accessController?.init) {
+      await this.accessController.init(ipfs, this.publicKey, sign, options);
     }
 
     const address = await this.save(ipfs, { pin: true });
@@ -212,8 +216,8 @@ export class Store<T> implements StoreLike<T> {
     this.snapshotPath = path.join(this.id, 'snapshot')
     this.queuePath = path.join(this.id, 'queue')
     this.manifestPath = path.join(this.id, '_manifest')
-    this.identity = identity
-    this.fallbackAccess = options.fallbackAccessController;
+    this.sign = sign;
+    this.fallbackAccessController = options.fallbackAccessController;
 
     // Set the options
     const opts = Object.assign({}, DefaultOptions)
@@ -226,7 +230,7 @@ export class Store<T> implements StoreLike<T> {
     this._cache = await options.resolveCache(this.address);
 
     // Create the operations log
-    this._oplog = new Log<T>(this._ipfs, this.identity, this.logOptions)
+    this._oplog = new Log<T>(this._ipfs, publicKey, sign, this.logOptions)
 
     // _addOperation and log-joins queue. Adding ops and joins to the queue
     // makes sure they get processed sequentially to avoid race conditions
@@ -351,7 +355,7 @@ export class Store<T> implements StoreLike<T> {
         getAnySecret: this.options.encryption(this.replicationTopic).getAnySecret,
         getEncryptionKey: this.options.encryption(this.replicationTopic).getEncryptionKey
       } : undefined, //this.options.encryption
-      access: this.access ? this.access : this.fallbackAccess,
+      access: this.accessController || this.fallbackAccessController,
       sortFn: this.options.sortFn,
       recycle: this.options.recycle,
     };
@@ -372,9 +376,9 @@ export class Store<T> implements StoreLike<T> {
     return options.replicationTopic ? (typeof options.replicationTopic === 'string' ? options.replicationTopic : options.replicationTopic()) : (typeof address === 'string' ? address : address.toString());
   }
 
-  setIdentity(identity) {
-    this.identity = identity
-    this._oplog.setIdentity(identity)
+  setPublicKey(publicKey: PublicKey) {
+    this.publicKey = publicKey
+    this._oplog.setPublicKey(publicKey)
   }
 
   async close() {
@@ -402,8 +406,8 @@ export class Store<T> implements StoreLike<T> {
     }
 
     // Close store access controller
-    if (this.access.close) {
-      await this.access.close()
+    if (this.accessController.close) {
+      await this.accessController.close()
     }
 
     // Remove all event listeners
@@ -466,7 +470,7 @@ export class Store<T> implements StoreLike<T> {
     }
 
     // Load the log
-    const log = await Log.fromEntryHash(this._ipfs, this.identity, heads.map(e => e.hash), {
+    const log = await Log.fromEntryHash(this._ipfs, this.publicKey, this.sign, heads.map(e => e.hash), {
       ...this.logOptions,
       length: amount,
       timeout: fetchEntryTimeout,
@@ -503,9 +507,10 @@ export class Store<T> implements StoreLike<T> {
         console.warn("Warning: Given input entry was 'null'.")
         return Promise.resolve(null)
       }
-
-      const identityProvider = this.identity.provider
-      if (!identityProvider) throw new Error('Identity-provider is required, cannot verify entry')
+      /* 
+            const identityProvider = this.identity.provider
+            if (!identityProvider) throw new Error('Identity-provider is required, cannot verify entry')
+       */
 
       // TODO Fix types
       head.init({
@@ -513,7 +518,7 @@ export class Store<T> implements StoreLike<T> {
         encryption: this._oplog._encryption
       })
       try {
-        const canAppend = await this.access.canAppend(head._payload, head._identity, identityProvider as any)
+        const canAppend = await this.accessController.canAppend(head._payload, head._publicKey)
         if (!canAppend) {
           logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
           return Promise.resolve(null)
@@ -523,7 +528,7 @@ export class Store<T> implements StoreLike<T> {
       }
 
       const logEntry = Entry.toEntryNoHash(head)
-      const hash = await io.write(this._ipfs, Entry.getWriteFormat(), logEntry.serialize(), { links: Entry.IPLD_LINKS }) ///, onlyHash: true
+      const hash = await io.write(this._ipfs, 'dag-cbor', logEntry.serialize(), { links: Entry.IPLD_LINKS }) ///, onlyHash: true
 
       if (hash !== head.hash) {
         throw new Error("Head hash didn\'t match the contents")
@@ -620,8 +625,8 @@ export class Store<T> implements StoreLike<T> {
       // Timeout 1 sec to only load entries that are already fetched (in order to not get stuck at loading)
       this._recalculateReplicationMax(snapshotData.values.reduce(maxClock, 0n))
       if (snapshotData) {
-        this._oplog = await Log.fromJSON(this._ipfs, this.identity, snapshotData, {
-          access: this.access,
+        this._oplog = await Log.fromJSON(this._ipfs, this.publicKey, this.sign, snapshotData, {
+          access: this.accessController,
           sortFn: this.options.sortFn,
           length: -1,
           timeout: 1000,
@@ -732,7 +737,7 @@ export class Store<T> implements StoreLike<T> {
   clone(newName: string): Store<T> {
     return new Store({
       name: newName,
-      accessController: this.access.clone(newName)
+      accessController: this.accessController.clone(newName)
     })
   }
 }

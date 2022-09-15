@@ -5,38 +5,49 @@ import { Log } from "@dao-xyz/ipfs-log";
 import { U8IntArraySerializer } from "@dao-xyz/io-utils";
 
 @variant(0)
-export class Operation { }
+export class Operation<T> { }
 
 @variant(0)
-export class PutOperation extends Operation {
+export class PutOperation<T> extends Operation<T> {
 
   @field({ type: 'string' })
   key: string
 
   @field(U8IntArraySerializer)
-  value: Uint8Array
+  data: Uint8Array
+
+  _value: T
 
   constructor(props?: {
     key: string,
-    value: Uint8Array
+    data: Uint8Array,
+    value?: T
   }) {
     super();
     if (props) {
       this.key = props.key;
-      this.value = props.value;
+      this.data = props.data;
+      this._value = props.value;
     }
+  }
+
+  get value(): T | undefined {
+    if (!this._value) {
+      throw new Error("Unexpected")
+    }
+    return this._value;
   }
 
 }
 
 @variant(1)
-export class PutAllOperation extends Operation {
+export class PutAllOperation<T> extends Operation<T> {
 
   @field({ type: vec(PutOperation) })
-  docs: PutOperation[]
+  docs: PutOperation<T>[]
 
   constructor(props?: {
-    docs: PutOperation[]
+    docs: PutOperation<T>[]
   }) {
     super();
     if (props) {
@@ -46,7 +57,7 @@ export class PutAllOperation extends Operation {
 }
 
 @variant(2)
-export class DeleteOperation extends Operation {
+export class DeleteOperation extends Operation<any> {
 
   @field({ type: 'string' })
   key: string
@@ -65,7 +76,7 @@ export class DeleteOperation extends Operation {
 export interface IndexedValue<T> {
   key: string,
   value: T, // decrypted, decoded
-  entry: Entry<Operation>
+  entry: Entry<Operation<T>>
 }
 
 
@@ -91,7 +102,7 @@ export class DocumentIndex<T> {
     if (!this.clazz) {
       throw new Error("Not initialized");
     }
-    const reducer = (handled, item: Entry<Operation>, idx) => {
+    const reducer = (handled, item: Entry<Operation<T>>, idx) => {
       let payload = item.payload.value;
       if (payload instanceof PutAllOperation) {
         for (const doc of payload.docs) {
@@ -99,7 +110,7 @@ export class DocumentIndex<T> {
             handled[doc.key] = true
             this._index[doc.key] = {
               key: asString(doc.key),
-              value: this.deserializeOrPass(doc.value),
+              value: this.deserializeOrPass(doc),
               entry: item
             }
           }
@@ -109,7 +120,11 @@ export class DocumentIndex<T> {
         const key = payload.key;
         if (handled[key] !== true) {
           handled[key] = true
-          this._index[key] = this.deserializeOrItem(item, payload)
+          this._index[key] = {
+            entry: item,
+            key: payload.key,
+            value: this.deserializeOrPass(payload)
+          }
         }
       }
       else if (payload instanceof DeleteOperation) {
@@ -137,17 +152,23 @@ export class DocumentIndex<T> {
     }
   }
 
-  deserializeOrPass(value: Uint8Array | T): T {
-    return value instanceof Uint8Array ? deserialize(Buffer.isBuffer(value) ? value : Buffer.from(value), this.clazz) : value
+  deserializeOrPass(value: PutOperation<T>): T {
+    if (value._value) {
+      return value._value;
+    }
+    else {
+      value._value = deserialize(Buffer.from(value.data), this.clazz);
+      return value._value;
+    }
   }
 
-  deserializeOrItem(entry: Entry<Operation>, operation: PutOperation): IndexedValue<T> {
+  deserializeOrItem(entry: Entry<Operation<T>>, operation: PutOperation<T>): IndexedValue<T> {
     /* if (typeof item.payload.value !== 'string')
       return item as LogEntry<T> */
     const item: IndexedValue<T> = {
       entry,
       key: operation.key,
-      value: this.deserializeOrPass(operation.value)
+      value: this.deserializeOrPass(operation)
     }
     return item;
     /* const newItem = { ...item, payload: { ...item.payload } };

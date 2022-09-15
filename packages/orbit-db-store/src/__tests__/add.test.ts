@@ -2,8 +2,7 @@
 import assert, { rejects } from 'assert'
 import { Store, DefaultOptions, HeadsCache } from '../store'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
-import { Keystore } from "@dao-xyz/orbit-db-keystore"
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { Keystore, SignKeyWithMeta } from "@dao-xyz/orbit-db-keystore"
 import { JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log-entry'
 import { createStore } from './storage'
 import { SimpleAccessController, SimpleIndex } from './utils'
@@ -20,7 +19,7 @@ const {
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`addOperation ${IPFS}`, function () {
-    let ipfsd, ipfs, testIdentity, identityStore, store: Store<any>, cacheStore
+    let ipfsd, ipfs, signKey: SignKeyWithMeta, identityStore, store: Store<any>, cacheStore
     let index: SimpleIndex<string>
 
     jest.setTimeout(config.timeout);
@@ -36,13 +35,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
       cacheStore = await createStore('cache')
       const cache = new Cache(cacheStore)
 
-      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore })
+      signKey = await keystore.getKeyByPath(new Uint8Array([0]), SignKeyWithMeta);
       ipfsd = await startIpfs(IPFS, ipfsConfig.daemon1)
       ipfs = ipfsd.api
 
       index = new SimpleIndex();
       store = new Store({ name: 'name', accessController: new SimpleAccessController() })
-      await store.init(ipfs, testIdentity, Object.assign({}, DefaultOptions, { resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index) }));
+      await store.init(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), Object.assign({}, DefaultOptions, { resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index) }));
       assert(Address.isValid(store.address));
     })
 

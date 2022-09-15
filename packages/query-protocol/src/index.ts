@@ -5,3 +5,5 @@ export * from './query-interface';
 export * from './result';
 export * from './string-query';
 export * from './context'
+export * from './range';
+export * from './byte-query';

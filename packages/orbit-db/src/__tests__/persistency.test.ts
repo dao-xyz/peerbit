@@ -4,6 +4,7 @@ const mapSeries = require('p-map-series')
 const rmrf = require('rimraf')
 const path = require('path')
 
+import { Address } from '@dao-xyz/orbit-db-store'
 import { OrbitDB } from '../orbit-db'
 import { SimpleAccessController } from './utils/access'
 import { EventStore, Operation } from './utils/stores/event-store'
@@ -79,7 +80,7 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
     })
 
     it('loads database from local cache', async () => {
-      db = await orbitdb1.open(address)
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
       await db.load()
       const items = db.iterator({ limit: -1 }).collect()
       assert.equal(items.length, entryCount)
@@ -89,7 +90,7 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
 
     it('loads database partially', async () => {
       const amount = 33
-      db = await orbitdb1.open(address)
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
       await db.load(amount)
       const items = db.iterator({ limit: -1 }).collect()
       assert.equal(items.length, amount)
@@ -101,7 +102,7 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
     it('load and close several times', async () => {
       const amount = 8
       for (let i = 0; i < amount; i++) {
-        db = await orbitdb1.open(address)
+        db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
         await db.load()
         const items = db.iterator({ limit: -1 }).collect()
         assert.equal(items.length, entryCount)
@@ -133,7 +134,7 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
     it('load, add one, close - several times', async () => {
       const amount = 8
       for (let i = 0; i < amount; i++) {
-        db = await orbitdb1.open(address)
+        db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
         await db.load()
         await db.add('hello' + (entryCount + i))
         const items = db.iterator({ limit: -1 }).collect()
@@ -144,7 +145,7 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
     })
 
     it('loading a database emits \'ready\' event', async () => {
-      db = await orbitdb1.open(address)
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
       return new Promise(async (resolve) => {
         db.events.on('ready', () => {
           const items = db.iterator({ limit: -1 }).collect()
@@ -158,7 +159,7 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
     })
 
     it('loading a database emits \'load.progress\' event', async () => {
-      db = await orbitdb1.open(address)
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
       return new Promise(async (resolve, reject) => {
         let count = 0
         db.events.on('load.progress', (address, hash, entry) => {
@@ -195,7 +196,7 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
       await db.saveSnapshot()
       await db.close()
 
-      db = await orbitdb1.open(address)
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
       await db.loadFromSnapshot()
       const items = db.iterator({ limit: -1 }).collect()
       assert.equal(items.length, 0)
@@ -219,11 +220,11 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
     })
 
     afterEach(async () => {
-      await db.drop()
+      await db?.drop()
     })
 
     it('loads database from snapshot', async () => {
-      db = await orbitdb1.open(address)
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
       await db.loadFromSnapshot()
       const items = db.iterator({ limit: -1 }).collect()
       assert.equal(items.length, entryCount)
@@ -234,7 +235,7 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
     it('load, add one and save snapshot several times', async () => {
       const amount = 4
       for (let i = 0; i < amount; i++) {
-        db = await orbitdb1.open(address)
+        db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
         await db.loadFromSnapshot()
         await db.add('hello' + (entryCount + i))
         const items = db.iterator({ limit: -1 }).collect()
@@ -247,10 +248,10 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
     })
 
     it('throws an error when trying to load a missing snapshot', async () => {
-      db = await orbitdb1.open(address)
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
       await db.drop()
       db = null
-      db = await orbitdb1.open(address)
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
 
       let err
       try {
@@ -262,7 +263,7 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
     })
 
     it('loading a database emits \'ready\' event', async () => {
-      db = await orbitdb1.open(address)
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
       return new Promise(async (resolve) => {
         db.events.on('ready', () => {
           const items = db.iterator({ limit: -1 }).collect()
@@ -276,7 +277,7 @@ describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
     })
 
     it('loading a database emits \'load.progress\' event', async () => {
-      db = await orbitdb1.open(address)
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
       return new Promise(async (resolve, reject) => {
         let count = 0
         db.events.on('load.progress', (address, hash, entry) => {

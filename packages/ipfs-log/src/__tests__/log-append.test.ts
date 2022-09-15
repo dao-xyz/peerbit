@@ -2,9 +2,8 @@ const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
-import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { assertPayload } from './utils/assert'
-import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
 const {
@@ -14,7 +13,7 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity: Identity
+let ipfsd, ipfs, signKey: SignKeyWithMeta
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe('Log - Append', function () {
@@ -32,9 +31,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
 
-      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
+      signKey = await keystore.createKey(new Uint8Array([0]), SignKeyWithMeta);
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
+
     })
 
     afterAll(async () => {
@@ -50,7 +50,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       let log: Log<string>
 
       beforeEach(async () => {
-        log = new Log(ipfs, testIdentity, { logId: 'A' })
+        log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
         await log.append('hello1')
       })
 
@@ -78,7 +78,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('updated the clocks correctly', async () => {
         log.values.forEach((entry) => {
-          assert.deepStrictEqual(entry.clock.id, new Uint8Array(testIdentity.publicKey.getBuffer()))
+          assert.deepStrictEqual(entry.clock.id, new Uint8Array(signKey.publicKey.getBuffer()))
           assert.strictEqual(entry.clock.time, 1)
         })
       })
@@ -91,7 +91,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       let log: Log<string>
 
       beforeAll(async () => {
-        log = new Log(ipfs, testIdentity, { logId: 'A' })
+        log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
         for (let i = 0; i < amount; i++) {
           await log.append('hello' + i, { pin: false, pointerCount: nextPointerAmount })
           // Make sure the log has the right heads after each append
@@ -114,7 +114,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       it('updated the clocks correctly', async () => {
         log.values.forEach((entry, index) => {
           assert.strictEqual(entry.clock.time, index + 1)
-          assert.deepStrictEqual(entry.clock.id, new Uint8Array(testIdentity.publicKey.getBuffer()))
+          assert.deepStrictEqual(entry.clock.id, new Uint8Array(signKey.publicKey.getBuffer()))
         })
       })
 

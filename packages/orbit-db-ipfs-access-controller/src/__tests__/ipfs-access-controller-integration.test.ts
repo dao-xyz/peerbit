@@ -1,11 +1,11 @@
 const assert = require('assert')
 const rmrf = require('rimraf')
-import { Identities as IdentityProvider, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { OrbitDB } from '@dao-xyz/orbit-db';
-import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import io from '@dao-xyz/orbit-db-io'
 import { EventStore } from './event-store';
 import { IPFSAccessController } from '../ipfs-access-controller';
+import { Ed25519PublicKeyData } from '@dao-xyz/identity';
 // Include test utilities
 const {
   config,
@@ -21,7 +21,7 @@ const API = 'js-ipfs'
 describe(`orbit-db - IPFSAccessController Integration`, function () {
   jest.setTimeout(config.timeout)
 
-  let ipfsd1, ipfsd2, ipfs1, ipfs2, id1: Identity, id2: Identity
+  let ipfsd1, ipfsd2, ipfs1, ipfs2, signKey1: SignKeyWithMeta, signKey2: SignKeyWithMeta
   let orbitdb1: OrbitDB, orbitdb2: OrbitDB
 
   beforeAll(async () => {
@@ -39,17 +39,19 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
     const keystore1 = new Keystore(dbPath1 + '/keys')
     const keystore2 = new Keystore(dbPath2 + '/keys')
 
-    id1 = await IdentityProvider.createIdentity({ id: new Uint8Array([0]), keystore: keystore1 })
-    id2 = await IdentityProvider.createIdentity({ id: new Uint8Array([1]), keystore: keystore2 })
+    signKey1 = await keystore1.createKey(new Uint8Array([0]), SignKeyWithMeta)
+    signKey2 = await keystore2.createKey(new Uint8Array([1]), SignKeyWithMeta)
 
     orbitdb1 = await OrbitDB.createInstance(ipfs1, {
       directory: dbPath1,
-      identity: id1
+      publicKey: new Ed25519PublicKeyData({ publicKey: signKey1.publicKey }),
+      sign: (data) => Keystore.sign(data, signKey1)
     })
 
     orbitdb2 = await OrbitDB.createInstance(ipfs2, {
       directory: dbPath2,
-      identity: id2
+      publicKey: new Ed25519PublicKeyData({ publicKey: signKey2.publicKey }),
+      sign: (data) => Keystore.sign(data, signKey2)
     })
   })
 
@@ -68,19 +70,14 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
     let dbManifest, acManifest
 
     beforeAll(async () => {
-      db = await orbitdb1.create(new EventStore<string>({
+      db = await orbitdb1.open(new EventStore<string>({
         name: 'AABB',
         accessController: new IPFSAccessController({
-          write: [id1.id]
+          write: [signKey1.publicKey.toString('base64')]
         })
+      }));
 
-      }), {
-        identity: id1
-      })
-
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db.address), {
-        identity: id2
-      })
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db.address))
       await db2.load()
 
       dbManifest = await io.read(ipfs1, db.address.root)
@@ -89,11 +86,11 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
     })
 
     it('has the correct access rights after creating the database', async () => {
-      assert.deepStrictEqual((db.access as any as IPFSAccessController<string>).write, [Buffer.from(id1.id).toString('base64')])
+      assert.deepStrictEqual((db.accessController as any as IPFSAccessController<string>).write, [signKey1.publicKey.toString('base64')])
     })
 
     it('makes database use the correct access controller', async () => {
-      const { address } = await (db.access as IPFSAccessController<any>).save()
+      const { address } = await (db.accessController as IPFSAccessController<any>).save()
       assert.strictEqual(acManifest.params.address, address)
     })
 
@@ -148,7 +145,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
         }
 
         const res = await db2.iterator().collect().map(e => e.payload.value.value)
-        assert.strictEqual(err.message, `Could not append Entry<T>, key "${db2.identity.id}" is not allowed to write to the log`)
+        assert.strictEqual(err.message, `Could not append Entry<T>, key "${db2.publicKey}" is not allowed to write to the log`)
         assert.deepStrictEqual(res.includes('hello!!'), false)
       })
     })

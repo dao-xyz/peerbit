@@ -1,8 +1,8 @@
 import { Keypair, PublicKey as SPublicKey } from '@solana/web3.js';
-import { Identity } from "@dao-xyz/orbit-db-identity-provider";
 import nacl from "tweetnacl";
 import { IdentityProvider } from './identity-provider-interface';
-import { joinUint8Arrays } from '@dao-xyz/io-utils';
+import { Ed25519PublicKeyData, verifySignatureEd25519 } from '@dao-xyz/identity';
+import { Identity } from './identity';
 
 type Signer = (data: Uint8Array) => Uint8Array;
 export type SolanaIdentityProviderOptions = { signer?: Signer, keypair?: Keypair, publicKey?: SPublicKey };
@@ -41,11 +41,11 @@ export class SolanaIdentityProvider extends IdentityProvider {
         return await this.signer(data);
     }
 
-    static async verify(signature: Uint8Array, data: Uint8Array, publicKey: Uint8Array): Promise<boolean> {
-        const signedData = nacl.sign.open(signature, publicKey);
-        let verified = nacl.verify(signedData, data);
-        return verified
-    }
+    /*  static async verify(signature: Uint8Array, data: Uint8Array, publicKey: Uint8Array): Promise<boolean> {
+         const signedData = nacl.sign.open(signature, publicKey);
+         let verified = nacl.verify(signedData, data);
+         return verified
+     } */
 
     static async verifyIdentity(identity: Identity) {
 
@@ -53,6 +53,9 @@ export class SolanaIdentityProvider extends IdentityProvider {
         /* const signedKey = nacl.sign.open(Uint8Array.from(Buffer.from(identity.signatures.publicKey)), bs58.decode(identity.id));
         let verified = nacl.verify(signedKey, Uint8Array.from(Buffer.from(identity.publicKey + identity.signatures.id)));
         return verified */
-        return SolanaIdentityProvider.verify(identity.signatures.publicKey, Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id]), identity.id);
+        if (identity.id instanceof Ed25519PublicKeyData) {
+            return verifySignatureEd25519(identity.signatures.publicKey, identity.id, Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id]));
+        }
+        return false;
     }
 }

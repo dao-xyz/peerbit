@@ -3,16 +3,16 @@ import { Shard } from "./shard";
 import { Message } from 'ipfs-core-types/types/src/pubsub'
 import { delay } from "@dao-xyz/time";
 import { createHash } from "crypto";
-import { IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider";
 
 export const EMIT_HEALTHCHECK_INTERVAL = 5000;
 
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { v4 as uuid } from 'uuid';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
-import { TrustWebAccessController } from "@dao-xyz/orbit-db-trust-web";
+import { RegionAccessController } from "@dao-xyz/orbit-db-trust-web";
 import isNode from 'is-node';
 import { arraysEqual } from "@dao-xyz/orbit-db-keystore";
+import { PublicKey } from "@dao-xyz/identity";
 let v8 = undefined;
 if (isNode) {
     v8 = require('v8');
@@ -64,7 +64,7 @@ export class AnyPeer {
 
 
     // trust regions that are currently replicated by the peer
-    public trustWebs: Map<string, { trust: TrustWebAccessController, shards: Map<string, Shard<any>> }> = new Map(); // key is the hash of P2PTrust
+    public trustWebs: Map<string, { trust: RegionAccessController, shards: Map<string, Shard<any>> }> = new Map(); // key is the hash of P2PTrust
 
     // to know whether we should treat the peer as long lasting or temporary with web restrictions
 
@@ -81,8 +81,8 @@ export class AnyPeer {
         return this.orbitDB._ipfs;
     }
 
-    _getCachedTrustOrSetPromise: Promise<{ trust: TrustWebAccessController, afterShardSave?: () => void }> = undefined;
-    async getCachedTrustOrSet(from: TrustWebAccessController, shard: Shard<any>): Promise<{ trust: TrustWebAccessController, afterShardSave?: () => void }> {
+    _getCachedTrustOrSetPromise: Promise<{ trust: RegionAccessController, afterShardSave?: () => void }> = undefined;
+    async getCachedTrustOrSet(from: RegionAccessController, shard: Shard<any>): Promise<{ trust: RegionAccessController, afterShardSave?: () => void }> {
         await this._getCachedTrustOrSetPromise; // prevent concurrency sideffects
         this._getCachedTrustOrSetPromise = new Promise(async (resolve, reject) => {
             const hashCode = from.hashCode();
@@ -117,7 +117,7 @@ export class AnyPeer {
     }
 
     _removeAndCloseCachedTrust: Promise<void> = undefined;
-    async removeAndCloseCachedTrust(from: TrustWebAccessController, shard: Shard<any>): Promise<void> {
+    async removeAndCloseCachedTrust(from: RegionAccessController, shard: Shard<any>): Promise<void> {
         await this._getCachedTrustOrSetPromise; // prevent concurrency sideffects 
         this._removeAndCloseCachedTrust = new Promise(async (resolve, reject) => {
             const hashCode = from.hashCode();
@@ -174,8 +174,8 @@ export class PeerCheck {
 @variant("info")
 export class PeerInfo {
 
-    @field({ type: IdentitySerializable })
-    key: IdentitySerializable
+    @field({ type: PublicKey })
+    key: PublicKey
 
     @field({ type: vec('string') })
     addresses: string[] // address
@@ -184,7 +184,7 @@ export class PeerInfo {
     memoryLeft: bigint
 
     constructor(props?: {
-        key: IdentitySerializable,
+        key: PublicKey,
         addresses: string[],
         memoryLeft: bigint
     }) {
@@ -207,7 +207,7 @@ export class ShardPeerInfo {
     async getShardPeerInfo(): Promise<PeerInfo> {
 
         return new PeerInfo({
-            key: this._shard.peer.orbitDB.identity.toSerializable(),
+            key: this._shard.peer.orbitDB.identity,
             addresses: (await this._shard.peer.node.id()).addresses.map(x => x.toString()),
             memoryLeft: v8.getHeapStatistics().total_available_size//v8
         })
@@ -273,7 +273,7 @@ export class ShardPeerInfo {
         let nextIndex = slotIndex + 1;
         if (nextIndex >= peerHashed.length)
             nextIndex = 0;
-        return arraysEqual(hashToPeer.get(peerHashed[nextIndex]).key.id, this._shard.peer.orbitDB.identity.id)
+        return hashToPeer.get(peerHashed[nextIndex]).key.equals(this._shard.peer.orbitDB.identity)
 
         // better alg, 
         // convert slot into hash, find most "probable peer" 

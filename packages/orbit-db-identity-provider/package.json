@@ -53,8 +53,9 @@
   "dependencies": {
     "@solana/web3.js": "^1.41.3",
     "bs58": "^5.0.0",
-    "@dao-xyz/borsh": "^3.1.0",
-    "@ethersproject/wallet": "^5.0.10",
+    "@dao-xyz/borsh": "^3.2.1",
+    "@dao-xyz/identity": "^0.0.12",
+    "@ethersproject/wallet": "^5.7.0",
     "assert": "^2.0.0",
     "dids": "^2.1.0",
     "@dao-xyz/orbit-db-keystore": "^0.0.1",

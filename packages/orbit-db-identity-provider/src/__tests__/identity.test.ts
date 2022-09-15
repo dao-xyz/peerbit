@@ -1,4 +1,4 @@
-import { Identity, IdentitySerializable, Signatures } from "../identity"
+import { Identity, Signatures } from "../identity"
 import { Ed25519PublicKey } from 'sodium-plus'
 const assert = require('assert')
 
@@ -16,7 +16,7 @@ describe('Identity', function () {
     identity = new Identity({
       id, publicKey, signatures: new Signatures({
         id: idSignature, publicKey: publicKeyAndIdSignature
-      }), type, provider: provider as any
+      }), provider: provider as any
     })
   })
 

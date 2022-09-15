@@ -1,16 +1,8 @@
-import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { AnyPeer, PeerOptions } from '../peer';
-import { field, variant } from '@dao-xyz/borsh';
-import { BinaryDocumentStore } from '@dao-xyz/orbit-db-bdocstore';
-import { BinaryFeedStore } from '@dao-xyz/orbit-db-bfeedstore';
-import { v4 as uuid } from 'uuid';
-import { NoResourceRequirements, Shard } from '../shard';
 import { getPeer as getPeerTest, getConnectedPeers as getConnectedPeersTest, Peer } from '@dao-xyz/peer-test-utils';
-import { TrustWebAccessController } from '@dao-xyz/orbit-db-trust-web';
-import { OrbitDB } from '@dao-xyz/orbit-db';
-import { IStoreOptions } from '@dao-xyz/orbit-db-store';
-export const getPeer = async (identity?: Identity, isServer?: boolean, peerCapacity?: number) => getPeerTest(identity).then((peer) => createAnyPeer(peer, isServer, peerCapacity));
-export const getConnectedPeers = async (amountOf: number, identity?: Identity, isServer?: boolean, peerCapacity?: number) => getConnectedPeersTest(amountOf, identity).then(peers => Promise.all(peers.map(peer => createAnyPeer(peer, isServer, peerCapacity))));
+import { PublicKey } from '@dao-xyz/identity';
+export const getPeer = async (identity?: PublicKey, isServer?: boolean, peerCapacity?: number) => getPeerTest(identity).then((peer) => createAnyPeer(peer, isServer, peerCapacity));
+export const getConnectedPeers = async (amountOf: number, identity?: PublicKey, isServer?: boolean, peerCapacity?: number) => getConnectedPeersTest(amountOf, identity).then(peers => Promise.all(peers.map(peer => createAnyPeer(peer, isServer, peerCapacity))));
 const createAnyPeer = async (peer: Peer, isServer: boolean = true, peerCapacity: number = 1000 * 1000 * 1000): Promise<AnyPeer> => {
     const anyPeer = new AnyPeer(peer.id);
     let options = new PeerOptions({
@@ -23,16 +15,7 @@ const createAnyPeer = async (peer: Peer, isServer: boolean = true, peerCapacity:
     return anyPeer;
 
 }
-export class Document {
-    @field({ type: 'string' })
-    id: string;
-    constructor(opts?: { id: string }) {
-        if (opts) {
-            this.id = opts.id;
-        }
 
-    }
-}
 
 /* const testBehaviours: TypedBehaviours = {
 
@@ -91,27 +74,7 @@ export class DocumentStoreInterface extends SingleDBInterface<Document, BinaryDo
 */
 
 /* 
-export const documentStoreShard = async (trust?: TrustWebAccessController, indexBy: string = 'id') => new Shard({
-    id: uuid(),
-    cluster: 'x',
-    resourceRequirements: new NoResourceRequirements(),
-    store: new BinaryDocumentStore({
-        name: 'documents',
-        indexBy,
-        objectType: Document.name,
-        accessController: 
-    }),
-    trust
-})
 
 
-export const shardStoreShard = async <T extends DBInterface>(trust?: TrustWebAccessController) => new Shard<RecursiveShardDBInterface<T>>({
-    id: uuid(),
-    cluster: 'x',
-    resourceRequirements: new NoResourceRequirements(),
-    interface: new RecursiveShardDBInterface({
-        name: 'shards'
-    }),
-    trust
-})
+
  */

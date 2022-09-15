@@ -1,32 +1,30 @@
 
 import { Identities } from "./identities";
 import { isDefined } from "./is-defined";
-import { variant, field, serialize, vec } from '@dao-xyz/borsh';
+import { variant, field, serialize, vec, option } from '@dao-xyz/borsh';
 import { createHash } from "crypto";
-import { U8IntArraySerializer, arraysEqual } from "@dao-xyz/io-utils";
+import { bufferSerializer, U8IntArraySerializer, arraysEqual } from "@dao-xyz/io-utils";
 import { Ed25519PublicKey } from "sodium-plus";
-import { bufferSerializer } from "@dao-xyz/encryption-utils";
+import { PublicKey } from "@dao-xyz/identity";
+
 @variant(0)
 export class Signatures {
 
   @field(U8IntArraySerializer)
   id: Uint8Array;
 
-  @field(U8IntArraySerializer)
-  publicKey: Uint8Array;
+  @field({ type: option(U8IntArraySerializer) })
+  publicKey?: Uint8Array;
 
   constructor(options?: {
     id: Uint8Array;
-    publicKey: Uint8Array;
+    publicKey?: Uint8Array;
   }) {
     if (options) {
       if (!isDefined(options.id)) {
         throw new Error('Signature of the id (idSignature) is required')
       }
 
-      if (!isDefined(options.publicKey)) {
-        throw new Error('Signature of (publicKey + idSignature) is required')
-      }
       this.id = options.id;
       this.publicKey = options.publicKey;
     }
@@ -36,30 +34,27 @@ export class Signatures {
   }
 }
 
-const identityToString = (identity: IdentitySerializable | Identity) => {
+/* const identityToString = (identity: IdentitySerializable | Identity) => {
   return identity.type + "/" + Buffer.from(identity.id).toString('base64')
-}
+} */
+
 @variant(0)
-export class IdentitySerializable {
+export class Identity {
 
-  @field(U8IntArraySerializer)
-  id: Uint8Array;
+  @field({ type: PublicKey })
+  id: PublicKey;
 
-  @field(bufferSerializer(Ed25519PublicKey))
-  publicKey: Ed25519PublicKey;
+  @field({ type: PublicKey })
+  publicKey: PublicKey;
 
   @field({ type: Signatures })
   signatures: Signatures;
 
-  @field({ type: 'string' })
-  type: string;
-
   constructor(
     options?: {
-      id: Uint8Array,
-      publicKey: Ed25519PublicKey,
-      signatures: Signatures,
-      type: string
+      id: PublicKey,
+      publicKey: PublicKey,
+      signatures: Signatures
     }
   ) {
     if (options) {
@@ -67,7 +62,6 @@ export class IdentitySerializable {
       this.id = options.id;
       this.publicKey = options.publicKey;
       this.signatures = options.signatures;
-      this.type = options.type;
     }
 
   }
@@ -76,31 +70,30 @@ export class IdentitySerializable {
     return createHash('sha1').update(serialize(this)).digest('hex')
   }
 
-  static from(identity: IdentitySerializable | any) {
-    if (identity instanceof IdentitySerializable)
+  static from(identity: Identity | any) {
+    if (identity instanceof Identity)
       return identity;
-    return new IdentitySerializable({
+    return new Identity({
       id: identity.id,
       publicKey: identity.publicKey,
       signatures: new Signatures({
         id: identity.signatures.id,
         publicKey: identity.signatures.publicKey
-      }),
-      type: identity.type
+      })
     })
   }
 
-  equals(other: IdentitySerializable): boolean {
-    return arraysEqual(this.id, other.id) && Buffer.compare(this.publicKey.getBuffer(), other.publicKey.getBuffer()) === 0 && this.type === other.type && this.signatures.equals(other.signatures)
+  equals(other: Identity): boolean {
+    return this.id.equals(other.id) && this.publicKey.equals(other.publicKey) && this.signatures.equals(other.signatures)
   }
 
-  toString() {
+  /* toString() {
     return identityToString(this);
-  }
+  } */
 }
 
 
-
+/* 
 export class Identity {
 
   _id: Uint8Array;
@@ -140,10 +133,7 @@ export class Identity {
     }
   }
 
-  /**
-  * This is only used as a fallback to the clock id when necessary
-  * @return {string} public key hex encoded
-  */
+
   get id(): Uint8Array {
     return this._id
   }
@@ -169,7 +159,6 @@ export class Identity {
     ser.id = this.id;
     ser.publicKey = this.publicKey;
     ser.signatures = new Signatures({ ...this.signatures });
-    ser.type = this.type;
     return ser;
   }
 
@@ -186,23 +175,24 @@ export class Identity {
     return arraysEqual(this.id, other.id) && Buffer.compare(this.publicKey.getBuffer(), other.publicKey.getBuffer()) === 0 && this.type === other.type && this.signatures.equals(other.signatures)
   }
 
-  toString() {
-    return identityToString(this);
-  }
-
-
-  /* static from(identity: IdentitySerializable): Identity {
-    return new Identity({
-      id: identity.id,
-      publicKey: identity.publicKey,
-      signatures: new Signatures({
-        id: identity.signatures.id,
-        publicKey: identity.signatures.publicKey
-      }),
-      type: identity.type
-    })
-  } */
-}
+} */
 
 
 
+
+/*  toString() {
+   return identityToString(this);
+ } */
+
+
+/* static from(identity: IdentitySerializable): Identity {
+  return new Identity({
+    id: identity.id,
+    publicKey: identity.publicKey,
+    signatures: new Signatures({
+      id: identity.signatures.id,
+      publicKey: identity.signatures.publicKey
+    }),
+    type: identity.type
+  })
+} */

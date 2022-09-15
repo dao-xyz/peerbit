@@ -1,6 +1,6 @@
 import { variant } from "@dao-xyz/borsh";
 
-/** Some proof that something is legit */
+/** Some kind of DDOS resistance proof for unverified identities */
 @variant(0)
 export class Proof {
 

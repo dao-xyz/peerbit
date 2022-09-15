@@ -150,9 +150,9 @@ Object.keys(testAPIs).forEach(API => {
             }
           }
           let err
-          options = Object.assign({}, options, { path: path.join(dbPath, '/sync-test/1') })
+          options = Object.assign({}, options, { directory: path.join(dbPath, '/sync-test/1') })
           const db1 = await database.create(orbitdb1, 'write error test 1', options)
-          options = Object.assign({}, options, { path: path.join(dbPath, '/sync-test/2'), sync: true })
+          options = Object.assign({}, options, { directory: path.join(dbPath, '/sync-test/2'), sync: true })
           const db2 = await database.create(orbitdb2, 'write error test 1', options)
 
           try {

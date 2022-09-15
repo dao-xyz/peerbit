@@ -3,9 +3,8 @@ const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Entry, LamportClock as Clock } from '@dao-xyz/ipfs-log-entry';
 import { Log } from '../log'
-import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { assertPayload } from './utils/assert'
-import { BoxKeyWithMeta, Keystore } from '@dao-xyz/orbit-db-keystore'
+import { BoxKeyWithMeta, Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { X25519PublicKey } from 'sodium-plus'
 // Test utils
 const {
@@ -15,7 +14,7 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity: Identity, testIdentity2: Identity, testIdentity3: Identity, testIdentity4: Identity
+let ipfsd, ipfs, signKey: SignKeyWithMeta, signKey2: SignKeyWithMeta, signKey3: SignKeyWithMeta, signKey4: SignKeyWithMeta
 
 const last = (arr) => {
   return arr[arr.length - 1]
@@ -42,9 +41,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
       senderKey = await keystore.createKey('sender', BoxKeyWithMeta, undefined, { overwrite: true });
       recieverKey = await keystore.createKey('reciever', BoxKeyWithMeta, undefined, { overwrite: true });
 
-      // The ids are choosen so that the tests plays out "nicely", specifically the logs clock id sort will reflect the testIdentity suffix
-      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
-      testIdentity2 = await Identities.createIdentity({ id: new Uint8Array([1]), keystore, signingKeystore })
+      // The ids are choosen so that the tests plays out "nicely", specifically the logs clock id sort will reflect the signKey suffix
+      signKey = await keystore.createKey(new Uint8Array([0]), SignKeyWithMeta);
+      signKey2 = await keystore.createKey(new Uint8Array([1]), SignKeyWithMeta);
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
 
@@ -85,20 +84,20 @@ Object.keys(testAPIs).forEach((IPFS) => {
             }
           }
         };
-        log1 = new Log(ipfs, testIdentity, logOptions)
-        log2 = new Log(ipfs, testIdentity2, logOptions)
+        log1 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), logOptions)
+        log2 = new Log(ipfs, signKey2.publicKey, (data) => Keystore.sign(data, signKey2), logOptions)
       })
 
       it('join encrypted identities only with knowledge of id and clock', async () => {
-        await log1.append('helloA1', { reciever: { id: undefined, clock: undefined, identity: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey }, pointerCount: 1 })
-        await log1.append('helloA2', { reciever: { id: undefined, clock: undefined, identity: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey }, pointerCount: 1 })
-        await log2.append('helloB1', { reciever: { id: undefined, clock: undefined, identity: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey }, pointerCount: 1 })
-        await log2.append('helloB2', { reciever: { id: undefined, clock: undefined, identity: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey }, pointerCount: 1 })
+        await log1.append('helloA1', { reciever: { id: undefined, clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey }, pointerCount: 1 })
+        await log1.append('helloA2', { reciever: { id: undefined, clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey }, pointerCount: 1 })
+        await log2.append('helloB1', { reciever: { id: undefined, clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey }, pointerCount: 1 })
+        await log2.append('helloB2', { reciever: { id: undefined, clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey }, pointerCount: 1 })
 
         // Remove decrypted caches of the log2 values
         log2.values.forEach((value) => {
           value._id.clear();
-          value._identity.clear();
+          value._publicKey.clear();
           value._clock.clear();
           value._payload.clear();
           value._signature.clear();

@@ -108,7 +108,7 @@ export class BinaryFeedStore<T> extends Store<Operation<T>> {
 
   clone(newName: string): BinaryFeedStore<T> {
     return new BinaryFeedStore({
-      accessController: this.access.clone(newName)
+      accessController: this.accessController.clone(newName)
     })
   }
 }

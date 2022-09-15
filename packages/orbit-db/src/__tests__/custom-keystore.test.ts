@@ -2,8 +2,10 @@
 const assert = require('assert')
 const rmrf = require('rimraf')
 const path = require('path')
+import { Ed25519PublicKeyData } from '@dao-xyz/identity'
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { OrbitDB } from '../orbit-db'
-const Identities = require('@dao-xyz/orbit-db-identity-provider')
+/* const Identities = require('@dao-xyz/orbit-db-identity-provider') */
 // Include test utilities
 const {
   config,
@@ -17,8 +19,8 @@ const {
   databases,
 } = require('./utils')
 
-Identities.addIdentityProvider(CustomTestKeystore().identityProvider)
-
+/* Identities.addIdentityProvider(CustomTestKeystore().identityProvider)
+ */
 const dbPath = './orbitdb/tests/customKeystore'
 
 Object.keys(testAPIs).forEach(API => {
@@ -31,10 +33,16 @@ Object.keys(testAPIs).forEach(API => {
       rmrf.sync(dbPath)
       ipfsd = await startIpfs(API, config.daemon1)
       ipfs = ipfsd.api
-      const identity = await Identities.createIdentity({ type: 'custom', keystore: CustomTestKeystore().create() })
+
+      const signKey: SignKeyWithMeta = await CustomTestKeystore().create().createKey(new Uint8Array([0]), SignKeyWithMeta);
+
+      //const identity = await Identities.createIdentity({ type: 'custom', keystore: CustomTestKeystore().create() })
       orbitdb1 = await OrbitDB.createInstance(ipfs, {
         directory: path.join(dbPath, '1'),
-        identity
+        publicKey: new Ed25519PublicKeyData({
+          publicKey: signKey.publicKey
+        }),
+        sign: (data) => Keystore.sign(data, signKey)
       })
     })
 

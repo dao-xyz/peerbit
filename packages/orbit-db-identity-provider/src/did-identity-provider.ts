@@ -1,9 +1,10 @@
 import { IdentityProvider } from "./identity-provider-interface"
 
+// TODO make JWS compliant with PublicKey 
+/* 
 import * as u8a from 'uint8arrays'
 import { DID } from 'dids'
-import { Identity, IdentitySerializable } from "./identity";
-import { joinUint8Arrays } from "@dao-xyz/io-utils";
+import { Identity } from "./identity";
 
 const TYPE = 'DID'
 export type DIDIdentityProviderOptions = { didProvider?: any };
@@ -45,14 +46,16 @@ export class DIDIdentityProvider extends IdentityProvider {
     }
   }
 
-  static async verifyIdentity(identity: Identity | IdentitySerializable) {
+  static async verifyIdentity(identity: Identity) {
     if (!this.did) {
       throw new Error('The DID resolver must first be set with setDIDResolver()')
     }
+    const signatureWithHeader = identity.signatures.publicKey;
     const data = new Uint8Array(Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id]));
+
     try {
       const payload = u8a.toString(data, 'base64url')
-      const [header, signature] = Buffer.from(identity.signatures.publicKey).toString().split('..')
+      const [header, signature] = Buffer.from(signatureWithHeader).toString().split('..')
       const jws = [header, payload, signature].join('.')
       await this.did.verifyJWS(jws)
 
@@ -63,3 +66,4 @@ export class DIDIdentityProvider extends IdentityProvider {
   }
 }
 
+ */

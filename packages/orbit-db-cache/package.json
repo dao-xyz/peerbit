@@ -42,7 +42,7 @@
   "license": "MIT",
   "dependencies": {
     "bs58": "^5.0.0",
-    "@dao-xyz/borsh": "^3.1.0",
+    "@dao-xyz/borsh": "^3.2.1",
     "logplease": "~1.2.15",
     "level": "^8.0.0"
   },

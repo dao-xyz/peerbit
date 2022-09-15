@@ -4,7 +4,8 @@ import { QueryRequestV0, Result } from '@dao-xyz/query-protocol';
 import { BinaryPayload } from '@dao-xyz/bpayload';
 import { AccessController, IInitializationOptions, Address } from '@dao-xyz/orbit-db-store';
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
-export declare class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Operation> {
+import { IOOptions } from '@dao-xyz/ipfs-log-entry';
+export declare class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Operation<T>> {
     indexBy: string;
     objectType: string;
     _clazz: Constructor<T>;
@@ -13,12 +14,14 @@ export declare class BinaryDocumentStore<T extends BinaryPayload> extends QueryS
         name?: string;
         indexBy: string;
         objectType: string;
-        accessController: AccessController<Operation>;
+        accessController: AccessController<Operation<T>>;
         queryRegion?: string;
+        clazz?: Constructor<T>;
     });
-    init(ipfs: any, identity: any, options: IInitializationOptions<T>): Promise<void>;
+    init(ipfs: any, key: any, sign: any, options: IInitializationOptions<T>): Promise<void>;
+    get encoding(): IOOptions<any>;
     get(key: any, caseSensitive?: boolean): IndexedValue<T>[];
-    queryDocuments(filter: ((doc: IndexedValue<T>) => boolean)): IndexedValue<T>[];
+    _queryDocuments(filter: ((doc: IndexedValue<T>) => boolean)): IndexedValue<T>[];
     queryHandler(query: QueryRequestV0): Promise<Result[]>;
     batchPut(docs: T[], onProgressCallback: any): Promise<import("ipfs-core-types/src/root").AddResult[]>;
     put(doc: T, options?: {}): Promise<unknown>;

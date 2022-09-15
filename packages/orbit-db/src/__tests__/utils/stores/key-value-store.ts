@@ -50,11 +50,11 @@ export class KeyValueStore<T> extends Store<Operation<T>> {
         super(properties)
         this._index = new KeyValueIndex();
     }
-    async init(ipfs, identity, options): Promise<void> {
+    async init(ipfs, key, sign, options): Promise<void> {
         let opts = Object.assign({}, { Index: KeyValueIndex })
         if (options.encoding === undefined) Object.assign(options, { encoding: JSON_ENCODER })
         Object.assign(opts, options)
-        return super.init(ipfs, identity, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
+        return super.init(ipfs, key, sign, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
     }
 
     get all() {

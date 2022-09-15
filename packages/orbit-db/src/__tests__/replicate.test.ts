@@ -63,17 +63,8 @@ Object.keys(testAPIs).forEach(API => {
       orbitdb1 = await OrbitDB.createInstance(ipfs1, { directory: orbitdbPath1 })
       orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2 })
 
-      options = {
-        // Set write access for both clients
-        accessController: {
-          write: [
-            orbitdb1.identity.id,
-            orbitdb2.identity.id,
-          ]
-        }
-      }
 
-      options = Object.assign({}, options, { directory: dbPath1 })
+      options = Object.assign({}, options, { accessControler: new SimpleAccessController(), directory: dbPath1 })
       db1 = await orbitdb1.open(new EventStore<string>({ name: 'a', accessController: new SimpleAccessController() })
         , options)
     })

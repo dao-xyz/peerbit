@@ -6,7 +6,7 @@ import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { BoxKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { OrbitDB } from '../orbit-db'
 import { EventStore, Operation } from './utils/stores/event-store'
-import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store';
+import { IStoreOptions } from '@dao-xyz/orbit-db-store';
 import { X25519PublicKey } from 'sodium-plus';
 import { AccessError } from '@dao-xyz/encryption-utils'
 import { SimpleAccessController } from './utils/access'
@@ -30,7 +30,7 @@ const dbPath1 = './orbitdb/tests/replication/1/db1'
 const dbPath2 = './orbitdb/tests/replication/2/db2'
 const dbPath3 = './orbitdb/tests/replication/3/db3'
 const testHello = async (addToDB: EventStore<string>, readFromDB: EventStore<string>, reciever: X25519PublicKey, timer: any) => {
-  await addToDB.add('hello', { reciever: { clock: reciever, id: reciever, identity: reciever, payload: reciever, signature: reciever } })
+  await addToDB.add('hello', { reciever: { clock: reciever, id: reciever, publicKey: reciever, payload: reciever, signature: reciever } })
   let finished = false;
   await new Promise((resolve, reject) => {
     let replicatedEventCount = 0
@@ -113,8 +113,7 @@ Object.keys(testAPIs).forEach(API => {
 
       orbitdb1 = await OrbitDB.createInstance(ipfs1, {
         directory: orbitdbPath1, canAccessKeys: (requester, _keyToAccess) => {
-          const comp = Buffer.compare(requester.getBuffer(), orbitdb2.identity.publicKey.getBuffer());
-          return Promise.resolve(comp === 0) // allow orbitdb1 to share keys with orbitdb2
+          return Promise.resolve(requester.equals(orbitdb2.publicKey)) // allow orbitdb1 to share keys with orbitdb2
         }, waitForKeysTimout: 1000
       })
       orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2, waitForKeysTimout: 1000 })
@@ -235,7 +234,7 @@ Object.keys(testAPIs).forEach(API => {
 
       const client3Key = await orbitdb3.keystore.createKey('unknown', BoxKeyWithMeta);
 
-      await db2.add('hello', { reciever: { id: undefined, clock: undefined, identity: client3Key.publicKey, payload: client3Key.publicKey, signature: client3Key.publicKey } })
+      await db2.add('hello', { reciever: { id: undefined, clock: undefined, publicKey: client3Key.publicKey, payload: client3Key.publicKey, signature: client3Key.publicKey } })
       let finishedRelay = false;
 
       await new Promise((resolve, reject) => {

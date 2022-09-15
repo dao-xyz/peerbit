@@ -94,12 +94,7 @@ Object.keys(testAPIs).forEach(API => {
       // fetch the database from the network
       let options = {
         // Set write access for both clients
-        accessController: {
-          write: [
-            orbitdb1.identity.id,
-            orbitdb2.identity.id,
-          ]
-        } as any
+        accessController: new SimpleAccessController()
       }
       const replicationTopicFn = () => 'x';
       const replicationTopic = replicationTopicFn();

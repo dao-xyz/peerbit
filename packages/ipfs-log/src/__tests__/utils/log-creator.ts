@@ -1,12 +1,12 @@
 import { Log as TypeOfLog } from "../../log"
 
 export class LogCreator {
-  static async createLogWithSixteenEntries(Log, ipfs, identities) {
+  static async createLogWithSixteenEntries(Log, ipfs, signKeys) {
     const create = async (): Promise<TypeOfLog<string>> => {
-      const logA = new Log(ipfs, identities[0], { logId: 'X' })
-      const logB = new Log(ipfs, identities[1], { logId: 'X' })
-      const log3 = new Log(ipfs, identities[2], { logId: 'X' })
-      const log = new Log(ipfs, identities[3], { logId: 'X' })
+      const logA = new Log(ipfs, signKeys[0], { logId: 'X' })
+      const logB = new Log(ipfs, signKeys[1], { logId: 'X' })
+      const log3 = new Log(ipfs, signKeys[2], { logId: 'X' })
+      const log = new Log(ipfs, signKeys[3], { logId: 'X' })
 
       for (let i = 1; i <= 5; i++) {
         await logA.append('entryA' + i)

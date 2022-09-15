@@ -6,7 +6,7 @@ import { StringQueryRequest } from '@dao-xyz/query-protocol';
 import { Range } from './range';
 import { deserialize, field, serialize, variant } from '@dao-xyz/borsh';
 
-import { BinaryPayload } from '@dao-xyz/bpayload';
+import { BinaryPayload, CustomBinaryPayload } from '@dao-xyz/bpayload';
 import { AccessController, IStoreOptions } from '@dao-xyz/orbit-db-store';
 
 export const STRING_STORE_TYPE = 'string_store';
@@ -102,7 +102,7 @@ export class StringStore extends QueryStore<PayloadOperation> {
 
 @variant("string")
 /* @variant([0, 2]) */
-export class StringResultSource extends BinaryPayload {
+export class StringResultSource extends CustomBinaryPayload {
 
   @field({ type: 'string' })
   string: string

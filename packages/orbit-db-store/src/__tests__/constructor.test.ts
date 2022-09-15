@@ -1,8 +1,7 @@
 import assert from 'assert'
 import { Store, DefaultOptions } from '../store'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
-import { Keystore } from "@dao-xyz/orbit-db-keystore"
-import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
+import { Keystore, SignKeyWithMeta } from "@dao-xyz/orbit-db-keystore"
 
 // Test utils
 import {
@@ -17,7 +16,7 @@ import { SimpleAccessController } from './utils'
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`Constructor ${IPFS}`, function () {
-    let ipfs, testIdentity: Identity, identityStore, store: Store<any>, storeWithCache: Store<any>, cacheStore
+    let ipfs, signKey: SignKeyWithMeta, identityStore, store: Store<any>, storeWithCache: Store<any>, cacheStore
 
     jest.setTimeout(config.timeout);
 
@@ -32,15 +31,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
       cacheStore = await createStore('cache')
       const cache = new Cache(cacheStore)
 
-      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore })
+      signKey = await keystore.getKeyByPath(new Uint8Array([0]), SignKeyWithMeta);
       ipfs = await startIpfs(IPFS, ipfsConfig.daemon1)
 
       store = new Store({ name: 'name', accessController: new SimpleAccessController() })
-      store.init(ipfs, testIdentity, DefaultOptions);
+      store.init(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), DefaultOptions);
       const options = Object.assign({}, DefaultOptions, { cache })
       storeWithCache = new Store({ name: 'name', accessController: new SimpleAccessController() })
-
-      await storeWithCache.init(ipfs, testIdentity, options);
+      await storeWithCache.init(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), options);
 
     })
 
@@ -60,7 +58,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.strictEqual(typeof store.events, 'object')
       assert.strictEqual(typeof store._ipfs, 'object')
       assert.strictEqual(typeof store._cache, 'undefined')
-      assert.strictEqual(typeof store.access, 'object')
+      assert.strictEqual(typeof store.accessController, 'object')
       assert.strictEqual(typeof store._oplog, 'object')
       assert.strictEqual(typeof store._replicationStatus, 'object')
       assert.strictEqual(typeof store._stats, 'object')

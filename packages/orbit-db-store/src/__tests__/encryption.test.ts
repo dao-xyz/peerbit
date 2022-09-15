@@ -2,8 +2,7 @@
 import assert from 'assert'
 import { Store, DefaultOptions, HeadsCache, StorePublicKeyEncryption, IInitializationOptions } from '../store'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
-import { BoxKeyWithMeta, Keystore, KeyWithMeta } from "@dao-xyz/orbit-db-keystore"
-import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
+import { BoxKeyWithMeta, Keystore, KeyWithMeta, SignKeyWithMeta } from "@dao-xyz/orbit-db-keystore"
 import { createStore } from './storage'
 import { X25519PublicKey, SodiumPlus } from 'sodium-plus'
 import { AccessError } from '@dao-xyz/encryption-utils'
@@ -20,7 +19,7 @@ const {
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`addOperation ${IPFS}`, function () {
-    let ipfsd, ipfs, testIdentity: Identity, keystore: Keystore, identityStore, store: Store<any>, cacheStore, senderKey: BoxKeyWithMeta, recieverKey: BoxKeyWithMeta, encryption: StorePublicKeyEncryption
+    let ipfsd, ipfs, signKey: SignKeyWithMeta, keystore: Keystore, identityStore, store: Store<any>, cacheStore, senderKey: BoxKeyWithMeta, recieverKey: BoxKeyWithMeta, encryption: StorePublicKeyEncryption
     let index: SimpleIndex<string>
 
     jest.setTimeout(config.timeout);
@@ -36,7 +35,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       cacheStore = await createStore('cache')
       const cache = new Cache(cacheStore)
 
-      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore })
+      signKey = await keystore.getKeyByPath(new Uint8Array([0]), SignKeyWithMeta);
       ipfsd = await startIpfs(IPFS, ipfsConfig.daemon1)
       ipfs = ipfsd.api
       index = new SimpleIndex();
@@ -67,7 +66,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const options: IInitializationOptions<any> = Object.assign({}, DefaultOptions, { resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index) })
       options.encryption = encryption
       store = new Store({ name: 'name', accessController: new SimpleAccessController() })
-      await store.init(ipfs, testIdentity, options);
+      await store.init(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), options);
 
     })
 
@@ -117,7 +116,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         reciever: {
           clock: recieverKey.publicKey,
           id: recieverKey.publicKey,
-          identity: recieverKey.publicKey,
+          publicKey: recieverKey.publicKey,
           payload: recieverKey.publicKey,
           signature: recieverKey.publicKey
         }
@@ -159,7 +158,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             reciever: {
               clock: undefined,
               id: undefined,
-              identity: pk,
+              publicKey: pk,
               payload: pk,
               signature: pk,
             }

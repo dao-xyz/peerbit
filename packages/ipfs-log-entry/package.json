@@ -31,13 +31,13 @@
   ],
   "dependencies": {
     "@dao-xyz/encryption-utils": "^0.0.1",
-    "@dao-xyz/borsh": "^3.1.0",
+    "@dao-xyz/borsh": "^3.2.1",
     "@dao-xyz/io-utils": "^0.0.1",
-    "@dao-xyz/orbit-db-identity-provider": "^0.5.10",
     "@dao-xyz/orbit-db-io": "^1.0.2",
     "sodium-plus": "^0.9.0"
   },
   "devDependencies": {
+    "@dao-xyz/orbit-db-keystore": "^0.0.1",
     "@babel/cli": "^7.14.3",
     "@babel/core": "^7.14.3",
     "@babel/plugin-syntax-object-rest-spread": "~7.8.3",

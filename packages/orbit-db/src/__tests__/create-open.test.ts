@@ -7,10 +7,11 @@ const Zip = require('adm-zip')
 import { OrbitDB } from '../orbit-db'
 import { KeyValueStore } from './utils/stores/key-value-store'
 import io from '@dao-xyz/orbit-db-io'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { SimpleAccessController } from './utils/access'
 import { Address, Store } from '@dao-xyz/orbit-db-store'
 import { EventStore } from './utils/stores'
+import { BoxKeyWithMeta, Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { Ed25519PublicKeyData } from '@dao-xyz/identity'
 // Include test utilities
 const {
   config,
@@ -145,18 +146,18 @@ Object.keys(testAPIs).forEach(API => {
       })
 
       it('opens a database - with a different identity', async () => {
-        const identity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore: orbitdb.keystore })
-        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { identity })
+        const signKey = await orbitdb.keystore.createKey(new Uint8Array([0]), SignKeyWithMeta);
+        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { publicKey: new Ed25519PublicKeyData({ publicKey: signKey.publicKey }), sign: (data) => Keystore.sign(data, signKey) })
         assert.equal(db.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db.address.toString().indexOf('zd'), 9)
         assert.equal(db.address.toString().indexOf('abc'), 59)
-        assert.equal(db.identity, identity)
+        assert(Buffer.compare((db.publicKey as Ed25519PublicKeyData).publicKey.getBuffer(), signKey.publicKey.getBuffer()) === 0)
         await db.drop()
       })
 
       it('opens the same database - from an address', async () => {
-        const identity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore: orbitdb.keystore })
-        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { identity })
+        const signKey = await orbitdb.keystore.createKey(new Uint8Array([0]), SignKeyWithMeta);
+        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { publicKey: new Ed25519PublicKeyData({ publicKey: signKey.publicKey }), sign: (data) => Keystore.sign(data, signKey) })
         const db2 = await orbitdb.open(await Store.load(orbitdb._ipfs, db.address))
         assert.equal(db2.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db2.address.toString().indexOf('zd'), 9)

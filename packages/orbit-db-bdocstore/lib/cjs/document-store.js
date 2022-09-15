@@ -21,6 +21,7 @@ const query_protocol_1 = require("@dao-xyz/query-protocol");
 const io_utils_1 = require("@dao-xyz/io-utils");
 const orbit_db_store_1 = require("@dao-xyz/orbit-db-store");
 const orbit_db_query_store_1 = require("@dao-xyz/orbit-db-query-store");
+const ipfs_log_entry_1 = require("@dao-xyz/ipfs-log-entry");
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement);
 /*
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
@@ -68,14 +69,9 @@ export class BinaryDocumentStoreOptions<T extends BinaryPayload> extends BStoreO
   addTypes: (typeMap: { [name: string]: Constructor<any> }) => void
 }
  */
-const defaultOptions = (options) => {
-    if (!options.encoding) {
-        options.encoding = {
-            decoder: (bytes) => (0, borsh_1.deserialize)(Buffer.from(bytes), document_index_1.Operation),
-            encoder: (data) => (0, borsh_1.serialize)(data)
-        };
-    }
-    return options;
+const _encoding = {
+    decoder: (bytes) => (0, borsh_1.deserialize)(Buffer.from(bytes), document_index_1.Operation),
+    encoder: (data) => (0, borsh_1.serialize)(data)
 };
 class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore /*  implements Typed */ {
     constructor(properties) {
@@ -83,13 +79,14 @@ class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore /*  implemen
         if (properties) {
             this.indexBy = properties.indexBy;
             this.objectType = properties.objectType;
+            this._clazz = properties.clazz;
         }
         this._index = new document_index_1.DocumentIndex();
     }
     /*  addTypes(_typeMap: { [name: string]: Constructor<any>; }) {
        throw new Error("Not implemented");
      } */
-    async init(ipfs, identity, options) {
+    async init(ipfs, key, sign, options) {
         if (!this._clazz) {
             if (!options.typeMap)
                 throw new Error("Class not set, " + this.objectType);
@@ -102,7 +99,10 @@ class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore /*  implemen
             }
         }
         this._index.init(this._clazz);
-        await super.init(ipfs, identity, { ...defaultOptions(options), onUpdate: this._index.updateIndex.bind(this._index) });
+        await super.init(ipfs, key, sign, { ...options, encoding: this.encoding, onUpdate: this._index.updateIndex.bind(this._index) });
+    }
+    get encoding() {
+        return _encoding;
     }
     get(key, caseSensitive = false) {
         key = key.toString();
@@ -122,88 +122,113 @@ class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore /*  implemen
             .filter(filter)
             .map(mapper);
     }
-    queryDocuments(filter) {
+    _queryDocuments(filter) {
         // Whether we return the full operation data or just the db value
         return Object.keys(this._index._index)
             .map((e) => this._index.get(e))
             .filter((doc) => filter(doc));
     }
     queryHandler(query) {
-        const documentQuery = query.type;
-        let filters = documentQuery.queries.filter(q => q instanceof query_protocol_1.FieldQuery);
-        let results = this.queryDocuments(doc => filters?.length > 0 ? filters.map(f => {
-            if (f instanceof query_protocol_1.FieldQuery) {
-                const fv = doc.value[f.key];
-                if (f instanceof query_protocol_1.FieldStringMatchQuery) {
-                    if (typeof fv !== 'string')
-                        return false;
-                    return fv.toLowerCase().indexOf(f.value.toLowerCase()) !== -1;
-                }
-                if (f instanceof query_protocol_1.FieldByteMatchQuery) {
-                    if (!Array.isArray(fv))
-                        return false;
-                    return (0, io_utils_1.arraysEqual)(fv, f.value);
-                }
-                if (f instanceof query_protocol_1.FieldBigIntCompareQuery) {
-                    let value = fv;
-                    if (typeof value !== 'bigint' && typeof value !== 'number') {
-                        return false;
+        if (query.type instanceof query_protocol_1.DocumentQueryRequest) {
+            let queries = query.type.queries;
+            let results = this._queryDocuments(doc => queries?.length > 0 ? queries.map(f => {
+                if (f instanceof query_protocol_1.FieldQuery) {
+                    let fv = doc.value;
+                    for (let i = 0; i < f.key.length; i++) {
+                        fv = fv[f.key[i]];
                     }
-                    switch (f.compare) {
-                        case query_protocol_1.Compare.Equal:
-                            return value == f.value; // == because with want bigint == number at some cases
-                        case query_protocol_1.Compare.Greater:
-                            return value > f.value;
-                        case query_protocol_1.Compare.GreaterOrEqual:
-                            return value >= f.value;
-                        case query_protocol_1.Compare.Less:
-                            return value < f.value;
-                        case query_protocol_1.Compare.LessOrEqual:
-                            return value <= f.value;
-                        default:
-                            console.warn("Unexpected compare");
+                    if (f instanceof query_protocol_1.FieldStringMatchQuery) {
+                        if (typeof fv !== 'string')
                             return false;
+                        return fv.toLowerCase().indexOf(f.value.toLowerCase()) !== -1;
+                    }
+                    if (f instanceof query_protocol_1.FieldByteMatchQuery) {
+                        if (!Array.isArray(fv))
+                            return false;
+                        return (0, io_utils_1.arraysEqual)(fv, f.value);
+                    }
+                    if (f instanceof query_protocol_1.FieldBigIntCompareQuery) {
+                        let value = fv;
+                        if (typeof value !== 'bigint' && typeof value !== 'number') {
+                            return false;
+                        }
+                        switch (f.compare) {
+                            case query_protocol_1.Compare.Equal:
+                                return value == f.value; // == because with want bigint == number at some cases
+                            case query_protocol_1.Compare.Greater:
+                                return value > f.value;
+                            case query_protocol_1.Compare.GreaterOrEqual:
+                                return value >= f.value;
+                            case query_protocol_1.Compare.Less:
+                                return value < f.value;
+                            case query_protocol_1.Compare.LessOrEqual:
+                                return value <= f.value;
+                            default:
+                                console.warn("Unexpected compare");
+                                return false;
+                        }
                     }
                 }
-            }
-            else {
-                throw new Error("Unsupported query type");
-            }
-        }).reduce((prev, current) => prev && current) : true).map(x => x.value);
-        if (documentQuery.sort) {
-            const resolveField = (obj) => {
-                let v = obj;
-                for (let i = 0; i < documentQuery.sort.fieldPath.length; i++) {
-                    v = v[documentQuery.sort.fieldPath[i]];
+                else if (f instanceof query_protocol_1.MemoryCompareQuery) {
+                    const payload = doc.entry._payload.decrypted.getValue(ipfs_log_entry_1.Payload);
+                    const operation = payload.init(this.encoding).value;
+                    if (operation instanceof document_index_1.PutOperation) {
+                        const bytes = operation.data;
+                        for (const compare of f.compares) {
+                            const offsetn = Number(compare.offset); // TODO type check
+                            for (let b = 0; b < compare.bytes.length; b++) {
+                                if (bytes[offsetn + b] !== compare.bytes[b]) {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                    else {
+                        // TODO add implementations for PutAll
+                        return false;
+                    }
+                    return true;
                 }
-                return v;
-            };
-            let direction = 1;
-            if (documentQuery.sort.direction == query_protocol_1.SortDirection.Descending) {
-                direction = -1;
+                else {
+                    throw new Error("Unsupported query type");
+                }
+            }).reduce((prev, current) => prev && current) : true).map(x => x.value);
+            if (query.type.sort) {
+                const sort = query.type.sort;
+                const resolveField = (obj) => {
+                    let v = obj;
+                    for (let i = 0; i < sort.key.length; i++) {
+                        v = v[sort.key[i]];
+                    }
+                    return v;
+                };
+                let direction = 1;
+                if (query.type.sort.direction == query_protocol_1.SortDirection.Descending) {
+                    direction = -1;
+                }
+                results.sort((a, b) => {
+                    const af = resolveField(a);
+                    const bf = resolveField(b);
+                    if (af < bf) {
+                        return -direction;
+                    }
+                    else if (af > bf) {
+                        return direction;
+                    }
+                    return 0;
+                });
             }
-            results.sort((a, b) => {
-                const af = resolveField(a);
-                const bf = resolveField(b);
-                if (af < bf) {
-                    return -direction;
-                }
-                else if (af > bf) {
-                    return direction;
-                }
-                return 0;
-            });
+            // TODO check conversions
+            if (query.type.offset) {
+                results = results.slice(Number(query.type.offset));
+            }
+            if (query.type.size) {
+                results = results.slice(0, Number(query.type.size));
+            }
+            return Promise.resolve(results.map(r => new query_protocol_1.ResultWithSource({
+                source: r
+            })));
         }
-        // TODO check conversions
-        if (documentQuery.offset) {
-            results = results.slice(Number(documentQuery.offset));
-        }
-        if (documentQuery.size) {
-            results = results.slice(0, Number(documentQuery.size));
-        }
-        return Promise.resolve(results.map(r => new query_protocol_1.ResultWithSource({
-            source: r
-        })));
     }
     batchPut(docs, onProgressCallback) {
         const mapper = (doc, idx) => {
@@ -223,7 +248,8 @@ class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore /*  implemen
         const ser = (0, borsh_1.serialize)(doc);
         return this._addOperation(new document_index_1.PutOperation({
             key: (0, utils_1.asString)(doc[this.indexBy]),
-            value: ser,
+            data: ser,
+            value: doc
         }), options);
     }
     putAll(docs, options = {}) {
@@ -236,7 +262,8 @@ class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore /*  implemen
         return this._addOperation(new document_index_1.PutAllOperation({
             docs: docs.map((value) => new document_index_1.PutOperation({
                 key: (0, utils_1.asString)(value[this.indexBy]),
-                value: (0, borsh_1.serialize)(value)
+                data: (0, borsh_1.serialize)(value),
+                value
             }))
         }), options);
     }
@@ -253,7 +280,7 @@ class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore /*  implemen
     }
     clone(newName) {
         return new BinaryDocumentStore({
-            accessController: this.access.clone(newName),
+            accessController: this.accessController.clone(newName),
             indexBy: this.indexBy,
             objectType: this.objectType,
             name: newName,

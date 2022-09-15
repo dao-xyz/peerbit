@@ -2,9 +2,8 @@ const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
-import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
 import { assertPayload } from './utils/assert'
-import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
 const {
@@ -21,7 +20,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
   describe('ipfs-log - Replication', function () {
     jest.setTimeout(config.timeout * 6)
 
-    let ipfsd1, ipfsd2, ipfs1, ipfs2, id1: Identity, id2: Identity, testIdentity: Identity, testIdentity2: Identity
+    let ipfsd1, ipfsd2, ipfs1, ipfs2, id1: string, id2: string, signKey: SignKeyWithMeta, signKey2: SignKeyWithMeta
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
 
@@ -49,8 +48,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
       signingKeystore = new Keystore(signingKeysPath)
 
       // Create an identity for each peers
-      testIdentity = await Identities.createIdentity({ id: new Uint8Array([1]), keystore, signingKeystore })
-      testIdentity2 = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
+      signKey = await keystore.getKeyByPath(new Uint8Array([0]), SignKeyWithMeta);
+      signKey2 = await keystore.getKeyByPath(new Uint8Array([1]), SignKeyWithMeta);
     })
 
     afterAll(async () => {
@@ -82,7 +81,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         processing++
         process.stdout.write('\r')
         process.stdout.write(`> Buffer1: ${buffer1.length} - Buffer2: ${buffer2.length}`)
-        const log = await Log.fromMultihash<string>(ipfs1, testIdentity, hash, {})
+        const log = await Log.fromMultihash<string>(ipfs1, signKey.publicKey, (data) => Keystore.sign(data, signKey), hash, {})
         await log1.join(log)
         processing--
       }
@@ -96,16 +95,16 @@ Object.keys(testAPIs).forEach((IPFS) => {
         processing++
         process.stdout.write('\r')
         process.stdout.write(`> Buffer1: ${buffer1.length} - Buffer2: ${buffer2.length}`)
-        const log = await Log.fromMultihash<string>(ipfs2, testIdentity2, hash, {})
+        const log = await Log.fromMultihash<string>(ipfs2, signKey2.publicKey, (data) => Keystore.sign(data, signKey2), hash, {})
         await log2.join(log)
         processing--
       }
 
       beforeEach(async () => {
-        log1 = new Log(ipfs1, testIdentity, { logId })
-        log2 = new Log(ipfs2, testIdentity2, { logId })
-        input1 = new Log(ipfs1, testIdentity, { logId })
-        input2 = new Log(ipfs2, testIdentity2, { logId })
+        log1 = new Log(ipfs1, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId })
+        log2 = new Log(ipfs2, signKey2.publicKey, (data) => Keystore.sign(data, signKey2), { logId })
+        input1 = new Log(ipfs1, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId })
+        input2 = new Log(ipfs2, signKey2.publicKey, (data) => Keystore.sign(data, signKey2), { logId })
         await ipfs1.pubsub.subscribe(channel, handleMessage)
         await ipfs2.pubsub.subscribe(channel, handleMessage2)
       })
@@ -147,7 +146,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         console.log('Waiting for all to process')
         await whileProcessingMessages(config.timeout * 2)
 
-        const result = new Log<string>(ipfs1, testIdentity, { logId })
+        const result = new Log<string>(ipfs1, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId })
         await result.join(log1)
         await result.join(log2)
 

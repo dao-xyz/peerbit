@@ -62,9 +62,8 @@ Object.keys(testAPIs).forEach(API => {
             rmrf.sync(dbPath2)
 
             orbitdb1 = await OrbitDB.createInstance(ipfs1, {
-                directory: orbitdbPath1, canAccessKeys: (requester, _keyToAccess) => {
-                    const comp = Buffer.compare(requester.getBuffer(), orbitdb2.identity.publicKey.getBuffer());
-                    return Promise.resolve(comp === 0) // allow orbitdb1 to share keys with orbitdb2
+                directory: orbitdbPath1, canAccessKeys: async (requester, _keyToAccess) => {
+                    return requester.equals(orbitdb2.publicKey); // allow orbitdb1 to share keys with orbitdb2
                 }, waitForKeysTimout: 1000
             })
             orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2 })
@@ -152,7 +151,7 @@ Object.keys(testAPIs).forEach(API => {
                 reciever: {
                     clock: encryptionKey.publicKey,
                     id: encryptionKey.publicKey,
-                    identity: encryptionKey.publicKey,
+                    publicKey: encryptionKey.publicKey,
                     payload: encryptionKey.publicKey,
                     signature: encryptionKey.publicKey
                 }

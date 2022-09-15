@@ -2,9 +2,9 @@ import { deserialize, field, option, serialize, variant, vec } from "@dao-xyz/bo
 import { OrbitDB } from "@dao-xyz/orbit-db";
 import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store'
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
-import { delay } from "@dao-xyz/time";
+import { delay, waitForAsync } from "@dao-xyz/time";
 import { AnyPeer, EMIT_HEALTHCHECK_INTERVAL, PeerInfo, ShardPeerInfo } from "./peer";
-import { BinaryPayload } from '@dao-xyz/bpayload';
+import { BinaryPayload, SystemBinaryPayload } from '@dao-xyz/bpayload';
 
 export const SHARD_INDEX = 0;
 const MAX_SHARD_SIZE = 1024 * 500 * 1000;
@@ -13,7 +13,7 @@ export const MIN_REPLICATION_AMOUNT = 1;
 import { MemoryLimitExceededError } from "./errors";
 import Logger from 'logplease';
 import isNode from 'is-node';
-import { TrustWebAccessController } from "@dao-xyz/orbit-db-trust-web";
+import { RegionAccessController } from "@dao-xyz/orbit-db-trust-web";
 
 let v8 = undefined;
 if (isNode) {
@@ -60,8 +60,8 @@ export class NoResourceRequirements extends ResourceRequirements { }
 
 /* @variant([0, 0]) */
 
-@variant("shard")
-export class Shard<S extends Store<any>> extends BinaryPayload {
+@variant(2)
+export class Shard<S extends Store<any>> extends SystemBinaryPayload {
 
     @field({ type: 'string' })
     id: string
@@ -69,8 +69,8 @@ export class Shard<S extends Store<any>> extends BinaryPayload {
     @field({ type: 'string' })
     cluster: string
 
-    @field({ type: TrustWebAccessController })
-    trust: TrustWebAccessController; // Infrastructure trust region, i.e. what signers can we trust for data for
+    @field({ type: RegionAccessController })
+    trust: RegionAccessController; // Infrastructure trust region, i.e. what signers can we trust for data for
 
     @field({ type: ResourceRequirements })
     resourceRequirements: ResourceRequirements
@@ -99,7 +99,7 @@ export class Shard<S extends Store<any>> extends BinaryPayload {
         resourceRequirements: ResourceRequirements
         address: string
         parentShardCID: string
-        trust: TrustWebAccessController
+        trust: RegionAccessController
         shardIndex: bigint
     } | {
         id: string,
@@ -107,7 +107,7 @@ export class Shard<S extends Store<any>> extends BinaryPayload {
         store: S
         resourceRequirements: ResourceRequirements
         shardIndex?: bigint
-        trust?: TrustWebAccessController
+        trust?: RegionAccessController
 
     }) {
 
@@ -147,7 +147,7 @@ export class Shard<S extends Store<any>> extends BinaryPayload {
                         this.requestNewShard();
                     }
                 },
-                appendAll: !this.peer.options.isServer, // because, if we are not a "server" we don't care about our own ACL, we just want to append everything we write (we never replicate others)
+                allowAll: !this.peer.options.isServer, // because, if we are not a "server" we don't care about our own ACL, we just want to append everything we write (we never replicate others)
                 storeOptions: {
                     subscribeToQueries: this.peer.options.isServer,
                     replicate: this.peer.options.isServer,
@@ -177,13 +177,11 @@ export class Shard<S extends Store<any>> extends BinaryPayload {
 
 
         if (!this.trust) {
-            this.trust = new TrustWebAccessController({
-                rootTrust: from.orbitDB.identity.toSerializable()
+            this.trust = new RegionAccessController({
+                rootTrust: from.orbitDB.identity
             })
-        }
-
-        if (!this.trust.store.initialized) { // Since the trust is shared between shards, we dont want to reinitialize already loaded trust
             await this.peer.orbitDB.open(this.trust) // this.storeOptions
+
         }
 
         const result = await this.peer.getCachedTrustOrSet(this.trust, this);
@@ -193,9 +191,8 @@ export class Shard<S extends Store<any>> extends BinaryPayload {
             this.shardPeerInfo = new ShardPeerInfo(this);
         }
 
+
         await this.peer.orbitDB.open(this.store); // this.storeOptions
-
-
 
         if (!this.cid) {
             // only needed for write, not needed to be loaded automatically
@@ -304,7 +301,7 @@ export class Shard<S extends Store<any>> extends BinaryPayload {
         // ??? 
     }
  */
-    static async subscribeForReplication(me: AnyPeer, trust: TrustWebAccessController, onReplication?: (shard: Shard<any>) => void): Promise<void> {
+    static async subscribeForReplication(me: AnyPeer, trust: RegionAccessController, onReplication?: (shard: Shard<any>) => void): Promise<void> {
         await me.node.pubsub.subscribe(trust.replicationTopic, async (msg: any) => {
             try {
                 let shard = deserialize(Buffer.from(msg.data), Shard);
@@ -345,7 +342,7 @@ export class Shard<S extends Store<any>> extends BinaryPayload {
     }
 
     _requestingReplicationPromise: Promise<void>;
-    /*async requestReplicate(shardIndex?: bigint): Promise<void> {
+    async requestReplicate(shardIndex?: bigint): Promise<void> {
         let shard = this as Shard<S>;
         if (shardIndex !== undefined) {
             shard = await this.createShardWithIndex(shardIndex);
@@ -371,19 +368,19 @@ export class Shard<S extends Store<any>> extends BinaryPayload {
         return this.requestReplicate(this.shardIndex + 1n)
     }
 
-     async createShardWithIndex(shardIndex: bigint, peer: AnyPeer = this.peer): Promise<Shard<T>> {
+    async createShardWithIndex(shardIndex: bigint, peer: AnyPeer = this.peer): Promise<Shard<S>> {
         const shard = new Shard<S>({
             shardIndex,
             id: this.id,
             cluster: this.cluster,
             parentShardCID: this.parentShardCID,
-            interface: this.interface.clone(this.cluster + shardIndex),
+            store: this.store.clone(this.cluster + shardIndex) as S,
             resourceRequirements: this.resourceRequirements,
             trust: this.trust,
         })
         await shard.open(peer);
         return shard;
-    } */
+    }
 
     async replicate(peer: AnyPeer) {
         /// Shard counter might be wrong because someone else could request sharding at the same time
@@ -401,12 +398,12 @@ export class Shard<S extends Store<any>> extends BinaryPayload {
         await this.startSupportPeer();
 
     }
-    /* async load() {
+    async load() {
         if (!this.trust.store.initialized) { // Since the trust is shared between shards, we dont want to reinitialize already loaded trust
             await this.trust.load();
         }
-        await this.interface.load();
-    } */
+        await this.store.load();
+    }
 
     getDBName(name: string): string {
         return (this.parentShardCID ? this.parentShardCID : '') + '-' + this.id + '-' + this.shardIndex + "-" + name;

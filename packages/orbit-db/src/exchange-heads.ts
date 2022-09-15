@@ -1,10 +1,10 @@
 import { variant, field, vec, serialize } from '@dao-xyz/borsh';
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Message } from './message';
-import { HeadsCache, Store, StoreLike } from '@dao-xyz/orbit-db-store';
+import { StoreLike } from '@dao-xyz/orbit-db-store';
 import Logger from 'logplease'
-import { DecryptedThing, MaybeSigned } from '@dao-xyz/encryption-utils';
-import { Ed25519PublicKey } from 'sodium-plus';
+import { DecryptedThing } from '@dao-xyz/encryption-utils';
+import { MaybeSigned, PublicKey } from '@dao-xyz/identity';
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
@@ -58,7 +58,7 @@ export class RequestHeadsMessage extends Message {
 
 
 
-export const exchangeHeads = async (channel: any, topic: string, getStore: (address: string) => { [key: string]: StoreLike<any> }, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: Ed25519PublicKey }>) => {
+export const exchangeHeads = async (channel: any, topic: string, getStore: (address: string) => { [key: string]: StoreLike<any> }, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
 
   // Send the heads if we have any
   const stores = getStore(topic);

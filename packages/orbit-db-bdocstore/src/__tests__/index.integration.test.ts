@@ -1,15 +1,13 @@
 
-import { Constructor, deserialize, field, option, serialize, variant } from '@dao-xyz/borsh';
+import { Constructor, field, option, serialize, variant } from '@dao-xyz/borsh';
 import { BinaryDocumentStore } from '../document-store';
-import { DocumentQueryRequest, Compare, FieldBigIntCompareQuery, QueryRequestV0, QueryResponseV0, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort } from '@dao-xyz/query-protocol';
-import { query } from '@dao-xyz/query-protocol';
+import { DocumentQueryRequest, Compare, FieldBigIntCompareQuery, QueryRequestV0, QueryResponseV0, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort, MemoryCompareQuery, MemoryCompare } from '@dao-xyz/query-protocol';
 import { disconnectPeers, getConnectedPeers, Peer } from '@dao-xyz/peer-test-utils';
-import { BinaryPayload } from '@dao-xyz/bpayload';
-import { Store } from '@dao-xyz/orbit-db-store';
-import { IPFSAccessController } from '@dao-xyz/orbit-db-ipfs-access-controller';
+import { CustomBinaryPayload } from '@dao-xyz/bpayload';
+import { query, ReadWriteAccessController } from '@dao-xyz/orbit-db-query-store';
 
 @variant("document")//@variant([1, 0])
-class Document extends BinaryPayload {
+class Document extends CustomBinaryPayload {
 
   @field({ type: 'string' })
   id: string;
@@ -46,9 +44,7 @@ const documentDbTestSetup = async (): Promise<{
 
   // Create store
   let documentStoreCreator = await peer.orbitDB.open(new BinaryDocumentStore<Document>({
-    accessController: new IPFSAccessController({
-      write: ['*']
-    }),
+    accessController: new SimpleRWAccessController(),
     queryRegion: 'world',
     indexBy: 'id',
     objectType: Document.name
@@ -70,6 +66,16 @@ const documentDbTestSetup = async (): Promise<{
   }
 }
 
+@variant([0, 253])
+export class SimpleRWAccessController<T> extends ReadWriteAccessController<T>
+{
+  async canAppend(a, b) {
+    return true;
+  }
+  async canRead(a) {
+    return true;
+  }
+}
 
 
 describe('query', () => {
@@ -248,7 +254,7 @@ describe('query', () => {
           })],
           offset: 1n,
           sort: new FieldSort({
-            fieldPath: ['number'],
+            key: ['number'],
             direction: SortDirection.Ascending
           })
         })
@@ -307,7 +313,7 @@ describe('query', () => {
           })],
           offset: 1n,
           sort: new FieldSort({
-            fieldPath: ['number'],
+            key: ['number'],
             direction: SortDirection.Descending
           })
         })
@@ -563,5 +569,68 @@ describe('query', () => {
       expect(((response.results[1] as ResultWithSource).source as Document).number).toEqual(2n);
       await disconnectPeers([creator, observer]);
     });
+  })
+
+  describe('Memory compare query', () => {
+    it('Can query by memory', async () => {
+
+      let {
+        creator,
+        observer,
+        documentStoreCreator
+      } = await documentDbTestSetup();
+
+      let blocks = documentStoreCreator;
+
+      const numberToMatch = 123;
+      let doc = new Document({
+        id: '1',
+        name: 'a',
+        number: 1n
+      });
+
+      let doc2 = new Document({
+        id: '2',
+        name: 'b',
+        number: BigInt(numberToMatch)
+
+      });
+
+      let doc3 = new Document({
+        id: '3',
+        name: 'c',
+        number: BigInt(numberToMatch)
+      });
+
+      const bytes = serialize(doc3);
+      const numberOffset = 26;
+      expect(bytes[numberOffset]).toEqual(numberToMatch);
+      await blocks.put(doc);
+      await blocks.put(doc2);
+      await blocks.put(doc3);
+
+      let response: QueryResponseV0 = undefined;
+
+      //await otherPeer.node.swarm.connect((await creatorPeer.node.id()).addresses[0].toString());
+      await query(observer.node.pubsub, blocks.queryTopic, new QueryRequestV0({
+        type: new DocumentQueryRequest({
+          queries: [new MemoryCompareQuery({
+            compares: [new MemoryCompare({
+              bytes: new Uint8Array([123, 0, 0]), // add some 0  trailing so we now we can match more than the exact value
+              offset: BigInt(numberOffset)
+            })]
+          })]
+        })
+      }), (r: QueryResponseV0) => {
+        response = r;
+      }, { waitForAmount: 1 })
+      expect(response.results).toHaveLength(2);
+      expect(((response.results[0] as ResultWithSource).source as Document).id).toEqual(doc2.id);
+      expect(((response.results[1] as ResultWithSource).source as Document).id).toEqual(doc3.id);
+      await disconnectPeers([creator, observer]);
+
+    });
+
+
   })
 }) 

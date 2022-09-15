@@ -6,11 +6,9 @@ import io from '@dao-xyz/orbit-db-io'
 import { MaybeEncrypted } from "@dao-xyz/encryption-utils"
 import { CanAppendAccessController } from "@dao-xyz/ipfs-log"
 import { Payload } from "@dao-xyz/ipfs-log-entry"
-import { Identities, Identity, IdentitySerializable } from "@dao-xyz/orbit-db-identity-provider"
 import { IInitializationOptions } from './store';
 import { IPFS } from 'ipfs-core-types/src';
-import { Message } from 'ipfs-core-types/src/pubsub';
-
+import { PublicKey } from '@dao-xyz/identity';
 /**
  * Interface for OrbitDB Access Controllers
  *
@@ -20,8 +18,17 @@ import { Message } from 'ipfs-core-types/src/pubsub';
 
 export class AccessController<T> implements CanAppendAccessController<T> {
 
-  init?(ipfs: IPFS, identity: Identity, options: IInitializationOptions<any>): Promise<void>;
-  async canAppend(payload: MaybeEncrypted<Payload<T>>, identity: MaybeEncrypted<IdentitySerializable>, identityProvider: Identities): Promise<boolean> {
+  _allowAll: boolean = false;
+  get allowAll(): boolean {
+    return this._allowAll;
+  }
+
+  set allowAll(value: boolean) {
+    this._allowAll = value;
+  }
+
+  init?(ipfs: IPFS, key: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<any>): Promise<void>;
+  async canAppend(payload: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicKey>): Promise<boolean> {
     throw new Error("Not implemented")
   }
   clone(newName: string): AccessController<T> {

@@ -1,13 +1,13 @@
-import { Identities } from "@dao-xyz/orbit-db-identity-provider"
 import { OrbitDB } from "../orbit-db"
 
 const fs = require('fs')
 const assert = require('assert')
 const rmrf = require('rimraf')
-import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { EventStore } from "./utils/stores"
 import { SimpleAccessController } from "./utils/access"
 import { Level } from "level"
+import { Ed25519PublicKeyData } from "@dao-xyz/identity"
 
 
 // Include test utilities
@@ -32,8 +32,8 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Set identities (${API})`, function () {
     jest.setTimeout(config.timeout)
 
-    let ipfsd, ipfs, orbitdb: OrbitDB, keystore, options
-    let identity1, identity2
+    let ipfsd, ipfs, orbitdb: OrbitDB, keystore: Keystore, options
+    let signKey1: SignKeyWithMeta, signKey2: SignKeyWithMeta
 
     beforeAll(async () => {
       rmrf.sync(dbPath)
@@ -44,8 +44,8 @@ Object.keys(testAPIs).forEach(API => {
       const identityStore = await createStore(keysPath)
 
       keystore = new Keystore(identityStore)
-      identity1 = await Identities.createIdentity({ id: new Uint8Array([0]), keystore })
-      identity2 = await Identities.createIdentity({ id: new Uint8Array([1]), keystore })
+      signKey1 = await keystore.createKey(new Uint8Array([0]), SignKeyWithMeta);
+      signKey2 = await keystore.createKey(new Uint8Array([1]), SignKeyWithMeta);
       orbitdb = await OrbitDB.createInstance(ipfs, { directory: dbPath })
     })
 
@@ -67,9 +67,11 @@ Object.keys(testAPIs).forEach(API => {
         name: 'abc',
         accessController: new SimpleAccessController()
       }), options)
-      assert.equal(db.identity, orbitdb.identity)
-      db.setIdentity(identity1)
-      assert.equal(db.identity, identity1)
+      assert.equal(db.publicKey, orbitdb.identity)
+      db.setPublicKey(new Ed25519PublicKeyData({
+        publicKey: signKey1.publicKey
+      }))
+      assert.equal(db.publicKey, signKey1.publicKey)
       await db.close()
     })
   })

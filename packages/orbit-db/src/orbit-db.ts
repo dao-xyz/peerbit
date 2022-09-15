@@ -3,7 +3,6 @@ import { Address, IStoreOptions, Store, StoreLike, StorePublicKeyEncryption } fr
 import { PubSub, Subscription } from '@dao-xyz/orbit-db-pubsub'
 import Logger from 'logplease'
 const logger = Logger.create('orbit-db')
-import { Identity, Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import Cache from '@dao-xyz/orbit-db-cache'
 import { BoxKeyWithMeta, Keystore, KeyWithMeta, SignKeyWithMeta, WithType } from '@dao-xyz/orbit-db-keystore'
@@ -15,11 +14,13 @@ import { serialize, deserialize } from '@dao-xyz/borsh'
 import { Message } from './message'
 import { getOrCreateChannel } from './channel'
 import { exchangeKeys, KeyResponseMessage, KeyAccessCondition, recieveKeys, requestAndWaitForKeys, RequestKeyMessage, RequestKeyCondition, RequestKeysByKey, RequestKeysByReplicationTopic } from './exchange-keys'
-import { DecryptedThing, EncryptedThing, MaybeEncrypted, MaybeSigned, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
+import { DecryptedThing, EncryptedThing, MaybeEncrypted, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
 import { Ed25519PublicKey, X25519PublicKey } from 'sodium-plus'
 import LRU from 'lru';
 import { DirectChannel } from '@dao-xyz/ipfs-pubsub-1on1'
 import { encryptionWithRequestKey, replicationTopicEncryptionWithRequestKey } from './encryption'
+import { Ed25519PublicKeyData, PublicKey } from '@dao-xyz/identity';
+import { MaybeSigned, SignatureWithKey } from '@dao-xyz/identity';
 
 /* let AccessControllersModule = AccessControllers;
  */
@@ -30,12 +31,13 @@ const defaultTimeout = 30000 // 30 seconds
 export type StoreOperations = 'write' | 'all'
 export type Storage = { createStore: (string) => any }
 export type CreateOptions = {
-  AccessControllers?: any, cache?: Cache, keystore?: Keystore, peerId?: string, offline?: boolean, directory?: string, storage?: Storage, broker?: any, waitForKeysTimout?: number, canAccessKeys?: KeyAccessCondition, isTrusted?: (key: Ed25519PublicKey, replicationTopic: string) => Promise<boolean>
+  AccessControllers?: any, cache?: Cache, keystore?: Keystore, peerId?: string, offline?: boolean, directory?: string, storage?: Storage, broker?: any, waitForKeysTimout?: number, canAccessKeys?: KeyAccessCondition, isTrusted?: (key: PublicKey, replicationTopic: string) => Promise<boolean>
 };
-export type CreateInstanceOptions = CreateOptions & { identity?: Identity, id?: string };
+export type CreateInstanceOptions = CreateOptions & { publicKey?: PublicKey, sign?: (data: Uint8Array) => Promise<Uint8Array>, id?: string };
 export class OrbitDB {
   _ipfs: IPFSInstance;
-  identity: Identity;
+  publicKey: PublicKey;
+  sign: (data: Uint8Array) => Promise<Uint8Array>;
   id: string;
   _pubsub: PubSub;
   _directConnections: { [key: string]: { channel: DirectChannel, dependencies: Set<string> } };
@@ -52,15 +54,17 @@ export class OrbitDB {
   _keysInflightMap: Map<string, Promise<any>> = new Map(); // TODO fix types
   _keyRequestsLRU: LRU = new LRU({ max: 100, maxAge: 10000 });
 
-  isTrusted: (key: Ed25519PublicKey, replicationTopic: string) => Promise<boolean>
+  isTrusted: (key: PublicKey, replicationTopic: string) => Promise<boolean>
   canAccessKeys: KeyAccessCondition
 
-  constructor(ipfs: IPFSInstance, identity: Identity, options: CreateOptions = {}) {
-    if (!isDefined(ipfs)) { throw new Error('IPFS is a required argument. See https://github.com/orbitdb/orbit-db/blob/master/API.md#createinstance') }
-    if (!isDefined(identity)) { throw new Error('identity is a required argument. See https://github.com/orbitdb/orbit-db/blob/master/API.md#createinstance') }
+  constructor(ipfs: IPFSInstance, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: CreateOptions = {}) {
+    if (!isDefined(ipfs)) { throw new Error('IPFS required') }
+    if (!isDefined(publicKey)) { throw new Error('public key required') }
+    if (!isDefined(sign)) { throw new Error('sign function required') }
 
     this._ipfs = ipfs
-    this.identity = identity
+    this.publicKey = publicKey
+    this.sign = sign;
     this.id = options.peerId
     this._pubsub = !options.offline
       ? new (
@@ -90,7 +94,6 @@ export class OrbitDB {
   static get Pubsub() { return PubSub }
   static get Cache() { return Cache }
   static get Keystore() { return Keystore }
-  static get Identities() { return Identities }
   /*   static get AccessControllers() { return AccessControllersModule }
    */
 
@@ -98,8 +101,11 @@ export class OrbitDB {
 
   get cache() { return this.caches[this.directory].cache }
 
+  get identity(): PublicKey {
+    return this.publicKey;
+  }
   get encryption(): PublicKeyEncryption {
-    return encryptionWithRequestKey(this.identity, this.keystore)
+    return encryptionWithRequestKey(this.publicKey, this.keystore)
   }
 
   async requestAndWaitForKeys<T extends KeyWithMeta>(replicationTopic: string, condition: RequestKeyCondition<T>): Promise<T[]> {
@@ -116,7 +122,7 @@ export class OrbitDB {
 
     const promise = new Promise<T[] | undefined>((resolve, reject) => {
       const send = (message: Uint8Array) => this._pubsub.publish(replicationTopic, message)
-      requestAndWaitForKeys(condition, send, this.keystore, this.identity, this._waitForKeysTimeout).then((results) => {
+      requestAndWaitForKeys(condition, send, this.keystore, this.publicKey, this.sign, this._waitForKeysTimeout).then((results) => {
         if (results?.length > 0) {
           resolve(results);
         }
@@ -211,22 +217,40 @@ export class OrbitDB {
 
 
 
-    if (options.identity && options.identity.provider.keystore) {
+    /* if (options.identity && options.identity.provider.keystore) {
       options.keystore = options.identity.provider.keystore
-    }
+    } */
 
     if (!options.keystore) {
       const keystorePath = path.join(options.directory, id, '/keystore')
       const keyStorage = await options.storage.createStore(keystorePath)
       options.keystore = new (Keystore as any)(keyStorage) // TODO fix typings
     }
+    let publicKey: PublicKey = undefined;
+    let sign: (data: Uint8Array) => Promise<Uint8Array> = undefined;
+    if (!!options.publicKey != !!options.sign) {
+      throw new Error("Either both publicKey and sign function has to be provided, or neither")
+    }
+    if (options.publicKey) {
+      publicKey = options.publicKey;
+      sign = options.sign;
+    }
+    else {
+      const signKey = await options.keystore.createKey(Buffer.from(id), SignKeyWithMeta);
+      publicKey = new Ed25519PublicKeyData({
+        publicKey: signKey.publicKey
+      });
+      sign = (data) => Keystore.sign(data, signKey);
+    }
 
-    if (!options.identity) {
+    /* const signKey = options.signKey || await options.keystore.createKey(Buffer.from(id), SignKeyWithMeta); */
+    /* if (!options.identity) {
       options.identity = await Identities.createIdentity({
         id: new Uint8Array(Buffer.from(id)),
         keystore: options.keystore
       })
-    }
+    } */
+
 
     if (!options.cache) {
       const cachePath = path.join(options.directory, id, '/cache')
@@ -235,7 +259,7 @@ export class OrbitDB {
     }
 
     const finalOptions = Object.assign({}, options, { peerId: id })
-    return new OrbitDB(ipfs, options.identity, finalOptions)
+    return new OrbitDB(ipfs, publicKey, sign, finalOptions)
   }
 
 
@@ -278,8 +302,8 @@ export class OrbitDB {
     await this.disconnect()
   }
 
-  async _createCache(path: string) {
-    const cacheStorage = await this.storage.createStore(path)
+  async _createCache(directory: string) {
+    const cacheStorage = await this.storage.createStore(directory)
     return new Cache(cacheStorage)
   }
 
@@ -308,9 +332,9 @@ export class OrbitDB {
       const maybeEncryptedMessage = deserialize(Buffer.from(data), MaybeEncrypted) as MaybeEncrypted<MaybeSigned<Message>>
       const decrypted = await maybeEncryptedMessage.init(this.encryption).decrypt()
       const signedMessage = decrypted.getValue(MaybeSigned);
-      await signedMessage.verify(this.keystore.verify);
+      await signedMessage.verify();
       const msg = signedMessage.getValue(Message);
-      const sender: Ed25519PublicKey | undefined = signedMessage.signature?.publicKey;
+      const sender: PublicKey | undefined = signedMessage.signature?.publicKey;
       const checkTrustedSender = async (replicationTopic: string): Promise<boolean> => {
         let isTrusted = false;
         if (sender) {
@@ -425,11 +449,10 @@ export class OrbitDB {
   }
 
   async getSigner() {
-    const senderSignerSecretKey = await this.keystore.getKeyByPath(this.identity.id, SignKeyWithMeta)
     return async (bytes) => {
       return {
-        signature: await this.keystore.sign(bytes, senderSignerSecretKey),
-        publicKey: senderSignerSecretKey.publicKey
+        signature: await this.sign(bytes),
+        publicKey: this.publicKey
       }
     }
   }
@@ -616,7 +639,8 @@ export class OrbitDB {
    */
   async open<S extends StoreLike<any>>(store: /* string | Address |  */S, options: {
     timeout?: number,
-    identity?: Identity,
+    publicKey?: PublicKey,
+    sign?: (data: Uint8Array) => Promise<Uint8Array>,
 
     /* cache?: Cache,
     directory?: string,
@@ -668,12 +692,13 @@ export class OrbitDB {
         throw new Error(`Database '${address}' doesn't exist!`)
       }
 
-      if (haveDB) {
-        throw new Error("Cache already exist for address: " + address.toString())
+      if (!haveDB) {
+        /*  throw new Error("Cache already exist for address: " + address.toString()) */
+        // Save the database locally
+        await this._addManifestToCache(cache, address)
       }
 
-      // Save the database locally
-      await this._addManifestToCache(cache, address)
+
       return cache;
     }
 
@@ -704,7 +729,7 @@ export class OrbitDB {
     }
 
     // Open the the database
-    await await store.init(this._ipfs, options.identity || this.identity, {
+    await store.init(this._ipfs, options.publicKey || this.publicKey, options.sign || this.sign, {
       replicate: true, ...options, ...{
         resolveCache,
         onClose: this._onClose.bind(this),

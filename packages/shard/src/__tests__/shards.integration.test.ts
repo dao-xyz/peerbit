@@ -1,14 +1,18 @@
 
-import { Shard } from '../shard';
+import { NoResourceRequirements, Shard } from '../shard';
 import { AnyPeer } from '../peer';
-import { Document, getPeer, getConnectedPeers } from './utils';
+import {  getPeer, getConnectedPeers } from './utils';
 import { connectPeers, disconnectPeers } from '@dao-xyz/peer-test-utils';
 import { delay, waitFor, waitForAsync } from '@dao-xyz/time';
-import { TrustWebAccessController } from '@dao-xyz/orbit-db-trust-web'
+import { RegionAccessController } from '@dao-xyz/orbit-db-trust-web'
 import { MemoryLimitExceededError } from '../errors';
 import v8 from 'v8';
 import { AccessError } from '@dao-xyz/encryption-utils';
-/* 
+import { v4 as uuid } from 'uuid';
+import { BinaryDocumentStore } from '@dao-xyz/orbit-db-bdocstore';
+import { field, variant } from '@dao-xyz/borsh';
+import { DynamicAccessController } from '../../../orbit-db-dynamic-access-controller/lib/esm';
+
 const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 
     let peerAddressesSet = (await from.node.id()).addresses.map(x => x.toString());
@@ -28,23 +32,98 @@ const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 
 
 
+class ShardOrDocument {
+
+    @field({ type: 'string' })
+    id: string;
+
+    
+    constructor(opts?: { id: string }) {
+        if (opts) {
+            this.id = opts.id;
+        }
+
+    }
+}
+
+
+@variant(0)
+class Document extends ShardOrDocument {
+
+    constructor(opts?: { id: string }) {
+        super(opts);
+        if (opts) {
+            this.id = opts.id;
+        }
+
+    }
+}
+
+
+@variant(1)
+class ShardDocument extends ShardOrDocument {
+
+    @field({type: Shard})
+    shard: Shard<any>
+
+    constructor(opts?: { id: string }) {
+        super(opts);
+        if (opts) {
+            this.id = opts.id;
+        }
+
+    }
+}
+
+
+export const documentStoreShard = async (properties: {trust?: RegionAccessController, parentShardCID?: string} = {}) => new Shard({
+    id: uuid(),
+    cluster: 'x',
+    resourceRequirements: new NoResourceRequirements(),
+    store: new BinaryDocumentStore({
+        name: 'documents',
+        indexBy: 'id',
+        objectType: Document.name,
+        accessController: new DynamicAccessController(),
+        clazz: Document
+    }),
+    trust: properties.trust,
+    parentShardCID: properties.parentShardCID
+})
+
+
+export const shardStoreShard = async <T>(trust?: RegionAccessController) => new Shard<BinaryDocumentStore<ShardOrDocument>>({
+    id: uuid(),
+    cluster: 'x',
+    resourceRequirements: new NoResourceRequirements(),
+    store: new BinaryDocumentStore({
+        indexBy: 'id',
+        accessController:  new DynamicAccessController(),
+        objectType: ShardOrDocument.name,
+        clazz: ShardOrDocument,
+        name: 'shard',
+    }),
+    trust
+})
+
+
 describe('cluster', () => {
     describe('trust', () => {
         it('add trustee', async () => {
             let [peer, peer2] = await getConnectedPeers(2);
             let l0a = await documentStoreShard();
-            await l0a.init(peer);
+            await l0a.open(peer);
             expect(l0a.cid).toBeDefined();
-            expect(l0a.trust).toBeInstanceOf(TrustWebAccessController);
-            expect((l0a.trust as TrustWebAccessController).rootTrust).toBeDefined();
-            expect((l0a.trust as TrustWebAccessController).rootTrust.equals(peer.orbitDB.identity))
+            expect(l0a.trust).toBeInstanceOf(RegionAccessController);
+            expect((l0a.trust as RegionAccessController).rootTrust).toBeDefined();
+            expect((l0a.trust as RegionAccessController).rootTrust.equals(peer.orbitDB.identity))
 
             let newTrustee = peer2.orbitDB.identity;
             await l0a.trust.addTrust(newTrustee);
             const l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
-            await l0b.init(peer2);
-            await l0b.trust.load(1);
-            expect(l0b.trust.db.size).toEqual(1)
+            await l0b.open(peer2);
+            await l0b.trust.trustGraph.load(1);
+            expect(l0b.trust.trustGraph.size).toEqual(1)
             await disconnectPeers([peer, peer2]);
         })
     })
@@ -57,10 +136,10 @@ describe('cluster', () => {
             await peer2.node.swarm.connect(l1)
 
             let l0 = await documentStoreShard();
-            await l0.init(peer);
+            await l0.open(peer);
             expect(l0.cid).toBeDefined();
-            let loadedShard = await Shard.loadFromCID<BinaryFeedStoreInterface>(l0.cid, peer2.node);
-            expect(loadedShard.interface.address).toEqual(l0.interface.address);
+            let loadedShard = await Shard.loadFromCID(l0.cid, peer2.node);
+            expect(loadedShard.store.address).toEqual(l0.store.address);
             await disconnectPeers([peer, peer2]);
         })
     })
@@ -76,9 +155,9 @@ describe('cluster', () => {
             // Create Feed store
 
             expect(await isInSwarm(peer, peer2)).toBeFalsy();
-            let feedStore = await (await documentStoreShard()).init(peer2, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
+            let feedStore = await (await documentStoreShard({parentShardCID: l0.cid})).open(peer2); // <-- This should trigger a swarm connection from peer to peer2
             await feedStore.replicate(peer2);
-            expect(feedStore.interface.address.endsWith(l0.cid + '-documents'));
+            expect(feedStore.store.address.toString().endsWith(l0.cid + '-documents'));
             await waitForAsync(async () => await isInSwarm(peer, peer2))
             disconnectPeers([peer, peer2]);
         })
@@ -94,9 +173,9 @@ describe('cluster', () => {
             // Create Feed store
 
             expect(await isInSwarm(peer, peer2)).toBeFalsy();
-            let feedStore1 = await (await documentStoreShard()).init(peer2, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
+            let feedStore1 = await (await documentStoreShard({parentShardCID: l0.cid})).open(peer2); // <-- This should trigger a swarm connection from peer to peer2
             await feedStore1.replicate(peer2);
-            let feedStore2 = await (await documentStoreShard()).init(peer2, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
+            let feedStore2 = await (await documentStoreShard({parentShardCID: l0.cid})).open(peer2); // <-- This should trigger a swarm connection from peer to peer2
             await feedStore2.replicate(peer2);
 
             await waitForAsync(async () => await isInSwarm(peer, peer2))
@@ -115,9 +194,9 @@ describe('cluster', () => {
             await l0.replicate(peer);
             // Create Feed store
 
-            let feedStore1 = await (await documentStoreShard()).init(peer, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
+            let feedStore1 = await (await documentStoreShard({parentShardCID:l0.cid})).open(peer); // <-- This should trigger a swarm connection from peer to peer2
             await feedStore1.replicate(peer);
-            let feedStore2 = await (await documentStoreShard()).init(peer, l0.cid); // <-- This should trigger a swarm connection from peer to peer2
+            let feedStore2 = await (await documentStoreShard({parentShardCID:l0.cid})).open(peer); // <-- This should trigger a swarm connection from peer to peer2
             await feedStore2.replicate(peer);
 
             expect(peer.supportJobs.size).toEqual(3)
@@ -132,21 +211,21 @@ describe('cluster', () => {
             let [peer, peer2] = await getConnectedPeers(2);
 
             // Create Root shard
-            let l0 = await shardStoreShard<DocumentStoreInterface>();
+            let l0 = await shardStoreShard();
             await l0.replicate(peer);
 
             // Create Feed store
-            let documentStore = await (await documentStoreShard()).init(peer, l0.cid);
+            let documentStore = await (await documentStoreShard({parentShardCID: l0.cid})).open(peer);
             await documentStore.replicate(peer);
-            await documentStore.interface.db.put(new Document({ id: 'hello' }));
-            await l0.interface.db.put(documentStore);
+            await documentStore.store.put(new Document({ id: 'hello' }));
+            await l0.store.put(documentStore);
 
 
             // --- Load assert, from another peer
             const l0b = await Shard.loadFromCID(l0.cid, peer2.orbitDB._ipfs);
-            await l0b.init(peer2)
-            await (l0b.interface as RecursiveShardDBInterface<DocumentStoreInterface>).load();
-            await waitFor(() => Object.keys((l0b.interface as RecursiveShardDBInterface<DocumentStoreInterface>).db.index._index).length === 1);
+            await l0b.open(peer2)
+            await (l0b.store).load();
+            await waitFor(() => Object.keys((l0b.store)._index._index).length === 1);
             let feedStoreLoaded = await (l0b.interface as RecursiveShardDBInterface<DocumentStoreInterface>).loadShard(documentStore.cid, peer2);
             await feedStoreLoaded.interface.load();
             await waitFor(() => Object.keys(feedStoreLoaded.interface.db.index._index).length === 1);
@@ -161,23 +240,23 @@ describe('cluster', () => {
             await l0a.replicate(peer);
 
             // Create Feed store
-            let l1 = await (await documentStoreShard()).init(peer, l0a.cid);
-            await l0a.interface.load();
-            await l0a.interface.db.put(l1);
+            let l1 = await (await documentStoreShard({parentShardCID: l0a.cid})).open(peer);
+            await l0a.store.load();
+            await l0a.store.put(l1);
 
             // --- Load assert, from another peer
             const l0b = await Shard.loadFromCID<DocumentStoreInterface>(l0a.cid, peer2.node);
             await l0b.replicate(peer2);
-            await l0b.interface.load(1);
+            await l0b.store.load(1);
             await waitFor(() => Object.keys(l0b.interface.db.index._index).length === 1);
 
 
             // Drop 1 peer and make sure a third peer can access data
             await disconnectPeers([peer]);
             const l0c = await Shard.loadFromCID<DocumentStoreInterface>(l0a.cid, peer3.node);
-            await l0c.init(peer3)
-            await l0c.interface.load(1);
-            await waitFor(() => Object.keys(l0c.interface.db.index._index).length === 1);
+            await l0c.open(peer3)
+            await l0c.store.load(1);
+            await waitFor(() => Object.keys(l0c.store.db.index._index).length === 1);
             await disconnectPeers([peer2, peer3]);
         })
     })
@@ -192,7 +271,7 @@ describe('cluster', () => {
             let l0a = await shardStoreShard();
             await l0a.replicate(peer);
             let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
-            await l0b.init(peer2);
+            await l0b.open(peer2);
             await delay(1000);
             expect(await l0b.shardPeerInfo.getPeers()).toHaveLength(1)
             await disconnectPeers([peer, peer2]);
@@ -206,7 +285,7 @@ describe('cluster', () => {
             let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
             await l0b.replicate(peer2);
             let l0c = await Shard.loadFromCID(l0a.cid, peer3.node);
-            await l0c.init(peer3);
+            await l0c.open(peer3);
             await delay(1000);
             expect(await l0c.shardPeerInfo.getPeers()).toHaveLength(2)
             await disconnectPeers([peer, peer2, peer3]);
@@ -221,7 +300,7 @@ describe('cluster', () => {
             await l0b.replicate(peer2);
 
             let l0c = await Shard.loadFromCID(l0a.cid, peer3.node);
-            await l0c.init(peer3);
+            await l0c.open(peer3);
             await delay(5000);
             await waitForAsync(async () => (await l0c.shardPeerInfo.getPeers()).length == 2);
             await disconnectPeers([peer2]);
@@ -236,17 +315,17 @@ describe('cluster', () => {
             await connectPeers(peer, peer2);
 
             let l0a = await shardStoreShard();
-            await l0a.init(peer);
+            await l0a.open(peer);
             await l0a.trust.load();
             await l0a.trust.addTrust(peer2.orbitDB.identity);
-            await waitFor(() => l0a.trust.db.size == 1)// add some delay because trust db is not synchronous
+            await waitFor(() => l0a.trust.trustGraph.size == 1)// add some delay because trust db is not synchronous
 
             let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
-            await l0b.init(peer2)
+            await l0b.open(peer2)
 
             expect(await l0a.shardPeerInfo.getPeers()).toHaveLength(0)
 
-            expect(l0a.trust.rootTrust.id === l0b.trust.rootTrust.id);            // Replication step
+            expect(l0a.trust.rootTrust.equals(l0b.trust.rootTrust));            // Replication step
             let replicationCallback = false
             await Shard.subscribeForReplication(peer, l0a.trust, () => { replicationCallback = true });
             await delay(5000); // Pubsub is flaky, wait some time before requesting shard
@@ -261,10 +340,10 @@ describe('cluster', () => {
         it('trust web reuse closing shards', async () => {
             let peer = await getPeer();
             let l0a = await shardStoreShard();
-            await l0a.init(peer);
+            await l0a.open(peer);
             await l0a.trust.load();
             let l0b = await shardStoreShard(l0a.trust);
-            await l0b.init(peer);
+            await l0b.open(peer);
             expect(peer.trustWebs.size).toEqual(1);
             const hashCode = l0a.trust.hashCode();
             expect(peer.trustWebs.get(hashCode).shards.size).toEqual(2);
@@ -283,7 +362,7 @@ describe('cluster', () => {
             it('isServer=false no subscriptions on idle on shardStoreShard', async () => {
                 let peerNonServer = await getPeer(undefined, false);
                 let l0 = await shardStoreShard();
-                await l0.init(peerNonServer);
+                await l0.open(peerNonServer);
                 const subscriptions = await peerNonServer.node.pubsub.ls();
                 expect(subscriptions.length).toEqual(0);  // non server should not have any subscriptions idle
                 await disconnectPeers([peerNonServer]);
@@ -293,7 +372,7 @@ describe('cluster', () => {
 
                 let peerNonServer = await getPeer(undefined, false);
                 let l0 = await documentStoreShard();
-                await l0.init(peerNonServer);
+                await l0.open(peerNonServer);
                 const subscriptions = await peerNonServer.node.pubsub.ls();
                 expect(subscriptions.length).toEqual(0); // non server should not have any subscriptions idle
                 await disconnectPeers([peerNonServer]);
@@ -312,15 +391,15 @@ describe('cluster', () => {
                 await l0.trust.addTrust(peerNonServer.orbitDB.identity);
 
                 let l0Write = await Shard.loadFromCID<DocumentStoreInterface>(l0.cid, peerNonServer.node);
-                await l0Write.init(peerNonServer);
+                await l0Write.open(peerNonServer);
 
                 //await peerNonServer.orbitDB["_pubsub"].subscribe(l0Write.interface.db.address.toString(), peerNonServer.orbitDB["_onMessage"].bind(peerNonServer.orbitDB), peerNonServer.orbitDB["_onPeerConnected"].bind(peerNonServer.orbitDB))
                 let subscriptions = await peerNonServer.node.pubsub.ls();
                 expect(subscriptions.length).toEqual(0); // non server should not have any subscriptions idle
                 await delay(3000)
-                await l0Write.interface.load();
-                await l0Write.interface.db.put(new Document({ id: 'hello' }))
-                await waitFor(() => l0.interface.db.size > 0);
+                await l0Write.store.load();
+                await l0Write.store.db.put(new Document({ id: 'hello' }))
+                await waitFor(() => l0.store.size > 0);
                 await l0Write.close();
                 subscriptions = await peerNonServer.node.pubsub.ls();
                 expect(subscriptions.length).toEqual(0);  // non server should not have any subscriptions after write
@@ -335,7 +414,7 @@ describe('cluster', () => {
                 // Create Root shard
 
                 let l0 = await shardStoreShard();
-                await l0.init(peer)
+                await l0.open(peer)
 
                 let isLeader = await l0.shardPeerInfo.isLeader(0);
                 expect(isLeader).toBeFalsy();
@@ -392,9 +471,9 @@ describe('cluster', () => {
             await l0.replicate(peer);
 
             // Create 2 feed stores
-            let feedStore1 = await (await documentStoreShard()).init(peer, l0.cid);
+            let feedStore1 = await (await documentStoreShard({parentShardCID: l0.cid})).open(peer);
             await feedStore1.replicate(peer);
-            let feedStore2 = await (await documentStoreShard()).init(peer, l0.cid);
+            let feedStore2 = await (await documentStoreShard({parentShardCID: l0.cid})).open(peer);
             await feedStore2.replicate(peer);
 
             const subscriptions = await peer.node.pubsub.ls();
@@ -415,7 +494,7 @@ describe('cluster', () => {
 
             // Create 1 feed store
             let statusA = await l0.shardPeerInfo.getShardPeerInfo();
-            let feedStore1 = await (await documentStoreShard()).init(peer, l0.cid);
+            let feedStore1 = await (await documentStoreShard({parentShardCID: l0.cid})).open(peer);
             await feedStore1.replicate(peer);
 
             let statusB = await l0.shardPeerInfo.getShardPeerInfo();
@@ -432,7 +511,7 @@ describe('cluster', () => {
             await l0.replicate(peer);
 
             // Create store
-            let feedStore1 = await (await documentStoreShard()).init(peer, l0.cid);
+            let feedStore1 = await (await documentStoreShard({parentShardCID: l0.cid})).open(peer);
 
             // Introduce memory limit
             const usedHeap = v8.getHeapStatistics().used_heap_size;
@@ -462,8 +541,8 @@ describe('cluster', () => {
             await Shard.subscribeForReplication(peerSupporting, l0.trust);
 
             // Create store
-            let docStoreA = await (await documentStoreShard(l0.trust)).init(peerLowMemory, l0.cid);
-            await docStoreA.interface.load();
+            let docStoreA = await (await documentStoreShard({trust: l0.trust, parentShardCID: l0.cid})).open(peerLowMemory);
+            await docStoreA.store.load();
 
             // add documents to docStore to trigger sharding
             expect(peerSupporting.supportJobs.size).toEqual(0);
@@ -471,7 +550,7 @@ describe('cluster', () => {
 
             await expect(async () => {
                 for (let i = 0; i <= 1000; i++) {
-                    await docStoreA.interface.db.put(new Document({ id: i.toString() })) // This will eventually fail
+                    await docStoreA.store.put(new Document({ id: i.toString() })) // This will eventually fail
                 }
             }).rejects.toBeInstanceOf(AccessError);
 
@@ -485,14 +564,14 @@ describe('cluster', () => {
             let docStoreAWritable = await docStoreA.createShardWithIndex(1n, peerNew);
             await docStoreAWritable.load();
             await waitFor(() => docStoreAWritable.trust.isTrusted(peerNew.orbitDB.identity));
-            await docStoreAWritable.interface.db.put(new Document({ id: 'new' }));
-            await waitFor(() => Object.keys((peerSupporting.supportJobs.values().next().value.shard.interface as DocumentStoreInterface).db.index._index).length == 1);
+            await docStoreAWritable.store.put(new Document({ id: 'new' }));
+            await waitFor(() => Object.keys((peerSupporting.supportJobs.values().next().value.shard.store as BinaryDocumentStore<any>)._index._index).length == 1);
             await disconnectPeers([peerLowMemory, peerSupporting, peerNew]);
         })
     })
 
 })
- */
+ 
 
 
 
@@ -522,7 +601,7 @@ describe('cluster', () => {
 
             // --- Load assert
             let l0b = await Shard.loadFromCID<FeedStoreInterface>(l0.cid, peer2.node);
-            await l0b.init(peer2)
+            await l0b.open(peer2)
             await l0b.interface.load(1);
             expect(Object.keys(l0.interface.db._index._index).length).toEqual(1);
             feedStoreLoaded = await l0b.interface.loadShard(0)
@@ -552,13 +631,13 @@ describe('cluster', () => {
                 await connectPeers(peer, peer2);
 
                 let l0a = await shardStoreShard();
-                await l0a.init(peer);
+                await l0a.open(peer);
                 await l0a.trust.load();
                 await l0a.trust.addTrust(peer2.orbitDB.identity);
                 await waitFor(() => l0a.trust.db.size == 1)// add some delay because trust db is not synchronous
 
                 let l0b = await Shard.loadFromCID(l0a.cid, peer2.node);
-                await l0b.init(peer2)
+                await l0b.open(peer2)
 
                 expect(await l0a.shardPeerInfo.getPeers()).toHaveLength(0)
                 expect(l0a.trust.rootTrust.id === l0b.trust.rootTrust.id);

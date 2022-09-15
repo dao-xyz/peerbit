@@ -1,10 +1,10 @@
 const assert = require('assert')
 const rmrf = require('rimraf')
-import { Identities as IdentityProvider, Identity } from '@dao-xyz/orbit-db-identity-provider'
-import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { DecryptedThing } from '@dao-xyz/encryption-utils';
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { IPFSAccessController } from '../ipfs-access-controller'
+import { Ed25519PublicKeyData } from '@dao-xyz/identity';
 
 // Include test utilities
 const {
@@ -19,7 +19,7 @@ const dbPath2 = './orbitdb/tests/ipfs-access-controller/2'
 describe(`orbit-db - IPFSAccessController`, function () {
   jest.setTimeout(config.timeout)
 
-  let ipfsd1, ipfsd2, ipfs1, ipfs2, id1: Identity, id2: Identity
+  let ipfsd1, ipfsd2, ipfs1, ipfs2, signKey1: SignKeyWithMeta, signKey2: SignKeyWithMeta
   let orbitdb1: OrbitDB, orbitdb2: OrbitDB
 
   beforeAll(async () => {
@@ -34,17 +34,19 @@ describe(`orbit-db - IPFSAccessController`, function () {
     const keystore1 = new Keystore(dbPath1 + '/keys')
     const keystore2 = new Keystore(dbPath2 + '/keys')
 
-    id1 = await IdentityProvider.createIdentity({ id: new Uint8Array([0]), keystore: keystore1 })
-    id2 = await IdentityProvider.createIdentity({ id: new Uint8Array([1]), keystore: keystore2 })
+    signKey1 = await keystore1.createKey(new Uint8Array([0]), SignKeyWithMeta)
+    signKey2 = await keystore2.createKey(new Uint8Array([1]), SignKeyWithMeta)
 
     orbitdb1 = await OrbitDB.createInstance(ipfs1, {
       directory: dbPath1,
-      identity: id1
+      publicKey: new Ed25519PublicKeyData({ publicKey: signKey1.publicKey }),
+      sign: (data) => Keystore.sign(data, signKey1)
     })
 
     orbitdb2 = await OrbitDB.createInstance(ipfs2, {
       directory: dbPath2,
-      identity: id2
+      publicKey: new Ed25519PublicKeyData({ publicKey: signKey2.publicKey }),
+      sign: (data) => Keystore.sign(data, signKey2)
     })
   })
 
@@ -71,7 +73,7 @@ describe(`orbit-db - IPFSAccessController`, function () {
 
     beforeAll(async () => {
       accessController = new IPFSAccessController({
-        write: [id1.id]
+        write: [signKey1.publicKey.toString('base64')]
       });
     })
 
@@ -91,20 +93,22 @@ describe(`orbit-db - IPFSAccessController`, function () {
     })
 
     it('sets default capabilities', async () => {
-      assert.deepStrictEqual(accessController.write, [Buffer.from(id1.id).toString('base64')])
+      assert.deepStrictEqual(accessController.write, [signKey1.publicKey.toString('base64')])
     })
 
     it('allows owner to append after creation', async () => {
       const mockEntry = {
         data: {
-          identity: id1
+          publicKey: signKey1.publicKey
         }
         // ...
         // doesn't matter what we put here, only identity is used for the check
       }
       const canAppend = await accessController.canAppend(mockEntry.data as any, new DecryptedThing({
-        value: id1.toSerializable()
-      }), id1.provider)
+        value: new Ed25519PublicKeyData({
+          publicKey: signKey1.publicKey
+        })
+      }))
       assert.strictEqual(canAppend, true)
     })
   })
@@ -114,7 +118,7 @@ describe(`orbit-db - IPFSAccessController`, function () {
 
     beforeAll(async () => {
       accessController = new IPFSAccessController({
-        write: ['A', 'B', id1.id]
+        write: ['A', 'B', signKey1.publicKey.toString('base64')]
       });
       await accessController.init(orbitdb1._ipfs, undefined, orbitdb1.identity, undefined);
 
@@ -123,7 +127,7 @@ describe(`orbit-db - IPFSAccessController`, function () {
     })
 
     it('has correct capabalities', async () => {
-      assert.deepStrictEqual(accessController.write, ['A', 'B', Buffer.from(id1.id).toString('base64')])
+      assert.deepStrictEqual(accessController.write, ['A', 'B', signKey1.publicKey.toString('base64')])
     })
   })
 })

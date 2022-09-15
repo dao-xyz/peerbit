@@ -1,7 +1,8 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh"
 import { serialize } from "@dao-xyz/borsh"
 import { AccessCondition } from "./condition"
-import { BinaryPayload } from '@dao-xyz/bpayload';
+import { SystemBinaryPayload } from '@dao-xyz/bpayload';
+
 export enum AccessType {
     Any = 0,
     Read = 1,
@@ -10,8 +11,8 @@ export enum AccessType {
 
 
 
-@variant("access")
-export class AccessData extends BinaryPayload {
+@variant(3)
+export class AccessData extends SystemBinaryPayload {
 
 }
 

@@ -21,8 +21,15 @@ let PutOperation = class PutOperation extends Operation {
         super();
         if (props) {
             this.key = props.key;
-            this.value = props.value;
+            this.data = props.data;
+            this._value = props.value;
         }
+    }
+    get value() {
+        if (!this._value) {
+            throw new Error("Unexpected");
+        }
+        return this._value;
     }
 };
 __decorate([
@@ -32,7 +39,7 @@ __decorate([
 __decorate([
     field(U8IntArraySerializer),
     __metadata("design:type", Uint8Array)
-], PutOperation.prototype, "value", void 0);
+], PutOperation.prototype, "data", void 0);
 PutOperation = __decorate([
     variant(0),
     __metadata("design:paramtypes", [Object])
@@ -95,7 +102,7 @@ export class DocumentIndex {
                         handled[doc.key] = true;
                         this._index[doc.key] = {
                             key: asString(doc.key),
-                            value: this.deserializeOrPass(doc.value),
+                            value: this.deserializeOrPass(doc),
                             entry: item
                         };
                     }
@@ -105,7 +112,11 @@ export class DocumentIndex {
                 const key = payload.key;
                 if (handled[key] !== true) {
                     handled[key] = true;
-                    this._index[key] = this.deserializeOrItem(item, payload);
+                    this._index[key] = {
+                        entry: item,
+                        key: payload.key,
+                        value: this.deserializeOrPass(payload)
+                    };
                 }
             }
             else if (payload instanceof DeleteOperation) {
@@ -132,7 +143,13 @@ export class DocumentIndex {
         }
     }
     deserializeOrPass(value) {
-        return value instanceof Uint8Array ? deserialize(Buffer.isBuffer(value) ? value : Buffer.from(value), this.clazz) : value;
+        if (value._value) {
+            return value._value;
+        }
+        else {
+            value._value = deserialize(Buffer.from(value.data), this.clazz);
+            return value._value;
+        }
     }
     deserializeOrItem(entry, operation) {
         /* if (typeof item.payload.value !== 'string')
@@ -140,7 +157,7 @@ export class DocumentIndex {
         const item = {
             entry,
             key: operation.key,
-            value: this.deserializeOrPass(operation.value)
+            value: this.deserializeOrPass(operation)
         };
         return item;
         /* const newItem = { ...item, payload: { ...item.payload } };

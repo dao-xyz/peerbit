@@ -1,5 +1,4 @@
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
 const leveldown = require('leveldown')
 const storage = require('orbit-db-storage-adapter')(leveldown)
 

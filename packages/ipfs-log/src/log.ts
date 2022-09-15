@@ -7,14 +7,17 @@ import * as LogError from './log-errors'
 import * as Sorting from './log-sorting'
 import { EntryFetchAllOptions, EntryFetchOptions, strictFetchOptions } from "./entry-io"
 import { IPFS } from "ipfs-core-types/src/"
-import { Identity } from "@dao-xyz/orbit-db-identity-provider"
 import { CanAppendAccessController, DefaultAccessController } from "./default-access-controller"
 import { isDefined } from './is-defined'
 import { findUniques } from "./find-uniques"
 import { IOOptions } from "@dao-xyz/ipfs-log-entry";
 import { JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log-entry';
-import { AccessError, PublicKeyEncryption } from '@dao-xyz/encryption-utils';
+import { AccessError, DecryptedThing, MaybeEncrypted, PublicKeyEncryption } from '@dao-xyz/encryption-utils';
 import { bigIntMax } from './utils';
+import { SignKeyWithMeta, Keystore } from '@dao-xyz/orbit-db-keystore';
+import { Ed25519PublicKeyData, PublicKey } from '@dao-xyz/identity';
+import { serialize } from '@dao-xyz/borsh';
+import { Ed25519PublicKey } from 'sodium-plus';
 
 const { LastWriteWins, NoZeroes } = Sorting
 const randomId = () => new Date().getTime().toString()
@@ -48,9 +51,10 @@ export class Log<T> extends GSet {
 
   // Access Controller
   _access: CanAppendAccessController<T>
-  // Identity
 
-  _identity: Identity
+  // Identity
+  _publicKey: PublicKey
+  _sign: (data: Uint8Array) => Promise<Uint8Array>
 
   // Add entries to the internal cache
   _entryIndex: EntryIndex<T>
@@ -81,14 +85,27 @@ export class Log<T> extends GSet {
    * @return {Log} The log instance
    */
 
-  constructor(ipfs: IPFS, identity: Identity, options: LogOptions<T> = {}) {
+  constructor(ipfs: IPFS, publicKey: PublicKey | Ed25519PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: LogOptions<T> = {}) {
+
     if (!isDefined(ipfs)) {
       throw LogError.IPFSNotDefinedError()
     }
 
-    if (!isDefined(identity)) {
+    if (!isDefined(publicKey)) {
       throw new Error('Identity is required')
     }
+    if (publicKey instanceof Ed25519PublicKey) {
+      publicKey = new Ed25519PublicKeyData({
+        publicKey
+      })
+    }
+
+    if (publicKey instanceof Ed25519PublicKey) {
+      publicKey = new Ed25519PublicKeyData({
+        publicKey
+      })
+    }
+
     let { logId, access, entries, heads, clock, sortFn, concurrency, recycle, encoding, encryption } = options;
     if (!isDefined(access)) {
       access = new DefaultAccessController()
@@ -117,7 +134,8 @@ export class Log<T> extends GSet {
     this._access = access
 
     // Identity
-    this._identity = identity
+    this._publicKey = publicKey
+    this._sign = sign;
 
     // encoder/decoder
     this._encoding = encoding;
@@ -155,7 +173,7 @@ export class Log<T> extends GSet {
     // Take the given key as the clock id is it's a Key instance,
     // otherwise if key was given, take whatever it is,
     // and if it was null, take the given id as the clock id
-    this._clock = new Clock(new Uint8Array(this._identity.publicKey.getBuffer()), maxTime)
+    this._clock = new Clock(new Uint8Array(serialize(publicKey)), maxTime)
 
     this.joinConcurrency = concurrency || 16
 
@@ -235,12 +253,13 @@ export class Log<T> extends GSet {
    * Set the identity for the log
    * @param {Identity} [identity] The identity to be set
    */
-  setIdentity(identity: Identity) {
-    this._identity = identity
+  setPublicKey(publicKey: PublicKey) {
+    this._publicKey = publicKey
     // Find the latest clock from the heads
     const time = bigIntMax(this.clock.time, this.heads.reduce(maxClockTimeReducer, 0n))
-    this._clock = new Clock(new Uint8Array(this._identity.publicKey.getBuffer()), time)
+    this._clock = new Clock(new Uint8Array(serialize(this._publicKey)), time)
   }
+
 
   /**
    * Find an entry.
@@ -360,20 +379,24 @@ export class Log<T> extends GSet {
       throw new Error("Message is intended to be encrypted but no encryption methods are provided for the log")
     }
 
-    const entry = await Entry.create(
+    const entry = await Entry.create<T>(
       {
         ipfs: this._storage,
-        identity: this._identity,
+        publicKey: this._publicKey,
+        sign: this._sign,
         logId: this.id,
         data,
         next: nexts,
         clock: this.clock,
         refs,
         pin: options.pin,
-        assertAllowed: async (payload, identity) => {
-          const canAppend = await this._access.canAppend(payload, identity, this._identity.provider);
+        assertAllowed: async (payload, key) => {
+          if (this._access.allowAll) {
+            return;
+          }
+          const canAppend = await this._access.canAppend(payload, key);
           if (!canAppend) {
-            throw new AccessError(`Could not append entry, key "${this._identity.id}" is not allowed to write to the log`)
+            throw new AccessError(`Could not append entry, key "${this._publicKey}" is not allowed to write to the log`)
           }
         },
         encodingOptions: this._encoding,
@@ -479,17 +502,17 @@ export class Log<T> extends GSet {
     // Get the difference of the logs
     const newItems = await Log.difference(log, this)
 
-    const identityProvider = this._identity.provider
-    // Verify if entries are allowed to be added to the log and throws if
+    /*     const identityProvider = this._identity.provider
+     */    // Verify if entries are allowed to be added to the log and throws if
     // there's an invalid entry
     const permitted = async (entry: Entry<T>) => {
       entry.init({
         encoding: this._encoding,
         encryption: this._encryption
       })
-      const canAppend = await this._access.canAppend(entry._payload, entry._identity, identityProvider)
+      const canAppend = await this._access.canAppend(entry._payload, entry._publicKey)
       if (!canAppend) {
-        throw new AccessError(`Could not append Entry<T>, key "${(await entry.identity).id}" is not allowed to write to the log`)
+        throw new AccessError(`Could not append Entry<T>, key "${(await entry.publicKey)}" is not allowed to write to the log`)
       }
     }
 
@@ -663,12 +686,12 @@ export class Log<T> extends GSet {
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @returns {Promise<Log>}
    */
-  static async fromMultihash<T>(ipfs, identity, hash,
+  static async fromMultihash<T>(ipfs, key: PublicKey | Ed25519PublicKey, sign: (Uint8Array) => Promise<Uint8Array>, hash,
     options?: { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction } & EntryFetchAllOptions<T>) {
     // TODO: need to verify the entries with 'key'
     const { logId, entries, heads } = await LogIO.fromMultihash(ipfs, hash,
       { length: options?.length, exclude: options?.exclude, shouldExclude: options?.shouldExclude, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback, concurrency: options?.concurrency, sortFn: options?.sortFn })
-    return new Log(ipfs, identity, { encoding: options?.encoding, encryption: options?.encryption, logId, access: options?.access, entries, heads, sortFn: options?.sortFn })
+    return new Log(ipfs, key, sign, { encoding: options?.encoding, encryption: options?.encryption, logId, access: options?.access, entries, heads, sortFn: options?.sortFn })
   }
 
   /**
@@ -685,12 +708,12 @@ export class Log<T> extends GSet {
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise<Log>} New Log
    */
-  static async fromEntryHash<T>(ipfs: IPFS, identity: Identity, hash: string | string[],
+  static async fromEntryHash<T>(ipfs: IPFS, key: PublicKey | Ed25519PublicKey, sign: (Uint8Array) => Promise<Uint8Array>, hash: string | string[],
     options: { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, logId?: any, access?: any, length?: number, exclude?: any[], shouldExclude?: any, timeout?: number, concurrency?: number, sortFn?: any, onProgressCallback?: any } = { length: -1, exclude: [] }) {
     // TODO: need to verify the entries with 'key'
     const { entries } = await LogIO.fromEntryHash(ipfs, hash,
       { length: options.length, exclude: options.exclude, encryption: options?.encryption, shouldExclude: options.shouldExclude, timeout: options.timeout, concurrency: options.concurrency, onProgressCallback: options.onProgressCallback, sortFn: options.sortFn })
-    return new Log(ipfs, identity, { encoding: options?.encoding, encryption: options?.encryption, logId: options.logId, access: options.access, entries, sortFn: options.sortFn })
+    return new Log(ipfs, key, sign, { encoding: options?.encoding, encryption: options?.encryption, logId: options.logId, access: options.access, entries, sortFn: options.sortFn })
   }
 
   /**
@@ -705,12 +728,12 @@ export class Log<T> extends GSet {
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise<Log>} New Log
    */
-  static async fromJSON<T>(ipfs: IPFS, identity: Identity, json: { id: string, heads: string[] | Entry<T>[] },
+  static async fromJSON<T>(ipfs: IPFS, key: PublicKey | Ed25519PublicKey, sign: (Uint8Array) => Promise<Uint8Array>, json: { id: string, heads: string[] | Entry<T>[] },
     options?: { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, access?: CanAppendAccessController<T>, length?: number, timeout?: number, sortFn?: Sorting.ISortFunction, onProgressCallback?: (entry: Entry<T>) => void }) {
     // TODO: need to verify the entries with 'key'
     const { logId, entries } = await LogIO.fromJSON(ipfs, json,
       { length: options?.length, encryption: options?.encryption, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback })
-    return new Log(ipfs, identity, { encoding: options?.encoding, encryption: options?.encryption, logId, entries, access: options?.access, sortFn: options?.sortFn })
+    return new Log(ipfs, key, sign, { encoding: options?.encoding, encryption: options?.encryption, logId, entries, access: options?.access, sortFn: options?.sortFn })
   }
 
   /**
@@ -726,12 +749,12 @@ export class Log<T> extends GSet {
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise<Log>} New Log
    */
-  static async fromEntry<T>(ipfs: IPFS, identity: Identity, sourceEntries: Entry<T>[] | Entry<T>, options: EntryFetchOptions<T> & { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction }) {
+  static async fromEntry<T>(ipfs: IPFS, key: PublicKey | Ed25519PublicKey, sign: (Uint8Array) => Promise<Uint8Array>, sourceEntries: Entry<T>[] | Entry<T>, options: EntryFetchOptions<T> & { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction }) {
     // TODO: need to verify the entries with 'key'
     options = strictFetchOptions(options);
     const { logId, entries } = await LogIO.fromEntry(ipfs, sourceEntries,
       { length: options.length, exclude: options.exclude, encryption: options?.encryption, timeout: options.timeout, concurrency: options.concurrency, onProgressCallback: options.onProgressCallback })
-    return new Log(ipfs, identity, { encoding: options?.encoding, encryption: options?.encryption, logId, access: options.access, entries, sortFn: options.sortFn })
+    return new Log(ipfs, key, sign, { encoding: options?.encoding, encryption: options?.encryption, logId, access: options.access, entries, sortFn: options.sortFn })
   }
 
   /**

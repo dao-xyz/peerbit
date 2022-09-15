@@ -122,21 +122,16 @@ Object.keys(testAPIs).forEach(API => {
 
                 // Set write access for both clients
                 let options = {
-                  accessController: {
-                    write: [
-                      orbitdb1.identity.id,
-                      orbitdb2.identity.id
-                    ]
-                  } as any
+                  accessController: new SimpleAccessController()
                 }
 
                 // Get the previous address to make sure nothing mutates it
 
                 // Open the database again (this time from the disk)
-                options = Object.assign({}, options, { path: dbPath1, create: false })
+                options = Object.assign({}, options, { directory: dbPath1, create: false })
                 const db3 = await orbitdb1.open<EventStore<string>>(await EventStore.load(orbitdb1._ipfs, db1.address), { ...options, replicationTopic: '_' }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
                 // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
-                options = Object.assign({}, options, { path: dbPath2, localOnly: true })
+                options = Object.assign({}, options, { directory: dbPath2, localOnly: true })
                 const db4 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), { ...options, replicationTopic: '_' }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
 
                 await db3.load()

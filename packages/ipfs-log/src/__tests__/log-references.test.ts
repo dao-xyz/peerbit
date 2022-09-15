@@ -1,8 +1,7 @@
 const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
-import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
-import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { Log } from '../log'
 
 // Test utils
@@ -13,7 +12,7 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity: Identity
+let ipfsd, ipfs, signKey: SignKeyWithMeta
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe('Log - References', function () {
@@ -21,7 +20,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
 
-    let keystore, signingKeystore
+    let keystore: Keystore, signingKeystore: Keystore
 
     beforeAll(async () => {
       rmrf.sync(identityKeysPath)
@@ -32,7 +31,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
 
-      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
+      signKey = await keystore.createKey(new Uint8Array([0]), SignKeyWithMeta);
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })
@@ -49,10 +48,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
       it('creates entries with references', async () => {
         const amount = 64
         const maxReferenceDistance = 2
-        const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
-        const log2 = new Log(ipfs, testIdentity, { logId: 'B' })
-        const log3 = new Log(ipfs, testIdentity, { logId: 'C' })
-        const log4 = new Log(ipfs, testIdentity, { logId: 'D' })
+        const log1 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
+        const log2 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'B' })
+        const log3 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'C' })
+        const log4 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'D' })
 
         for (let i = 0; i < amount; i++) {
           await log1.append(i.toString(), { pointerCount: maxReferenceDistance })
@@ -105,17 +104,17 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         for (const input of inputs) {
           const test = async (amount: number, referenceCount: number, refLength: number) => {
-            const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
+            const log1 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
             for (let i = 0; i < amount; i++) {
               await log1.append((i + 1).toString(), { pointerCount: referenceCount })
             }
 
             assert.strict.equal(log1.values.length, input.amount)
-            assert.strict.equal(log1.values[log1.length - 1].clock.time, input.amount)
+            assert.strict.equal(log1.values[log1.length - 1].clock.time, BigInt(input.amount))
 
             for (let k = 0; k < input.amount; k++) {
               const idx = log1.length - k - 1
-              assert.strict.equal(log1.values[idx].clock.time, idx + 1)
+              assert.strict.equal(log1.values[idx].clock.time, BigInt(idx + 1))
               const refsAtIdx = log1.values[idx].refs;
               if (refsAtIdx == undefined) {
                 fail();

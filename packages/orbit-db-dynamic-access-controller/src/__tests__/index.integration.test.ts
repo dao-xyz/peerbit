@@ -3,15 +3,15 @@ import { disconnectPeers, getConnectedPeers, getPeer, Peer } from '@dao-xyz/peer
 import { DynamicAccessController, DYNAMIC_ACCESS_CONTROLER } from "..";
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
-import { delay, waitFor } from '@dao-xyz/time';
-import { DocumentQueryRequest, FieldStringMatchQuery, query, QueryRequestV0, QueryResponseV0, ResultWithSource } from "@dao-xyz/query-protocol";
+import { waitFor } from '@dao-xyz/time';
+import { DocumentQueryRequest, FieldStringMatchQuery, QueryRequestV0, QueryResponseV0 } from "@dao-xyz/query-protocol";
 import { AccessError } from "@dao-xyz/encryption-utils";
-import { BinaryPayload } from "@dao-xyz/bpayload";
+import { CustomBinaryPayload } from "@dao-xyz/bpayload";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
-import { IPFSAccessController } from '@dao-xyz/orbit-db-ipfs-access-controller'
+import { query } from "@dao-xyz/orbit-db-query-store";
 
 @variant("document")
-class Document extends BinaryPayload {
+class Document extends CustomBinaryPayload {
 
     @field({ type: 'string' })
     id: string;
@@ -90,9 +90,9 @@ describe('index', () => {
         await expect(l0b.put(new Document({
             id: 'id'
         }))).rejects.toBeInstanceOf(AccessError); // Not trusted
-        await (l0a.access as DynamicAccessController<Document>).trust.addTrust(peer2.orbitDB.identity);
-        await delay(10000);
-        await waitFor(() => Object.keys((l0b.access as DynamicAccessController<Document>).trust.store._index._index).length === 1);
+        await (l0a.accessController as DynamicAccessController<Document>).trust.addTrust(peer2.orbitDB.identity);
+
+        await waitFor(() => Object.keys((l0b.accessController as DynamicAccessController<Document>).trust.trustGraph._index._index).length === 1);
 
         await l0b.put(new Document({
             id: '2'
@@ -129,21 +129,69 @@ describe('index', () => {
             }))).rejects.toBeInstanceOf(AccessError); // Not trusted
 
 
-            await (l0a.access as DynamicAccessController<Document>).acl.store.put(new Access({
+            await (l0a.accessController as DynamicAccessController<Document>).acl.access.put(new Access({
                 accessCondition: new PublicKeyAccessCondition({
-                    key: peer2.orbitDB.identity.id,
-                    type: peer2.orbitDB.identity.type
+                    key: peer2.orbitDB.identity
                 }),
                 accessTypes: [AccessType.Any]
-            }).initialize());
+            }));
 
-            await waitFor(() => Object.keys((l0b.access as DynamicAccessController<Document>).trust.store._index._index).length === 1);
+            await waitFor(() => Object.keys((l0b.accessController as DynamicAccessController<Document>).acl.access._index._index).length === 1);
             await l0b.put(new Document({
                 id: '2'
             })) // Now trusted 
 
             await disconnectPeers([peer, peer2])
         })
+
+
+        it('through trust chain', async () => {
+            const [peer, peer2, peer3] = await getConnectedPeers(3)
+            const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
+                name: 'test',
+                indexBy: 'id',
+                objectType: Document.name,
+                accessController: new DynamicAccessController({
+                    name: 'test-acl',
+                    rootTrust: peer.orbitDB.identity
+                })
+            }), { typeMap });
+            await l0a.put(new Document({
+                id: '1'
+            }));
+
+
+            const l0b = await peer2.orbitDB.open(await BinaryDocumentStore.load(peer2.orbitDB._ipfs, l0a.address), { typeMap });
+            const l0c = await peer3.orbitDB.open(await BinaryDocumentStore.load(peer3.orbitDB._ipfs, l0a.address), { typeMap });
+
+            await expect(l0c.put(new Document({
+                id: 'id'
+            }))).rejects.toBeInstanceOf(AccessError); // Not trusted
+
+
+            await (l0a.accessController as DynamicAccessController<Document>).acl.access.put(new Access({
+                accessCondition: new PublicKeyAccessCondition({
+                    key: peer2.orbitDB.identity
+                }),
+                accessTypes: [AccessType.Any]
+            }));
+
+
+            await expect(l0c.put(new Document({
+                id: 'id'
+            }))).rejects.toBeInstanceOf(AccessError); // Not trusted
+
+
+            await waitFor(() => Object.keys((l0b.accessController as DynamicAccessController<Document>).acl.access._index._index).length == 1)
+            await (((l0b.accessController as DynamicAccessController<Document>).acl.identityGraphController.addRelation(peer3.orbitDB.identity)));
+            await waitFor(() => Object.keys((l0c.accessController as DynamicAccessController<Document>).acl.identityGraphController.relationGraph._index._index).length === 1);
+            await l0c.put(new Document({
+                id: '2'
+            })) // Now trusted 
+
+            await disconnectPeers([peer, peer2])
+        })
+
 
 
         it('any access', async () => {
@@ -173,9 +221,9 @@ describe('index', () => {
                 accessTypes: [AccessType.Any]
             });
             expect(access.id).toBeDefined();
-            await (l0a.access as DynamicAccessController<Document>).acl.store.put(access);
+            await (l0a.accessController as DynamicAccessController<Document>).acl.access.put(access);
 
-            await waitFor(() => Object.keys((l0b.access as DynamicAccessController<Document>).acl.store._index._index).length === 1);
+            await waitFor(() => Object.keys((l0b.accessController as DynamicAccessController<Document>).acl.access._index._index).length === 1);
             await l0b.put(new Document({
                 id: '2'
             })) // Now trusted 
@@ -213,6 +261,12 @@ describe('index', () => {
             }), (response) => {
                 results = response;
             }, {
+                signer: async (bytes) => {
+                    return {
+                        publicKey: peer2.orbitDB.publicKey,
+                        signature: await peer2.orbitDB.sign(bytes)
+                    }
+                },
                 maxAggregationTime: 3000
             })
 
@@ -220,7 +274,7 @@ describe('index', () => {
 
             expect(results).toBeUndefined(); // Because no read access
 
-            await (l0a.access as DynamicAccessController<Document>).acl.store.put(new Access({
+            await (l0a.accessController as DynamicAccessController<Document>).acl.access.put(new Access({
                 accessCondition: new AnyAccessCondition(),
                 accessTypes: [AccessType.Read]
             }).initialize());
@@ -249,15 +303,14 @@ describe('index', () => {
             id: '1'
         }));
         const dbb = await BinaryDocumentStore.load(peer2.orbitDB._ipfs, l0a.address);
-        (dbb.access as DynamicAccessController<Document>).appendAll = true;
+        (dbb.accessController as DynamicAccessController<Document>).allowAll = true;
         const l0b = await peer2.orbitDB.open(dbb, { typeMap });
         await l0b.put(new Document({
             id: '2'
         })) // Now trusted because append all is 'true'
 
         // but entry will not be replicated on l0a since it still respects ACL
-        await delay(5000); // Arbritary delay
-        expect(Object.keys(l0a._index._index)).toHaveLength(1);
+        await waitFor(() => Object.keys(l0a._index._index).length === 1);
         await disconnectPeers([peer, peer2])
     })
 
@@ -312,7 +365,7 @@ describe('index', () => {
             })
         }), { typeMap })
         expect(l0a.address).not.toEqual(l0b.address)
-        expect((l0a.access as DynamicAccessController<Document>).acl.address).not.toEqual((l0b.access as DynamicAccessController<Document>).acl.address)
+        expect((l0a.accessController as DynamicAccessController<Document>).acl.address.toString()).not.toEqual((l0b.accessController as DynamicAccessController<Document>).acl.address.toString())
         await disconnectPeers([peer])
 
     })
@@ -329,21 +382,35 @@ describe('index', () => {
                 rootTrust: peer.orbitDB.identity
             })
         }), { typeMap });;
-        await (l0a.access as DynamicAccessController<Document>).acl.store.put(new Access({
+        await (l0a.accessController as DynamicAccessController<Document>).acl.access.put(new Access({
             accessCondition: new AnyAccessCondition(),
             accessTypes: [AccessType.Any]
         }).initialize());
 
         const dbb = await BinaryDocumentStore.load(peer2.orbitDB._ipfs, l0a.address);
-        (dbb.access as DynamicAccessController<Document>).appendAll = true;
+
         const l0b = await peer2.orbitDB.open(dbb, { typeMap });
 
+        // Allow all for easy query
+        (l0a.accessController as DynamicAccessController<Document>).allowAll = true;
+        (l0b.accessController as DynamicAccessController<Document>).allowAll = true;
+
+        await waitFor(() => Object.keys((l0a.accessController as DynamicAccessController<Document>).acl.access._index._index).length === 1);
+        await waitFor(() => Object.keys((l0b.accessController as DynamicAccessController<Document>).acl.access._index._index).length === 1);
+
         let resp: QueryResponseV0 = undefined;
-        await (l0b.access as DynamicAccessController<Document>).acl.store.query(new QueryRequestV0({
+        await (l0b.accessController as DynamicAccessController<Document>).acl.access.query(new QueryRequestV0({
             type: new DocumentQueryRequest({
                 queries: []
             })
-        }), (r) => { resp = r }, { waitForAmount: 1 });
+        }), (r) => { resp = r }, {
+            signer: async (bytes) => {
+                return {
+                    publicKey: peer2.orbitDB.publicKey,
+                    signature: await peer2.orbitDB.sign(bytes)
+                }
+            }, waitForAmount: 1
+        });
         await waitFor(() => !!resp);
 
         // Now trusted because append all is 'true'c

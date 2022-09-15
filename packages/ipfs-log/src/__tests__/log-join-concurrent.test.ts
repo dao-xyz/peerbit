@@ -3,7 +3,7 @@ const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
 import { SortByEntryHash } from '../log-sorting'
-import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
 const {
@@ -13,7 +13,7 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity: Identity
+let ipfsd, ipfs, signKey: SignKeyWithMeta
 
 Object.keys(testAPIs).forEach(IPFS => {
   describe('Log - Join Concurrent Entries', function () {
@@ -26,7 +26,7 @@ Object.keys(testAPIs).forEach(IPFS => {
       rmrf.sync(signingKeysPath)
       await fs.copy(identityKeyFixtures(__dirname), identityKeysPath)
       await fs.copy(signingKeyFixtures(__dirname), signingKeysPath)
-      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), identityKeysPath, signingKeysPath })
+      signKey = await signingKeysPath.getKeyByPath(new Uint8Array([0]), SignKeyWithMeta);
 
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
@@ -34,8 +34,6 @@ Object.keys(testAPIs).forEach(IPFS => {
 
     afterAll(async () => {
       await stopIpfs(ipfsd)
-      await testIdentity.provider.keystore.close()
-      await testIdentity.provider.signingKeystore.close()
       rmrf.sync(identityKeysPath)
       rmrf.sync(signingKeysPath)
     })
@@ -45,8 +43,8 @@ Object.keys(testAPIs).forEach(IPFS => {
 
       beforeAll(async () => {
 
-        log1 = new Log(ipfs, testIdentity, { logId: 'A', sortFn: SortByEntryHash })
-        log2 = new Log(ipfs, testIdentity, { logId: 'A', sortFn: SortByEntryHash })
+        log1 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A', sortFn: SortByEntryHash })
+        log2 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A', sortFn: SortByEntryHash })
       })
 
       it('joins consistently', async () => {

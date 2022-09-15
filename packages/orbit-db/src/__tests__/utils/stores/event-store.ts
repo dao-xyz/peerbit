@@ -3,7 +3,6 @@ import { Entry } from "@dao-xyz/ipfs-log-entry";
 import { Address, JSON_ENCODER, load } from "@dao-xyz/orbit-db-store";
 import { Store } from "@dao-xyz/orbit-db-store"
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry';
-import { Identity } from "@dao-xyz/orbit-db-identity-provider";
 import { AccessController } from "@dao-xyz/orbit-db-store";
 import { variant } from '@dao-xyz/borsh';
 
@@ -41,9 +40,9 @@ export class EventStore<T> extends Store<Operation<T>> {
         this._index = new EventIndex();
     }
 
-    async init(ipfs: any, identity: Identity, options: any) {
+    async init(ipfs: any, key, sign, options: any) {
         if (options.encoding === undefined) Object.assign(options, { encoding: JSON_ENCODER })
-        return super.init(ipfs, identity, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
+        return super.init(ipfs, key, sign, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
     }
 
     add(data, options?: {

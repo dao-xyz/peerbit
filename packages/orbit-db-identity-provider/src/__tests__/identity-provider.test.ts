@@ -1,6 +1,5 @@
 import fs from 'fs-extra';
 import { Ed25519PublicKey } from "sodium-plus"
-import { joinUint8Arrays } from "@dao-xyz/io-utils"
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { Identities } from "../identities"
 import { Identity, Signatures } from "../identity"
@@ -89,7 +88,7 @@ describe('Identity Provider', function () {
       const key = await keystore.getKeyByPath<SignKeyWithMeta>(id)
       const externalId = key.publicKey
       const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(externalId)
-      const idSignature = await keystore.sign(new Uint8Array(externalId.getBuffer()), signingKey)
+      const idSignature = await Keystore.sign(new Uint8Array(externalId.getBuffer()), signingKey)
       const publicKey = signingKey.publicKey;
       const verifies = await Keystore.verify(idSignature, publicKey, new Uint8Array(externalId.getBuffer()))
       assert.strictEqual(verifies, true)
@@ -100,9 +99,9 @@ describe('Identity Provider', function () {
       const key = await keystore.getKeyByPath<SignKeyWithMeta>(id)
       const externalId = key.publicKey;
       const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(externalId.toString('base64'))
-      const idSignature = await keystore.sign(new Uint8Array(externalId.getBuffer()), signingKey)
+      const idSignature = await Keystore.sign(new Uint8Array(externalId.getBuffer()), signingKey)
       const externalKey = await keystore.getKeyByPath<SignKeyWithMeta>(id)
-      const publicKeyAndIdSignature = await keystore.sign(Buffer.concat([identity.publicKey.getBuffer(), idSignature]), externalKey)
+      const publicKeyAndIdSignature = await Keystore.sign(Buffer.concat([identity.publicKey.getBuffer(), idSignature]), externalKey)
       assert.deepStrictEqual(identity.signatures.publicKey, publicKeyAndIdSignature)
     })
 
@@ -149,8 +148,8 @@ describe('Identity Provider', function () {
     it('has the correct signatures', async () => {
       const internalSigningKey = await savedKeysKeystore.getKeyByPath<SignKeyWithMeta>(identity.id)
       const externalSigningKey = await savedKeysKeystore.getKeyByPath<SignKeyWithMeta>(id)
-      const idSignature = await savedKeysKeystore.sign(identity.id, internalSigningKey)
-      const pubKeyIdSignature = await savedKeysKeystore.sign(Buffer.concat([identity.publicKey.getBuffer(), idSignature]), externalSigningKey)
+      const idSignature = await Keystore.sign(identity.id, internalSigningKey)
+      const pubKeyIdSignature = await Keystore.sign(Buffer.concat([identity.publicKey.getBuffer(), idSignature]), externalSigningKey)
       const expectedSignature = { id: idSignature, publicKey: pubKeyIdSignature }
       assert.deepStrictEqual({ ...identity.signatures }, expectedSignature)
     })
@@ -239,7 +238,7 @@ describe('Identity Provider', function () {
 
     it('sign data', async () => {
       const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(identity.id)
-      const expectedSignature = await keystore.sign(data, signingKey)
+      const expectedSignature = await Keystore.sign(data, signingKey)
       const signature = await identity.provider.sign(data, identity)
       assert.deepStrictEqual(signature, expectedSignature)
     })

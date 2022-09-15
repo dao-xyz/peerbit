@@ -1,4 +1,4 @@
-import { Identity, IdentitySerializable } from "./identity"
+import { Identity } from "./identity"
 export abstract class IdentityProvider {
   /* Return id of identity (to be signed by orbit-db public key) */
   async getId(options: { id?: Uint8Array } = {}): Promise<Uint8Array> {
@@ -12,7 +12,7 @@ export abstract class IdentityProvider {
   }
 
   /* Verify a signature of a OrbitDB public key signature */
-  static async verifyIdentity(identity: Identity | IdentitySerializable): Promise<boolean> {
+  static async verifyIdentity(identity: Identity): Promise<boolean> {
     throw new Error("Not implemented")
   }
 

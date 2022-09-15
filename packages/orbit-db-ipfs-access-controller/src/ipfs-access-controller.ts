@@ -1,13 +1,12 @@
 import { Payload } from '@dao-xyz/ipfs-log-entry';
 import io from '@dao-xyz/orbit-db-io'
-import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider';
 import { MaybeEncrypted } from '@dao-xyz/encryption-utils';
 import { variant, field, vec } from '@dao-xyz/borsh';
-import { AccessController, IStoreOptions } from '@dao-xyz/orbit-db-store';
-import { IPFS } from 'ipfs-core-types/src/';
+import { ReadWriteAccessController } from '@dao-xyz/orbit-db-query-store';
+import { PublicKey } from '@dao-xyz/identity';
 
 @variant([1, 0])
-export class IPFSAccessController<T> extends AccessController<T> {
+export class IPFSAccessController<T> extends ReadWriteAccessController<T> {
 
   @field({ type: vec('string') })
   _write: string[];
@@ -26,15 +25,12 @@ export class IPFSAccessController<T> extends AccessController<T> {
     return this._write
   }
 
-  async canAppend<T>(payload: MaybeEncrypted<Payload<T>>, identityEncrypted: MaybeEncrypted<IdentitySerializable>, identityProvider: Identities) {
+  async canAppend<T>(payload: MaybeEncrypted<Payload<T>>, keyEncrypted: MaybeEncrypted<PublicKey>) {
     // Allow if access list contain the writer's publicKey or is '*'
-    let identity = undefined;
+    let key: PublicKey = undefined;
 
     try {
-      identity = (await identityEncrypted.decrypt()).getValue(IdentitySerializable);
-      if (!identityProvider.verifyIdentity(identity)) {
-        return false;
-      }
+      key = (await keyEncrypted.decrypt()).getValue(PublicKey);
     } catch (error) {
       // Can not access identity
       return this.write.includes('*');
@@ -43,7 +39,16 @@ export class IPFSAccessController<T> extends AccessController<T> {
     if (this.write.includes('*')) {
       return true; // we can end up with encrypted identities
     }
-    return this.write.includes(Buffer.from(identity.id).toString('base64'))
+    return this.write.includes(key.getBuffer().toString('base64'))
+  }
+
+  async canRead(key: PublicKey) {
+
+    // Allow if access list contain the writer's publicKey or is '*'
+    if (this.write.includes('*')) {
+      return true; // we can end up with encrypted identities
+    }
+    return this.write.includes(key.getBuffer().toString('base64'))
   }
 
   async load(address) {

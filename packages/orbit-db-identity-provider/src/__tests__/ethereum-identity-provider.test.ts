@@ -1,7 +1,6 @@
 import { EthIdentityProvider } from "../ethereum-identity-provider"
 import { Identities } from "../identities"
 import { Identity, Signatures } from "../identity"
-import { Ed25519PublicKey } from 'sodium-plus';
 import { Wallet } from '@ethersproject/wallet'
 
 const assert = require('assert')
@@ -53,7 +52,7 @@ describe('Ethereum Identity Provider', function () {
 
     it('has a signature for the id', async () => {
       const signingKey = (await keystore.getKeyByPath<SignKeyWithMeta>(Buffer.from(wallet.address).toString('base64')));
-      const idSignature = await keystore.sign(wallet.address, signingKey)
+      const idSignature = await Keystore.sign(wallet.address, signingKey)
       const verifies = await Keystore.verify(idSignature, signingKey.publicKey, new Uint8Array(Buffer.from(wallet.address)))
       assert.strictEqual(verifies, true)
       assert.deepStrictEqual(identity.signatures.id, idSignature)
@@ -61,7 +60,7 @@ describe('Ethereum Identity Provider', function () {
 
     it('has a signature for the publicKey', async () => {
       const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(Buffer.from(wallet.address).toString('base64'))
-      const idSignature = await keystore.sign(wallet.address, signingKey)
+      const idSignature = await Keystore.sign(wallet.address, signingKey)
       const publicKeyAndIdSignature = await wallet.signMessage(Buffer.concat([identity.publicKey.getBuffer(), idSignature]))
       assert.deepStrictEqual(identity.signatures.publicKey, new Uint8Array(Buffer.from(publicKeyAndIdSignature)))
     })
@@ -100,7 +99,7 @@ describe('Ethereum Identity Provider', function () {
 
     it('sign data', async () => {
       const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(identity.id)
-      const expectedSignature = await keystore.sign(Buffer.from(data), signingKey)
+      const expectedSignature = await Keystore.sign(Buffer.from(data), signingKey)
       const signature = await identity.provider.sign(data, identity)
       assert.deepStrictEqual(signature, expectedSignature)
     })
