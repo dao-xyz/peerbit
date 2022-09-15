@@ -147,7 +147,7 @@ export class DocumentIndex {
             return value._value;
         }
         else {
-            value._value = deserialize(Buffer.from(value.data), this.clazz);
+            value._value = deserialize(value.data, this.clazz);
             return value._value;
         }
     }

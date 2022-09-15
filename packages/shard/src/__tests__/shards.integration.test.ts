@@ -11,7 +11,8 @@ import { AccessError } from '@dao-xyz/encryption-utils';
 import { v4 as uuid } from 'uuid';
 import { BinaryDocumentStore } from '@dao-xyz/orbit-db-bdocstore';
 import { field, variant } from '@dao-xyz/borsh';
-import { DynamicAccessController } from '../../../orbit-db-dynamic-access-controller/lib/esm';
+import { DynamicAccessController } from '@dao-xyz/orbit-db-dynamic-access-controller';
+import { PublicKey } from '@dao-xyz/identity';
 
 const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 
@@ -32,26 +33,13 @@ const isInSwarm = async (from: AnyPeer, swarmSource: AnyPeer) => {
 
 
 
-class ShardOrDocument {
+@variant(0)
+class Document  {
 
     @field({ type: 'string' })
     id: string;
 
-    
     constructor(opts?: { id: string }) {
-        if (opts) {
-            this.id = opts.id;
-        }
-
-    }
-}
-
-
-@variant(0)
-class Document extends ShardOrDocument {
-
-    constructor(opts?: { id: string }) {
-        super(opts);
         if (opts) {
             this.id = opts.id;
         }
@@ -61,14 +49,17 @@ class Document extends ShardOrDocument {
 
 
 @variant(1)
-class ShardDocument extends ShardOrDocument {
+class ShardDocument {
+
+    @field({ type: 'string' })
+    id: string;
 
     @field({type: Shard})
     shard: Shard<any>
 
-    constructor(opts?: { id: string }) {
-        super(opts);
+    constructor(opts?: { id: string, shard: Shard<any> }) {
         if (opts) {
+            this.shard = opts.shard;
             this.id = opts.id;
         }
 
@@ -76,7 +67,7 @@ class ShardDocument extends ShardOrDocument {
 }
 
 
-export const documentStoreShard = async (properties: {trust?: RegionAccessController, parentShardCID?: string} = {}) => new Shard({
+export const documentStoreShard = async (properties: {rootTrust?: PublicKey, regionAccessController?: RegionAccessController, parentShardCID?: string} ) => new Shard({
     id: uuid(),
     cluster: 'x',
     resourceRequirements: new NoResourceRequirements(),
@@ -84,26 +75,33 @@ export const documentStoreShard = async (properties: {trust?: RegionAccessContro
         name: 'documents',
         indexBy: 'id',
         objectType: Document.name,
-        accessController: new DynamicAccessController(),
+        accessController: new DynamicAccessController({
+            regionAccessController: properties.regionAccessController,
+            rootTrust: properties.rootTrust
+        }),
         clazz: Document
     }),
-    trust: properties.trust,
+    trust: properties.regionAccessController,
     parentShardCID: properties.parentShardCID
 })
 
 
-export const shardStoreShard = async <T>(trust?: RegionAccessController) => new Shard<BinaryDocumentStore<ShardOrDocument>>({
+export const shardStoreShard = async <T>(properties: {rootTrust?: PublicKey, regionAccessController?: RegionAccessController, parentShardCID?: string}) => new Shard<BinaryDocumentStore<ShardDocument>>({
     id: uuid(),
     cluster: 'x',
     resourceRequirements: new NoResourceRequirements(),
     store: new BinaryDocumentStore({
         indexBy: 'id',
-        accessController:  new DynamicAccessController(),
-        objectType: ShardOrDocument.name,
-        clazz: ShardOrDocument,
+        accessController:  new DynamicAccessController({
+            regionAccessController: properties.regionAccessController,
+            rootTrust: properties.rootTrust
+        }),
+        objectType: ShardDocument.name,
+        clazz: ShardDocument,
         name: 'shard',
     }),
-    trust
+    trust: properties.regionAccessController,
+    parentShardCID: properties.parentShardCID
 })
 
 
@@ -111,7 +109,7 @@ describe('cluster', () => {
     describe('trust', () => {
         it('add trustee', async () => {
             let [peer, peer2] = await getConnectedPeers(2);
-            let l0a = await documentStoreShard();
+            let l0a = await documentStoreShard({rootTrust: peer.orbitDB.identity});
             await l0a.open(peer);
             expect(l0a.cid).toBeDefined();
             expect(l0a.trust).toBeInstanceOf(RegionAccessController);
@@ -135,7 +133,7 @@ describe('cluster', () => {
             let l1 = (await peer.node.id()).addresses[0];
             await peer2.node.swarm.connect(l1)
 
-            let l0 = await documentStoreShard();
+            let l0 = await documentStoreShard({rootTrust: peer.orbitDB.identity});
             await l0.open(peer);
             expect(l0.cid).toBeDefined();
             let loadedShard = await Shard.loadFromCID(l0.cid, peer2.node);
@@ -150,7 +148,7 @@ describe('cluster', () => {
             let [peer, peer2] = await getConnectedPeers(2)
 
             // Create Root shard
-            let l0 = await shardStoreShard();
+            let l0 = await shardStoreShard({rootTrust: peer.orbitDB.identity});
             await l0.replicate(peer);
             // Create Feed store
 
@@ -168,7 +166,7 @@ describe('cluster', () => {
             let [peer, peer2] = await getConnectedPeers(2)
 
             // Create Root shard
-            let l0 = await shardStoreShard();
+            let l0 = await shardStoreShard({rootTrust: peer.orbitDB.identity});
             await l0.replicate(peer);
             // Create Feed store
 
@@ -190,7 +188,7 @@ describe('cluster', () => {
             let [peer] = await getConnectedPeers(2)
 
             // Create Root shard
-            let l0 = await shardStoreShard();
+            let l0 = await shardStoreShard({rootTrust: peer.orbitDB.identity});
             await l0.replicate(peer);
             // Create Feed store
 
@@ -205,7 +203,7 @@ describe('cluster', () => {
         })
     })
 
-    describe('resiliance', () => {
+    /* describe('resiliance', () => {
         it('connect to remote', async () => {
 
             let [peer, peer2] = await getConnectedPeers(2);
@@ -225,8 +223,8 @@ describe('cluster', () => {
             const l0b = await Shard.loadFromCID(l0.cid, peer2.orbitDB._ipfs);
             await l0b.open(peer2)
             await (l0b.store).load();
-            await waitFor(() => Object.keys((l0b.store)._index._index).length === 1);
-            let feedStoreLoaded = await (l0b.interface as RecursiveShardDBInterface<DocumentStoreInterface>).loadShard(documentStore.cid, peer2);
+            await waitFor(() => Object.keys((l0b.store as BinaryDocumentStore<ShardDocument>)._index._index).length === 1);
+            let feedStoreLoaded = await (l0b.store as BinaryDocumentStore<ShardDocument>).get(documentStore.cid), peer2);
             await feedStoreLoaded.interface.load();
             await waitFor(() => Object.keys(feedStoreLoaded.interface.db.index._index).length === 1);
             await disconnectPeers([peer, peer2]);
@@ -245,18 +243,18 @@ describe('cluster', () => {
             await l0a.store.put(l1);
 
             // --- Load assert, from another peer
-            const l0b = await Shard.loadFromCID<DocumentStoreInterface>(l0a.cid, peer2.node);
+            const l0b = await Shard.loadFromCID<BinaryDocumentStore<ShardDocument>>(l0a.cid, peer2.node);
             await l0b.replicate(peer2);
             await l0b.store.load(1);
-            await waitFor(() => Object.keys(l0b.interface.db.index._index).length === 1);
+            await waitFor(() => Object.keys(l0b.store._index._index).length === 1);
 
 
             // Drop 1 peer and make sure a third peer can access data
             await disconnectPeers([peer]);
-            const l0c = await Shard.loadFromCID<DocumentStoreInterface>(l0a.cid, peer3.node);
+            const l0c = await Shard.loadFromCID<BinaryDocumentStore<ShardDocument>>(l0a.cid, peer3.node);
             await l0c.open(peer3)
             await l0c.store.load(1);
-            await waitFor(() => Object.keys(l0c.store.db.index._index).length === 1);
+            await waitFor(() => Object.keys(l0c.store._index._index).length === 1);
             await disconnectPeers([peer2, peer3]);
         })
     })
@@ -390,7 +388,7 @@ describe('cluster', () => {
 
                 await l0.trust.addTrust(peerNonServer.orbitDB.identity);
 
-                let l0Write = await Shard.loadFromCID<DocumentStoreInterface>(l0.cid, peerNonServer.node);
+                let l0Write = await Shard.loadFromCID<BinaryDocumentStore<ShardDocument>>(l0.cid, peerNonServer.node);
                 await l0Write.open(peerNonServer);
 
                 //await peerNonServer.orbitDB["_pubsub"].subscribe(l0Write.interface.db.address.toString(), peerNonServer.orbitDB["_onMessage"].bind(peerNonServer.orbitDB), peerNonServer.orbitDB["_onPeerConnected"].bind(peerNonServer.orbitDB))
@@ -398,7 +396,7 @@ describe('cluster', () => {
                 expect(subscriptions.length).toEqual(0); // non server should not have any subscriptions idle
                 await delay(3000)
                 await l0Write.store.load();
-                await l0Write.store.db.put(new Document({ id: 'hello' }))
+                await l0Write.store.put(new Document({ id: 'hello' }))
                 await waitFor(() => l0.store.size > 0);
                 await l0Write.close();
                 subscriptions = await peerNonServer.node.pubsub.ls();
@@ -568,7 +566,7 @@ describe('cluster', () => {
             await waitFor(() => Object.keys((peerSupporting.supportJobs.values().next().value.shard.store as BinaryDocumentStore<any>)._index._index).length == 1);
             await disconnectPeers([peerLowMemory, peerSupporting, peerNew]);
         })
-    })
+    }) */
 
 })
  

@@ -64,7 +64,7 @@ export class BinaryDocumentStoreOptions<T extends BinaryPayload> extends BStoreO
 }
  */
 const _encoding = {
-    decoder: (bytes) => deserialize(Buffer.from(bytes), Operation),
+    decoder: (bytes) => deserialize(bytes, Operation),
     encoder: (data) => serialize(data)
 };
 export class BinaryDocumentStore extends QueryStore /*  implements Typed */ {

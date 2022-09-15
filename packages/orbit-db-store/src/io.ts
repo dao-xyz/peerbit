@@ -92,7 +92,7 @@ export const save = async (ipfs: IPFS, thing: Addressable, options: { format?: s
 export const load = async <S extends Addressable & { address: Address }>(ipfs, address: Address, into: Constructor<S>, options: { timeout?: number } = {}): Promise<S> => {
     let hash = address.root
     const manifest: Manifest = await io.read(ipfs, hash, options);
-    const der = deserialize(Buffer.from(manifest.data), into)
+    const der = deserialize(manifest.data, into)
     der.address = Address.parse(Address.join(hash, der.name))
     return der;
 }

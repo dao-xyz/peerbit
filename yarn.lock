@@ -2058,10 +2058,10 @@
     bs58 "^4.0.0"
     text-encoding-utf-8 "^1.0.2"
 
-"@dao-xyz/borsh@^3.2.1":
-  version "3.2.1"
-  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-3.2.1.tgz#8b913f2ed20683a1e3fc0953424376ea4df87a5a"
-  integrity sha512-FWYs4jSt+3zbXJRIJ50anyg8GfXIHL5SK/QKxGXdtrrMEHKpvIFKm1Ceo9eeYs0OgeGjuwA1japhtiFEmqPNbA==
+"@dao-xyz/borsh@^3.2.2":
+  version "3.2.2"
+  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-3.2.2.tgz#2ff99d041d73d4816f03641a39559c4cbc08830d"
+  integrity sha512-KRSUYmeVFt1FpW4xFWYM3S9De+OeB7CAbclG0gQMdRkcTqG5nCbSMPTQWvE+ws8+yBwKIV3xH7OF+BEwBpT0DQ==
   dependencies:
     text-encoding-utf-8 "^1.0.2"
 

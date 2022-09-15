@@ -73,7 +73,7 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
         if (this._value) {
             return this._value;
         }
-        return deserialize(Buffer.from(this._data), clazz)
+        return deserialize(this._data, clazz)
     }
 
     async encrypt(...recieverPublicKeys: X25519PublicKey[]): Promise<EncryptedThing<T>> {
@@ -285,7 +285,7 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
             let counter = 0;
             while (der instanceof EncryptedThing) {
                 const decrypted = await crypto.crypto_secretbox_open(Buffer.from(this._encrypted), Buffer.from(this._nonce), epheremalKey);
-                der = deserialize(Buffer.from(decrypted), DecryptedThing)
+                der = deserialize(decrypted, DecryptedThing)
                 counter += 1;
                 if (counter >= 10) {
                     throw new Error("Unexpected decryption behaviour, data seems to always be in encrypted state")
@@ -342,7 +342,7 @@ export const decryptVerifyInto = async <T>(data: Uint8Array, clazz: Constructor<
             throw new AccessError();
         }
     }
-    return deserialize(Buffer.from(maybeSigned.data), clazz);
+    return deserialize(maybeSigned.data, clazz);
 }
 /* 
 
@@ -401,7 +401,7 @@ export class UnsignedMessage<T> extends MaybeSigned<T> {
 
 
     async open(_opener: (bytes: Uint8Array, key: Ed25519PublicKey) => Promise<Uint8Array>, constructor: Constructor<T>): Promise<T> {
-        return deserialize(Buffer.from(this.data), constructor)
+        return deserialize(this.data, constructor)
     }
 }
 

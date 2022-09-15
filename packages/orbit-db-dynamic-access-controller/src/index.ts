@@ -20,6 +20,7 @@ import { Log } from "@dao-xyz/ipfs-log";
 import Cache from '@dao-xyz/orbit-db-cache';
 import { Operation } from "@dao-xyz/orbit-db-bdocstore";
 import { ReadWriteAccessController } from "@dao-xyz/orbit-db-query-store";
+import { v4 as uuid } from 'uuid';
 
 let v8 = undefined;
 if (isNode) {
@@ -72,12 +73,18 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<T> imp
     _onMemoryExceeded?: OnMemoryExceededCallback<T>;
 
 
-    constructor(properties?: { name: string, rootTrust: PublicKey }) {
+    constructor(properties?: {
+        name?: string,
+        rootTrust?: PublicKey,
+        regionAccessController?: RegionAccessController
+    }) {
         super();
         if (properties) {
             this._db = new AccessStore({
-                name: properties.name + "_acl",
-                rootTrust: properties.rootTrust
+                name: (uuid() || properties.name) + "_acl",
+                rootTrust: properties.rootTrust,
+                regionAccessController: properties.regionAccessController
+
             })
             /*  this._acldb = ); */
             //subscribeToQueriies to not exist on store options
@@ -121,7 +128,7 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<T> imp
         this._initializationPromise = new Promise(async (resolve, _reject) => {
             let arr = await this._orbitDB._ipfs.cat(cid);
             for await (const obj of arr) {
-                let der = deserialize(Buffer.from(obj), ACL);
+                let der = deserialize(obj, ACL);
                 this._aclDB = der;
                 await this._acldb.init(this._orbitDB, this._storeOptions);
                 await this._acldb.load();

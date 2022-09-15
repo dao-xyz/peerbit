@@ -41,7 +41,7 @@ const canAppendByRelation = async (payload: MaybeEncrypted<Payload<Operation<Rel
     const operation = p.init(db.encoding).value;
 
     if (operation instanceof PutOperation || operation instanceof DeleteOperation) {
-        /*  const relation: Relation = operation.value || deserialize(Buffer.from(operation.data), Relation); */
+        /*  const relation: Relation = operation.value || deserialize(operation.data, Relation); */
         await keyEncrypted.decrypt();
         const key = keyEncrypted.decrypted.getValue(PublicKey);
 
@@ -49,7 +49,7 @@ const canAppendByRelation = async (payload: MaybeEncrypted<Payload<Operation<Rel
             // TODO, this clause is only applicable when we modify the identityGraph, but it does not make sense that the canAppend method does not know what the payload will
             // be, upon deserialization. There should be known in the `canAppend` method whether we are appending to the identityGraph.
 
-            const relation: BinaryPayload = operation._value || deserialize(Buffer.from(operation.data), BinaryPayload);
+            const relation: BinaryPayload = operation._value || deserialize(operation.data, BinaryPayload);
             operation._value = relation;
 
             if (relation instanceof AnyRelation) {

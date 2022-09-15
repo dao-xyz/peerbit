@@ -14,10 +14,10 @@ describe('U8IntArraySerializer', () => {
 
     }
 
-    const der = deserialize(Buffer.from(serialize(Object.assign(new Test(), {
+    const der = deserialize(serialize(Object.assign(new Test(), {
       a: new Uint8Array([1, 2, 3]),
       b: new Uint8Array([4, 5, 6])
-    }))), Test)
+    })), Test)
 
     expect(der.a).toStrictEqual(new Uint8Array([1, 2, 3]))
     expect(der.b).toStrictEqual(new Uint8Array([4, 5, 6]))

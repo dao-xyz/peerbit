@@ -34,7 +34,7 @@ export interface Peer {
     orbitDB: OrbitDB,
     disconnect: () => Promise<void>
 }
-export const getPeer = async (signKey?: SignKeyWithMeta, publicKey?: PublicKey, sign?: (data: Uint8Array) => Promise<Uint8Array>): Promise<Peer> => {
+export const getPeer = async (publicKey?: PublicKey, sign?: (data: Uint8Array) => Promise<Uint8Array>): Promise<Peer> => {
     require('events').EventEmitter.prototype._maxListeners = 100;
     require('events').defaultMaxListeners = 100;
 
@@ -45,6 +45,7 @@ export const getPeer = async (signKey?: SignKeyWithMeta, publicKey?: PublicKey, 
     let node = await controller.api;
     /*     let node = await createIPFSNode('./ipfs/' + id + '/');
      */
+    // publicKey?: PublicKey, sign?: (data: Uint8Array) => Promise<Uint8Array>
     let orbitDB = await createOrbitDBInstance(node, id, publicKey, sign);
     return {
         id,
@@ -60,11 +61,11 @@ export const getPeer = async (signKey?: SignKeyWithMeta, publicKey?: PublicKey, 
         }
     };
 }
-export const getConnectedPeers = async (numberOf: number, signKey?: SignKeyWithMeta): Promise<Peer[]> => {
+export const getConnectedPeers = async (numberOf: number): Promise<Peer[]> => {
 
     const peersPromises: Promise<Peer>[] = [];
     for (let i = 0; i < numberOf; i++) {
-        peersPromises.push(getPeer(signKey));
+        peersPromises.push(getPeer());
     }
     const peers = await Promise.all(peersPromises);
     const connectPromises = [];

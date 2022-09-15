@@ -59,7 +59,7 @@ export class AccessControllers {
 
   static async resolve(orbitdb: { _ipfs: any }, address: string) {
     const { data } = await io.read(orbitdb._ipfs, address)
-    const ac: AccessController<any> = deserialize(Buffer.from(data), AccessController)
+    const ac: AccessController<any> = deserialize(data, AccessController)
     return ac;
   }
 }

@@ -22,6 +22,8 @@ import { v4 as uuid } from 'uuid';
 import { StoreLike } from './store-like'
 import { Ed25519PublicKeyData, PublicKey } from '@dao-xyz/identity'
 import { Ed25519PublicKey } from 'sodium-plus';
+import { joinUint8Arrays } from '@dao-xyz/io-utils';
+
 export type Constructor<T> = new (...args: any[]) => T;
 
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
@@ -618,8 +620,7 @@ export class Store<T> implements StoreLike<T> {
       for await (const chunk of this._ipfs.cat(snapshot["hash"])) {
         chunks.push(chunk)
       }
-      const buffer = Buffer.concat(chunks)
-      const snapshotData = deserialize(buffer, Snapshot);
+      const snapshotData = deserialize(joinUint8Arrays(chunks), Snapshot);
 
       // Fetch the entries
       // Timeout 1 sec to only load entries that are already fetched (in order to not get stuck at loading)

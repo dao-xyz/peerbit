@@ -6,6 +6,7 @@ import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { PublicKey } from '@dao-xyz/identity';
 import { Address, IInitializationOptions, StoreLike } from '@dao-xyz/orbit-db-store';
 import { Log } from '@dao-xyz/ipfs-log';
+import { v4 as uuid } from 'uuid';
 import Cache from '@dao-xyz/orbit-db-cache';
 
 @variant(0)
@@ -19,15 +20,19 @@ export class AccessStore implements StoreLike<Operation<any>> {
     identityGraphController: RelationAccessController;
 
     constructor(opts?: {
-        name: string;
-        rootTrust: PublicKey
+        name?: string;
+        rootTrust?: PublicKey,
+        regionAccessController?: RegionAccessController
     }) {
         if (opts) {
+            if (!opts.regionAccessController && !opts.rootTrust) {
+                throw new Error("Expecting either regionAccessController or rootTrust")
+            }
             this.access = new BinaryDocumentStore({
                 indexBy: 'id',
                 objectType: AccessData.name,
-                accessController: new RegionAccessController({
-                    name: opts.name + "_region",
+                accessController: opts.regionAccessController ? opts.regionAccessController : new RegionAccessController({
+                    name: (opts.name || uuid()) + "_region",
                     rootTrust: opts.rootTrust
                 })
             })

@@ -84,11 +84,8 @@ export class QueryStore<T> extends Store<T> {
             let query: QueryRequestV0 = undefined;
             try {
                 query = await decryptVerifyInto(msg.data, QueryRequestV0, this._oplog._encryption, {
-                    isTrusted: async (key) => {
+                    isTrusted: this.accessController.allowAll ? undefined : async (key) => {
                         const accessController = (this.accessController || this.fallbackAccessController) as ReadWriteAccessController<any>;
-                        if (accessController.allowAll) {
-                            return true;
-                        }
                         return (accessController).canRead(key)
                     }
                 })

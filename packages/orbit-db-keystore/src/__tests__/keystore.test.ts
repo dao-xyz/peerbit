@@ -362,7 +362,7 @@ describe('keystore', () => {
       /* 
       await keystore.close(); */
       /* const createdKey = await keystore.createKey('signing', SignKeyWithMeta, undefined, { overwrite: true })
-      const y = deserialize(Buffer.from(serialize(createdKey)), KeyWithMeta); */
+      const y = deserialize(serialize(createdKey), KeyWithMeta); */
       key = await keystore.getKeyByPath('signing', SignKeyWithMeta)
       /* await keystore.close();  */ //
       const x = 123;

@@ -150,7 +150,7 @@ class DocumentIndex {
             return value._value;
         }
         else {
-            value._value = (0, borsh_1.deserialize)(Buffer.from(value.data), this.clazz);
+            value._value = (0, borsh_1.deserialize)(value.data, this.clazz);
             return value._value;
         }
     }

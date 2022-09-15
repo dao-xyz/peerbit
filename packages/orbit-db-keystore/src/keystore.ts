@@ -417,7 +417,7 @@ export class Keystore {
         // not found
         return Promise.resolve(null)
       }
-      loadedKey = deserialize(Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer), KeyWithMeta);
+      loadedKey = deserialize(buffer, KeyWithMeta);
     }
 
     if (!loadedKey) {
@@ -453,11 +453,11 @@ export class Keystore {
       if (type) {
         prefix += '/' + type.type;
       }
-      const iterator = this.groupStore.iterator({ gte: prefix, lte: prefix + "\xFF", valueEncoding: 'view' });
+      const iterator = this.groupStore.iterator<any, Uint8Array>({ gte: prefix, lte: prefix + "\xFF", valueEncoding: 'view' });
       const ret: KeyWithMeta[] = [];
 
       for await (const [_key, value] of iterator) {
-        ret.push(deserialize(Buffer.from(value), KeyWithMeta));
+        ret.push(deserialize(value, KeyWithMeta));
       }
 
       return ret as T[];
@@ -550,7 +550,7 @@ export class Keystore {
     const sender = bytes.slice(bytes.length - X25519PublicKey_LENGTH * 2, bytes.length - X25519PublicKey_LENGTH)
     const reciever = bytes.slice(bytes.length - X25519PublicKey_LENGTH, bytes.length) */
 
-    const msg = deserialize(Buffer.from(bytes), EncryptedMessage);
+    const msg = deserialize(bytes, EncryptedMessage);
     return new Uint8Array(await crypto.crypto_box_open(Buffer.from(msg.cipher), Buffer.from(msg.nonce), key.secretKey, sender))
     /* }
     else {

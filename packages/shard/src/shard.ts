@@ -127,42 +127,7 @@ export class Shard<S extends Store<any>> extends SystemBinaryPayload {
         }
 
     }
-    /* get defaultStoreOptions(): IQueryStoreOptions<T> {
-        if (!this.peer) {
-            throw new Error("Not initialized")
-        }
-        return {
-            queryRegion: DEFAULT_QUERY_REGION,
-            replicationTopic: () => this.trust.address,
-            accessController: {
-                type: DYNAMIC_ACCESS_CONTROLER,
-                trustResolver: () => this.trust,
-                heapSizeLimit: v8 ? () => Math.min(v8.getHeapStatistics().total_heap_size, this.peer.options.heapSizeLimit) : () => this.peer.options.heapSizeLimit,
-                onMemoryExceeded: (_entry: Entry<T>) => {
-                    if (this._requestingReplicationPromise) {
-                        // Already replicating
-                        logger.info("Memory exceeded heap, but replication is already in process")
-                    }
-                    else {
-                        this.requestNewShard();
-                    }
-                },
-                allowAll: !this.peer.options.isServer, // because, if we are not a "server" we don't care about our own ACL, we just want to append everything we write (we never replicate others)
-                storeOptions: {
-                    subscribeToQueries: this.peer.options.isServer,
-                    replicate: this.peer.options.isServer,
-                    directory: this.peer.options.storeDirectory,
-                    queryRegion: DEFAULT_QUERY_REGION, // the acl has a DB that you also can query
-                    replicationTopic: () => this.trust.address,
-                }
-            } as any,
-            subscribeToQueries: this.peer.options.isServer,
-            replicate: this.peer.options.isServer,
-            directory: this.peer.options.storeDirectory,
-            typeMap: {},
-            nameResolver: (name: string) => this.getDBName(name)
-        }
-    } */
+
 
     async open(from: AnyPeer): Promise<Shard<S>> {
         // TODO: this is ugly but ok for now
@@ -172,7 +137,6 @@ export class Shard<S extends Store<any>> extends SystemBinaryPayload {
         //await this.close();
         this.peer = from;
         /*  this.storeOptions = this.defaultStoreOptions; */
-
 
 
 
@@ -304,7 +268,7 @@ export class Shard<S extends Store<any>> extends SystemBinaryPayload {
     static async subscribeForReplication(me: AnyPeer, trust: RegionAccessController, onReplication?: (shard: Shard<any>) => void): Promise<void> {
         await me.node.pubsub.subscribe(trust.replicationTopic, async (msg: any) => {
             try {
-                let shard = deserialize(Buffer.from(msg.data), Shard);
+                let shard = deserialize(msg.data, Shard);
                 if (me.supportJobs.has(shard.cid)) {
                     return; // Already replicated
                 }
@@ -399,9 +363,7 @@ export class Shard<S extends Store<any>> extends SystemBinaryPayload {
 
     }
     async load() {
-        if (!this.trust.store.initialized) { // Since the trust is shared between shards, we dont want to reinitialize already loaded trust
-            await this.trust.load();
-        }
+        await this.trust.load();
         await this.store.load();
     }
 
@@ -418,7 +380,6 @@ export class Shard<S extends Store<any>> extends SystemBinaryPayload {
         return this.cid;
     }
 
-
     static async loadFromCID<T extends Store<any>>(cid: string, node: IPFSInstance) {
         let arr = await node.cat(cid);
         for await (const obj of arr) {
@@ -427,13 +388,50 @@ export class Shard<S extends Store<any>> extends SystemBinaryPayload {
             return der;
         }
     }
-
-
-    /* static get recursiveStoreOption() {
-        return new BinaryDocumentStoreOptions<Shard<any>>({
-            objectType: Shard.name,
-            indexBy: 'cid'
-        })
-
-    } */
 }
+
+/* static get recursiveStoreOption() {
+       return new BinaryDocumentStoreOptions<Shard<any>>({
+           objectType: Shard.name,
+           indexBy: 'cid'
+       })
+
+   } */
+
+
+/* get defaultStoreOptions(): IQueryStoreOptions<T> {
+       if (!this.peer) {
+           throw new Error("Not initialized")
+       }
+       return {
+           queryRegion: DEFAULT_QUERY_REGION,
+           replicationTopic: () => this.trust.address,
+           accessController: {
+               type: DYNAMIC_ACCESS_CONTROLER,
+               trustResolver: () => this.trust,
+               heapSizeLimit: v8 ? () => Math.min(v8.getHeapStatistics().total_heap_size, this.peer.options.heapSizeLimit) : () => this.peer.options.heapSizeLimit,
+               onMemoryExceeded: (_entry: Entry<T>) => {
+                   if (this._requestingReplicationPromise) {
+                       // Already replicating
+                       logger.info("Memory exceeded heap, but replication is already in process")
+                   }
+                   else {
+                       this.requestNewShard();
+                   }
+               },
+               allowAll: !this.peer.options.isServer, // because, if we are not a "server" we don't care about our own ACL, we just want to append everything we write (we never replicate others)
+               storeOptions: {
+                   subscribeToQueries: this.peer.options.isServer,
+                   replicate: this.peer.options.isServer,
+                   directory: this.peer.options.storeDirectory,
+                   queryRegion: DEFAULT_QUERY_REGION, // the acl has a DB that you also can query
+                   replicationTopic: () => this.trust.address,
+               }
+           } as any,
+           subscribeToQueries: this.peer.options.isServer,
+           replicate: this.peer.options.isServer,
+           directory: this.peer.options.storeDirectory,
+           typeMap: {},
+           nameResolver: (name: string) => this.getDBName(name)
+       }
+   } */

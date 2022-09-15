@@ -56,7 +56,7 @@ export class MaybeSigned<T>  {
     _value: T
 
     getValue(constructor: Constructor<T>): T {
-        return deserialize(Buffer.from(this.data), constructor)
+        return deserialize(this.data, constructor)
     }
 
     async verify(): Promise<boolean> {

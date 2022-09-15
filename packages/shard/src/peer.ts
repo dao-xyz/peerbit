@@ -232,7 +232,7 @@ export class ShardPeerInfo {
         let peers: Map<string, PeerInfo> = new Map();
         const ids = new Set();
         await this._shard.peer.node.pubsub.subscribe(this.peerHealthTopic, (message: Message) => {
-            const p = deserialize(Buffer.from(message.data), PeerInfo);
+            const p = deserialize(message.data, PeerInfo);
             peers.set(p.key.toString(), p); // TODO check verify responses are valid
         })
 

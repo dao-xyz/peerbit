@@ -56,7 +56,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: 'hello'
         })
-        deserialize(Buffer.from(serialize(entry)), Entry)
+        deserialize(serialize(entry), Entry)
       })
     })
 

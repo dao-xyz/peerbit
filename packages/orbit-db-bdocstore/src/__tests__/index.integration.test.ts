@@ -43,8 +43,10 @@ const documentDbTestSetup = async (): Promise<{
   let [peer, observer] = await getConnectedPeers(2);
 
   // Create store
+  const controller = new SimpleRWAccessController();
+  controller.allowAll = true;
   let documentStoreCreator = await peer.orbitDB.open(new BinaryDocumentStore<Document>({
-    accessController: new SimpleRWAccessController(),
+    accessController: controller,
     queryRegion: 'world',
     indexBy: 'id',
     objectType: Document.name
@@ -52,6 +54,7 @@ const documentDbTestSetup = async (): Promise<{
   await documentStoreCreator.load();
   const observerStore = await BinaryDocumentStore.load(observer.orbitDB._ipfs, documentStoreCreator.address);
   observerStore.subscribeToQueries = false;
+  observerStore.accessController.allowAll = true;
   let _documentStoreObserver = await observer.orbitDB.open(observerStore, { typeMap, replicate: false })
   /*   
    */

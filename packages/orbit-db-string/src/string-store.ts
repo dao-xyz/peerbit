@@ -30,7 +30,7 @@ const findAllOccurrences = (str: string, substr: string): number[] => {
 const defaultOptions = (options: IStoreOptions<any>): any => {
   if (!options.encoding) {
     options.encoding = {
-      decoder: (bytes) => deserialize(Buffer.from(bytes), PayloadOperation),
+      decoder: (bytes) => deserialize(bytes, PayloadOperation),
       encoder: (data) => serialize(data)
     }
   }

@@ -70,7 +70,7 @@ export class BinaryDocumentStoreOptions<T extends BinaryPayload> extends BStoreO
 }
  */
 const _encoding = {
-    decoder: (bytes) => (0, borsh_1.deserialize)(Buffer.from(bytes), document_index_1.Operation),
+    decoder: (bytes) => (0, borsh_1.deserialize)(bytes, document_index_1.Operation),
     encoder: (data) => (0, borsh_1.serialize)(data)
 };
 class BinaryDocumentStore extends orbit_db_query_store_1.QueryStore /*  implements Typed */ {

@@ -329,7 +329,7 @@ export class OrbitDB {
   async _onMessage(onMessageTopic: string, data: Uint8Array, peer: string) {
     try {
 
-      const maybeEncryptedMessage = deserialize(Buffer.from(data), MaybeEncrypted) as MaybeEncrypted<MaybeSigned<Message>>
+      const maybeEncryptedMessage = deserialize(data, MaybeEncrypted) as MaybeEncrypted<MaybeSigned<Message>>
       const decrypted = await maybeEncryptedMessage.init(this.encryption).decrypt()
       const signedMessage = decrypted.getValue(MaybeSigned);
       await signedMessage.verify();
