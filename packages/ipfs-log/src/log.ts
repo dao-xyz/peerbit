@@ -1,4 +1,4 @@
-import { EncryptionTemplateMaybeEncrypted, Entry, EntryEncryptionTempate, LamportClock as Clock, LamportClock, MaybeX25519PublicKey } from '@dao-xyz/ipfs-log-entry';
+import { EncryptionTemplateMaybeEncrypted, Entry, LamportClock as Clock, LamportClock, MaybeX25519PublicKey } from '@dao-xyz/ipfs-log-entry';
 import { EntryIndex } from "./entry-index"
 import pMap from 'p-map'
 import { GSet } from './g-set'
@@ -286,13 +286,13 @@ export class Log<T> extends GSet {
     // Cache for checking if we've processed an entry already
     let traversed: { [key: string]: boolean } = {}
     // End result
-    const result = {}
+    const result: { [key: string]: Entry<T> } = {}
     let count = 0
     // Named function for getting an entry from the log
-    const getEntry = e => this.get(e)
+    const getEntry = (e: string) => this.get(e)
 
     // Add an entry to the stack and traversed nodes index
-    const addToStack = entry => {
+    const addToStack = (entry: Entry<T>) => {
       // If we've already processed the Entry<T>, don't add it to the stack
       if (!entry || traversed[entry.hash]) {
         return
@@ -306,7 +306,7 @@ export class Log<T> extends GSet {
       traversed[entry.hash] = true
     }
 
-    const addEntry = rootEntry => {
+    const addEntry = (rootEntry: Entry<T>) => {
       result[rootEntry.hash] = rootEntry
       traversed[rootEntry.hash] = true
       count++
@@ -336,44 +336,52 @@ export class Log<T> extends GSet {
     return result
   }
 
+  getPow2Refs(pointerCount = 1) {
+    return (isNext: (entry: string) => boolean) => {
+      const all = Object.values(this.traverse(this.heads, Math.max(pointerCount, this.heads.length)))
+
+      // If pointer count is 4, returns 2
+      // If pointer count is 8, returns 3 references
+      // If pointer count is 512, returns 9 references
+      // If pointer count is 2048, returns 11 references
+      const getEveryPow2 = (maxDistance) => {
+        const entries = new Set<Entry<T>>() // TODO set will not work since entry is not a string
+        for (let i = 1; i <= maxDistance; i *= 2) {
+          const index = Math.min(i - 1, all.length - 1)
+          entries.add(all[index])
+        }
+        return entries
+      }
+      const references = getEveryPow2(Math.min(pointerCount, all.length))
+
+      // Always include the last known reference
+      if (all.length < pointerCount && all[all.length - 1]) {
+        references.add(all[all.length - 1])// TODO can this yield a publicate?
+      }
+
+      // Create the next pointers from heads
+
+      // Delete the heads from the refs
+      const refs = Array.from(references).map(getHash).filter(isNext)
+      // Create the entry and add it to the internal cache
+      return refs;
+    }
+  }
+
   /**
    * Append an entry to the log.
    * @param {Entry} entry Entry to add
    * @return {Log} New Log containing the appended value
    */
-  async append(data: T, options: { pointerCount: number, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = { pointerCount: 1, pin: false }) {
+  async append(data: T, options: { refsResolver?: (isNext: (entry: string) => boolean) => string[], pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = { pin: false }) {
 
     // Update the clock (find the latest clock)
     const newTime = bigIntMax(this.clock.time, this.heads.reduce(maxClockTimeReducer, 0n)) + 1n
     this._clock = new Clock(this.clock.id, newTime)
-
-    const all = Object.values(this.traverse(this.heads, Math.max(options.pointerCount, this.heads.length)))
-
-    // If pointer count is 4, returns 2
-    // If pointer count is 8, returns 3 references
-    // If pointer count is 512, returns 9 references
-    // If pointer count is 2048, returns 11 references
-    const getEveryPow2 = (maxDistance) => {
-      const entries = new Set()
-      for (let i = 1; i <= maxDistance; i *= 2) {
-        const index = Math.min(i - 1, all.length - 1)
-        entries.add(all[index])
-      }
-      return entries
-    }
-    const references = getEveryPow2(Math.min(options.pointerCount, all.length))
-
-    // Always include the last known reference
-    if (all.length < options.pointerCount && all[all.length - 1]) {
-      references.add(all[all.length - 1])
-    }
-
-    // Create the next pointers from heads
     const nexts = Object.keys(this.heads.reverse().reduce(uniqueEntriesReducer, {}))
-    const isNext = e => !nexts.includes(e)
-    // Delete the heads from the refs
-    const refs = Array.from(references).map(getHash).filter(isNext)
-    // Create the entry and add it to the internal cache
+    const isNext = (e: string) => !nexts.includes(e)
+    const refs = (options.refsResolver || this.getPow2Refs())(isNext);
+
 
     if (options.reciever && !this._encryption) {
       throw new Error("Message is intended to be encrypted but no encryption methods are provided for the log")
@@ -545,9 +553,9 @@ export class Log<T> extends GSet {
     this._entryIndex.add(newItems)
 
     // Merge the heads
+    const nextsFromNewItems = Object.values(newItems).map(getNextPointers).reduce(flatMap, [])
     const notReferencedByNewItems = e => !nextsFromNewItems.find(a => a === e.hash)
     const notInCurrentNexts = e => !this._nextsIndex[e.hash]
-    const nextsFromNewItems = Object.values(newItems).map(getNextPointers).reduce(flatMap, [])
     const mergedHeads = Log.findHeads(Object.values(Object.assign({}, this._headsIndex, log._headsIndex)))
       .filter(notReferencedByNewItems)
       .filter(notInCurrentNexts)
@@ -790,7 +798,7 @@ export class Log<T> extends GSet {
     // Hashes for all entries for quick lookups
     const hashes = {}
     // Hashes of all next entries
-    let nexts: any[] = []
+    let nexts: string[] = []
 
     const addToIndex = (e: Entry<T>) => {
       if (e.next.length === 0) {
@@ -814,8 +822,8 @@ export class Log<T> extends GSet {
     entries.forEach(addToIndex)
 
     const addUniques = (res: Entry<T>[], entries: Entry<T>[], _idx, _arr) => res.concat(findUniques(entries, 'hash'))
-    const exists = e => hashes[e] === undefined
-    const findFromReverseIndex = e => reverseIndex[e]
+    const exists = (e: string) => hashes[e] === undefined
+    const findFromReverseIndex = (e: string) => reverseIndex[e]
 
     // Drop hashes that are not in the input entries
     const tails = nexts // For every hash in nexts:

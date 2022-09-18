@@ -1,5 +1,5 @@
 import { Log } from "@dao-xyz/ipfs-log";
-import { Address, JSON_ENCODER, load } from "@dao-xyz/orbit-db-store";
+import { Address, JSON_ENCODER, load, StoreLike } from "@dao-xyz/orbit-db-store";
 import { Store } from "@dao-xyz/orbit-db-store"
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry';
 import { AccessController } from "@dao-xyz/orbit-db-store";
@@ -50,7 +50,7 @@ export class KeyValueStore<T> extends Store<Operation<T>> {
         super(properties)
         this._index = new KeyValueIndex();
     }
-    async init(ipfs, key, sign, options): Promise<void> {
+    async init(ipfs, key, sign, options): Promise<StoreLike<Operation<T>>> {
         let opts = Object.assign({}, { Index: KeyValueIndex })
         if (options.encoding === undefined) Object.assign(options, { encoding: JSON_ENCODER })
         Object.assign(opts, options)

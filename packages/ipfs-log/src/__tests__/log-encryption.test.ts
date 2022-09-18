@@ -89,10 +89,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       it('join encrypted identities only with knowledge of id and clock', async () => {
-        await log1.append('helloA1', { reciever: { id: undefined, clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey }, pointerCount: 1 })
-        await log1.append('helloA2', { reciever: { id: undefined, clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey }, pointerCount: 1 })
-        await log2.append('helloB1', { reciever: { id: undefined, clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey }, pointerCount: 1 })
-        await log2.append('helloB2', { reciever: { id: undefined, clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey }, pointerCount: 1 })
+        await log1.append('helloA1', { reciever: { id: undefined, clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey } })
+        await log1.append('helloA2', { reciever: { id: undefined, clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey } })
+        await log2.append('helloB1', { reciever: { id: undefined, clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey } })
+        await log2.append('helloB2', { reciever: { id: undefined, clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey } })
 
         // Remove decrypted caches of the log2 values
         log2.values.forEach((value) => {

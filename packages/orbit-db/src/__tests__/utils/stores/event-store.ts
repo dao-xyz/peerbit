@@ -34,7 +34,7 @@ export class EventStore<T> extends Store<Operation<T>> {
 
     constructor(properties: {
         name?: string;
-        accessController: AccessController<Operation<T>>;
+        accessController?: AccessController<Operation<T>>;
     }) {
         super(properties)
         this._index = new EventIndex();

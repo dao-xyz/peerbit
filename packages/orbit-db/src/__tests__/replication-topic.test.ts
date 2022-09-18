@@ -3,6 +3,8 @@ const assert = require('assert')
 const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
 import { Entry } from '@dao-xyz/ipfs-log-entry'
+import { delay, waitFor, waitForAsync } from '@dao-xyz/time'
+import { EMIT_HEALTHCHECK_INTERVAL } from '../exchange-replication'
 
 import { OrbitDB } from '../orbit-db'
 import { SimpleAccessController } from './utils/access'
@@ -143,7 +145,7 @@ Object.keys(testAPIs).forEach(API => {
       })
     })
 
-    it('request heads if new database but same topic and connection', async () => {
+    it('multible databases shared replication topic', async () => {
 
       console.log("Waiting for peers to connect")
       // Set 'sync' flag on. It'll prevent creating a new local database and rather
@@ -158,18 +160,14 @@ Object.keys(testAPIs).forEach(API => {
       db1.add('hello')
       db2.add('world')
 
-      await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
 
       const options = { directory: dbPath2, sync: true }
       db3 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), { ...options, replicationTopic: replicationTopicFn })
       db4 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db2.address), { ...options, replicationTopic: replicationTopicFn })
 
-      expect(await orbitdb1._ipfs.pubsub.ls()).toStrictEqual([replicationTopic])
-      const ls2 = await orbitdb2._ipfs.pubsub.ls();
-      expect(ls2).toContain(replicationTopic)
-      expect(ls2).toHaveLength(2)
 
-      let finished = false
+      let finished =
+        false
       await new Promise((resolve, reject) => {
         let replicatedEventCount = 0
         db3.events.on('replicated', (address, length) => {
@@ -211,7 +209,26 @@ Object.keys(testAPIs).forEach(API => {
           }
         }, 100)
       })
+
+      await waitForAsync(async () => (await orbitdb1._ipfs.pubsub.ls()).length == 2)
+      expect(await orbitdb1._ipfs.pubsub.ls()).toContain(replicationTopic)
+      const ls2 = await orbitdb2._ipfs.pubsub.ls();
+      expect(ls2).toContain(replicationTopic)
+      expect(ls2).toHaveLength(2)
+
+      await delay(EMIT_HEALTHCHECK_INTERVAL);
+
+      const peersFrom1 = await orbitdb1.getPeers(replicationTopic, db1.address);
+      expect(peersFrom1).toHaveLength(1);
+      expect(peersFrom1[0].peerInfo.memoryLeft).toBeDefined();
+
+
+      const peersFrom2 = await orbitdb2.getPeers(replicationTopic, db1.address);
+      expect(peersFrom2).toHaveLength(1);
+      expect(peersFrom2[0].peerInfo.memoryLeft).toBeDefined();
+
     })
+
 
   })
 })

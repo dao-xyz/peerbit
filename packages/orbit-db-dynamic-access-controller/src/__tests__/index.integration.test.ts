@@ -9,6 +9,7 @@ import { AccessError } from "@dao-xyz/encryption-utils";
 import { CustomBinaryPayload } from "@dao-xyz/bpayload";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
 import { query } from "@dao-xyz/orbit-db-query-store";
+import { RegionAccessController } from "@dao-xyz/orbit-db-trust-web";
 
 @variant("document")
 class Document extends CustomBinaryPayload {
@@ -69,6 +70,40 @@ const loadTrust = async (peer: Peer, cid: string) => {
 } */
 describe('index', () => {
 
+    it('it can share region access controller across stores', async () => {
+        const [peer] = await getConnectedPeers(1)
+        const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
+            name: 'a',
+            indexBy: 'id',
+            objectType: Document.name,
+            accessController: new DynamicAccessController({
+                name: 'test-acl-a',
+                regionAccessController: new RegionAccessController({
+                    rootTrust: peer.orbitDB.identity,
+                    name: 'region',
+                })
+            })
+        }), { typeMap });
+
+        const l0b = await peer.orbitDB.open(new BinaryDocumentStore({
+            name: 'b',
+            indexBy: 'id',
+            objectType: Document.name,
+            accessController: new DynamicAccessController({
+                name: 'test-acl-b',
+                regionAccessController: new RegionAccessController({
+                    rootTrust: peer.orbitDB.identity,
+                    name: 'region',
+                })
+            })
+        }), { typeMap });
+
+        expect(l0a.accessController !== l0b.accessController)
+        expect((l0a.accessController as DynamicAccessController<any>).trust === (l0b.accessController as DynamicAccessController<any>).trust)
+
+        await disconnectPeers([peer])
+    })
+
     it('can write from trust web', async () => {
         const [peer, peer2] = await getConnectedPeers(2)
         const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
@@ -100,7 +135,6 @@ describe('index', () => {
 
         await waitFor(() => Object.keys(l0a._index._index).length === 2);
         await waitFor(() => Object.keys(l0b._index._index).length === 2);
-
 
         await disconnectPeers([peer, peer2])
     })

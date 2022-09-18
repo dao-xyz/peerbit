@@ -189,7 +189,6 @@ Object.keys(testAPIs).forEach(API => {
           assert.strictEqual(connections, 0)
         }
       }
-
     })
   })
 })

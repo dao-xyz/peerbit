@@ -15,7 +15,6 @@ export class AccessStore implements StoreLike<Operation<any>> {
     @field({ type: BinaryDocumentStore })
     access: BinaryDocumentStore<AccessData>;
 
-
     @field({ type: RelationAccessController })
     identityGraphController: RelationAccessController;
 
@@ -115,6 +114,12 @@ export class AccessStore implements StoreLike<Operation<any>> {
 
     async init(ipfs, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<Access>) {
         this.access._clazz = AccessData;
+
+        const store = await options.saveAndResolveStore(this);
+        if (store !== this) {
+            return store;
+        }
+
         /* await this.access.accessController.init(ipfs, publicKey, sign, options); */
         await this.identityGraphController.init(ipfs, publicKey, sign, options);
         return this.access.init(ipfs, publicKey, sign, options)

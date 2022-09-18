@@ -49,14 +49,9 @@ export class AccessRequest {
     }
 }
 
+export const DYNAMIC_ACCESS_CONTROLER = 'dynamic-access-controller';
 export type AccessVerifier = (identity: PublicKey) => Promise<boolean>
 
-
-
-
-export const DYNAMIC_ACCESS_CONTROLER = 'dynamic-access-controller';
-
-export type OnMemoryExceededCallback<T> = (payload: MaybeEncrypted<Payload<T>>, identity: PublicKey) => void;
 
 @variant([0, 3])
 export class DynamicAccessController<T> extends ReadWriteAccessController<T> implements StoreLike<Operation<T>> {
@@ -69,8 +64,8 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<T> imp
 
     _initializationPromise: Promise<void>;
     _orbitDB: OrbitDB
-    _heapSizeLimit?: () => number;
-    _onMemoryExceeded?: OnMemoryExceededCallback<T>;
+    /*     _heapSizeLimit?: () => number;
+        _onMemoryExceeded?: OnMemoryExceededCallback<T>; */
 
 
     constructor(properties?: {
@@ -187,17 +182,6 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<T> imp
 
         await this._initializationPromise;
 
-        if (this._heapSizeLimit) {
-            const usedHeapSize = v8?.getHeapStatistics().used_heap_size;
-            if (usedHeapSize > this._heapSizeLimit()) {
-                if (this._onMemoryExceeded)
-                    this._onMemoryExceeded(payload, identity);
-                return false;
-            }
-        }
-
-
-
         // Check whether it is trusted by trust web
         if (await this._db.trust.isTrusted(identity)) {
             return true;
@@ -207,6 +191,9 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<T> imp
         if (await this._db.canWrite(identity)) {
             return true; // Creator of entry does not own NFT or token, or publickey etc
         }
+
+
+
         return false;
     }
 
@@ -217,9 +204,10 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<T> imp
         await this._acldb.close();
     } */
 
-    async init(ipfs, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<Access>) {
+    async init(ipfs, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<Access>): Promise<DynamicAccessController<T>> {
         /*  this._trust = options.trust; */
-        return this._db.init(ipfs, publicKey, sign, options)
+        await this._db.init(ipfs, publicKey, sign, options)
+        return this;
     }
 
     close(): Promise<void> {

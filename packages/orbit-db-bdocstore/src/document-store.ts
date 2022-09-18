@@ -111,7 +111,7 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
     }
 
     this._index.init(this._clazz);
-    await super.init(ipfs, key, sign, { ...options, encoding: this.encoding, onUpdate: this._index.updateIndex.bind(this._index) })
+    return await super.init(ipfs, key, sign, { ...options, encoding: this.encoding, onUpdate: this._index.updateIndex.bind(this._index) })
   }
 
   get encoding(): IOOptions<any> {
@@ -319,16 +319,16 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
   public get size(): number {
     return Object.keys(this._index).length
   }
-  clone(newName: string): BinaryDocumentStore<T> {
-    return new BinaryDocumentStore<T>({
-      accessController: this.accessController.clone(newName),
-      indexBy: this.indexBy,
-      objectType: this.objectType,
-      name: newName,
-      queryRegion: this.queryRegion
-    })
-  }
-
+  /*   clone(newName: string): BinaryDocumentStore<T> {
+      return new BinaryDocumentStore<T>({
+        accessController: this.accessController.clone(newName),
+        indexBy: this.indexBy,
+        objectType: this.objectType,
+        name: newName,
+        queryRegion: this.queryRegion
+      })
+    }
+   */
   static async load<T>(ipfs: any, address: Address, options?: {
     timeout?: number;
   }): Promise<BinaryDocumentStore<T>> {

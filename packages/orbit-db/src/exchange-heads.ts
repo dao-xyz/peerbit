@@ -62,18 +62,21 @@ export const exchangeHeads = async (channel: any, topic: string, getStore: (addr
 
   // Send the heads if we have any
   const stores = getStore(topic);
-  for (const [storeAddress, store] of Object.entries(stores)) {
-    const heads = await store.getHeads();
-    logger.debug(`Send latest heads of '${topic}':\n`, JSON.stringify(heads.map(e => e.hash), null, 2))
-    if (heads && heads.length > 0) {
-      const message = new ExchangeHeadsMessage({ replicationTopic: topic, address: storeAddress, heads: heads });
-      const signedMessage = await new MaybeSigned({ data: serialize(message) }).sign(sign)
-      const decryptedMessage = new DecryptedThing({
-        data: serialize(signedMessage)
-      })
-      const serializedMessage = serialize(decryptedMessage);
-      await channel.send(serializedMessage)
+  if (stores) {
+    for (const [storeAddress, store] of Object.entries(stores)) {
+      const heads = await store.getHeads();
+      logger.debug(`Send latest heads of '${topic}':\n`, JSON.stringify(heads.map(e => e.hash), null, 2))
+      if (heads && heads.length > 0) {
+        const message = new ExchangeHeadsMessage({ replicationTopic: topic, address: storeAddress, heads: heads });
+        const signedMessage = await new MaybeSigned({ data: serialize(message) }).sign(sign)
+        const decryptedMessage = new DecryptedThing({
+          data: serialize(signedMessage)
+        }) // TODO encryption?
+        const serializedMessage = serialize(decryptedMessage);
+        await channel.send(serializedMessage)
+      }
     }
   }
+
 }
 

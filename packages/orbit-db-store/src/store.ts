@@ -3,7 +3,7 @@ import { EventEmitter } from 'events'
 import mapSeries from 'p-each-series'
 import { default as PQueue } from 'p-queue'
 import { Log, ISortFunction, RecycleOptions, LogOptions } from '@dao-xyz/ipfs-log'
-import { IOOptions, EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry'
+import { IOOptions, EncryptionTemplateMaybeEncrypted, Payload } from '@dao-xyz/ipfs-log-entry'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Replicator } from './replicator'
 import { ReplicationInfo } from './replication-info'
@@ -23,7 +23,13 @@ import { StoreLike } from './store-like'
 import { Ed25519PublicKeyData, PublicKey } from '@dao-xyz/identity'
 import { Ed25519PublicKey } from 'sodium-plus';
 import { joinUint8Arrays } from '@dao-xyz/io-utils';
+import isNode from 'is-node';
+import { NoSharding, Sharding } from './shard'
 
+let v8 = undefined;
+if (isNode) {
+  v8 = require('v8');
+}
 export type Constructor<T> = new (...args: any[]) => T;
 
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
@@ -55,7 +61,6 @@ export type StorePublicKeyEncryption = (replicationTopic: string) => PublicKeyEn
   }>,
   decrypt: (data: Uint8Array, senderPublicKey: X25519PublicKey, recieverPublicKey: X25519PublicKey) => Promise<Uint8Array | undefined>
 } */
-
 
 
 export interface IStoreOptions<T> {
@@ -97,9 +102,12 @@ export interface IStoreOptions<T> {
   recycle?: RecycleOptions,
   typeMap?: { [key: string]: Constructor<any> }
   onUpdate?: (oplog: Log<T>, entries?: Entry<T>[]) => void,
+  resourceOptions?: ResourceOptions<T>,
 
 
 }
+
+export type ResourceOptions<T> = { heapSizeLimit: () => number };
 
 
 export interface IInitializationOptions<T> extends IStoreOptions<T> {
@@ -109,13 +117,14 @@ export interface IInitializationOptions<T> extends IStoreOptions<T> {
     decrypt: (arr: Uint8Array, keyGroup: string, keyId: Uint8Array) => Promise<Uint8Array>
   }, */
 
-
+  requestNewShard: () => void,
+  saveAndResolveStore: (store: StoreLike<any>) => Promise<StoreLike<any>>,
   resolveCache: (address: Address) => Promise<Cache>,
   onClose?: (store: Store<T>) => void,
   onDrop?: (store: Store<T>) => void,
   onLoad?: (store: Store<T>) => void,
   onWrite?: (topic: string, address: string, _entry: Entry<T>, heads: Entry<T>[]) => void
-  onOpen?: (store: Store<any>) => Promise<void>
+  onOpen?: (store: Store<any>) => Promise<void>,
 }
 export const JSON_ENCODER = {
   encoder: (obj) => new Uint8Array(Buffer.from(stringify(obj))),
@@ -136,8 +145,17 @@ export const DefaultOptions: IInitializationOptions<any> = {
   onClose: undefined,
   onDrop: undefined,
   onLoad: undefined,
-  resolveCache: undefined
+  resolveCache: undefined,
+  resourceOptions: undefined,
+  requestNewShard: undefined,
+  saveAndResolveStore: async (store: Store<any>) => {
+    await store.save(store._ipfs, { pin: true })
+    return store;
+  }
 }
+
+
+
 
 @variant(0)
 export class Store<T> implements StoreLike<T> {
@@ -145,10 +163,14 @@ export class Store<T> implements StoreLike<T> {
   @field({ type: 'string' })
   name: string;
 
-  @field({ type: option(AccessController) })
-  accessController?: AccessController<T>
+  @field({ type: Sharding })
+  sharding: Sharding
 
-  fallbackAccessController?: AccessController<T>
+  @field({ type: option(AccessController) })
+  accessController?: AccessController<T> | (StoreLike<any> & AccessController<T>)
+
+  // An access controller that is note part of the store manifest, usefull for circular store -> access controller -> store structures
+  fallbackAccessController?: AccessController<T> | (StoreLike<any> & AccessController<T>)
 
   id: string;
   options: IInitializationOptions<T>;
@@ -163,6 +185,8 @@ export class Store<T> implements StoreLike<T> {
   queuePath: string;
   manifestPath: string;
   initialized: boolean;
+
+  _freezed: boolean;
   _ipfs: IPFS;
   _cache: Cache;
   _oplog: Log<T>;
@@ -177,11 +201,12 @@ export class Store<T> implements StoreLike<T> {
   
   */
 
-  constructor(properties?: { name?: string, accessController?: AccessController<T> }) {
+  constructor(properties?: { sharding?: Sharding, name?: string, accessController?: AccessController<T> | (StoreLike<any> & AccessController<T>) }) {
 
     if (properties) {
-      this.name = properties.name ? properties.name : uuid();
+      this.name = properties.name || uuid();
       this.accessController = properties.accessController;
+      this.sharding = properties.sharding || new NoSharding()
     }
 
 
@@ -198,15 +223,34 @@ export class Store<T> implements StoreLike<T> {
 
   }
 
-  async init(ipfs: IPFS, publicKey: PublicKey | Ed25519PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<T>): Promise<void> {
+  async init(ipfs: IPFS, publicKey: PublicKey | Ed25519PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<T>): Promise<StoreLike<T>> {
+
+    if (this.initialized) {
+      return;
+    }
+
+    // Set ipfs since we are to save the store
+    this._ipfs = ipfs
+
+    // Set the options (we will use the replicationTopic property after thiis)
+    const opts = Object.assign({}, DefaultOptions)
+    Object.assign(opts, options)
+    this.options = opts
+
+
+    const thisAlternative = await options.saveAndResolveStore(this);
+    if (thisAlternative !== this) {
+      return thisAlternative;
+    }
+
 
     this.publicKey = publicKey instanceof Ed25519PublicKey ? new Ed25519PublicKeyData({ publicKey }) : publicKey;
 
-    if (this.accessController?.init) {
-      await this.accessController.init(ipfs, this.publicKey, sign, options);
+    if ((this.accessController as StoreLike<any>)?.init) {
+      this.accessController = (await (this.accessController as StoreLike<any>).init(ipfs, this.publicKey, sign, options)) as (StoreLike<any> & AccessController<any>);
     }
 
-    const address = await this.save(ipfs, { pin: true });
+    const address = this.address; // will exist since options.saveAndResolveStore will save
 
     // Create IDs, names and paths
     this.id = address.toString();
@@ -220,15 +264,11 @@ export class Store<T> implements StoreLike<T> {
     this.manifestPath = path.join(this.id, '_manifest')
     this.sign = sign;
     this.fallbackAccessController = options.fallbackAccessController;
+    this.sharding.init(options.requestNewShard);
 
-    // Set the options
-    const opts = Object.assign({}, DefaultOptions)
-    Object.assign(opts, options)
-    this.options = opts
 
 
     // External dependencies
-    this._ipfs = ipfs
     this._cache = await options.resolveCache(this.address);
 
     // Create the operations log
@@ -374,6 +414,7 @@ export class Store<T> implements StoreLike<T> {
   get replicationTopic() {
     return Store.getReplicationTopic(this.address, this.options)
   }
+
   static getReplicationTopic(address: Address | string, options: IStoreOptions<any>) {
     return options.replicationTopic ? (typeof options.replicationTopic === 'string' ? options.replicationTopic : options.replicationTopic()) : (typeof address === 'string' ? address : address.toString());
   }
@@ -383,7 +424,32 @@ export class Store<T> implements StoreLike<T> {
     this._oplog.setPublicKey(publicKey)
   }
 
+  freeze() {
+    this._freezed = true;
+  }
+
+  checkMemory(): boolean {
+    if (!v8) {
+      return true; // Assume no memory checks
+    }
+    if (this.options.resourceOptions.heapSizeLimit) {
+      const usedHeapSize = v8?.getHeapStatistics().used_heap_size;
+      if (usedHeapSize > this.options.resourceOptions.heapSizeLimit()) {
+        if (!this.sharding) {
+          return true; // Assume no memory checks
+        }
+        this.sharding.onMemoryExceeded(this);
+
+        return false;
+      }
+    }
+    return true;
+  }
   async close() {
+    if (!this.initialized) {
+      return
+    };
+
     // Stop the Replicator
     await this._replicator?.stop()
 
@@ -408,8 +474,8 @@ export class Store<T> implements StoreLike<T> {
     }
 
     // Close store access controller
-    if (this.accessController.close) {
-      await this.accessController.close()
+    if ((this.accessController || this.fallbackAccessController).close) {
+      await (this.accessController || this.fallbackAccessController).close()
     }
 
     // Remove all event listeners
@@ -420,12 +486,13 @@ export class Store<T> implements StoreLike<T> {
     this._oplog = null
 
     // Database is now closed
+
+    this.initialized = false;
     return Promise.resolve()
   }
 
   /**
    * Drops a database and removes local data
-   * @return {[None]}
    */
   async drop() {
     if (!this._oplog && !this._cache) {
@@ -491,6 +558,16 @@ export class Store<T> implements StoreLike<T> {
   }
 
   async sync(heads: Entry<T>[]) {
+
+    if (this._freezed) {
+      return
+    }
+
+    const mem = await this.checkMemory();
+    if (!mem) {
+      return;
+    }
+
     this._stats.syncRequestsReceieved += 1
     logger.debug(`Sync request #${this._stats.syncRequestsReceieved} ${heads.length}`)
     if (heads.length === 0) {
@@ -670,6 +747,7 @@ export class Store<T> implements StoreLike<T> {
         if (this.options.syncLocal) {
           await this.syncLocal()
         }
+
         const entry = await this._oplog.append(data, {
           pointerCount: this.options.referenceCount, pin: options.pin, reciever: options.reciever
         })

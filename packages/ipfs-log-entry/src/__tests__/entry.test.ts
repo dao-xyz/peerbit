@@ -62,7 +62,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     describe('create', () => {
       it('creates a an empty entry', async () => {
-        const expectedHash = 'zdpuArZfc1JLrXSuvAtDAUZQMX6nApFivKwpPoug4k8Yj57EX'
+        const expectedHash = 'zdpuAmgPgov4ACUDbjKY67jZZp3HNbPUbb8YYfHBkE38VPFBp'
         const entry = await Entry.create({
           ipfs, publicKey: new Ed25519PublicKeyData({
             publicKey: signKey.publicKey
@@ -70,7 +70,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         })
         assert.strictEqual(entry.hash, expectedHash)
         assert.strictEqual(entry.id, 'A')
-        assert.deepStrictEqual(entry.clock.id, new Uint8Array(signKey.publicKey.getBuffer()))
+        assert.deepStrictEqual(entry.clock.id, new Uint8Array(new Ed25519PublicKeyData({
+          publicKey: signKey.publicKey
+        }).getBuffer()));
         assert.strictEqual(entry.clock.time, 0n)
         assert.strictEqual(entry.payload.value, 'hello')
         assert.strictEqual(entry.next.length, 0)
@@ -88,7 +90,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(entry.hash, expectedHash)
         assert.strictEqual(entry.payload.value, payload)
         assert.strictEqual(entry.id, 'A')
-        assert.deepStrictEqual(entry.clock.id, new Uint8Array(signKey.publicKey.getBuffer()))
+        assert.deepStrictEqual(entry.clock.id, new Uint8Array(new Ed25519PublicKeyData({
+          publicKey: signKey.publicKey
+        }).getBuffer()));
         assert.strictEqual(entry.clock.time, 0n)
         assert.strictEqual(entry.next.length, 0)
         assert.strictEqual(entry.refs.length, 0)
@@ -168,7 +172,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(entry2.payload.value, payload2)
         assert.strictEqual(entry2.next.length, 1)
         assert.strictEqual(entry2.hash, expectedHash)
-        assert.deepStrictEqual(entry2.clock.id, new Uint8Array(signKey.publicKey.getBuffer()))
+        assert.deepStrictEqual(entry2.clock.id, new Uint8Array(new Ed25519PublicKeyData({
+          publicKey: signKey.publicKey
+        }).getBuffer()));
         assert.strictEqual(entry2.clock.time, 1n)
       })
 

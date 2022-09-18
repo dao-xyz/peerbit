@@ -146,6 +146,8 @@ export class RequestKeyMessage<T extends KeyWithMeta> extends Message {
     @field({ type: RequestKeyCondition })
     condition: RequestKeyCondition<T>
 
+    // TODO peer info for sending repsonse directly
+
     constructor(props?: { encryptionKey: X25519PublicKey, condition: RequestKeyCondition<T> }) {
         super();
         if (props) {

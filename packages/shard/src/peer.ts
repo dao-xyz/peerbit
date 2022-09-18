@@ -1,25 +1,19 @@
-import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
+import { field, variant } from "@dao-xyz/borsh";
 import { Shard } from "./shard";
-import { Message } from 'ipfs-core-types/types/src/pubsub'
-import { delay } from "@dao-xyz/time";
-import { createHash } from "crypto";
-
-export const EMIT_HEALTHCHECK_INTERVAL = 5000;
-
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { v4 as uuid } from 'uuid';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import { RegionAccessController } from "@dao-xyz/orbit-db-trust-web";
 import isNode from 'is-node';
-import { arraysEqual } from "@dao-xyz/orbit-db-keystore";
-import { PublicKey } from "@dao-xyz/identity";
+
 let v8 = undefined;
 if (isNode) {
     v8 = require('v8');
 }
+
+export const EMIT_HEALTHCHECK_INTERVAL = 5000;
 export const ROOT_CHAIN_SHARD_SIZE = 100;
 const EXPECTED_PING_DELAY = 10 * 1000; // expected pubsub hello ping delay (two way)
-
 
 
 
@@ -99,11 +93,11 @@ export class AnyPeer {
                 }
             }
             let afterShardSave = undefined;
-            if (!shard.cid) {
-                afterShardSave = () => value.shards.set(shard.cid, shard);
+            if (!shard.address) {
+                afterShardSave = () => value.shards.set(shard.address.toString(), shard);
             }
             else {
-                value.shards.set(shard.cid, shard);
+                value.shards.set(shard.address.toString(), shard);
             }
 
             this.trustWebs.set(hashCode, value)
@@ -124,7 +118,7 @@ export class AnyPeer {
             let value = this.trustWebs.get(hashCode);
             if (!value)
                 return;
-            value.shards.delete(shard.cid)
+            value.shards.delete(shard.address.toString())
             if (value.shards.size === 0) {
                 await value.trust.close();
                 this.trustWebs.delete(hashCode);
@@ -138,22 +132,22 @@ export class AnyPeer {
 
     async disconnect(): Promise<void> {
         try {
-            /*   await this.orbitDB.disconnect(); */
-            /*  let p = (await this.node.pubsub.ls()).map(topic => this.node.pubsub.unsubscribe(topic))
-             await Promise.all(p); */
+
             for (const jobs of this.supportJobs.values()) {
                 jobs.controller.abort();
             }
             await this.orbitDB.disconnect();
 
-            /*            
-             */
+
         } catch (error) {
 
         }
     }
 }
 
+/*   await this.orbitDB.disconnect(); */
+/*  let p = (await this.node.pubsub.ls()).map(topic => this.node.pubsub.unsubscribe(topic))
+ await Promise.all(p); */
 
 
 @variant("check")
@@ -170,120 +164,6 @@ export class PeerCheck {
     }
 
 }
-
-@variant("info")
-export class PeerInfo {
-
-    @field({ type: PublicKey })
-    key: PublicKey
-
-    @field({ type: vec('string') })
-    addresses: string[] // address
-
-    @field({ type: 'u64' })
-    memoryLeft: bigint
-
-    constructor(props?: {
-        key: PublicKey,
-        addresses: string[],
-        memoryLeft: bigint
-    }) {
-        if (props) {
-            this.key = props.key;
-            this.addresses = props.addresses;
-            this.memoryLeft = props.memoryLeft;
-        }
-    }
-
-}
-
-export class ShardPeerInfo {
-    _shard: Shard<any>
-    constructor(shard: Shard<any>) {
-        this._shard = shard;
-    }
-
-
-    async getShardPeerInfo(): Promise<PeerInfo> {
-
-        return new PeerInfo({
-            key: this._shard.peer.orbitDB.identity,
-            addresses: (await this._shard.peer.node.id()).addresses.map(x => x.toString()),
-            memoryLeft: v8.getHeapStatistics().total_available_size//v8
-        })
-    }
-
-    /**
-     * 
-     * Start to "support" the shard
-     * by responding to peer healthcheck requests
-     */
-    async emitHealthcheck(): Promise<void> {
-        if (this._shard.peer.options.isServer) {
-            this._shard.peer.node.pubsub.publish(this.peerHealthTopic, serialize(await this.getShardPeerInfo()))
-        }
-    }
-    get peerHealthTopic(): string {
-        return this._shard.getQueryTopic('health')
-    }
-
-
-    async getPeers(): Promise<PeerInfo[]> {
-        let peers: Map<string, PeerInfo> = new Map();
-        const ids = new Set();
-        await this._shard.peer.node.pubsub.subscribe(this.peerHealthTopic, (message: Message) => {
-            const p = deserialize(message.data, PeerInfo);
-            peers.set(p.key.toString(), p); // TODO check verify responses are valid
-        })
-
-        await delay(EMIT_HEALTHCHECK_INTERVAL + 3000); // add some extra padding to make sure all nodes have emitted
-        return [...peers.values()]
-    }
-
-    /**
-     * An intentionally imperfect leader rotation routine
-     * @param slot, some time measure
-     * @returns 
-     */
-    async isLeader(slot: number): Promise<boolean> {
-        // Hash the time, and find the closest peer id to this hash
-        const h = (h: string) => createHash('sha1').update(h).digest('hex');
-        const slotHash = h(slot.toString())
-
-
-        const hashToPeer: Map<string, PeerInfo> = new Map();
-        const peers: PeerInfo[] = [...await this.getPeers()];
-        if (peers.length == 0) {
-            return false;
-        }
-
-        const peerHashed: string[] = [];
-        peers.forEach((peer) => {
-            const peerHash = h(peer.key.toString());
-            hashToPeer.set(peerHash, peer);
-            peerHashed.push(peerHash);
-        })
-        peerHashed.push(slotHash);
-        // TODO make more efficient
-        peerHashed.sort((a, b) => a.localeCompare(b)) // sort is needed, since "getPeers" order is not deterministic
-        let slotIndex = peerHashed.findIndex(x => x === slotHash);
-        // we only step forward 1 step (ignoring that step backward 1 could be 'closer')
-        // This does not matter, we only have to make sure all nodes running the code comes to somewhat the 
-        // same conclusion (are running the same leader selection algorithm)
-        let nextIndex = slotIndex + 1;
-        if (nextIndex >= peerHashed.length)
-            nextIndex = 0;
-        return hashToPeer.get(peerHashed[nextIndex]).key.equals(this._shard.peer.orbitDB.identity)
-
-        // better alg, 
-        // convert slot into hash, find most "probable peer" 
-    }
-
-    close(): Promise<void> {
-        return this._shard.peer.node.pubsub.unsubscribe(this._shard.getQueryTopic('peer'))
-    }
-}
-
 
 // we create a dummy shard chain just to be able to create a new Shard
 /* let chain = new ShardChain<any>({

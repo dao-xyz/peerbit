@@ -18,7 +18,7 @@ export declare class BinaryDocumentStore<T extends BinaryPayload> extends QueryS
         queryRegion?: string;
         clazz?: Constructor<T>;
     });
-    init(ipfs: any, key: any, sign: any, options: IInitializationOptions<T>): Promise<void>;
+    init(ipfs: any, key: any, sign: any, options: IInitializationOptions<T>): Promise<this>;
     get encoding(): IOOptions<any>;
     get(key: any, caseSensitive?: boolean): IndexedValue<T>[];
     _queryDocuments(filter: ((doc: IndexedValue<T>) => boolean)): IndexedValue<T>[];
@@ -28,7 +28,6 @@ export declare class BinaryDocumentStore<T extends BinaryPayload> extends QueryS
     putAll(docs: T[], options?: {}): Promise<unknown>;
     del(key: any, options?: {}): Promise<unknown>;
     get size(): number;
-    clone(newName: string): BinaryDocumentStore<T>;
     static load<T>(ipfs: any, address: Address, options?: {
         timeout?: number;
     }): Promise<BinaryDocumentStore<T>>;

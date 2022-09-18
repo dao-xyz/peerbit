@@ -1,9 +1,9 @@
 import { deserialize, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
 import { OrbitDB } from "@dao-xyz/orbit-db";
-import { IStoreOptions, Store } from '@dao-xyz/orbit-db-store'
+import { Address, IInitializationOptions, IStoreOptions, load, save, Store, StoreLike } from '@dao-xyz/orbit-db-store'
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import { delay, waitForAsync } from "@dao-xyz/time";
-import { AnyPeer, EMIT_HEALTHCHECK_INTERVAL, PeerInfo, ShardPeerInfo } from "./peer";
+import { AnyPeer } from "./peer";
 import { BinaryPayload, SystemBinaryPayload } from '@dao-xyz/bpayload';
 
 export const SHARD_INDEX = 0;
@@ -14,6 +14,10 @@ import { MemoryLimitExceededError } from "./errors";
 import Logger from 'logplease';
 import isNode from 'is-node';
 import { RegionAccessController } from "@dao-xyz/orbit-db-trust-web";
+import { PublicKey } from "@dao-xyz/identity";
+import { Log } from "@dao-xyz/ipfs-log";
+import { Entry } from "@dao-xyz/ipfs-log-entry";
+import esm from "@dao-xyz/orbit-db-cache";
 
 let v8 = undefined;
 if (isNode) {
@@ -53,15 +57,11 @@ export type Behaviours<St> = {
     newStore: StoreBuilder<St>
 }
 
-export class ResourceRequirements { }
-
-@variant(0)
-export class NoResourceRequirements extends ResourceRequirements { }
 
 /* @variant([0, 0]) */
 
 @variant(2)
-export class Shard<S extends Store<any>> extends SystemBinaryPayload {
+export class Shard<S extends Store<any>> extends SystemBinaryPayload implements StoreLike<S> {
 
     @field({ type: 'string' })
     id: string
@@ -72,40 +72,33 @@ export class Shard<S extends Store<any>> extends SystemBinaryPayload {
     @field({ type: RegionAccessController })
     trust: RegionAccessController; // Infrastructure trust region, i.e. what signers can we trust for data for
 
-    @field({ type: ResourceRequirements })
-    resourceRequirements: ResourceRequirements
-
     @field({ type: Store })
     store: S; // the actual data dbs, all governed by the shard
 
     @field({ type: option('string') })
-    parentShardCID: string | undefined; // one of the shards in the parent cluster
+    parentAddress?: string; // one of the shards in the parent cluster
 
     @field({ type: 'u64' })
     shardIndex: bigint // 0, 1, 2... this index will change the IFPS hash of this shard serialized. This means we can iterate shards without actually saving them in a DB
 
-    shardPeerInfo: ShardPeerInfo | undefined;
 
-    peer: AnyPeer;
+    /*     peer: AnyPeer; */
 
-    cid: string;
+    address: Address;
 
     /* storeOptions: IQueryStoreOptions<T, T, any>
- */
+    */
     constructor(props?: {
         id: string,
         cluster: string
         store: S
-        resourceRequirements: ResourceRequirements
-        address: string
-        parentShardCID: string
+        parentAddress: Address | string
         trust: RegionAccessController
         shardIndex: bigint
     } | {
         id: string,
         cluster: string
         store: S
-        resourceRequirements: ResourceRequirements
         shardIndex?: bigint
         trust?: RegionAccessController
 
@@ -117,9 +110,9 @@ export class Shard<S extends Store<any>> extends SystemBinaryPayload {
             this.id = props.id;
             this.cluster = props.cluster;
             this.store = props.store;
-            this.resourceRequirements = props.resourceRequirements;
             this.shardIndex = props.shardIndex;
             this.trust = props.trust;
+            this.parentAddress = props["parentAddress"]?.toString();
         }
 
         if (!this.shardIndex) {
@@ -128,51 +121,124 @@ export class Shard<S extends Store<any>> extends SystemBinaryPayload {
 
     }
 
+    async init(ipfs: IPFSInstance<{}>, key: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<any>): Promise<void> {
+        await this.trust.init(ipfs, key, sign, options);
+        await this.store.init(ipfs, key, sign, options);
 
-    async open(from: AnyPeer): Promise<Shard<S>> {
         // TODO: this is ugly but ok for now
-        if (this.peer && this.peer !== from) {
-            throw new Error("Reinitialization with different peer might lead to unexpected behaviours. Create a new instance instead")
-        }
+        /*   if (this.peer && this.peer !== from) {
+              throw new Error("Reinitialization with different peer might lead to unexpected behaviours. Create a new instance instead")
+          } */
         //await this.close();
-        this.peer = from;
-        /*  this.storeOptions = this.defaultStoreOptions; */
-
-
-
-        if (!this.trust) {
-            this.trust = new RegionAccessController({
-                rootTrust: from.orbitDB.identity
-            })
-            await this.peer.orbitDB.open(this.trust) // this.storeOptions
-
-        }
+        /*   this.peer = from;
 
         const result = await this.peer.getCachedTrustOrSet(this.trust, this);
-        this.trust = result.trust;
+        this.trust = result.trust;*/
 
-        if (!this.shardPeerInfo) {
-            this.shardPeerInfo = new ShardPeerInfo(this);
-        }
+        /*    if (!this.shardPeerInfo) {
+               this.shardPeerInfo = new ShardPeerInfo(this);
+           }
+    */
 
+        /* await this.peer.orbitDB.open(this.store); */ // this.storeOptions
 
-        await this.peer.orbitDB.open(this.store); // this.storeOptions
-
-        if (!this.cid) {
-            // only needed for write, not needed to be loaded automatically
-            await this.save(from.node);
-        }
-
-        if (result.afterShardSave) {
-            result.afterShardSave();
-        }
-        return this;
+        /*  if (this.trust.afterShardSave) {
+             this.trust.afterShardSave();
+         }
+  */
+        return;
     }
 
-    async close() {
+    drop(): Promise<void> {
+        return this.store.drop();
+    }
+    sync(heads: Entry<S>[]): Promise<void> {
+        return this.sync(heads);
+    }
+    get replicationTopic(): string {
+        return this.store.replicationTopic;
+    }
+    get events(): import("events") {
+        return this.store.events;
+    }
 
-        await this.peer?.removeAndCloseCachedTrust(this.trust, this);
-        await this.shardPeerInfo?.close();
+    get oplog(): Log<S> {
+        return this.store.oplog;
+    }
+    get cache(): esm {
+        return this.store.cache;
+    }
+    get replicate(): boolean {
+        return this.store.replicate;
+    }
+    getHeads(): Promise<Entry<S>[]> {
+        return this.store.getHeads();
+    }
+    get name(): string {
+        return this.store.name;
+    }
+
+    async load() {
+        await this.trust.load();
+        await this.store.load();
+    }
+
+
+    async save(ipfs: any, options?: {
+        format?: string;
+        pin?: boolean;
+        timeout?: number;
+    }): Promise<Address> {
+        const address = await save(ipfs, this, options)
+        this.address = address;
+        return address;
+    }
+
+    static load(ipfs: any, address: Address, options?: {
+        timeout?: number;
+    }) {
+        return load(ipfs, address, Shard, options)
+    }
+
+
+    /*  async open(from: AnyPeer): Promise<Shard<S>> {
+         // TODO: this is ugly but ok for now
+         if (this.peer && this.peer !== from) {
+             throw new Error("Reinitialization with different peer might lead to unexpected behaviours. Create a new instance instead")
+         }
+         //await this.close();
+         this.peer = from;
+ 
+ 
+ 
+         if (!this.trust) {
+             this.trust = new RegionAccessController({
+                 rootTrust: from.orbitDB.identity
+             })
+             await this.peer.orbitDB.open(this.trust) // this.storeOptions
+ 
+         }
+ 
+         const result = await this.peer.getCachedTrustOrSet(this.trust, this);
+         this.trust = result.trust;
+ 
+         if (!this.shardPeerInfo) {
+             this.shardPeerInfo = new ShardPeerInfo(this);
+         }
+ 
+ 
+         await this.peer.orbitDB.open(this.store); // this.storeOptions
+ 
+         if (result.afterShardSave) {
+             result.afterShardSave();
+         }
+         return this;
+     }
+  */
+    async close() {
+        /* 
+                await this.peer?.removeAndCloseCachedTrust(this.trust, this);
+                await this.shardPeerInfo?.close(); */
         await this.store.close();
     }
 
@@ -188,105 +254,96 @@ export class Shard<S extends Store<any>> extends SystemBinaryPayload {
         // 2. Dials parents 
 
         let parentShard: Shard<any> | undefined = undefined;
-        if (this.parentShardCID) {
-            parentShard = await Shard.loadFromCID(this.parentShardCID, this.peer.node); //WE CANT LOAD TS IF NOT CONNECTED
+        if (this.parentAddress) {
+            parentShard = await Shard.load(this.peer.node, Address.parse(this.parentAddress)); //WE CANT LOAD TS IF NOT CONNECTED
             // TODO:  fix to work if parent is a cluster
             // await parentShard.open(this.peer);
         }
-
-        const peerIsSupportingParent = !!this.parentShardCID && this.peer.supportJobs.has(this.parentShardCID)
-
-        // TODO make more efficient (this.peer.supportJobs.values()...)
-        const connectToParentShard = !peerIsSupportingParent && !!parentShard && ![...this.peer.supportJobs.values()].find((job) => job.connectingToParentShardCID == this.parentShardCID)
-        const controller = new AbortController();
-        const newJob = {
-            shard: this.shardPeerInfo._shard,
-            controller,
-            connectingToParentShardCID: connectToParentShard ? this.parentShardCID : undefined
-        }
-
-        this.peer.supportJobs.set(this.shardPeerInfo._shard.cid, newJob);
-
-        const task = async () => {
-            await this.shardPeerInfo.emitHealthcheck();
-
-            // Connect to parent shard, and connects to its peers 
-            if (connectToParentShard) {
-                let parentPeers = await parentShard.shardPeerInfo.getPeers()
-                if (parentPeers.length == 0) {
-                    console.error("Failed to swarm connect to parent");
-                    //throw new Error("Expected to find at least 1 parent peer, got 0")
+        /*
+        
+                const peerIsSupportingParent = !!this.parentAddress && this.peer.supportJobs.has(this.parentAddress)
+        
+                // TODO make more efficient (this.peer.supportJobs.values()...)
+                const connectToParentShard = !peerIsSupportingParent && !!parentShard && ![...this.peer.supportJobs.values()].find((job) => job.connectingToParentShardCID == this.parentAddress)
+                const controller = new AbortController();
+                const newJob = {
+                    shard: this.shardPeerInfo._shard,
+                    controller,
+                    connectingToParentShardCID: connectToParentShard ? this.parentAddress : undefined
                 }
-                let myAddresses = (await this.peer.node.id()).addresses.map(x => x.toString());
-                if (parentPeers?.length > 0) {
-                    let thisAddressSet = new Set(myAddresses);
-                    const isSelfDial = (peer: PeerInfo) => {
-                        for (const addr of peer.addresses) {
-                            if (thisAddressSet.has(addr))
-                                return true;
+        
+                 this.peer.supportJobs.set(this.shardPeerInfo._shard.address.toString(), newJob);
+        
+                const task = async () => {
+                    await this.shardPeerInfo.emitHealthcheck();
+        
+                    // Connect to parent shard, and connects to its peers 
+                    if (connectToParentShard) {
+                        let parentPeers = await parentShard.shardPeerInfo.getPeers()
+                        if (parentPeers.length == 0) {
+                            console.error("Failed to swarm connect to parent");
+                            //throw new Error("Expected to find at least 1 parent peer, got 0")
                         }
-                        return false;
-                    }
-                    const mySwarmAddresses = new Set((await this.peer.node.swarm.addrs()).map(x => x.addrs).flat(1).map(x => x.toString()));
-                    const isAlreadyDialed = (peer: PeerInfo) => {
-                        for (const addr of peer.addresses) {
-                            if (mySwarmAddresses.has(addr))
-                                return true;
+                        let myAddresses = (await this.peer.node.id()).addresses.map(x => x.toString());
+                        if (parentPeers?.length > 0) {
+                            let thisAddressSet = new Set(myAddresses);
+                            const isSelfDial = (peer: PeerInfo) => {
+                                for (const addr of peer.addresses) {
+                                    if (thisAddressSet.has(addr))
+                                        return true;
+                                }
+                                return false;
+                            }
+                            const mySwarmAddresses = new Set((await this.peer.node.swarm.addrs()).map(x => x.addrs).flat(1).map(x => x.toString()));
+                            const isAlreadyDialed = (peer: PeerInfo) => {
+                                for (const addr of peer.addresses) {
+                                    if (mySwarmAddresses.has(addr))
+                                        return true;
+                                }
+                                return false;
+                            }
+        
+                            // Connect to all parent peers, we could do better (cherry pick), but ok for now
+                            const connectPromises = parentPeers.filter(peer => !isSelfDial(peer) && !isAlreadyDialed(peer)).map((peer) => this.peer.node.swarm.connect(peer.addresses[0]));
+                            await Promise.all(connectPromises)
                         }
-                        return false;
                     }
-
-                    // Connect to all parent peers, we could do better (cherry pick), but ok for now
-                    const connectPromises = parentPeers.filter(peer => !isSelfDial(peer) && !isAlreadyDialed(peer)).map((peer) => this.peer.node.swarm.connect(peer.addresses[0]));
-                    await Promise.all(connectPromises)
+                } 
+        
+                const cron = async () => {
+                    let stop = false;
+                    let promise: Promise<any> = undefined;
+                    let delayStopper: () => void | undefined = undefined;
+                    controller.signal.addEventListener("abort", async () => {
+                        stop = true;
+                        if (delayStopper)
+                            delayStopper();
+                        await promise;
+                    });
+                    while (this.peer.node.isOnline() && !stop) { // 
+                        promise = task();
+                        await promise;
+                        await delay(EMIT_HEALTHCHECK_INTERVAL, { stopperCallback: (stopper) => { delayStopper = stopper } }); // some delay
+                    }
                 }
-            }
-        }
-
-        const cron = async () => {
-            let stop = false;
-            let promise: Promise<any> = undefined;
-            let delayStopper: () => void | undefined = undefined;
-            controller.signal.addEventListener("abort", async () => {
-                stop = true;
-                if (delayStopper)
-                    delayStopper();
-                await promise;
-            });
-            while (this.peer.node.isOnline() && !stop) { // 
-                promise = task();
-                await promise;
-                await delay(EMIT_HEALTHCHECK_INTERVAL, { stopperCallback: (stopper) => { delayStopper = stopper } }); // some delay
-            }
-        }
-        cron();
+                cron();*/
     }
     /* public async stopSupportPeer() {
         // ??? 
     }
  */
-    static async subscribeForReplication(me: AnyPeer, trust: RegionAccessController, onReplication?: (shard: Shard<any>) => void): Promise<void> {
+    /* static async subscribeForReplication(me: AnyPeer, trust: RegionAccessController, onReplication?: (shard: Shard<any>) => void): Promise<void> {
         await me.node.pubsub.subscribe(trust.replicationTopic, async (msg: any) => {
             try {
                 let shard = deserialize(msg.data, Shard);
-                if (me.supportJobs.has(shard.cid)) {
+                if (me.supportJobs.has(shard.address.toString())) {
                     return; // Already replicated
                 }
 
-                // check if is trusted,
-
-                /*    
-                WE CAN NOT HAVE THIS CHECK; BECAUSE WE CAN NOT KNOW WHETHER WE HAVE LOADED THE TRUST DB FULLY (WE NEED TO WAIT TM)
-                
-                if (!shard.trust.isTrusted(PublicKey.from(this.orbitDB.identity))) { 
-                      //if not no point replicating
-                      console.log(`Can not replicate since not trusted`)
-                      return;
-                  }
-                 */
+               
                 const trustResult = (await me.getCachedTrustOrSet(trust, shard));
                 shard.trust = trustResult.trust  // this is necessary, else the shard with initialize with a new trust region
-                await shard.replicate(me);
+                await shard.support(me);
                 if (trustResult.afterShardSave) {
                     trustResult.afterShardSave();
                 }
@@ -303,28 +360,51 @@ export class Shard<S extends Store<any>> extends SystemBinaryPayload {
                 throw error;
             }
         })
-    }
+    } */
 
-    _requestingReplicationPromise: Promise<void>;
-    async requestReplicate(shardIndex?: bigint): Promise<void> {
-        let shard = this as Shard<S>;
-        if (shardIndex !== undefined) {
-            shard = await this.createShardWithIndex(shardIndex);
-        }
+    /*  _requestingReplicationPromise: Promise<void>;
+     async requestReplicate(shardIndex?: bigint): Promise<void> {
+         let shard = this as Shard<S>;
+         if (shardIndex !== undefined) {
+             shard = await this.createShardWithIndex(shardIndex);
+         }
+ 
+         await this._requestingReplicationPromise;
+         this._requestingReplicationPromise = new Promise(async (resolve, reject) => {
+             const currentPeersCount = async () => (await this.shardPeerInfo.getPeers()).length
+             let ser = serialize(shard);
+             await this.peer.node.pubsub.publish(this.trust.replicationTopic, ser);
+             await waitForAsync(async () => await currentPeersCount() >= MIN_REPLICATION_AMOUNT, {
+                 timeout: 60000,
+                 delayInterval: 50
+             })
+             resolve();
+         })
+         await this._requestingReplicationPromise;
+ 
+     } */
 
-        await this._requestingReplicationPromise;
-        this._requestingReplicationPromise = new Promise(async (resolve, reject) => {
-            const currentPeersCount = async () => (await this.shardPeerInfo.getPeers()).length
-            let ser = serialize(shard);
-            await this.peer.node.pubsub.publish(this.trust.replicationTopic, ser);
-            await waitForAsync(async () => await currentPeersCount() >= MIN_REPLICATION_AMOUNT, {
-                timeout: 60000,
-                delayInterval: 50
-            })
-            resolve();
-        })
-        await this._requestingReplicationPromise;
 
+    /*  async support(peer: AnyPeer) {
+         /// Shard counter might be wrong because someone else could request sharding at the same time
+         if (!v8) {
+             throw new Error("Can not replicate outside a Node environment");
+         }
+         // check if enough memory 
+         const usedHeap = v8.getHeapStatistics().used_heap_size;
+         if (usedHeap > peer.options.heapSizeLimit) {
+             throw new MemoryLimitExceededError(`Can not replicate with peer heap size limit: ${peer.options.heapSizeLimit} when used heap is: ${usedHeap}`);
+         }
+ 
+         await peer.orbitDB.open(this);
+         await this.startSupportPeer();
+ 
+     }
+  */
+
+
+    getDBName(name: string): string {
+        return (this.parentAddress ? this.parentAddress : '') + '-' + this.id + '-' + this.shardIndex + "-" + name;
     }
 
     async requestNewShard(): Promise<void> {
@@ -337,57 +417,17 @@ export class Shard<S extends Store<any>> extends SystemBinaryPayload {
             shardIndex,
             id: this.id,
             cluster: this.cluster,
-            parentShardCID: this.parentShardCID,
+            parentAddress: this.parentAddress,
             store: this.store.clone(this.cluster + shardIndex) as S,
             resourceRequirements: this.resourceRequirements,
             trust: this.trust,
         })
-        await shard.open(peer);
+        await peer.orbitDB.open
         return shard;
     }
 
-    async replicate(peer: AnyPeer) {
-        /// Shard counter might be wrong because someone else could request sharding at the same time
-        if (!v8) {
-            throw new Error("Can not replicate outside a Node environment");
-        }
-        // check if enough memory 
-        const usedHeap = v8.getHeapStatistics().used_heap_size;
-        if (usedHeap > peer.options.heapSizeLimit) {
-            throw new MemoryLimitExceededError(`Can not replicate with peer heap size limit: ${peer.options.heapSizeLimit} when used heap is: ${usedHeap}`);
-        }
 
-        await this.open(peer);
-        /*     await this.load(); */
-        await this.startSupportPeer();
 
-    }
-    async load() {
-        await this.trust.load();
-        await this.store.load();
-    }
-
-    getDBName(name: string): string {
-        return (this.parentShardCID ? this.parentShardCID : '') + '-' + this.id + '-' + this.shardIndex + "-" + name;
-    }
-
-    async save(node: IPFSInstance): Promise<string> {
-
-        let arr = serialize(this);
-        let addResult = await node.add(arr)
-        let pinResult = await node.pin.add(addResult.cid)
-        this.cid = pinResult.toString();
-        return this.cid;
-    }
-
-    static async loadFromCID<T extends Store<any>>(cid: string, node: IPFSInstance) {
-        let arr = await node.cat(cid);
-        for await (const obj of arr) {
-            let der = deserialize<Shard<T>>(Buffer.from(obj), Shard);
-            der.cid = cid;
-            return der;
-        }
-    }
 }
 
 /* static get recursiveStoreOption() {

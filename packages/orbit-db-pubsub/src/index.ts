@@ -125,17 +125,8 @@ export class PubSub {
     return undefined
   }
 
-  publish(topic: string, payload: Buffer | Uint8Array, options = {}) {
-    if (this._subscriptions[topic] && this._ipfs.pubsub) {
-      /*       let payload;
-       */      //Buffer should be already serialized. Everything else will get serialized as json if not buffer, string.
-      /*  if (Buffer.isBuffer(message) || typeof message === "string") {
-         payload = message;
-       } else {
-         payload = JSON.stringify(message);
-       } */
-      this._ipfs.pubsub.publish(topic, Buffer.isBuffer(payload) ? payload : Buffer.from(payload), options)
-    }
+  async publish(topic: string, payload: Buffer | Uint8Array, options = {}) {
+    this._ipfs.pubsub.publish(topic, Buffer.isBuffer(payload) ? payload : Buffer.from(payload), options)
   }
 
   async disconnect() {

@@ -9,6 +9,7 @@ import { Payload } from "@dao-xyz/ipfs-log-entry"
 import { IInitializationOptions } from './store';
 import { IPFS } from 'ipfs-core-types/src';
 import { PublicKey } from '@dao-xyz/identity';
+import { Initiable } from './store-like';
 /**
  * Interface for OrbitDB Access Controllers
  *
@@ -16,7 +17,7 @@ import { PublicKey } from '@dao-xyz/identity';
  * the methods defined by the interface here.
  */
 
-export class AccessController<T> implements CanAppendAccessController<T> {
+export class AccessController<T> implements CanAppendAccessController<T>, Initiable<T> {
 
   _allowAll: boolean = false;
   get allowAll(): boolean {
@@ -26,8 +27,10 @@ export class AccessController<T> implements CanAppendAccessController<T> {
   set allowAll(value: boolean) {
     this._allowAll = value;
   }
+  async init(ipfs: IPFS, key: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<any>): Promise<AccessController<T>> {
+    return this;
+  }
 
-  init?(ipfs: IPFS, key: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<any>): Promise<void>;
   async canAppend(payload: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicKey>): Promise<boolean> {
     throw new Error("Not implemented")
   }

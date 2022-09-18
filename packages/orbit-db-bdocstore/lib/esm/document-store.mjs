@@ -93,7 +93,7 @@ export class BinaryDocumentStore extends QueryStore /*  implements Typed */ {
             }
         }
         this._index.init(this._clazz);
-        await super.init(ipfs, key, sign, { ...options, encoding: this.encoding, onUpdate: this._index.updateIndex.bind(this._index) });
+        return await super.init(ipfs, key, sign, { ...options, encoding: this.encoding, onUpdate: this._index.updateIndex.bind(this._index) });
     }
     get encoding() {
         return _encoding;
@@ -272,15 +272,16 @@ export class BinaryDocumentStore extends QueryStore /*  implements Typed */ {
     get size() {
         return Object.keys(this._index).length;
     }
-    clone(newName) {
-        return new BinaryDocumentStore({
-            accessController: this.accessController.clone(newName),
-            indexBy: this.indexBy,
-            objectType: this.objectType,
-            name: newName,
-            queryRegion: this.queryRegion
-        });
-    }
+    /*   clone(newName: string): BinaryDocumentStore<T> {
+        return new BinaryDocumentStore<T>({
+          accessController: this.accessController.clone(newName),
+          indexBy: this.indexBy,
+          objectType: this.objectType,
+          name: newName,
+          queryRegion: this.queryRegion
+        })
+      }
+     */
     static async load(ipfs, address, options) {
         const instance = await load(ipfs, address, Store, options);
         if (instance instanceof BinaryDocumentStore === false) {

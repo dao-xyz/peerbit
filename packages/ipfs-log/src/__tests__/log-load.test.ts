@@ -672,22 +672,22 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log = new Log(ipfs, signKey2.publicKey, (data) => Keystore.sign(data, signKey2), { logId: 'X' })
 
         for (let i = 1; i <= 5; i++) {
-          await logA.append('entryA' + i, { pointerCount: nextPointerAmount })
+          await logA.append('entryA' + i, { refsResolver: logA.getPow2Refs(nextPointerAmount) })
         }
 
         for (let i = 1; i <= 5; i++) {
-          await logB.append('entryB' + i, { pointerCount: nextPointerAmount })
+          await logB.append('entryB' + i, { refsResolver: logB.getPow2Refs(nextPointerAmount) })
         }
 
         await log3.join(logA)
         await log3.join(logB)
 
         for (let i = 6; i <= 10; i++) {
-          await logA.append('entryA' + i, { pointerCount: nextPointerAmount })
+          await logA.append('entryA' + i, { refsResolver: logA.getPow2Refs(nextPointerAmount) })
         }
 
         await log.join(log3)
-        await log.append('entryC0', { pointerCount: nextPointerAmount })
+        await log.append('entryC0', { refsResolver: log.getPow2Refs(nextPointerAmount) })
 
         await log.join(logA)
 
@@ -736,22 +736,22 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log = new Log(ipfs, signKey2.publicKey, (data) => Keystore.sign(data, signKey2), { logId: 'X' })
 
         for (let i = 1; i <= 5; i++) {
-          await logA.append('entryA' + i, { pointerCount: nextPointersAmount })
+          await logA.append('entryA' + i, { refsResolver: logA.getPow2Refs(nextPointersAmount) })
         }
 
         for (let i = 1; i <= 5; i++) {
-          await logB.append('entryB' + i, { pointerCount: nextPointersAmount })
+          await logB.append('entryB' + i, { refsResolver: logB.getPow2Refs(nextPointersAmount) })
         }
 
         await log3.join(logA)
         await log3.join(logB)
 
         for (let i = 6; i <= 10; i++) {
-          await logA.append('entryA' + i, { pointerCount: nextPointersAmount })
+          await logA.append('entryA' + i, { refsResolver: logA.getPow2Refs(nextPointersAmount) })
         }
 
         await log.join(log3)
-        await log.append('entryC0', { pointerCount: nextPointersAmount })
+        await log.append('entryC0', { refsResolver: log.getPow2Refs(nextPointersAmount) })
 
         await log.join(logA)
 

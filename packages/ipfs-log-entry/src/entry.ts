@@ -11,7 +11,7 @@ import { Signature } from './signature';
 import { PublicKey } from '@dao-xyz/identity';
 
 export type MaybeX25519PublicKey = (X25519PublicKey | X25519PublicKey[] | undefined);
-export type EncryptionTemplateMaybeEncrypted = EntryEncryptionTempate<MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey>;
+export type EncryptionTemplateMaybeEncrypted = EntryEncryptionTemplate<MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey>;
 export interface EntryEncryption {
   reciever: EncryptionTemplateMaybeEncrypted,
   options: PublicKeyEncryption
@@ -32,12 +32,6 @@ export const JSON_ENCODING_OPTIONS: IOOptions<any> = {
 
 const IpfsNotDefinedError = () => new Error('Ipfs instance not defined')
 
-/*
- * @description
- * An ipfs-log entry
- */
-
-
 
 export interface EntrySerialized<T> {
   id: Uint8Array,
@@ -45,7 +39,6 @@ export interface EntrySerialized<T> {
   publicKey: Uint8Array,
   signature: Uint8Array,
   clock: Uint8Array,
-  hash?: string // "zd...Foo", we'll set the hash after persisting the entry
   next?: string[]
   refs?: string[] // Array of hashes
 }
@@ -78,37 +71,6 @@ export class Payload<T>
     return Buffer.compare(Buffer.from(this._data), Buffer.from(other._data)) === 0;
   }
 
-  /**
-   * In place
-   * @param recieverPublicKey 
-   * @returns this
-   */
-  /*  async encrypt(recieverPublicKey: X25519PublicKey): Promise<Payload<T>> {
-     if (this._data instanceof DecryptedThing) {
-       this._data = await this._data.encrypt(recieverPublicKey)
-       return this;
-     }
-     else if (this._data instanceof EncryptedThing) {
-       throw new Error("Already encrypted")
-     }
-     throw new Error("Unsupported")
-   }
-  */
-  /**
-   * In place
-   * @returns this
-   */
-  /* async decrypt(): Promise<DecryptedThing<T>> {
-    if (this._data instanceof EncryptedThing) {
-      await this._data.decrypt()
-      return this._data.decrypted;
-    }
-    else if (this._data instanceof DecryptedThing) {
-      return this._data;
-    }
-    throw new Error("Unsupported")
-  } */
-
   _value: T
   get value(): T {
     if (this._value)
@@ -119,7 +81,7 @@ export class Payload<T>
   }
 }
 
-export interface EntryEncryptionTempate<A, B, C, D, E> {
+export interface EntryEncryptionTemplate<A, B, C, D, E> {
   id: A,
   clock: B
   payload: C,
@@ -128,7 +90,7 @@ export interface EntryEncryptionTempate<A, B, C, D, E> {
 }
 
 @variant(0)
-export class Entry<T> implements EntryEncryptionTempate<string, Clock, Payload<T>, PublicKey, Signature> {
+export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<T>, PublicKey, Signature> {
 
   @field({ type: MaybeEncrypted })
   _id: MaybeEncrypted<Id>
@@ -151,7 +113,6 @@ export class Entry<T> implements EntryEncryptionTempate<string, Clock, Payload<T
   @field({ type: option(vec('string')) })
   refs?: string[] // Array of hashes
 
-  @field({ type: option('string') })
   hash?: string // "zd...Foo", we'll set the hash after persisting the entry
 
   static IPLD_LINKS = ['next', 'refs']
@@ -201,7 +162,6 @@ export class Entry<T> implements EntryEncryptionTempate<string, Clock, Payload<T
       publicKey: serialize(this._publicKey),
       signature: serialize(this._signature),
       clock: serialize(this._clock),
-      hash: this.hash,
       next: this.next,
       refs: this.refs
     }
@@ -295,7 +255,7 @@ export class Entry<T> implements EntryEncryptionTempate<string, Clock, Payload<T
    * console.log(entry)
    * // { hash: null, payload: "hello", next: [] }
    */
-  static async create<T>(properties: { ipfs: IPFS, logId: string, data: T, next?: (Entry<T> | string)[], encodingOptions?: IOOptions<T>, clock?: Clock, refs?: string[], pin?: boolean, assertAllowed?: (entryData: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicKey>) => Promise<void>, encryption?: EntryEncryption, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array> }) {
+  static async create<T>(properties: { ipfs: IPFS, logId: string, data: T, encodingOptions?: IOOptions<T>, clock?: Clock, next?: (Entry<T> | string)[], refs?: string[], pin?: boolean, assertAllowed?: (entryData: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicKey>) => Promise<void>, encryption?: EntryEncryption, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array> }) {
     if (!properties.encodingOptions || !properties.refs || !properties.next) {
       properties = {
         ...properties,
@@ -362,35 +322,8 @@ export class Entry<T> implements EntryEncryptionTempate<string, Clock, Payload<T
       }
     })
 
-    // We are encrypting the payload before signing it
-    // This is important because we want to verify the signature without decrypting the payload
-    /* payload.init(options.encodingOptions, options.encryption?.options);
-    if (options.encryption) {
-      entry.payload = await new Payload({
-        data: decryptedData
-      }).init(options.encodingOptions, options.encryption.options).encrypt(options.encryption?.recieverPayload);
-    } */
-
     // Sign id, encrypted payload, clock, nexts, refs 
     const signature = await properties.sign(Entry.createDataToSign(id, payload, clock, entry.next, entry.refs))
-
-    // Create encrypted metadata with data, and encrypt it
-    /* entry.metadata = new MetadataSecure({
-      metadata: new DecryptedThing({
-        data: serialize(new Metadata({
-          id,
-          identity: identitySerializable,
-          signature
-        }))
-      })
-    }) */
-
-    /* 
-        entry.metadata.init(options.encryption?.options);
-        if (options.encryption) {
-          await entry.metadata.encrypt(options.encryption.recieverPayload);
-        } */
-
 
     // Append hash and signature
     entry._signature = await maybeEncrypt(new Signature({

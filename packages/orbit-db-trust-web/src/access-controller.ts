@@ -91,9 +91,7 @@ export class RelationAccessController extends ReadWriteAccessController<Relation
             this.relationGraph = createIdentityGraphStore(props);
         }
     }
-    hello(): any {
-        return 0;
-    }
+
 
     async canRead(_): Promise<boolean> {
         return true;
@@ -104,11 +102,15 @@ export class RelationAccessController extends ReadWriteAccessController<Relation
     }
 
 
-    async init(ipfs: IPFS, key: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<any>): Promise<void> {
+    async init(ipfs: IPFS, key: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<any>): Promise<RelationAccessController> {
         const typeMap = options.typeMap ? { ...options.typeMap } : {}
         typeMap[Relation.name] = Relation;
-        await this.save(ipfs);
-        return this.relationGraph.init(ipfs, key, sign, { ...options, typeMap, fallbackAccessController: this }) // self referencing access controller
+        const saveOrResolved = await options.saveAndResolveStore(this);
+        if (saveOrResolved !== this) {
+            return saveOrResolved as RelationAccessController;
+        }
+        await this.relationGraph.init(ipfs, key, sign, { ...options, typeMap, fallbackAccessController: this }) // self referencing access controller
+        return this;
     }
 
 
@@ -192,7 +194,6 @@ export class RegionAccessController extends ReadWriteAccessController<Relation> 
 
     constructor(props?: {
         name?: string,
-        queryRegion?: string,
         rootTrust: PublicKey
     }) {
         super();
@@ -202,11 +203,15 @@ export class RegionAccessController extends ReadWriteAccessController<Relation> 
         }
     }
 
-    async init(ipfs: IPFS, key: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<any>): Promise<void> {
+    async init(ipfs: IPFS, key: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<any>): Promise<RegionAccessController> {
         const typeMap = options.typeMap ? { ...options.typeMap } : {}
         typeMap[Relation.name] = Relation;
-        await this.save(ipfs);
-        return this.trustGraph.init(ipfs, key, sign, { ...options, typeMap, fallbackAccessController: this }) // self referencing access controller
+        const saveOrResolved = await options.saveAndResolveStore(this);
+        if (saveOrResolved !== this) {
+            return saveOrResolved as RegionAccessController;
+        }
+        await this.trustGraph.init(ipfs, key, sign, { ...options, typeMap, fallbackAccessController: this }) // self referencing access controller
+        return this;
     }
 
 
