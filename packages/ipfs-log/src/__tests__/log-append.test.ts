@@ -93,7 +93,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       beforeAll(async () => {
         log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
         for (let i = 0; i < amount; i++) {
-          await log.append('hello' + i, { pin: false, refsResolver: log.getPow2Refs(nextPointerAmount) })
+          await log.append('hello' + i, { pin: false, refs: log.getPow2Refs(nextPointerAmount) })
           // Make sure the log has the right heads after each append
           const values = log.values
           assert.strictEqual(log.heads.length, 1)

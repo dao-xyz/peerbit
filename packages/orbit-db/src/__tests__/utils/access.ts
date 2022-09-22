@@ -37,9 +37,6 @@ export class SimpleStoreAccessController extends AccessController<any> implement
     drop(): Promise<void> {
         return this.store.drop()
     }
-    freeze(): void {
-        this.store.freeze();
-    }
 
     load(): Promise<void> {
         return this.store.load()

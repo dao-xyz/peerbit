@@ -70,9 +70,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         })
         assert.strictEqual(entry.hash, expectedHash)
         assert.strictEqual(entry.id, 'A')
-        assert.deepStrictEqual(entry.clock.id, new Uint8Array(new Ed25519PublicKeyData({
+        assert.deepStrictEqual(entry.clock.id, new Ed25519PublicKeyData({
           publicKey: signKey.publicKey
-        }).getBuffer()));
+        }).bytes);
         assert.strictEqual(entry.clock.time, 0n)
         assert.strictEqual(entry.payload.value, 'hello')
         assert.strictEqual(entry.next.length, 0)
@@ -90,9 +90,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(entry.hash, expectedHash)
         assert.strictEqual(entry.payload.value, payload)
         assert.strictEqual(entry.id, 'A')
-        assert.deepStrictEqual(entry.clock.id, new Uint8Array(new Ed25519PublicKeyData({
+        assert.deepStrictEqual(entry.clock.id, new Ed25519PublicKeyData({
           publicKey: signKey.publicKey
-        }).getBuffer()));
+        }).bytes);
         assert.strictEqual(entry.clock.time, 0n)
         assert.strictEqual(entry.next.length, 0)
         assert.strictEqual(entry.refs.length, 0)
@@ -101,8 +101,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
       it('creates a encrypted entry with payload', async () => {
 
         const payload = 'hello world'
-        const senderKey = await keystore.createKey('sender', BoxKeyWithMeta);
-        const receiverKey = await keystore.createKey('reciever', BoxKeyWithMeta);
+        const senderKey = await keystore.createKey('sender', BoxKeyWithMeta, undefined, { overwrite: true });
+        const receiverKey = await keystore.createKey('reciever', BoxKeyWithMeta, undefined, { overwrite: true });
         const entry = await Entry.create({
           ipfs, publicKey: new Ed25519PublicKeyData({
             publicKey: signKey.publicKey
@@ -141,7 +141,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         // We can not have a hash check because nonce of encryption will always change
         assert.strictEqual(entry.id, 'A')
-        assert.deepStrictEqual(Buffer.from(entry.clock.id), signKey.publicKey.getBuffer())
+        assert.deepStrictEqual(entry.clock.id, (new Ed25519PublicKeyData({ publicKey: signKey.publicKey })).bytes)
         assert.strictEqual(entry.clock.time, 0n)
         assert.strictEqual(entry.next.length, 0)
         assert.strictEqual(entry.refs.length, 0)
@@ -172,9 +172,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(entry2.payload.value, payload2)
         assert.strictEqual(entry2.next.length, 1)
         assert.strictEqual(entry2.hash, expectedHash)
-        assert.deepStrictEqual(entry2.clock.id, new Uint8Array(new Ed25519PublicKeyData({
+        assert.deepStrictEqual(entry2.clock.id, new Ed25519PublicKeyData({
           publicKey: signKey.publicKey
-        }).getBuffer()));
+        }).bytes);
         assert.strictEqual(entry2.clock.time, 1n)
       })
 

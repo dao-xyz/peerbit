@@ -27,7 +27,7 @@ export const arraysCompare = (array1: Uint8Array, array2: Uint8Array): number =>
     const minLength = Math.min(array1.length, array2.length);
     for (let i = 0; i < minLength; i++) {
         if (array1[i] === array2[i]) {
-            return 0;
+            continue;
         }
         if (array1[i] < array2[i]) {
             return -1;
@@ -39,10 +39,10 @@ export const arraysCompare = (array1: Uint8Array, array2: Uint8Array): number =>
         return 0;
     }
 
-    if (array1.length < array2.length) {
-        return -1;
+    if (array1.length > array2.length) {
+        return 1;
     }
-    return 1;
+    return -1;
 }
 
 export const joinUint8Arrays = (arrays: Uint8Array[]) => {

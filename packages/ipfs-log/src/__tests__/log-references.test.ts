@@ -54,19 +54,19 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log4 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'D' })
 
         for (let i = 0; i < amount; i++) {
-          await log1.append(i.toString(), { refsResolver: log1.getPow2Refs(maxReferenceDistance) })
+          await log1.append(i.toString(), { refs: log1.getPow2Refs(maxReferenceDistance) })
         }
 
         for (let i = 0; i < amount * 2; i++) {
-          await log2.append(i.toString(), { refsResolver: log2.getPow2Refs(Math.pow(maxReferenceDistance, 2)) })
+          await log2.append(i.toString(), { refs: log2.getPow2Refs(Math.pow(maxReferenceDistance, 2)) })
         }
 
         for (let i = 0; i < amount * 3; i++) {
-          await log3.append(i.toString(), { refsResolver: log3.getPow2Refs(Math.pow(maxReferenceDistance, 3)) })
+          await log3.append(i.toString(), { refs: log3.getPow2Refs(Math.pow(maxReferenceDistance, 3)) })
         }
 
         for (let i = 0; i < amount * 4; i++) {
-          await log4.append(i.toString(), { refsResolver: log4.getPow2Refs(Math.pow(maxReferenceDistance, 4)) })
+          await log4.append(i.toString(), { refs: log4.getPow2Refs(Math.pow(maxReferenceDistance, 4)) })
         }
 
         assert.strict.equal(log1.values[log1.length - 1].next?.length, 1)
@@ -108,7 +108,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const test = async (amount: number, referenceCount: number, refLength: number) => {
             const log1 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
             for (let i = 0; i < amount; i++) {
-              await log1.append((i + 1).toString(), { refsResolver: log1.getPow2Refs(referenceCount) })
+              await log1.append((i + 1).toString(), { refs: log1.getPow2Refs(referenceCount) })
             }
 
             assert.strict.equal(log1.values.length, input.amount)
@@ -149,7 +149,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const amount = 3
         const log1 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
         for (let i = 0; i < amount; i++) {
-          await log1.append(i.toString(), { refsResolver: () => [] })
+          await log1.append(i.toString(), { refs: [] })
         }
         assert.strict.equal(log1.values[0].next?.length, 0)
         assert.strict.equal(log1.values[0].refs?.length, 0)

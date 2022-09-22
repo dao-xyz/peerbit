@@ -55,7 +55,7 @@ export const strictFetchOptions = <T>(options: EntryFetchOptions<T>): EntryFetch
 export class EntryIO {
   // Fetch log graphs in parallel
   static async fetchParallel<T>(ipfs: IPFS, hashes: string | string[], options: EntryFetchAllOptions<T>) {
-    const fetchOne = async (hash) => EntryIO.fetchAll(ipfs, hash, strictFetchOptions(options))
+    const fetchOne = async (hash) => EntryIO.fetchAll(ipfs, hash, options)
     const concatArrays = (arr1, arr2) => arr1.concat(arr2)
     const flatten = (arr) => arr.reduce(concatArrays, [])
     const res = await pMap(hashes, fetchOne, { concurrency: Math.max(options.concurrency || hashes.length, 1) })
@@ -75,8 +75,8 @@ export class EntryIO {
    * @param {function(entry)} onProgressCallback Called when an entry was fetched
    * @returns {Promise<Array<Entry<T>>>}
    */
-  static async fetchAll<T>(ipfs: IPFS, hashes: string | string[], options: EntryFetchAllOptions<T>) {
-    options = strictFetchOptions(options);
+  static async fetchAll<T>(ipfs: IPFS, hashes: string | string[], fetchOptions: EntryFetchAllOptions<T>) {
+    const options = strictAllFetchOptions(fetchOptions);
     const result = []
     const cache = {}
     const loadingCache = {}
@@ -139,7 +139,7 @@ export class EntryIO {
           : null
 
         const addToResults = async (entry: Entry<T>) => {
-          if (Entry.isEntry(entry) && !cache[entry.hash] && !shouldExclude(entry.hash)) {
+          if (!cache[entry.hash] && !shouldExclude(entry.hash)) {
             entry.init({ encryption: options.encryption, encoding: undefined });
 
             // Todo check bigint conversions
@@ -166,6 +166,7 @@ export class EntryIO {
                 options.onProgressCallback(entry)
               }
             }
+
 
             if (options.length < 0) {
               // If we're fetching all entries (length === -1), adds nexts and refs to the queue

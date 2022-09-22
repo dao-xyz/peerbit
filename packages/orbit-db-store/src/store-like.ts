@@ -6,7 +6,6 @@ import { Log } from "@dao-xyz/ipfs-log";
 import Cache from '@dao-xyz/orbit-db-cache';
 import { Entry } from "@dao-xyz/ipfs-log-entry";
 import { PublicKey } from "@dao-xyz/identity";
-import { Freezable } from "./shard";
 
 export interface Initiable<T> {
     init?(ipfs: IPFS, key: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<any>): Promise<Initiable<T>>;
@@ -14,7 +13,7 @@ export interface Initiable<T> {
 
 
 
-export interface StoreLike<T> extends Addressable, Initiable<T>, Freezable {
+export interface StoreLike<T> extends Addressable, Initiable<T> {
     close?(): Promise<void>;
     drop?(): Promise<void>;
     load?(): Promise<void>;

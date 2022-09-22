@@ -1,13 +1,6 @@
-import { Address, Addressable } from "./io";
-import { IPFS } from 'ipfs-core-types/src/'
-import { IInitializationOptions } from "./store";
-import EventEmitter from "events";
-import { Log } from "@dao-xyz/ipfs-log";
-import Cache from '@dao-xyz/orbit-db-cache';
-import { Entry } from "@dao-xyz/ipfs-log-entry";
-import { PublicKey } from "@dao-xyz/identity";
-import { variant, field } from '@dao-xyz/borsh';
 
+import { variant, field } from '@dao-xyz/borsh';
+/* 
 export class Sharding {
     _requestStore: (store: Any) => void;
     init(requestNewShard: () => void) {
@@ -45,6 +38,9 @@ export class ShardingCounter extends Sharding {
     }
 }
 
-export interface Freezable {
+
+ */
+
+/* export interface Freezable {
     freeze(): void;
-}
+} */

@@ -89,6 +89,7 @@ Object.keys(testAPIs).forEach(API => {
             const replicationTopic = 'x';
             const store = new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() });
             await orbitdb2.subscribeForReplicationStart(replicationTopic);
+
             //PEER COUNT IS ALREDY ONE BEFORE REPLICAITON START?
             await orbitdb1.requestReplication(store, replicationTopic);
 

@@ -30,7 +30,7 @@
   "author": "dao.xyz",
   "license": "MIT",
   "dependencies": {
-    "@dao-xyz/borsh": "^3.2.4",
+    "@dao-xyz/borsh": "^3.2.5",
     "@dao-xyz/bpayload": "^0.0.11",
     "@dao-xyz/io-utils": "^0.0.1",
     "@ethersproject/wallet": "^5.7.0",

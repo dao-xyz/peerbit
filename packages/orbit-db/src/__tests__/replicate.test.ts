@@ -207,8 +207,9 @@ Object.keys(testAPIs).forEach(API => {
           finished = (all === entryCount)
         })
 
-        try {
-          timer = setInterval(() => {
+        timer = setInterval(() => {
+          try {
+
             if (finished) {
               clearInterval(timer)
               // All entries should be in the database
@@ -231,10 +232,11 @@ Object.keys(testAPIs).forEach(API => {
 
               resolve(true)
             }
-          }, 1000)
-        } catch (e) {
-          reject(e)
-        }
+          } catch (e) {
+            reject(e)
+          }
+        }, 1000)
+
 
         // Trigger replication
         let adds = []

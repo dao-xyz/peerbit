@@ -302,6 +302,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
               signature: await Keystore.sign(Entry.createDataToSign(id, payload, clockDecrypted, []), signKey)
             }))
           }),
+          refs: [],
           next: [],
         });
       })

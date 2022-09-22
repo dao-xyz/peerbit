@@ -107,13 +107,20 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
   @field({ type: MaybeEncrypted })
   _signature: MaybeEncrypted<Signature>
 
-  @field({ type: option(vec('string')) })
-  next?: string[]
+  @field({ type: vec('string') })
+  next: string[] // Array of hashes (the tree)
 
-  @field({ type: option(vec('string')) })
-  refs?: string[] // Array of hashes
+  @field({ type: vec('string') })
+  refs: string[] // Array of hashes (jumps in the tree, indicating dependencies or used for jumping for faster iteration or fail safe behaviour if gaps occur)
 
-  hash?: string // "zd...Foo", we'll set the hash after persisting the entry
+  @field({ type: 'u8' })
+  _state: number = 0; // reserved for states
+
+  @field({ type: 'u8' })
+  _reserved: number = 0; // reserved for future changes
+
+  @field({ type: 'string' })
+  hash: string // "zd...Foo", we'll set the hash after persisting the entry
 
   static IPLD_LINKS = ['next', 'refs']
 
@@ -126,8 +133,8 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
     publicKey: MaybeEncrypted<PublicKey>,
     signature: MaybeEncrypted<Signature>,
     clock: MaybeEncrypted<Clock>;
-    next?: string[]
-    refs?: string[] // Array of hashes
+    next: string[]
+    refs: string[] // Array of hashes
     hash?: string // "zd...Foo", we'll set the hash after persisting the entry
   }) {
     if (obj) {
@@ -238,7 +245,7 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
 
 
   equals(other: Entry<T>) {
-    return other.hash === this.hash && this._id.equals(other._id) && this._clock.equals(other._clock) && this._signature.equals(other._signature) && arraysEqual(this.next, other.next) && arraysEqual(this.refs, other.refs) && this._payload.equals(other._payload)
+    return this._id.equals(other._id) && this._clock.equals(other._clock) && this._signature.equals(other._signature) && arraysEqual(this.next, other.next) && arraysEqual(this.refs, other.refs) && this._payload.equals(other._payload) // dont compare hashes because the hash is a function of the other properties
   }
 
   /**
@@ -377,9 +384,7 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
     if (!ipfs) throw IpfsNotDefinedError()
     if (!Entry.isEntry(entry)) throw new Error('Invalid object format, cannot generate entry hash')
 
-    // Ensure `entry` follows the correct format
-    const e = Entry.toEntryNoHash(entry) // Will remove the hash
-    return io.write(ipfs, 'dag-cbor', e.serialize(), { links: Entry.IPLD_LINKS, pin })
+    return io.write(ipfs, 'dag-cbor', entry.serialize(), { links: Entry.IPLD_LINKS, pin })
   }
 
   /**

@@ -66,7 +66,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         log2 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: store._oplog.id })
         console.log(`writing ${logLength} entries to the log`)
         for (let i = 0; i < logLength; i++) {
-          await log2.append(`entry${i}`, { pointerCount: 123 })
+          await log2.append(`entry${i}`, { refs: log2.getPow2Refs(123) })
         }
         expect(log2.values.length).toEqual(logLength)
       })

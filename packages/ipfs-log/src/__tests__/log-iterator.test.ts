@@ -268,7 +268,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       beforeAll(async () => {
         identities = [signKey3, signKey2, signKey3, signKey]
-        fixture = await LogCreator.createLogWithSixteenEntries(Log, ipfs, identities)
+        fixture = await LogCreator.createLogWithSixteenEntries(ipfs, identities)
       })
 
       it('returns the full length from all heads', async () => {

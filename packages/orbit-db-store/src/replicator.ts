@@ -162,10 +162,7 @@ export class Replicator<T> {
   }
 
   async _replicateLog(entry: Entry<T>) {
-    const hash = entry.hash || entry
-    if (typeof hash !== 'string') {
-      throw new Error("Unexpected hash format");
-    }
+
 
     // Notify the Store that we made progress
     const onProgressCallback = (entry: Entry<T>) => {
@@ -177,19 +174,18 @@ export class Replicator<T> {
 
     const shouldExclude = (h: string) => {
 
-      return h && h !== hash && this._store._oplog && (this._store._oplog.has(h) || this._fetching[h] !== undefined || this._fetched[h] !== undefined)
+      return h && this._store._oplog && (this._store._oplog.has(h) || this._fetching[h] !== undefined || this._fetched[h] !== undefined)
 
     }
 
     // Fetch and load a log from the entry hash
-    const log = await Log.fromEntryHash(
+    const log = await Log.fromEntry(
       this._store._ipfs,
       this._store.publicKey,
       this._store.sign,
-      hash,
+      entry,
       {
         // TODO, load all store options?
-        logId: this._store._oplog.id,
         access: this._store.access,
         encryption: this._store._oplog._encryption,
         encoding: this._store._oplog._encoding,

@@ -1,5 +1,5 @@
 import path from 'path'
-import { Address, IStoreOptions, ResourceOptions, ShardingCounter, Store, StoreLike, StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store'
+import { Address, IStoreOptions, ResourceOptions, Store, StoreLike, StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store'
 import { PubSub, Subscription } from '@dao-xyz/orbit-db-pubsub'
 import Logger from 'logplease'
 const logger = Logger.create('orbit-db')
@@ -931,11 +931,11 @@ export class OrbitDB {
           return alreadyHaveStore || store;
         }
       },
-      requestNewShard: async () => {
-        const newStore = deserialize(serialize(store), Store);
-       THIS SHOULD BE DONE ONE THE STORE!(newStore.sharding as ShardingCounter).shardIndex += 1n;
-        await this.requestReplication(newStore, store.replicationTopic);
-      },
+      /*  requestNewShard: async () => {
+     const newStore = deserialize(serialize(store), Store);
+       (newStore.sharding as ShardingCounter).shardIndex += 1n;
+       await this.requestReplication(newStore, store.replicationTopic); 
+     },*/
       onClose: this._onClose.bind(this),
       onDrop: this._onDrop.bind(this),
       onLoad: this._onLoad.bind(this),

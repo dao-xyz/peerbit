@@ -1,27 +1,28 @@
 
+<br>
 <p align="center">
-    <img width="300" src="./anon.png"  alt="Anonbit icon Icon">
+    <img width="300" src="./peer.png"  alt="Peerit icon Icon">
 </p>
 
-<br>
 
 <h1 align="center">
-   Anonbit
+<strong>
+   Peerit DB
+   </strong>
 </h1>
 
 <h3 align="center">
-    Develop for a distributed web with Anonbit DB 
+    Develop for a distributed web with Peerit DB 
 </h3>
 
-<h3 align="center">🤫 E2EE encryption &nbsp; &nbsp; 👯 Sharding &nbsp; &nbsp; 🔍 Discoverability</h3>
-
+<h3 align="center">🤫 E2EE &nbsp; &nbsp; 👯 P2P &nbsp; &nbsp; 🔍 Searchable</h3>
 <br>
 
 
-## Summary
-Originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS supporting, encryption, sharding and discoverability (searching). Peers are a organizing themselves into "permissioned" regions. Within a region, secret information can be shared freely, this allow peers to create locally centralized database clusters with efficient replication, sharding, query yet still allowing cross trust region (low trust) activities, like relying encrypted and signed messages. Data can be shared and replicated on a granular level, you can decide exactly what parts of metadata should be public and not. Beware, some metadata is needed for you content to be discoverable at all.
+## What is this?
+Started originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS supporting, encryption, sharding and discoverability (searching). Peers are a organizing themselves into "permissioned" regions. Within a region, secret information can be shared freely, this allow peers to create locally centralized database clusters with efficient replication, sharding, query yet still allowing cross trust region (low trust) activities, like relying encrypted and signed messages. Data can be shared and encrypted on a granular level, you can decide exactly what parts of metadata should be public and not.
 
-### [How Anonbit differs from OrbitDB](./documentation/DIFFERENCE.md)
+### [How Peerit differs from OrbitDB](./documentation/DIFFERENCE.md)
 
 ## 🚧 WIP 🚧  Use with caution
 Below are descriptions of some modules

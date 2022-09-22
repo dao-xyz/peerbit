@@ -29,7 +29,7 @@
     "crdt"
   ],
   "dependencies": {
-    "@dao-xyz/borsh": "^3.2.4",
+    "@dao-xyz/borsh": "^3.2.5",
     "safe-buffer": "~5.2.1",
     "@dao-xyz/io-utils": "^0.0.1"
   },

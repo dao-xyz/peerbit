@@ -6,6 +6,7 @@ import { Log } from '../log'
 import { assertPayload } from './utils/assert'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { Ed25519PublicKeyData } from '@dao-xyz/identity';
+import { arraysCompare } from '@dao-xyz/io-utils';
 
 // Test utils
 const {
@@ -39,10 +40,17 @@ Object.keys(testAPIs).forEach((IPFS) => {
       signingKeystore = new Keystore(signingKeysPath)
 
       // The ids are choosen so that the tests plays out "nicely", specifically the logs clock id sort will reflect the signKey suffix
-      signKey = await keystore.createKey(new Uint8Array([0]), SignKeyWithMeta);
-      signKey2 = await keystore.createKey(new Uint8Array([1]), SignKeyWithMeta);
-      signKey3 = await keystore.createKey(new Uint8Array([2]), SignKeyWithMeta);
-      signKey4 = await keystore.createKey(new Uint8Array([3]), SignKeyWithMeta);
+      const keys: SignKeyWithMeta[] = []
+      for (let i = 0; i < 4; i++) {
+        keys.push(await keystore.createKey(new Uint8Array([i]), SignKeyWithMeta))
+      };
+      keys.sort((a, b) => {
+        return arraysCompare(new Uint8Array(a.publicKey.getBuffer()), new Uint8Array(b.publicKey.getBuffer()))
+      });
+      signKey = keys[0];
+      signKey2 = keys[1];
+      signKey3 = keys[2];
+      signKey4 = keys[3];
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })
@@ -113,28 +121,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(logA.heads.length, 1)
       })
 
-      it('throws an error if first log is not defined', async () => {
-        let err
-        try {
-          await log1.join(undefined)
-        } catch (e) {
-          err = e
-        }
-        assert.notStrictEqual(err, null)
-        assert.strictEqual(err.message, 'Log instance not defined')
-      })
-
-      it('throws an error if passed argument is not an instance of Log', async () => {
-        let err
-        try {
-          await log1.join({} as any)
-        } catch (e) {
-          err = e
-        }
-        assert.notStrictEqual(err, null)
-        assert.strictEqual(err.message, 'Given argument is not an instance of Log')
-      })
-
       it('joins only unique items', async () => {
         await log1.append('helloA1')
         await log1.append('helloA2')
@@ -154,17 +140,23 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.strictEqual(item.next.length, 1)
       })
 
+
       it('joins logs two ways', async () => {
-        await log1.append('helloA1')
-        await log1.append('helloA2')
-        await log2.append('helloB1')
-        await log2.append('helloB2')
+        const a1 = await log1.append('helloA1')
+        const a2 = await log1.append('helloA2')
+        const b1 = await log2.append('helloB1')
+        const b2 = await log2.append('helloB2')
         await log1.join(log2)
         await log2.join(log1)
 
         const expectedData = [
           'helloA1', 'helloB1', 'helloA2', 'helloB2'
         ]
+
+        expect(log1.heads).toContainValues([a2, b2]);
+        expect(log2.heads).toContainValues([a2, b2]);
+        expect(a2.next).toContainValues([a1.hash]);
+        expect(b2.next).toContainValues([b1.hash]);
 
         assert.deepStrictEqual(log1.values.map((e) => e.hash), log2.values.map((e) => e.hash))
         assert.deepStrictEqual(log1.values.map((e) => e.payload.value), expectedData)
@@ -297,15 +289,15 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log1.append('helloA2')
         await log2.append('helloB2')
 
-        assert.strictEqual(log1.clock.id, signKey.publicKey)
-        assert.strictEqual(log2.clock.id, signKey2.publicKey)
-        assert.strictEqual(log1.clock.time, 2)
-        assert.strictEqual(log2.clock.time, 2)
+        assert.deepStrictEqual(log1.clock.id, new Ed25519PublicKeyData({ publicKey: signKey.publicKey }).bytes)
+        assert.deepStrictEqual(log2.clock.id, new Ed25519PublicKeyData({ publicKey: signKey2.publicKey }).bytes)
+        assert.strictEqual(log1.clock.time, 2n)
+        assert.strictEqual(log2.clock.time, 2n)
 
         await log3.join(log1)
         assert.strictEqual(log3.id, 'X')
-        assert.strictEqual(log3.clock.id, signKey3.publicKey)
-        assert.strictEqual(log3.clock.time, 2)
+        assert.deepStrictEqual(log3.clock.id, new Ed25519PublicKeyData({ publicKey: signKey3.publicKey }).bytes)
+        assert.strictEqual(log3.clock.time, 2n)
 
         await log3.append('helloC1')
         await log3.append('helloC2')
@@ -324,26 +316,26 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log4.append('helloD5')
         await log1.append('helloA5')
         await log4.join(log1)
-        assert.deepStrictEqual(log4.clock.id, signKey4.publicKey)
-        assert.deepStrictEqual(log4.clock.time, 7)
+        assert.deepStrictEqual(log4.clock.id, new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes)
+        assert.deepStrictEqual(log4.clock.time, 7n)
 
         await log4.append('helloD6')
-        assert.deepStrictEqual(log4.clock.time, 8)
+        assert.deepStrictEqual(log4.clock.time, 8n)
 
         const expectedData = [
-          { payload: 'helloA1', id: 'X', clock: new Clock(new Uint8Array(signKey.publicKey.getBuffer()), 1) },
-          { payload: 'helloB1', id: 'X', clock: new Clock(new Uint8Array(signKey2.publicKey.getBuffer()), 1) },
-          { payload: 'helloD1', id: 'X', clock: new Clock(new Uint8Array(signKey4.publicKey.getBuffer()), 1) },
-          { payload: 'helloA2', id: 'X', clock: new Clock(new Uint8Array(signKey.publicKey.getBuffer()), 2) },
-          { payload: 'helloB2', id: 'X', clock: new Clock(new Uint8Array(signKey2.publicKey.getBuffer()), 2) },
-          { payload: 'helloD2', id: 'X', clock: new Clock(new Uint8Array(signKey4.publicKey.getBuffer()), 2) },
-          { payload: 'helloC1', id: 'X', clock: new Clock(new Uint8Array(signKey3.publicKey.getBuffer()), 3) },
-          { payload: 'helloC2', id: 'X', clock: new Clock(new Uint8Array(signKey3.publicKey.getBuffer()), 4) },
-          { payload: 'helloD3', id: 'X', clock: new Clock(new Uint8Array(signKey4.publicKey.getBuffer()), 5) },
-          { payload: 'helloD4', id: 'X', clock: new Clock(new Uint8Array(signKey4.publicKey.getBuffer()), 6) },
-          { payload: 'helloA5', id: 'X', clock: new Clock(new Uint8Array(signKey.publicKey.getBuffer()), 7) },
-          { payload: 'helloD5', id: 'X', clock: new Clock(new Uint8Array(signKey4.publicKey.getBuffer()), 7) },
-          { payload: 'helloD6', id: 'X', clock: new Clock(new Uint8Array(signKey4.publicKey.getBuffer()), 8) }
+          { payload: 'helloA1', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey.publicKey }).bytes, 1) },
+          { payload: 'helloB1', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey2.publicKey }).bytes, 1) },
+          { payload: 'helloD1', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 1) },
+          { payload: 'helloA2', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey.publicKey }).bytes, 2) },
+          { payload: 'helloB2', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey2.publicKey }).bytes, 2) },
+          { payload: 'helloD2', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 2) },
+          { payload: 'helloC1', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey3.publicKey }).bytes, 3) },
+          { payload: 'helloC2', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey3.publicKey }).bytes, 4) },
+          { payload: 'helloD3', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 5) },
+          { payload: 'helloD4', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 6) },
+          { payload: 'helloA5', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey.publicKey }).bytes, 7) },
+          { payload: 'helloD5', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 7) },
+          { payload: 'helloD6', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 8) }
         ]
 
         const transformed = log4.values.map((e) => {
@@ -364,13 +356,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         await log1.join(log3)
         assert.strictEqual(log1.id, 'X')
-        assert.strictEqual(log1.clock.id, new Uint8Array(signKey.publicKey.getBuffer()))
-        assert.strictEqual(log1.clock.time, 2)
+        assert.deepStrictEqual(log1.clock.id, new Ed25519PublicKeyData({ publicKey: signKey.publicKey }).bytes)
+        assert.strictEqual(log1.clock.time, 2n)
 
         await log3.join(log1)
         assert.strictEqual(log3.id, 'X')
-        assert.strictEqual(log3.clock.id, new Uint8Array(signKey3.publicKey.getBuffer()))
-        assert.strictEqual(log3.clock.time, 2)
+        assert.deepStrictEqual(log3.clock.id, new Ed25519PublicKeyData({ publicKey: signKey3.publicKey }).bytes)
+        assert.strictEqual(log3.clock.time, 2n)
 
         await log3.append('helloC1')
         await log3.append('helloC2')
@@ -384,8 +376,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log4.append('helloD3')
         await log4.append('helloD4')
 
-        assert.strictEqual(log4.clock.id, signKey4.publicKey)
-        assert.strictEqual(log4.clock.time, 6)
+        assert.deepStrictEqual(log4.clock.id, new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes)
+        assert.strictEqual(log4.clock.time, 6n)
 
         const expectedData = [
           'helloA1',

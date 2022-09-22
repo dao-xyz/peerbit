@@ -11,6 +11,7 @@ module.exports = {
   testRegex: "/__tests__/.*\\.(test|spec)\\.ts$",
   moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
   testTimeout: 260000,
+  setupFilesAfterEnv: ['jest-extended/all'],
   globals: {
     "ts-jest": {
       tsconfig: {

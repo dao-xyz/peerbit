@@ -37,7 +37,7 @@
     "@dao-xyz/ipfs-log": "^5.5.15",
     "@dao-xyz/orbit-db-store": "^0.0.20",
     "@dao-xyz/orbit-db": "^0.29.16",
-    "@dao-xyz/borsh": "^3.2.4",
+    "@dao-xyz/borsh": "^3.2.5",
     "@dao-xyz/io-utils": "^0.0.1"
   },
   "scripts": {

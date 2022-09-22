@@ -30,7 +30,7 @@
     "crdt"
   ],
   "dependencies": {
-    "@dao-xyz/borsh": "^3.2.4",
+    "@dao-xyz/borsh": "^3.2.5",
     "@dao-xyz/ipfs-log-entry": "^5.5.15",
     "json-stringify-deterministic": "^1.0.1",
     "multihashing-async": "^2.0.1",

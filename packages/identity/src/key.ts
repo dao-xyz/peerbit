@@ -17,11 +17,12 @@ export class PublicKey extends Identity {
         throw new Error("Not implemented");
     }
 
-    getBuffer(): Buffer {
-        return Buffer.from(serialize(this))
+    get bytes(): Uint8Array {
+        return serialize(this)
     }
+
     hashCode(): string {
-        return this.getBuffer().toString('base64');
+        return Buffer.from(this.bytes).toString('base64');
     }
 
     toString(): string {

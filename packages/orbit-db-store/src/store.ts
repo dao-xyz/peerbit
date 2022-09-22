@@ -24,7 +24,6 @@ import { Ed25519PublicKeyData, PublicKey } from '@dao-xyz/identity'
 import { Ed25519PublicKey } from 'sodium-plus';
 import { joinUint8Arrays } from '@dao-xyz/io-utils';
 import isNode from 'is-node';
-import { NoSharding, Sharding } from './shard'
 
 let v8 = undefined;
 if (isNode) {
@@ -104,7 +103,6 @@ export interface IStoreOptions<T> {
   onUpdate?: (oplog: Log<T>, entries?: Entry<T>[]) => void,
   resourceOptions?: ResourceOptions<T>,
 
-
 }
 
 export type ResourceOptions<T> = { heapSizeLimit: () => number };
@@ -117,7 +115,6 @@ export interface IInitializationOptions<T> extends IStoreOptions<T> {
     decrypt: (arr: Uint8Array, keyGroup: string, keyId: Uint8Array) => Promise<Uint8Array>
   }, */
 
-  requestNewShard: () => void,
   saveAndResolveStore: (store: StoreLike<any>) => Promise<StoreLike<any>>,
   resolveCache: (address: Address) => Promise<Cache>,
   onClose?: (store: Store<T>) => void,
@@ -147,7 +144,6 @@ export const DefaultOptions: IInitializationOptions<any> = {
   onLoad: undefined,
   resolveCache: undefined,
   resourceOptions: undefined,
-  requestNewShard: undefined,
   saveAndResolveStore: async (store: Store<any>) => {
     await store.save(store._ipfs, { pin: true })
     return store;
@@ -163,8 +159,8 @@ export class Store<T> implements StoreLike<T> {
   @field({ type: 'string' })
   name: string;
 
-  @field({ type: Sharding })
-  sharding: Sharding
+  /* @field({ type: Sharding })
+  sharding: Sharding */
 
   @field({ type: option(AccessController) })
   accessController?: AccessController<T> | (StoreLike<any> & AccessController<T>)
@@ -185,8 +181,9 @@ export class Store<T> implements StoreLike<T> {
   queuePath: string;
   manifestPath: string;
   initialized: boolean;
+  allowForks: boolean = true;
 
-  _freezed: boolean;
+
   _ipfs: IPFS;
   _cache: Cache;
   _oplog: Log<T>;
@@ -201,12 +198,12 @@ export class Store<T> implements StoreLike<T> {
   
   */
 
-  constructor(properties?: { sharding?: Sharding, name?: string, accessController?: AccessController<T> | (StoreLike<any> & AccessController<T>) }) {
+  constructor(properties?: { /* sharding?: Sharding, */ name?: string, accessController?: AccessController<T> | (StoreLike<any> & AccessController<T>) }) {
 
     if (properties) {
       this.name = properties.name || uuid();
       this.accessController = properties.accessController;
-      this.sharding = properties.sharding || new NoSharding()
+      /* this.sharding = properties.sharding || new NoSharding() */
     }
 
 
@@ -264,7 +261,7 @@ export class Store<T> implements StoreLike<T> {
     this.manifestPath = path.join(this.id, '_manifest')
     this.sign = sign;
     this.fallbackAccessController = options.fallbackAccessController;
-    this.sharding.init(options.requestNewShard);
+    /* this.sharding.init(options.requestNewShard); */
 
 
 
@@ -311,7 +308,7 @@ export class Store<T> implements StoreLike<T> {
         }
       }
 
-      const onReplicationComplete = async (logs) => {
+      const onReplicationComplete = async (logs: Log<any>[]) => {
         const updateState = async () => {
           try {
             if (this._oplog && logs.length > 0) {
@@ -424,9 +421,7 @@ export class Store<T> implements StoreLike<T> {
     this._oplog.setPublicKey(publicKey)
   }
 
-  freeze() {
-    this._freezed = true;
-  }
+
 
   checkMemory(): boolean {
     if (!v8) {
@@ -435,10 +430,10 @@ export class Store<T> implements StoreLike<T> {
     if (this.options.resourceOptions.heapSizeLimit) {
       const usedHeapSize = v8?.getHeapStatistics().used_heap_size;
       if (usedHeapSize > this.options.resourceOptions.heapSizeLimit()) {
-        if (!this.sharding) {
-          return true; // Assume no memory checks
-        }
-        this.sharding.onMemoryExceeded(this);
+        /*  if (!this.sharding) {
+           return true; // Assume no memory checks
+         }
+         this.sharding.onMemoryExceeded(this); */
 
         return false;
       }
@@ -539,7 +534,7 @@ export class Store<T> implements StoreLike<T> {
     }
 
     // Load the log
-    const log = await Log.fromEntryHash(this._ipfs, this.publicKey, this.sign, heads.map(e => e.hash), {
+    const log = await Log.fromEntry(this._ipfs, this.publicKey, this.sign, heads, {
       ...this.logOptions,
       length: amount,
       timeout: fetchEntryTimeout,
@@ -559,20 +554,48 @@ export class Store<T> implements StoreLike<T> {
 
   async sync(heads: Entry<T>[]) {
 
-    if (this._freezed) {
-      return
-    }
 
-    const mem = await this.checkMemory();
+    /* const mem = await this.checkMemory();
     if (!mem) {
-      return;
-    }
+      return; // TODO state will not be accurate
+    } */
 
     this._stats.syncRequestsReceieved += 1
     logger.debug(`Sync request #${this._stats.syncRequestsReceieved} ${heads.length}`)
     if (heads.length === 0) {
       return
     }
+
+
+    let hasKnown = false;
+    outer:
+    for (const head of heads) {
+      for (const hash of head.next) {
+        if (!this._oplog.has(hash)) {
+          hasKnown = true;
+        }
+        if (hasKnown) {
+          break outer;
+        }
+      }
+      for (const hash of head.refs) {
+        if (this._oplog.has(hash)) {
+          hasKnown = true;
+        }
+        if (hasKnown) {
+          break outer;
+        }
+      }
+    }
+
+    if (!hasKnown) {
+      // "FORK" 
+      if (!this.allowForks) {
+        console.warn("Seems to be a fork, and this store does not allow them")
+        return Promise.resolve(null)
+      }
+    }
+
 
     // To simulate network latency, uncomment this line
     // and comment out the rest of the function
@@ -597,6 +620,7 @@ export class Store<T> implements StoreLike<T> {
         encryption: this._oplog._encryption
       })
       try {
+        // TODO add can append, because it referenses things I know, or is a new root. BTW new roots should only be accepted if the access controller allows it
         const canAppend = await this.accessController.canAppend(head._payload, head._publicKey)
         if (!canAppend) {
           logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
@@ -606,13 +630,10 @@ export class Store<T> implements StoreLike<T> {
         return Promise.resolve(null);
       }
 
-      const logEntry = Entry.toEntryNoHash(head)
-      const hash = await io.write(this._ipfs, 'dag-cbor', logEntry.serialize(), { links: Entry.IPLD_LINKS }) ///, onlyHash: true
-
+      const hash = await io.write(this._ipfs, 'dag-cbor', head.serialize(), { links: Entry.IPLD_LINKS })
       if (hash !== head.hash) {
         throw new Error("Head hash didn\'t match the contents")
       }
-
       return head
     }
 
@@ -703,7 +724,7 @@ export class Store<T> implements StoreLike<T> {
       // Timeout 1 sec to only load entries that are already fetched (in order to not get stuck at loading)
       this._recalculateReplicationMax(snapshotData.values.reduce(maxClock, 0n))
       if (snapshotData) {
-        this._oplog = await Log.fromJSON(this._ipfs, this.publicKey, this.sign, snapshotData, {
+        this._oplog = await Log.fromEntry(this._ipfs, this.publicKey, this.sign, snapshotData.heads, {
           access: this.accessController,
           sortFn: this.options.sortFn,
           length: -1,
@@ -740,7 +761,7 @@ export class Store<T> implements StoreLike<T> {
     }
   }
 
-  async _addOperation(data: T, options: { onProgressCallback?: (any) => void, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = {}) {
+  async _addOperation(data: T, options: { refs?: [], nexts?: [], onProgressCallback?: (any) => void, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = {}) {
     const addOperation = async () => {
       if (this._oplog) {
         // check local cache for latest heads
@@ -749,7 +770,7 @@ export class Store<T> implements StoreLike<T> {
         }
 
         const entry = await this._oplog.append(data, {
-          pointerCount: this.options.referenceCount, pin: options.pin, reciever: options.reciever
+          refs: options.refs, nexts: options.nexts, pin: options.pin, reciever: options.reciever
         })
         this._recalculateReplicationStatus((await entry.clock).time)
         await this._cache.setBinary(this.localHeadsPath, new HeadsCache({ heads: [entry] }))
@@ -760,7 +781,8 @@ export class Store<T> implements StoreLike<T> {
         // to all the connected peers to tell them that a new entry has been added
         // TODO: don't use events, or make it more transparent that there is a vital subscription in the background
         // that is handling replication
-        this.events.emit('write', this.replicationTopic, this.address.toString(), entry, this._oplog.heads)
+        const headsFromWrite = await this.oplog.getHeads(entry.hash);
+        this.events.emit('write', this.replicationTopic, this.address.toString(), entry, headsFromWrite)
         if (options?.onProgressCallback) options.onProgressCallback(entry)
         return entry.hash
 
