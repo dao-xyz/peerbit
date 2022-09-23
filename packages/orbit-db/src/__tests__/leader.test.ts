@@ -81,7 +81,7 @@ Object.keys(testAPIs).forEach(API => {
         })
 
 
-        it('one leader for two peers', async () => {
+        it('select leaders for two peers', async () => {
 
             // TODO fix test timeout, isLeader is too slow as we need to wait for peers
             // perhaps do an event based get peers using the pubsub peers api
@@ -93,9 +93,11 @@ Object.keys(testAPIs).forEach(API => {
             db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() })
                 , { directory: dbPath1, replicationTopic })
 
-
-            const isLeaderA = await orbitdb1.isLeader(db1, 123);
-            expect(isLeaderA); // since only 1 peer
+            const waitForPeersTime = 1000;
+            const isLeaderAOneLeader = await orbitdb1.isLeader(db1.replicationTopic, db1.address.toString(), 123, 1, { waitForPeersTime });
+            expect(isLeaderAOneLeader);
+            const isLeaderATwoLeader = await orbitdb1.isLeader(db1.replicationTopic, db1.address.toString(), 123, 2, { waitForPeersTime });
+            expect(isLeaderATwoLeader);
 
             const options = { directory: dbPath2, sync: true }
             db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), { ...options, replicationTopic: replicationTopicFn })
@@ -110,15 +112,23 @@ Object.keys(testAPIs).forEach(API => {
 
             // leader rotation is kind of random, so we do a sequence of tests
             for (let slot = 0; slot < 3; slot++) {
-                const isLeaderA = await orbitdb1.isLeader(db1, slot);
-                const isLeaderB = await orbitdb2.isLeader(db1, slot);
-                expect(typeof isLeaderA).toEqual('boolean');
-                expect(typeof isLeaderB).toEqual('boolean');
-                expect(isLeaderA).toEqual(!isLeaderB);
+
+                // One leader
+                const isLeaderAOneLeader = await orbitdb1.isLeader(db1.replicationTopic, db1.address.toString(), slot, 1, { waitForPeersTime });
+                const isLeaderBOneLeader = await orbitdb2.isLeader(db1.replicationTopic, db1.address.toString(), slot, 1, { waitForPeersTime });
+                expect(typeof isLeaderAOneLeader).toEqual('boolean');
+                expect(typeof isLeaderBOneLeader).toEqual('boolean');
+                expect(isLeaderAOneLeader).toEqual(!isLeaderBOneLeader);
+
+                // Two leaders
+                const isLeaderATwoLeaders = await orbitdb1.isLeader(db1.replicationTopic, db1.address.toString(), slot, 2, { waitForPeersTime });
+                const isLeaderBTwoLeaders = await orbitdb2.isLeader(db1.replicationTopic, db1.address.toString(), slot, 2, { waitForPeersTime });
+                expect(isLeaderATwoLeaders);
+                expect(isLeaderBTwoLeaders);
+
             }
 
         })
-
 
     })
 })

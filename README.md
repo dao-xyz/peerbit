@@ -7,7 +7,7 @@
 
 <h1 align="center">
 <strong>
-   Peerit DB
+   PeeritDB
    </strong>
 </h1>
 

@@ -382,11 +382,11 @@ Object.keys(testAPIs).forEach(API => {
           finished = (all === entryCount * 2)
         })
 
-        try {
-          await mapSeries(adds, add)
-          timer = setInterval(() => {
-            if (finished) {
-              clearInterval(timer)
+        await mapSeries(adds, add)
+        timer = setInterval(() => {
+          if (finished) {
+            clearInterval(timer)
+            try {
 
               // Database values should match
               const values1 = db1.iterator({ limit: -1 }).collect()
@@ -410,12 +410,15 @@ Object.keys(testAPIs).forEach(API => {
               assert.equal(Object.keys(db2._replicator._fetching).length, 0)
 
               resolve(true)
+            } catch (e) {
+              reject(e)
             }
-          }, 500)
-        } catch (e) {
-          reject(e)
-        }
+          }
+        }, 500)
+
       })
     })
+
+
   })
 })

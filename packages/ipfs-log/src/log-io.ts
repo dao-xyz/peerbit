@@ -146,6 +146,11 @@ export class LogIO {
     if (options.shouldExclude) {
       hashes = hashes.filter(h => !options.shouldExclude(h))
     }
+    if (options.onProgressCallback) {
+      sourceEntries.forEach((entry) => {
+        options.onProgressCallback(entry)
+      })
+    }
 
 
     // Fetch the entries

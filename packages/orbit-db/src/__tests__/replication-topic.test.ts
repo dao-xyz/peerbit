@@ -4,7 +4,7 @@ const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { delay, waitFor, waitForAsync } from '@dao-xyz/time'
-import { EMIT_HEALTHCHECK_INTERVAL } from '../exchange-replication'
+import { EMIT_HEALTHCHECK_INTERVAL, RequestReplicatorInfo } from '../exchange-replication'
 
 import { OrbitDB } from '../orbit-db'
 import { SimpleAccessController } from './utils/access'
@@ -218,12 +218,18 @@ Object.keys(testAPIs).forEach(API => {
 
       await delay(EMIT_HEALTHCHECK_INTERVAL);
 
-      const peersFrom1 = await orbitdb1.getPeers(replicationTopic, db1.address);
+      const peersFrom1 = await orbitdb1.getPeers(new RequestReplicatorInfo({
+        address: db1.address,
+        replicationTopic
+      }));
       expect(peersFrom1).toHaveLength(1);
       expect(peersFrom1[0].peerInfo.memoryLeft).toBeDefined();
 
 
-      const peersFrom2 = await orbitdb2.getPeers(replicationTopic, db1.address);
+      const peersFrom2 = await orbitdb2.getPeers(new RequestReplicatorInfo({
+        address: db1.address,
+        replicationTopic
+      }));
       expect(peersFrom2).toHaveLength(1);
       expect(peersFrom2[0].peerInfo.memoryLeft).toBeDefined();
 

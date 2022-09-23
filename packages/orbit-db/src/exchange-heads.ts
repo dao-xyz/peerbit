@@ -5,6 +5,7 @@ import { StoreLike } from '@dao-xyz/orbit-db-store';
 import Logger from 'logplease'
 import { DecryptedThing } from '@dao-xyz/encryption-utils';
 import { MaybeSigned, PublicKey } from '@dao-xyz/identity';
+import { ResourceRequirement } from './exchange-replication';
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
@@ -20,13 +21,18 @@ export class ExchangeHeadsMessage<T> extends Message {
   @field({ type: vec(Entry) })
   heads: Entry<T>[];
 
+  @field({ type: vec(ResourceRequirement) })
+  resourceRequirements: ResourceRequirement[];
+
   constructor(props?: {
     replicationTopic: string,
     address: string,
-    heads: Entry<T>[]
+    heads: Entry<T>[],
+    resourceRequirements?: ResourceRequirement[]
   }) {
     super();
     if (props) {
+      this.resourceRequirements = props.resourceRequirements || [];
       this.replicationTopic = props.replicationTopic;
       this.address = props.address;
       this.heads = props.heads;
@@ -55,13 +61,8 @@ export class RequestHeadsMessage extends Message {
   }
 }
 
-
-
-
 export const exchangeHeads = async (channel: any, topic: string, getStore: (address: string) => { [key: string]: StoreLike<any> }, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
-
-  // Send the heads if we have any
-  const stores = getStore(topic);
+  const stores = getStore(topic);  // Send the heads if we have any
   if (stores) {
     for (const [storeAddress, store] of Object.entries(stores)) {
       const heads = await store.getHeads();
@@ -77,6 +78,5 @@ export const exchangeHeads = async (channel: any, topic: string, getStore: (addr
       }
     }
   }
-
 }
 

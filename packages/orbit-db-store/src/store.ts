@@ -356,12 +356,8 @@ export class Store<T> implements StoreLike<T> {
     } catch (e) {
       console.error('Store Error:', e)
     }
-    // TODO: verify if this is working since we don't seem to emit "replicated.progress" anywhere
-    this.events.on('replicated.progress', (address, hash, entry, progress, have) => {
-      this._procEntry(entry)
-    })
+
     this.events.on('write', (topic, address, entry, heads) => {
-      this._procEntry(entry)
       if (this.options.onWrite) {
         this.options.onWrite(topic, address, entry, heads);
       }
@@ -427,7 +423,7 @@ export class Store<T> implements StoreLike<T> {
     if (!v8) {
       return true; // Assume no memory checks
     }
-    if (this.options.resourceOptions.heapSizeLimit) {
+    if (this.options.resourceOptions?.heapSizeLimit) {
       const usedHeapSize = v8?.getHeapStatistics().used_heap_size;
       if (usedHeapSize > this.options.resourceOptions.heapSizeLimit()) {
         /*  if (!this.sharding) {
@@ -552,7 +548,7 @@ export class Store<T> implements StoreLike<T> {
     this.events.emit('ready', this.address.toString(), this._oplog.heads)
   }
 
-  async sync(heads: Entry<T>[]) {
+  async sync(heads: Entry<T>[], isLeader: () => Promise<boolean>) {
 
 
     /* const mem = await this.checkMemory();
@@ -566,12 +562,13 @@ export class Store<T> implements StoreLike<T> {
       return
     }
 
+    this.allowForks = await this.checkMemory();
 
     let hasKnown = false;
     outer:
     for (const head of heads) {
       for (const hash of head.next) {
-        if (!this._oplog.has(hash)) {
+        if (this._oplog.has(hash)) {
           hasKnown = true;
         }
         if (hasKnown) {
@@ -589,10 +586,14 @@ export class Store<T> implements StoreLike<T> {
     }
 
     if (!hasKnown) {
-      // "FORK" 
+      // Is a fork/independent state
       if (!this.allowForks) {
-        console.warn("Seems to be a fork, and this store does not allow them")
+        logger.info("Seems to be a fork, and this store does not allow them")
         return Promise.resolve(null)
+      }
+      if (!await isLeader()) {
+        logger.info("Is not leader so I am rejecting the fork")
+        return Promise.resolve(null);
       }
     }
 
@@ -605,14 +606,6 @@ export class Store<T> implements StoreLike<T> {
     // return this._replicator.load(heads)
 
     const saveToIpfs = async (head: Entry<T>) => {
-      if (!head) {
-        console.warn("Warning: Given input entry was 'null'.")
-        return Promise.resolve(null)
-      }
-      /* 
-            const identityProvider = this.identity.provider
-            if (!identityProvider) throw new Error('Identity-provider is required, cannot verify entry')
-       */
 
       // TODO Fix types
       head.init({
@@ -704,7 +697,7 @@ export class Store<T> implements StoreLike<T> {
     this.events.emit('load', this.address.toString()) // TODO emits inconsistent params, missing heads param
 
     const maxClock = (res: bigint, val: Entry<any>): bigint => bigIntMax(res, val.clock.time)
-    this.sync([])
+    this.sync([], () => Promise.resolve(true))
 
     const queue = (await this._cache.get(this.queuePath)) as string[]
     if (queue?.length > 0) {
@@ -761,7 +754,7 @@ export class Store<T> implements StoreLike<T> {
     }
   }
 
-  async _addOperation(data: T, options: { refs?: [], nexts?: [], onProgressCallback?: (any) => void, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = {}) {
+  async _addOperation(data: T, options: { refs?: string[], nexts?: string[], onProgressCallback?: (any) => void, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = {}): Promise<Entry<T>> {
     const addOperation = async () => {
       if (this._oplog) {
         // check local cache for latest heads
@@ -784,7 +777,7 @@ export class Store<T> implements StoreLike<T> {
         const headsFromWrite = await this.oplog.getHeads(entry.hash);
         this.events.emit('write', this.replicationTopic, this.address.toString(), entry, headsFromWrite)
         if (options?.onProgressCallback) options.onProgressCallback(entry)
-        return entry.hash
+        return entry
 
       }
     }
@@ -793,19 +786,7 @@ export class Store<T> implements StoreLike<T> {
 
 
 
-  _addOperationBatch(data, batchOperation?, lastOperation?, onProgressCallback?) {
-    throw new Error('Not implemented!')
-  }
 
-  _procEntry(entry: Entry<T>) {
-    /* const { op } = payload
-    if (op) {
-      this.events.emit(`log.op.${op}`, this.address.toString(), hash, payload)
-    } else {
-      this.events.emit('log.op.none', this.address.toString(), hash, payload)
-    }
-    this.events.emit('log.op', op, this.address.toString(), hash, payload) */
-  }
 
   /* Replication Status state updates */
   _recalculateReplicationProgress() {

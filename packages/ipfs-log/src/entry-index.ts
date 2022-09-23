@@ -3,20 +3,11 @@ import { Entry } from "@dao-xyz/ipfs-log-entry"
 export class EntryIndex<T> {
   _cache: { [key: string]: Entry<T> }
   constructor(entries = {}) {
-    Object.keys(entries).forEach((k) => {
-      if (k?.length != 49) {
-        throw new Error("Unexpected")
-      }
-    })
-
     this._cache = entries
-
   }
 
   set(k: string, v: Entry<T>) {
-    if (k?.length != 49) {
-      throw new Error("Unexpected")
-    }
+
     this._cache[k] = v
   }
 
@@ -29,12 +20,6 @@ export class EntryIndex<T> {
   }
 
   add(newItems: { [key: string]: Entry<T> }) {
-    Object.keys(newItems).forEach((k) => {
-      if (k?.length != 49) {
-        throw new Error("Unexpected")
-      }
-    })
-
     this._cache = Object.assign(this._cache, newItems)
   }
 

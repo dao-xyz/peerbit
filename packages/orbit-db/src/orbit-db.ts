@@ -21,7 +21,7 @@ import { DirectChannel } from '@dao-xyz/ipfs-pubsub-1on1'
 import { encryptionWithRequestKey, replicationTopicEncryptionWithRequestKey } from './encryption'
 import { Ed25519PublicKeyData, PublicKey } from '@dao-xyz/identity';
 import { MaybeSigned, SignatureWithKey } from '@dao-xyz/identity';
-import { EMIT_HEALTHCHECK_INTERVAL, exchangePeerInfo, HeapSizeRequirement, PeerInfo, PeerInfoWithMeta, RequestPeerInfo, requestPeerInfo, RequestReplication } from './exchange-replication'
+import { EMIT_HEALTHCHECK_INTERVAL, exchangePeerInfo, HeapSizeRequirement, ReplicatorInfo, PeerInfoWithMeta, RequestReplicatorInfo, requestPeerInfo } from './exchange-replication'
 import { createHash } from 'crypto'
 import isNode from 'is-node';
 import { delay, waitForAsync } from '@dao-xyz/time'
@@ -37,10 +37,12 @@ Logger.setLogLevel('ERROR')
 const defaultTimeout = 30000 // 30 seconds
 const STORE_MIN_HEAP_SIZE = 50 * 1000;
 
+const MIN_REPLICAS = 2;
+
 export type StoreOperations = 'write' | 'all'
 export type Storage = { createStore: (string) => any }
 export type CreateOptions = {
-  AccessControllers?: any, cache?: Cache, keystore?: Keystore, peerId?: string, offline?: boolean, directory?: string, storage?: Storage, broker?: any, heapSizeLimit?: number, waitForKeysTimout?: number, canAccessKeys?: KeyAccessCondition, isTrusted?: (key: PublicKey, replicationTopic: string) => Promise<boolean>
+  AccessControllers?: any, cache?: Cache, keystore?: Keystore, peerId?: string, offline?: boolean, directory?: string, storage?: Storage, broker?: any, minReplicas?: number, heapsizeLimitForForks?: number, waitForKeysTimout?: number, canAccessKeys?: KeyAccessCondition, isTrusted?: (key: PublicKey, replicationTopic: string) => Promise<boolean>
 };
 export type CreateInstanceOptions = CreateOptions & { publicKey?: PublicKey, sign?: (data: Uint8Array) => Promise<Uint8Array>, id?: string };
 export class OrbitDB {
@@ -57,7 +59,8 @@ export class OrbitDB {
   storage: Storage;
   caches: any;
   keystore: Keystore;
-  heapSizeLimit: number = 1000 * 1000 * 1000;
+  minReplicas: number;
+  heapsizeLimitForForks: number = 1000 * 1000 * 1000;
   stores: { [topic: string]: { [address: string]: StoreLike<any> } };
 
   _subscribeForReplication = new Set<string>();
@@ -66,6 +69,9 @@ export class OrbitDB {
   _keyRequestsLRU: LRU = new LRU({ max: 100, maxAge: 10000 });
   /*   _replicationTopicJobs: Map<string, { controller: AbortController }> = new Map(); */
   _peerInfoLRU: LRU = new LRU({ max: 1000, maxAge: EMIT_HEALTHCHECK_INTERVAL * 4 });
+
+  //_peerInfoMap: Map<string, Map<string, Set<string>>> // peer -> store -> heads
+
 
   isTrusted: (key: PublicKey, replicationTopic: string) => Promise<boolean>
   canAccessKeys: KeyAccessCondition
@@ -90,6 +96,7 @@ export class OrbitDB {
     this._directConnections = {}
     this.stores = {}
     this.caches = {}
+    this.minReplicas = options.minReplicas || MIN_REPLICAS;
     this.caches[this.directory] = { cache: options.cache, handlers: new Set() }
     this.keystore = options.keystore
     this.canAccessKeys = options.canAccessKeys || (() => Promise.resolve(false));
@@ -97,7 +104,7 @@ export class OrbitDB {
     if (options.waitForKeysTimout) {
       this._waitForKeysTimeout = options.waitForKeysTimout;
     }
-
+    this.heapsizeLimitForForks = options.heapsizeLimitForForks;
     // AccessControllers module can be passed in to enable
     // testing with orbit-db-access-controller
     /*     AccessControllersModule = options.AccessControllers || AccessControllers
@@ -366,6 +373,20 @@ export class OrbitDB {
         }
         const stores = this.stores[replicationTopic]
         if (heads && stores) {
+          let isLeaderResolver = () => this.isLeader(replicationTopic, address, Buffer.from(signedMessage.signature.signature).toString('base64'), MIN_REPLICAS)
+          if (!stores[address]) {
+            // open store if is leader
+            const isLeader = await isLeaderResolver();
+            if (isLeader) {
+              // open store since it is not open
+              await this.open(Address.parse(address), { replicationTopic })
+              isLeaderResolver = () => Promise.resolve(true);
+            }
+            else {
+              return; // is not leader, so we should not open the store
+            }
+
+          }
           for (const [storeAddress, store] of Object.entries(stores)) {
             if (store) {
               if (storeAddress !== address) {
@@ -385,7 +406,7 @@ export class OrbitDB {
                 }
                 else {
                   // Full sync
-                  await store.sync(heads)
+                  await store.sync(heads, () => isLeaderResolver());
 
                 }
               }
@@ -432,17 +453,21 @@ export class OrbitDB {
         await exchangeKeys(channel, msg, sender, this.canAccessKeys, getKeysByPublicKey, getKeysByGroup, await this.getSigner(), this.encryption)
         logger.debug(`Exchanged keys`)
       }
-      else if (msg instanceof RequestPeerInfo) {
+      else if (msg instanceof RequestReplicatorInfo) {
 
         if (!(await checkTrustedSender(msg.replicationTopic))) {
           return;
         }
         // if supports store, return resp
-        if (this.stores[msg.replicationTopic]?.[msg.store]) {
-          await exchangePeerInfo(msg.replicationTopic, msg.store, (topic, message) => this._pubsub.publish(topic, message), await this.getSigner())
+        const store = this.stores[msg.replicationTopic]?.[msg.address];
+        let hasHead = msg.head ? !!store.oplog._entryIndex.get(msg.head) : true;
+
+        // TODO do direct channel repsonse?
+        if (store && hasHead) {
+          await exchangePeerInfo(msg.replicationTopic, store, (topic, message) => this._pubsub.publish(topic, message), await this.getSigner())
         }
       }
-      else if (msg instanceof PeerInfo) {
+      else if (msg instanceof ReplicatorInfo) {
 
         if (!(await checkTrustedSender(msg.replicationTopic))) {
           return;
@@ -453,23 +478,26 @@ export class OrbitDB {
         } as PeerInfoWithMeta)
       }
 
-      else if (msg instanceof RequestReplication) {
-
-        if (!this._subscribeForReplication.has(msg.replicationTopic)) {
-          return;
-        }
-
-        if (!(await checkTrustedSender(msg.replicationTopic))) {
-          return;
-        }
-        for (const r of msg.resourceRequirements) {
-          if (!await r.ok(this)) {
-            return; // does not fulfill criteria
-          }
-        }
-        // TODO only leader open?
-        await this.open(msg.store, { replicationTopic: msg.replicationTopic });
-      }
+      /*  else if (msg instanceof RequestReplication) {
+ 
+         if (!this._subscribeForReplication.has(msg.replicationTopic)) {
+           return;
+         }
+ 
+         if (!(await checkTrustedSender(msg.replicationTopic))) {
+           return;
+         }
+         for (const r of msg.resourceRequirements) {
+           if (!await r.ok(this)) {
+             return; // does not fulfill criteria
+           }
+         }
+         // TODO only leader open?
+         await this.open(msg.store, { replicationTopic: msg.replicationTopic });
+         if (msg.heads.length > 0) {
+           await msg.store.sync(msg.heads, () => this.isLeader(msg.store, Buffer.from(data).toString('base64'), XXX))
+         }
+       } */
 
       else {
         throw new Error("Unexpected message")
@@ -606,6 +634,7 @@ export class OrbitDB {
     if (!this.stores[replicationTopic]) {
       this.stores[replicationTopic] = {};
     }
+
     const storeAddress = store.address.toString();
     const existingStore = this.stores[replicationTopic][storeAddress];
     if (!!existingStore && existingStore !== store) { // second condition only makes this throw error if we are to add a new instance with the same address
@@ -626,14 +655,13 @@ export class OrbitDB {
     } */
   }
 
-  async getPeers(replicationTopic: string, address: Address): Promise<PeerInfoWithMeta[]> {
+  async getPeers(request: RequestReplicatorInfo, options: { waitForPeersTime?: number } = {}): Promise<PeerInfoWithMeta[]> {
 
-    await this.subscribeToReplicationTopic(replicationTopic);
-    await requestPeerInfo(replicationTopic, address.toString(), this.id, (topic, message) => this._pubsub.publish(topic, message), await this.getSigner())
-    await delay(EMIT_HEALTHCHECK_INTERVAL * 2);
+    await this.subscribeToReplicationTopic(request.replicationTopic);
+    await requestPeerInfo(request, (topic, message) => this._pubsub.publish(topic, message), await this.getSigner())
+    await delay(options?.waitForPeersTime || EMIT_HEALTHCHECK_INTERVAL * 2);
     const caches: { value: PeerInfoWithMeta }[] = Object.values(this._peerInfoLRU.cache);
-    const addressString = address.toString();
-    const peersSupportingAddress = caches.filter(cache => cache.value.peerInfo.store === addressString).map(x => x.value)
+    const peersSupportingAddress = caches.filter(cache => cache.value.peerInfo.store === request.address).map(x => x.value)
     return peersSupportingAddress
   }
 
@@ -642,14 +670,14 @@ export class OrbitDB {
   * @param slot, some time measure
   * @returns 
   */
-  async isLeader(store: Store<any>, slot: number): Promise<boolean> {
+  async isLeader(replicationTopic: string, address: string, slot: { toString(): string }, numberOfLeaders: number, options: { waitForPeersTime?: number } = {}): Promise<boolean> {
     // Hash the time, and find the closest peer id to this hash
     const h = (h: string) => createHash('sha1').update(h).digest('hex');
     const slotHash = h(slot.toString())
 
 
     const hashToPeer: Map<string, (OrbitDB | PeerInfoWithMeta)> = new Map();
-    const peers: (OrbitDB | PeerInfoWithMeta)[] = await this.getPeers(store.replicationTopic, store.address);
+    const peers: (OrbitDB | PeerInfoWithMeta)[] = await this.getPeers(new RequestReplicatorInfo({ address, replicationTopic }), options);
     if (peers.length == 0) {
       return false;
     }
@@ -661,6 +689,8 @@ export class OrbitDB {
       hashToPeer.set(peerHash, peer);
       peerHashed.push(peerHash);
     })
+    numberOfLeaders = Math.min(numberOfLeaders, peerHashed.length);
+
     peerHashed.push(slotHash);
 
     // TODO make more efficient
@@ -669,60 +699,70 @@ export class OrbitDB {
     // we only step forward 1 step (ignoring that step backward 1 could be 'closer')
     // This does not matter, we only have to make sure all nodes running the code comes to somewhat the 
     // same conclusion (are running the same leader selection algorithm)
-    let nextIndex = slotIndex + 1;
-    if (nextIndex >= peerHashed.length)
-      nextIndex = 0;
+    for (let i = 0; i < numberOfLeaders; i++) {
+      let nextIndex = slotIndex + 1 + i;
+      if (nextIndex >= peerHashed.length)
+        nextIndex = 0;
+      const isLeader = hashToPeer.get(peerHashed[nextIndex]).publicKey.equals(this.identity)
+      if (isLeader) {
+        return true;
+      }
+    }
 
-    const isLeader = hashToPeer.get(peerHashed[nextIndex]).publicKey.equals(this.identity)
-    return isLeader
-
+    return false;
     // better alg, 
     // convert slot into hash, find most "probable peer" 
   }
 
 
-  _requestingReplicationPromise: Promise<void>;
-  async requestReplication(store: Store<any>, replicationTopic?: string) {
-    replicationTopic = replicationTopic || store.replicationTopic;
-    if (!replicationTopic) {
-      throw new Error("Missing replication topic for replication");
-    }
-    await this._requestingReplicationPromise;
-    if (!store.address) {
-      await store.save(this._ipfs);
-    }
-    const currentPeersCountFn = async () => (await this.getPeers(replicationTopic, store.address)).length
-    const currentPeersCount = await currentPeersCountFn();
-    this._requestingReplicationPromise = new Promise(async (resolve, reject) => {
-      const signedThing = new DecryptedThing({
-        data: await serialize(await (new MaybeSigned({
-          data: serialize(new RequestReplication({
-            replicationTopic,
-            store,
-            resourceRequirements: [new HeapSizeRequirement({
-              heapSize: BigInt(STORE_MIN_HEAP_SIZE)
-            })]
-          }))
-        })).sign(await this.getSigner()))
-      }) /// TODO add encryption?
+  /*  _requestingReplicationPromise: Promise<void>;
+   async requestReplication(store: Store<any>, options: { heads?: Entry<any>[], replicationTopic?: string, waitForPeersTime?: number } = {}) {
+     const replicationTopic = options?.replicationTopic || store.replicationTopic;
+     if (!replicationTopic) {
+       throw new Error("Missing replication topic for replication");
+     }
+     await this._requestingReplicationPromise;
+     if (!store.address) {
+       await store.save(this._ipfs);
+     }
+     const currentPeersCountFn = async () => (await this.getPeers(replicationTopic, store.address, options)).length
+     const currentPeersCount = await currentPeersCountFn();
+     this._requestingReplicationPromise = new Promise(async (resolve, reject) => {
+       const signedThing = new DecryptedThing({
+         data: await serialize(await (new MaybeSigned({
+           data: serialize(new RequestReplication({
+             replicationTopic,
+             store,
+             heads: options?.heads,
+             resourceRequirements: [new HeapSizeRequirement({
+               heapSize: BigInt(STORE_MIN_HEAP_SIZE)
+             })]
+           }))
+         })).sign(await this.getSigner()))
+       }) /// TODO add encryption?
+ 
+       await this._pubsub.publish(replicationTopic, serialize(signedThing));
+       await waitForAsync(async () => await currentPeersCountFn() >= currentPeersCount + 1, {
+         timeout: (options?.waitForPeersTime || 5000) * 2,
+         delayInterval: 50
+       })
+       resolve();
+ 
+     })
+     await this._requestingReplicationPromise;
+   } */
 
-      await this._pubsub.publish(replicationTopic, serialize(signedThing));
-      await waitForAsync(async () => await currentPeersCountFn() >= currentPeersCount + 1, {
-        timeout: 60000,
-        delayInterval: 50
-      })
-      resolve();
-
-    })
-    await this._requestingReplicationPromise;
-  }
 
   subscribeToReplicationTopic(topic: string, id: string = '_'): Promise<any> {
+    if (!this.stores[topic]) {
+      this.stores[topic] = {};
+    }
     if (!this._pubsub._subscriptions[topic]) {
       return this._pubsub.subscribe(topic, id, this._onMessage.bind(this), {
         onNewPeerCallback: this._onPeerConnected.bind(this)
       })
     }
+
   }
   hasSubscribedToReplicationTopic(topic: string): boolean {
     return !!this._pubsub._subscriptions[topic]
@@ -817,7 +857,17 @@ export class OrbitDB {
     return cache
   }
 
-  async open<S extends StoreLike<any>>(store: /* string | Address |  */S, options: {
+
+  _openStorePromise: Promise<StoreLike<any>>
+
+  /**
+   * Default behaviour of a store is only to accept heads that are forks (new roots) with some probability
+   * and to replicate heads (and updates) which is requested by another peer
+   * @param store 
+   * @param options 
+   * @returns 
+   */
+  async open<S extends StoreLike<any>>(storeOrAddress: /* string | Address |  */S | Address | string, options: {
     timeout?: number,
     publicKey?: PublicKey,
     sign?: (data: Uint8Array) => Promise<Uint8Array>,
@@ -838,132 +888,96 @@ export class OrbitDB {
 
 
     // TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?
+    await this._openStorePromise;
 
-
-    logger.debug('open()')
-
-    options = Object.assign({ localOnly: false, create: false }, options)
-    logger.debug(`Open database '${store}'`)
-
-    // If address is just the name of database, check the options to crate the database
-    /*  if (!store.address) {
- 
-       logger.warn(`Not a valid OrbitDB address '${store}', creating the database`)
-       return this.create(store, options)
-     }
-     else { */
-
-    // Parse the database address
-    /*  const address = store.address;
-     if (!address) {
-       throw new Error("Missing address to open");
-     } */
-    // If database is already open, return early by returning the instance
-    // if (this.stores[dbAddress]) {
-    //   return this.stores[dbAddress]
-    // }
-
-    const resolveCache = async (address: Address) => {
-      const cache = await this._requestCache(address.toString(), options.directory)
-
-      // Check if we have the database
-      const haveDB = await this._haveLocalData(cache, address)
-
-      logger.debug((haveDB ? 'Found' : 'Didn\'t find') + ` database '${address}'`)
-
-      // If we want to try and open the database local-only, throw an error
-      // if we don't have the database locally
-      if (options.localOnly && !haveDB) {
-        logger.warn(`Database '${address}' doesn't exist!`)
-        throw new Error(`Database '${address}' doesn't exist!`)
+    this._openStorePromise = new Promise<S | undefined>(async (resolve, reject) => {
+      let store = storeOrAddress as S;
+      if (typeof storeOrAddress === 'string') {
+        storeOrAddress = Address.parse(storeOrAddress);
       }
-
-      if (!haveDB) {
-        /*  throw new Error("Cache already exist for address: " + address.toString()) */
-        // Save the database locally
-        await this._addManifestToCache(cache, address)
-      }
-
-
-      return cache;
-    }
-
-
-    logger.debug(`Loading store`)
-    /*  let store = store instanceof Store ? store : undefined;
-     if (!store) {
-       try {
-         // Get the database manifest from IPFS
-         store = await Store.load(this._ipfs, address, { timeout: options.timeout || defaultTimeout }) as S
-         logger.debug(`Manifest for '${address}':\n${JSON.stringify(store.name, null, 2)}`)
-       } catch (e) {
-         if (e.name === 'TimeoutError' && e.code === 'ERR_TIMEOUT') {
-           console.error(e)
-           throw new Error('ipfs unable to find and fetch store for this address.')
-         } else {
-           throw e
-         }
-       }
-     } */
-
-    /*  if (store.name !== address.path) {
-       logger.warn(`Store name '${store.name}' and path name '${address.path}' do not match`)
-     } */
-
-    if (!options.encryption) {
-      options.encryption = this.replicationTopicEncryption();
-    }
-
-    /* we want to save databases recoursivle outside the init function so we invoke the "save" fn on the store like interface. 
-    This would enable us to swap stores also */
-    // Open the the database
-    await store.init(this._ipfs, options.publicKey || this.publicKey, options.sign || this.sign, {
-      replicate: true, ...options, ...{
-        resolveCache,
-        saveAndResolveStore: async (store: StoreLike<any>) => {
-          const address = await store.save(this._ipfs);
-          const r = Store.getReplicationTopic(address, options);
-          const a = address.toString();
-          const alreadyHaveStore = this.stores[r]?.[a];
-          if (options.rejectIfAlreadyOpen) {
-            new Error(`Store at ${r}/${a} is already created`)
-          }
-          return alreadyHaveStore || store;
-        }
-      },
-      /*  requestNewShard: async () => {
-     const newStore = deserialize(serialize(store), Store);
-       (newStore.sharding as ShardingCounter).shardIndex += 1n;
-       await this.requestReplication(newStore, store.replicationTopic); 
-     },*/
-      onClose: this._onClose.bind(this),
-      onDrop: this._onDrop.bind(this),
-      onLoad: this._onLoad.bind(this),
-      onWrite: this._onWrite.bind(this),
-      onOpen: async (store) => {
-
-        // ID of the store is the address as a string
-        await this.addStore(store)
-
-        // Subscribe to pubsub to get updates from peers,
-        // this is what hooks us into the message propagation layer
-        // and the p2p network
-        if (this._pubsub) {
-          if (!this._pubsub._subscriptions[store.replicationTopic]) {
-            await this.subscribeToReplicationTopic(store.replicationTopic, store.id);
-          }
-          else {
-            const msg = new RequestHeadsMessage({
-              address: store.address.toString(),
-              replicationTopic: store.replicationTopic
-            });
-            await this._pubsub.publish(store.replicationTopic, serialize(await this.decryptedSignedThing(serialize(msg))));
-
-          }
+      if (storeOrAddress instanceof Address) {
+        try {
+          store = await Store.load(this._ipfs, storeOrAddress as any as Address) as any as S // TODO fix typings
+        } catch (error) {
+          logger.error("Failed to load store with address: " + storeOrAddress.toString());
+          reject(error);
         }
       }
-    });
-    return store as S;
+
+      try {
+        logger.debug('open()')
+
+        options = Object.assign({ localOnly: false, create: false }, options)
+        logger.debug(`Open database '${store}'`)
+
+        const resolveCache = async (address: Address) => {
+          const cache = await this._requestCache(address.toString(), options.directory)
+          const haveDB = await this._haveLocalData(cache, address)
+          logger.debug((haveDB ? 'Found' : 'Didn\'t find') + ` database '${address}'`)
+          if (options.localOnly && !haveDB) {
+            logger.warn(`Database '${address}' doesn't exist!`)
+            throw new Error(`Database '${address}' doesn't exist!`)
+          }
+
+          if (!haveDB) {
+            await this._addManifestToCache(cache, address)
+          }
+          return cache;
+        }
+
+        if (!options.encryption) {
+          options.encryption = this.replicationTopicEncryption();
+        }
+
+        // Open the the database
+        await store.init(this._ipfs, options.publicKey || this.publicKey, options.sign || this.sign, {
+          replicate: true, ...options, ...{
+            resolveCache,
+            saveAndResolveStore: async (store: StoreLike<any>) => {
+              const address = await store.save(this._ipfs);
+              const r = Store.getReplicationTopic(address, options);
+              const a = address.toString();
+              const alreadyHaveStore = this.stores[r]?.[a];
+              if (options.rejectIfAlreadyOpen) {
+                new Error(`Store at ${r}/${a} is already created`)
+              }
+              return alreadyHaveStore || store;
+            }
+          },
+          resourceOptions: options.resourceOptions || this.heapsizeLimitForForks ? { heapSizeLimit: () => this.heapsizeLimitForForks } : undefined,
+          onClose: this._onClose.bind(this),
+          onDrop: this._onDrop.bind(this),
+          onLoad: this._onLoad.bind(this),
+          onWrite: this._onWrite.bind(this),
+          onOpen: async (store) => {
+
+            // ID of the store is the address as a string
+            await this.addStore(store)
+
+            // Subscribe to pubsub to get updates from peers,
+            // this is what hooks us into the message propagation layer
+            // and the p2p network
+            if (this._pubsub) {
+              if (!this._pubsub._subscriptions[store.replicationTopic]) {
+                await this.subscribeToReplicationTopic(store.replicationTopic, store.id);
+              }
+              else {
+                const msg = new RequestHeadsMessage({
+                  address: store.address.toString(),
+                  replicationTopic: store.replicationTopic
+                });
+                await this._pubsub.publish(store.replicationTopic, serialize(await this.decryptedSignedThing(serialize(msg))));
+
+              }
+            }
+          }
+        });
+        resolve(store)
+      } catch (error) {
+        reject(error);
+      }
+    })
+    return this._openStorePromise as Promise<S>;
     /*  } */
 
   }

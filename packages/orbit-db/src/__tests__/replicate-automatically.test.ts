@@ -1,4 +1,6 @@
 
+import { waitFor } from "@dao-xyz/time"
+import { RequestReplicatorInfo } from "../exchange-replication"
 import { OrbitDB } from "../orbit-db"
 import { SimpleAccessController } from "./utils/access"
 import { EventStore, Operation } from "./utils/stores/event-store"
@@ -18,55 +20,70 @@ const {
 
 const dbPath1 = './orbitdb/tests/replicate-automatically/1'
 const dbPath2 = './orbitdb/tests/replicate-automatically/2'
+const dbPath3 = './orbitdb/tests/replicate-automatically/3'
+const dbPath4 = './orbitdb/tests/replicate-automatically/4'
 
 Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Automatic Replication (${API})`, function () {
     jest.setTimeout(config.timeout * 3)
 
-    let ipfsd1, ipfsd2, ipfs1, ipfs2
-    let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore<string>, db2: EventStore<string>, db3: KeyValueStore<string>, db4: KeyValueStore<string>
+    let ipfsd1, ipfsd2, ipfsd3, ipfsd4, ipfs1, ipfs2, ipfs3, ipfs4
+    let orbitdb1: OrbitDB, orbitdb2: OrbitDB, orbitdb3: OrbitDB, orbitdb4: OrbitDB
 
     beforeAll(async () => {
       rmrf.sync('./orbitdb')
       rmrf.sync(dbPath1)
       rmrf.sync(dbPath2)
+      rmrf.sync(dbPath3)
+      rmrf.sync(dbPath4)
+
       ipfsd1 = await startIpfs(API, config.daemon1)
       ipfsd2 = await startIpfs(API, config.daemon2)
+      ipfsd3 = await startIpfs(API, config.daemon3)
+      ipfsd4 = await startIpfs(API, config.daemon4)
+
       ipfs1 = ipfsd1.api
       ipfs2 = ipfsd2.api
+      ipfs3 = ipfsd3.api
+      ipfs4 = ipfsd4.api
       orbitdb1 = await OrbitDB.createInstance(ipfs1, { directory: dbPath1 })
       orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: dbPath2 })
 
-      let options: any = {}
-      // Set write access for both clients
 
-
-      options = Object.assign({}, options)
-      db1 = await orbitdb1.open(new EventStore<string>({ name: 'replicate-automatically-tests', accessController: new SimpleAccessController() })
-        , options)
-      db3 = await orbitdb1.open(new KeyValueStore<string>({ name: 'replicate-automatically-tests-kv', accessController: new SimpleAccessController() })
-        , options)
     })
 
     afterAll(async () => {
+
       if (orbitdb1) {
         await orbitdb1.stop()
       }
-
       if (orbitdb2) {
         await orbitdb2.stop()
+      }
+      if (orbitdb3) {
+        await orbitdb3.stop()
+      }
+      if (orbitdb4) {
+        await orbitdb4.stop()
       }
 
       if (ipfsd1) {
         await stopIpfs(ipfsd1)
       }
-
       if (ipfs2) {
         await stopIpfs(ipfsd2)
       }
-
+      if (ipfs3) {
+        await stopIpfs(ipfsd3)
+      }
+      if (ipfs4) {
+        await stopIpfs(ipfsd4)
+      }
       rmrf.sync(dbPath1)
       rmrf.sync(dbPath2)
+      rmrf.sync(dbPath3)
+      rmrf.sync(dbPath4)
+
     })
 
     it('starts replicating the database when peers connect', async () => {
@@ -76,6 +93,11 @@ Object.keys(testAPIs).forEach(API => {
       const entryCount = 33
       const entryArr = []
 
+      const db1 = await orbitdb1.open(new EventStore<string>({ name: 'replicate-automatically-tests', accessController: new SimpleAccessController() })
+        , {})
+      const db3 = await orbitdb1.open(new KeyValueStore<string>({ name: 'replicate-automatically-tests-kv', accessController: new SimpleAccessController() })
+        , {})
+
       // Create the entries in the first database
       for (let i = 0; i < entryCount; i++) {
         entryArr.push(i)
@@ -84,8 +106,8 @@ Object.keys(testAPIs).forEach(API => {
       await mapSeries(entryArr, (i) => db1.add('hello' + i))
 
       // Open the second database
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {})
-      db4 = await orbitdb2.open<KeyValueStore<string>>(await KeyValueStore.load(orbitdb2._ipfs, db3.address), {})
+      const db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {})
+      const db4 = await orbitdb2.open<KeyValueStore<string>>(await KeyValueStore.load(orbitdb2._ipfs, db3.address), {})
 
       // Listen for the 'replicated' events and check that all the entries
       // were replicated to the second database
@@ -128,7 +150,40 @@ Object.keys(testAPIs).forEach(API => {
         }
       })
     })
+    it('will run a chron job making sures stores are replicated', async () => {
 
+      // Create a write only peer and write two messsages and make sure another peer is replicating them
+      const replicationTopic = 'x';
+      const store = new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() });
+      const db1 = await orbitdb1.open(store, { replicate: false, replicationTopic }); // this would be a "light" client, write -only
+      const db2 = await orbitdb2.open(store, { replicationTopic });
+      orbitdb3 = await OrbitDB.createInstance(ipfs3, { directory: dbPath3, minReplicas: 2 })
+      orbitdb4 = await OrbitDB.createInstance(ipfs4, { directory: dbPath4, minReplicas: 2 })
+      const hello = await store.add('hello', { refs: [], nexts: [] });
+      const world = await store.add('world', { refs: [hello.hash] });
+
+      expect(store.oplog.heads).toHaveLength(1);
+
+      await waitFor(() => db2.oplog.values.length == 2);
+
+      expect(db2.oplog.heads).toHaveLength(1);
+      expect(db2.oplog.heads[0].hash).toEqual(world.hash);
+
+      // Now open a replicating peer and make sure it starts to replicate entries 
+      const db3 = await orbitdb3.open(store, { replicationTopic });
+      await waitFor(() => db2.oplog.values.length === 2);
+      await waitFor(() => db3.oplog.values.length === 2);
+
+      const peers = await orbitdb2.getPeers(new RequestReplicatorInfo({
+        address: store.address,
+        replicationTopic,
+        head: world.hash,
+      }), { waitForPeersTime: 10000 })
+      const x = 123;
+      // Now open a forth peer and make sure it does not start to replicate entries since it is not needed
+
+
+    })
 
   })
 })

@@ -82,29 +82,29 @@ Object.keys(testAPIs).forEach(API => {
 
 
 
-        it('replicate by request', async () => {
+        /*  it('replicate by request no heads', async () => {
+ 
+             const waitForPeersTime = 1000;
+             const replicationTopic = 'x';
+             const store = new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() });
+             await orbitdb2.subscribeForReplicationStart(replicationTopic);
+ 
+             await orbitdb1.requestReplication(store, { replicationTopic, waitForPeersTime });
+ 
+             const replicatedStore = Object.values(orbitdb2.stores[replicationTopic])[0];
+             expect(replicatedStore).toBeDefined();
+ 
+             await waitForPeers(ipfs1, [orbitdb2.id], replicationTopic)
+             const ls2 = await orbitdb2._ipfs.pubsub.ls();
+             expect(ls2).toContain(replicationTopic)
+             expect(ls2).toHaveLength(2)
+             const peersFrom1 = await orbitdb1.getPeers(replicationTopic, replicatedStore.address, { waitForPeersTime });
+             expect(peersFrom1).toHaveLength(1);
+             expect(peersFrom1[0].peerInfo.memoryLeft).toBeDefined();
+ 
+         }) */
 
-            console.log("Waiting for peers to connect")
 
-            const replicationTopic = 'x';
-            const store = new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() });
-            await orbitdb2.subscribeForReplicationStart(replicationTopic);
-
-            //PEER COUNT IS ALREDY ONE BEFORE REPLICAITON START?
-            await orbitdb1.requestReplication(store, replicationTopic);
-
-            const replicatedStore = Object.values(orbitdb2.stores[replicationTopic])[0];
-            expect(replicatedStore).toBeDefined();
-
-            await waitForPeers(ipfs1, [orbitdb2.id], replicationTopic)
-            const ls2 = await orbitdb2._ipfs.pubsub.ls();
-            expect(ls2).toContain(replicationTopic)
-            expect(ls2).toHaveLength(2)
-            const peersFrom1 = await orbitdb1.getPeers(replicationTopic, replicatedStore.address);
-            expect(peersFrom1).toHaveLength(1);
-            expect(peersFrom1[0].peerInfo.memoryLeft).toBeDefined();
-
-        })
 
 
     })

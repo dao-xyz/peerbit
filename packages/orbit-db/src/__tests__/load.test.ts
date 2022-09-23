@@ -37,7 +37,7 @@ const tests = [
 const API = 'js-ipfs';
 const test = tests[0];
 /* tests.forEach(test => {*/
-describe(`orbit-db - Persistency (js-ipfs)`, function () { //${test.title}
+describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
   jest.setTimeout(config.timeout)
 
   const entryCount = 65

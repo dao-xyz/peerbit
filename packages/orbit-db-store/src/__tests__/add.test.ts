@@ -3,7 +3,7 @@ import assert, { rejects } from 'assert'
 import { Store, DefaultOptions, HeadsCache } from '../store'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
 import { Keystore, SignKeyWithMeta } from "@dao-xyz/orbit-db-keystore"
-import { JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log-entry'
+import { Entry, JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log-entry'
 import { createStore } from './storage'
 import { SimpleAccessController, SimpleIndex } from './utils'
 import { Address } from '../io'
@@ -79,7 +79,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
           done()
         })
       })
-      store._addOperation(data).catch(error => {
+      store._addOperation(data).then((entry) => {
+        expect(entry).toBeInstanceOf(Entry)
+      }).catch(error => {
         rejects(error);
       })
 
@@ -112,12 +114,5 @@ Object.keys(testAPIs).forEach((IPFS) => {
       }
     })
 
-    it('Shows that batch writing is not yet implemented', async () => {
-      try {
-        await store._addOperationBatch({})
-      } catch (e) {
-        assert.strictEqual(e.message, 'Not implemented!')
-      }
-    })
   })
 })

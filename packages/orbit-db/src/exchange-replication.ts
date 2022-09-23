@@ -1,11 +1,12 @@
-import { variant, field, vec, serialize } from '@dao-xyz/borsh';
+import { variant, field, vec, option, serialize } from '@dao-xyz/borsh';
 import { delay } from '@dao-xyz/time';
 import { Message } from './message';
 import isNode from 'is-node';
 import { MaybeSigned, PublicKey } from '@dao-xyz/identity';
 import { DecryptedThing, PublicKeyEncryption } from '@dao-xyz/encryption-utils';
-import { Store } from '@dao-xyz/orbit-db-store';
+import { Address, Store, StoreLike } from '@dao-xyz/orbit-db-store';
 import { OrbitDB } from './orbit-db';
+import { Entry } from '@dao-xyz/ipfs-log-entry';
 
 
 let v8 = undefined;
@@ -17,13 +18,19 @@ export const EMIT_HEALTHCHECK_INTERVAL = 5000;
 
 
 @variant([2, 0])
-export class PeerInfo extends Message {
+export class ReplicatorInfo extends Message {
 
     @field({ type: 'string' })
     replicationTopic: string
 
     @field({ type: 'string' })
     store: string // address
+
+    @field({ type: option(vec('string')) })
+    heads: string[] // address
+
+    @field({ type: 'bool' })
+    allowForks: boolean
 
     @field({ type: 'u64' })
     memoryLeft: bigint
@@ -31,45 +38,52 @@ export class PeerInfo extends Message {
     constructor(props?: {
         replicationTopic: string,
         store: string,
-        memoryLeft: bigint
+        memoryLeft: bigint,
+        allowForks: boolean
+        heads?: string[]
     }) {
         super();
         if (props) {
             this.replicationTopic = props.replicationTopic;
             this.store = props.store;
             this.memoryLeft = props.memoryLeft;
+            this.heads = props.heads;
+            this.allowForks = props.allowForks;
         }
     }
 }
+
 @variant([2, 1])
-export class RequestPeerInfo extends Message {
+export class RequestReplicatorInfo extends Message {
 
     @field({ type: 'string' })
     replicationTopic: string
 
     @field({ type: 'string' })
-    store: string // address
+    address: string // address
 
-    @field({ type: 'string' })
-    peer: string
+    @field({ type: option('string') })
+    head?: string
+
+
 
     constructor(props?: {
         replicationTopic: string,
-        store: string,
-        peer: string
+        address: Address | string,
+        head?: string
     }) {
         super();
         if (props) {
             this.replicationTopic = props.replicationTopic;
-            this.store = props.store;
-            this.peer = props.peer;
+            this.address = typeof props.address === 'string' ? props.address : props.address.toString()
+            this.head = props.head;
         }
     }
 }
 
 
 export interface PeerInfoWithMeta {
-    peerInfo: PeerInfo
+    peerInfo: ReplicatorInfo
     publicKey: PublicKey
 }
 /* return new PeerInfo({
@@ -125,34 +139,30 @@ export interface PeerInfoWithMeta {
 }
  */
 
-export const requestPeerInfo = async (replicationTopic: string, store: string, peer: string, publish: (topic: string, message: Uint8Array) => Promise<void>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
+export const requestPeerInfo = async (request: RequestReplicatorInfo, publish: (topic: string, message: Uint8Array) => Promise<void>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
 
     const signedMessage = await new MaybeSigned({
-        data: serialize(new RequestPeerInfo({
-            replicationTopic,
-            store,
-            peer
-        }))
+        data: serialize(request)
 
     }).sign(sign)
     const decryptedMessage = new DecryptedThing({
         data: serialize(signedMessage)
     })// TODO add encryption  .init(encryption).encrypt(lala)
 
-    return publish(replicationTopic, serialize(decryptedMessage))
+    return publish(request.replicationTopic, serialize(decryptedMessage))
 }
 
-export const exchangePeerInfo = async (replicationTopic: string, store: string, publish: (topic: string, message: Uint8Array) => Promise<void>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
+export const exchangePeerInfo = async (replicationTopic: string, store: StoreLike<any>, publish: (topic: string, message: Uint8Array) => Promise<void>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
 
     const signedMessage = await new MaybeSigned({
-        data: serialize(new PeerInfo({
+        data: serialize(new ReplicatorInfo({
             replicationTopic,
-            store,
-            memoryLeft: v8.getHeapStatistics().total_available_size//v8
-
+            store: store.address.toString(),
+            allowForks: store.allowForks,
+            memoryLeft: v8.getHeapStatistics().total_available_size //v8
         }))
-
     }).sign(sign)
+
     const decryptedMessage = new DecryptedThing({
         data: serialize(signedMessage)
     })// TODO add encryption  .init(encryption).encrypt(lala)
@@ -184,17 +194,17 @@ export class HeapSizeRequirement extends ResourceRequirement {
     }
 
     async ok(orbitdb: OrbitDB): Promise<boolean> {
-        if (!v8) {
+        if (!v8 || typeof orbitdb.heapsizeLimitForForks !== 'number') {
             return true;
         }
         const usedHeap: number = v8.getHeapStatistics().used_heap_size;
-        return BigInt(usedHeap) + this.heapSize < orbitdb.heapSizeLimit;
+        return BigInt(usedHeap) + this.heapSize < orbitdb.heapsizeLimitForForks;
     }
 
 
 }
 
-
+/* 
 @variant([2, 2])
 export class RequestReplication extends Message {
 
@@ -204,19 +214,27 @@ export class RequestReplication extends Message {
     @field({ type: Store })
     store: Store<any> // address
 
+
+    @field({ type: vec(Entry) })
+    heads: Entry<any>[] // address
+
+
     @field({ type: vec(ResourceRequirement) })
     resourceRequirements: ResourceRequirement[];
 
     constructor(props?: {
         resourceRequirements: ResourceRequirement[],
         replicationTopic: string,
-        store: Store<any>
+        store: Store<any>,
+        heads?: Entry<any>[]
     }) {
         super();
         if (props) {
             this.replicationTopic = props.replicationTopic;
             this.store = props.store;
             this.resourceRequirements = props.resourceRequirements;
+            this.heads = props.heads || [];
         }
     }
 }
+ */

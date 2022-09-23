@@ -416,7 +416,7 @@ export class Log<T> extends GSet {
 
     const currentHeads: Entry<T>[] = Object.values(this.heads.reverse().reduce(uniqueEntriesReducer, {})); // TODO this invokes a double reverse
     let refs: string[] = options.refs || this.getPow2Refs(); // custom || or pick refs using getPow2Refs
-    let nexts: string[] = options.nexts || currentHeads.map(h => h.hash); // custom || get nexts from all heads (merging activity)
+    let nexts: string[] = options.nexts || (options.refs ? this.getNextsFromRefs(refs) : currentHeads.map(h => h.hash)); // custom || get nexts from all heads (merging activity)
 
     // Some heads might not even be referenced by the refs, this will be merged into the headsIndex so we dont forget them
     let keepHeads: Entry<T>[] = options.nexts ? currentHeads.filter(h => !nexts.includes(h.hash)) : []; // TODO improve performance

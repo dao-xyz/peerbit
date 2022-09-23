@@ -3,6 +3,7 @@ const assert = require('assert')
 const rmrf = require('rimraf')
 import { Entry, LamportClock } from '@dao-xyz/ipfs-log-entry'
 import { BoxKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { Store } from '@dao-xyz/orbit-db-store'
 import { delay, waitFor } from '@dao-xyz/time'
 
 import { OrbitDB } from '../orbit-db'
@@ -198,6 +199,28 @@ Object.keys(testAPIs).forEach(API => {
                     }
                 }, 100)
             })
+        })
+
+        it('will open store on exchange heads message', async () => {
+
+            const replicationTopic = 'x';
+            const store = new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() });
+            await orbitdb2.subscribeForReplicationStart(replicationTopic);
+            await orbitdb1.open(store, { replicate: false, replicationTopic }); // this would be a "light" client, write -only
+
+            const hello = await store.add('hello', { refs: [], nexts: [] });
+            const world = await store.add('world', { refs: [hello.hash] });
+
+            expect(store.oplog.heads).toHaveLength(1);
+
+            await waitFor(() => Object.values(orbitdb2.stores[replicationTopic]).length > 0, { timeout: 20 * 1000, delayInterval: 50 });
+
+            const replicatedStore = Object.values(orbitdb2.stores[replicationTopic])[0];
+            await waitFor(() => replicatedStore.oplog.values.length == 2);
+            expect(replicatedStore).toBeDefined();
+            expect(replicatedStore.oplog.heads).toHaveLength(1);
+            expect(replicatedStore.oplog.heads[0].hash).toEqual(world.hash);
+
         })
     })
 })
