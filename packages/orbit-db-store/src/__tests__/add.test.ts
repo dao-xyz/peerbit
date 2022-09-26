@@ -61,11 +61,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
     it('adds an operation and triggers the write event', (done) => {
       const data = { data: 12345 }
       store.events.on('write', (topic, address, entry, heads) => {
-        assert.strictEqual(heads.length, 1)
+        expect(heads.length).toEqual(1)
         assert(Address.isValid(address))
         assert.deepStrictEqual(entry.payload.value, data)
-        assert.strictEqual(store.replicationStatus.progress, 1n)
-        assert.strictEqual(store.replicationStatus.max, 1n)
+        expect(store.replicationStatus.progress).toEqual(1n)
+        expect(store.replicationStatus.max).toEqual(1n)
         assert.deepStrictEqual(index._index, heads)
         store._cache.getBinary(store.localHeadsPath, HeadsCache).then((localHeads) => {
           localHeads.heads[0].init({
@@ -73,8 +73,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
           });
           assert.deepStrictEqual(localHeads.heads[0].payload.value, data)
           assert(localHeads.heads[0].equals(heads[0]))
-          assert.strictEqual(heads.length, 1)
-          assert.strictEqual(localHeads.heads.length, 1)
+          expect(heads.length).toEqual(1)
+          expect(localHeads.heads.length).toEqual(1)
           store.events.removeAllListeners('write')
           done()
         })
@@ -94,10 +94,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
       store.events.on('write', (topic, address, entry, heads) => {
         eventsFired++
         if (eventsFired === writes) {
-          assert.strictEqual(heads.length, 1)
-          assert.strictEqual(store.replicationStatus.progress, BigInt(writes))
-          assert.strictEqual(store.replicationStatus.max, BigInt(writes))
-          assert.strictEqual(index._index.length, writes)
+          expect(heads.length).toEqual(1)
+          expect(store.replicationStatus.progress).toEqual(BigInt(writes))
+          expect(store.replicationStatus.max).toEqual(BigInt(writes))
+          expect(index._index.length).toEqual(writes)
           store._cache.getBinary(store.localHeadsPath, HeadsCache).then((localHeads) => {
             localHeads.heads[0].init({
               encoding: JSON_ENCODING_OPTIONS

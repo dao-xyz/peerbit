@@ -62,7 +62,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await log.append('one')
       const hash = log.values[0].hash
       const res = await EntryIO.fetchAll(ipfs, hash, { length: 1 })
-      assert.strictEqual(res.length, 1)
+      expect(res.length).toEqual(1)
     })
 
     it('log with 2 entries', async () => {
@@ -71,7 +71,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await log.append('two')
       const hash = last(log.values).hash
       const res = await EntryIO.fetchAll(ipfs, hash, { length: 2 })
-      assert.strictEqual(res.length, 2)
+      expect(res.length).toEqual(2)
     })
 
     it('loads max 1 entry from a log of 2 entry', async () => {
@@ -80,7 +80,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await log.append('two')
       const hash = last(log.values).hash
       const res = await EntryIO.fetchAll(ipfs, hash, { length: 1 })
-      assert.strictEqual(res.length, 1)
+      expect(res.length).toEqual(1)
     })
 
     it('log with 100 entries', async () => {
@@ -91,7 +91,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       }
       const hash = await log.toMultihash()
       const result = await Log.fromMultihash(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), hash, {})
-      assert.strictEqual(result.length, count)
+      expect(result.length).toEqual(count)
     })
 
     it('load only 42 entries from a log with 100 entries', async () => {
@@ -109,7 +109,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       const hash = await log.toMultihash()
       const result = await Log.fromMultihash(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), hash, { length: 42 })
-      assert.strictEqual(result.length, 42)
+      expect(result.length).toEqual(42)
     })
 
     it('load only 99 entries from a log with 100 entries', async () => {
@@ -127,7 +127,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       const hash = await log2.toMultihash()
       const result = await Log.fromMultihash(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), hash, { length: 99 })
-      assert.strictEqual(result.length, 99)
+      expect(result.length).toEqual(99)
     })
 
     it('load only 10 entries from a log with 100 entries', async () => {
@@ -153,7 +153,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await log3.join(log2)
       const hash = await log3.toMultihash()
       const result = await Log.fromMultihash(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), hash, { length: 10 })
-      assert.strictEqual(result.length, 10)
+      expect(result.length).toEqual(10)
     })
 
     it('load only 10 entries and then expand to max from a log with 100 entries', async () => {

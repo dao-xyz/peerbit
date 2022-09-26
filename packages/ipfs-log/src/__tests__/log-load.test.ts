@@ -96,8 +96,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const data = fixture.log
         const json = fixture.json
         const log = await Log.fromJSON(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), json, {})
-        assert.strictEqual(log.id, data.heads[0].id)
-        assert.strictEqual(log.length, 16)
+        expect(log.id).toEqual(data.heads[0].id)
+        expect(log.length).toEqual(16)
         assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), fixture.expectedData)
       })
 
@@ -109,8 +109,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log = await Log.fromJSON(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), json,
           { length: -1, sortFn: FirstWriteWins })
 
-        assert.strictEqual(log.id, data.heads[0].id)
-        assert.strictEqual(log.length, 16)
+        expect(log.id).toEqual(data.heads[0].id)
+        expect(log.length).toEqual(16)
         assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), firstWriteExpectedData)
       })
 
@@ -124,7 +124,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const et = new Date().getTime()
         // Allow for a few millseconds of skew
         assert.strictEqual((et - st) >= (timeout - 10), true, '' + (et - st) + ' should be greater than timeout ' + timeout)
-        assert.strictEqual(log.length, 0)
+        expect(log.length).toEqual(0)
         assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), [])
       })
     })
@@ -143,8 +143,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         await log1.join(log2)
 
-        assert.strictEqual(log1.id, data.heads[0].id)
-        assert.strictEqual(log1.length, 16)
+        expect(log1.id).toEqual(data.heads[0].id)
+        expect(log1.length).toEqual(16)
         assert.deepStrictEqual(log1.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), fixture.expectedData)
       })
 
@@ -159,8 +159,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         await log1.join(log2)
 
-        assert.strictEqual(log1.id, data.heads[0].id)
-        assert.strictEqual(log1.length, 16)
+        expect(log1.id).toEqual(data.heads[0].id)
+        expect(log1.length).toEqual(16)
         assert.deepStrictEqual(log1.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), firstWriteExpectedData)
       })
 
@@ -170,7 +170,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log = await Log.fromEntryHash(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), 'zdpuAwNuRc2Kc1aNDdcdSWuxfNpHRJQw8L8APBNHCEFXbogus', { logId: 'X', timeout })
         const et = new Date().getTime()
         assert.strictEqual((et - st) >= timeout, true, '' + (et - st) + ' should be greater than timeout ' + timeout)
-        assert.strictEqual(log.length, 0)
+        expect(log.length).toEqual(0)
         assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), [])
       })
     })
@@ -182,8 +182,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const data = fixture.log
 
         const log = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), data.heads, { length: -1 })
-        assert.strictEqual(log.id, data.heads[0].id)
-        assert.strictEqual(log.length, 16)
+        expect(log.id).toEqual(data.heads[0].id)
+        expect(log.length).toEqual(16)
         assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), fixture.expectedData)
       })
 
@@ -193,8 +193,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         const log = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), data.heads,
           { length: -1, sortFn: FirstWriteWins })
-        assert.strictEqual(log.id, data.heads[0].id)
-        assert.strictEqual(log.length, 16)
+        expect(log.id).toEqual(data.heads[0].id)
+        expect(log.length).toEqual(16)
         assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), firstWriteExpectedData)
       })
 
@@ -203,22 +203,22 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const data = fixture.log
         const log1 = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), data.heads,
           { length: data.heads.length })
-        assert.strictEqual(log1.id, data.heads[0].id)
-        assert.strictEqual(log1.length, data.heads.length)
+        expect(log1.id).toEqual(data.heads[0].id)
+        expect(log1.length).toEqual(data.heads.length)
         assertPayload(log1.values[0].payload.value, 'entryC0')
         assertPayload(log1.values[1].payload.value, 'entryA10')
 
         const log2 = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), data.heads, { length: 4 })
-        assert.strictEqual(log2.id, data.heads[0].id)
-        assert.strictEqual(log2.length, 4)
+        expect(log2.id).toEqual(data.heads[0].id)
+        expect(log2.length).toEqual(4)
         assertPayload(log2.values[0].payload.value, 'entryC0')
         assertPayload(log2.values[1].payload.value, 'entryA8')
         assertPayload(log2.values[2].payload.value, 'entryA9')
         assertPayload(log2.values[3].payload.value, 'entryA10')
 
         const log3 = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), data.heads, { length: 7 })
-        assert.strictEqual(log3.id, data.heads[0].id)
-        assert.strictEqual(log3.length, 7)
+        expect(log3.id).toEqual(data.heads[0].id)
+        expect(log3.length).toEqual(7)
         assertPayload(log3.values[0].payload.value, 'entryB5')
         assertPayload(log3.values[1].payload.value, 'entryA6')
         assertPayload(log3.values[2].payload.value, 'entryC0')
@@ -245,7 +245,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const callback = (entry: Entry<string>) => {
           entry.init({ encoding: JSON_ENCODING_OPTIONS });
           assert.notStrictEqual(entry, null)
-          assert.strictEqual(entry.hash, items1[items1.length - i - 1].hash)
+          expect(entry.hash).toEqual(items1[items1.length - i - 1].hash)
           assertPayload(entry.payload.value, items1[items1.length - i - 1].payload.value)
           i++
         }
@@ -276,11 +276,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         // limit to 10 entries
         const a = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), last(items1), { length: 10 })
-        assert.strictEqual(a.length, 10)
+        expect(a.length).toEqual(10)
 
         // limit to 42 entries
         const b = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), last(items1), { length: 42 })
-        assert.strictEqual(b.length, 42)
+        expect(b.length).toEqual(42)
       })
 
       it('retrieves full log from an entry hash', async () => {
@@ -305,15 +305,15 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         const a = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), [last(items1)],
           { length: amount })
-        assert.strictEqual(a.length, amount)
+        expect(a.length).toEqual(amount)
 
         const b = await Log.fromEntry<string>(ipfs, signKey2.publicKey, (data) => Keystore.sign(data, signKey2), [last(items2)],
           { length: amount * 2 })
-        assert.strictEqual(b.length, amount * 2)
+        expect(b.length).toEqual(amount * 2)
 
         const c = await Log.fromEntry<string>(ipfs, signKey3.publicKey, (data) => Keystore.sign(data, signKey3), [last(items3)],
           { length: amount * 3 })
-        assert.strictEqual(c.length, amount * 3)
+        expect(c.length).toEqual(amount * 3)
       })
 
       it('retrieves full log from an entry hash 2', async () => {
@@ -338,15 +338,15 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         const a = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), last(items1),
           { length: amount })
-        assert.strictEqual(a.length, amount)
+        expect(a.length).toEqual(amount)
 
         const b = await Log.fromEntry<string>(ipfs, signKey2.publicKey, (data) => Keystore.sign(data, signKey2), last(items2),
           { length: amount * 2 })
-        assert.strictEqual(b.length, amount * 2)
+        expect(b.length).toEqual(amount * 2)
 
         const c = await Log.fromEntry<string>(ipfs, signKey3.publicKey, (data) => Keystore.sign(data, signKey3), last(items3),
           { length: amount * 3 })
-        assert.strictEqual(c.length, amount * 3)
+        expect(c.length).toEqual(amount * 3)
       })
 
       it('retrieves full log from an entry hash 3', async () => {
@@ -380,7 +380,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         const a = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), last(items1),
           { length: amount })
-        assert.strictEqual(a.length, amount)
+        expect(a.length).toEqual(amount)
 
         const itemsInB = [
           'entryA1',
@@ -407,13 +407,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         const b = await Log.fromEntry<string>(ipfs, signKey2.publicKey, (data) => Keystore.sign(data, signKey2), last(items2),
           { length: amount * 2 })
-        assert.strictEqual(b.length, amount * 2)
+        expect(b.length).toEqual(amount * 2)
         assert.deepStrictEqual(b.values.map((e) => e.payload.value), itemsInB)
 
         const c = await Log.fromEntry<string>(ipfs, signKey4.publicKey, (data) => Keystore.sign(data, signKey4), last(items3),
           { length: amount * 3 })
         await c.append('EOF')
-        assert.strictEqual(c.length, amount * 3 + 1)
+        expect(c.length).toEqual(amount * 3 + 1)
 
         const tmp = [
           'entryA1',
@@ -469,8 +469,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const g = await Log.fromEntry<string>(ipfs, signKey3.publicKey, (data) => Keystore.sign(data, signKey3), last(d.values),
           { length: -1, exclude: [] })
 
-        assert.strictEqual(f.toString(), bigLogString)
-        assert.strictEqual(g.toString(), bigLogString)
+        expect(f.toString()).toEqual(bigLogString)
+        expect(g.toString()).toEqual(bigLogString)
       })
 
       it('retrieves full log of randomly joined log', async () => {
@@ -805,22 +805,22 @@ Object.keys(testAPIs).forEach((IPFS) => {
         it('returns all entries - no excluded entries', async () => {
           const a = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), last(items1),
             { length: -1 })
-          assert.strictEqual(a.length, amount)
-          assert.strictEqual(a.values[0].hash, items1[0].hash)
+          expect(a.length).toEqual(amount)
+          expect(a.values[0].hash).toEqual(items1[0].hash)
         })
 
         it('returns all entries - including excluded entries', async () => {
           // One entry
           const a = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), last(items1),
             { length: -1, exclude: [items1[0]] })
-          assert.strictEqual(a.length, amount)
-          assert.strictEqual(a.values[0].hash, items1[0].hash)
+          expect(a.length).toEqual(amount)
+          expect(a.values[0].hash).toEqual(items1[0].hash)
 
           // All entries
           const b = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), last(items1),
             { length: -1, exclude: items1 })
-          assert.strictEqual(b.length, amount)
-          assert.strictEqual(b.values[0].hash, items1[0].hash)
+          expect(b.length).toEqual(amount)
+          expect(b.values[0].hash).toEqual(items1[0].hash)
         })
       })
     })

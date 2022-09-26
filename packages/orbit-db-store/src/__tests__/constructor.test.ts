@@ -47,22 +47,22 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     it('creates a new Store instance', async () => {
-      assert.strictEqual(typeof store.options, 'object')
-      assert.strictEqual(typeof store.id, 'string')
-      assert.strictEqual(typeof store.address, 'object')
-      assert.strictEqual(typeof store.dbname, 'string')
-      assert.strictEqual(typeof store.events, 'object')
-      assert.strictEqual(typeof store._ipfs, 'object')
-      assert.strictEqual(typeof store._cache, 'object')
-      assert.strictEqual(typeof store.accessController, 'object')
-      assert.strictEqual(typeof store._oplog, 'object')
-      assert.strictEqual(typeof store._replicationStatus, 'object')
-      assert.strictEqual(typeof store._stats, 'object')
-      assert.strictEqual(typeof store._loader, 'object')
+      expect(typeof store.options).toEqual('object')
+      expect(typeof store.id).toEqual('string')
+      expect(typeof store.address).toEqual('object')
+      expect(typeof store.dbname).toEqual('string')
+      expect(typeof store.events).toEqual('object')
+      expect(typeof store._ipfs).toEqual('object')
+      expect(typeof store._cache).toEqual('object')
+      expect(typeof store.accessController).toEqual('object')
+      expect(typeof store._oplog).toEqual('object')
+      expect(typeof store._replicationStatus).toEqual('object')
+      expect(typeof store._stats).toEqual('object')
+      expect(typeof store._loader).toEqual('object')
     })
 
     it('properly defines a cache', async () => {
-      assert.strictEqual(typeof store._cache, 'object')
+      expect(typeof store._cache).toEqual('object')
     })
     it('can clone', async () => {
       const clone = store.clone();

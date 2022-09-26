@@ -106,9 +106,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         })
 
         await log1.join(log2)
-        assert.strictEqual(log1.length, 4)
+        expect(log1.length).toEqual(4)
         const item = last(log1.values)
-        assert.strictEqual(item.next.length, 1)
+        expect(item.next.length).toEqual(1)
       })
     })
   })

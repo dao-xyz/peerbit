@@ -73,20 +73,20 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('replicates all entries in the log', (done) => {
         let replicated = 0
-        assert.strictEqual(store._oplog.id, log2.id)
+        expect(store._oplog.id).toEqual(log2.id)
 
-        assert.strictEqual(store._replicator._logs.length, 0)
-        assert.strictEqual(store._replicator.tasksQueued, 0)
+        expect(store._replicator._logs.length).toEqual(0)
+        expect(store._replicator.tasksQueued).toEqual(0)
         store._replicator.onReplicationProgress = () => replicated++
         store._replicator.onReplicationComplete = async (replicatedLogs) => {
-          assert.strictEqual(store._replicator.tasksRunning, 0)
-          assert.strictEqual(store._replicator.tasksQueued, 0)
-          assert.strictEqual(store._replicator.unfinished.length, 0)
+          expect(store._replicator.tasksRunning).toEqual(0)
+          expect(store._replicator.tasksQueued).toEqual(0)
+          expect(store._replicator.unfinished.length).toEqual(0)
           for (const replicatedLog of replicatedLogs) {
             await store._oplog.join(replicatedLog)
           }
-          assert.strictEqual(store._oplog.values.length, logLength)
-          assert.strictEqual(store._oplog.values.length, log2.values.length)
+          expect(store._oplog.values.length).toEqual(logLength)
+          expect(store._oplog.values.length).toEqual(log2.values.length)
           for (let i = 0; i < store._oplog.values.length; i++) {
             assert(store._oplog.values[i].equals(log2.values[i]))
           }

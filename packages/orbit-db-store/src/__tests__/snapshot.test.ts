@@ -63,9 +63,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await store._addOperation({ step: i })
       }
       const snapshot = await store.saveSnapshot()
-      assert.strictEqual(snapshot[0].path.length, 46)
-      assert.strictEqual(snapshot[0].cid.toString().length, 46)
-      assert.strictEqual(snapshot[0].path, snapshot[0].cid.toString())
+      expect(snapshot[0].path.length).toEqual(46)
+      expect(snapshot[0].cid.toString().length).toEqual(46)
+      expect(snapshot[0].path).toEqual(snapshot[0].cid.toString())
       assert.strictEqual(snapshot[0].size > writes * 200, true)
     })
 
@@ -78,7 +78,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await store.saveSnapshot()
       index._index = [];
       await store.loadFromSnapshot()
-      assert.strictEqual(index._index.length, 10)
+      expect(index._index.length).toEqual(10)
 
       for (let i = 0; i < writes; i++) {
         assert.strictEqual((index._index[i] as Entry<any>).payload.value.step, i)

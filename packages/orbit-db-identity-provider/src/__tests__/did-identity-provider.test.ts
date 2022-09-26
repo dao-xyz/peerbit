@@ -58,7 +58,7 @@ describe('DID Identity Provider', function () {
       const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(didStr)
       const idSignature = await Keystore.sign(didStr, signingKey)
       const verifies = await Keystore.verify(idSignature, identity.publicKey, new Uint8Array(Buffer.from(didStr)))
-      assert.strictEqual(verifies, true)
+      expect(verifies).toEqual(true)
       assert.deepStrictEqual(identity.signatures.id, idSignature)
     })
 
@@ -79,7 +79,7 @@ describe('DID Identity Provider', function () {
 
     it('DID identity verifies', async () => {
       const verified = await Identities.verifyIdentity(identity)
-      assert.strictEqual(verified, true)
+      expect(verified).toEqual(true)
     })
 
     it('DID identity with incorrect id does not verify', async () => {
@@ -87,7 +87,7 @@ describe('DID Identity Provider', function () {
         id: new Uint8Array([1, 1, 1]), publicKey: identity.publicKey, signatures: identity.signatures, type: identity.type, provider: identity.provider
       })
       const verified = await Identities.verifyIdentity(identity2)
-      assert.strictEqual(verified, false)
+      expect(verified).toEqual(false)
     })
   })
 
@@ -119,8 +119,8 @@ describe('DID Identity Provider', function () {
       } catch (e) {
         err = e.toString()
       }
-      assert.strictEqual(signature, undefined)
-      assert.strictEqual(err, 'Error: Private signing key not found from Keystore')
+      expect(signature).toEqual(undefined)
+      expect(err).toEqual('Error: Private signing key not found from Keystore')
     })
 
     describe('verify data signed by an identity', () => {
@@ -136,12 +136,12 @@ describe('DID Identity Provider', function () {
 
       it('verifies that the signature is valid', async () => {
         const verified = await identity.provider.verify(signature, identity.publicKey, data)
-        assert.strictEqual(verified, true)
+        expect(verified).toEqual(true)
       })
 
       it('doesn\'t verify invalid signature', async () => {
         const verified = await identity.provider.verify(new Uint8Array([1, 1, 1]), identity.publicKey, data)
-        assert.strictEqual(verified, false)
+        expect(verified).toEqual(false)
       })
     })
   })

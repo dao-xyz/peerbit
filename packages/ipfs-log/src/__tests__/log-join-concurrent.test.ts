@@ -59,8 +59,8 @@ Object.keys(testAPIs).forEach(IPFS => {
         const hash1 = await log1.toMultihash()
         const hash2 = await log2.toMultihash()
 
-        assert.strictEqual(hash1, hash2)
-        assert.strictEqual(log1.length, 20)
+        expect(hash1).toEqual(hash2)
+        expect(log1.length).toEqual(20)
         assert.deepStrictEqual(log1.values.map(e => e.payload.value), log2.values.map(e => e.payload.value))
       })
 
@@ -79,9 +79,9 @@ Object.keys(testAPIs).forEach(IPFS => {
         const hash1 = await log1.toMultihash()
         const hash2 = await log2.toMultihash()
 
-        assert.strictEqual(hash1, hash2)
-        assert.strictEqual(log1.length, 41)
-        assert.strictEqual(log2.length, 41)
+        expect(hash1).toEqual(hash2)
+        expect(log1.length).toEqual(41)
+        expect(log2.length).toEqual(41)
         assert.deepStrictEqual(log1.values.map(e => e.payload.value), log2.values.map(e => e.payload.value))
       })
 
@@ -89,8 +89,8 @@ Object.keys(testAPIs).forEach(IPFS => {
         await log1.join(log2)
         await log2.join(log1)
 
-        assert.strictEqual(log1.length, log2.length)
-        assert.strictEqual(log1.length, 41)
+        expect(log1.length).toEqual(log2.length)
+        expect(log1.length).toEqual(41)
         assert.deepStrictEqual(log1.values.map(e => e.payload.value), log2.values.map(e => e.payload.value))
       })
     })

@@ -90,8 +90,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const res2 = log3.values.slice()
 
         // associativity: a + (b + c) == (a + b) + c
-        assert.strictEqual(res1.length, expectedElementsCount)
-        assert.strictEqual(res2.length, expectedElementsCount)
+        expect(res1.length).toEqual(expectedElementsCount)
+        expect(res2.length).toEqual(expectedElementsCount)
         assert.deepStrictEqual(res1, res2)
       })
 
@@ -119,8 +119,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const res2 = log1.values.slice()
 
         // commutativity: a + b == b + a
-        assert.strictEqual(res1.length, expectedElementsCount)
-        assert.strictEqual(res2.length, expectedElementsCount)
+        expect(res1.length).toEqual(expectedElementsCount)
+        expect(res2.length).toEqual(expectedElementsCount)
         assert.deepStrictEqual(res1, res2)
       })
 
@@ -144,7 +144,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log1.join(log2)
         const resA2 = log1.toString()
 
-        assert.strictEqual(resA1, resA2)
+        expect(resA1).toEqual(resA2)
 
         // a + b == b + a
         log1 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'X' })
@@ -165,7 +165,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log2.join(log1)
         const resB2 = log2.toString()
 
-        assert.strictEqual(resB1, resB2)
+        expect(resB1).toEqual(resB2)
 
         // a + c == c + a
         log1 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
@@ -186,7 +186,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log1.join(log3)
         const resC2 = log1.toString()
 
-        assert.strictEqual(resC1, resC2)
+        expect(resC1).toEqual(resC2)
 
         // c + b == b + c
         log2 = new Log(ipfs, signKey2.publicKey, (data) => Keystore.sign(data, signKey2), { logId: 'X' })
@@ -208,7 +208,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log2.join(log3)
         const resD2 = log2.toString()
 
-        assert.strictEqual(resD1, resD2)
+        expect(resD1).toEqual(resD2)
 
         // a + b + c == c + b + a
         log1 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'X' })
@@ -237,7 +237,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log3.join(log1)
         const logRight = log3.toString()
 
-        assert.strictEqual(logLeft, logRight)
+        expect(logLeft).toEqual(logRight)
       })
 
       it('join is idempotent', async () => {
@@ -250,7 +250,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         // idempotence: a + a = a
         await logA.join(logA)
-        assert.strictEqual(logA.length, expectedElementsCount)
+        expect(logA.length).toEqual(expectedElementsCount)
       })
     })
   })

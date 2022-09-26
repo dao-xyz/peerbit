@@ -1,4 +1,4 @@
-import { BinaryReader, BinaryWriter, Constructor } from "@dao-xyz/borsh";
+import { BinaryReader, BinaryWriter, Constructor, option } from "@dao-xyz/borsh";
 
 export const U8IntArraySerializer = {
     serialize: (obj: Uint8Array, writer) => {
@@ -16,6 +16,22 @@ export const U8IntArraySerializer = {
         return arr;
     }
 };
+
+export const StringSetSerializer = {
+    deserialize: (reader) => {
+        const len = reader.readU32();
+        let resp = new Set();
+        for (let i = 0; i < len; i++) {
+            resp.add(reader.readString());
+        }
+    },
+    serialize: (arg: Set<string>, writer) => {
+        writer.writeU32(arg.size);
+        arg.forEach((s) => {
+            writer.writeString(s);
+        })
+    }
+}
 
 export const arraysEqual = (array1?: any[] | Uint8Array, array2?: any[] | Uint8Array) => {
     if (!!array1 != !!array2)

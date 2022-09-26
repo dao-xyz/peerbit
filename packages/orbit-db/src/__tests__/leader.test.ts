@@ -29,7 +29,7 @@ const dbPath2 = './orbitdb/tests/leader/2/db2'
 const dbPath3 = './orbitdb/tests/leader/3/db3'
 
 Object.keys(testAPIs).forEach(API => {
-    describe(`orbit-db - Replication (${API})`, function () {
+    describe(`orbit-db - leaders`, function () {
         jest.setTimeout(config.timeout * 2)
 
         let ipfsd1, ipfsd2, ipfsd3, ipfs1, ipfs2, ipfs3
@@ -57,14 +57,20 @@ Object.keys(testAPIs).forEach(API => {
 
             if (ipfsd2)
                 await stopIpfs(ipfsd2)
+
+            if (ipfsd3)
+                await stopIpfs(ipfsd3)
         })
 
         beforeEach(async () => {
 
             rmrf.sync(orbitdbPath1)
             rmrf.sync(orbitdbPath2)
+            rmrf.sync(orbitdbPath3)
+
             rmrf.sync(dbPath1)
             rmrf.sync(dbPath2)
+            rmrf.sync(dbPath3)
 
             orbitdb1 = await OrbitDB.createInstance(ipfs1, { directory: orbitdbPath1 })
             orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2 })
@@ -80,10 +86,15 @@ Object.keys(testAPIs).forEach(API => {
 
             if (db2)
                 await db2.drop()
+
             if (db3)
                 await db3.drop()
+
             if (orbitdb1)
                 await orbitdb1.stop()
+
+            if (orbitdb2)
+                await orbitdb2.stop()
 
             if (orbitdb3)
                 await orbitdb3.stop()
@@ -144,10 +155,6 @@ Object.keys(testAPIs).forEach(API => {
             db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() })
                 , { replicate: false, directory: dbPath1, replicationTopic })
             db2 = await orbitdb2.open<EventStore<string>>(db1.address, { directory: dbPath2, replicationTopic: replicationTopicFn })
-
-            await waitForPeers(ipfs1, [orbitdb2.id], DirectChannel.getTopic([orbitdb1.id, orbitdb2.id]))
-            await waitForPeers(ipfs2, [orbitdb1.id], DirectChannel.getTopic([orbitdb1.id, orbitdb2.id]))
-
 
             // One leader
             const slot = 0;

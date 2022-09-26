@@ -3,10 +3,10 @@ import { isDefined } from './is-defined'
 import { variant, field, vec, option, serialize, deserialize } from '@dao-xyz/borsh';
 import io from '@dao-xyz/orbit-db-io';
 import { IPFS } from 'ipfs-core-types/src/'
-import { arraysEqual, joinUint8Arrays, U8IntArraySerializer } from '@dao-xyz/io-utils';
+import { arraysEqual, joinUint8Arrays, StringSetSerializer, U8IntArraySerializer } from '@dao-xyz/io-utils';
 import { X25519PublicKey } from 'sodium-plus';
 import { PublicKeyEncryption, DecryptedThing, MaybeEncrypted } from '@dao-xyz/encryption-utils';
-import { Id } from './id';
+import { getPeerID, Id } from './id';
 import { Signature } from './signature';
 import { PublicKey } from '@dao-xyz/identity';
 
@@ -122,12 +122,15 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
   @field({ type: 'string' })
   hash: string // "zd...Foo", we'll set the hash after persisting the entry
 
+  @field({ type: StringSetSerializer })
+  peers: Set<string>; // peers hosting/owning this data
+
   static IPLD_LINKS = ['next', 'refs']
 
   _encoding: IOOptions<T>
   _encryption?: PublicKeyEncryption
 
-  peers: string[]; // peers hosting/owning this data
+
 
   constructor(obj?: {
     id: MaybeEncrypted<Id>,
@@ -138,6 +141,7 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
     next: string[]
     refs: string[] // Array of hashes
     hash?: string // "zd...Foo", we'll set the hash after persisting the entry
+    peers: Set<string>
   }) {
     if (obj) {
       this._id = obj.id;
@@ -148,6 +152,7 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
       this.next = obj.next;
       this.refs = obj.refs;
       this.hash = obj.hash;
+      this.peers = obj.peers;
     }
   }
 
@@ -264,7 +269,7 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
    * console.log(entry)
    * // { hash: null, payload: "hello", next: [] }
    */
-  static async create<T>(properties: { ipfs: IPFS, logId: string, data: T, encodingOptions?: IOOptions<T>, clock?: Clock, next?: (Entry<T> | string)[], refs?: string[], pin?: boolean, assertAllowed?: (entryData: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicKey>) => Promise<void>, encryption?: EntryEncryption, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array> }) {
+  static async create<T>(properties: { ipfs: IPFS, peer?: string, logId: string, data: T, encodingOptions?: IOOptions<T>, clock?: Clock, next?: (Entry<T> | string)[], refs?: string[], pin?: boolean, assertAllowed?: (entryData: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicKey>) => Promise<void>, encryption?: EntryEncryption, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array> }) {
     if (!properties.encodingOptions || !properties.refs || !properties.next) {
       properties = {
         ...properties,
@@ -279,6 +284,7 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
     if (!isDefined(properties.data)) throw new Error('Entry requires data')
     if (!isDefined(properties.next) || !Array.isArray(properties.next)) throw new Error("'next' argument is not an array")
 
+    let peer = properties.peer || await getPeerID(properties.ipfs)
 
 
     // Clean the next objects and convert to hashes
@@ -322,6 +328,7 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
       hash: null, // "zd...Foo", we'll set the hash after persisting the entry
       next: nexts, // Array of hashes
       refs: properties.refs,
+      peers: new Set([peer])
     })
 
 
@@ -394,7 +401,7 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
    * @param entry 
    * @returns 
    */
-  static toEntryNoHash<T>(entry: Entry<T> | EntrySerialized<T>): Entry<T> {
+  static toEntryNoHash<T>(entry: EntrySerialized<T>): Entry<T> {
     let clock: MaybeEncrypted<Clock> = undefined;
     let payload: MaybeEncrypted<Payload<T>> = undefined;
     let signature: MaybeEncrypted<Signature> = undefined;
@@ -422,7 +429,8 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
       publicKey,
       id,
       next: entry.next,
-      refs: entry.refs
+      refs: entry.refs,
+      peers: new Set()
     })
     return e
   }

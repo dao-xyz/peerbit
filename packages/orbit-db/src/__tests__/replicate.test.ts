@@ -96,7 +96,8 @@ Object.keys(testAPIs).forEach(API => {
 
       let finished = false
 
-      await db1.add('hello')
+      const value = 'hello';
+      await db1.add(value)
 
       await new Promise((resolve, reject) => {
         let replicatedEventCount = 0
@@ -111,14 +112,24 @@ Object.keys(testAPIs).forEach(API => {
         timer = setInterval(() => {
           if (finished) {
             clearInterval(timer)
-            const entries: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
+            const db1Entries: Entry<Operation<string>>[] = db1.iterator({ limit: -1 }).collect()
             try {
-              expect(entries.length).toEqual(1)
-              expect(entries[0].payload.value.value).toEqual('hello')
-              expect(replicatedEventCount).toEqual(1)
+              expect(db1Entries.length).toEqual(1)
+              expect(db1Entries[0].peers).toContainValues([orbitdb1.id, orbitdb2.id]);
+              expect(db1Entries[0].payload.value.value).toEqual(value)
             } catch (error) {
               reject(error)
             }
+
+            const db2Entries: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
+            try {
+              expect(db2Entries.length).toEqual(1)
+              expect(db2Entries[0].peers).toContainValues([orbitdb1.id, orbitdb2.id]);
+              expect(db2Entries[0].payload.value.value).toEqual(value)
+            } catch (error) {
+              reject(error)
+            }
+            expect(replicatedEventCount).toEqual(1)
             resolve(true)
           }
         }, 100)
@@ -161,8 +172,8 @@ Object.keys(testAPIs).forEach(API => {
             const entries = db2.iterator({ limit: -1 }).collect()
             try {
               expect(entries.length).toEqual(entryCount)
-              assert.equal(entries[0].payload.value.value, 'hello0')
-              assert.equal(entries[entries.length - 1].payload.value.value, 'hello99')
+              expect(entries[0].payload.value.value).toEqual('hello0')
+              expect(entries[entries.length - 1].payload.value.value).toEqual('hello99')
               resolve(true)
             } catch (error) {
               reject(error)
@@ -213,22 +224,22 @@ Object.keys(testAPIs).forEach(API => {
             if (finished) {
               clearInterval(timer)
               // All entries should be in the database
-              assert.equal(db2.iterator({ limit: -1 }).collect().length, entryCount)
+              expect(db2.iterator({ limit: -1 }).collect().length).toEqual(entryCount)
               // progress events should increase monotonically
-              assert.equal(progressEvents.length, entryCount)
+              expect(progressEvents.length).toEqual(entryCount)
               for (const [idx, e] of progressEvents.entries()) {
-                assert.equal(e, idx + 1)
+                expect(e).toEqual(idx + 1)
               }
               // Verify replication status
-              assert.equal(db2.replicationStatus.progress, entryCount)
-              assert.equal(db2.replicationStatus.max, entryCount)
+              expect(db2.replicationStatus.progress).toEqual(entryCount)
+              expect(db2.replicationStatus.max).toEqual(entryCount)
               // Verify replicator state
-              assert.equal(db2._replicator.tasksRunning, 0)
-              assert.equal(db2._replicator.tasksQueued, 0)
-              assert.equal(db2._replicator.unfinished.length, 0)
+              expect(db2._replicator.tasksRunning).toEqual(0)
+              expect(db2._replicator.tasksQueued).toEqual(0)
+              expect(db2._replicator.unfinished.length).toEqual(0)
               // Replicator's internal caches should be empty
-              assert.equal(db2._replicator._logs.length, 0)
-              assert.equal(Object.keys(db2._replicator._fetching).length, 0)
+              expect(db2._replicator._logs.length).toEqual(0)
+              expect(Object.keys(db2._replicator._fetching).length).toEqual(0)
 
               resolve(true)
             }
@@ -307,24 +318,24 @@ Object.keys(testAPIs).forEach(API => {
 
             try {
               // All entries should be in the database
-              assert.equal(db2.iterator({ limit: -1 }).collect().length, entryCount)
+              expect(db2.iterator({ limit: -1 }).collect().length).toEqual(entryCount)
               // 'replicated' event should've been received only once
               expect(replicatedEventCount).toEqual(1)
               // progress events should increase monotonically
-              assert.equal(progressEvents.length, entryCount)
+              expect(progressEvents.length).toEqual(entryCount)
               for (const [idx, e] of progressEvents.entries()) {
-                assert.equal(e, idx + 1)
+                expect(e).toEqual(idx + 1)
               }
               // Verify replication status
-              assert.equal(db2.replicationStatus.progress, entryCount)
-              assert.equal(db2.replicationStatus.max, entryCount)
+              expect(db2.replicationStatus.progress).toEqual(entryCount)
+              expect(db2.replicationStatus.max).toEqual(entryCount)
               // Verify replicator state
-              assert.equal(db2._replicator.tasksRunning, 0)
-              assert.equal(db2._replicator.tasksQueued, 0)
-              assert.equal(db2._replicator.unfinished.length, 0)
+              expect(db2._replicator.tasksRunning).toEqual(0)
+              expect(db2._replicator.tasksQueued).toEqual(0)
+              expect(db2._replicator.unfinished.length).toEqual(0)
               // Replicator's internal caches should be empty
-              assert.equal(db2._replicator._logs.length, 0)
-              assert.equal(Object.keys(db2._replicator._fetching).length, 0)
+              expect(db2._replicator._logs.length).toEqual(0)
+              expect(Object.keys(db2._replicator._fetching).length).toEqual(0)
 
               resolve(true)
             } catch (e) {
@@ -363,7 +374,7 @@ Object.keys(testAPIs).forEach(API => {
         }
 
         db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), options)
-        assert.equal(db1.address.toString(), db2.address.toString())
+        expect(db1.address.toString()).toEqual(db2.address.toString())
 
         // Test that none of the entries gets into the replication queue twice
         const replicateSet = new Set()
@@ -391,23 +402,23 @@ Object.keys(testAPIs).forEach(API => {
               // Database values should match
               const values1 = db1.iterator({ limit: -1 }).collect()
               const values2 = db2.iterator({ limit: -1 }).collect()
-              assert.equal(values1.length, values2.length)
+              expect(values1.length).toEqual(values2.length)
               for (let i = 0; i < values1.length; i++) {
                 assert(values1[i].equals(values2[i]))
               }
               // All entries should be in the database
-              assert.equal(values1.length, entryCount * 2)
-              assert.equal(values2.length, entryCount * 2)
+              expect(values1.length).toEqual(entryCount * 2)
+              expect(values2.length).toEqual(entryCount * 2)
               // Verify replication status
-              assert.equal(db2.replicationStatus.progress, entryCount * 2)
-              assert.equal(db2.replicationStatus.max, entryCount * 2)
+              expect(db2.replicationStatus.progress).toEqual(entryCount * 2)
+              expect(db2.replicationStatus.max).toEqual(entryCount * 2)
               // Verify replicator state
-              assert.equal(db2._replicator.tasksRunning, 0)
-              assert.equal(db2._replicator.tasksQueued, 0)
-              assert.equal(db2._replicator.unfinished.length, 0)
+              expect(db2._replicator.tasksRunning).toEqual(0)
+              expect(db2._replicator.tasksQueued).toEqual(0)
+              expect(db2._replicator.unfinished.length).toEqual(0)
               // Replicator's internal caches should be empty
-              assert.equal(db2._replicator._logs.length, 0)
-              assert.equal(Object.keys(db2._replicator._fetching).length, 0)
+              expect(db2._replicator._logs.length).toEqual(0)
+              expect(Object.keys(db2._replicator._fetching).length).toEqual(0)
 
               resolve(true)
             } catch (e) {

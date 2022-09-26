@@ -76,7 +76,7 @@ Object.keys(testAPIs).forEach(API => {
           } catch (e) {
             err = e.toString()
           }
-          assert.equal(err, `Error: Database '${db.address}' already exists!`)
+          expect(err).toEqual(`Error: Database '${db.address}' already exists!`)
           await db.close()
         })
 
@@ -103,7 +103,7 @@ Object.keys(testAPIs).forEach(API => {
         })
 
         it('saves the database locally', async () => {
-          assert.equal(fs.existsSync(localDataPath), true)
+          expect(fs.existsSync(localDataPath)).toEqual(true)
         })
 
         it('saves database manifest reference locally', async () => {
@@ -111,14 +111,14 @@ Object.keys(testAPIs).forEach(API => {
           const manifestHash = address.split('/')[2]
           await db._cache._store.open()
           const value = await db._cache.get(path.join(address, '/_manifest'))
-          assert.equal(value, manifestHash)
+          expect(value).toEqual(manifestHash)
         })
 
         it('saves database manifest file locally', async () => {
           const manifestHash = db.id.split('/')[2]
           const manifest = await io.read(ipfs, manifestHash)
           assert.notEqual(manifest, false)
-          assert.equal(manifest.name, 'second')
+          expect(manifest.name).toEqual('second')
           assert.notEqual(manifest.accessController, null)
           assert.equal(manifest.accessController.indexOf('/ipfs'), 0)
         })
@@ -127,7 +127,7 @@ Object.keys(testAPIs).forEach(API => {
           const dir = './orbitdb/tests/another-feed'
           const db2 = await orbitdb.open(new EventStore({ name: 'third', accessController: new SimpleAccessController() })
             , { directory: dir })
-          assert.equal(fs.existsSync(dir), true)
+          expect(fs.existsSync(dir)).toEqual(true)
           await db2.close()
         })
 
@@ -185,7 +185,7 @@ Object.keys(testAPIs).forEach(API => {
         return orbitdb.open(await Store.load(orbitdb._ipfs, address), { localOnly: true })
           .then(() => new Error('Shouldn\'t open the database'))
           .catch(e => {
-            assert.equal(e.toString(), `Error: Database '${address}' doesn't exist!`)
+            expect(e.toString()).toEqual(`Error: Database '${address}' doesn't exist!`)
           })
       })
 
@@ -200,9 +200,9 @@ Object.keys(testAPIs).forEach(API => {
         await db.load()
         const res = db.iterator({ limit: -1 }).collect()
 
-        assert.equal(res.length, 2)
-        assert.equal(res[0].payload.value.value, 'hello1')
-        assert.equal(res[1].payload.value.value, 'hello2')
+        expect(res.length).toEqual(2)
+        expect(res[0].payload.value.value).toEqual('hello1')
+        expect(res[1].payload.value.value).toEqual('hello2')
         await db.drop()
         await db2.drop()
       })
@@ -217,7 +217,7 @@ Object.keys(testAPIs).forEach(API => {
         const directory = path.join(dbPath, "custom-store")
         const db = await orbitdb.open(new EventStore({ name: 'xyz', accessController: new SimpleAccessController() }), { directory })
         await db.close()
-        assert.strictEqual(db._cache._store.status, 'closed')
+        expect(db._cache._store.status).toEqual('closed')
       })
 
       it("close load close sets status to 'closed'", async () => {
@@ -226,7 +226,7 @@ Object.keys(testAPIs).forEach(API => {
         await db.close()
         await db.load()
         await db.close()
-        assert.strictEqual(db._cache._store.status, 'closed')
+        expect(db._cache._store.status).toEqual('closed')
       })
 
       it('successfully manages multiple caches', async () => {
@@ -244,19 +244,19 @@ Object.keys(testAPIs).forEach(API => {
         await db2.close()
         await db4.close()
 
-        assert.strictEqual(orbitdb.cache._store._db.status, 'open')
-        assert.strictEqual(db2._cache._store.status, 'open')
-        assert.strictEqual(db3._cache._store.status, 'open')
-        assert.strictEqual(db4._cache._store.status, 'closed')
+        expect(orbitdb.cache._store._db.status).toEqual('open')
+        expect(db2._cache._store.status).toEqual('open')
+        expect(db3._cache._store.status).toEqual('open')
+        expect(db4._cache._store.status).toEqual('closed')
 
         await db3.close()
         await db5.close()
 
-        assert.strictEqual(orbitdb.cache._store._db.status, 'closed')
-        assert.strictEqual(db2._cache._store.status, 'closed')
-        assert.strictEqual(db3._cache._store.status, 'closed')
-        assert.strictEqual(db4._cache._store.status, 'closed')
-        assert.strictEqual(db5._cache._store.status, 'closed')
+        expect(orbitdb.cache._store._db.status).toEqual('closed')
+        expect(db2._cache._store.status).toEqual('closed')
+        expect(db3._cache._store.status).toEqual('closed')
+        expect(db4._cache._store.status).toEqual('closed')
+        expect(db5._cache._store.status).toEqual('closed')
       })
     })
   })

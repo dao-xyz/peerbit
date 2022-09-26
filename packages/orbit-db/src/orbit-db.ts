@@ -447,8 +447,10 @@ export class OrbitDB {
         if (stores) {
           for (const [storeAddress, store] of Object.entries(stores)) {
             if (store.replicate) {
-              const channel = await this.getChannel(peer, replicationTopic);
-              await exchangeHeads((msg) => channel.send(Buffer.from(msg)), store, (key) => this._supportedHashesLRU.get(key) >= this.minReplicas, await this.getSigner());
+              await exchangeHeads(this.id, async (peer, msg) => {
+                const channel = await this.getChannel(peer, replicationTopic);
+                return channel.send(Buffer.from(msg));
+              }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner());
             }
             else {
               // Ignore for now (dont share headss)
@@ -518,7 +520,6 @@ export class OrbitDB {
 
         if (msg.fromId) {
           await this._peerInfoResponseCounter.increment(msg.fromId);
-          const x = 123;
         }
         msg.heads?.forEach((h) => {
           this._supportedHashesLRU.increment(h);
@@ -564,14 +565,25 @@ export class OrbitDB {
       for (const [_storeAddress, store] of Object.entries(stores)) {
         if (store.replicate) {
           // create a channel for sending/receiving messages
-          const channel = await this.getChannel(peer, replicationTopic);
-          await exchangeHeads((msg) => channel.send(Buffer.from(msg)), store, (key) => this._supportedHashesLRU.get(key) >= this.minReplicas, await this.getSigner());
+          /*  const channel = await this.getChannel(peer, replicationTopic); */
+          /*  await exchangeHeads((msg) => channel.send(Buffer.from(msg)), store, (key) => this._supportedHashesLRU.get(key) >= this.minReplicas, await this.getSigner()); */
+          /*    await exchangeHeads(this.id, async (peer, msg) => {
+               const channel = await this.getChannel(peer, replicationTopic);
+               return channel.send(Buffer.from(msg));
+             }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner()); */
 
         }
         else {
+
           // If replicate false, we are in write mode. Means we should exchange all heads 
-          await exchangeHeads((message) => this._pubsub.publish(replicationTopic, message), store, () => false, await this.getSigner())
+          /*   await exchangeHeads((message) => this._pubsub.publish(replicationTopic, message), store, () => false, await this.getSigner()) */
         }
+
+        await exchangeHeads(this.id, async (peer, msg) => {
+          const channel = await this.getChannel(peer, replicationTopic);
+          return channel.send(Buffer.from(msg));
+        }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner());
+
       }
     }
   }
@@ -780,7 +792,7 @@ export class OrbitDB {
     return !!(leaders.find(id => id === this.id))
   }
 
-  async findLeaders(replicationTopic: string, address: string, slot: { toString(): string }, numberOfLeaders: number): Promise<string[]> {
+  findLeaders(replicationTopic: string, address: string, slot: { toString(): string }, numberOfLeaders: number): string[] {
     // Hash the time, and find the closest peer id to this hash
     const h = (h: string) => createHash('sha1').update(h).digest('hex');
     const slotHash = h(slot.toString())

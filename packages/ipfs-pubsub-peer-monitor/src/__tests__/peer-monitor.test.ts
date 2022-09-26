@@ -44,9 +44,9 @@ describe('peer monitor', () => {
       let res = []
 
       const done = () => {
-        assert.equal(res.length, 2)
-        assert.equal(res[0], 'C')
-        assert.equal(res[1], 'D')
+        expect(res.length).toEqual(2)
+        expect(res[0]).toEqual('C')
+        expect(res[1]).toEqual('D')
         resolve(true)
       }
 
@@ -66,9 +66,9 @@ describe('peer monitor', () => {
       let res = []
 
       const done = () => {
-        assert.equal(res.length, 2)
-        assert.equal(res[0], 'A')
-        assert.equal(res[1], 'B')
+        expect(res.length).toEqual(2)
+        expect(res[0]).toEqual('A')
+        expect(res[1]).toEqual('B')
         resolve(true)
       }
 
@@ -85,8 +85,8 @@ describe('peer monitor', () => {
   it('emits nothing', async () => {
     const ee = new EventEmitter()
     await new Promise((resolve, reject) => {
-      ee.on('join', peer => assert.equal(peer, null))
-      ee.on('leave', peer => assert.equal(peer, null))
+      ee.on('join', peer => expect(peer).toEqual(null))
+      ee.on('leave', peer => expect(peer).toEqual(null))
       IpfsPubsubPeerMonitor._emitJoinsAndLeaves(new Set(['A', 'B']), new Set(['A', 'B']), ee)
       resolve(true)
     })

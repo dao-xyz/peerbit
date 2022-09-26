@@ -37,11 +37,11 @@ describe('keystore', () => {
     it('creates a new Keystore instance', async () => {
       const keystore = new Keystore(store)
 
-      assert.strictEqual(typeof keystore.close, 'function')
-      assert.strictEqual(typeof keystore.openStore, 'function')
-      assert.strictEqual(typeof keystore.hasKey, 'function')
-      assert.strictEqual(typeof keystore.createKey, 'function')
-      assert.strictEqual(typeof keystore.getKeyByPath, 'function')
+      expect(typeof keystore.close).toEqual('function')
+      expect(typeof keystore.openStore).toEqual('function')
+      expect(typeof keystore.hasKey).toEqual('function')
+      expect(typeof keystore.createKey).toEqual('function')
+      expect(typeof keystore.getKeyByPath).toEqual('function')
     })
 
     it('assigns this._store', async () => {
@@ -52,25 +52,25 @@ describe('keystore', () => {
 
     it('assigns this.cache with default of 100', async () => {
       const keystore = new Keystore(store)
-      assert.strictEqual(keystore._cache.max, 100)
+      expect(keystore._cache.max).toEqual(100)
     })
 
     it('creates a proper leveldown / level-js store if not passed a store', async () => {
       const keystore = new Keystore()
-      assert.strictEqual(keystore._store.status, 'opening')
+      expect(keystore._store.status).toEqual('opening')
       await keystore.close()
     })
 
     it('creates a keystore with empty options', async () => {
       const keystore = new Keystore({})
-      assert.strictEqual(keystore._store.status, 'opening')
+      expect(keystore._store.status).toEqual('opening')
       await keystore.close()
     })
 
     it('creates a keystore with only cache', async () => {
       const cache = new LRU({ max: 10 })
       const keystore = new Keystore({ cache })
-      assert.strictEqual(keystore._store.status, 'opening')
+      expect(keystore._store.status).toEqual('opening')
       assert(keystore._cache === cache)
       await keystore.close()
     })
@@ -99,7 +99,7 @@ describe('keystore', () => {
       const id = 'a new key'
       await keystore.createKey(id, SignKeyWithMeta)
       const hasKey = await keystore.hasKey(id, SignKeyWithMeta)
-      assert.strictEqual(hasKey, true)
+      expect(hasKey).toEqual(true)
     })
 
     it('throws an error upon not receiving an ID', async () => {
@@ -233,7 +233,7 @@ describe('keystore', () => {
 
     it('returns true if key exists', async () => {
       const hasKey = await keystore.hasKey('YYZ', SignKeyWithMeta)
-      assert.strictEqual(hasKey, true)
+      expect(hasKey).toEqual(true)
     })
 
     it('returns false if key does not exist', async () => {
@@ -241,7 +241,7 @@ describe('keystore', () => {
       try {
         hasKey = await keystore.hasKey('XXX', SignKeyWithMeta)
       } catch (e) {
-        assert.strictEqual(hasKey, true)
+        expect(hasKey).toEqual(true)
       }
     })
 
@@ -279,8 +279,8 @@ describe('keystore', () => {
 
     it('gets an existing key', async () => {
       const key = await keystore.getKeyByPath('ZZZ', SignKeyWithMeta)
-      assert.strictEqual(key.publicKey.getLength(), 32)
-      assert.strictEqual(key.secretKey.getLength(), 64)
+      expect(key.publicKey.getLength()).toEqual(32)
+      expect(key.secretKey.getLength()).toEqual(64)
     })
 
     it('throws an error upon accessing a non-existant key', async () => {
@@ -397,7 +397,7 @@ describe('keystore', () => {
       const signature = '4FAJrjPESeuDK5AhhHVmrCdVbb6gTqczxex1CydLfCHH4kP4CBmoMLfH6UxLF2UmPkisNMU15RVHo63NbWiNvyyb2f4h8x5cKWtQrHY3mUL'
       try {
         const verified = await Keystore.verify(Buffer.from(signature), publicKey, Buffer.from('data data data'))
-        assert.strictEqual(verified, true)
+        expect(verified).toEqual(true)
       } catch (error) {
         const x = 123;
       }
@@ -418,7 +418,7 @@ describe('keystore', () => {
     it('does not verify content with bad signature', async () => {
       const signature = 'xxxxxx'
       const verified = await Keystore.verify((new Uint8Array(Buffer.from(signature))), publicKey, Buffer.from('data data data'))
-      assert.strictEqual(verified, false)
+      expect(verified).toEqual(false)
     })
 
     afterAll(async () => {
@@ -438,7 +438,7 @@ describe('keystore', () => {
     it('closes then open', async () => {
       await waitFor(() => signingStore.status === 'closed');
       await keystore.openStore()
-      assert.strictEqual(signingStore.status, 'open')
+      expect(signingStore.status).toEqual('open')
     })
 
     it('fails when no store', async () => {
@@ -449,7 +449,7 @@ describe('keystore', () => {
       } catch (e) {
         error = e.message
       }
-      assert.strictEqual(error, 'Keystore: No store found to open')
+      expect(error).toEqual('Keystore: No store found to open')
     })
 
     afterEach(async () => {

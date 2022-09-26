@@ -66,7 +66,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           amount: 0
         })
 
-        assert.strictEqual(typeof it[Symbol.iterator], 'function')
+        expect(typeof it[Symbol.iterator]).toEqual('function')
         assert.deepStrictEqual(it.next(), { value: undefined, done: true })
       })
 
@@ -77,7 +77,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           amount: amount
         })
         const length = [...it].length;
-        assert.strictEqual(length, 10)
+        expect(length).toEqual(10)
       })
 
       it('returns entries with lte and amount and payload', async () => {
@@ -92,7 +92,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         for (const entry of it) {
           assertPayload(entry.payload.value, 'entry' + (67 - i++))
         }
-        assert.strictEqual(i, amount)
+        expect(i).toEqual(amount)
 
       })
 
@@ -109,7 +109,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         for (const entry of it) {
           assertPayload(entry.payload.value, 'entry' + (72 - i++))
         }
-        assert.strictEqual(i, amount)
+        expect(i).toEqual(amount)
       })
 
 
@@ -126,7 +126,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         for (const entry of it) {
           assertPayload(entry.payload.value, 'entry' + (79 - i++))
         }
-        assert.strictEqual(i, amount);
+        expect(i).toEqual(amount);
       })
 
       /* eslint-disable camelcase */
@@ -140,7 +140,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         // neither hash should appear in the array
         assert.strictEqual(hashes.indexOf('zdpuAo48H2WjBVJJUJ9aPtmynJbHCFYUaXUdXyY8SsU38bE23'), -1)
         assert.strictEqual(hashes.indexOf('zdpuAq4vvCjcNF99gJfgyuzr23Jggqg8HH69PkgJeAkSFEgbq'), -1)
-        assert.strictEqual(hashes.length, 10)
+        expect(hashes.length).toEqual(10)
       })
 
       it('iterates with lt and gte', async () => {
@@ -153,7 +153,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         // only the gte hash should appear in the array
         assert.strictEqual(hashes.indexOf('zdpuAwLMpxr8soCH1QC6XbvkHMxVDViBo1viPXJ48sRV7FUPc'), 24)
         assert.strictEqual(hashes.indexOf('zdpuAyATysiVgqZKrgmLLs5V8MXb7XjTc1FrgDWm6KAfnhxbd'), -1)
-        assert.strictEqual(hashes.length, 25)
+        expect(hashes.length).toEqual(25)
       })
 
       it('iterates with lte and gt', async () => {
@@ -166,7 +166,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         // only the lte hash should appear in the array
         assert.strictEqual(hashes.indexOf('zdpuAyUCayar44SgPxTC3P9UvVr2B4DARQ9mbiaTd9aGkwFwg'), -1)
         assert.strictEqual(hashes.indexOf('zdpuAoxE82TvJQQYzvgNAh4UtXh8bd6ka8jVVosyK11dYGNDs'), 0)
-        assert.strictEqual(hashes.length, 4)
+        expect(hashes.length).toEqual(4)
       })
 
       it('iterates with lte and gte', async () => {
@@ -179,7 +179,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         // neither hash should appear in the array
         assert.strictEqual(hashes.indexOf('zdpuAv1v9krPN1ctgV8RzrqzFqpG7978nfyDyaawGSwhVjpGQ'), 9)
         assert.strictEqual(hashes.indexOf('zdpuB2Y7A7TSwFhENZCUtDtt1WEiMttngkxxhaXHnkGEi9ttZ'), 0)
-        assert.strictEqual(hashes.length, 10)
+        expect(hashes.length).toEqual(10)
       })
 
       it('returns length with gt and default amount', async () => {
@@ -187,7 +187,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           gt: 'zdpuApRErChG8jJptFerzSgfFSj89z49dFanFt9XtPMujVtKc'
         })
 
-        assert.strictEqual([...it].length, 33)
+        expect([...it].length).toEqual(33)
       })
 
       it('returns entries with gt and default amount', async () => {
@@ -206,7 +206,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           gte: 'zdpuApRErChG8jJptFerzSgfFSj89z49dFanFt9XtPMujVtKc'
         })
 
-        assert.strictEqual([...it].length, 34)
+        expect([...it].length).toEqual(34)
       })
 
       it('returns entries with gte and default amount', async () => {
@@ -225,7 +225,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           lt: 'zdpuApRErChG8jJptFerzSgfFSj89z49dFanFt9XtPMujVtKc'
         })
 
-        assert.strictEqual([...it].length, 67)
+        expect([...it].length).toEqual(67)
       })
 
       it('returns entries with lt and default amount value', async () => {
@@ -244,7 +244,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           lte: 'zdpuApRErChG8jJptFerzSgfFSj89z49dFanFt9XtPMujVtKc'
         })
 
-        assert.strictEqual([...it].length, 68)
+        expect([...it].length).toEqual(68)
       })
 
       it('returns entries with lte and default amount value', async () => {
@@ -276,7 +276,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           lte: fixture.log.heads
         })
 
-        assert.strictEqual([...it].length, 16)
+        expect([...it].length).toEqual(16)
       })
 
       it('returns partial entries from all heads', async () => {
@@ -294,7 +294,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           lte: [fixture.log.heads[0]]
         })
 
-        assert.strictEqual([...it].length, 10)
+        expect([...it].length).toEqual(10)
       })
 
       it('returns partial logs from single heads #2', async () => {
@@ -302,7 +302,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           lte: [fixture.log.heads[1]]
         })
 
-        assert.strictEqual([...it].length, 11)
+        expect([...it].length).toEqual(11)
       })
 
       it('throws error if lt/lte not a string or array of entries', async () => {
@@ -316,7 +316,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           errMsg = e.message
         }
 
-        assert.strictEqual(errMsg, 'lt or lte must be a string or array of Entries')
+        expect(errMsg).toEqual('lt or lte must be a string or array of Entries')
       })
     })
   })

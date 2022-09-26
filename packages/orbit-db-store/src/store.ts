@@ -635,7 +635,7 @@ export class Store<T> implements StoreLike<T> {
         return Promise.resolve(null);
       }
 
-      head.peers = leaderInfo.leaders;
+      head.peers = new Set(leaderInfo.leaders);
 
       const hash = await io.write(this._ipfs, 'dag-cbor', head.serialize(), { links: Entry.IPLD_LINKS })
       if (hash !== head.hash) {
@@ -779,6 +779,7 @@ export class Store<T> implements StoreLike<T> {
         const entry = await this._oplog.append(data, {
           refs: options.refs, nexts: options.nexts, pin: options.pin, reciever: options.reciever
         })
+        entry
         this._recalculateReplicationStatus((await entry.clock).time)
         await this._cache.setBinary(this.localHeadsPath, new HeadsCache({ heads: [entry] }))
         await this._updateIndex([entry])

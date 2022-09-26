@@ -17,7 +17,7 @@ describe('start and stop', () => {
     } catch (e) {
       err = e
     }
-    assert.equal(err, "Error: 'started' is read-only")
+    expect(err).toEqual("Error: 'started' is read-only")
   })
 
   it('removes all event listeners on stop', async () => {
@@ -38,25 +38,25 @@ describe('start and stop', () => {
     it('starts polling peers', () => {
       const m = new IpfsPubsubPeerMonitor(mockPubsub, topic)
       assert.notEqual(m, null)
-      assert.equal(m.started, true)
+      expect(m.started).toEqual(true)
     })
 
     it('doesn\'t start polling peers', () => {
       const m = new IpfsPubsubPeerMonitor(mockPubsub, topic, { start: false })
       assert.notEqual(m, null)
-      assert.equal(m.started, false)
+      expect(m.started).toEqual(false)
     })
 
     it('starts polling peers when started manually', () => {
       const m = new IpfsPubsubPeerMonitor(mockPubsub, topic, { start: false })
       m.start()
-      assert.equal(m.started, true)
+      expect(m.started).toEqual(true)
     })
 
     it('stops polling peers', () => {
       const m = new IpfsPubsubPeerMonitor(mockPubsub, topic)
       m.stop()
-      assert.equal(m.started, false)
+      expect(m.started).toEqual(false)
     })
 
     it('polls with the given interval', async () => {

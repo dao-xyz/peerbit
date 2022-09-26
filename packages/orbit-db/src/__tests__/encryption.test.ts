@@ -256,7 +256,7 @@ Object.keys(testAPIs).forEach(API => {
 
             const entriesRelay: Entry<Operation<string>>[] = db1.iterator({ limit: -1 }).collect()
             try {
-              assert.equal(entriesRelay.length, 1)
+              expect(entriesRelay.length).toEqual(1)
               try {
                 await entriesRelay[0].getPayload(); // should fail, since relay can not see the message
                 assert(false);
@@ -271,9 +271,9 @@ Object.keys(testAPIs).forEach(API => {
 
             const sender: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
             try {
-              assert.equal(sender.length, 1)
+              expect(sender.length).toEqual(1)
               await sender[0].getPayload();
-              assert.equal(sender[0].payload.value.value, 'hello')
+              expect(sender[0].payload.value.value).toEqual('hello')
               expect(replicatedEventCount).toEqual(1)
             } catch (error) {
               reject(error)
@@ -307,7 +307,7 @@ Object.keys(testAPIs).forEach(API => {
             clearInterval(timer)
             const entriesRelay: Entry<Operation<string>>[] = db3.iterator({ limit: -1 }).collect()
             try {
-              assert.equal(entriesRelay.length, 1)
+              expect(entriesRelay.length).toEqual(1)
               await entriesRelay[0].getPayload(); // should pass since orbitdb3 got encryption key
               expect(replicatedEventCount).toEqual(1)
             } catch (error) {

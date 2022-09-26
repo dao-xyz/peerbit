@@ -134,7 +134,7 @@ Object.keys(testAPIs).forEach(API => {
               expect(entries[0].payload.value.value).toEqual('hello')
               expect(replicatedEventCount).toEqual(1)
               const allFromDB3 = db3.iterator({ limit: -1 }).collect().length
-              assert.equal(allFromDB3, 0) // Same replication topic but different DB (which means no entries should exist) 
+              expect(allFromDB3).toEqual(0) // Same replication topic but different DB (which means no entries should exist) 
 
             } catch (error) {
               reject(error)
@@ -198,13 +198,13 @@ Object.keys(testAPIs).forEach(API => {
 
             const entries2: Entry<Operation<string>>[] = db4.iterator({ limit: -1 }).collect()
             try {
-              assert.equal(entries2.length, 1)
-              assert.equal(entries2[0].payload.value.value, 'world')
+              expect(entries2.length).toEqual(1)
+              expect(entries2[0].payload.value.value).toEqual('world')
             } catch (error) {
               reject(error)
             }
 
-            assert.equal(replicatedEventCount, 2)
+            expect(replicatedEventCount).toEqual(2)
             resolve(true)
           }
         }, 100)

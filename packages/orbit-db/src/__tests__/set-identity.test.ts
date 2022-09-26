@@ -67,11 +67,11 @@ Object.keys(testAPIs).forEach(API => {
         name: 'abc',
         accessController: new SimpleAccessController()
       }), options)
-      assert.equal(db.publicKey, orbitdb.identity)
+      expect(db.publicKey).toEqual(orbitdb.identity)
       db.setPublicKey(new Ed25519PublicKeyData({
         publicKey: signKey1.publicKey
       }))
-      assert.equal(db.publicKey, signKey1.publicKey)
+      expect(db.publicKey).toEqual(signKey1.publicKey)
       await db.close()
     })
   })

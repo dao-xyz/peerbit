@@ -79,7 +79,7 @@ Object.keys(testAPIs).forEach(API => {
       beforeAll(async () => {
         await openDatabases()
 
-        assert.equal(db1.address.toString(), db2.address.toString())
+        expect(db1.address.toString()).toEqual(db2.address.toString())
 
         console.log("Waiting for peers...")
         await waitForPeers(ipfs1, [orbitdb2.id], db1.address.toString())
@@ -114,9 +114,9 @@ Object.keys(testAPIs).forEach(API => {
               clearInterval(timer)
 
               const items = db2.iterator({ limit: -1 }).collect()
-              assert.equal(items.length, entryCount)
-              assert.equal(items[0].payload.value.value, 'hello0')
-              assert.equal(items[items.length - 1].payload.value.value, 'hello' + (items.length - 1));
+              expect(items.length).toEqual(entryCount)
+              expect(items[0].payload.value.value).toEqual('hello0')
+              expect(items[items.length - 1].payload.value.value).toEqual('hello' + (items.length - 1));
 
               try {
 
@@ -140,8 +140,8 @@ Object.keys(testAPIs).forEach(API => {
                 // Make sure we have all the entries in the databases
                 const result1 = db3.iterator({ limit: -1 }).collect()
                 const result2 = db4.iterator({ limit: -1 }).collect()
-                assert.equal(result1.length, entryCount)
-                assert.equal(result2.length, entryCount)
+                expect(result1.length).toEqual(entryCount)
+                expect(result2.length).toEqual(entryCount)
 
                 await db3.drop()
                 await db4.drop()

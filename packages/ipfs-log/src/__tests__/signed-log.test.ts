@@ -55,7 +55,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const logId = 'A'
       const log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId })
       assert.notStrictEqual(log.id, null)
-      assert.strictEqual(log.id, logId)
+      expect(log.id).toEqual(logId)
     })
 
     it('has the correct identity', () => {
@@ -66,17 +66,17 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('has the correct public key', () => {
       const log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
-      assert.strictEqual(log._publicKey, signKey.publicKey)
+      expect(log._publicKey).toEqual(signKey.publicKey)
     })
 
     it('has the correct pkSignature', () => {
       const log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
-      assert.strictEqual(log._publicKey, signKey.publicKey)
+      expect(log._publicKey).toEqual(signKey.publicKey)
     })
 
     it('has the correct signature', () => {
       const log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
-      assert.strictEqual(log._publicKey, signKey.publicKey)
+      expect(log._publicKey).toEqual(signKey.publicKey)
     })
 
     it('entries contain an identity', async () => {
@@ -93,7 +93,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       } catch (e) {
         err = e
       }
-      assert.strictEqual(err.message, 'Identity is required')
+      expect(err.message).toEqual('Identity is required')
     })
 
     it('doesn\'t join logs with different IDs ', async () => {
@@ -111,9 +111,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         throw e
       }
 
-      assert.strictEqual(err, undefined)
-      assert.strictEqual(log1.id, 'A')
-      assert.strictEqual(log1.values.length, 1)
+      expect(err).toEqual(undefined)
+      expect(log1.id).toEqual('A')
+      expect(log1.values.length).toEqual(1)
       assertPayload(log1.values[0].payload.value, 'one')
     })
 
@@ -132,7 +132,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       } catch (e) {
         err = e.toString()
       }
-      assert.strictEqual(err, 'Error: Unsupported')
+      expect(err).toEqual('Error: Unsupported')
     })
 
     it('throws an error if log is signed but the signature doesn\'t verify', async () => {
@@ -151,8 +151,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
       }
 
       const entry = log2.values[0]
-      assert.strictEqual(err, `Error: Could not validate signature "${await entry.signature}" for entry "${entry.hash}" and key "${(await entry.publicKey)}"`)
-      assert.strictEqual(log1.values.length, 1)
+      expect(err).toEqual(`Error: Could not validate signature "${await entry.signature}" for entry "${entry.hash}" and key "${(await entry.publicKey)}"`)
+      expect(log1.values.length).toEqual(1)
       assertPayload(log1.values[0].payload.value, 'one')
     })
 
@@ -170,7 +170,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         err = e.toString()
       }
 
-      assert.strictEqual(err, `Error: Could not append Entry<T>, key "${signKey2.publicKey}" is not allowed to write to the log`)
+      expect(err).toEqual(`Error: Could not append Entry<T>, key "${signKey2.publicKey}" is not allowed to write to the log`)
     })
 
     it('throws an error upon join if entry doesn\'t have append access', async () => {
@@ -189,7 +189,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         err = e.toString()
       }
 
-      assert.strictEqual(err, `Error: Could not append Entry<T>, key "${signKey2.publicKey}" is not allowed to write to the log`)
+      expect(err).toEqual(`Error: Could not append Entry<T>, key "${signKey2.publicKey}" is not allowed to write to the log`)
     })
   })
 })

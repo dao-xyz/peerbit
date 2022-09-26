@@ -61,12 +61,14 @@ export class RequestHeadsMessage extends Message {
   }
 }
 
-export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>, store: StoreLike<any>, isSupported: (hash: string) => boolean, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
+/* export const exchangeHeads = async (send: (peer, message: Uint8Array) => Promise<void>, store: StoreLike<any>, isSupported: (hash: string) => boolean, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
   const heads = await store.getHeads();
   logger.debug(`Send latest heads of '${store.replicationTopic}'`)
   if (heads && heads.length > 0) {
 
     const headsToSend = heads.filter(head => !isSupported(head.hash));
+
+    // Calculate leaders and send directly ? Batch by channel instead
     const message = new ExchangeHeadsMessage({ replicationTopic: store.replicationTopic, address: store.address.toString(), heads: headsToSend });
     const signedMessage = await new MaybeSigned({ data: serialize(message) }).sign(sign)
     const decryptedMessage = new DecryptedThing({
@@ -74,6 +76,53 @@ export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>
     }) // TODO encryption?
     const serializedMessage = serialize(decryptedMessage);
     await send(serializedMessage)
+  }
+}
+ */
+
+export const exchangeHeads = async (id: string, send: (peer, message: Uint8Array) => Promise<void>, store: StoreLike<any>, leaders: (hash: string) => string[], sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
+  const heads = await store.getHeads();
+  logger.debug(`Send latest heads of '${store.replicationTopic}'`)
+  if (heads && heads.length > 0) {
+
+    const mapFromPeerToHead: Map<string, Entry<any>[]> = new Map();
+    heads.forEach((head) => {
+
+      if (head.next.length === 0) {
+        if (!head.peers) {
+          head.peers = new Set(leaders(head.hash));
+        }
+      }
+      if (head.peers.size === 0) {
+        throw new Error("Unexpected");
+      }
+
+      head.peers.forEach((peer) => {
+        if (peer === id) {
+          return;
+        }
+        let hs: Entry<any>[] = mapFromPeerToHead.get(peer);
+        if (!hs) {
+          hs = [];
+          mapFromPeerToHead.set(peer, hs);
+        }
+        hs.push(head);
+      })
+
+    });
+
+    const promises = [];
+    mapFromPeerToHead.forEach(async (headsToPeer, peer) => {
+      // Calculate leaders and send directly ? Batch by channel instead
+      const message = new ExchangeHeadsMessage({ replicationTopic: store.replicationTopic, address: store.address.toString(), heads: headsToPeer });
+      const signedMessage = await new MaybeSigned({ data: serialize(message) }).sign(sign)
+      const decryptedMessage = new DecryptedThing({
+        data: serialize(signedMessage)
+      }) // TODO encryption?
+      const serializedMessage = serialize(decryptedMessage);
+      promises.push(send(peer, serializedMessage))
+    })
+    await Promise.all(promises);
   }
 }
 

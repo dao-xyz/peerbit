@@ -47,17 +47,17 @@ Object.keys(testAPIs).forEach(API => {
       beforeAll(async () => {
         db = await orbitdb.open(new EventStore({ name: 'first', accessController: new SimpleAccessController() }))
         localDataPath = path.join(dbPath)
-        assert.equal(fs.existsSync(localDataPath), true)
+        expect(fs.existsSync(localDataPath)).toEqual(true)
       })
 
       it('removes local database cache', async () => {
         await db.drop()
         await db._cache.open()
-        assert.equal(await db._cache.get(db.localHeadsPath), undefined)
-        assert.equal(await db._cache.get(db.remoteHeadsPath), undefined)
-        assert.equal(await db._cache.get(db.snapshotPath), undefined)
-        assert.equal(await db._cache.get(db.queuePath), undefined)
-        assert.equal(await db._cache.get(db.manifestPath), undefined)
+        expect(await db._cache.get(db.localHeadsPath)).toEqual(undefined)
+        expect(await db._cache.get(db.remoteHeadsPath)).toEqual(undefined)
+        expect(await db._cache.get(db.snapshotPath)).toEqual(undefined)
+        expect(await db._cache.get(db.queuePath)).toEqual(undefined)
+        expect(await db._cache.get(db.manifestPath)).toEqual(undefined)
         await db._cache.close()
       })
     })

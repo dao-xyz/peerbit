@@ -31,14 +31,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('writes', async () => {
         cid1 = await io.write(ipfs, 'dag-cbor', data, { pin: true })
-        assert.strictEqual(cid1, 'zdpuAwHevBbd7V9QXeP8zC1pdb3HmugJ7zgzKnyiWxJG3p2Y4')
+        expect(cid1).toEqual('zdpuAwHevBbd7V9QXeP8zC1pdb3HmugJ7zgzKnyiWxJG3p2Y4')
 
         let obj = await io.read(ipfs, cid1, {})
         assert.deepStrictEqual(obj, data)
 
         data[cid1] = cid1
         cid2 = await io.write(ipfs, 'dag-cbor', data, { links: [cid1] })
-        assert.strictEqual(cid2, 'zdpuAqeyAtvp1ACxnWZLPW9qMEN5rJCD9N3vjUbMs4AAodTdz')
+        expect(cid2).toEqual('zdpuAqeyAtvp1ACxnWZLPW9qMEN5rJCD9N3vjUbMs4AAodTdz')
 
         obj = await io.read(ipfs, cid2, { links: [cid1] })
         data[cid1] = cid1
@@ -52,7 +52,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('writes', async () => {
         cid = await io.write(ipfs, 'dag-pb', data, { pin: true })
-        assert.strictEqual(cid, 'QmaPXy3wcj4ds9baLreBGWf94zzwAUM41AiNG1eN51C9uM')
+        expect(cid).toEqual('QmaPXy3wcj4ds9baLreBGWf94zzwAUM41AiNG1eN51C9uM')
 
         const obj = await io.read(ipfs, cid, {})
         assert.deepStrictEqual(obj, data)
@@ -65,10 +65,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('writes', async () => {
         cid = await io.write(ipfs, 'raw', data, { pin: true })
-        assert.strictEqual(cid, 'zdpuAwHevBbd7V9QXeP8zC1pdb3HmugJ7zgzKnyiWxJG3p2Y4')
+        expect(cid).toEqual('zdpuAwHevBbd7V9QXeP8zC1pdb3HmugJ7zgzKnyiWxJG3p2Y4')
 
         cid = await io.write(ipfs, 'raw', data, { format: 'dag-pb' })
-        assert.strictEqual(cid, 'QmaPXy3wcj4ds9baLreBGWf94zzwAUM41AiNG1eN51C9uM')
+        expect(cid).toEqual('QmaPXy3wcj4ds9baLreBGWf94zzwAUM41AiNG1eN51C9uM')
 
         const obj = await io.read(ipfs, cid, {})
         assert.deepStrictEqual(obj, data)

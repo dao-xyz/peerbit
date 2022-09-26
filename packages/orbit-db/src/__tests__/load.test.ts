@@ -83,9 +83,9 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
       await db.load()
       const items = db.iterator({ limit: -1 }).collect()
-      assert.equal(items.length, entryCount)
-      assert.equal(items[0].payload.value.value, 'hello0')
-      assert.equal(items[items.length - 1].payload.value.value, 'hello' + (entryCount - 1))
+      expect(items.length).toEqual(entryCount)
+      expect(items[0].payload.value.value).toEqual('hello0')
+      expect(items[items.length - 1].payload.value.value).toEqual('hello' + (entryCount - 1))
     })
 
     it('loads database partially', async () => {
@@ -93,10 +93,10 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
       await db.load(amount)
       const items = db.iterator({ limit: -1 }).collect()
-      assert.equal(items.length, amount)
-      assert.equal(items[0].payload.value.value, 'hello' + (entryCount - amount))
-      assert.equal(items[1].payload.value.value, 'hello' + (entryCount - amount + 1))
-      assert.equal(items[items.length - 1].payload.value.value, 'hello' + (entryCount - 1))
+      expect(items.length).toEqual(amount)
+      expect(items[0].payload.value.value).toEqual('hello' + (entryCount - amount))
+      expect(items[1].payload.value.value).toEqual('hello' + (entryCount - amount + 1))
+      expect(items[items.length - 1].payload.value.value).toEqual('hello' + (entryCount - 1))
     })
 
     it('load and close several times', async () => {
@@ -105,10 +105,10 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
         db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
         await db.load()
         const items = db.iterator({ limit: -1 }).collect()
-        assert.equal(items.length, entryCount)
-        assert.equal(items[0].payload.value.value, 'hello0')
-        assert.equal(items[1].payload.value.value, 'hello1')
-        assert.equal(items[items.length - 1].payload.value.value, 'hello' + (entryCount - 1))
+        expect(items.length).toEqual(entryCount)
+        expect(items[0].payload.value.value).toEqual('hello0')
+        expect(items[1].payload.value.value).toEqual('hello1')
+        expect(items[items.length - 1].payload.value.value).toEqual('hello' + (entryCount - 1))
         await db.close()
       }
     })
@@ -123,7 +123,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
             if (e.toString() !== 'ReadError: Database is not open') {
               reject(e)
             } else {
-              assert.equal(db._cache._store, null)
+              expect(db._cache._store).toEqual( null)
               resolve(true)
             }
           })
@@ -138,8 +138,8 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
         await db.load()
         await db.add('hello' + (entryCount + i))
         const items = db.iterator({ limit: -1 }).collect()
-        assert.equal(items.length, entryCount + i + 1)
-        assert.equal(items[items.length - 1].payload.value.value, 'hello' + (entryCount + i))
+        expect(items.length).toEqual(entryCount + i + 1)
+        expect(items[items.length - 1].payload.value.value).toEqual('hello' + (entryCount + i))
         await db.close()
       }
     })
@@ -149,9 +149,9 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       return new Promise(async (resolve) => {
         db.events.on('ready', () => {
           const items = db.iterator({ limit: -1 }).collect()
-          assert.equal(items.length, entryCount)
-          assert.equal(items[0].payload.value.value, 'hello0')
-          assert.equal(items[items.length - 1].payload.value.value, 'hello' + (entryCount - 1))
+          expect(items.length).toEqual(entryCount)
+          expect(items[0].payload.value.value).toEqual('hello0')
+          expect(items[items.length - 1].payload.value.value).toEqual('hello' + (entryCount - 1))
           resolve(true)
         })
         await db.load()
@@ -165,11 +165,11 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
         db.events.on('load.progress', (address, hash, entry) => {
           count++
           try {
-            assert.equal(address, db.address.toString())
+            expect(address).toEqual(db.address.toString())
 
             const { progress, max } = db.replicationStatus
-            assert.equal(max, entryCount)
-            assert.equal(progress, count)
+            expect(max).toEqual(entryCount)
+            expect(progress).toEqual(count)
 
             assert.notEqual(hash, null)
             assert.notEqual(entry, null)
@@ -199,7 +199,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
       await db.loadFromSnapshot()
       const items = db.iterator({ limit: -1 }).collect()
-      assert.equal(items.length, 0)
+      expect(items.length).toEqual(0)
     })
   })
 
@@ -227,9 +227,9 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
       await db.loadFromSnapshot()
       const items = db.iterator({ limit: -1 }).collect()
-      assert.equal(items.length, entryCount)
-      assert.equal(items[0].payload.value.value, 'hello0')
-      assert.equal(items[entryCount - 1].payload.value.value, 'hello' + (entryCount - 1))
+      expect(items.length).toEqual(entryCount)
+      expect(items[0].payload.value.value).toEqual('hello0')
+      expect(items[entryCount - 1].payload.value.value).toEqual('hello' + (entryCount - 1))
     })
 
     it('load, add one and save snapshot several times', async () => {
@@ -239,9 +239,9 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
         await db.loadFromSnapshot()
         await db.add('hello' + (entryCount + i))
         const items = db.iterator({ limit: -1 }).collect()
-        assert.equal(items.length, entryCount + i + 1)
-        assert.equal(items[0].payload.value.value, 'hello0')
-        assert.equal(items[items.length - 1].payload.value.value, 'hello' + (entryCount + i))
+        expect(items.length).toEqual(entryCount + i + 1)
+        expect(items[0].payload.value.value).toEqual('hello0')
+        expect(items[items.length - 1].payload.value.value).toEqual('hello' + (entryCount + i))
         await db.saveSnapshot()
         await db.close()
       }
@@ -259,7 +259,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       } catch (e) {
         err = e.toString()
       }
-      assert.equal(err, `Error: Snapshot for ${address} not found!`)
+      expect(err).toEqual(`Error: Snapshot for ${address} not found!`)
     })
 
     it('loading a database emits \'ready\' event', async () => {
@@ -267,9 +267,9 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       return new Promise(async (resolve) => {
         db.events.on('ready', () => {
           const items = db.iterator({ limit: -1 }).collect()
-          assert.equal(items.length, entryCount)
-          assert.equal(items[0].payload.value.value, 'hello0')
-          assert.equal(items[entryCount - 1].payload.value.value, 'hello' + (entryCount - 1))
+          expect(items.length).toEqual(entryCount)
+          expect(items[0].payload.value.value).toEqual('hello0')
+          expect(items[entryCount - 1].payload.value.value).toEqual('hello' + (entryCount - 1))
           resolve(true)
         })
         await db.loadFromSnapshot()
@@ -283,11 +283,11 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
         db.events.on('load.progress', (address, hash, entry) => {
           count++
           try {
-            assert.equal(address, db.address.toString())
+            expect(address).toEqual(db.address.toString())
 
             const { progress, max } = db.replicationStatus
-            assert.equal(max, entryCount)
-            assert.equal(progress, count)
+            expect(max).toEqual(entryCount)
+            expect(progress).toEqual(count)
 
             assert.notEqual(hash, null)
             assert.notEqual(entry, null)

@@ -89,7 +89,7 @@ describe(`orbit-db - IPFSAccessController`, function () {
     it('has IPFS instance', async () => {
       const peerId1 = await accessController._ipfs.id()
       const peerId2 = await ipfs1.id()
-      assert.strictEqual(peerId1.id, peerId2.id)
+      expect(peerId1.id).toEqual(peerId2.id)
     })
 
     it('sets default capabilities', async () => {
@@ -109,7 +109,7 @@ describe(`orbit-db - IPFSAccessController`, function () {
           publicKey: signKey1.publicKey
         })
       }))
-      assert.strictEqual(canAppend, true)
+      expect(canAppend).toEqual(true)
     })
   })
 

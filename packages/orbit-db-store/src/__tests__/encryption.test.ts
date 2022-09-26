@@ -88,11 +88,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       store.events.on('write', (topic, address, entry, heads) => {
         try {
-          assert.strictEqual(heads.length, 1)
+          expect(heads.length).toEqual(1)
           assert(Address.isValid(address))
           assert.deepStrictEqual(entry.payload.value, data)
-          assert.strictEqual(store.replicationStatus.progress, 1n)
-          assert.strictEqual(store.replicationStatus.max, 1n)
+          expect(store.replicationStatus.progress).toEqual(1n)
+          expect(store.replicationStatus.max).toEqual(1n)
           assert.deepStrictEqual(index._index, heads)
           store._cache.getBinary(store.localHeadsPath, HeadsCache).then(async (localHeads) => {
             localHeads.heads[0].init({
@@ -102,8 +102,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
             await localHeads.heads[0].getPayload();
             assert.deepStrictEqual(localHeads.heads[0].payload.value, data)
             assert(localHeads.heads[0].equals(heads[0]))
-            assert.strictEqual(heads.length, 1)
-            assert.strictEqual(localHeads.heads.length, 1)
+            expect(heads.length).toEqual(1)
+            expect(localHeads.heads.length).toEqual(1)
             store.events.removeAllListeners('write')
             done()
           })
@@ -128,11 +128,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const data = { data: 12345 }
 
       store.events.on('write', (topic, address, entry, heads) => {
-        assert.strictEqual(heads.length, 1)
+        expect(heads.length).toEqual(1)
         assert(Address.isValid(address))
         assert.deepStrictEqual(entry.payload.value, data)
-        assert.strictEqual(store.replicationStatus.progress, 1n)
-        assert.strictEqual(store.replicationStatus.max, 1n)
+        expect(store.replicationStatus.progress).toEqual(1n)
+        expect(store.replicationStatus.max).toEqual(1n)
         assert.deepStrictEqual(index._index, heads)
         store._cache.getBinary(store.localHeadsPath, HeadsCache).then(async (localHeads) => {
           localHeads.heads[0].init({
@@ -146,8 +146,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
             expect(error).toBeInstanceOf(AccessError)
           }
           assert(localHeads.heads[0].equals(heads[0]))
-          assert.strictEqual(heads.length, 1)
-          assert.strictEqual(localHeads.heads.length, 1)
+          expect(heads.length).toEqual(1)
+          expect(localHeads.heads.length).toEqual(1)
           store.events.removeAllListeners('write')
           done()
         })

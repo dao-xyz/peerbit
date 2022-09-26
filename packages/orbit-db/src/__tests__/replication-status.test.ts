@@ -67,7 +67,7 @@ Object.keys(testAPIs).forEach(API => {
       await db.add('hello2')
 
       const db2 = await orbitdb2.open(await EventStore.load(orbitdb2._ipfs, db.address))
-      await db2.sync(db._oplog.heads, () => Promise.resolve(true))
+      await db2.sync(db._oplog.heads, () => Promise.resolve({ isLeader: true, leaders: [db2.id] }))
 
       return new Promise((resolve, reject) => {
         setTimeout(() => {

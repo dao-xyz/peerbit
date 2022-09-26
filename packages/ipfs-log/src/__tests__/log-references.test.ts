@@ -69,14 +69,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
           await log4.append(i.toString(), { refs: log4.getPow2Refs(Math.pow(maxReferenceDistance, 4)) })
         }
 
-        assert.strict.equal(log1.values[log1.length - 1].next?.length, 1)
-        assert.strict.equal(log2.values[log2.length - 1].next?.length, 1)
-        assert.strict.equal(log3.values[log3.length - 1].next?.length, 1)
-        assert.strict.equal(log4.values[log4.length - 1].next?.length, 1)
-        assert.strict.equal(log1.values[log1.length - 1].refs?.length, 1)
-        assert.strict.equal(log2.values[log2.length - 1].refs?.length, 2)
-        assert.strict.equal(log3.values[log3.length - 1].refs?.length, 3)
-        assert.strict.equal(log4.values[log4.length - 1].refs?.length, 4)
+        expect(log1.values[log1.length - 1].next?.length).toEqual(1)
+        expect(log2.values[log2.length - 1].next?.length).toEqual(1)
+        expect(log3.values[log3.length - 1].next?.length).toEqual(1)
+        expect(log4.values[log4.length - 1].next?.length).toEqual(1)
+        expect(log1.values[log1.length - 1].refs?.length).toEqual(1)
+        expect(log2.values[log2.length - 1].refs?.length).toEqual(2)
+        expect(log3.values[log3.length - 1].refs?.length).toEqual(3)
+        expect(log4.values[log4.length - 1].refs?.length).toEqual(4)
 
         const inputs = [
           { amount: 1, referenceCount: 1, refLength: 0 },
@@ -111,33 +111,33 @@ Object.keys(testAPIs).forEach((IPFS) => {
               await log1.append((i + 1).toString(), { refs: log1.getPow2Refs(referenceCount) })
             }
 
-            assert.strict.equal(log1.values.length, input.amount)
-            assert.strict.equal(log1.values[log1.length - 1].clock.time, BigInt(input.amount))
+            expect(log1.values.length).toEqual(input.amount)
+            expect(log1.values[log1.length - 1].clock.time).toEqual(BigInt(input.amount))
 
             for (let k = 0; k < input.amount; k++) {
               const idx = log1.length - k - 1
-              assert.strict.equal(log1.values[idx].clock.time, BigInt(idx + 1))
+              expect(log1.values[idx].clock.time).toEqual(BigInt(idx + 1))
               const refsAtIdx = log1.values[idx].refs;
               if (refsAtIdx == undefined) {
                 fail();
               }
               // Check the first ref (distance 2)
-              if (refsAtIdx.length > 0) { assert.strict.equal(refsAtIdx[0], log1.values[idx - 2].hash) }
+              if (refsAtIdx.length > 0) { expect(refsAtIdx[0]).toEqual(log1.values[idx - 2].hash) }
 
               // Check the second ref (distance 2)
-              if (refsAtIdx.length > 1 && idx > referenceCount) { assert.strict.equal(refsAtIdx[1], log1.values[idx - 4].hash) }
+              if (refsAtIdx.length > 1 && idx > referenceCount) { expect(refsAtIdx[1]).toEqual(log1.values[idx - 4].hash) }
 
               // Check the third ref (distance 4)
-              if (refsAtIdx.length > 2 && idx > referenceCount) { assert.strict.equal(refsAtIdx[2], log1.values[idx - 8].hash) }
+              if (refsAtIdx.length > 2 && idx > referenceCount) { expect(refsAtIdx[2]).toEqual(log1.values[idx - 8].hash) }
 
               // Check the fourth ref (distance 8)
-              if (refsAtIdx.length > 3 && idx > referenceCount) { assert.strict.equal(refsAtIdx[3], log1.values[idx - 16].hash) }
+              if (refsAtIdx.length > 3 && idx > referenceCount) { expect(refsAtIdx[3]).toEqual(log1.values[idx - 16].hash) }
 
               // Check the fifth ref (distance 16)
-              if (refsAtIdx.length > 4 && idx > referenceCount) { assert.strict.equal(refsAtIdx[4], log1.values[idx - 32].hash) }
+              if (refsAtIdx.length > 4 && idx > referenceCount) { expect(refsAtIdx[4]).toEqual(log1.values[idx - 32].hash) }
 
               // Check the reference of each entry
-              if (idx > referenceCount) { assert.strict.equal(refsAtIdx?.length, refLength) }
+              if (idx > referenceCount) { expect(refsAtIdx?.length).toEqual(refLength) }
             }
           }
 
@@ -151,12 +151,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
         for (let i = 0; i < amount; i++) {
           await log1.append(i.toString(), { refs: [] })
         }
-        assert.strict.equal(log1.values[0].next?.length, 0)
-        assert.strict.equal(log1.values[0].refs?.length, 0)
-        assert.strict.equal(log1.values[1].next?.length, 1)
-        assert.strict.equal(log1.values[1].refs?.length, 0)
-        assert.strict.equal(log1.values[2].next?.length, 1)
-        assert.strict.equal(log1.values[2].refs?.length, 0)
+        expect(log1.values[0].next?.length).toEqual(0)
+        expect(log1.values[0].refs?.length).toEqual(0)
+        expect(log1.values[1].next?.length).toEqual(1)
+        expect(log1.values[1].refs?.length).toEqual(0)
+        expect(log1.values[2].next?.length).toEqual(1)
+        expect(log1.values[2].refs?.length).toEqual(0)
       })
     })
   })

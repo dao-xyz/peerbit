@@ -7,7 +7,7 @@
 
 <h1 align="center">
 <strong>
-   PeerbitDB
+   Peerbit DB
    </strong>
    
 </h1>

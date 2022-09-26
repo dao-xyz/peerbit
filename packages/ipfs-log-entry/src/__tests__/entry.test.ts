@@ -68,15 +68,15 @@ Object.keys(testAPIs).forEach((IPFS) => {
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: 'hello'
         })
-        assert.strictEqual(entry.hash, expectedHash)
-        assert.strictEqual(entry.id, 'A')
+        expect(entry.hash).toEqual(expectedHash)
+        expect(entry.id).toEqual('A')
         assert.deepStrictEqual(entry.clock.id, new Ed25519PublicKeyData({
           publicKey: signKey.publicKey
         }).bytes);
-        assert.strictEqual(entry.clock.time, 0n)
-        assert.strictEqual(entry.payload.value, 'hello')
-        assert.strictEqual(entry.next.length, 0)
-        assert.strictEqual(entry.refs.length, 0)
+        expect(entry.clock.time).toEqual(0n)
+        expect(entry.payload.value).toEqual('hello')
+        expect(entry.next.length).toEqual(0)
+        expect(entry.refs.length).toEqual(0)
       })
 
       it('creates a entry with payload', async () => {
@@ -87,15 +87,15 @@ Object.keys(testAPIs).forEach((IPFS) => {
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: payload, next: []
         })
-        assert.strictEqual(entry.hash, expectedHash)
-        assert.strictEqual(entry.payload.value, payload)
-        assert.strictEqual(entry.id, 'A')
+        expect(entry.hash).toEqual(expectedHash)
+        expect(entry.payload.value).toEqual(payload)
+        expect(entry.id).toEqual('A')
         assert.deepStrictEqual(entry.clock.id, new Ed25519PublicKeyData({
           publicKey: signKey.publicKey
         }).bytes);
-        assert.strictEqual(entry.clock.time, 0n)
-        assert.strictEqual(entry.next.length, 0)
-        assert.strictEqual(entry.refs.length, 0)
+        expect(entry.clock.time).toEqual(0n)
+        expect(entry.next.length).toEqual(0)
+        expect(entry.refs.length).toEqual(0)
       })
 
       it('creates a encrypted entry with payload', async () => {
@@ -137,14 +137,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
           }
         })
         assert(entry.payload instanceof Payload)
-        assert.strictEqual(entry.payload.value, payload);
+        expect(entry.payload.value).toEqual(payload);
 
         // We can not have a hash check because nonce of encryption will always change
-        assert.strictEqual(entry.id, 'A')
+        expect(entry.id).toEqual('A')
         assert.deepStrictEqual(entry.clock.id, (new Ed25519PublicKeyData({ publicKey: signKey.publicKey })).bytes)
-        assert.strictEqual(entry.clock.time, 0n)
-        assert.strictEqual(entry.next.length, 0)
-        assert.strictEqual(entry.refs.length, 0)
+        expect(entry.clock.time).toEqual(0n)
+        expect(entry.next.length).toEqual(0)
+        expect(entry.refs.length).toEqual(0)
       })
 
       it('creates a entry with payload and next', async () => {
@@ -169,13 +169,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: payload2, next: [entry1], clock: new LamportClock(clock.id, clock.time + 1n)
         })
-        assert.strictEqual(entry2.payload.value, payload2)
-        assert.strictEqual(entry2.next.length, 1)
-        assert.strictEqual(entry2.hash, expectedHash)
+        expect(entry2.payload.value).toEqual(payload2)
+        expect(entry2.next.length).toEqual(1)
+        expect(entry2.hash).toEqual(expectedHash)
         assert.deepStrictEqual(entry2.clock.id, new Ed25519PublicKeyData({
           publicKey: signKey.publicKey
         }).bytes);
-        assert.strictEqual(entry2.clock.time, 1n)
+        expect(entry2.clock.time).toEqual(1n)
       })
 
       it('`next` parameter can be an array of strings', async () => {
@@ -231,7 +231,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         } catch (e) {
           err = e
         }
-        assert.strictEqual(err.message, 'Entry requires an id')
+        expect(err.message).toEqual('Entry requires an id')
       })
 
       it('throws an error if data is not defined', async () => {
@@ -245,7 +245,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         } catch (e) {
           err = e
         }
-        assert.strictEqual(err.message, 'Entry requires data')
+        expect(err.message).toEqual('Entry requires data')
       })
 
       it('throws an error if next is not an array', async () => {
@@ -259,7 +259,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         } catch (e) {
           err = e
         }
-        assert.strictEqual(err.message, '\'next\' argument is not an array')
+        expect(err.message).toEqual('\'next\' argument is not an array')
       })
     })
 
@@ -273,7 +273,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: 'hello', next: []
         })
         const multihash = await Entry.toMultihash(ipfs, entry)
-        assert.strictEqual(multihash, expectedMultihash)
+        expect(multihash).toEqual(expectedMultihash)
       })
 
       it('throws an error if ipfs is not defined', async () => {
@@ -283,7 +283,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         } catch (e) {
           err = e
         }
-        assert.strictEqual(err.message, 'Ipfs instance not defined')
+        expect(err.message).toEqual('Ipfs instance not defined')
       })
 
       /*  TODO what is the point of this test?
@@ -299,7 +299,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         } catch (e) {
           err = e
         }
-        assert.strictEqual(err.message, 'Invalid object format, cannot generate entry hash')
+        expect(err.message).toEqual('Invalid object format, cannot generate entry hash')
       }) */
     })
 
@@ -321,11 +321,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const final = await Entry.fromMultihash<string>(ipfs, entry2.hash)
         final.init(entry2);
         assert(final.equals(entry2));
-        assert.strictEqual(await final.id, 'A')
-        assert.strictEqual(final.payload.value, payload2)
-        assert.strictEqual(final.next.length, 1)
-        assert.strictEqual(final.next[0], entry1.hash)
-        assert.strictEqual(final.hash, expectedHash)
+        expect(await final.id).toEqual('A')
+        expect(final.payload.value).toEqual(payload2)
+        expect(final.next.length).toEqual(1)
+        expect(final.next[0]).toEqual(entry1.hash)
+        expect(final.hash).toEqual(expectedHash)
       })
 
       it('throws an error if ipfs is not present', async () => {
@@ -335,7 +335,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         } catch (e) {
           err = e
         }
-        assert.strictEqual(err.message, 'Ipfs instance not defined')
+        expect(err.message).toEqual('Ipfs instance not defined')
       })
 
       it('throws an error if hash is undefined', async () => {
@@ -345,7 +345,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         } catch (e) {
           err = e
         }
-        assert.strictEqual(err.message, 'Invalid hash: undefined')
+        expect(err.message).toEqual('Invalid hash: undefined')
       })
     })
 
@@ -363,7 +363,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: payload2, next: [entry1]
         })
-        assert.strictEqual(Entry.isParent(entry1, entry2), true)
+        expect(Entry.isParent(entry1, entry2)).toEqual(true);
       })
 
       it('returns false if entry does not have a child', async () => {
@@ -384,9 +384,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: payload2, next: [entry2]
         })
-        assert.strictEqual(Entry.isParent(entry1, entry2), false)
-        assert.strictEqual(Entry.isParent(entry1, entry3), false)
-        assert.strictEqual(Entry.isParent(entry2, entry3), true)
+        expect(Entry.isParent(entry1, entry2)).toEqual(false);
+        expect(Entry.isParent(entry1, entry1)).toEqual(false);
+        expect(Entry.isParent(entry2, entry3)).toEqual(true);
+
       })
     })
 
@@ -403,7 +404,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: payload1, next: []
         })
-        assert.strictEqual(Entry.isEqual(entry1, entry2), true)
+        expect(Entry.isParent(entry1, entry2)).toEqual(true);
       })
 
       it('returns true if entries are not the same', async () => {
@@ -419,7 +420,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: payload2, next: []
         })
-        assert.strictEqual(Entry.isEqual(entry1, entry2), false)
+        expect(Entry.isParent(entry1, entry2)).toEqual(false);
       })
     })
 
@@ -430,37 +431,37 @@ Object.keys(testAPIs).forEach((IPFS) => {
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: 'hello', next: []
         })
-        assert.strictEqual(Entry.isEntry(entry), true)
+        expect(Entry.isEntry(entry)).toEqual(true)
       })
 
       it('is not an Entry - no id', async () => {
         const fakeEntry = { data: { v: 1, hash: 'Foo', payload: 123, seq: 0 }, next: [], }
-        assert.strictEqual(Entry.isEntry(fakeEntry as any), false)
+        expect(Entry.isEntry(fakeEntry as any)).toEqual(false)
       })
 
       it('is not an Entry - no seq', async () => {
         const fakeEntry = { data: { v: 1, hash: 'Foo', payload: 123 }, next: [] }
-        assert.strictEqual(Entry.isEntry(fakeEntry as any), false)
+        expect(Entry.isEntry(fakeEntry as any)).toEqual(false)
       })
 
       it('is not an Entry - no next', async () => {
         const fakeEntry = { data: { id: 'A', v: 1, hash: 'Foo', seq: 0 }, payload: 123 }
-        assert.strictEqual(Entry.isEntry(fakeEntry as any), false)
+        expect(Entry.isEntry(fakeEntry as any)).toEqual(false)
       })
 
       it('is not an Entry - no version', async () => {
         const fakeEntry = { data: { id: 'A', payload: 123, seq: 0 }, next: [] }
-        assert.strictEqual(Entry.isEntry(fakeEntry as any), false)
+        expect(Entry.isEntry(fakeEntry as any)).toEqual(false)
       })
 
       it('is not an Entry - no hash', async () => {
         const fakeEntry = { data: { id: 'A', v: 1, payload: 123, seq: 0 }, next: [] }
-        assert.strictEqual(Entry.isEntry(fakeEntry as any), false)
+        expect(Entry.isEntry(fakeEntry as any)).toEqual(false)
       })
 
       it('is not an Entry - no payload', async () => {
         const fakeEntry = { data: { id: 'A', v: 1, hash: 'Foo', seq: 0 }, next: [] }
-        assert.strictEqual(Entry.isEntry(fakeEntry as any), false)
+        expect(Entry.isEntry(fakeEntry as any)).toEqual(false)
       })
     })
   })

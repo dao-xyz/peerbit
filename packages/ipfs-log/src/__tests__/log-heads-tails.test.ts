@@ -57,14 +57,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
       it('finds one head after one entry', async () => {
         const log1 = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
         await log1.append('helloA1')
-        assert.strictEqual(log1.heads.length, 1)
+        expect(log1.heads.length).toEqual(1)
       })
 
       it('finds one head after two entries', async () => {
         const log1 = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
         await log1.append('helloA1')
         await log1.append('helloA2')
-        assert.strictEqual(log1.heads.length, 1)
+        expect(log1.heads.length).toEqual(1)
       })
 
       it('log contains the head entry', async () => {
@@ -86,7 +86,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log2.append('helloB2')
         const expectedHead = last(log2.values)
 
-        assert.strictEqual(log2.heads.length, 1)
+        expect(log2.heads.length).toEqual(1)
         assert.deepStrictEqual(log2.heads[0].hash, expectedHead.hash)
       })
 
@@ -105,9 +105,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log1.join(log2)
 
         const heads = log1.heads
-        assert.strictEqual(heads.length, 2)
-        assert.strictEqual(heads[0].hash, expectedHead2.hash)
-        assert.strictEqual(heads[1].hash, expectedHead1.hash)
+        expect(heads.length).toEqual(2)
+        expect(heads[0].hash).toEqual(expectedHead2.hash)
+        expect(heads[1].hash).toEqual(expectedHead1.hash)
       })
 
       it('finds two heads after two joins', async () => {
@@ -132,9 +132,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log1.join(log2)
 
         const heads = log1.heads
-        assert.strictEqual(heads.length, 2)
-        assert.strictEqual(heads[0].hash, expectedHead1.hash)
-        assert.strictEqual(heads[1].hash, expectedHead2.hash)
+        expect(heads.length).toEqual(2)
+        expect(heads[0].hash).toEqual(expectedHead1.hash)
+        expect(heads[1].hash).toEqual(expectedHead2.hash)
       })
 
       it('finds two heads after three joins', async () => {
@@ -158,9 +158,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log1.join(log2)
 
         const heads = log1.heads
-        assert.strictEqual(heads.length, 2)
-        assert.strictEqual(heads[0].hash, expectedHead1.hash)
-        assert.strictEqual(heads[1].hash, expectedHead2.hash)
+        expect(heads.length).toEqual(2)
+        expect(heads[0].hash).toEqual(expectedHead1.hash)
+        expect(heads[1].hash).toEqual(expectedHead2.hash)
       })
 
       it('finds three heads after three joins', async () => {
@@ -185,7 +185,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log1.join(log3)
 
         const heads = log1.heads
-        assert.strictEqual(heads.length, 3)
+        expect(heads.length).toEqual(3)
         assert.deepStrictEqual(heads[0].hash, expectedHead1.hash)
         assert.deepStrictEqual(heads[1].hash, expectedHead2.hash)
         assert.deepStrictEqual(heads[2].hash, expectedHead3.hash)
@@ -196,13 +196,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
       it('returns a tail', async () => {
         const log1 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
         await log1.append('helloA1')
-        assert.strictEqual(log1.tails.length, 1)
+        expect(log1.tails.length).toEqual(1)
       })
 
       it('tail is a Entry', async () => {
         const log1 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
         await log1.append('helloA1')
-        assert.strictEqual(Entry.isEntry(log1.tails[0]), true)
+        expect(Entry.isEntry(log1.tails[0])).toEqual(true)
       })
 
       it('returns tail entries', async () => {
@@ -211,9 +211,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log1.append('helloA1')
         await log2.append('helloB1')
         await log1.join(log2)
-        assert.strictEqual(log1.tails.length, 2)
-        assert.strictEqual(Entry.isEntry(log1.tails[0]), true)
-        assert.strictEqual(Entry.isEntry(log1.tails[1]), true)
+        expect(log1.tails.length).toEqual(2)
+        expect(Entry.isEntry(log1.tails[0])).toEqual(true)
+        expect(Entry.isEntry(log1.tails[1])).toEqual(true)
       })
 
       it('returns tail hashes', async () => {
@@ -224,7 +224,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log2.append('helloB1')
         await log2.append('helloB2')
         await log1.join(log2, 2)
-        assert.strictEqual(log1.tailHashes.length, 2)
+        expect(log1.tailHashes.length).toEqual(2)
       })
 
       it('returns no tail hashes if all entries point to empty nexts', async () => {
@@ -233,7 +233,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log1.append('helloA1')
         await log2.append('helloB1')
         await log1.join(log2)
-        assert.strictEqual(log1.tailHashes.length, 0)
+        expect(log1.tailHashes.length).toEqual(0)
       })
 
       it('returns tails after loading a partial log', async () => {
@@ -245,10 +245,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log2.append('helloB2')
         await log1.join(log2)
         const log4 = await Log.fromEntry(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), log1.heads, { length: 2 })
-        assert.strictEqual(log4.length, 2)
-        assert.strictEqual(log4.tails.length, 2)
-        assert.strictEqual(log4.tails[0].hash, log4.values[0].hash)
-        assert.strictEqual(log4.tails[1].hash, log4.values[1].hash)
+        expect(log4.length).toEqual(2)
+        expect(log4.tails.length).toEqual(2)
+        expect(log4.tails[0].hash).toEqual(log4.values[0].hash)
+        expect(log4.tails[1].hash).toEqual(log4.values[1].hash)
       })
 
       it('returns tails sorted by public key', async () => {
@@ -262,9 +262,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log3.join(log1)
         await log3.join(log2)
         await log4.join(log3)
-        assert.strictEqual(log4.tails.length, 3)
+        expect(log4.tails.length).toEqual(3)
         const log4Id = (await log4.tails[0].id);
-        assert.strictEqual(log4Id, 'XX')
+        expect(log4Id).toEqual('XX')
         assert.deepStrictEqual(log4.tails[0].clock.id, signKey3.publicKey)
         assert.deepStrictEqual(log4.tails[1].clock.id, signKey2.publicKey)
         assert.deepStrictEqual(log4.tails[2].clock.id, signKey.publicKey)

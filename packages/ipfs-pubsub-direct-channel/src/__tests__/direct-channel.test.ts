@@ -68,8 +68,8 @@ Object.keys(testAPIs).forEach(API => {
                 const c2 = await Channel.open(ipfs2, id1)
                 assert.deepEqual(c1.peers, expectedPeerIDs)
                 assert.deepEqual(c2.peers, expectedPeerIDs)
-                assert.equal(c1.id, path.join('/', PROTOCOL, expectedPeerIDs.join('/')))
-                assert.equal(c2.id, path.join('/', PROTOCOL, expectedPeerIDs.join('/')))
+                expect(c1.id).toEqual(path.join('/', PROTOCOL, expectedPeerIDs.join('/')))
+                expect(c2.id).toEqual(path.join('/', PROTOCOL, expectedPeerIDs.join('/')))
                 c1.close()
                 c2.close()
             })
@@ -78,7 +78,7 @@ Object.keys(testAPIs).forEach(API => {
                 const c = await Channel.open(ipfs1, id2)
                 const topics = await ipfs1.pubsub.ls()
                 const channelID = topics.find(e => e === c.id)
-                assert.equal(channelID, c.id)
+                expect(channelID).toEqual(c.id)
                 c.close()
             })
         })
@@ -97,11 +97,11 @@ Object.keys(testAPIs).forEach(API => {
             })
 
             it('has an id', async () => {
-                assert.equal(c.id, path.join('/', PROTOCOL, expectedPeerIDs.join('/')))
+                expect(c.id).toEqual(path.join('/', PROTOCOL, expectedPeerIDs.join('/')))
             })
 
             it('has two peers', async () => {
-                assert.equal(c.peers.length, 2)
+                expect(c.peers.length).toEqual(2)
                 assert.deepEqual(c.peers, expectedPeerIDs)
             })
 
@@ -112,7 +112,7 @@ Object.keys(testAPIs).forEach(API => {
                 } catch (e) {
                     err = e
                 }
-                assert.equal(err, null)
+                expect(err).toEqual(null)
             })
         })
 
@@ -130,20 +130,20 @@ Object.keys(testAPIs).forEach(API => {
 
                     c2.on('message', async (m) => {
                         assert.notEqual(m, null)
-                        assert.equal(m.from, id1)
-                        assert.equal(Buffer.from(m.data).toString(), Buffer.from('hello1'))
-                        assert.equal(m.topicIDs.length, 1)
-                        assert.equal(m.topicIDs[0], c1.id)
-                        assert.equal(m.topicIDs[0], c2.id)
+                        expect(m.from).toEqual(id1)
+                        expect(Buffer.from(m.data).toString()).toEqual(Buffer.from('hello1'))
+                        expect(m.topicIDs.length).toEqual(1)
+                        expect(m.topicIDs[0]).toEqual(c1.id)
+                        expect(m.topicIDs[0]).toEqual(c2.id)
                         await c2.send('hello2')
                     })
 
                     c1.on('message', (m) => {
-                        assert.equal(m.from, id2)
-                        assert.equal(Buffer.from(m.data).toString(), Buffer.from('hello2'))
-                        assert.equal(m.topicIDs.length, 1)
-                        assert.equal(m.topicIDs[0], c1.id)
-                        assert.equal(m.topicIDs[0], c2.id)
+                        expect(m.from).toEqual(id2)
+                        expect(Buffer.from(m.data).toString()).toEqual(Buffer.from('hello2'))
+                        expect(m.topicIDs.length).toEqual(1)
+                        expect(m.topicIDs[0]).toEqual(c1.id)
+                        expect(m.topicIDs[0]).toEqual(c2.id)
                         c1.close()
                         c2.close()
                         setTimeout(() => resolve(true), 500)
@@ -183,21 +183,21 @@ Object.keys(testAPIs).forEach(API => {
                 await c2.connect()
 
                 return new Promise(async (resolve, reject) => {
-                    assert.equal(c1._closed, false)
-                    assert.equal(c1._isClosed(), false)
+                    expect(c1._closed).toEqual(false)
+                    expect(c1._isClosed()).toEqual(false)
                     c1.close()
                     const topics1 = await ipfs1.pubsub.ls()
                     assert.deepEqual(topics1, [])
-                    assert.equal(c1._closed, true)
-                    assert.equal(c1._isClosed(), true)
+                    expect(c1._closed).toEqual(true)
+                    expect(c1._isClosed()).toEqual(true)
 
-                    assert.equal(c2._closed, false)
-                    assert.equal(c2._isClosed(), false)
+                    expect(c2._closed).toEqual(false)
+                    expect(c2._isClosed()).toEqual(false)
                     c2.close()
                     const topics2 = await ipfs2.pubsub.ls()
                     assert.deepEqual(topics1, [])
-                    assert.equal(c2._closed, true)
-                    assert.equal(c2._isClosed(), true)
+                    expect(c2._closed).toEqual(true)
+                    expect(c2._isClosed()).toEqual(true)
 
                     setTimeout(async () => {
                         const peers1 = await ipfs1.pubsub.peers(c1.id)
@@ -234,7 +234,7 @@ Object.keys(testAPIs).forEach(API => {
                     err = e
                 }
 
-                assert.equal(err, 'Error: This IPFS node does not support pubsub.')
+                expect(err).toEqual('Error: This IPFS node does not support pubsub.')
             })
 
         })
@@ -248,11 +248,11 @@ Object.keys(testAPIs).forEach(API => {
                 await c2.connect()
 
                 c1.on('message', (m) => {
-                    assert.equal(m.from, id2)
-                    assert.equal(m.data.toString(), 'hello1')
-                    assert.equal(m.topicIDs.length, 1)
-                    assert.equal(m.topicIDs[0], c1.id)
-                    assert.equal(m.topicIDs[0], c2.id)
+                    expect(m.from).toEqual(id2)
+                    expect(m.data.toString()).toEqual('hello1')
+                    expect(m.topicIDs.length).toEqual(1)
+                    expect(m.topicIDs[0]).toEqual(c1.id)
+                    expect(m.topicIDs[0]).toEqual(c2.id)
                 })
 
                 await ipfs3.pubsub.subscribe(c1.id, () => { })

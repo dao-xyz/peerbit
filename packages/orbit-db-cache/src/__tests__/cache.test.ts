@@ -46,7 +46,7 @@ describe(`Cache - level`, function () {
       await cache.set(d.key, d.value)
       const val = await cache.get(d.key)
       assert.deepStrictEqual(val, d.value)
-      assert.strictEqual(typeof val, d.type)
+      expect(typeof val).toEqual(d.type)
 
 
       try {
@@ -89,7 +89,7 @@ describe(`Cache - level`, function () {
       await cache.set(d.key, d.value)
       const val = await cache.get(d.key)
       assert.deepStrictEqual(val, d.value)
-      assert.strictEqual(typeof val, d.type)
+      expect(typeof val).toEqual(d.type)
     })
 
     it('throws an error trying to get an unknown key', async () => {

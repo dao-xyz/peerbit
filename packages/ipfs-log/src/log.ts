@@ -601,7 +601,7 @@ export class Log<T> extends GSet {
 
 
     // Update the internal next pointers index
-    const addToNextsIndex = e => {
+    const addToNextsIndex = (e: Entry<any>) => {
       if (!isDefined(e.hash)) {
         throw new Error("Unexpected");
       }
@@ -624,8 +624,8 @@ export class Log<T> extends GSet {
 
     // Merge the heads
     const nextsFromNewItems = Object.values(newItems).map(getNextPointers).reduce(flatMap, [])
-    const notReferencedByNewItems = e => !nextsFromNewItems.find(a => a === e.hash)
-    const notInCurrentNexts = e => !this._nextsIndex[e.hash]
+    const notReferencedByNewItems = (e: Entry<any>) => !nextsFromNewItems.find(a => a === e.hash)
+    const notInCurrentNexts = (e: Entry<any>) => !this._nextsIndex[e.hash]
     const mergedHeads = Log.findHeads(Object.values(Object.assign({}, this._headsIndex, log._headsIndex)))
       .filter(notReferencedByNewItems)
       .filter(notInCurrentNexts)

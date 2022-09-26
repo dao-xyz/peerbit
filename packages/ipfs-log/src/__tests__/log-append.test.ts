@@ -55,7 +55,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       it('added the correct amount of items', () => {
-        assert.strictEqual(log.length, 1)
+        expect(log.length).toEqual(1)
       })
 
       it('added the correct values', async () => {
@@ -66,20 +66,20 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('added the correct amount of next pointers', async () => {
         log.values.forEach((entry) => {
-          assert.strictEqual(entry.next.length, 0)
+          expect(entry.next.length).toEqual(0)
         })
       })
 
       it('has the correct heads', async () => {
         log.heads.forEach((head) => {
-          assert.strictEqual(head.hash, log.values[0].hash)
+          expect(head.hash).toEqual(log.values[0].hash)
         })
       })
 
       it('updated the clocks correctly', async () => {
         log.values.forEach((entry) => {
           assert.deepStrictEqual(entry.clock.id, new Uint8Array(signKey.publicKey.getBuffer()))
-          assert.strictEqual(entry.clock.time, 1)
+          expect(entry.clock.time).toEqual(1)
         })
       })
     })
@@ -96,13 +96,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
           await log.append('hello' + i, { pin: false, refs: log.getPow2Refs(nextPointerAmount) })
           // Make sure the log has the right heads after each append
           const values = log.values
-          assert.strictEqual(log.heads.length, 1)
-          assert.strictEqual(log.heads[0].hash, values[values.length - 1].hash)
+          expect(log.heads.length).toEqual(1)
+          expect(log.heads[0].hash).toEqual(values[values.length - 1].hash)
         }
       })
 
       it('added the correct amount of items', () => {
-        assert.strictEqual(log.length, amount)
+        expect(log.length).toEqual(amount)
       })
 
       it('added the correct values', async () => {
@@ -113,14 +113,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('updated the clocks correctly', async () => {
         log.values.forEach((entry, index) => {
-          assert.strictEqual(entry.clock.time, index + 1)
+          expect(entry.clock.time).toEqual(index + 1)
           assert.deepStrictEqual(entry.clock.id, new Uint8Array(signKey.publicKey.getBuffer()))
         })
       })
 
       it('added the correct amount of refs pointers', async () => {
         log.values.forEach((entry, index) => {
-          assert.strictEqual(entry.refs.length, index > 0 ? Math.ceil(Math.log2(Math.min(nextPointerAmount, index))) : 0)
+          expect(entry.refs.length).toEqual(index > 0 ? Math.ceil(Math.log2(Math.min(nextPointerAmount, index))) : 0)
         })
       })
     })

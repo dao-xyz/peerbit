@@ -91,7 +91,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
 
     it('makes database use the correct access controller', async () => {
       const { address } = await (db.accessController as IPFSAccessController<any>).save()
-      assert.strictEqual(acManifest.params.address, address)
+      expect(acManifest.params.address).toEqual(address)
     })
 
     it('saves database manifest file locally', async () => {
@@ -103,16 +103,16 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
     })
 
     it('has correct type', async () => {
-      assert.strictEqual(acManifest.type, 'ipfs')
+      expect(acManifest.type).toEqual('ipfs')
     })
 
     describe('database manifest', () => {
       it('has correct name', async () => {
-        assert.strictEqual(dbManifest.name, 'AABB')
+        expect(dbManifest.name).toEqual('AABB')
       })
 
       it('has correct type', async () => {
-        assert.strictEqual(dbManifest.type, 'feed')
+        expect(dbManifest.type).toEqual('feed')
       })
 
       it('has correct address', async () => {
@@ -131,7 +131,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
         }
 
         const res = await db.iterator().collect().map(e => e.payload.value.value)
-        assert.strictEqual(err, undefined)
+        expect(err).toEqual(undefined)
         assert.deepStrictEqual(res, ['hello?'])
       })
 
@@ -145,7 +145,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
         }
 
         const res = await db2.iterator().collect().map(e => e.payload.value.value)
-        assert.strictEqual(err.message, `Could not append Entry<T>, key "${db2.publicKey}" is not allowed to write to the log`)
+        expect(err.message).toEqual(`Could not append Entry<T>, key "${db2.publicKey}" is not allowed to write to the log`)
         assert.deepStrictEqual(res.includes('hello!!'), false)
       })
     })

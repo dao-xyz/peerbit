@@ -91,7 +91,7 @@ Object.keys(testAPIs).forEach(API => {
 
           await database.tryInsert(db2)
 
-          assert.strictEqual(database.query(db1).length, 0)
+          expect(database.query(db1).length).toEqual(0)
           db1.sync(db2._oplog.heads)
 
           return new Promise(resolve => {
@@ -123,7 +123,7 @@ Object.keys(testAPIs).forEach(API => {
 
           await database.tryInsert(db2)
 
-          assert.strictEqual(database.query(db1).length, 0)
+          expect(database.query(db1).length).toEqual(0)
           db1.sync(db2._oplog.heads)
 
           return new Promise(resolve => {
@@ -164,10 +164,10 @@ Object.keys(testAPIs).forEach(API => {
             // Make sure peer 2's instance throws an error
             err = e.toString()
           }
-          assert.strictEqual(err, `Error: Could not append Entry<T>, key "${orbitdb2.identity.id}" is not allowed to write to the log`)
+          expect(err).toEqual(`Error: Could not append Entry<T>, key "${orbitdb2.identity.id}" is not allowed to write to the log`)
 
           // Make sure nothing was added to the database
-          assert.strictEqual(database.query(db1).length, 0)
+          expect(database.query(db1).length).toEqual(0)
 
           // Try to sync peer 1 with peer 2, this shouldn't produce anything
           // at peer 1 (nothing was supposed to be added to the database by peer 2)
@@ -176,7 +176,7 @@ Object.keys(testAPIs).forEach(API => {
           return new Promise((resolve, reject) => {
             setTimeout(async () => {
               // Make sure nothing was added
-              assert.strictEqual(database.query(db1).length, 0)
+              expect(database.query(db1).length).toEqual(0)
               await db1.close()
               await db2.close()
               if (!err) {
@@ -209,7 +209,7 @@ Object.keys(testAPIs).forEach(API => {
           } catch (e) {
             err = e.toString()
           }
-          assert.strictEqual(err, `Error: Could not append Entry<T>, key "${orbitdb2.identity.id}" is not allowed to write to the log`)
+          expect(err).toEqual(`Error: Could not append Entry<T>, key "${orbitdb2.identity.id}" is not allowed to write to the log`)
         })
       })
     })

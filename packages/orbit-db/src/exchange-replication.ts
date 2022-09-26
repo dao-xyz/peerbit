@@ -7,6 +7,7 @@ import { DecryptedThing, PublicKeyEncryption } from '@dao-xyz/encryption-utils';
 import { Address, Store, StoreLike } from '@dao-xyz/orbit-db-store';
 import { OrbitDB } from './orbit-db';
 import { Entry } from '@dao-xyz/ipfs-log-entry';
+import { StringSetSerializer } from '@dao-xyz/io-utils';
 import { v4 as uuid } from 'uuid';
 let v8 = undefined;
 if (isNode) {
@@ -28,23 +29,7 @@ export class ReplicatorInfo extends Message {
     @field({ type: 'string' })
     store: string // address
 
-    @field({
-        type: option({
-            deserialize: (reader) => {
-                const len = reader.readU32();
-                let resp = new Set();
-                for (let i = 0; i < len; i++) {
-                    resp.add(reader.readString());
-                }
-            },
-            serialize: (arg: Set<string>, writer) => {
-                writer.writeU32(arg.size);
-                arg.forEach((s) => {
-                    writer.writeString(s);
-                })
-            }
-        })
-    })
+    @field({ type: option(StringSetSerializer) })
     heads?: Set<string> // address
 
     @field({ type: 'bool' })

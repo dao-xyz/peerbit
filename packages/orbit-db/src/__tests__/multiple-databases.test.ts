@@ -154,8 +154,8 @@ Object.keys(testAPIs).forEach(API => {
             remoteDatabasesA.forEach((db) => {
               try {
                 const result = db.iterator({ limit: -1 }).collect().length;
-                assert.equal(result, entryCount)
-                assert.equal(db._oplog.length, entryCount)
+                expect(result).toEqual(entryCount)
+                expect(db._oplog.length).toEqual(entryCount)
               } catch (error) {
                 reject(error)
               }
@@ -164,8 +164,8 @@ Object.keys(testAPIs).forEach(API => {
             remoteDatabasesB.forEach((db) => {
               try {
                 const result = db.iterator({ limit: -1 }).collect().length;
-                assert.equal(result, entryCount)
-                assert.equal(db._oplog.length, entryCount)
+                expect(result).toEqual(entryCount)
+                expect(db._oplog.length).toEqual(entryCount)
               } catch (error) {
                 reject(error)
               }
@@ -177,16 +177,16 @@ Object.keys(testAPIs).forEach(API => {
 
       // check gracefully shut down (with no leak)
       let directConnections = 2;
-      assert.strictEqual((await orbitdb3._ipfs.pubsub.ls()).length, directConnections + dbCount);
+      expect((await orbitdb3._ipfs.pubsub.ls()).length).toEqual(directConnections + dbCount);
       for (let i = 0; i < dbCount; i++) {
         await remoteDatabasesB[i].drop();
         const connections = (await orbitdb3._ipfs.pubsub.ls()).length;
         if (i < dbCount - 1) {
-          assert.strictEqual(connections, dbCount - (i + 1) + directConnections)
+          expect(connections).toEqual(dbCount - (i + 1) + directConnections)
         }
         else {
           // Direct connection should close because no databases "in common" are open
-          assert.strictEqual(connections, 0)
+          expect(connections).toEqual(0)
         }
       }
     })
