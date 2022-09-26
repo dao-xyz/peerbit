@@ -47,10 +47,10 @@ const testHello = async (addToDB: EventStore<string>, readFromDB: EventStore<str
         clearInterval(timer)
         const entries: Entry<Operation<string>>[] = readFromDB.iterator({ limit: -1 }).collect()
         try {
-          assert.equal(entries.length, 1)
+          expect(entries.length).toEqual(1)
           await entries[0].getPayload();
-          assert.equal(entries[0].payload.value.value, 'hello')
-          assert.equal(replicatedEventCount, 1)
+          expect(entries[0].payload.value.value).toEqual('hello')
+          expect(replicatedEventCount).toEqual(1)
         } catch (error) {
           reject(error)
         }
@@ -75,7 +75,7 @@ Object.keys(testAPIs).forEach(API => {
     beforeAll(async () => {
       ipfsd1 = await startIpfs(API, config.daemon1)
       ipfsd2 = await startIpfs(API, config.daemon2)
-      ipfsd3 = await startIpfs(API, config.daemon3)
+      ipfsd3 = await startIpfs(API, config.daemon2)
 
       ipfs1 = ipfsd1.api
       ipfs2 = ipfsd2.api
@@ -263,7 +263,7 @@ Object.keys(testAPIs).forEach(API => {
               } catch (error) {
                 expect(error).toBeInstanceOf(AccessError);
               }
-              assert.equal(replicatedEventCount, 1)
+              expect(replicatedEventCount).toEqual(1)
             } catch (error) {
               reject(error)
             }
@@ -274,7 +274,7 @@ Object.keys(testAPIs).forEach(API => {
               assert.equal(sender.length, 1)
               await sender[0].getPayload();
               assert.equal(sender[0].payload.value.value, 'hello')
-              assert.equal(replicatedEventCount, 1)
+              expect(replicatedEventCount).toEqual(1)
             } catch (error) {
               reject(error)
             }
@@ -309,7 +309,7 @@ Object.keys(testAPIs).forEach(API => {
             try {
               assert.equal(entriesRelay.length, 1)
               await entriesRelay[0].getPayload(); // should pass since orbitdb3 got encryption key
-              assert.equal(replicatedEventCount, 1)
+              expect(replicatedEventCount).toEqual(1)
             } catch (error) {
               reject(error)
             }

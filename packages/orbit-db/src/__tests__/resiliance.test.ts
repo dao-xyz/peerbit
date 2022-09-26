@@ -2,13 +2,8 @@
 const assert = require('assert')
 const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
-import { Entry } from '@dao-xyz/ipfs-log-entry'
-import { delay, waitFor, waitForAsync } from '@dao-xyz/time'
-import { EMIT_HEALTHCHECK_INTERVAL } from '../exchange-replication'
-
 import { OrbitDB } from '../orbit-db'
-import { SimpleAccessController } from './utils/access'
-import { EventStore, Operation } from './utils/stores/event-store'
+import { EventStore } from './utils/stores/event-store'
 
 // Include test utilities
 const {

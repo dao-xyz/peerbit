@@ -1,4 +1,4 @@
-import { DirectChannel } from '@dao-xyz/ipfs-pubsub-1on1'
+import { DirectChannel } from '../../ipfs-pubsub-direct-channel'
 import Logger from 'logplease'
 const logger = Logger.create('channel', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')

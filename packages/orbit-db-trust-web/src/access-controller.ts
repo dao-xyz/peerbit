@@ -122,8 +122,8 @@ export class RelationAccessController extends ReadWriteAccessController<Relation
         }));
     }
 
-    sync(heads: Entry<any>[]): Promise<void> {
-        return this.relationGraph.sync(heads);
+    sync(heads: Entry<any>[], leaderResolver: () => Promise<{ isLeader: boolean, leaders: string[] }>): Promise<void> {
+        return this.relationGraph.sync(heads, leaderResolver);
     }
     async getHeads(): Promise<Entry<any>[]> {
         return this.relationGraph.getHeads();
@@ -265,7 +265,7 @@ export class RegionAccessController extends ReadWriteAccessController<Relation> 
         return createHash('sha1').update(serialize(this)).digest('hex')
     }
 
-    sync(heads: Entry<any>[]): Promise<void> {
+    sync(heads: Entry<any>[],): Promise<void> {
         return this.trustGraph.sync(heads);
     }
     async getHeads(): Promise<Entry<any>[]> {

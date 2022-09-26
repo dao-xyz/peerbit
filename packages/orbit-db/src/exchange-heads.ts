@@ -61,22 +61,19 @@ export class RequestHeadsMessage extends Message {
   }
 }
 
-export const exchangeHeads = async (channel: any, topic: string, getStore: (address: string) => { [key: string]: StoreLike<any> }, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
-  const stores = getStore(topic);  // Send the heads if we have any
-  if (stores) {
-    for (const [storeAddress, store] of Object.entries(stores)) {
-      const heads = await store.getHeads();
-      logger.debug(`Send latest heads of '${topic}':\n`, JSON.stringify(heads.map(e => e.hash), null, 2))
-      if (heads && heads.length > 0) {
-        const message = new ExchangeHeadsMessage({ replicationTopic: topic, address: storeAddress, heads: heads });
-        const signedMessage = await new MaybeSigned({ data: serialize(message) }).sign(sign)
-        const decryptedMessage = new DecryptedThing({
-          data: serialize(signedMessage)
-        }) // TODO encryption?
-        const serializedMessage = serialize(decryptedMessage);
-        await channel.send(serializedMessage)
-      }
-    }
+export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>, store: StoreLike<any>, isSupported: (hash: string) => boolean, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
+  const heads = await store.getHeads();
+  logger.debug(`Send latest heads of '${store.replicationTopic}'`)
+  if (heads && heads.length > 0) {
+
+    const headsToSend = heads.filter(head => !isSupported(head.hash));
+    const message = new ExchangeHeadsMessage({ replicationTopic: store.replicationTopic, address: store.address.toString(), heads: headsToSend });
+    const signedMessage = await new MaybeSigned({ data: serialize(message) }).sign(sign)
+    const decryptedMessage = new DecryptedThing({
+      data: serialize(signedMessage)
+    }) // TODO encryption?
+    const serializedMessage = serialize(decryptedMessage);
+    await send(serializedMessage)
   }
 }
 

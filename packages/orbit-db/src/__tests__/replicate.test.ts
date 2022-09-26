@@ -113,9 +113,9 @@ Object.keys(testAPIs).forEach(API => {
             clearInterval(timer)
             const entries: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
             try {
-              assert.equal(entries.length, 1)
-              assert.equal(entries[0].payload.value.value, 'hello')
-              assert.equal(replicatedEventCount, 1)
+              expect(entries.length).toEqual(1)
+              expect(entries[0].payload.value.value).toEqual('hello')
+              expect(replicatedEventCount).toEqual(1)
             } catch (error) {
               reject(error)
             }
@@ -160,7 +160,7 @@ Object.keys(testAPIs).forEach(API => {
             clearInterval(timer)
             const entries = db2.iterator({ limit: -1 }).collect()
             try {
-              assert.equal(entries.length, entryCount)
+              expect(entries.length).toEqual(entryCount)
               assert.equal(entries[0].payload.value.value, 'hello0')
               assert.equal(entries[entries.length - 1].payload.value.value, 'hello99')
               resolve(true)
@@ -309,7 +309,7 @@ Object.keys(testAPIs).forEach(API => {
               // All entries should be in the database
               assert.equal(db2.iterator({ limit: -1 }).collect().length, entryCount)
               // 'replicated' event should've been received only once
-              assert.equal(replicatedEventCount, 1)
+              expect(replicatedEventCount).toEqual(1)
               // progress events should increase monotonically
               assert.equal(progressEvents.length, entryCount)
               for (const [idx, e] of progressEvents.entries()) {

@@ -1,6 +1,6 @@
 const fs = (typeof window === 'object' || typeof self === 'object') ? null : eval('require("fs")') // eslint-disable-line
 import { Level } from 'level';
-import LRU from 'lru';
+import LRU from 'lru-cache';
 import { variant, field, serialize, deserialize, option, Constructor } from '@dao-xyz/borsh';
 import { U8IntArraySerializer, bufferSerializer } from '@dao-xyz/io-utils';
 import { SodiumPlus, X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519SecretKey } from 'sodium-plus';
@@ -38,7 +38,8 @@ export const createStore = (path = './keystore'): Level => {
   return new Level(path, { valueEncoding: 'view' })
 }
 
-const verifiedCache: { get(string: string): { publicKey: Ed25519PublicKey, data: Uint8Array }, set(string: string, value: { publicKey: Ed25519PublicKey, data: Uint8Array }) } = new LRU(1000)
+const verifiedCache: { get(string: string): { publicKey: Ed25519PublicKey, data: Uint8Array }, set(string: string, value: { publicKey: Ed25519PublicKey, data: Uint8Array }) } = new LRU({ max: 1000 })
+
 const _crypto = SodiumPlus.auto();
 
 const NONCE_LENGTH = 24;
@@ -229,7 +230,7 @@ export class BoxKeyWithMeta extends KeyWithMeta {
 export class Keystore {
 
   _store: Level;
-  _cache: LRU
+  _cache: LRU<string, KeyWithMeta>
 
   constructor(input: (Level | { store?: string } | { store?: Level }) & { cache?: any } | string = {}) {
     if (typeof input === 'string') {
@@ -241,7 +242,7 @@ export class Keystore {
     } else {
       this._store = input["store"] || createStore()
     }
-    this._cache = input["cache"] || new LRU(100)
+    this._cache = input["cache"] || new LRU({ max: 100 })
   }
 
   async openStore() {

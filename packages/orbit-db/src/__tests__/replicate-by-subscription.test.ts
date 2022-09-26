@@ -4,7 +4,7 @@ const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { delay, waitFor, waitForAsync } from '@dao-xyz/time'
-import { EMIT_HEALTHCHECK_INTERVAL } from '../exchange-replication'
+import { WAIT_FOR_PEERS_TIME } from '../exchange-replication'
 
 import { OrbitDB } from '../orbit-db'
 import { SimpleAccessController } from './utils/access'

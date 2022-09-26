@@ -60,14 +60,18 @@ export class SimpleStoreAccessController extends AccessController<any> implement
         return address;
     }
 
-    sync(heads: Entry<Operation<string>>[]): Promise<void> {
-        return this.store.sync(heads)
+    sync(heads: Entry<Operation<string>>[], leaderResolver: () => Promise<{ isLeader: boolean, leaders: string[] }>): Promise<void> {
+        return this.store.sync(heads, leaderResolver)
     }
     get replicationTopic(): string {
         return Store.getReplicationTopic(this.address, this._options);
     }
     get events(): EventEmitter {
         return this.store.events
+    }
+
+    get allowForks(): boolean {
+        return this.store.allowForks;
     }
 
     get oplog(): Log<Operation<string>> {

@@ -16,7 +16,7 @@ import { SimpleAccessController } from './utils'
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`Constructor ${IPFS}`, function () {
-    let ipfs, signKey: SignKeyWithMeta, identityStore, store: Store<any>, storeWithCache: Store<any>, cacheStore
+    let ipfs, signKey: SignKeyWithMeta, identityStore, store: Store<any>, cacheStore
 
     jest.setTimeout(config.timeout);
 
@@ -33,18 +33,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       signKey = await keystore.getKeyByPath(new Uint8Array([0]), SignKeyWithMeta);
       ipfs = await startIpfs(IPFS, ipfsConfig.daemon1)
-
+      const options = Object.assign({}, DefaultOptions, { resolveCache: () => cache })
       store = new Store({ name: 'name', accessController: new SimpleAccessController() })
-      store.init(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), DefaultOptions);
-      const options = Object.assign({}, DefaultOptions, { cache })
-      storeWithCache = new Store({ name: 'name', accessController: new SimpleAccessController() })
-      await storeWithCache.init(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), options);
+      await store.init(ipfs.api, signKey.publicKey, (data) => Keystore.sign(data, signKey), options);
 
     })
 
     afterAll(async () => {
       await store?.close()
-      await storeWithCache?.close()
       ipfs && await stopIpfs(ipfs)
       await identityStore?.close()
       await cacheStore?.close()
@@ -53,11 +49,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
     it('creates a new Store instance', async () => {
       assert.strictEqual(typeof store.options, 'object')
       assert.strictEqual(typeof store.id, 'string')
-      assert.strictEqual(typeof store.address, 'string')
+      assert.strictEqual(typeof store.address, 'object')
       assert.strictEqual(typeof store.dbname, 'string')
       assert.strictEqual(typeof store.events, 'object')
       assert.strictEqual(typeof store._ipfs, 'object')
-      assert.strictEqual(typeof store._cache, 'undefined')
+      assert.strictEqual(typeof store._cache, 'object')
       assert.strictEqual(typeof store.accessController, 'object')
       assert.strictEqual(typeof store._oplog, 'object')
       assert.strictEqual(typeof store._replicationStatus, 'object')
@@ -66,7 +62,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     it('properly defines a cache', async () => {
-      assert.strictEqual(typeof storeWithCache._cache, 'object')
+      assert.strictEqual(typeof store._cache, 'object')
+    })
+    it('can clone', async () => {
+      const clone = store.clone();
+      expect(clone).not.toEqual(store);
     })
   })
 })

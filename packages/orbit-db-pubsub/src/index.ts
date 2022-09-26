@@ -51,11 +51,19 @@ export class PubSub {
    * @param topic 
    * @param subscriberId 
    * @param onMessageCallback 
-   * @param onNewPeerCallback 
+   * @param monitor 
    * @param options 
    * @returns The subscription id
    */
-  async subscribe(topic: string, subscriberId: string, onMessageCallback: (topic: string, content: any, from: any) => void, monitor?: { onNewPeerCallback: (topic: string, peer: string, fromSubscription: Subscription) => void }, options = {}): Promise<Subscription> {
+  async subscribe(
+    topic: string,
+    subscriberId: string,
+    onMessageCallback: (topic: string, content: any, from: any) => void,
+    monitor?: {
+      onNewPeerCallback: (topic: string, peer: string, fromSubscription: Subscription) => void,
+      onPeerLeaveCallback: (topic: string, peer: string, fromSubscription: Subscription) => void
+    }, options = {}
+  ): Promise<Subscription> {
     let subscription = this._subscriptions[topic];
     if (!subscription && this._ipfs.pubsub) {
       try {
@@ -90,14 +98,23 @@ export class PubSub {
           logger.debug(`Peer joined ${topic}:`)
           logger.debug(peer)
           const joinSubscription = this._subscriptions[topic];
-          if (joinSubscription) {
+          if (joinSubscription && monitor.onNewPeerCallback) {
             monitor.onNewPeerCallback(topic, peer, joinSubscription)
           } else {
             logger.warn('Peer joined a room we don\'t have a subscription for')
             logger.warn(topic, peer)
           }
         })
-        topicMonitor.on('leave', (peer) => logger.debug(`Peer ${peer} left ${topic}`))
+        topicMonitor.on('leave', (peer) => {
+          logger.debug(`Peer ${peer} left ${topic}`)
+          const joinSubscription = this._subscriptions[topic];
+          if (joinSubscription && monitor.onPeerLeaveCallback) {
+            monitor.onPeerLeaveCallback(topic, peer, joinSubscription)
+          } else {
+            logger.warn('Peer joined a room we don\'t have a subscription for')
+            logger.warn(topic, peer)
+          }
+        })
         topicMonitor.on('error', (e) => logger.error(e))
         return topicMonitor;
       }

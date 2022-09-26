@@ -20,7 +20,7 @@ export class DirectChannel extends EventEmitter {
   _id: string;
   _ipfs: any;
   _closed: boolean;
-  _isClosed: () => void;
+  _isClosed: () => boolean;
   _receiverID: string;
   _senderID: string;
   _peers: string[];
@@ -97,10 +97,10 @@ export class DirectChannel extends EventEmitter {
     this._senderID = await getPeerID(this._ipfs)
 
     // Channel's participants
-    this._peers = Array.from([this._senderID, this._receiverID]).sort()
+    this._peers = Array.from([this._senderID, this._receiverID])
 
     // ID of the channel is "<peer1 id>/<peer 2 id>""
-    this._id = '/' + PROTOCOL + '/' + this._peers.join('/')
+    this._id = DirectChannel.getTopic(this._peers);
 
     // Function to use to handle incoming messages
     this._messageHandler = (message: {
@@ -134,6 +134,10 @@ export class DirectChannel extends EventEmitter {
     const channel = new DirectChannel(ipfs, receiverID)
     await channel._openChannel()
     return channel
+  }
+
+  static getTopic(peers: string[]): string {
+    return '/' + PROTOCOL + '/' + peers.sort().join('/')
   }
 }
 

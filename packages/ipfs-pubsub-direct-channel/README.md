@@ -1,16 +1,16 @@
-# ipfs-pubsub-1on1
+# ipfs-pubsub-direct-channel
 
 > Communication channel between two peers over IPFS Pubsub
 
 **_Work in progress!_**
 
-`ipfs-pubsub-1on1` is a 1-to-1 communication channel over IPFS Pubsub. It enables two peers to exchange messages between each other. Note that the channel is currently not authenticated nor encrypted!
+`ipfs-pubsub-direct-channel` is a 1-to-1 communication channel over IPFS Pubsub. It enables two peers to exchange messages between each other. Note that the channel is currently not authenticated nor encrypted!
 
 ## Usage
 
 ```javascript
 // Include as lib
-const Channel = require('ipfs-pubsub-1on1')
+const Channel = require('ipfs-pubsub-direct-channel')
 // Create IPFS instance somehow
 const ipfs = new IPFS()
 // IPFS peer ID of the peer to connect to

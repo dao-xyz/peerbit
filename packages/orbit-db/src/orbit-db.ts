@@ -16,15 +16,16 @@ import { getOrCreateChannel } from './channel'
 import { exchangeKeys, KeyResponseMessage, KeyAccessCondition, recieveKeys, requestAndWaitForKeys, RequestKeyMessage, RequestKeyCondition, RequestKeysByKey, RequestKeysByReplicationTopic } from './exchange-keys'
 import { DecryptedThing, EncryptedThing, MaybeEncrypted, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
 import { X25519PublicKey } from 'sodium-plus'
-import LRU from 'lru';
-import { DirectChannel } from '@dao-xyz/ipfs-pubsub-1on1'
+import LRU from 'lru-cache';
+import { DirectChannel } from '../../ipfs-pubsub-direct-channel'
 import { encryptionWithRequestKey, replicationTopicEncryptionWithRequestKey } from './encryption'
 import { Ed25519PublicKeyData, PublicKey } from '@dao-xyz/identity';
-import { MaybeSigned, SignatureWithKey } from '@dao-xyz/identity';
-import { EMIT_HEALTHCHECK_INTERVAL, exchangePeerInfo, HeapSizeRequirement, ReplicatorInfo, PeerInfoWithMeta, RequestReplicatorInfo, requestPeerInfo } from './exchange-replication'
+import { MaybeSigned } from '@dao-xyz/identity';
+import { WAIT_FOR_PEERS_TIME, exchangePeerInfo, ReplicatorInfo, PeerInfoWithMeta, RequestReplicatorInfo, requestPeerInfo } from './exchange-replication'
 import { createHash } from 'crypto'
 import isNode from 'is-node';
-import { delay, waitForAsync } from '@dao-xyz/time'
+import { delay, waitFor } from '@dao-xyz/time'
+import { LRUCounter } from './lru-counter'
 let v8 = undefined;
 if (isNode) {
   v8 = require('v8');
@@ -50,7 +51,7 @@ export class OrbitDB {
   _ipfs: IPFSInstance;
 
   _pubsub: PubSub;
-  _directConnections: { [key: string]: { channel: DirectChannel, dependencies: Set<string> } };
+  _directConnections: Map<string, { channel: DirectChannel, dependencies: Set<string> }>;
 
   publicKey: PublicKey;
   sign: (data: Uint8Array) => Promise<Uint8Array>;
@@ -66,9 +67,11 @@ export class OrbitDB {
   _subscribeForReplication = new Set<string>();
   _waitForKeysTimeout = 10000;
   _keysInflightMap: Map<string, Promise<any>> = new Map(); // TODO fix types
-  _keyRequestsLRU: LRU = new LRU({ max: 100, maxAge: 10000 });
+  _keyRequestsLRU: LRU<string, KeyWithMeta[] | null> = new LRU({ max: 100, ttl: 10000 });
   /*   _replicationTopicJobs: Map<string, { controller: AbortController }> = new Map(); */
-  _peerInfoLRU: LRU = new LRU({ max: 1000, maxAge: EMIT_HEALTHCHECK_INTERVAL * 4 });
+  _peerInfoLRU: Map<string, PeerInfoWithMeta> = new Map();// LRU = new LRU({ max: 1000, ttl:  EMIT_HEALTHCHECK_INTERVAL * 4 });
+  _supportedHashesLRU: LRUCounter = new LRUCounter(new LRU({ ttl: 60000 }))
+  _peerInfoResponseCounter: LRUCounter = new LRUCounter(new LRU({ ttl: 100000 }))
 
   //_peerInfoMap: Map<string, Map<string, Set<string>>> // peer -> store -> heads
 
@@ -93,7 +96,7 @@ export class OrbitDB {
       : null
     this.directory = options.directory || './orbitdb'
     this.storage = options.storage
-    this._directConnections = {}
+    this._directConnections = new Map();
     this.stores = {}
     this.caches = {}
     this.minReplicas = options.minReplicas || MIN_REPLICAS;
@@ -105,6 +108,7 @@ export class OrbitDB {
       this._waitForKeysTimeout = options.waitForKeysTimout;
     }
     this.heapsizeLimitForForks = options.heapsizeLimitForForks;
+    this._pubsub.subscribe(DirectChannel.getTopic([this.id]), this.id, this._onMessage.bind(this));
     // AccessControllers module can be passed in to enable
     // testing with orbit-db-access-controller
     /*     AccessControllersModule = options.AccessControllers || AccessControllers
@@ -129,7 +133,7 @@ export class OrbitDB {
 
     let lruCache = this._keyRequestsLRU.get(promiseKey);
     if (lruCache !== undefined) {
-      return lruCache;
+      return lruCache as T[];
     }
 
     const promise = new Promise<T[] | undefined>((resolve, reject) => {
@@ -203,6 +207,9 @@ export class OrbitDB {
     let id: string = undefined;
     if (options.id || options.offline) {
 
+      if (!options.offline) {
+        throw new Error("Custom id is only supported for offline peers");
+      }
       id = options.id;
     }
     else {
@@ -279,13 +286,14 @@ export class OrbitDB {
     // Close a direct connection and remove it from internal state
     this._subscribeForReplication.clear();
 
+    await this._pubsub.unsubscribe(DirectChannel.getTopic([this.id]), this.id);
     const removeDirectConnect = e => {
-      this._directConnections[e].channel.close()
-      delete this._directConnections[e]
+      this._directConnections.get(e)?.channel.close()
+      this._directConnections.delete(e);
     }
 
     // Close all direct connections to peers
-    Object.keys(this._directConnections).forEach(removeDirectConnect)
+    this._directConnections.forEach(removeDirectConnect)
 
     // Disconnect from pubsub
     if (this._pubsub) {
@@ -373,14 +381,22 @@ export class OrbitDB {
         }
         const stores = this.stores[replicationTopic]
         if (heads && stores) {
-          let isLeaderResolver = () => this.isLeader(replicationTopic, address, Buffer.from(signedMessage.signature.signature).toString('base64'), MIN_REPLICAS)
+
+          let isLeaderResolver: () => Promise<{ leaders: string[], isLeader: boolean }> = async () => {
+            const leaders = await this.findLeaders(replicationTopic, address, Buffer.from(signedMessage.signature.signature).toString('base64'), this.minReplicas);
+            return {
+              leaders,
+              isLeader: this.isLeader(leaders)
+            }
+          }
+
           if (!stores[address]) {
             // open store if is leader
-            const isLeader = await isLeaderResolver();
-            if (isLeader) {
+            const leaderInfo = await isLeaderResolver();
+            if (leaderInfo.isLeader) {
               // open store since it is not open
               await this.open(Address.parse(address), { replicationTopic })
-              isLeaderResolver = () => Promise.resolve(true);
+              isLeaderResolver = () => Promise.resolve(leaderInfo);
             }
             else {
               return; // is not leader, so we should not open the store
@@ -426,8 +442,19 @@ export class OrbitDB {
         if (!(await checkTrustedSender(replicationTopic))) {
           return;
         }
-        const channel = await this.getChannel(peer, replicationTopic);
-        await exchangeHeads(channel, replicationTopic, (address: string) => this.stores[address], await this.getSigner());
+
+        const stores = this.stores[replicationTopic];  // Send the heads if we have any
+        if (stores) {
+          for (const [storeAddress, store] of Object.entries(stores)) {
+            if (store.replicate) {
+              const channel = await this.getChannel(peer, replicationTopic);
+              await exchangeHeads((msg) => channel.send(Buffer.from(msg)), store, (key) => this._supportedHashesLRU.get(key) >= this.minReplicas, await this.getSigner());
+            }
+            else {
+              // Ignore for now (dont share headss)
+            }
+          }
+        }
         logger.debug(`Received exchange heades request for topic: ${replicationTopic}, address: ${address}`)
       }
       else if (msg instanceof KeyResponseMessage) {
@@ -445,26 +472,35 @@ export class OrbitDB {
          * Someone is requesting X25519 Secret keys for me so that they can open encrypted messages (and encrypt)
          * 
          */
-
-        const channel = await this.getChannel(peer, onMessageTopic);
+        const send = (message: Uint8Array) => this._pubsub.publish(DirectChannel.getTopic([peer]), message);
         const getKeysByGroup = <T extends KeyWithMeta>(group: string, type: WithType<T>) => this.keystore.getKeys(group, type);
         const getKeysByPublicKey = (key: Uint8Array) => this.keystore.getKeyById(key);
-
-        await exchangeKeys(channel, msg, sender, this.canAccessKeys, getKeysByPublicKey, getKeysByGroup, await this.getSigner(), this.encryption)
+        await exchangeKeys(send, msg, sender, this.canAccessKeys, getKeysByPublicKey, getKeysByGroup, await this.getSigner(), this.encryption)
         logger.debug(`Exchanged keys`)
       }
       else if (msg instanceof RequestReplicatorInfo) {
 
+        const store = this.stores[msg.replicationTopic]?.[msg.address];
+        if (!store || !store.replicate) {
+          return;
+        }
+
         if (!(await checkTrustedSender(msg.replicationTopic))) {
           return;
         }
-        // if supports store, return resp
-        const store = this.stores[msg.replicationTopic]?.[msg.address];
-        let hasHead = msg.head ? !!store.oplog._entryIndex.get(msg.head) : true;
 
-        // TODO do direct channel repsonse?
-        if (store && hasHead) {
-          await exchangePeerInfo(msg.replicationTopic, store, (topic, message) => this._pubsub.publish(topic, message), await this.getSigner())
+        // if supports store, return resp
+        if (store) {
+          const send = this._directConnections.has(peer) ? (message) => this._directConnections.get(peer).channel.send(message) : (message) => this._pubsub.publish(msg.replicationTopic, message);
+          if (msg.heads) {
+            let ownedHeads = msg.heads.filter(h => !!store.oplog._entryIndex.get(h));
+            if (ownedHeads.length > 0) {
+              await exchangePeerInfo(msg.id, msg.replicationTopic, store, ownedHeads, send, await this.getSigner())
+            }
+          }
+          else {
+            await exchangePeerInfo(msg.id, msg.replicationTopic, store, undefined, send, await this.getSigner())
+          }
         }
       }
       else if (msg instanceof ReplicatorInfo) {
@@ -472,10 +508,22 @@ export class OrbitDB {
         if (!(await checkTrustedSender(msg.replicationTopic))) {
           return;
         }
-        this._peerInfoLRU.set(sender.hashCode(), {
+        // TODO singleton
+        const hashcode = sender.hashCode();
+
+        this._peerInfoLRU.set(hashcode, {
           peerInfo: msg,
           publicKey: sender
         } as PeerInfoWithMeta)
+
+        if (msg.fromId) {
+          await this._peerInfoResponseCounter.increment(msg.fromId);
+          const x = 123;
+        }
+        msg.heads?.forEach((h) => {
+          this._supportedHashesLRU.increment(h);
+        })
+
       }
 
       /*  else if (msg instanceof RequestReplication) {
@@ -508,18 +556,28 @@ export class OrbitDB {
   }
 
 
-  // Callback for when a peer connected to a database
   async _onPeerConnected(replicationTopic: string, peer: string, subscription: Subscription) {
     logger.debug(`New peer '${peer}' connected to '${replicationTopic}'`)
 
-    // create a channel for sending/receiving messages
-    const channel = await this.getChannel(peer, subscription.topicMonitor.topic)
+    const stores = this.stores[replicationTopic];  // Send the heads if we have any
+    if (stores) {
+      for (const [_storeAddress, store] of Object.entries(stores)) {
+        if (store.replicate) {
+          // create a channel for sending/receiving messages
+          const channel = await this.getChannel(peer, replicationTopic);
+          await exchangeHeads((msg) => channel.send(Buffer.from(msg)), store, (key) => this._supportedHashesLRU.get(key) >= this.minReplicas, await this.getSigner());
 
-    const getStore = (topic: string) => this.stores[topic]
+        }
+        else {
+          // If replicate false, we are in write mode. Means we should exchange all heads 
+          await exchangeHeads((message) => this._pubsub.publish(replicationTopic, message), store, () => false, await this.getSigner())
+        }
+      }
+    }
+  }
 
-    // Exchange heads
-    await exchangeHeads(channel, replicationTopic, getStore, await this.getSigner())
-
+  async _onPeerDisconnected(replicationTopic: string, peer: string, subscription: Subscription) {
+    logger.debug(`Peer left '${peer}' topic '${replicationTopic}'`)
   }
 
   async getSigner() {
@@ -533,14 +591,15 @@ export class OrbitDB {
 
 
   async getChannel(peer: string, fromTopic: string) {
+
     // TODO what happens if disconnect and connection to direct connection is happening
     // simultaneously
-    const getDirectConnection = (peer: string) => this._directConnections[peer]?.channel
+    const getDirectConnection = (peer: string) => this._directConnections.get(peer)?.channel
     const _onChannelCreated = (channel: DirectChannel) => {
-      this._directConnections[channel.recieverId] = {
+      this._directConnections.set(channel.recieverId, {
         channel,
         dependencies: new Set([fromTopic])
-      }
+      })
     }
 
     const handleMessage = (message: { data: Uint8Array }) => {
@@ -548,7 +607,7 @@ export class OrbitDB {
     }
     let channel = await getOrCreateChannel(this._ipfs, peer, getDirectConnection, handleMessage, _onChannelCreated);
 
-    this._directConnections[channel.recieverId].dependencies.add(fromTopic);
+    this._directConnections.get(channel.recieverId).dependencies.add(fromTopic);
 
     return channel;
   }
@@ -590,11 +649,11 @@ export class OrbitDB {
           this._replicationTopicJobs.delete(db.replicationTopic);
         }
    */
-      for (const [key, connection] of Object.entries(this._directConnections)) {
+      for (const [key, connection] of this._directConnections) {
         connection.dependencies.delete(db.replicationTopic);
         if (connection.dependencies.size === 0) {
           await connection?.channel.close();
-          delete this._directConnections[key];
+          this._directConnections.delete(key);
         }
         // Delete connection from thing
       }
@@ -655,14 +714,61 @@ export class OrbitDB {
     } */
   }
 
-  async getPeers(request: RequestReplicatorInfo, options: { waitForPeersTime?: number } = {}): Promise<PeerInfoWithMeta[]> {
+  _getPeersLRU: LRU<string, Promise<PeerInfoWithMeta[]>> = new LRU({ max: 500, ttl: WAIT_FOR_PEERS_TIME })
 
-    await this.subscribeToReplicationTopic(request.replicationTopic);
-    await requestPeerInfo(request, (topic, message) => this._pubsub.publish(topic, message), await this.getSigner())
-    await delay(options?.waitForPeersTime || EMIT_HEALTHCHECK_INTERVAL * 2);
-    const caches: { value: PeerInfoWithMeta }[] = Object.values(this._peerInfoLRU.cache);
-    const peersSupportingAddress = caches.filter(cache => cache.value.peerInfo.store === request.address).map(x => x.value)
-    return peersSupportingAddress
+  getPeersOnTopic(topic: string): string[] {
+    const ret: string[] = [];
+    for (const [k, v] of this._directConnections) {
+      if (v.dependencies.has(topic)) {
+        ret.push(k);
+      }
+    }
+    return ret;
+  }
+  async getPeers(request: RequestReplicatorInfo, options: { ignoreCache?: boolean, waitForPeersTime?: number } = {}): Promise<PeerInfoWithMeta[]> {
+    const serializedRequest = serialize(request);
+    const hashKey = Buffer.from(serializedRequest).toString('base64');
+    if (!options.ignoreCache) {
+      const promise = this._getPeersLRU.get(hashKey);
+      if (promise) {
+        return promise;
+      }
+    }
+
+    const promise = new Promise<PeerInfoWithMeta[]>(async (r, c) => {
+      await this.subscribeToReplicationTopic(request.replicationTopic);
+      await requestPeerInfo(serializedRequest, request.replicationTopic, (topic, message) => this._pubsub.publish(topic, message), await this.getSigner())
+      const directConnectionsOnTopic = this.getPeersOnTopic(request.replicationTopic).length
+      const timeout = options?.waitForPeersTime || WAIT_FOR_PEERS_TIME * 3;
+      if (directConnectionsOnTopic) {
+        // Assume that all peers are connected
+        // TODO What happens if directConnectionsOnTopic changes?
+        try {
+          await waitFor(() => this._peerInfoResponseCounter.get(request.id) >= directConnectionsOnTopic, { timeout, delayInterval: 400 })
+          const y = 123;
+        } catch (error) {
+          // failed to resolve all peers
+          // it is "ok" since we are going to pick a leader from the peers that we got
+          // (though this assumes that all other peers also reaches the same conclusion)
+          // TODO make more deterministic
+          const x = 123;
+        }
+      }
+      else {
+        await delay(timeout);
+      }
+
+      /* const caches: { value: PeerInfoWithMeta }[] = Object.values(this._peerInfoLRU); */
+      const peersSupportingAddress = [];
+      this._peerInfoLRU.forEach((v, k) => {
+        if (v.peerInfo.store === request.address) {
+          peersSupportingAddress.push(v)
+        }
+      })
+      r(peersSupportingAddress)
+    })
+    this._getPeersLRU.set(hashKey, promise);
+    return promise
   }
 
   /**
@@ -670,22 +776,34 @@ export class OrbitDB {
   * @param slot, some time measure
   * @returns 
   */
-  async isLeader(replicationTopic: string, address: string, slot: { toString(): string }, numberOfLeaders: number, options: { waitForPeersTime?: number } = {}): Promise<boolean> {
+  isLeader(leaders: string[]): boolean {
+    return !!(leaders.find(id => id === this.id))
+  }
+
+  async findLeaders(replicationTopic: string, address: string, slot: { toString(): string }, numberOfLeaders: number): Promise<string[]> {
     // Hash the time, and find the closest peer id to this hash
     const h = (h: string) => createHash('sha1').update(h).digest('hex');
     const slotHash = h(slot.toString())
 
-
-    const hashToPeer: Map<string, (OrbitDB | PeerInfoWithMeta)> = new Map();
-    const peers: (OrbitDB | PeerInfoWithMeta)[] = await this.getPeers(new RequestReplicatorInfo({ address, replicationTopic }), options);
-    if (peers.length == 0) {
-      return false;
-    }
+    // Assumptions: All peers wanting to replicate on topic has direct connections with me (Fully connected network)
+    const peers: string[] = this.getPeersOnTopic(replicationTopic);
+    const hashToPeer: Map<string, string> = new Map();
+    //const peers: (OrbitDB | PeerInfoWithMeta)[] = await this.getPeers(new RequestReplicatorInfo({ address, replicationTopic }), options);
 
     const peerHashed: string[] = [];
-    peers.push(this)
+    const thisStore = this.stores[replicationTopic]?.[address];
+
+    if (!thisStore || !thisStore.replicate) {
+      return [];
+    }
+
+    if (peers.length === 0) {
+      return [this.id];
+    }
+
+    peers.push(this.id)
     peers.forEach((peer) => {
-      const peerHash = h(peer.publicKey.hashCode());
+      const peerHash = h(peer);
       hashToPeer.set(peerHash, peer);
       peerHashed.push(peerHash);
     })
@@ -699,20 +817,19 @@ export class OrbitDB {
     // we only step forward 1 step (ignoring that step backward 1 could be 'closer')
     // This does not matter, we only have to make sure all nodes running the code comes to somewhat the 
     // same conclusion (are running the same leader selection algorithm)
+    const leaders: string[] = [];
+    let offset = 0;
     for (let i = 0; i < numberOfLeaders; i++) {
-      let nextIndex = slotIndex + 1 + i;
-      if (nextIndex >= peerHashed.length)
-        nextIndex = 0;
-      const isLeader = hashToPeer.get(peerHashed[nextIndex]).publicKey.equals(this.identity)
-      if (isLeader) {
-        return true;
+      let nextIndex = (slotIndex + 1 + i + offset) % peerHashed.length;
+      if (nextIndex === slotIndex) {
+        offset = 1;
+        nextIndex = (nextIndex + 1) % peerHashed.length;
       }
+      leaders.push(hashToPeer.get(peerHashed[nextIndex]));
     }
-
-    return false;
-    // better alg, 
-    // convert slot into hash, find most "probable peer" 
+    return leaders;
   }
+
 
 
   /*  _requestingReplicationPromise: Promise<void>;
@@ -759,7 +876,8 @@ export class OrbitDB {
     }
     if (!this._pubsub._subscriptions[topic]) {
       return this._pubsub.subscribe(topic, id, this._onMessage.bind(this), {
-        onNewPeerCallback: this._onPeerConnected.bind(this)
+        onNewPeerCallback: this._onPeerConnected.bind(this),
+        onPeerLeaveCallback: this._onPeerDisconnected.bind(this)
       })
     }
 
@@ -930,7 +1048,7 @@ export class OrbitDB {
         }
 
         // Open the the database
-        await store.init(this._ipfs, options.publicKey || this.publicKey, options.sign || this.sign, {
+        const initializedStore = await store.init(this._ipfs, options.publicKey || this.publicKey, options.sign || this.sign, {
           replicate: true, ...options, ...{
             resolveCache,
             saveAndResolveStore: async (store: StoreLike<any>) => {

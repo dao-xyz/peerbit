@@ -1,7 +1,7 @@
 
 import path from 'path';
 import assert from 'assert';
-import LRU from 'lru';
+import LRU from 'lru-cache';
 import { BoxKeyWithMeta, createStore, Keystore, KeyWithMeta, SignKeyWithMeta } from '../keystore';
 import rmrf from 'rimraf'
 import { waitFor } from '@dao-xyz/time';
@@ -14,10 +14,11 @@ const fixturePath = path.join('packages/orbit-db-keystore/src/__tests__', 'fixtu
 const storagePath = path.join('packages/orbit-db-keystore/src/__tests__', 'signingKeys')
 const upgradePath = path.join('packages/orbit-db-keystore/src/__tests__', 'upgrade')
 const tempKeyPath = "packages/orbit-db-keystore/src/__tests__/keystore-test";
-
-jest.setTimeout(10000);
+jest.useRealTimers();
+jest.setTimeout(100000);
 
 describe('keystore', () => {
+
   beforeAll(async () => {
     await fs.copy(fixturePath, storagePath)
     rmrf.sync(tempKeyPath)
@@ -67,7 +68,7 @@ describe('keystore', () => {
     })
 
     it('creates a keystore with only cache', async () => {
-      const cache = new LRU(10)
+      const cache = new LRU({ max: 10 })
       const keystore = new Keystore({ cache })
       assert.strictEqual(keystore._store.status, 'opening')
       assert(keystore._cache === cache)
@@ -75,7 +76,7 @@ describe('keystore', () => {
     })
 
     it('creates a keystore with both', async () => {
-      const cache = new LRU(10)
+      const cache = new LRU({ max: 10 })
       const keystore = new Keystore({ store, cache })
       assert(['open', 'opening'].includes(keystore._store.status))
       assert(keystore._cache === cache)
@@ -315,34 +316,21 @@ describe('keystore', () => {
   describe('getKeys', () => {
     let keystore: Keystore, aSignKey: KeyWithMeta, aBoxKey: KeyWithMeta, aBox2Key: KeyWithMeta, bSignKey: KeyWithMeta
 
-    beforeAll(async () => {
+    it('gets keys by group amd type', async () => {
 
-      keystore = new Keystore(tempKeyPath)
-      aSignKey = await keystore.createKey('asign', SignKeyWithMeta, 'group')
-      aBoxKey = await keystore.createKey('abox', BoxKeyWithMeta, 'group')
-      aBox2Key = await keystore.createKey('abox2', BoxKeyWithMeta, 'group')
-      bSignKey = await keystore.createKey('bsign', SignKeyWithMeta, 'group2')
-
-    })
-
-    it('gets keys by group', async () => {
-      const keys = await keystore.getKeys('group')
-      assert(keys[0].equals(aBoxKey))
-      assert(keys[1].equals(aBox2Key))
-      assert(keys[2].equals(aSignKey))
-
-    })
+      keystore = new Keystore(store)
+      aSignKey = await keystore.createKey('asign', SignKeyWithMeta, 'group', { overwrite: true })
+      aBoxKey = await keystore.createKey('abox', BoxKeyWithMeta, 'group', { overwrite: true })
+      aBox2Key = await keystore.createKey('abox2', BoxKeyWithMeta, 'group', { overwrite: true })
+      bSignKey = await keystore.createKey('bsign', SignKeyWithMeta, 'group2', { overwrite: true })
 
 
-    it('gets keys by group by type', async () => {
-      const keys = await keystore.getKeys('group', BoxKeyWithMeta)
-      assert(keys[0].equals(aBoxKey))
-      assert(keys[1].equals(aBox2Key))
-    })
+      const keysByGroup = await keystore.getKeys('group')
+      expect(keysByGroup).toHaveLength(3);
+      expect(keysByGroup.map(k => (k as (BoxKeyWithMeta | SignKeyWithMeta)).publicKey.toString('hex'))).toContainAllValues([aBoxKey, aBox2Key, aSignKey].map(k => (k as (BoxKeyWithMeta | SignKeyWithMeta)).publicKey.toString('hex')));
+      const keysByType = await keystore.getKeys('group', BoxKeyWithMeta)
+      expect(keysByType.map(k => (k as (BoxKeyWithMeta | SignKeyWithMeta)).publicKey.toString('hex'))).toContainAllValues([aBoxKey, aBox2Key].map(k => (k as (BoxKeyWithMeta | SignKeyWithMeta)).publicKey.toString('hex')));
 
-
-    afterAll(async () => {
-      // keystore.close()
     })
   })
 

@@ -1,4 +1,4 @@
-export const waitForPeers = async (ipfs, peersToWait, topic, isClosed) => {
+export const waitForPeers = async (ipfs: any, peersToWait: string[], topic: string, isClosed: () => boolean) => {
   const checkPeers = async () => {
     const peers = await ipfs.pubsub.peers(topic)
     const hasAllPeers = peersToWait.map((e) => peers.includes(e)).filter((e) => e === false).length === 0

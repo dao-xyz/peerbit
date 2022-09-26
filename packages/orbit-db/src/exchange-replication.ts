@@ -7,18 +7,20 @@ import { DecryptedThing, PublicKeyEncryption } from '@dao-xyz/encryption-utils';
 import { Address, Store, StoreLike } from '@dao-xyz/orbit-db-store';
 import { OrbitDB } from './orbit-db';
 import { Entry } from '@dao-xyz/ipfs-log-entry';
-
-
+import { v4 as uuid } from 'uuid';
 let v8 = undefined;
 if (isNode) {
     v8 = require('v8');
 }
 
-export const EMIT_HEALTHCHECK_INTERVAL = 5000;
+export const WAIT_FOR_PEERS_TIME = 5000;
 
 
 @variant([2, 0])
 export class ReplicatorInfo extends Message {
+
+    @field({ type: option('string') })
+    fromId?: string;
 
     @field({ type: 'string' })
     replicationTopic: string
@@ -26,8 +28,24 @@ export class ReplicatorInfo extends Message {
     @field({ type: 'string' })
     store: string // address
 
-    @field({ type: option(vec('string')) })
-    heads: string[] // address
+    @field({
+        type: option({
+            deserialize: (reader) => {
+                const len = reader.readU32();
+                let resp = new Set();
+                for (let i = 0; i < len; i++) {
+                    resp.add(reader.readString());
+                }
+            },
+            serialize: (arg: Set<string>, writer) => {
+                writer.writeU32(arg.size);
+                arg.forEach((s) => {
+                    writer.writeString(s);
+                })
+            }
+        })
+    })
+    heads?: Set<string> // address
 
     @field({ type: 'bool' })
     allowForks: boolean
@@ -36,18 +54,20 @@ export class ReplicatorInfo extends Message {
     memoryLeft: bigint
 
     constructor(props?: {
+        fromId?: string;
         replicationTopic: string,
         store: string,
         memoryLeft: bigint,
         allowForks: boolean
-        heads?: string[]
+        heads?: Set<string> | string[]
     }) {
         super();
         if (props) {
+            this.fromId = props.fromId;
             this.replicationTopic = props.replicationTopic;
             this.store = props.store;
             this.memoryLeft = props.memoryLeft;
-            this.heads = props.heads;
+            this.heads = Array.isArray(props.heads) ? new Set(props.heads) : this.heads;
             this.allowForks = props.allowForks;
         }
     }
@@ -57,28 +77,31 @@ export class ReplicatorInfo extends Message {
 export class RequestReplicatorInfo extends Message {
 
     @field({ type: 'string' })
+    id: string;
+
+    @field({ type: 'string' })
     replicationTopic: string
 
     @field({ type: 'string' })
     address: string // address
 
-    @field({ type: option('string') })
-    head?: string
-
-
+    @field({ type: vec('string') })
+    heads: string[]
 
     constructor(props?: {
         replicationTopic: string,
         address: Address | string,
-        head?: string
+        heads: string[]
     }) {
         super();
         if (props) {
+            this.id = uuid();
             this.replicationTopic = props.replicationTopic;
             this.address = typeof props.address === 'string' ? props.address : props.address.toString()
-            this.head = props.head;
+            this.heads = props.heads;
         }
     }
+
 }
 
 
@@ -139,26 +162,27 @@ export interface PeerInfoWithMeta {
 }
  */
 
-export const requestPeerInfo = async (request: RequestReplicatorInfo, publish: (topic: string, message: Uint8Array) => Promise<void>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
+export const requestPeerInfo = async (serializedRequest: Uint8Array, replicationTopic: string, publish: (topic: string, message: Uint8Array) => Promise<void>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
 
     const signedMessage = await new MaybeSigned({
-        data: serialize(request)
-
+        data: serializedRequest
     }).sign(sign)
     const decryptedMessage = new DecryptedThing({
         data: serialize(signedMessage)
     })// TODO add encryption  .init(encryption).encrypt(lala)
 
-    return publish(request.replicationTopic, serialize(decryptedMessage))
+    return publish(replicationTopic, serialize(decryptedMessage))
 }
 
-export const exchangePeerInfo = async (replicationTopic: string, store: StoreLike<any>, publish: (topic: string, message: Uint8Array) => Promise<void>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
+export const exchangePeerInfo = async (fromId: string, replicationTopic: string, store: StoreLike<any>, heads: string[] | undefined, publish: (message: Uint8Array) => Promise<void>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
 
     const signedMessage = await new MaybeSigned({
         data: serialize(new ReplicatorInfo({
+            fromId,
             replicationTopic,
             store: store.address.toString(),
             allowForks: store.allowForks,
+            heads,
             memoryLeft: v8.getHeapStatistics().total_available_size //v8
         }))
     }).sign(sign)
@@ -167,7 +191,7 @@ export const exchangePeerInfo = async (replicationTopic: string, store: StoreLik
         data: serialize(signedMessage)
     })// TODO add encryption  .init(encryption).encrypt(lala)
 
-    return publish(replicationTopic, serialize(decryptedMessage))
+    return publish(serialize(decryptedMessage))
 }
 
 export class ResourceRequirement {

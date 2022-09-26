@@ -1,18 +1,19 @@
 
 <br>
 <p align="center">
-    <img width="300" src="./peer.png"  alt="Peerit icon Icon">
+    <img width="400" src="./peer.png"  alt="Peerbit icon Icon">
 </p>
 
 
 <h1 align="center">
 <strong>
-   PeeritDB
+   PeerbitDB
    </strong>
+   
 </h1>
 
 <h3 align="center">
-    Develop for a distributed web with Peerit DB 
+    Develop for a distributed web with Peerbit DB 
 </h3>
 
 <h3 align="center">🤫 E2EE &nbsp; &nbsp; 👯 P2P &nbsp; &nbsp; 🔍 Searchable</h3>
@@ -22,10 +23,17 @@
 ## What is this?
 Started originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS supporting, encryption, sharding and discoverability (searching). Peers are a organizing themselves into "permissioned" regions. Within a region, secret information can be shared freely, this allow peers to create locally centralized database clusters with efficient replication, sharding, query yet still allowing cross trust region (low trust) activities, like relying encrypted and signed messages. Data can be shared and encrypted on a granular level, you can decide exactly what parts of metadata should be public and not.
 
-### [How Peerit differs from OrbitDB](./documentation/DIFFERENCE.md)
+### [How Peerbit differs from OrbitDB](./documentation/DIFFERENCE.md)
 
 ## 🚧 WIP 🚧  Use with caution
 Below are descriptions of some modules
+
+## Peerbit [./packages/Peerbit](Peerbit)
+The peer client for managing databases related messaging. 
+- Open/close stores (databases)
+- Exchange keys
+- Exchange replication info. Healthcheck/Redundancy diagnostics for shards. 
+- Leader and leader rotation routines for building functionality around leaders
 
 ## BPayload [./packages/bpayload](bpayload)
 - A generic payload class which you can extend and build binary serialization routines to and from with (@dao-xyz/borsh-ts). For example; Documents that are stored in the  BDocstore [./packages/orbit-db-bdocstore](bdocstore) could/should extend this class so when you are writing or querying data, you can be sure that results with be succesfully be deserialized with BinaryPayload class.
@@ -42,7 +50,3 @@ Below are descriptions of some modules
 ## Dynamic Access Controller  [./packages/orbit-db-dynamic-access-controller](dca)
 - "Chain agnostic" Access Controller
 
-## Shard [./packages/shard](shard)
-- Shard/Container for horizontally scaling databases. 
-- Leader and leader rotation routines for building functionality around leaders
-- Healthcheck/Redundancy diagnostics for shards.

@@ -30,7 +30,7 @@
   "dependencies": {
     "@dao-xyz/encryption-utils": "^0.0.1",
     "@dao-xyz/orbit-db-store": "^0.0.20",
-    "@dao-xyz/ipfs-pubsub-1on1": "^0.0.8",
+    "@dao-xyz/ipfs-pubsub-direct-channel": "^0.0.8",
     "is-node": "^1.0.2",
     "localstorage-down": "^0.6.7",
     "logplease": "^1.2.14",
@@ -40,6 +40,7 @@
     "@dao-xyz/orbit-db-keystore": "^0.0.1",
     "@dao-xyz/orbit-db-pubsub": "^0.6.11",
     "wherearewe": "^1.0.2",
+    "lru-cache": "^7.14.0",
     "level": "^8.0.0"
   },
   "devDependencies": {

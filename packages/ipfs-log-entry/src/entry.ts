@@ -127,6 +127,8 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
   _encoding: IOOptions<T>
   _encryption?: PublicKeyEncryption
 
+  peers: string[]; // peers hosting/owning this data
+
   constructor(obj?: {
     id: MaybeEncrypted<Id>,
     payload: MaybeEncrypted<Payload<T>>

@@ -185,6 +185,7 @@ export class Store<T> implements StoreLike<T> {
 
 
   _ipfs: IPFS;
+  _idFromIPFS: string;
   _cache: Cache;
   _oplog: Log<T>;
   _queue: PQueue<any, any>
@@ -219,15 +220,21 @@ export class Store<T> implements StoreLike<T> {
 
 
   }
-
   async init(ipfs: IPFS, publicKey: PublicKey | Ed25519PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<T>): Promise<StoreLike<T>> {
 
     if (this.initialized) {
-      return;
+      throw new Error("Already initialized");
     }
 
     // Set ipfs since we are to save the store
     this._ipfs = ipfs
+    const idFromIpfs: string | { toString: () => string } = (await ipfs.id()).id;
+    if (typeof idFromIpfs !== 'string') {
+      this._idFromIPFS = idFromIpfs.toString(); //  ipfs 57+ seems to return an id object rather than id
+    }
+    else {
+      this._idFromIPFS = idFromIpfs
+    }
 
     // Set the options (we will use the replicationTopic property after thiis)
     const opts = Object.assign({}, DefaultOptions)
@@ -548,7 +555,7 @@ export class Store<T> implements StoreLike<T> {
     this.events.emit('ready', this.address.toString(), this._oplog.heads)
   }
 
-  async sync(heads: Entry<T>[], isLeader: () => Promise<boolean>) {
+  async sync(heads: Entry<T>[], leaderResolver: () => Promise<{ leaders: string[], isLeader: boolean }>) {
 
 
     /* const mem = await this.checkMemory();
@@ -591,12 +598,17 @@ export class Store<T> implements StoreLike<T> {
         logger.info("Seems to be a fork, and this store does not allow them")
         return Promise.resolve(null)
       }
-      if (!await isLeader()) {
+
+    }
+
+    const leaderInfo = await leaderResolver();
+
+    if (!hasKnown) {
+      if (!leaderInfo.isLeader) {
         logger.info("Is not leader so I am rejecting the fork")
         return Promise.resolve(null);
       }
     }
-
 
     // To simulate network latency, uncomment this line
     // and comment out the rest of the function
@@ -605,7 +617,7 @@ export class Store<T> implements StoreLike<T> {
     // the log, it'll fetch it from the network instead from the disk.
     // return this._replicator.load(heads)
 
-    const saveToIpfs = async (head: Entry<T>) => {
+    const handle = async (head: Entry<T>) => {
 
       // TODO Fix types
       head.init({
@@ -623,6 +635,8 @@ export class Store<T> implements StoreLike<T> {
         return Promise.resolve(null);
       }
 
+      head.peers = leaderInfo.leaders;
+
       const hash = await io.write(this._ipfs, 'dag-cbor', head.serialize(), { links: Entry.IPLD_LINKS })
       if (hash !== head.hash) {
         throw new Error("Head hash didn\'t match the contents")
@@ -630,7 +644,7 @@ export class Store<T> implements StoreLike<T> {
       return head
     }
 
-    return mapSeries(heads, saveToIpfs)
+    return mapSeries(heads, handle)
       .then(async (saved) => {
         return this._replicator.load(saved.filter(e => e !== null))
       })
@@ -697,7 +711,7 @@ export class Store<T> implements StoreLike<T> {
     this.events.emit('load', this.address.toString()) // TODO emits inconsistent params, missing heads param
 
     const maxClock = (res: bigint, val: Entry<any>): bigint => bigIntMax(res, val.clock.time)
-    this.sync([], () => Promise.resolve(true))
+    this.sync([], () => Promise.resolve({ isLeader: true, leaders: [this._idFromIPFS] }))
 
     const queue = (await this._cache.get(this.queuePath)) as string[]
     if (queue?.length > 0) {
@@ -816,10 +830,7 @@ export class Store<T> implements StoreLike<T> {
     this.events.emit('load.progress', this.address.toString(), entry.hash, entry, this.replicationStatus.progress, this.replicationStatus.max)
   }
 
-  clone(newName: string): Store<T> {
-    return new Store({
-      name: newName,
-      accessController: this.accessController.clone(newName)
-    })
+  clone(): Store<T> {
+    return deserialize(serialize(this), this.constructor as any as Constructor<any>);
   }
 }

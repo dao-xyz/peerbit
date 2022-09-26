@@ -4,7 +4,6 @@ import { Identity, Signatures } from "./identity"
 import { IdentityProvider } from "./identity-provider-interface"
 import { OrbitDBIdentityProvider } from "./orbit-db-identity-provider"
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
-import LRU from 'lru'
 import path from 'path'
 import { Ed25519PublicKey } from 'sodium-plus';
 import { SolanaIdentityProviderOptions } from "./solana-identity-provider"

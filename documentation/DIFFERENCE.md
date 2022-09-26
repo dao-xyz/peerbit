@@ -1,11 +1,11 @@
-# How Peerit differs from OrbitDB
+# How Peerbit differs from OrbitDB
 
-Peerit started as a fork of OrbitDB in order to support some key features that are important for building applications for the modern web. Along the way, many changes have been made improve various aspects of the project. 
+Peerbit started as a fork of OrbitDB in order to support some key features that are important for building applications for the modern web. Along the way, many changes have been made improve various aspects of the project. 
 
 
 ## Coding experience
 - All modules have been rewritten in TypeScript. There are many benifits of this, one is that we can omit a large amount of type checking code.
-- Monorepo. OrbitDB is scattered around many repositories which slows down development speed. Peerit has collected all modules in one repo with [lerna](https://github.com/lerna/lerna). 
+- Monorepo. OrbitDB is scattered around many repositories which slows down development speed. Peerbit has collected all modules in one repo with [lerna](https://github.com/lerna/lerna). 
 - Tests are now written in `jest` rather than `mocha`
 - Type safety. Messages are encoded with [Borsh](https://github.com/near/borsh) serialization format. This format allows one to have a strict type checks during serialization/deserialization and enables message polymorphism which JSON does not (in a easy way) support and provides a much more compact data representation. 
 - Performance critical modules are written with the mindset that might be ported to Rust/WASM at some point.
@@ -13,12 +13,12 @@ Peerit started as a fork of OrbitDB in order to support some key features that a
 ## Features
 
 ### Encryption
-- OrbitDB did never support read access control, this feature is much more complicated to achieve in comparison to write access as one also need to gatekeep data in some way (encrypted storage). In addition to this, one need to build a framework around managing encryption keys, relaying encrypted messages (1-N encryption) and a query/search framework compatible with encrypted content and metadata. Peerit supports this, and does so at a granular level. 
+- OrbitDB did never support read access control, this feature is much more complicated to achieve in comparison to write access as one also need to gatekeep data in some way (encrypted storage). In addition to this, one need to build a framework around managing encryption keys, relaying encrypted messages (1-N encryption) and a query/search framework compatible with encrypted content and metadata. Peerbit supports this, and does so at a granular level. 
 
 ### Performance
-- Peerit tries to solve key problems building distributed databases at scale, for example what happens when a database grows too large? How can sharding create data boundaries that still lets "weak" devices participate in the replication process? Peerit supports sharding, more or less, seamlessly by building a depency graph (references) of log entries, so that different nodes can be part of replicating different parts of the log, yet not corrupt any Index built on top of the log.
+- Peerbit tries to solve key problems building distributed databases at scale, for example what happens when a database grows too large? How can sharding create data boundaries that still lets "weak" devices participate in the replication process? Peerbit supports sharding, more or less, seamlessly by building a depency graph (references) of log entries, so that different nodes can be part of replicating different parts of the log, yet not corrupt any Index built on top of the log.
 
-- Not only can the amount of entries in a database grow to a huge number, but the number of database/stores that a node replicate can also grow immensly in real world applications. For example, imagine a building a social network where each post have edit capabilities, its own access control, encryption and so on. This could be done by modeling the post as individual databases to contains all the edits. If each post would represent a new database, then we need to really make sure that we can efficiently open a database and transmit to peers that it needs to be replicated. Peerit is working towards this by allowing to share replication messages on shared topic, allowing stores to share access controllers and making sure that database manifests are compact in memory.
+- Not only can the amount of entries in a database grow to a huge number, but the number of database/stores that a node replicate can also grow immensly in real world applications. For example, imagine a building a social network where each post have edit capabilities, its own access control, encryption and so on. This could be done by modeling the post as individual databases to contains all the edits. If each post would represent a new database, then we need to really make sure that we can efficiently open a database and transmit to peers that it needs to be replicated. Peerbit is working towards this by allowing to share replication messages on shared topic, allowing stores to share access controllers and making sure that database manifests are compact in memory.
 
 
 ### Discoverability

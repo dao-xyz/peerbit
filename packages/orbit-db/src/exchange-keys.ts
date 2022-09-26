@@ -146,6 +146,8 @@ export class RequestKeyMessage<T extends KeyWithMeta> extends Message {
     @field({ type: RequestKeyCondition })
     condition: RequestKeyCondition<T>
 
+
+
     // TODO peer info for sending repsonse directly
 
     constructor(props?: { encryptionKey: X25519PublicKey, condition: RequestKeyCondition<T> }) {
@@ -244,7 +246,7 @@ export const requestKeys = async <T extends KeyWithMeta>(condition: RequestKeyCo
     await send(serialize(unencryptedMessage))
 }
 
-export const exchangeKeys = async <T extends KeyWithMeta>(channel: any, request: RequestKeyMessage<T>, requester: PublicKey, canAccessKey: KeyAccessCondition, getKeyByPublicKey: (key: Uint8Array) => Promise<T>, getKeysByGroup: (group: string, type: WithType<T>) => Promise<T[]>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>, encryption: PublicKeyEncryption) => { //  encrypt: (data: Uint8Array, recieverPublicKey: X25519PublicKey) => Promise<{ publicKey: X25519PublicKey, bytes: Uint8Array }>
+export const exchangeKeys = async <T extends KeyWithMeta>(send: (Uint8Array) => Promise<void>, request: RequestKeyMessage<T>, requester: PublicKey, canAccessKey: KeyAccessCondition, getKeyByPublicKey: (key: Uint8Array) => Promise<T>, getKeysByGroup: (group: string, type: WithType<T>) => Promise<T[]>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>, encryption: PublicKeyEncryption) => { //  encrypt: (data: Uint8Array, recieverPublicKey: X25519PublicKey) => Promise<{ publicKey: X25519PublicKey, bytes: Uint8Array }>
 
     // Validate signature
     let secretKeys: KeyWithMeta[] = []
@@ -276,7 +278,7 @@ export const exchangeKeys = async <T extends KeyWithMeta>(channel: any, request:
     }));
 
     const signatureResult = await sign(secretKeyResponseMessage);
-    await channel.send(serialize(await new DecryptedThing<KeyResponseMessage>({
+    await send(serialize(await new DecryptedThing<KeyResponseMessage>({
         data: serialize(new MaybeSigned({
             signature: new SignatureWithKey({
                 signature: signatureResult.signature,

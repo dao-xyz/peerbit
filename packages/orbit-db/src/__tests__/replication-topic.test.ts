@@ -4,7 +4,7 @@ const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { delay, waitFor, waitForAsync } from '@dao-xyz/time'
-import { EMIT_HEALTHCHECK_INTERVAL, RequestReplicatorInfo } from '../exchange-replication'
+import { WAIT_FOR_PEERS_TIME, RequestReplicatorInfo } from '../exchange-replication'
 
 import { OrbitDB } from '../orbit-db'
 import { SimpleAccessController } from './utils/access'
@@ -130,9 +130,9 @@ Object.keys(testAPIs).forEach(API => {
             clearInterval(timer)
             const entries: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
             try {
-              assert.equal(entries.length, 1)
-              assert.equal(entries[0].payload.value.value, 'hello')
-              assert.equal(replicatedEventCount, 1)
+              expect(entries.length).toEqual(1)
+              expect(entries[0].payload.value.value).toEqual('hello')
+              expect(replicatedEventCount).toEqual(1)
               const allFromDB3 = db3.iterator({ limit: -1 }).collect().length
               assert.equal(allFromDB3, 0) // Same replication topic but different DB (which means no entries should exist) 
 
@@ -157,7 +157,7 @@ Object.keys(testAPIs).forEach(API => {
         , { directory: dbPath1, replicationTopic })
       db2 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests-2', accessController: new SimpleAccessController() })
         , { directory: dbPath1, replicationTopic })
-      db1.add('hello')
+      const hello = db1.add('hello')
       db2.add('world')
 
 
@@ -189,8 +189,8 @@ Object.keys(testAPIs).forEach(API => {
             clearInterval(timer)
             const entries: Entry<Operation<string>>[] = db3.iterator({ limit: -1 }).collect()
             try {
-              assert.equal(entries.length, 1)
-              assert.equal(entries[0].payload.value.value, 'hello')
+              expect(entries.length).toEqual(1)
+              expect(entries[0].payload.value.value).toEqual('hello')
 
             } catch (error) {
               reject(error)
@@ -216,11 +216,12 @@ Object.keys(testAPIs).forEach(API => {
       expect(ls2).toContain(replicationTopic)
       expect(ls2).toHaveLength(2)
 
-      await delay(EMIT_HEALTHCHECK_INTERVAL);
+      await delay(WAIT_FOR_PEERS_TIME);
 
       const peersFrom1 = await orbitdb1.getPeers(new RequestReplicatorInfo({
         address: db1.address,
-        replicationTopic
+        replicationTopic,
+        heads: [(await hello).hash]
       }));
       expect(peersFrom1).toHaveLength(1);
       expect(peersFrom1[0].peerInfo.memoryLeft).toBeDefined();
@@ -228,7 +229,8 @@ Object.keys(testAPIs).forEach(API => {
 
       const peersFrom2 = await orbitdb2.getPeers(new RequestReplicatorInfo({
         address: db1.address,
-        replicationTopic
+        replicationTopic,
+        heads: [(await hello).hash]
       }));
       expect(peersFrom2).toHaveLength(1);
       expect(peersFrom2[0].peerInfo.memoryLeft).toBeDefined();

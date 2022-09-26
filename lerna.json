@@ -3,7 +3,7 @@
         "packages/shard",
         "packages/io-utils",
         "packages/encryption-utils",
-        "packages/ipfs-pubsub-1on1",
+        "packages/ipfs-pubsub-direct-channel",
         "packages/ipfs-pubsub-peer-monitor",
         "packages/ipfs-log",
         "packages/ipfs-log-entry",
