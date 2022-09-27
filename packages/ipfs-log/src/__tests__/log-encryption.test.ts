@@ -63,7 +63,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       beforeEach(async () => {
         const logOptions = {
-          logId: 'X', encryption: {
+          gid: 'X', encryption: {
             getEncryptionKey: () => Promise.resolve(senderKey.secretKey),
             getAnySecret: async (publicKeys: X25519PublicKey[]) => {
               for (let i = 0; i < publicKeys.length; i++) {
@@ -89,14 +89,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       it('join encrypted identities only with knowledge of id and clock', async () => {
-        await log1.append('helloA1', { reciever: { id: undefined, clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey } })
-        await log1.append('helloA2', { reciever: { id: undefined, clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey } })
-        await log2.append('helloB1', { reciever: { id: undefined, clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey } })
-        await log2.append('helloB2', { reciever: { id: undefined, clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey } })
+        await log1.append('helloA1', { reciever: { clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey } })
+        await log1.append('helloA2', { reciever: { clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey } })
+        await log2.append('helloB1', { reciever: { clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey } })
+        await log2.append('helloB2', { reciever: { clock: undefined, publicKey: recieverKey.publicKey, payload: recieverKey.publicKey, signature: recieverKey.publicKey } })
 
         // Remove decrypted caches of the log2 values
         log2.values.forEach((value) => {
-          value._id.clear();
           value._publicKey.clear();
           value._clock.clear();
           value._payload.clear();

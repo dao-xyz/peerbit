@@ -55,7 +55,7 @@ const run = (() => {
     const keystore = new Keystore('./ipfs-log-benchmarks/keys/')
     const identity = await IdentityProvider.createIdentity({ id: 'userA', keystore })
 
-    log = new Log(ipfs, identity, { logId: 'A' })
+    log = new Log(ipfs, identity, { gid: 'A' })
 
     // Output metrics at 1 second interval
     setInterval(() => {

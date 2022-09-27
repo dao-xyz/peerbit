@@ -29,6 +29,11 @@ export class LamportClock {
     return arraysEqual(this.id, other.id) && this.time === other.time;
   }
 
+  advance() {
+    return new LamportClock(this.id, this.time + 1n)
+
+  }
+
 
   static compare(a: LamportClock, b: LamportClock) {
     // Calculate the "distance" based on the clock, ie. lower or greater

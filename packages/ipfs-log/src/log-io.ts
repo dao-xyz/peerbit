@@ -118,7 +118,7 @@ export class LogIO {
    * @param {Array<Entry<T>>} options.exclude Entries to not fetch (cached)
    * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
    */
-  static async fromEntry<T>(ipfs, sourceEntries: Entry<T>[] | Entry<T>, options: EntryFetchAllOptions<T>): Promise<{ logId: string, entries: Entry<T>[] }> {
+  static async fromEntry<T>(ipfs, sourceEntries: Entry<T>[] | Entry<T>, options: EntryFetchAllOptions<T>): Promise<{ entries: Entry<T>[] }> {
 
     if (!Array.isArray(sourceEntries)) {
       sourceEntries = [sourceEntries]
@@ -135,9 +135,6 @@ export class LogIO {
     // Make sure we pass hashes instead of objects to the fetcher function
     let hashes = [];
     sourceEntries.forEach((e) => {
-      e.refs.forEach((r) => {
-        hashes.push(r);
-      })
       e.next.forEach((n) => {
         hashes.push(n);
       })
@@ -176,8 +173,7 @@ export class LogIO {
     // Add the input entries at the beginning of the array and remove
     // as many elements from the array before inserting the original entries
     const entries = replaceInFront(sliced, missingSourceEntries)
-    const logId = await entries[entries.length - 1].id
-    return { logId, entries }
+    return { entries }
   }
 }
 

@@ -115,7 +115,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
       store._addOperation(data, {
         reciever: {
           clock: recieverKey.publicKey,
-          id: recieverKey.publicKey,
           publicKey: recieverKey.publicKey,
           payload: recieverKey.publicKey,
           signature: recieverKey.publicKey
@@ -157,7 +156,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
           store._addOperation(data, {
             reciever: {
               clock: undefined,
-              id: undefined,
               publicKey: pk,
               payload: pk,
               signature: pk,

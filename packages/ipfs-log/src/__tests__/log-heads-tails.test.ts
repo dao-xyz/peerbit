@@ -263,12 +263,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log3.join(log2)
         await log4.join(log3)
         expect(log4.tails.length).toEqual(3)
-        const log4Id = (await log4.tails[0].id);
+        const log4Id = (await log4.tails[0].gid);
         expect(log4Id).toEqual('XX')
         assert.deepStrictEqual(log4.tails[0].clock.id, signKey3.publicKey)
         assert.deepStrictEqual(log4.tails[1].clock.id, signKey2.publicKey)
         assert.deepStrictEqual(log4.tails[2].clock.id, signKey.publicKey)
-        assert.deepStrictEqual(log4.clock.id, signKey4.publicKey)
+        assert.deepStrictEqual(log4.heads[0].clock.id, signKey4.publicKey)
       })
     })
   })

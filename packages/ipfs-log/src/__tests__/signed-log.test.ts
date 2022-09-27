@@ -51,16 +51,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await signingKeystore?.close()
     })
 
-    it('creates a signed log', () => {
-      const logId = 'A'
-      const log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId })
-      assert.notStrictEqual(log.id, null)
-      expect(log.id).toEqual(logId)
-    })
+
 
     it('has the correct identity', () => {
       const log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
-      assert.notStrictEqual(log.id, null)
       expect(log._publicKey).toMatchSnapshot('publicKeyFromLog');
     })
 
@@ -112,7 +106,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       }
 
       expect(err).toEqual(undefined)
-      expect(log1.id).toEqual('A')
+      expect(log1._id).toEqual('A')
       expect(log1.values.length).toEqual(1)
       assertPayload(log1.values[0].payload.value, 'one')
     })

@@ -382,13 +382,13 @@ export class OrbitDB {
         const stores = this.stores[replicationTopic]
         if (heads && stores) {
 
-          let isLeaderResolver: () => Promise<{ leaders: string[], isLeader: boolean }> = async () => {
-            const leaders = await this.findLeaders(replicationTopic, address, Buffer.from(signedMessage.signature.signature).toString('base64'), this.minReplicas);
-            return {
-              leaders,
-              isLeader: this.isLeader(leaders)
-            }
-          }
+          /*   let isLeaderResolver: () => Promise<{ leaders: string[], isLeader: boolean }> = async () => {
+              const leaders = await this.findLeaders(replicationTopic, address, Buffer.from(signedMessage.signature.signature).toString('base64'), this.minReplicas);
+              return {
+                leaders,
+                isLeader: this.isLeader(leaders)
+              }
+            } */
 
           if (!stores[address]) {
             // open store if is leader
@@ -409,22 +409,24 @@ export class OrbitDB {
                 continue // this messages was intended for another store
               }
               if (heads.length > 0) {
-                if (!store.replicate) {
-                  // if we are only to write, then only care about others clock
-                  for (const head of heads) {
-                    head.init({
-                      encoding: store.oplog._encoding,
-                      encryption: store.oplog._encryption
-                    })
-                    const clock = await head.getClock();
-                    store.oplog.mergeClock(clock)
-                  }
-                }
-                else {
-                  // Full sync
-                  await store.sync(heads, () => isLeaderResolver());
+                /*    if (!store.replicate) {
+                     // if we are only to write, then only care about others clock
+                     for (const head of heads) {
+                       head.init({
+                         encoding: store.oplog._encoding,
+                         encryption: store.oplog._encryption
+                       })
+                       const clock = await head.getClock();
+                       store.oplog.mergeClock(clock)
+                     }
+                   }
+                   else {
+                     // Full sync
+                     
+   
+                   } */
 
-                }
+                await store.sync(heads, (gid: string) => Promise.resolve(this.findLeaders(replicationTopic, address, gid, this.minReplicas)));
               }
               store.events.emit('peer.exchanged', peer, address, heads)
             }

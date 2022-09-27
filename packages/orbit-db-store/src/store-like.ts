@@ -23,7 +23,7 @@ export interface StoreLike<T> extends Addressable, Initiable<T> {
         pin?: boolean;
         timeout?: number;
     })
-    sync(heads: Entry<T>[], leaderResolver: () => Promise<{ leaders: string[], isLeader: boolean }>): Promise<void>
+    sync(heads: Entry<T>[], findLeaders: (gid: string) => Promise<string[]>): Promise<void>
 
     get replicationTopic(): string;
     get events(): EventEmitter;

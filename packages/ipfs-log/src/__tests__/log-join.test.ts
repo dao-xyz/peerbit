@@ -13,10 +13,11 @@ const {
   config,
   testAPIs,
   startIpfs,
-  stopIpfs
+  stopIpfs,
+  connectPeers
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, ipfsd2, ipfs2, signKey: SignKeyWithMeta, signKey2: SignKeyWithMeta, signKey3: SignKeyWithMeta, signKey4: SignKeyWithMeta
+let ipfsd, ipfs, ipfs2, ipfsd2, signKey: SignKeyWithMeta, signKey2: SignKeyWithMeta, signKey3: SignKeyWithMeta, signKey4: SignKeyWithMeta
 
 const last = (arr) => {
   return arr[arr.length - 1]
@@ -56,6 +57,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       ipfsd2 = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs2 = ipfsd2.api
+
+      const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
+      await connectPeers(ipfs, ipfs2, { filter: isLocalhostAddress })
+
     })
 
     afterAll(async () => {
@@ -85,6 +90,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const items2: Entry<string>[] = []
         const items3: Entry<string>[] = []
         const amount = 100
+
         for (let i = 1; i <= amount; i++) {
           const prev1 = last(items1)
           const prev2 = last(items2)
@@ -92,17 +98,17 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const n1 = await Entry.create({
             ipfs, publicKey: new Ed25519PublicKeyData({
               publicKey: signKey.publicKey
-            }), sign: (data) => Keystore.sign(data, signKey), logId: 'X', data: 'entryA' + i, next: [prev1]
+            }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'X' + i, data: 'entryA' + i, next: prev1 ? [prev1] : undefined
           })
           const n2 = await Entry.create({
             ipfs, publicKey: new Ed25519PublicKeyData({
               publicKey: signKey2.publicKey
-            }), sign: (data) => Keystore.sign(data, signKey2), logId: 'X', data: 'entryB' + i, next: [prev2, n1]
+            }), sign: (data) => Keystore.sign(data, signKey2), data: 'entryB' + i, next: prev2 ? [prev2, n1] : [n1]
           })
           const n3 = await Entry.create({
-            ipfs, publicKey: new Ed25519PublicKeyData({
+            ipfs: ipfs2, publicKey: new Ed25519PublicKeyData({
               publicKey: signKey3.publicKey
-            }), sign: (data) => Keystore.sign(data, signKey3), logId: 'X', data: 'entryC' + i, next: [prev3, n1, n2]
+            }), sign: (data) => Keystore.sign(data, signKey3), data: 'entryC' + i, next: prev3 ? [prev3, n1, n2] : [n1, n2]
           })
           items1.push(n1)
           items2.push(n2)
@@ -112,9 +118,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
         // Here we're creating a log from entries signed by A and B
         // but we accept entries from C too
         const logA = await Log.fromEntry(ipfs, signKey3.publicKey, (data) => Keystore.sign(data, signKey3), last(items2), { length: -1 })
+
+        expect(logA.getPeersByGid(logA.heads[0].gid).size).toEqual(1);
+
         // Here we're creating a log from entries signed by peer A, B and C
         // "logA" accepts entries from peer C so we can join logs A and B
-        const logB = await Log.fromEntry(ipfs, signKey3.publicKey, (data) => Keystore.sign(data, signKey3), last(items3), { length: -1 })
+        const logB = await Log.fromEntry(ipfs2, signKey3.publicKey, (data) => Keystore.sign(data, signKey3), last(items3), { length: -1 })
         expect(logA.length).toEqual(items2.length + items1.length)
         expect(logB.length).toEqual(items3.length + items2.length + items1.length)
 
@@ -124,7 +133,75 @@ Object.keys(testAPIs).forEach((IPFS) => {
         // The last Entry<T>, 'entryC100', should be the only head
         // (it points to entryB100, entryB100 and entryC99)
         expect(logA.heads.length).toEqual(1)
+        expect(logA.getPeersByGid(logA.heads[0].gid).size).toEqual(2);
+
       })
+
+      it('joins gid peers', async () => {
+        // 4 different roots
+        await log1.append('helloA1', { nexts: [] })
+        await log1.append('helloA2', { nexts: [] })
+        const b1 = await log2.append('helloB1', { nexts: [] })
+        const b2 = await log2.append('helloB2', { nexts: [] })
+        await log1.join(log2)
+
+        const expectedData = [
+          'helloA1', 'helloB1', 'helloA2', 'helloB2'
+        ]
+
+        expect(log1.length).toEqual(4)
+        expect(log1.values.map((e) => e.payload.value)).toContainAllValues(expectedData)
+
+        expect(log1._peersByGid.size).toEqual(4);
+        const peerId = await log1.getPeerId();
+        const peerId2 = await log2.getPeerId();
+
+        log1._peersByGid.forEach((map, gid) => {
+          expect(map.peers.has(peerId));
+          if (gid == b1.gid || gid == b2.gid) {
+            expect(map.peers.size).toEqual(1)
+          }
+          else {
+            expect(map.peers.has(peerId2))
+          }
+          expect(map.links.size).toEqual(0)
+        })
+
+        // check log2 has not changed
+        log2._peersByGid.forEach((map) => {
+          expect(map.peers.has(peerId));
+          expect(map.peers.size).toEqual(1)
+          expect(map.links.size).toEqual(0)
+        })
+      })
+
+      it('joins gid by peers and nexts', async () => {
+        // 4 different roots
+        const a1 = await log1.append('helloA1', { nexts: [] })
+        const b1 = await log2.append('helloB1', { nexts: [] })
+        const b2 = await log2.append('helloB2', { nexts: [] })
+        const b12 = await log2.append('helloB12', { nexts: [b1, b2] })
+        await log1.join(log2)
+
+        const expectedData = [
+          'helloA1', 'helloB1', 'helloB2', 'helloB12'
+        ]
+
+        expect(log1.length).toEqual(4)
+        expect(log1.values.map((e) => e.payload.value)).toContainAllValues(expectedData)
+        expect(log1._peersByGid.size).toEqual(4);
+        const peerId = await log1.getPeerId();
+        const peerId2 = await log2.getPeerId();
+
+        expect(log1._peersByGid.get(b12.gid).links).toEqual(new Set([b1.gid, b2.gid]));
+        expect(log1._peersByGid.get(b12.gid).peers).toEqual(new Set([peerId, peerId2]));
+        expect(log1._peersByGid.get(b1.gid).peers).toEqual(new Set([peerId, peerId2]));
+        expect(log1._peersByGid.get(b2.gid).peers).toEqual(new Set([peerId, peerId2]));
+        expect(log1._peersByGid.get(a1.gid).peers).toEqual(new Set([peerId]));
+
+
+      })
+
 
       it('joins only unique items', async () => {
         await log1.append('helloA1')
@@ -288,63 +365,64 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       it('joins logs and updates clocks', async () => {
-        await log1.append('helloA1')
-        await log2.append('helloB1')
+        const a1 = await log1.append('helloA1')
+        const b1 = await log2.append('helloB1')
         await log2.join(log1)
-        await log1.append('helloA2')
-        await log2.append('helloB2')
+        const a2 = await log1.append('helloA2')
+        const b2 = await log2.append('helloB2')
 
-        assert.deepStrictEqual(log1.clock.id, new Ed25519PublicKeyData({ publicKey: signKey.publicKey }).bytes)
-        assert.deepStrictEqual(log2.clock.id, new Ed25519PublicKeyData({ publicKey: signKey2.publicKey }).bytes)
-        expect(log1.clock.time).toEqual(2n)
-        expect(log2.clock.time).toEqual(2n)
+        expect(a2.clock.id).toEqual(new Ed25519PublicKeyData({ publicKey: signKey.publicKey }).bytes)
+        expect(b2.clock.id).toEqual(new Ed25519PublicKeyData({ publicKey: signKey2.publicKey }).bytes)
+        expect(a2.clock.time).toEqual(1n)
+        expect(b2.clock.time).toEqual(1n)
 
         await log3.join(log1)
-        expect(log3.id).toEqual('X')
-        assert.deepStrictEqual(log3.clock.id, new Ed25519PublicKeyData({ publicKey: signKey3.publicKey }).bytes)
-        expect(log3.clock.time).toEqual(2n)
-
+        /*   assert.deepStrictEqual(log3.clock.id, new Ed25519PublicKeyData({ publicKey: signKey3.publicKey }).bytes)
+          expect(log3.clock.time).toEqual(2n)
+   */
         await log3.append('helloC1')
-        await log3.append('helloC2')
+        const c2 = await log3.append('helloC2')
         await log1.join(log3)
         await log1.join(log2)
         await log4.append('helloD1')
-        await log4.append('helloD2')
+        const d2 = await log4.append('helloD2')
         await log4.join(log2)
         await log4.join(log1)
         await log4.join(log3)
-        await log4.append('helloD3')
+        const d3 = await log4.append('helloD3')
+        expect(d3.gid).toEqual(await Entry.createGid([b2.gid, c2.gid, d2.gid].sort().join()));
         await log4.append('helloD4')
-
         await log1.join(log4)
         await log4.join(log1)
-        await log4.append('helloD5')
-        await log1.append('helloA5')
-        await log4.join(log1)
-        assert.deepStrictEqual(log4.clock.id, new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes)
-        assert.deepStrictEqual(log4.clock.time, 7n)
+        const d5 = await log4.append('helloD5')
+        expect(d5.gid).toEqual(await Entry.createGid([d2.gid, b2.gid, c2.gid].sort().join()));
 
-        await log4.append('helloD6')
-        assert.deepStrictEqual(log4.clock.time, 8n)
+        const a5 = await log1.append('helloA5')
+        expect(a5.gid).toEqual(await Entry.createGid([d2.gid, b2.gid, c2.gid].sort().join()));
+
+        await log4.join(log1)
+        const d6 = await log4.append('helloD6')
+        expect(d5.gid).toEqual(a5.gid);
+        expect(d6.gid).toEqual(a5.gid);
 
         const expectedData = [
-          { payload: 'helloA1', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey.publicKey }).bytes, 1) },
-          { payload: 'helloB1', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey2.publicKey }).bytes, 1) },
-          { payload: 'helloD1', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 1) },
-          { payload: 'helloA2', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey.publicKey }).bytes, 2) },
-          { payload: 'helloB2', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey2.publicKey }).bytes, 2) },
-          { payload: 'helloD2', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 2) },
-          { payload: 'helloC1', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey3.publicKey }).bytes, 3) },
-          { payload: 'helloC2', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey3.publicKey }).bytes, 4) },
-          { payload: 'helloD3', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 5) },
-          { payload: 'helloD4', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 6) },
-          { payload: 'helloA5', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey.publicKey }).bytes, 7) },
-          { payload: 'helloD5', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 7) },
-          { payload: 'helloD6', id: 'X', clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 8) }
+          { payload: 'helloA1', gid: a1.gid, clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey.publicKey }).bytes, 0) },
+          { payload: 'helloB1', gid: b1.gid, clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey2.publicKey }).bytes, 0) },
+          { payload: 'helloD1', gid: d2.gid, clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 0) },
+          { payload: 'helloA2', gid: a2.gid, clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey.publicKey }).bytes, 1) },
+          { payload: 'helloB2', gid: b2.gid, clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey2.publicKey }).bytes, 1) },
+          { payload: 'helloD2', gid: d2.gid, clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 1) },
+          { payload: 'helloC1', gid: a1.gid, clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey3.publicKey }).bytes, 2) },
+          { payload: 'helloC2', gid: c2.gid, clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey3.publicKey }).bytes, 3) },
+          { payload: 'helloD3', gid: d3.gid, clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 4) },
+          { payload: 'helloD4', gid: d3.gid, clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 5) },
+          { payload: 'helloA5', gid: a5.gid, clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey.publicKey }).bytes, 6) },
+          { payload: 'helloD5', gid: d5.gid, clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 6) },
+          { payload: 'helloD6', gid: d6.gid, clock: new Clock(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes, 7) }
         ]
 
         const transformed = log4.values.map((e) => {
-          return { payload: e.payload.value, id: e.id, clock: e.clock }
+          return { payload: e.payload.value, gid: e.gid, clock: e.clock }
         })
 
         expect(log4.length).toEqual(13)
@@ -356,18 +434,18 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log1.join(log2)
         await log2.append('helloB1')
         await log2.join(log1)
-        await log1.append('helloA2')
-        await log2.append('helloB2')
+        const a2 = await log1.append('helloA2')
+        const b2 = await log2.append('helloB2')
 
         await log1.join(log3)
-        expect(log1.id).toEqual('X')
-        assert.deepStrictEqual(log1.clock.id, new Ed25519PublicKeyData({ publicKey: signKey.publicKey }).bytes)
-        expect(log1.clock.time).toEqual(2n)
+        expect(log1.heads[log1.heads.length - 1].gid).toEqual(await Entry.createGid('X'))
+        expect(a2.clock.id).toEqual(new Ed25519PublicKeyData({ publicKey: signKey.publicKey }).bytes)
+        expect(a2.clock.time).toEqual(1n)
 
         await log3.join(log1)
-        expect(log3.id).toEqual('X')
-        assert.deepStrictEqual(log3.clock.id, new Ed25519PublicKeyData({ publicKey: signKey3.publicKey }).bytes)
-        expect(log3.clock.time).toEqual(2n)
+        expect(log3.heads[log3.heads.length - 1].gid).toEqual(await Entry.createGid('X'))
+        /*   assert.deepStrictEqual(log3.clock.id, new Ed25519PublicKeyData({ publicKey: signKey3.publicKey }).bytes)
+          expect(log3.clock.time).toEqual(2n) */
 
         await log3.append('helloC1')
         await log3.append('helloC2')
@@ -379,10 +457,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log4.join(log1)
         await log4.join(log3)
         await log4.append('helloD3')
-        await log4.append('helloD4')
+        const d4 = await log4.append('helloD4')
 
-        assert.deepStrictEqual(log4.clock.id, new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes)
-        expect(log4.clock.time).toEqual(6n)
+        expect(d4.clock.id).toEqual(new Ed25519PublicKeyData({ publicKey: signKey4.publicKey }).bytes)
+        expect(d4.clock.time).toEqual(5n)
 
         const expectedData = [
           'helloA1',

@@ -5,7 +5,6 @@ import { Entry } from '@dao-xyz/ipfs-log-entry';
 import { AccessController } from './access-controller';
 import { PublicKey } from '@dao-xyz/identity';
 
-const getNextAndRefsUnion = e => [...new Set([...e.next, ...e.refs])]
 const flatMap = (res, val) => res.concat(val)
 
 const defaultConcurrency = 32
@@ -199,7 +198,7 @@ export class Replicator<T> {
     )
 
     // Return all next pointers
-    const nexts = log.values.map(getNextAndRefsUnion).reduce(flatMap, [])
+    const nexts = log.values.map(e => e.next).reduce(flatMap, [])
     try {
       // Add the next (hashes) to the processing queue
       this._addToQueue(nexts)

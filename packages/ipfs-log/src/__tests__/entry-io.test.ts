@@ -102,7 +102,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log.append('hello' + i)
         if (i % 10 === 0) {
           log2 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey),
-            { logId: log2.id, entries: log2.values, heads: log2.heads.concat(log.heads) })
+            { logId: log2._id, entries: log2.values, heads: log2.heads.concat(log.heads) })
           await log2.append('hi' + i)
         }
       }
@@ -119,7 +119,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       for (let i = 1; i <= count; i++) {
         await log.append('hello' + i)
         if (i % 10 === 0) {
-          log2 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: log2.id, entries: log2.values })
+          log2 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: log2._id, entries: log2.values })
           await log2.append('hi' + i)
           await log2.join(log)
         }
@@ -139,13 +139,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log.append('hello' + i)
         if (i % 10 === 0) {
           log2 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey),
-            { logId: log2.id, entries: log2.values, heads: log2.heads })
+            { logId: log2._id, entries: log2.values, heads: log2.heads })
           await log2.append('hi' + i)
           await log2.join(log)
         }
         if (i % 25 === 0) {
           log3 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey),
-            { logId: log3.id, entries: log3.values, heads: log3.heads.concat(log2.heads) })
+            { logId: log3._id, entries: log3.values, heads: log3.heads.concat(log2.heads) })
           await log3.append('--' + i)
         }
       }
@@ -170,7 +170,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         }
         if (i % 25 === 0) {
           log3 = new Log(ipfs, signKey3.publicKey, (data) => Keystore.sign(data, signKey3),
-            { logId: log3.id, entries: log3.values, heads: log3.heads.concat(log2.heads) })
+            { logId: log3._id, entries: log3.values, heads: log3.heads.concat(log2.heads) })
           await log3.append('--' + i)
         }
       }

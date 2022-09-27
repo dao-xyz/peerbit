@@ -16,7 +16,7 @@ export const createLog = async (ipfs, logId) => {
   const access = new AccessController()
   const keystore = new Keystore(store)
   const identity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore })
-  const log = new Log(ipfs, identity, { logId: 'A', access })
+  const log = new Log(ipfs, identity, { gid: 'A', access })
   return { log, access, identity }
 }
 

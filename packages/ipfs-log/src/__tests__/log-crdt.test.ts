@@ -20,7 +20,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
 
-    let keystore, signingKeystore
+    let keystore: Keystore, signingKeystore
 
     beforeAll(async () => {
       rmrf.sync(identityKeysPath)
@@ -31,9 +31,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
 
-      signKey = await keystore.getKeyByPath(new Uint8Array([0]), SignKeyWithMeta);
-      signKey2 = await keystore.getKeyByPath(new Uint8Array([2]), SignKeyWithMeta);
-      signKey3 = await keystore.getKeyByPath(new Uint8Array([3]), SignKeyWithMeta);
+      signKey = await keystore.createKey(new Uint8Array([0]), SignKeyWithMeta, undefined, { overwrite: true });
+      signKey2 = await keystore.createKey(new Uint8Array([2]), SignKeyWithMeta, undefined, { overwrite: true });
+      signKey3 = await keystore.createKey(new Uint8Array([3]), SignKeyWithMeta, undefined, { overwrite: true });
 
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api

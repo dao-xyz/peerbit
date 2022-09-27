@@ -67,8 +67,8 @@ const run = (() => {
     const identity = await IdentityProvider.createIdentity({ id: 'userA', keystore })
     const identity2 = await IdentityProvider.createIdentity({ id: 'userB', keystore })
 
-    log1 = new Log(ipfs, identity, { logId: 'A' })
-    log2 = new Log(ipfs, identity2, { logId: 'A' })
+    log1 = new Log(ipfs, identity, { gid: 'A' })
+    log2 = new Log(ipfs, identity2, { gid: 'A' })
 
     // Output metrics at 1 second interval
     setInterval(() => {

@@ -3,7 +3,7 @@ import { EventEmitter } from 'events'
 import mapSeries from 'p-each-series'
 import { default as PQueue } from 'p-queue'
 import { Log, ISortFunction, RecycleOptions, LogOptions } from '@dao-xyz/ipfs-log'
-import { IOOptions, EncryptionTemplateMaybeEncrypted, Payload } from '@dao-xyz/ipfs-log-entry'
+import { IOOptions, EncryptionTemplateMaybeEncrypted, Payload, getPeerID } from '@dao-xyz/ipfs-log-entry'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Replicator } from './replicator'
 import { ReplicationInfo } from './replication-info'
@@ -185,7 +185,6 @@ export class Store<T> implements StoreLike<T> {
 
 
   _ipfs: IPFS;
-  _idFromIPFS: string;
   _cache: Cache;
   _oplog: Log<T>;
   _queue: PQueue<any, any>
@@ -228,13 +227,6 @@ export class Store<T> implements StoreLike<T> {
 
     // Set ipfs since we are to save the store
     this._ipfs = ipfs
-    const idFromIpfs: string | { toString: () => string } = (await ipfs.id()).id;
-    if (typeof idFromIpfs !== 'string') {
-      this._idFromIPFS = idFromIpfs.toString(); //  ipfs 57+ seems to return an id object rather than id
-    }
-    else {
-      this._idFromIPFS = idFromIpfs
-    }
 
     // Set the options (we will use the replicationTopic property after thiis)
     const opts = Object.assign({}, DefaultOptions)
@@ -555,7 +547,7 @@ export class Store<T> implements StoreLike<T> {
     this.events.emit('ready', this.address.toString(), this._oplog.heads)
   }
 
-  async sync(heads: Entry<T>[], leaderResolver: () => Promise<{ leaders: string[], isLeader: boolean }>) {
+  async sync(heads: Entry<T>[], findLeaders: (gid: string) => Promise<string[]>) {
 
 
     /* const mem = await this.checkMemory();
@@ -571,18 +563,10 @@ export class Store<T> implements StoreLike<T> {
 
     this.allowForks = await this.checkMemory();
 
-    let hasKnown = false;
+    /* let hasKnown = false;
     outer:
     for (const head of heads) {
       for (const hash of head.next) {
-        if (this._oplog.has(hash)) {
-          hasKnown = true;
-        }
-        if (hasKnown) {
-          break outer;
-        }
-      }
-      for (const hash of head.refs) {
         if (this._oplog.has(hash)) {
           hasKnown = true;
         }
@@ -598,17 +582,51 @@ export class Store<T> implements StoreLike<T> {
         logger.info("Seems to be a fork, and this store does not allow them")
         return Promise.resolve(null)
       }
+    }
+ */
+    heads.sort(this.oplog._sortFn);
+    const mergeable = [];
+    const newItems: Map<string, Entry<any>> = new Map();
+    for (const head of heads) {
+      if (this.oplog._peersByGid.has(head.gid)) {
+        mergeable.push(head);
+      }
+      else {
+        // if new root, then check if we should merge this
 
+        if (head.next.length === 0) {
+          const leaders = await findLeaders(head.gid);
+          const peerId = await this.oplog.getPeerId()
+          if (leaders.find((l) => l === peerId)) {
+            // is leader
+            newItems.set(head.hash, head);
+            this.oplog.setPeersByGid(head.gid, new Set(leaders))
+          }
+          else {
+            // Safely ignore item, since its a root element, and we are not the leader
+          }
+        }
+        else {
+          // Unexpected if not new items contains nexts
+          head.next.forEach((next) => {
+            if (!newItems.has(next) && !this.oplog.has(next)) {
+              throw new Error("Failed to sync item with next elements that are unknown")
+            }
+          })
+
+          newItems.set(head.hash, head);
+
+        }
+      }
     }
 
-    const leaderInfo = await leaderResolver();
 
-    if (!hasKnown) {
+    /* if (!hasKnown) {
       if (!leaderInfo.isLeader) {
         logger.info("Is not leader so I am rejecting the fork")
         return Promise.resolve(null);
       }
-    }
+    } */
 
     // To simulate network latency, uncomment this line
     // and comment out the rest of the function
@@ -635,8 +653,8 @@ export class Store<T> implements StoreLike<T> {
         return Promise.resolve(null);
       }
 
-      head.peers = new Set(leaderInfo.leaders);
-
+      /*       head.peers = new Set(leaderInfo.leaders);
+       */
       const hash = await io.write(this._ipfs, 'dag-cbor', head.serialize(), { links: Entry.IPLD_LINKS })
       if (hash !== head.hash) {
         throw new Error("Head hash didn\'t match the contents")
@@ -711,7 +729,7 @@ export class Store<T> implements StoreLike<T> {
     this.events.emit('load', this.address.toString()) // TODO emits inconsistent params, missing heads param
 
     const maxClock = (res: bigint, val: Entry<any>): bigint => bigIntMax(res, val.clock.time)
-    this.sync([], () => Promise.resolve({ isLeader: true, leaders: [this._idFromIPFS] }))
+    this.sync([], async () => Promise.resolve([await getPeerID(this._ipfs)]))
 
     const queue = (await this._cache.get(this.queuePath)) as string[]
     if (queue?.length > 0) {
@@ -768,7 +786,7 @@ export class Store<T> implements StoreLike<T> {
     }
   }
 
-  async _addOperation(data: T, options: { refs?: string[], nexts?: string[], onProgressCallback?: (any) => void, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = {}): Promise<Entry<T>> {
+  async _addOperation(data: T, options: { nexts?: Entry<T>[], onProgressCallback?: (any) => void, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = {}): Promise<Entry<T>> {
     const addOperation = async () => {
       if (this._oplog) {
         // check local cache for latest heads
@@ -777,7 +795,7 @@ export class Store<T> implements StoreLike<T> {
         }
 
         const entry = await this._oplog.append(data, {
-          refs: options.refs, nexts: options.nexts, pin: options.pin, reciever: options.reciever
+          nexts: options.nexts, pin: options.pin, reciever: options.reciever
         })
         entry
         this._recalculateReplicationStatus((await entry.clock).time)

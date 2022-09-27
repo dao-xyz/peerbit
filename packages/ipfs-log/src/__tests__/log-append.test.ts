@@ -92,8 +92,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       beforeAll(async () => {
         log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
+        let prev = undefined;
         for (let i = 0; i < amount; i++) {
-          await log.append('hello' + i, { pin: false, refs: log.getPow2Refs(nextPointerAmount) })
+          prev = await log.append('hello' + i, { pin: false, nexts: prev ? [prev] : undefined })//,  refs: log.getPow2Refs(nextPointerAmount) })
           // Make sure the log has the right heads after each append
           const values = log.values
           expect(log.heads.length).toEqual(1)
@@ -118,11 +119,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
         })
       })
 
-      it('added the correct amount of refs pointers', async () => {
-        log.values.forEach((entry, index) => {
-          expect(entry.refs.length).toEqual(index > 0 ? Math.ceil(Math.log2(Math.min(nextPointerAmount, index))) : 0)
-        })
-      })
+      /*    it('added the correct amount of refs pointers', async () => {
+           log.values.forEach((entry, index) => {
+             expect(entry.refs.length).toEqual(index > 0 ? Math.ceil(Math.log2(Math.min(nextPointerAmount, index))) : 0)
+           })
+         }) */
     })
   })
 })

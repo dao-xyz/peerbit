@@ -9,7 +9,7 @@
         "packages/ipfs-log-entry",
         "packages/orbit-db",
         "packages/orbit-db-ipfs-access-controller",
-        "packages/orbit-db-dynamic-access-controller",
+        "packages/dynamic-access-controller",
         "packages/orbit-db-store",
         "packages/orbit-db-cache",
         "packages/orbit-db-bdocstore",

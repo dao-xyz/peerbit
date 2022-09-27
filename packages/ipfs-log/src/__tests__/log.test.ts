@@ -65,8 +65,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.notStrictEqual(log._entryIndex, null)
         assert.notStrictEqual(log._headsIndex, null)
         assert.notStrictEqual(log._id, null)
-        assert.notStrictEqual(log.id, null)
-        assert.notStrictEqual(log.clock, null)
+        assert.notStrictEqual(log._id, null)
         assert.notStrictEqual(log.values, null)
         assert.notStrictEqual(log.heads, null)
         assert.notStrictEqual(log.tails, null)
@@ -86,37 +85,31 @@ Object.keys(testAPIs).forEach((IPFS) => {
         expect(err.message).toEqual('IPFS instance not defined')
       })
 
-      it('sets an id', () => {
+      it('sets an id', async () => {
         const log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'ABC' })
-        expect(log.id).toEqual('ABC')
-      })
-
-      it('sets the clock id', () => {
-        const log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'ABC' })
-        expect(log.id).toEqual('ABC')
-        expect(log.clock.id).toEqual(signKey.publicKey)
+        expect(log._id).toEqual('ABC')
       })
 
       it('generates id string if id is not passed as an argument', () => {
         const log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), undefined)
-        assert.strictEqual(typeof log.id === 'string', true)
+        assert.strictEqual(typeof log._id === 'string', true)
       })
 
       it('sets items if given as params', async () => {
         const one = await Entry.create({
           ipfs, publicKey: new Ed25519PublicKeyData({
             publicKey: signKey.publicKey
-          }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: 'entryA', next: [], clock: new Clock(new Uint8Array([0]), 0)
+          }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryA', next: [], clock: new Clock(new Uint8Array([0]), 0)
         })
         const two = await Entry.create({
           ipfs, publicKey: new Ed25519PublicKeyData({
             publicKey: signKey.publicKey
-          }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: 'entryB', next: [], clock: new Clock(new Uint8Array([1]), 0)
+          }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryB', next: [], clock: new Clock(new Uint8Array([1]), 0)
         })
         const three = await Entry.create({
           ipfs, publicKey: new Ed25519PublicKeyData({
             publicKey: signKey.publicKey
-          }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: 'entryC', next: [], clock: new Clock(new Uint8Array([2]), 0)
+          }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryC', next: [], clock: new Clock(new Uint8Array([2]), 0)
         })
         const log = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey),
           { logId: 'A', entries: [one, two, three] })
@@ -130,17 +123,17 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const one = await Entry.create({
           ipfs, publicKey: new Ed25519PublicKeyData({
             publicKey: signKey.publicKey
-          }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: 'entryA', next: []
+          }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryA', next: []
         })
         const two = await Entry.create({
           ipfs, publicKey: new Ed25519PublicKeyData({
             publicKey: signKey.publicKey
-          }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: 'entryB', next: []
+          }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryB', next: []
         })
         const three = await Entry.create({
           ipfs, publicKey: new Ed25519PublicKeyData({
             publicKey: signKey.publicKey
-          }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: 'entryC', next: []
+          }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryC', next: []
         })
         const log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey),
           { logId: 'B', entries: [one, two, three], heads: [three] })
@@ -152,17 +145,17 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const one = await Entry.create({
           ipfs, publicKey: new Ed25519PublicKeyData({
             publicKey: signKey.publicKey
-          }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: 'entryA', next: []
+          }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryA', next: []
         })
         const two = await Entry.create({
           ipfs, publicKey: new Ed25519PublicKeyData({
             publicKey: signKey.publicKey
-          }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: 'entryB', next: []
+          }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryB', next: []
         })
         const three = await Entry.create({
           ipfs, publicKey: new Ed25519PublicKeyData({
             publicKey: signKey.publicKey
-          }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: 'entryC', next: []
+          }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryC', next: []
         })
         const log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey),
           { logId: 'A', entries: [one, two, three] })
@@ -285,9 +278,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             data: new Uint8Array(Buffer.from('one'))
           }))
         });
-        const id = new DecryptedThing<Id>({
-          data: serialize(new Id({ id: 'aaa' }))
-        });
+        const gid = 'aaa';
         const publicKey = new DecryptedThing<PublicKey>({
           data: serialize(new Ed25519PublicKeyData({ publicKey: signKey.publicKey }))
         })
@@ -295,16 +286,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
           hash: 'zdpuAozwfaZEdTCimGoLbXrz3hsJdCQZATpVgyVDMJLVrACqw',
           payload,
           clock: clockDecrypted,
-          id,
+          gid,
           publicKey,
           signature: new DecryptedThing({
             data: serialize(new Signature({
-              signature: await Keystore.sign(Entry.createDataToSign(id, payload, clockDecrypted, []), signKey)
+              signature: await Keystore.sign(Entry.createDataToSign(gid, payload, clockDecrypted, [], [], 0, 0), signKey)
             }))
           }),
-          refs: [],
-          next: [],
-          peers: new Set([await getPeerID(ipfs)])
+          next: []
         });
       })
 
@@ -655,7 +644,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'X' })
           await log.append('one')
           const res = await Log.fromEntryHash(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), expectedData.heads[0],
-            { logId: log.id, length: -1 })
+            { logId: log._id, length: -1 })
           expect(JSON.stringify(res.toJSON())).toEqual(JSON.stringify(expectedData))
         })
       })

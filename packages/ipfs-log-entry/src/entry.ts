@@ -6,12 +6,15 @@ import { IPFS } from 'ipfs-core-types/src/'
 import { arraysEqual, joinUint8Arrays, StringSetSerializer, U8IntArraySerializer } from '@dao-xyz/io-utils';
 import { X25519PublicKey } from 'sodium-plus';
 import { PublicKeyEncryption, DecryptedThing, MaybeEncrypted } from '@dao-xyz/encryption-utils';
-import { getPeerID, Id } from './id';
 import { Signature } from './signature';
 import { PublicKey } from '@dao-xyz/identity';
+import { bigIntMax } from './utils';
+import { SodiumPlus } from 'sodium-plus';
 
+const _crypto = SodiumPlus.auto();
+export const maxClockTimeReducer = <T>(res: bigint, acc: Entry<T>): bigint => bigIntMax(res, acc.clock.time);
 export type MaybeX25519PublicKey = (X25519PublicKey | X25519PublicKey[] | undefined);
-export type EncryptionTemplateMaybeEncrypted = EntryEncryptionTemplate<MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey>;
+export type EncryptionTemplateMaybeEncrypted = EntryEncryptionTemplate<MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey>;
 export interface EntryEncryption {
   reciever: EncryptionTemplateMaybeEncrypted,
   options: PublicKeyEncryption
@@ -34,13 +37,16 @@ const IpfsNotDefinedError = () => new Error('Ipfs instance not defined')
 
 
 export interface EntrySerialized<T> {
-  id: Uint8Array,
+  gid: string,
   payload: Uint8Array,
   publicKey: Uint8Array,
   signature: Uint8Array,
   clock: Uint8Array,
-  next?: string[]
-  refs?: string[] // Array of hashes
+  state: Uint8Array,
+  reserved: Uint8Array,
+  next: string[],
+  fork: string[],
+
 }
 
 @variant(0)
@@ -81,19 +87,18 @@ export class Payload<T>
   }
 }
 
-export interface EntryEncryptionTemplate<A, B, C, D, E> {
-  id: A,
-  clock: B
-  payload: C,
-  publicKey: D
-  signature: E
+export interface EntryEncryptionTemplate<A, B, C, D> {
+  clock: A
+  payload: B,
+  publicKey: C
+  signature: D
 }
 
 @variant(0)
-export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<T>, PublicKey, Signature> {
+export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, PublicKey, Signature> {
 
-  @field({ type: MaybeEncrypted })
-  _id: MaybeEncrypted<Id>
+  @field({ type: 'string' })
+  gid: string // graph id
 
   @field({ type: MaybeEncrypted })
   _clock: MaybeEncrypted<Clock>
@@ -110,9 +115,12 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
   @field({ type: vec('string') })
   next: string[] // Array of hashes (the tree)
 
-  @field({ type: vec('string') })
-  refs: string[] // Array of hashes (jumps in the tree, indicating dependencies or used for jumping for faster iteration or fail safe behaviour if gaps occur)
+  @field(({ type: vec('string') }))
+  _fork: string[] = []; // not used yet
 
+  /*  @field({ type: vec('string') })
+   refs: string[] // Array of hashes (jumps in the tree, indicating dependencies or used for jumping for faster iteration or fail safe behaviour if gaps occur)
+  */
   @field({ type: 'u8' })
   _state: number = 0; // reserved for states
 
@@ -122,10 +130,7 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
   @field({ type: 'string' })
   hash: string // "zd...Foo", we'll set the hash after persisting the entry
 
-  @field({ type: StringSetSerializer })
-  peers: Set<string>; // peers hosting/owning this data
-
-  static IPLD_LINKS = ['next', 'refs']
+  static IPLD_LINKS = ['next']
 
   _encoding: IOOptions<T>
   _encryption?: PublicKeyEncryption
@@ -133,26 +138,24 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
 
 
   constructor(obj?: {
-    id: MaybeEncrypted<Id>,
+    gid: string,
     payload: MaybeEncrypted<Payload<T>>
     publicKey: MaybeEncrypted<PublicKey>,
     signature: MaybeEncrypted<Signature>,
     clock: MaybeEncrypted<Clock>;
     next: string[]
-    refs: string[] // Array of hashes
+    /*  refs: string[]  */// Array of hashes
     hash?: string // "zd...Foo", we'll set the hash after persisting the entry
-    peers: Set<string>
   }) {
     if (obj) {
-      this._id = obj.id;
+      this.gid = obj.gid;
       this._clock = obj.clock
       this._payload = obj.payload;
       this._signature = obj.signature;
       this._publicKey = obj.publicKey;
       this.next = obj.next;
-      this.refs = obj.refs;
+      /*     this.refs = obj.refs; */
       this.hash = obj.hash;
-      this.peers = obj.peers;
     }
   }
 
@@ -162,7 +165,7 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
     this._encryption = encryption;
     this._encoding = encoding;
     this._payload.init(encryption);
-    this._id.init(encryption);
+    /* this._id.init(encryption); */
     this._clock.init(encryption);
     this._signature.init(encryption);
 
@@ -171,25 +174,27 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
 
   serialize(): EntrySerialized<T> {
     return {
-      id: serialize(this._id),
+      gid: this.gid,
       payload: serialize(this._payload),
       publicKey: serialize(this._publicKey),
       signature: serialize(this._signature),
       clock: serialize(this._clock),
       next: this.next,
-      refs: this.refs
+      fork: this._fork,
+      state: new Uint8Array(this._state),
+      reserved: new Uint8Array(this._reserved),
     }
   }
 
-  get id(): string {
-    return this._id.decrypted.getValue(Id).id
-  }
-
-  async getId(): Promise<string> {
-    await this._id.decrypt();
-    return this.id;
-  }
-
+  /*  get id(): string {
+     return this._id.decrypted.getValue(Id).id
+   }
+ 
+   async getId(): Promise<string> {
+     await this._id.decrypt();
+     return this.id;
+   }
+  */
   get clock(): Clock {
     return this._clock.decrypted.getValue(Clock)
   }
@@ -231,30 +236,30 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
 
 
 
-  static createDataToSign(id: MaybeEncrypted<Id>, payload: MaybeEncrypted<Payload<any>>, clock: MaybeEncrypted<Clock>, next?: (any | string)[], refs?: string[]): Buffer { // TODO fix types
-    const arrays: Uint8Array[] = [serialize(id), serialize(payload), serialize(clock)];
+  static createDataToSign(gid: string, payload: MaybeEncrypted<Payload<any>>, clock: MaybeEncrypted<Clock>, next: string[], fork: string[], state: number, reserved: number,): Buffer { // TODO fix types
+    const arrays: Uint8Array[] = [new Uint8Array(Buffer.from(gid)), serialize(payload), serialize(clock)];
+    arrays.push(new Uint8Array([state, reserved]))
     if (next) {
       next.forEach((n) => {
         arrays.push(new Uint8Array(Buffer.from(n)));
-      })
-    }
-    if (refs) {
-      refs.forEach((r) => {
-        arrays.push(new Uint8Array(Buffer.from(r)));
       })
     }
     return Buffer.from(joinUint8Arrays(arrays));
   }
 
   async createDataToSign(): Promise<Buffer> {
-    return Entry.createDataToSign(this._id, this._payload, this._clock, this.next, this.refs)
+    return Entry.createDataToSign(this.gid, this._payload, this._clock, this.next, this._fork, this._state, this._reserved)
   }
 
 
   equals(other: Entry<T>) {
-    return this._id.equals(other._id) && this._clock.equals(other._clock) && this._signature.equals(other._signature) && arraysEqual(this.next, other.next) && arraysEqual(this.refs, other.refs) && this._payload.equals(other._payload) // dont compare hashes because the hash is a function of the other properties
+    return this.gid === other.gid && this._clock.equals(other._clock) && this._signature.equals(other._signature) && arraysEqual(this.next, other.next) && this._payload.equals(other._payload) // dont compare hashes because the hash is a function of the other properties
   }
 
+  static async createGid(seed?: string): Promise<string> {
+    const crypto = await _crypto;
+    return (await crypto.crypto_generichash(seed || (await crypto.randombytes_buf(32)))).toString('base64')
+  }
   /**
    * Create an Entry
    * @param {IPFS} ipfs An IPFS instance
@@ -269,27 +274,22 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
    * console.log(entry)
    * // { hash: null, payload: "hello", next: [] }
    */
-  static async create<T>(properties: { ipfs: IPFS, peer?: string, logId: string, data: T, encodingOptions?: IOOptions<T>, clock?: Clock, next?: (Entry<T> | string)[], refs?: string[], pin?: boolean, assertAllowed?: (entryData: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicKey>) => Promise<void>, encryption?: EntryEncryption, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array> }) {
-    if (!properties.encodingOptions || !properties.refs || !properties.next) {
+  static async create<T>(properties: { ipfs: IPFS, gid?: string, gidSeed?: string, data: T, encodingOptions?: IOOptions<T>, next?: Entry<T>[], clock?: Clock, pin?: boolean, assertAllowed?: (entryData: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicKey>) => Promise<void>, encryption?: EntryEncryption, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array> }) {
+    if (!properties.encodingOptions || !properties.next) {
       properties = {
         ...properties,
         next: properties.next ? properties.next : [],
-        refs: properties.refs ? properties.refs : [],
         encodingOptions: properties.encodingOptions ? properties.encodingOptions : JSON_ENCODING_OPTIONS
       }
     }
 
     if (!isDefined(properties.ipfs)) throw IpfsNotDefinedError()
-    if (!isDefined(properties.logId)) throw new Error('Entry requires an id')
     if (!isDefined(properties.data)) throw new Error('Entry requires data')
     if (!isDefined(properties.next) || !Array.isArray(properties.next)) throw new Error("'next' argument is not an array")
 
-    let peer = properties.peer || await getPeerID(properties.ipfs)
-
 
     // Clean the next objects and convert to hashes
-    const toEntry = (e) => e.hash ? e.hash : e
-    const nexts = properties.next.filter(isDefined).map(toEntry)
+    const nexts = properties.next;
 
     let payloadToSave = new Payload<T>({
       data: properties.encodingOptions.encoder(properties.data),
@@ -312,23 +312,62 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
       })); // TODO fix types
     }
 
-    const clock = await maybeEncrypt(properties.clock || new Clock(serialize(properties.publicKey)), properties.encryption?.reciever.clock);
+    let clockValue = properties.clock;
+    if (!clockValue) {
+      const newTime = nexts?.length > 0 ? nexts.reduce(maxClockTimeReducer, 0n) + 1n : 0n;
+      clockValue = new Clock(new Uint8Array(serialize(properties.publicKey)), newTime)
+    }
+    else {
+      // check if nexts, that all nexts are happening BEFORE this clock value (else clock make no sense)
+      nexts.forEach((n) => {
+        if (n.clock.time >= clockValue.time) {
+          throw new Error("Expecting next(s) to happen before entry, got: " + n.clock.time + " > " + clockValue.time);
+        }
+      })
+    }
+
+    const clock = await maybeEncrypt(clockValue, properties.encryption?.reciever.clock);
     const publicKey = await maybeEncrypt(properties.publicKey, properties.encryption?.reciever.publicKey);
-    const id = await maybeEncrypt(new Id({
+    /* const id = await maybeEncrypt(new Id({
       id: properties.logId
-    }), properties.encryption?.reciever.id);
+    }), properties.encryption?.reciever.id); */
     const payload = await maybeEncrypt(payloadToSave, properties.encryption?.reciever.payload);
+
+
+    const nextHashes = [];
+    let gid: string = undefined
+    if (nexts?.length > 0) {
+      const gidSet: Set<string> = new Set();
+      nexts.forEach((next) => {
+        gidSet.add(next.gid);
+        gid = next.gid
+        if (!next.hash) {
+          throw new Error("All next entries needs to have hash defined");
+        }
+        nextHashes.push(next.hash);
+      })
+
+      if (gidSet.size === 1) {
+        gid = gidSet.values().next().value;
+      }
+      else {
+        gid = await Entry.createGid([...gidSet].sort().join());
+      }
+    }
+    else {
+
+      gid = properties.gid || (await Entry.createGid(properties.gidSeed));
+    }
 
     const entry: Entry<T> = new Entry<T>({
       payload,
       clock,
-      id,
+      gid,
       publicKey,
       signature: null,
       hash: null, // "zd...Foo", we'll set the hash after persisting the entry
-      next: nexts, // Array of hashes
-      refs: properties.refs,
-      peers: new Set([peer])
+      next: nextHashes, // Array of hashes
+      /* refs: properties.refs, */
     })
 
 
@@ -339,7 +378,7 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
     })
 
     // Sign id, encrypted payload, clock, nexts, refs 
-    const signature = await properties.sign(Entry.createDataToSign(id, payload, clock, entry.next, entry.refs))
+    const signature = await properties.sign(Entry.createDataToSign(gid, payload, clock, entry.next, entry._fork, entry._state, entry._reserved))
 
     // Append hash and signature
     entry._signature = await maybeEncrypt(new Signature({
@@ -406,20 +445,17 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
     let payload: MaybeEncrypted<Payload<T>> = undefined;
     let signature: MaybeEncrypted<Signature> = undefined;
     let publicKey: MaybeEncrypted<PublicKey> = undefined;
-    let id: MaybeEncrypted<Id> = undefined;
     if (entry instanceof Entry) {
       clock = entry._clock;
       payload = entry._payload;
       publicKey = entry._publicKey;
       signature = entry._signature;
-      id = entry._id
     }
     else {
       clock = deserialize<MaybeEncrypted<Clock>>(Buffer.from(entry.clock), MaybeEncrypted);
       payload = deserialize<MaybeEncrypted<Payload<T>>>(Buffer.from(entry.payload), MaybeEncrypted);
       signature = deserialize<MaybeEncrypted<Signature>>(Buffer.from(entry.signature), MaybeEncrypted);
       publicKey = deserialize<MaybeEncrypted<PublicKey>>(Buffer.from(entry.publicKey), MaybeEncrypted);
-      id = deserialize<MaybeEncrypted<Id>>(Buffer.from(entry.id), MaybeEncrypted);
     }
     const e: Entry<T> = new Entry<T>({
       hash: null,
@@ -427,11 +463,12 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
       payload,
       signature,
       publicKey,
-      id,
-      next: entry.next,
-      refs: entry.refs,
-      peers: new Set()
+      gid: entry.gid,
+      next: entry.next
     })
+    e._state = entry.state[0];
+    e._reserved = entry.reserved[0];
+
     return e
   }
 
@@ -471,7 +508,7 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
       return false
     }
 
-    if (!obj._id) {
+    if (!obj.gid) {
       return false
     }
 
@@ -487,7 +524,7 @@ export class Entry<T> implements EntryEncryptionTemplate<string, Clock, Payload<
       return false
     }
     return obj &&
-      obj.next !== undefined && obj.hash !== undefined && obj.refs !== undefined
+      obj.next !== undefined && obj.hash !== undefined
   }
 
   /**

@@ -96,7 +96,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const data = fixture.log
         const json = fixture.json
         const log = await Log.fromJSON(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), json, {})
-        expect(log.id).toEqual(data.heads[0].id)
+        expect(log.heads[0].gid).toEqual(data.heads[0].gid)
         expect(log.length).toEqual(16)
         assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), fixture.expectedData)
       })
@@ -109,7 +109,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log = await Log.fromJSON(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), json,
           { length: -1, sortFn: FirstWriteWins })
 
-        expect(log.id).toEqual(data.heads[0].id)
+        expect(log.heads[0].gid).toEqual(data.heads[0].gid)
         expect(log.length).toEqual(16)
         assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), firstWriteExpectedData)
       })
@@ -143,7 +143,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         await log1.join(log2)
 
-        expect(log1.id).toEqual(data.heads[0].id)
+        expect(log1.heads[0].gid).toEqual(data.heads[0].gid)
         expect(log1.length).toEqual(16)
         assert.deepStrictEqual(log1.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), fixture.expectedData)
       })
@@ -159,7 +159,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         await log1.join(log2)
 
-        expect(log1.id).toEqual(data.heads[0].id)
+        expect(log1.heads[0].gid).toEqual(data.heads[0].gid)
         expect(log1.length).toEqual(16)
         assert.deepStrictEqual(log1.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), firstWriteExpectedData)
       })
@@ -182,7 +182,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const data = fixture.log
 
         const log = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), data.heads, { length: -1 })
-        expect(log.id).toEqual(data.heads[0].id)
+        expect(log.heads[0].gid).toEqual(data.heads[0].gid)
         expect(log.length).toEqual(16)
         assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), fixture.expectedData)
       })
@@ -193,7 +193,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         const log = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), data.heads,
           { length: -1, sortFn: FirstWriteWins })
-        expect(log.id).toEqual(data.heads[0].id)
         expect(log.length).toEqual(16)
         assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), firstWriteExpectedData)
       })
@@ -203,13 +202,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const data = fixture.log
         const log1 = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), data.heads,
           { length: data.heads.length })
-        expect(log1.id).toEqual(data.heads[0].id)
+        expect(log1.heads[0].gid).toEqual(data.heads[0].gid)
         expect(log1.length).toEqual(data.heads.length)
         assertPayload(log1.values[0].payload.value, 'entryC0')
         assertPayload(log1.values[1].payload.value, 'entryA10')
 
         const log2 = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), data.heads, { length: 4 })
-        expect(log2.id).toEqual(data.heads[0].id)
+        expect(log2.heads[0].gid).toEqual(data.heads[0].gid)
         expect(log2.length).toEqual(4)
         assertPayload(log2.values[0].payload.value, 'entryC0')
         assertPayload(log2.values[1].payload.value, 'entryA8')
@@ -217,7 +216,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assertPayload(log2.values[3].payload.value, 'entryA10')
 
         const log3 = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), data.heads, { length: 7 })
-        expect(log3.id).toEqual(data.heads[0].id)
+        expect(log3.heads[0].gid).toEqual(data.heads[0].gid)
         expect(log3.length).toEqual(7)
         assertPayload(log3.values[0].payload.value, 'entryB5')
         assertPayload(log3.values[1].payload.value, 'entryA6')
@@ -236,12 +235,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const n1 = await Entry.create({
             ipfs, publicKey: new Ed25519PublicKeyData({
               publicKey: signKey.publicKey
-            }), sign: (data) => Keystore.sign(data, signKey), logId: 'A', data: 'entryA' + i, next: [prev1]
+            }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryA' + i, next: prev1 ? [prev1] : undefined
           })
           items1.push(n1)
         }
 
-        let i = 1
+        let i = 0
         const callback = (entry: Entry<string>) => {
           entry.init({ encoding: JSON_ENCODING_OPTIONS });
           assert.notStrictEqual(entry, null)
@@ -266,9 +265,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const prev1 = last(items1)
           const prev2 = last(items2)
           const prev3 = last(items3)
-          const n1 = await Entry.create({ ipfs, publicKey: log1._publicKey, sign: (data) => Keystore.sign(data, signKey), logId: 'X', data: 'entryA' + i, next: [prev1] })
-          const n2 = await Entry.create({ ipfs, publicKey: log2._publicKey, sign: (data) => Keystore.sign(data, signKey2), logId: 'X', data: 'entryB' + i, next: [prev2, n1] })
-          const n3 = await Entry.create({ ipfs, publicKey: log3._publicKey, sign: (data) => Keystore.sign(data, signKey3), logId: 'X', data: 'entryC' + i, next: [prev3, n1, n2] })
+          const n1 = await Entry.create({ ipfs, publicKey: log1._publicKey, sign: (data) => Keystore.sign(data, signKey), gidSeed: 'X', data: 'entryA' + i, next: prev1 ? [prev1] : undefined })
+          const n2 = await Entry.create({ ipfs, publicKey: log2._publicKey, sign: (data) => Keystore.sign(data, signKey2), gidSeed: 'X', data: 'entryB' + i, next: prev2 ? [prev2, n1] : [n1] })
+          const n3 = await Entry.create({ ipfs, publicKey: log3._publicKey, sign: (data) => Keystore.sign(data, signKey3), gidSeed: 'X', data: 'entryC' + i, next: prev3 ? [prev3, n1, n2] : [n1, n2] })
           items1.push(n1)
           items2.push(n2)
           items3.push(n3)
@@ -295,9 +294,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const prev1 = last(items1)
           const prev2 = last(items2)
           const prev3 = last(items3)
-          const n1 = await Entry.create({ ipfs, publicKey: log1._publicKey, sign: (data) => Keystore.sign(data, signKey), logId: 'X', data: 'entryA' + i, next: [prev1] })
-          const n2 = await Entry.create({ ipfs, publicKey: log2._publicKey, sign: (data) => Keystore.sign(data, signKey2), logId: 'X', data: 'entryB' + i, next: [prev2, n1] })
-          const n3 = await Entry.create({ ipfs, publicKey: log3._publicKey, sign: (data) => Keystore.sign(data, signKey3), logId: 'X', data: 'entryC' + i, next: [prev3, n2] })
+          const n1 = await Entry.create({ ipfs, publicKey: log1._publicKey, sign: (data) => Keystore.sign(data, signKey), gidSeed: 'X', data: 'entryA' + i, next: prev1 ? [prev1] : undefined })
+          const n2 = await Entry.create({ ipfs, publicKey: log2._publicKey, sign: (data) => Keystore.sign(data, signKey2), gidSeed: 'X', data: 'entryB' + i, next: prev2 ? [prev2, n1] : [n1] })
+          const n3 = await Entry.create({ ipfs, publicKey: log3._publicKey, sign: (data) => Keystore.sign(data, signKey3), gidSeed: 'X', data: 'entryC' + i, next: prev3 ? [prev3, n1, n2] : [n1, n2] })
           items1.push(n1)
           items2.push(n2)
           items3.push(n3)
@@ -328,9 +327,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const prev1 = last(items1)
           const prev2 = last(items2)
           const prev3 = last(items3)
-          const n1 = await Entry.create({ ipfs, publicKey: log1._publicKey, sign: (data) => Keystore.sign(data, signKey), logId: 'X', data: 'entryA' + i, next: [prev1] })
-          const n2 = await Entry.create({ ipfs, publicKey: log2._publicKey, sign: (data) => Keystore.sign(data, signKey2), logId: 'X', data: 'entryB' + i, next: [prev2, n1] })
-          const n3 = await Entry.create({ ipfs, publicKey: log3._publicKey, sign: (data) => Keystore.sign(data, signKey3), logId: 'X', data: 'entryC' + i, next: [prev3, n1, n2] })
+          const n1 = await Entry.create({ ipfs, publicKey: log1._publicKey, sign: (data) => Keystore.sign(data, signKey), gidSeed: 'X', data: 'entryA' + i, next: prev1 ? [prev1] : undefined })
+          const n2 = await Entry.create({ ipfs, publicKey: log2._publicKey, sign: (data) => Keystore.sign(data, signKey2), gidSeed: 'X', data: 'entryB' + i, next: prev2 ? [prev2, n1] : [n1] })
+          const n3 = await Entry.create({ ipfs, publicKey: log3._publicKey, sign: (data) => Keystore.sign(data, signKey3), gidSeed: 'X', data: 'entryC' + i, next: prev3 ? [prev3, n1, n2] : [n1, n2] })
           items1.push(n1)
           items2.push(n2)
           items3.push(n3)
@@ -361,18 +360,18 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const prev1 = last(items1)
           const prev2 = last(items2)
           const prev3 = last(items3)
-          log1.tickClock()
-          log2.tickClock()
-          log3.tickClock()
-          const n1 = await Entry.create({ ipfs, publicKey: log1._publicKey, sign: (data) => Keystore.sign(data, signKey), logId: 'X', data: 'entryA' + i, next: [prev1], clock: log1.clock })
-          const n2 = await Entry.create({ ipfs, publicKey: log2._publicKey, sign: (data) => Keystore.sign(data, signKey2), logId: 'X', data: 'entryB' + i, next: [prev2, n1], clock: log2.clock })
-          const n3 = await Entry.create({ ipfs, publicKey: log3._publicKey, sign: (data) => Keystore.sign(data, signKey3), logId: 'X', data: 'entryC' + i, next: [prev3, n1, n2], clock: log3.clock })
-          log1.mergeClock(log2.clock)
-          log1.mergeClock(log3.clock)
-          log2.mergeClock(log1.clock)
-          log2.mergeClock(log3.clock)
-          log3.mergeClock(log1.clock)
-          log3.mergeClock(log2.clock)
+          /*        log1.tickClock()
+                 log2.tickClock()
+                 log3.tickClock() */
+          const n1 = await Entry.create({ ipfs, publicKey: log1._publicKey, sign: (data) => Keystore.sign(data, signKey), gidSeed: 'X', data: 'entryA' + i, next: prev1 ? [prev1] : undefined, clock: items1.length > 0 ? items1[items1.length - 1].clock.advance() : undefined })
+          const n2 = await Entry.create({ ipfs, publicKey: log2._publicKey, sign: (data) => Keystore.sign(data, signKey2), gidSeed: 'X', data: 'entryB' + i, next: prev2 ? [prev2, n1] : [n1], clock: items2.length > 0 ? items2[items2.length - 1].clock.advance() : undefined })
+          const n3 = await Entry.create({ ipfs, publicKey: log3._publicKey, sign: (data) => Keystore.sign(data, signKey3), gidSeed: 'X', data: 'entryC' + i, next: prev3 ? [prev3, n1, n2] : [n1, n2], clock: items3.length > 0 ? items3[items3.length - 1].clock.advance() : undefined })
+          /*        log1.mergeClock(log2.clock)
+                 log1.mergeClock(log3.clock)
+                 log2.mergeClock(log1.clock)
+                 log2.mergeClock(log3.clock)
+                 log3.mergeClock(log1.clock)
+                 log3.mergeClock(log2.clock) */
           items1.push(n1)
           items2.push(n2)
           items3.push(n3)
@@ -645,22 +644,22 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log = new Log(ipfs, signKey4.publicKey, (data) => Keystore.sign(data, signKey2), { logId: 'X' })
 
         for (let i = 1; i <= 5; i++) {
-          await logA.append('entryA' + i, { refs: logA.getPow2Refs(nextPointerAmount) })
+          await logA.append('entryA' + i, { nexts: logA.heads  /* logA.getPow2Refs(nextPointersAmount) */ })
         }
 
         for (let i = 1; i <= 5; i++) {
-          await logB.append('entryB' + i, { refs: logB.getPow2Refs(nextPointerAmount) })
+          await logB.append('entryB' + i, { nexts: logB.heads /* logB.getPow2Refs(nextPointersAmount) */ })
         }
 
         await log3.join(logA)
         await log3.join(logB)
 
         for (let i = 6; i <= 10; i++) {
-          await logA.append('entryA' + i, { refs: logA.getPow2Refs(nextPointerAmount) })
+          await logA.append('entryA' + i, { nexts: logA.heads /*  logA.getPow2Refs(nextPointersAmount) */ })
         }
 
         await log.join(log3)
-        await log.append('entryC0', { refs: log.getPow2Refs(nextPointerAmount) })
+        await log.append('entryC0', { nexts: logB.heads /* log.getPow2Refs(nextPointersAmount) */ })
 
         await log.join(logA)
 
@@ -701,30 +700,30 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       it('retrieves partially joined log deterministically - multiple next pointers', async () => {
-        const nextPointersAmount = 64
-
+        /*         const nextPointersAmount = 64
+         */
         const logA = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'X' })
         const logB = new Log(ipfs, signKey2.publicKey, (data) => Keystore.sign(data, signKey3), { logId: 'X' })
         const log3 = new Log(ipfs, signKey3.publicKey, (data) => Keystore.sign(data, signKey4), { logId: 'X' })
         const log = new Log(ipfs, signKey4.publicKey, (data) => Keystore.sign(data, signKey2), { logId: 'X' })
 
         for (let i = 1; i <= 5; i++) {
-          await logA.append('entryA' + i, { refs: logA.getPow2Refs(nextPointersAmount) })
+          await logA.append('entryA' + i, { nexts: logA.heads  /* logA.getPow2Refs(nextPointersAmount) */ })
         }
 
         for (let i = 1; i <= 5; i++) {
-          await logB.append('entryB' + i, { refs: logB.getPow2Refs(nextPointersAmount) })
+          await logB.append('entryB' + i, { nexts: logB.heads /* logB.getPow2Refs(nextPointersAmount) */ })
         }
 
         await log3.join(logA)
         await log3.join(logB)
 
         for (let i = 6; i <= 10; i++) {
-          await logA.append('entryA' + i, { refs: logA.getPow2Refs(nextPointersAmount) })
+          await logA.append('entryA' + i, { nexts: logA.heads /*  logA.getPow2Refs(nextPointersAmount) */ })
         }
 
         await log.join(log3)
-        await log.append('entryC0', { refs: log.getPow2Refs(nextPointersAmount) })
+        await log.append('entryC0', { nexts: logB.heads /* log.getPow2Refs(nextPointersAmount) */ })
 
         await log.join(logA)
 
@@ -784,18 +783,19 @@ Object.keys(testAPIs).forEach((IPFS) => {
             const prev1 = last(items1)
             const prev2 = last(items2)
             const prev3 = last(items3)
-            const n1 = await Entry.create({ ipfs, publicKey: log1._publicKey, sign: (data) => Keystore.sign(data, signKey), logId: log1.id, data: 'entryA' + i + '-' + ts, next: [prev1], clock: log1.clock })
-            const n2 = await Entry.create({ ipfs, publicKey: log2._publicKey, sign: (data) => Keystore.sign(data, signKey2), logId: log2.id, data: 'entryB' + i + '-' + ts, next: [prev2, n1], clock: log2.clock })
-            const n3 = await Entry.create({ ipfs, publicKey: log3._publicKey, sign: (data) => Keystore.sign(data, signKey3), logId: log3.id, data: 'entryC' + i + '-' + ts, next: [prev3, n1, n2], clock: log3.clock })
-            log1.tickClock()
-            log2.tickClock()
-            log3.tickClock()
-            log1.mergeClock(log2.clock)
-            log1.mergeClock(log3.clock)
-            log2.mergeClock(log1.clock)
-            log2.mergeClock(log3.clock)
-            log3.mergeClock(log1.clock)
-            log3.mergeClock(log2.clock)
+            const n1 = await Entry.create({ ipfs, publicKey: log1._publicKey, sign: (data) => Keystore.sign(data, signKey), gidSeed: 'X', data: 'entryA' + i, next: prev1 ? [prev1] : undefined, clock: items1.length > 0 ? items1[items1.length - 1].clock.advance() : undefined })
+            const n2 = await Entry.create({ ipfs, publicKey: log2._publicKey, sign: (data) => Keystore.sign(data, signKey2), gidSeed: 'X', data: 'entryB' + i, next: prev2 ? [prev2, n1] : [n1], clock: items2.length > 0 ? items2[items2.length - 1].clock.advance() : undefined })
+            const n3 = await Entry.create({ ipfs, publicKey: log3._publicKey, sign: (data) => Keystore.sign(data, signKey3), gidSeed: 'X', data: 'entryC' + i, next: prev3 ? [prev3, n1, n2] : [n1, n2], clock: items3.length > 0 ? items3[items3.length - 1].clock.advance() : undefined })
+
+            /*      log1.tickClock()
+                 log2.tickClock()
+                 log3.tickClock()
+                 log1.mergeClock(log2.clock)
+                 log1.mergeClock(log3.clock)
+                 log2.mergeClock(log1.clock)
+                 log2.mergeClock(log3.clock)
+                 log3.mergeClock(log1.clock)
+                 log3.mergeClock(log2.clock) */
             items1.push(n1)
             items2.push(n2)
             items3.push(n3)

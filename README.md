@@ -28,25 +28,26 @@ Started originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS 
 ## 🚧 WIP 🚧  Use with caution
 Below are descriptions of some modules
 
-## Peerbit [./packages/Peerbit](Peerbit)
-The peer client for managing databases related messaging. 
+## [peerbit](./packages/peerbit)
+The peer client
 - Open/close stores (databases)
 - Exchange keys
-- Exchange replication info. Healthcheck/Redundancy diagnostics for shards. 
+- Exchange replication info. Healthcheck/Redundancy diagnostics. 
 - Leader and leader rotation routines for building functionality around leaders
 
-## BPayload [./packages/bpayload](bpayload)
-- A generic payload class which you can extend and build binary serialization routines to and from with (@dao-xyz/borsh-ts). For example; Documents that are stored in the  BDocstore [./packages/orbit-db-bdocstore](bdocstore) could/should extend this class so when you are writing or querying data, you can be sure that results with be succesfully be deserialized with BinaryPayload class.
-
-## query-protocol  [./packages/query-protocol](query-protocol)
+## [query-protocol](./packages/query-protocol)
 - Generalized query models/protocol for distributed queries
 
-## BDocstore [./packages/orbit-db-bdocstore](bdocstore)
+## [pbayload](./packages/bpayload)
+- A generic payload class which you can extend and build binary serialization routines to and from with (@dao-xyz/borsh-ts). For example; Documents that are stored in the [bdocstore](./packages/orbit-db-bdocstore) could/should extend this class so when you are writing or querying data, you can be sure that results with be succesfully be deserialized with BinaryPayload class.
+
+
+## [bdocstore](./packages/orbit-db-bdocstore)
 - Document store, but different from the "default" orbit-db implementation in the way serialization/deserialization is performed. In addition, this store supports querying. 
 
-## BFeedStore  [./packages/bfeedstore](bfeedstore)
+## [bfeedstore](./packages/bfeedstore)
 - Same as BDocstore but for "feedstore" (though docstore is superior in many aspects)
 
-## Dynamic Access Controller  [./packages/orbit-db-dynamic-access-controller](dca)
+## [dac](./packages/dynamic-access-controller)
 - "Chain agnostic" Access Controller
 

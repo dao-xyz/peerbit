@@ -63,17 +63,18 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       beforeAll(async () => {
 
-        log2 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: store._oplog.id })
+        log2 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: store._oplog._id })
         console.log(`writing ${logLength} entries to the log`)
+        let prev = undefined;
         for (let i = 0; i < logLength; i++) {
-          await log2.append(`entry${i}`, { refs: log2.getPow2Refs(123) })
+          prev = await log2.append(`entry${i}`, { nexts: prev ? [prev] : undefined })
         }
         expect(log2.values.length).toEqual(logLength)
       })
 
       it('replicates all entries in the log', (done) => {
         let replicated = 0
-        expect(store._oplog.id).toEqual(log2.id)
+        expect(store._oplog._id).toEqual(log2._id)
 
         expect(store._replicator._logs.length).toEqual(0)
         expect(store._replicator.tasksQueued).toEqual(0)
