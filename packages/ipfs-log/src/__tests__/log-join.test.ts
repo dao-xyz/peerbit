@@ -189,11 +189,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         expect(log1.length).toEqual(4)
         expect(log1.values.map((e) => e.payload.value)).toContainAllValues(expectedData)
-        expect(log1._peersByGid.size).toEqual(4);
+        expect(log1._peersByGid.size).toEqual(3);
         const peerId = await log1.getPeerId();
         const peerId2 = await log2.getPeerId();
 
-        expect(log1._peersByGid.get(b12.gid).links).toEqual(new Set([b1.gid, b2.gid]));
+        expect(log1._peersByGid.get(b12.gid).links).toEqual(new Set([[b1.gid, b2.gid].sort()[1]])); // link will contain the gid that is not reused (i.e. not the smallest one -> i.e. index 1)
         expect(log1._peersByGid.get(b12.gid).peers).toEqual(new Set([peerId, peerId2]));
         expect(log1._peersByGid.get(b1.gid).peers).toEqual(new Set([peerId, peerId2]));
         expect(log1._peersByGid.get(b2.gid).peers).toEqual(new Set([peerId, peerId2]));
@@ -390,15 +390,15 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log4.join(log1)
         await log4.join(log3)
         const d3 = await log4.append('helloD3')
-        expect(d3.gid).toEqual(await Entry.createGid([b2.gid, c2.gid, d2.gid].sort().join()));
+        expect(d3.gid).toEqual([b2.gid, c2.gid, d2.gid].sort()[0]);
         await log4.append('helloD4')
         await log1.join(log4)
         await log4.join(log1)
         const d5 = await log4.append('helloD5')
-        expect(d5.gid).toEqual(await Entry.createGid([d2.gid, b2.gid, c2.gid].sort().join()));
+        expect(d5.gid).toEqual([d2.gid, b2.gid, c2.gid].sort()[0]);
 
         const a5 = await log1.append('helloA5')
-        expect(a5.gid).toEqual(await Entry.createGid([d2.gid, b2.gid, c2.gid].sort().join()));
+        expect(a5.gid).toEqual([d2.gid, b2.gid, c2.gid].sort()[0]);
 
         await log4.join(log1)
         const d6 = await log4.append('helloD6')
@@ -430,20 +430,21 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       it('joins logs from 4 logs', async () => {
-        await log1.append('helloA1')
+        const a1 = await log1.append('helloA1')
         await log1.join(log2)
-        await log2.append('helloB1')
+        const b1 = await log2.append('helloB1')
         await log2.join(log1)
         const a2 = await log1.append('helloA2')
         const b2 = await log2.append('helloB2')
 
         await log1.join(log3)
-        expect(log1.heads[log1.heads.length - 1].gid).toEqual(await Entry.createGid('X'))
+        // Sometimes failes because of clock ids are random TODO Fix
+        expect(log1.heads[log1.heads.length - 1].gid).toEqual([b2.gid].sort()[0])
         expect(a2.clock.id).toEqual(new Ed25519PublicKeyData({ publicKey: signKey.publicKey }).bytes)
         expect(a2.clock.time).toEqual(1n)
 
         await log3.join(log1)
-        expect(log3.heads[log3.heads.length - 1].gid).toEqual(await Entry.createGid('X'))
+        expect(log3.heads[log3.heads.length - 1].gid).toEqual([b2.gid].sort()[0])
         /*   assert.deepStrictEqual(log3.clock.id, new Ed25519PublicKeyData({ publicKey: signKey3.publicKey }).bytes)
           expect(log3.clock.time).toEqual(2n) */
 

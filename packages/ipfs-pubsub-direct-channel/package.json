@@ -31,9 +31,12 @@
   "dependencies": {
     "@dao-xyz/borsh": "^3.2.5",
     "safe-buffer": "~5.2.1",
-    "@dao-xyz/io-utils": "^0.0.1"
+    "@dao-xyz/io-utils": "^0.0.1",
+    "@dao-xyz/ipfs-pubsub-peer-monitor": "^0.0.8",
+    "@dao-xyz/ipfs-pubsub-shared": "^0.0.1"
   },
   "devDependencies": {
+    "@dao-xyz/time": "^0.0.11",
     "@mapbox/node-pre-gyp": "^1.0.5",
     "assert": "^2.0.0",
     "eslint": "^7.32.0",

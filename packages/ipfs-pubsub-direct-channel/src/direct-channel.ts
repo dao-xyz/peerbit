@@ -2,7 +2,11 @@ import EventEmitter from 'events'
 import { getPeerID } from './get-peer-id';
 import { waitForPeers } from './wait-for-peers';
 import { v1 as PROTOCOL } from './protocol';
-
+import Logger from 'logplease';
+import { IPFS } from 'ipfs-core-types/src/'
+import { IpfsPubsubPeerMonitor } from '@dao-xyz/ipfs-pubsub-peer-monitor';
+const logger = Logger.create("direct-channel", { color: Logger.Colors.Yellow })
+Logger.setLogLevel('ERROR')
 export type PubSubMessage = {
   data: Buffer
   from: string
@@ -12,29 +16,35 @@ export type PubSubMessage = {
   signature: Uint8Array
   topicIDs: string[]
 };
-
+export type MessageFN = (message: {
+  data: Buffer
+  from: string
+  key: Buffer
+  receivedFrom: string
+  seqno: Buffer
+  signature: Uint8Array
+  topicIDs: string[]
+}) => void
 /**
  * Communication channel over Pubsub between two IPFS nodes
  */
 export class DirectChannel extends EventEmitter {
   _id: string;
-  _ipfs: any;
+  _ipfs: IPFS;
   _closed: boolean;
   _isClosed: () => boolean;
   _receiverID: string;
   _senderID: string;
   _peers: string[];
-  _messageHandler: (msg: { from: string, data: Buffer }) => void;
+  _handler: MessageFN;
+  _monitor: IpfsPubsubPeerMonitor;
 
-  constructor(ipfs, receiverID: string) {
+  constructor(ipfs: IPFS, receiverID: string) {
     super()
 
     // IPFS instance to use internally
     this._ipfs = ipfs
 
-    if (!ipfs.pubsub) {
-      throw new Error('This IPFS node does not support pubsub.')
-    }
 
     this._closed = false
     this._isClosed = () => this._closed
@@ -79,9 +89,9 @@ export class DirectChannel extends EventEmitter {
    * Send a message to the other peer
    * @param  {[Any]} message Payload
    */
-  async send(message: string | Buffer) {
+  async send(message: Uint8Array) {
     if (this._closed) return
-    await this._ipfs.pubsub.publish(this._id, Buffer.isBuffer(message) ? message : Buffer.from(message))
+    await this._ipfs.pubsub.publish(this._id, message)
   }
 
   /**
@@ -89,8 +99,8 @@ export class DirectChannel extends EventEmitter {
    */
   async close(): Promise<void> {
     this._closed = true
-    this.removeAllListeners('message')
-    return this._ipfs.pubsub.unsubscribe(this._id, this._messageHandler)
+    this._monitor?.stop();
+    return this._ipfs.pubsub.unsubscribe(this._id, this._handler)
   }
 
   async _setup() {
@@ -103,7 +113,7 @@ export class DirectChannel extends EventEmitter {
     this._id = DirectChannel.getTopic(this._peers);
 
     // Function to use to handle incoming messages
-    this._messageHandler = (message: {
+    /* this._messageHandler = (message: {
       data: Buffer
       from: string
       key: Buffer
@@ -121,18 +131,75 @@ export class DirectChannel extends EventEmitter {
       if (isValid) {
         this.emit('message', message)
       }
+    } */
+  }
+
+  async _openChannel(onMessageCallback: MessageFN, monitor?: {
+    onNewPeerCallback?: (channel: DirectChannel) => void,
+    onPeerLeaveCallback?: (channel: DirectChannel) => void,
+  }) {
+    this._closed = false
+    await this._setup()
+    this._handler = onMessageCallback;
+    await this._ipfs.pubsub.subscribe(this._id, onMessageCallback)
+    if (monitor?.onNewPeerCallback || monitor?.onPeerLeaveCallback) {
+      const topicMonitor = new IpfsPubsubPeerMonitor(this._ipfs.pubsub, this._id)
+      topicMonitor.on('join', (peer) => {
+        if (peer === this._receiverID) {
+          logger.debug(`Peer joined direct channel ${this.id}`)
+          logger.debug(peer)
+          if (monitor.onNewPeerCallback) {
+            monitor.onNewPeerCallback(this)
+          }
+        }
+
+      })
+      topicMonitor.on('leave', (peer) => {
+        if (peer === this._receiverID) {
+          logger.debug(`Peer ${peer} left ${this.id}`)
+          if (monitor.onPeerLeaveCallback) {
+            monitor.onPeerLeaveCallback(this)
+          }
+        }
+      })
+      topicMonitor.on('error', (e) => logger.error(e))
+      this._monitor = topicMonitor;
+    }
+  }
+  _messageHandler(messageCallback: (topic: string, data: Uint8Array, from: string) => void): MessageFN {
+    return (message: {
+      data: Buffer
+      from: string
+      key: Buffer
+      receivedFrom: string
+      seqno: Buffer
+      signature: Uint8Array
+      topic: string,
+      topicIDs: string[]
+    }) => {
+      if (message.from === this._receiverID) { // is valid
+        const topicId = message.topic ? message.topic : message.topicIDs[0]
+        let data: Uint8Array = message.data;
+        if (data.constructor !== Uint8Array) {
+          if (data instanceof Uint8Array) {
+            data = new Uint8Array(data);
+          }
+          else {
+            throw new Error("Unexpected data format")
+          }
+        }
+        messageCallback(topicId, data, message.from)
+      }
     }
   }
 
-  async _openChannel() {
-    this._closed = false
-    await this._setup()
-    await this._ipfs.pubsub.subscribe(this._id, this._messageHandler)
-  }
-
-  static async open(ipfs, receiverID: string) {
+  static async open(ipfs, receiverID: string, onMessageCallback: (topic: string, content: Uint8Array, from: string) => void, monitor?: {
+    onNewPeerCallback?: (channel: DirectChannel) => void,
+    onPeerLeaveCallback?: (channel: DirectChannel) => void,
+  }): Promise<DirectChannel> {
     const channel = new DirectChannel(ipfs, receiverID)
-    await channel._openChannel()
+    const handler = channel._messageHandler(onMessageCallback);
+    await channel._openChannel(handler, monitor)
     return channel
   }
 

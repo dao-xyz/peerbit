@@ -1,6 +1,6 @@
 import path from 'path'
 import { Address, IStoreOptions, ResourceOptions, Store, StoreLike, StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store'
-import { PubSub, Subscription } from '@dao-xyz/orbit-db-pubsub'
+/* import {  Subscription } from '@dao-xyz/ipfs-pubsub-shared' */
 import Logger from 'logplease'
 const logger = Logger.create('orbit-db')
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
@@ -12,12 +12,12 @@ import { exchangeHeads, ExchangeHeadsMessage, RequestHeadsMessage } from './exch
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { serialize, deserialize } from '@dao-xyz/borsh'
 import { Message } from './message'
-import { getOrCreateChannel } from './channel'
+import { SharedChannel, SharedIPFSChannel } from './channel'
 import { exchangeKeys, KeyResponseMessage, KeyAccessCondition, recieveKeys, requestAndWaitForKeys, RequestKeyMessage, RequestKeyCondition, RequestKeysByKey, RequestKeysByReplicationTopic } from './exchange-keys'
 import { DecryptedThing, EncryptedThing, MaybeEncrypted, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
 import { X25519PublicKey } from 'sodium-plus'
 import LRU from 'lru-cache';
-import { DirectChannel } from '../../ipfs-pubsub-direct-channel'
+import { DirectChannel } from '@dao-xyz/ipfs-pubsub-direct-channel'
 import { encryptionWithRequestKey, replicationTopicEncryptionWithRequestKey } from './encryption'
 import { Ed25519PublicKeyData, PublicKey } from '@dao-xyz/identity';
 import { MaybeSigned } from '@dao-xyz/identity';
@@ -26,6 +26,7 @@ import { createHash } from 'crypto'
 import isNode from 'is-node';
 import { delay, waitFor } from '@dao-xyz/time'
 import { LRUCounter } from './lru-counter'
+import { IpfsPubsubPeerMonitor } from '@dao-xyz/ipfs-pubsub-peer-monitor';
 let v8 = undefined;
 if (isNode) {
   v8 = require('v8');
@@ -46,12 +47,27 @@ export type CreateOptions = {
   AccessControllers?: any, cache?: Cache, keystore?: Keystore, peerId?: string, offline?: boolean, directory?: string, storage?: Storage, broker?: any, minReplicas?: number, heapsizeLimitForForks?: number, waitForKeysTimout?: number, canAccessKeys?: KeyAccessCondition, isTrusted?: (key: PublicKey, replicationTopic: string) => Promise<boolean>
 };
 export type CreateInstanceOptions = CreateOptions & { publicKey?: PublicKey, sign?: (data: Uint8Array) => Promise<Uint8Array>, id?: string };
+
+const groupByGid = (entries: Entry<any>[]) => {
+  const groupByGid: Map<string, Entry<any>[]> = new Map()
+  for (const head of entries) {
+    let arr = groupByGid.get(head.gid);
+    if (!arr) {
+      arr = [];
+      groupByGid.set(head.gid, arr)
+    }
+    arr.push(head);
+  }
+  return groupByGid;
+}
+
 export class OrbitDB {
 
   _ipfs: IPFSInstance;
-
-  _pubsub: PubSub;
-  _directConnections: Map<string, { channel: DirectChannel, dependencies: Set<string> }>;
+  /* 
+    _pubsub: PubSub; */
+  _directConnections: Map<string, SharedChannel<DirectChannel>>;
+  _replicationTopicSubscriptions: Map<string, SharedChannel<SharedIPFSChannel>>;
 
   publicKey: PublicKey;
   sign: (data: Uint8Array) => Promise<Uint8Array>;
@@ -64,7 +80,7 @@ export class OrbitDB {
   heapsizeLimitForForks: number = 1000 * 1000 * 1000;
   stores: { [topic: string]: { [address: string]: StoreLike<any> } };
 
-  _subscribeForReplication = new Set<string>();
+  _gidPeersHistory: Map<string, Set<string>> = new Map()
   _waitForKeysTimeout = 10000;
   _keysInflightMap: Map<string, Promise<any>> = new Map(); // TODO fix types
   _keyRequestsLRU: LRU<string, KeyWithMeta[] | null> = new LRU({ max: 100, ttl: 10000 });
@@ -89,11 +105,11 @@ export class OrbitDB {
     this.publicKey = publicKey
     this.sign = sign;
     this.id = options.peerId
-    this._pubsub = !options.offline
-      ? new (
-        options.broker ? options.broker : PubSub
-      )(this._ipfs, this.id)
-      : null
+    /*     this._pubsub = !options.offline
+          ? new (
+            options.broker ? options.broker : PubSub
+          )(this._ipfs, this.id)
+          : null */
     this.directory = options.directory || './orbitdb'
     this.storage = options.storage
     this._directConnections = new Map();
@@ -108,11 +124,12 @@ export class OrbitDB {
       this._waitForKeysTimeout = options.waitForKeysTimout;
     }
     this.heapsizeLimitForForks = options.heapsizeLimitForForks;
-    this._pubsub.subscribe(DirectChannel.getTopic([this.id]), this.id, this._onMessage.bind(this));
+    this._ipfs.pubsub.subscribe(DirectChannel.getTopic([this.id]), this._onMessage.bind(this));
     // AccessControllers module can be passed in to enable
     // testing with orbit-db-access-controller
     /*     AccessControllersModule = options.AccessControllers || AccessControllers
      */
+    this._replicationTopicSubscriptions = new Map();
   }
 
   get cache() { return this.caches[this.directory].cache }
@@ -137,7 +154,7 @@ export class OrbitDB {
     }
 
     const promise = new Promise<T[] | undefined>((resolve, reject) => {
-      const send = (message: Uint8Array) => this._pubsub.publish(replicationTopic, message)
+      const send = (message: Uint8Array) => this._ipfs.pubsub.publish(replicationTopic, message)
       requestAndWaitForKeys(condition, send, this.keystore, this.publicKey, this.sign, this._waitForKeysTimeout).then((results) => {
         if (results?.length > 0) {
           resolve(results);
@@ -284,21 +301,27 @@ export class OrbitDB {
 
   async disconnect() {
     // Close a direct connection and remove it from internal state
-    this._subscribeForReplication.clear();
 
-    await this._pubsub.unsubscribe(DirectChannel.getTopic([this.id]), this.id);
+    for (const [_topic, channel] of this._replicationTopicSubscriptions) {
+      await channel.close();
+    }
+
+
+    await this._ipfs.pubsub.unsubscribe(DirectChannel.getTopic([this.id]));
     const removeDirectConnect = e => {
-      this._directConnections.get(e)?.channel.close()
+      this._directConnections.get(e)?.close()
       this._directConnections.delete(e);
     }
 
     // Close all direct connections to peers
-    this._directConnections.forEach(removeDirectConnect)
+    this._directConnections.forEach(removeDirectConnect);
+
 
     // Disconnect from pubsub
-    if (this._pubsub) {
-      await this._pubsub.disconnect()
-    }
+    /*   if (this._pubsub) {
+        await this._ipfs.pubsub.disconnect()
+      } */
+
 
     // close keystore
     await this.keystore.close()
@@ -336,19 +359,19 @@ export class OrbitDB {
     if (!heads) {
       throw new Error("'heads' not defined")
     }
-    if (this._pubsub && heads.length > 0) {
+    if (this._ipfs.pubsub && heads.length > 0) {
       this.decryptedSignedThing(serialize(new ExchangeHeadsMessage({
         address,
         heads,
         replicationTopic: topic
       }))).then((thing) => {
-        this._pubsub.publish(topic, serialize(thing))
+        this._ipfs.pubsub.publish(topic, serialize(thing))
       })
     }
   }
 
   // Callback for receiving a message from the network
-  async _onMessage(onMessageTopic: string, data: Uint8Array, peer: string) {
+  async _onMessage(topic: string, data: Uint8Array, peer: string) {
     try {
 
       const maybeEncryptedMessage = deserialize(data, MaybeEncrypted) as MaybeEncrypted<MaybeSigned<Message>>
@@ -379,7 +402,13 @@ export class OrbitDB {
         if (!(await checkTrustedSender(replicationTopic))) {
           return;
         }
-        const stores = this.stores[replicationTopic]
+        let stores = this.stores[replicationTopic]
+        if (!stores) {
+          stores = {};
+          this.stores[replicationTopic] = stores
+        }
+        const isReplicating = this._replicationTopicSubscriptions.has(replicationTopic);
+
         if (heads && stores) {
 
           /*   let isLeaderResolver: () => Promise<{ leaders: string[], isLeader: boolean }> = async () => {
@@ -390,93 +419,156 @@ export class OrbitDB {
               }
             } */
 
+          /**
+           * Filter our heads that we should not care about
+           */
+          // We should sync heads if 
+          // - We already support next
+          // or 
+          // - Or we are a leader
+          // DO CHECKS here and dont pass isLeader check to sync methodd
+
+          const leaderCache: Map<string, string[]> = new Map();
           if (!stores[address]) {
             // open store if is leader
-            const leaderInfo = await isLeaderResolver();
-            if (leaderInfo.isLeader) {
-              // open store since it is not open
-              await this.open(Address.parse(address), { replicationTopic })
-              isLeaderResolver = () => Promise.resolve(leaderInfo);
-            }
-            else {
-              return; // is not leader, so we should not open the store
-            }
 
-          }
-          for (const [storeAddress, store] of Object.entries(stores)) {
-            if (store) {
-              if (storeAddress !== address) {
-                continue // this messages was intended for another store
+            for (const [gid, value] of groupByGid(heads)) {
+              // Check if root, if so, we check if we should open the store
+              const leaders = this.findLeaders(replicationTopic, isReplicating, gid, this.minReplicas); // Todo reuse calculations
+              leaderCache.set(gid, leaders);
+              if (leaders.find(x => x === this.id)) {
+                await this.open(Address.parse(address), { replicationTopic })
               }
-              if (heads.length > 0) {
-                /*    if (!store.replicate) {
-                     // if we are only to write, then only care about others clock
-                     for (const head of heads) {
-                       head.init({
-                         encoding: store.oplog._encoding,
-                         encryption: store.oplog._encryption
-                       })
-                       const clock = await head.getClock();
-                       store.oplog.mergeClock(clock)
-                     }
-                   }
-                   else {
-                     // Full sync
-                     
-   
-                   } */
-
-                await store.sync(heads, (gid: string) => Promise.resolve(this.findLeaders(replicationTopic, address, gid, this.minReplicas)));
-              }
-              store.events.emit('peer.exchanged', peer, address, heads)
+            }
+            if (!stores[address]) {
+              return;
             }
           }
+
+          const store = stores[address];
+          /*           heads.sort(store.oplog._sortFn); */
+          /*    const mergeable = [];
+             const newItems: Map<string, Entry<any>> = new Map(); */
+
+          const toMerge: Entry<any>[] = [];
+          for (const [gid, value] of groupByGid(heads)) {
+            const leaders = leaderCache.get(gid) || this.findLeaders(replicationTopic, isReplicating, gid, this.minReplicas);
+            const isLeader = leaders.find((l) => l === this.id);
+            if (!isLeader) {
+              continue;
+            }
+            value.forEach((head) => {
+              toMerge.push(head);
+            })
+
+          }
+          if (toMerge.length > 0) {
+            await store.sync(toMerge);
+            store.events.emit('peer.exchanged', peer, address, toMerge)
+
+          }
+          /*   for (const head of heads) {
+              if (store.oplog._peersByGid.has(head.gid) || head.next.find(n => store.oplog.has(n))) {
+                mergeable.push(head);
+              }
+              else { */
+          // if new root, then check if we should merge this
+
+          /*  if (head.next.length === 0) {
+             if (leaders.find((l) => l === this.id)) {
+               // is leader
+               newItems.set(head.hash, head);
+               store.oplog.setPeersByGid(head.gid, new Set(leaders))
+             }
+             else {
+               // Safely ignore item, since its a not root element, and we are not the leader
+             }
+           }
+           else {
+             // Unexpected if not new items contains nexts
+             head.next.forEach((next) => {
+               if (!newItems.has(next) && !store.oplog.has(next)) {
+                 logger.error("Failed to sync item with next elements that are unknown")
+               }
+             })
+             mergeable.push(head);
+             newItems.set(head.hash, head);
+           } */
+          /*  }
+         } */
+
+
+
+          /* 
+                    for (const [storeAddress, store] of Object.entries(stores)) {
+                      if (store) {
+                        if (storeAddress !== address) {
+                          continue // this messages was intended for another store
+                        }
+                        if (heads.length > 0) { */
+          /*    if (!store.replicate) {
+               // if we are only to write, then only care about others clock
+               for (const head of heads) {
+                 head.init({
+                   encoding: store.oplog._encoding,
+                   encryption: store.oplog._encryption
+                 })
+                 const clock = await head.getClock();
+                 store.oplog.mergeClock(clock)
+               }
+             }
+             else {
+               // Full sync
+               
+ 
+             } */
+
+          /*      }
+           
+             }
+           } */
         }
 
         logger.debug(`Received ${heads.length} heads for '${address}':\n`, JSON.stringify(heads.map(e => e.hash), null, 2))
       }
-      else if (msg instanceof RequestHeadsMessage) {
-        /**
-         * I have recieved a message urging me to share my heads
-         * so that another peer can clone my log and join with theirs
-         */
-        const { replicationTopic, address } = msg
-        if (!(await checkTrustedSender(replicationTopic))) {
-          return;
-        }
-
-        const stores = this.stores[replicationTopic];  // Send the heads if we have any
-        if (stores) {
-          for (const [storeAddress, store] of Object.entries(stores)) {
-            if (store.replicate) {
-              await exchangeHeads(this.id, async (peer, msg) => {
-                const channel = await this.getChannel(peer, replicationTopic);
-                return channel.send(Buffer.from(msg));
-              }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner());
-            }
-            else {
-              // Ignore for now (dont share headss)
-            }
-          }
-        }
-        logger.debug(`Received exchange heades request for topic: ${replicationTopic}, address: ${address}`)
-      }
-      else if (msg instanceof KeyResponseMessage) {
-        await recieveKeys(msg, (keys) => {
-          const keysToSave = keys.filter(key => key instanceof SignKeyWithMeta || key instanceof BoxKeyWithMeta);
-          return Promise.all(keysToSave.map((key) => this.keystore.saveKey(key)))
-        })
-        /*         
-        this._keysInFlightResolver?.();
-         */
-      }
+      /*  else if (msg instanceof RequestHeadsMessage) {
+          // I have recieved a message urging me to share my heads
+          // so that another peer can clone my log and join with theirs
+         const { replicationTopic, address } = msg
+         if (!(await checkTrustedSender(replicationTopic))) {
+           return;
+         }
+ 
+         const stores = this.stores[replicationTopic];  // Send the heads if we have any
+         if (stores) {
+           for (const [storeAddress, store] of Object.entries(stores)) {
+             if (store.replicate) {
+               await exchangeHeads(async (peer, msg) => {
+                 const channel = await this.getChannel(peer, replicationTopic);
+                 return channel.send(Buffer.from(msg));
+               }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner());
+             }
+             else {
+               // Ignore for now (dont share headss)
+             }
+           }
+         }
+         logger.debug(`Received exchange heades request for topic: ${replicationTopic}, address: ${address}`)
+       }
+       else if (msg instanceof KeyResponseMessage) {
+         await recieveKeys(msg, (keys) => {
+           const keysToSave = keys.filter(key => key instanceof SignKeyWithMeta || key instanceof BoxKeyWithMeta);
+           return Promise.all(keysToSave.map((key) => this.keystore.saveKey(key)))
+         })
+         
+       } */
       else if (msg instanceof RequestKeyMessage) {
 
         /**
          * Someone is requesting X25519 Secret keys for me so that they can open encrypted messages (and encrypt)
          * 
          */
-        const send = (message: Uint8Array) => this._pubsub.publish(DirectChannel.getTopic([peer]), message);
+        const send = (message: Uint8Array) => this._ipfs.pubsub.publish(DirectChannel.getTopic([peer]), message);
         const getKeysByGroup = <T extends KeyWithMeta>(group: string, type: WithType<T>) => this.keystore.getKeys(group, type);
         const getKeysByPublicKey = (key: Uint8Array) => this.keystore.getKeyById(key);
         await exchangeKeys(send, msg, sender, this.canAccessKeys, getKeysByPublicKey, getKeysByGroup, await this.getSigner(), this.encryption)
@@ -495,7 +587,7 @@ export class OrbitDB {
 
         // if supports store, return resp
         if (store) {
-          const send = this._directConnections.has(peer) ? (message) => this._directConnections.get(peer).channel.send(message) : (message) => this._pubsub.publish(msg.replicationTopic, message);
+          const send = this._directConnections.has(peer) ? (message) => this._directConnections.get(peer).channel.send(message) : (message) => this._ipfs.pubsub.publish(msg.replicationTopic, message);
           if (msg.heads) {
             let ownedHeads = msg.heads.filter(h => !!store.oplog._entryIndex.get(h));
             if (ownedHeads.length > 0) {
@@ -559,7 +651,7 @@ export class OrbitDB {
   }
 
 
-  async _onPeerConnected(replicationTopic: string, peer: string, subscription: Subscription) {
+  async _onPeerConnected(replicationTopic: string, peer: string) {
     logger.debug(`New peer '${peer}' connected to '${replicationTopic}'`)
 
     const stores = this.stores[replicationTopic];  // Send the heads if we have any
@@ -574,24 +666,111 @@ export class OrbitDB {
                return channel.send(Buffer.from(msg));
              }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner()); */
 
+
+          // Creation of this channel here, will make sure it is created even though a head might not be exchanged
+          await this.getChannel(peer, replicationTopic);
+
+          /*       await exchangeHeads(this.id, async (peer, msg) => {
+                  const channel = await this.getChannel(peer, replicationTopic);
+                  return channel.send(Buffer.from(msg));
+                }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner()); */
+
         }
         else {
-
+          const x = 123;
           // If replicate false, we are in write mode. Means we should exchange all heads 
-          /*   await exchangeHeads((message) => this._pubsub.publish(replicationTopic, message), store, () => false, await this.getSigner()) */
+          /*   await exchangeHeads((message) => this._ipfs.pubsub.publish(replicationTopic, message), store, () => false, await this.getSigner()) */
         }
 
-        await exchangeHeads(this.id, async (peer, msg) => {
-          const channel = await this.getChannel(peer, replicationTopic);
-          return channel.send(Buffer.from(msg));
-        }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner());
 
       }
     }
   }
 
-  async _onPeerDisconnected(replicationTopic: string, peer: string, subscription: Subscription) {
-    logger.debug(`Peer left '${peer}' topic '${replicationTopic}'`)
+  /* async _onPeerDisconnected(topic: string, peer: string) {
+
+    // get all topics for this peer
+    if (this._directConnections.has(peer)) {
+      for (const replicationTopic of this._directConnections.get(peer).dependencies) {
+        for (const store of Object.values(this.stores[replicationTopic])) {
+          const heads = await store.getHeads();
+          const groupedByGid = groupByGid(heads);
+          for (const [gid, entries] of groupedByGid) {
+            const peers = this.findReplicators(store, gid); // would not work if peer got disconnected?
+            const index = peers.findIndex(p => p === peer);
+            if (index !== -1) { //
+              // We lost an important peer,
+              if (peers[(index + 1) & peers.length] === this.id) {
+
+                // is should tell the others that we need one more replicator
+                //const
+              }
+            }
+          }
+        }
+      }
+    }
+
+  } */
+
+
+  /**
+   * When a peers join the networkk and want to participate the leaders for particular log subgraphs might change, hence some might start replicating, might some stop
+   * This method will go through my owned entries, and see whether I should share them with a new leader, and/or I should stop care about specific entries
+   * @param channel
+   */
+  async replicationReorganization(modifiedChannel: DirectChannel) {
+    for (const replicationTopic of this._directConnections.get(modifiedChannel.recieverId).dependencies) {
+      for (const store of Object.values(this.stores[replicationTopic])) {
+        const heads = await store.getHeads();
+        const groupedByGid = groupByGid(heads);
+        for (const [gid, entries] of groupedByGid) {
+          if (entries.length === 0) {
+            continue; // TODO maybe close store?
+          }
+          /*     const oldPeers = this.findReplicators(store, gid, [channel.recieverId]);
+              const oldPeersSet = new Set(this.findReplicators(store, gid, [channel.recieverId])); */
+          const oldPeersSet = this._gidPeersHistory.get(gid);
+          const newPeers = this.findReplicators(store.replicationTopic, store.replicate, gid);
+          /* const index = oldPeers.findIndex(p => p === channel.recieverId); */
+          for (const newPeer of newPeers) {
+            if (!oldPeersSet?.has(newPeer) && newPeer !== this.id) { // second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
+
+              // send heads to the new peer
+              const abc = 123
+              const channel = this._directConnections.get(newPeer).channel;
+              await exchangeHeads(async (message) => {
+                try {
+                  await channel.send(message);
+                } catch (error) {
+                  const x = 123;
+                }
+              }, store, await this.getSigner(), entries)
+            }
+          }
+
+          if (!newPeers.find(x => x === this.id)) {
+            // delete entries since we are not suppose to replicate this anymore
+            // TODO add delay? freeze time? (to ensure resiliance for bad io)
+            store.oplog.removeAll(entries);
+
+            // TODO if length === 0 maybe close store? 
+          }
+          this._gidPeersHistory.set(gid, new Set(newPeers))
+          /* if (index !== -1)  */{ //
+            // We lost an replicating peer,
+            // find diff
+
+            /* if (peers[(index + 1) & peers.length] === this.id) { */
+
+            // is should tell the others that we need one more replicator
+            //const
+            /* } */
+          }
+        }
+      }
+    }
+
   }
 
   async getSigner() {
@@ -608,20 +787,44 @@ export class OrbitDB {
 
     // TODO what happens if disconnect and connection to direct connection is happening
     // simultaneously
-    const getDirectConnection = (peer: string) => this._directConnections.get(peer)?.channel
-    const _onChannelCreated = (channel: DirectChannel) => {
-      this._directConnections.set(channel.recieverId, {
-        channel,
-        dependencies: new Set([fromTopic])
-      })
+    const getDirectConnection = (peer: string) => this._directConnections.get(peer)?._channel
+
+    let channel = getDirectConnection(peer)
+    if (!channel) {
+      try {
+        logger.debug(`Create a channel to ${peer}`)
+        channel = await DirectChannel.open(this._ipfs, peer, this._onMessage.bind(this), {
+          onPeerLeaveCallback: (channel) => {
+
+            // First modify direct connections
+            this._directConnections.get(channel.recieverId).close(channel.recieverId)
+
+            // Then perform replication reorg
+            this.replicationReorganization(channel);
+          },
+          onNewPeerCallback: (channel) => {
+
+            // First modify direct connections
+            if (!this._directConnections.has(channel.recieverId)) {
+              this._directConnections.set(channel.recieverId, new SharedChannel(channel, new Set([fromTopic])));
+            }
+            else {
+              this._directConnections.get(channel.recieverId).dependencies.add(fromTopic);
+            }
+
+            // Then perform replication reorg
+            this.replicationReorganization(channel);
+          }
+        })
+        logger.debug(`Channel created to ${peer}`)
+      } catch (e) {
+        logger.error(e)
+      }
     }
 
-    const handleMessage = (message: { data: Uint8Array }) => {
-      this._onMessage(undefined, message.data, peer)
-    }
-    let channel = await getOrCreateChannel(this._ipfs, peer, getDirectConnection, handleMessage, _onChannelCreated);
-
-    this._directConnections.get(channel.recieverId).dependencies.add(fromTopic);
+    // Wait for the direct channel to be fully connected
+    await channel.connect()
+    logger.debug(`Connected to ${peer}`)
 
     return channel;
   }
@@ -629,15 +832,13 @@ export class OrbitDB {
 
 
   // Callback when a database was closed
-  async _onClose(db: Store<any>) {
+  async _onClose(db: Store<any>) { // TODO Can we really close a this.stores, either we close all stores in the replication topic or none
     const address = db.address.toString()
     logger.debug(`Close ${address}`)
 
     // Unsubscribe from pubsub
-    let subscriptionId = undefined;
-    if (this._pubsub) {
-      subscriptionId = await this._pubsub.unsubscribe(db.replicationTopic, db.id)
-    }
+    await this._replicationTopicSubscriptions.get(db.replicationTopic).close(db.id);
+
 
     const dir = db && db.options.directory ? db.options.directory : this.directory
     const cache = this.caches[dir]
@@ -664,12 +865,10 @@ export class OrbitDB {
         }
    */
       for (const [key, connection] of this._directConnections) {
-        connection.dependencies.delete(db.replicationTopic);
-        if (connection.dependencies.size === 0) {
-          await connection?.channel.close();
-          this._directConnections.delete(key);
-        }
+        await connection.close(db.replicationTopic);
         // Delete connection from thing
+
+        // TODO what happens if we close a store, but not its direct connection? we should open direct connections and make it dependenct on the replciation topic
       }
     }
 
@@ -707,6 +906,9 @@ export class OrbitDB {
     if (!this.stores[replicationTopic]) {
       this.stores[replicationTopic] = {};
     }
+    if (this.stores[replicationTopic] === undefined) {
+      throw new Error("Unexpected behaviour")
+    }
 
     const storeAddress = store.address.toString();
     const existingStore = this.stores[replicationTopic][storeAddress];
@@ -720,7 +922,7 @@ export class OrbitDB {
       const job = await createEmitHealthCheckJob({
         stores: () => Object.keys(this.stores[replicationTopic]),
         subscribingForReplication: (topic) => this._subscribeForReplication.has(topic)
-      }, replicationTopic, (r, d) => this._pubsub.publish(r, d), () => this._ipfs.isOnline(), controller, await this.getSigner(), this.encryption);
+      }, replicationTopic, (r, d) => this._ipfs.pubsub.publish(r, d), () => this._ipfs.isOnline(), controller, await this.getSigner(), this.encryption);
       job();
       this._replicationTopicJobs.set(replicationTopic, {
         controller
@@ -739,6 +941,8 @@ export class OrbitDB {
     }
     return ret;
   }
+
+
   async getPeers(request: RequestReplicatorInfo, options: { ignoreCache?: boolean, waitForPeersTime?: number } = {}): Promise<PeerInfoWithMeta[]> {
     const serializedRequest = serialize(request);
     const hashKey = Buffer.from(serializedRequest).toString('base64');
@@ -751,7 +955,7 @@ export class OrbitDB {
 
     const promise = new Promise<PeerInfoWithMeta[]>(async (r, c) => {
       await this.subscribeToReplicationTopic(request.replicationTopic);
-      await requestPeerInfo(serializedRequest, request.replicationTopic, (topic, message) => this._pubsub.publish(topic, message), await this.getSigner())
+      await requestPeerInfo(serializedRequest, request.replicationTopic, (topic, message) => this._ipfs.pubsub.publish(topic, message), await this.getSigner())
       const directConnectionsOnTopic = this.getPeersOnTopic(request.replicationTopic).length
       const timeout = options?.waitForPeersTime || WAIT_FOR_PEERS_TIME * 3;
       if (directConnectionsOnTopic) {
@@ -794,7 +998,12 @@ export class OrbitDB {
     return !!(leaders.find(id => id === this.id))
   }
 
-  findLeaders(replicationTopic: string, address: string, slot: { toString(): string }, numberOfLeaders: number): string[] {
+  findReplicators(replicationTopic: string, replicating: boolean, gid: string/* , addPeers: string[] = [], removePeers: string[] = [] */): string[] {
+    return this.findLeaders(replicationTopic, replicating, gid, this.minReplicas);
+  }
+
+
+  findLeaders(replicationTopic: string, replicating: boolean, slot: { toString(): string }, numberOfLeaders: number/* , addPeers: string[] = [], removePeers: string[] = [] */): string[] {
     // Hash the time, and find the closest peer id to this hash
     const h = (h: string) => createHash('sha1').update(h).digest('hex');
     const slotHash = h(slot.toString())
@@ -805,25 +1014,28 @@ export class OrbitDB {
     //const peers: (OrbitDB | PeerInfoWithMeta)[] = await this.getPeers(new RequestReplicatorInfo({ address, replicationTopic }), options);
 
     const peerHashed: string[] = [];
-    const thisStore = this.stores[replicationTopic]?.[address];
 
-    if (!thisStore || !thisStore.replicate) {
-      return [];
-    }
 
     if (peers.length === 0) {
       return [this.id];
     }
 
-    peers.push(this.id)
+    // Add self
+    if (!replicating) {
+      peers.push(this.id)
+    }
+
+
+    // Hash step
     peers.forEach((peer) => {
-      const peerHash = h(peer);
+      const peerHash = h(peer + slotHash); // we do peer + slotHash because we want peerHashed.sort() to be different for each slot, (so that uniformly random pick leaders). You can see this as seed
       hashToPeer.set(peerHash, peer);
       peerHashed.push(peerHash);
     })
     numberOfLeaders = Math.min(numberOfLeaders, peerHashed.length);
-
     peerHashed.push(slotHash);
+
+    // Choice step
 
     // TODO make more efficient
     peerHashed.sort((a, b) => a.localeCompare(b)) // sort is needed, since "getPeers" order is not deterministic
@@ -871,48 +1083,58 @@ export class OrbitDB {
            }))
          })).sign(await this.getSigner()))
        }) /// TODO add encryption?
- 
-       await this._pubsub.publish(replicationTopic, serialize(signedThing));
+   
+       await this._ipfs.pubsub.publish(replicationTopic, serialize(signedThing));
        await waitForAsync(async () => await currentPeersCountFn() >= currentPeersCount + 1, {
          timeout: (options?.waitForPeersTime || 5000) * 2,
          delayInterval: 50
        })
        resolve();
- 
+   
      })
      await this._requestingReplicationPromise;
    } */
 
 
-  subscribeToReplicationTopic(topic: string, id: string = '_'): Promise<any> {
+  async subscribeToReplicationTopic(topic: string): Promise<void> {
     if (!this.stores[topic]) {
       this.stores[topic] = {};
     }
-    if (!this._pubsub._subscriptions[topic]) {
-      return this._pubsub.subscribe(topic, id, this._onMessage.bind(this), {
-        onNewPeerCallback: this._onPeerConnected.bind(this),
-        onPeerLeaveCallback: this._onPeerDisconnected.bind(this)
+    if (!this._replicationTopicSubscriptions.has(topic)) {
+      const topicMonitor = new IpfsPubsubPeerMonitor(this._ipfs.pubsub, topic)
+      topicMonitor.on('join', (peer) => {
+        logger.debug(`Peer joined ${topic}:`)
+        logger.debug(peer)
+        this._onPeerConnected(topic, peer);
       })
+      topicMonitor.on('leave', (peer) => {
+        logger.debug(`Peer ${peer} left ${topic}`)
+        /*    this._onPeerDisconnected(topic, peer); */
+      })
+      topicMonitor.on('error', (e) => logger.error(e))
+      this._replicationTopicSubscriptions.set(topic, new SharedChannel(await new SharedIPFSChannel(this._ipfs, this.id, topic, this._onMessage.bind(this), topicMonitor).start()));
+
     }
+
+    /* if (!this._ipfs.pubsub._subscriptions[topic]) {
+      
+    } */
 
   }
   hasSubscribedToReplicationTopic(topic: string): boolean {
-    return !!this._pubsub._subscriptions[topic]
+    return !!this.stores[topic]
   }
-  unsubscribeToReplicationTopic(topic: string, id: string = '_'): Promise<any> {
-    this._subscribeForReplication.delete(topic);
-    if (this._pubsub._subscriptions[topic]) {
-      return this._pubsub.unsubscribe(topic, id)
-    }
+  unsubscribeToReplicationTopic(topic: string, id: string = '_'): Promise<boolean> {
+    /* if (this._ipfs.pubsub._subscriptions[topic]) { */
+    return this._replicationTopicSubscriptions.get(topic).close(id);
+    /* } */
   }
 
   subscribeForReplicationStart(topic: string): Promise<any> {
-    this._subscribeForReplication.add(topic);
     return this.subscribeToReplicationTopic(topic);
   }
 
   subscribeForReplicationStop(topic: string): Promise<any> {
-    this._subscribeForReplication.delete(topic);
     return this.unsubscribeToReplicationTopic(topic);
 
   }
@@ -1084,24 +1306,23 @@ export class OrbitDB {
           onOpen: async (store) => {
 
             // ID of the store is the address as a string
-            await this.addStore(store)
 
             // Subscribe to pubsub to get updates from peers,
             // this is what hooks us into the message propagation layer
             // and the p2p network
-            if (this._pubsub) {
-              if (!this._pubsub._subscriptions[store.replicationTopic]) {
-                await this.subscribeToReplicationTopic(store.replicationTopic, store.id);
-              }
-              else {
-                const msg = new RequestHeadsMessage({
-                  address: store.address.toString(),
-                  replicationTopic: store.replicationTopic
-                });
-                await this._pubsub.publish(store.replicationTopic, serialize(await this.decryptedSignedThing(serialize(msg))));
+            /*   if (this._ipfs.pubsub.ls()) { */
+            await this.addStore(store)
+            await this.subscribeToReplicationTopic(store.replicationTopic);
 
-              }
-            }
+            /* else {
+              const msg = new RequestHeadsMessage({
+                address: store.address.toString(),
+                replicationTopic: store.replicationTopic
+              });
+              await this._ipfs.pubsub.publish(store.replicationTopic, serialize(await this.decryptedSignedThing(serialize(msg))));
+
+            } */
+            /*  } */
           }
         });
         resolve(store)

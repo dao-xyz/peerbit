@@ -96,14 +96,11 @@ Object.keys(testAPIs).forEach(API => {
             db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), { directory: dbPath2, replicate: false, encryption: undefined })
 
             await db1.add('hello');
-            await waitFor(() => db2._oplog.clock.time > 0);
+            /*   await waitFor(() => db2._oplog.clock.time > 0); */
             await db2.add('world');
 
             await waitFor(() => db1.oplog.values.length === 2);
-            expect(db1.oplog.values[0].clock.time).toEqual(1n)
-            expect(db1.oplog.values[0].payload.value.value).toEqual('hello')
-            expect(db1.oplog.values[1].clock.time).toEqual(2n)
-            expect(db1.oplog.values[1].payload.value.value).toEqual('world')
+            expect(db1.oplog.values.map(x => x.payload.value.value)).toContainAllValues(['hello', 'world'])
             expect(db2.oplog.values.length).toEqual(1);
 
         })
@@ -113,28 +110,23 @@ Object.keys(testAPIs).forEach(API => {
             await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
             const encryptionKey = await orbitdb1.keystore.createKey('encryption key', BoxKeyWithMeta, db1.replicationTopic);
             db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), { directory: dbPath2, replicate: false, encryption: orbitdb2.replicationTopicEncryption() })
-            let finished = false
 
             await db1.add('hello', {
                 reciever: {
                     clock: encryptionKey.publicKey,
-                    id: encryptionKey.publicKey,
                     publicKey: encryptionKey.publicKey,
                     payload: encryptionKey.publicKey,
                     signature: encryptionKey.publicKey
                 }
             });
 
-            await waitFor(() => db2._oplog.clock.time > 0);
+            /*   await waitFor(() => db2._oplog.clock.time > 0); */
 
             // Now the db2 will request sync clocks even though it does not replicate any content
             await db2.add('world');
 
             await waitFor(() => db1.oplog.values.length === 2);
-            expect(db1.oplog.values[0].clock.time).toEqual(1n)
-            expect(db1.oplog.values[0].payload.value.value).toEqual('hello')
-            expect(db1.oplog.values[1].clock.time).toEqual(2n)
-            expect(db1.oplog.values[1].payload.value.value).toEqual('world')
+            expect(db1.oplog.values.map(x => x.payload.value.value)).toContainAllValues(['hello', 'world'])
             expect(db2.oplog.values.length).toEqual(1);
         })
 
@@ -145,8 +137,8 @@ Object.keys(testAPIs).forEach(API => {
             await orbitdb2.subscribeForReplicationStart(replicationTopic);
             await orbitdb1.open(store, { replicate: false, replicationTopic }); // this would be a "light" client, write -only
 
-            const hello = await store.add('hello', { refs: [], nexts: [] });
-            const world = await store.add('world', { refs: [hello.hash] });
+            const hello = await store.add('hello', { nexts: [] });
+            const world = await store.add('world', { nexts: [hello] });
 
             expect(store.oplog.heads).toHaveLength(1);
 

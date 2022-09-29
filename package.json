@@ -26,7 +26,7 @@
             "packages/orbit-db-io",
             "packages/orbit-db-string",
             "packages/orbit-db-trust-web",
-            "packages/orbit-db-pubsub",
+            "packages/ipfs-pubsub-shared",
             "packages/time",
             "packages/identity",
             "packages/peer-test-utils",
@@ -51,8 +51,6 @@
     "scripts": {
         "clean": "lerna run clean",
         "build": "lerna run build",
-        "redeploy": "solana program deploy /Users/admin/git/solchat/src/program/target/deploy/dao-xyz.so --program-id /Users/admin/kkk/westake-3.json",
-        "start-with-test-validator": "start-server-and-test 'solana-test-validator --quiet' http://localhost:8899/health test:integration",
         "test": "node ./node_modules/.bin/jest test  -c jest.config.unit.cjs --runInBand --forceExit",
         "test:integration": "node ./node_modules/.bin/jest test -c jest.config.integration.cjs --runInBand --forceExit",
         "deploy": "yarn deploy:docs && yarn deploy:example",

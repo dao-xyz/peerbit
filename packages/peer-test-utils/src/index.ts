@@ -2,7 +2,6 @@ import fs from 'mz/fs';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { v4 as uuid } from 'uuid';
-import { PubSub } from '@dao-xyz/orbit-db-pubsub'
 import Ctl, { Controller } from 'ipfsd-ctl'
 import * as ipfs from 'ipfs';
 import { SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore';
@@ -24,8 +23,7 @@ export const createOrbitDBInstance = (node: IPFSInstance | any, id: string, publ
     {
         publicKey,
         sign,
-        directory: './orbit-db/' + id,
-        broker: PubSub
+        directory: './orbit-db/' + id
     })
 
 export interface Peer {

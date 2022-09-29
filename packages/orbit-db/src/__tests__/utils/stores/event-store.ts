@@ -49,8 +49,7 @@ export class EventStore<T> extends Store<Operation<T>> {
         onProgressCallback?: (any: any) => void;
         pin?: boolean;
         reciever?: EncryptionTemplateMaybeEncrypted,
-        refs?: string[];
-        nexts?: string[]
+        nexts?: Entry<any>[]
     }) {
         return this._addOperation({
             op: 'ADD',

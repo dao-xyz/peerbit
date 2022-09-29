@@ -108,10 +108,8 @@ Object.keys(testAPIs).forEach(API => {
       db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), { ...options, replicationTopic: replicationTopicFn })
       db3 = await orbitdb2.open(new EventStore<string>({ name: 'replication-tests-same-topic', accessController: new SimpleAccessController() }), { ...options, replicationTopic: replicationTopicFn })
 
-      expect(await orbitdb1._ipfs.pubsub.ls()).toStrictEqual([replicationTopic])
-      const ls2 = await orbitdb2._ipfs.pubsub.ls();
-      expect(ls2).toContain(replicationTopic)
-      expect(ls2).toHaveLength(2)
+      await waitFor(() => orbitdb1._directConnections.size === 1);
+      await waitFor(() => orbitdb2._directConnections.size === 1);
 
       let finished = false
       db1.add('hello')
@@ -210,13 +208,8 @@ Object.keys(testAPIs).forEach(API => {
         }, 100)
       })
 
-      await waitForAsync(async () => (await orbitdb1._ipfs.pubsub.ls()).length == 2)
-      expect(await orbitdb1._ipfs.pubsub.ls()).toContain(replicationTopic)
-      const ls2 = await orbitdb2._ipfs.pubsub.ls();
-      expect(ls2).toContain(replicationTopic)
-      expect(ls2).toHaveLength(2)
-
-      await delay(WAIT_FOR_PEERS_TIME);
+      await waitFor(() => orbitdb1._directConnections.size === 1);
+      await waitFor(() => orbitdb2._directConnections.size === 1);
 
       const peersFrom1 = await orbitdb1.getPeers(new RequestReplicatorInfo({
         address: db1.address,

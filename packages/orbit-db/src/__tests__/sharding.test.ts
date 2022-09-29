@@ -78,60 +78,60 @@ Object.keys(testAPIs).forEach(API => {
 
         })
 
-        it('can control forking behaviour with `allowForks`', async () => {
-
-            const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
-            await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
-            console.log('Peers connected')
-            const entryCount = 2
-
-            // Create the entries in the first database
-            let prev: Entry<any> = undefined;
-            for (let i = 0; i < entryCount; i++) {
-                prev = await db1.add('hello' + i, { refs: prev ? [prev.hash] : undefined });
-
-            }
-
-            // Open the second database
-            db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {})
-            await waitFor(() => db2.oplog.values.length === entryCount);
-
-            db2.allowForks = false; // Only allow "changes"
-
-            const _forkEntry = await db1.add('fork entry', { refs: [] }); // to reject since it is not referencing any prior logs
-            const lastEntry = await db1.add('chained entry', { refs: [prev.hash] });
-            await waitFor(() => db2.oplog.values.length > entryCount);
-            expect(db2.oplog.values.length).toEqual(3);
-            expect(db2.oplog.values[db2.oplog.values.length - 1].hash).toEqual(lastEntry.hash);
-        })
-
-        it('will reject forks when reaching memory limit', async () => {
-            const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
-            await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
-            console.log('Peers connected')
-
-
-
-            // Create the entries in the first database
-            let prev: Entry<any> = undefined;
-            const entryCount = 2
-
-
-            // Open the second database and set a heap size limit and assume this heap size limit is set in the opened store
-            // Now check whether this heap size limit makes `allowForks` false when we start to write alot of data
-            const heapsizeLimitForForks = 30000 + v8.getHeapStatistics().used_heap_size;
-            orbitdb3 = await OrbitDB.createInstance(ipfs2, { directory: dbPath3, heapsizeLimitForForks })
-            db2 = await orbitdb3.open<EventStore<string>>(await EventStore.load(orbitdb3._ipfs, db1.address), {})
-            expect(db2.options.resourceOptions.heapSizeLimit()).toEqual(heapsizeLimitForForks);
-            let i = 0;
-            expect(db2.allowForks);
-            while (db2.allowForks && i < 100) {
+        /*     it('can control forking behaviour with `allowForks`', async () => {
+    
+                const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
+                await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
+                console.log('Peers connected')
+                const entryCount = 2
+    
+                // Create the entries in the first database
+                let prev: Entry<any> = undefined;
                 for (let i = 0; i < entryCount; i++) {
                     prev = await db1.add('hello' + i, { refs: prev ? [prev.hash] : undefined });
+    
                 }
-                i++;
-            }
-            expect(!db2.allowForks);
-        })
+    
+                // Open the second database
+                db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {})
+                await waitFor(() => db2.oplog.values.length === entryCount);
+    
+                db2.allowForks = false; // Only allow "changes"
+    
+                const _forkEntry = await db1.add('fork entry', { refs: [] }); // to reject since it is not referencing any prior logs
+                const lastEntry = await db1.add('chained entry', { refs: [prev.hash] });
+                await waitFor(() => db2.oplog.values.length > entryCount);
+                expect(db2.oplog.values.length).toEqual(3);
+                expect(db2.oplog.values[db2.oplog.values.length - 1].hash).toEqual(lastEntry.hash);
+            }) */
+
+        /*   it('will reject forks when reaching memory limit', async () => {
+              const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
+              await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
+              console.log('Peers connected')
+  
+  
+  
+              // Create the entries in the first database
+              let prev: Entry<any> = undefined;
+              const entryCount = 2
+  
+  
+              // Open the second database and set a heap size limit and assume this heap size limit is set in the opened store
+              // Now check whether this heap size limit makes `allowForks` false when we start to write alot of data
+              const heapsizeLimitForForks = 30000 + v8.getHeapStatistics().used_heap_size;
+              orbitdb3 = await OrbitDB.createInstance(ipfs2, { directory: dbPath3, heapsizeLimitForForks })
+              db2 = await orbitdb3.open<EventStore<string>>(await EventStore.load(orbitdb3._ipfs, db1.address), {})
+              expect(db2.options.resourceOptions.heapSizeLimit()).toEqual(heapsizeLimitForForks);
+              let i = 0;
+              expect(db2.allowForks);
+              while (db2.allowForks && i < 100) {
+                  for (let i = 0; i < entryCount; i++) {
+                      prev = await db1.add('hello' + i, { refs: prev ? [prev.hash] : undefined });
+                  }
+                  i++;
+              }
+              expect(!db2.allowForks);
+          }) */
     })
 })

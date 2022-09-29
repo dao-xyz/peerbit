@@ -60,8 +60,8 @@ export class SimpleStoreAccessController extends AccessController<any> implement
         return address;
     }
 
-    sync(heads: Entry<Operation<string>>[], leaderResolver: () => Promise<{ isLeader: boolean, leaders: string[] }>): Promise<void> {
-        return this.store.sync(heads, leaderResolver)
+    sync(heads: Entry<Operation<string>>[]): Promise<void> {
+        return this.store.sync(heads)
     }
     get replicationTopic(): string {
         return Store.getReplicationTopic(this.address, this._options);
@@ -70,9 +70,9 @@ export class SimpleStoreAccessController extends AccessController<any> implement
         return this.store.events
     }
 
-    get allowForks(): boolean {
-        return this.store.allowForks;
-    }
+    /*   get allowForks(): boolean {
+          return this.store.allowForks;
+      } */
 
     get oplog(): Log<Operation<string>> {
         return this.store.oplog;

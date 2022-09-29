@@ -336,26 +336,28 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
 
     const nextHashes = [];
     let gid: string = undefined
+
     if (nexts?.length > 0) {
-      const gidSet: Set<string> = new Set();
-      nexts.forEach((next) => {
-        gidSet.add(next.gid);
-        gid = next.gid
-        if (!next.hash) {
-          throw new Error("All next entries needs to have hash defined");
+      // take min gid as our gid
+      nexts.forEach((n) => {
+
+        if (!n.hash) {
+          throw new Error("Expecting hash to be defined to next entries")
         }
-        nextHashes.push(next.hash);
+        nextHashes.push(n.hash);
+
+        if (!gid) {
+          gid = n.gid;
+          return;
+        }
+
+        if (n.gid < gid) {
+          gid = n.gid;
+        }
       })
-
-      if (gidSet.size === 1) {
-        gid = gidSet.values().next().value;
-      }
-      else {
-        gid = await Entry.createGid([...gidSet].sort().join());
-      }
     }
-    else {
 
+    else {
       gid = properties.gid || (await Entry.createGid(properties.gidSeed));
     }
 

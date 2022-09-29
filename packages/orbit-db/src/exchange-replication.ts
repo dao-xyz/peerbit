@@ -6,7 +6,6 @@ import { MaybeSigned, PublicKey } from '@dao-xyz/identity';
 import { DecryptedThing, PublicKeyEncryption } from '@dao-xyz/encryption-utils';
 import { Address, Store, StoreLike } from '@dao-xyz/orbit-db-store';
 import { OrbitDB } from './orbit-db';
-import { Entry } from '@dao-xyz/ipfs-log-entry';
 import { StringSetSerializer } from '@dao-xyz/io-utils';
 import { v4 as uuid } from 'uuid';
 let v8 = undefined;
@@ -31,10 +30,10 @@ export class ReplicatorInfo extends Message {
 
     @field({ type: option(StringSetSerializer) })
     heads?: Set<string> // address
-
-    @field({ type: 'bool' })
-    allowForks: boolean
-
+    /* 
+        @field({ type: 'bool' })
+        allowForks: boolean
+     */
     @field({ type: 'u64' })
     memoryLeft: bigint
 
@@ -43,8 +42,8 @@ export class ReplicatorInfo extends Message {
         replicationTopic: string,
         store: string,
         memoryLeft: bigint,
-        allowForks: boolean
-        heads?: Set<string> | string[]
+/*         allowForks: boolean
+ */        heads?: Set<string> | string[]
     }) {
         super();
         if (props) {
@@ -53,7 +52,7 @@ export class ReplicatorInfo extends Message {
             this.store = props.store;
             this.memoryLeft = props.memoryLeft;
             this.heads = Array.isArray(props.heads) ? new Set(props.heads) : this.heads;
-            this.allowForks = props.allowForks;
+            /*  this.allowForks = props.allowForks; */
         }
     }
 }
@@ -166,7 +165,7 @@ export const exchangePeerInfo = async (fromId: string, replicationTopic: string,
             fromId,
             replicationTopic,
             store: store.address.toString(),
-            allowForks: store.allowForks,
+            /*   allowForks: store.allowForks, */
             heads,
             memoryLeft: v8.getHeapStatistics().total_available_size //v8
         }))

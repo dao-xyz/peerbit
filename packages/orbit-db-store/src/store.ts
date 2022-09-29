@@ -25,10 +25,10 @@ import { Ed25519PublicKey } from 'sodium-plus';
 import { joinUint8Arrays } from '@dao-xyz/io-utils';
 import isNode from 'is-node';
 
-let v8 = undefined;
+/* let v8 = undefined;
 if (isNode) {
   v8 = require('v8');
-}
+} */
 export type Constructor<T> = new (...args: any[]) => T;
 
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
@@ -181,8 +181,8 @@ export class Store<T> implements StoreLike<T> {
   queuePath: string;
   manifestPath: string;
   initialized: boolean;
-  allowForks: boolean = true;
-
+  /*   allowForks: boolean = true;
+   */
 
   _ipfs: IPFS;
   _cache: Cache;
@@ -299,7 +299,14 @@ export class Store<T> implements StoreLike<T> {
       const onReplicationProgress = async (entry: Entry<T>) => {
         const previousProgress = this.replicationStatus.progress
         const previousMax = this.replicationStatus.max
-        this._recalculateReplicationStatus((await entry.clock).time)
+
+        // TODO below is not nice, do we really need replication status?
+        try {
+          this._recalculateReplicationStatus((await entry.getClock()).time)
+        } catch (error) {
+          this._recalculateReplicationStatus(0)
+        }
+
         if (this._oplog.length + 1 > this.replicationStatus.progress ||
           this.replicationStatus.progress > previousProgress ||
           this.replicationStatus.max > previousMax) {
@@ -417,24 +424,22 @@ export class Store<T> implements StoreLike<T> {
   }
 
 
-
-  checkMemory(): boolean {
-    if (!v8) {
-      return true; // Assume no memory checks
-    }
-    if (this.options.resourceOptions?.heapSizeLimit) {
-      const usedHeapSize = v8?.getHeapStatistics().used_heap_size;
-      if (usedHeapSize > this.options.resourceOptions.heapSizeLimit()) {
-        /*  if (!this.sharding) {
-           return true; // Assume no memory checks
-         }
-         this.sharding.onMemoryExceeded(this); */
-
-        return false;
+  /* 
+    checkMemory(): boolean {
+      if (!v8) {
+        return true; // Assume no memory checks
       }
+      if (this.options.resourceOptions?.heapSizeLimit) {
+        const usedHeapSize = v8?.getHeapStatistics().used_heap_size;
+        if (usedHeapSize > this.options.resourceOptions.heapSizeLimit()) {
+      
+  
+          return false;
+        }
+      }
+      return true;
     }
-    return true;
-  }
+     */
   async close() {
     if (!this.initialized) {
       return
@@ -547,7 +552,7 @@ export class Store<T> implements StoreLike<T> {
     this.events.emit('ready', this.address.toString(), this._oplog.heads)
   }
 
-  async sync(heads: Entry<T>[], findLeaders: (gid: string) => Promise<string[]>) {
+  async sync(heads: Entry<T>[]) {
 
 
     /* const mem = await this.checkMemory();
@@ -561,8 +566,8 @@ export class Store<T> implements StoreLike<T> {
       return
     }
 
-    this.allowForks = await this.checkMemory();
-
+    /*     this.allowForks = await this.checkMemory();
+     */
     /* let hasKnown = false;
     outer:
     for (const head of heads) {
@@ -584,41 +589,7 @@ export class Store<T> implements StoreLike<T> {
       }
     }
  */
-    heads.sort(this.oplog._sortFn);
-    const mergeable = [];
-    const newItems: Map<string, Entry<any>> = new Map();
-    for (const head of heads) {
-      if (this.oplog._peersByGid.has(head.gid)) {
-        mergeable.push(head);
-      }
-      else {
-        // if new root, then check if we should merge this
 
-        if (head.next.length === 0) {
-          const leaders = await findLeaders(head.gid);
-          const peerId = await this.oplog.getPeerId()
-          if (leaders.find((l) => l === peerId)) {
-            // is leader
-            newItems.set(head.hash, head);
-            this.oplog.setPeersByGid(head.gid, new Set(leaders))
-          }
-          else {
-            // Safely ignore item, since its a root element, and we are not the leader
-          }
-        }
-        else {
-          // Unexpected if not new items contains nexts
-          head.next.forEach((next) => {
-            if (!newItems.has(next) && !this.oplog.has(next)) {
-              throw new Error("Failed to sync item with next elements that are unknown")
-            }
-          })
-
-          newItems.set(head.hash, head);
-
-        }
-      }
-    }
 
 
     /* if (!hasKnown) {
@@ -628,12 +599,6 @@ export class Store<T> implements StoreLike<T> {
       }
     } */
 
-    // To simulate network latency, uncomment this line
-    // and comment out the rest of the function
-    // That way the object (received as head message from pubsub)
-    // doesn't get written to IPFS and so when the Replicator is fetching
-    // the log, it'll fetch it from the network instead from the disk.
-    // return this._replicator.load(heads)
 
     const handle = async (head: Entry<T>) => {
 
@@ -729,7 +694,7 @@ export class Store<T> implements StoreLike<T> {
     this.events.emit('load', this.address.toString()) // TODO emits inconsistent params, missing heads param
 
     const maxClock = (res: bigint, val: Entry<any>): bigint => bigIntMax(res, val.clock.time)
-    this.sync([], async () => Promise.resolve([await getPeerID(this._ipfs)]))
+    this.sync([])
 
     const queue = (await this._cache.get(this.queuePath)) as string[]
     if (queue?.length > 0) {
@@ -797,8 +762,13 @@ export class Store<T> implements StoreLike<T> {
         const entry = await this._oplog.append(data, {
           nexts: options.nexts, pin: options.pin, reciever: options.reciever
         })
-        entry
-        this._recalculateReplicationStatus((await entry.clock).time)
+
+        // TODO below is not nice, do we really need replication status?
+        try {
+          this._recalculateReplicationStatus((await entry.getClock()).time)
+        } catch (error) {
+          this._recalculateReplicationStatus(0)
+        }
         await this._cache.setBinary(this.localHeadsPath, new HeadsCache({ heads: [entry] }))
         await this._updateIndex([entry])
 

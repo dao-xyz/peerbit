@@ -498,7 +498,7 @@ export class Log<T> extends GSet {
     let keepHeads: Entry<T>[] = options.nexts ? currentHeads.filter(h => !nexts.find(e => e.hash === (h.hash))) : []; // TODO improve performance
 
     // Calculate max time for log/graph
-    const newTime = nexts?.length > 0 ? this.getHeadsFromHashes(nexts.map(n => n.hash)).reduce(maxClockTimeReducer, 0n) + 1n : 0n;
+    const newTime = nexts?.length > 0 ? this.heads.concat(nexts).reduce(maxClockTimeReducer, 0n) + 1n : 0n; // this.getHeadsFromHashes(nexts.map(n => n.hash)).reduce(maxClockTimeReducer, 0n)
     const clock = new Clock(new Uint8Array(serialize(this._publicKey)), newTime)
 
 
@@ -758,14 +758,11 @@ export class Log<T> extends GSet {
 
     const peerId = await this.getPeerId();
     log._peersByGid.forEach((map, gid) => {
-      const current = this._peersByGid.get(gid);
+      let current = this._peersByGid.get(gid);
       if (!current) {
-        this._peersByGid.set(gid, map)
-        map.peers.add(peerId);
-        map.links.forEach((link) => {
-          if (!this._peersByGid.has(link)) {
-            throw new Error("Unexpected")
-          }
+        this._peersByGid.set(gid, {
+          peers: new Set([...map.peers, peerId]),
+          links: new Set([...map.links])
         })
       }
       else {
@@ -774,9 +771,19 @@ export class Log<T> extends GSet {
         })
         map.links.forEach((link) => {
           current.links.add(link)
+          this._peersByGid.set(link, log._peersByGid.get(link));
         })
       }
     })
+
+    log._peersByGid.forEach((map, gid) => {
+      map.links.forEach((link) => {
+        if (!this._peersByGid.has(link)) {
+          throw new Error("Unexpected")
+        }
+      })
+    });
+
 
 
     if (size > -1) {
@@ -850,6 +857,24 @@ export class Log<T> extends GSet {
     this._entryIndex = null
     this._entryIndex = new EntryIndex(tmp.reduce(uniqueEntriesReducer, {}))
     this._headsIndex = Log.findHeads(tmp).reduce(uniqueEntriesReducer, {})
+    this._length = this._entryIndex.length
+  }
+
+  removeAll(heads: Entry<any>[]) {
+    let stack: Entry<any>[] = [...heads];
+    while (stack.length > 0) {
+      const next = stack.shift();
+      this._entryIndex.delete(next.hash);
+      delete this._nextsIndexToHead[next.hash]
+      delete this._headsIndex[next.hash]
+      delete this._nextsIndex[next.hash]
+      next.next.forEach((n) => {
+        const value = this.get(n);
+        if (value) {
+          stack.push(value)
+        }
+      })
+    }
     this._length = this._entryIndex.length
   }
 

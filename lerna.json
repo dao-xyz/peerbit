@@ -1,6 +1,5 @@
 {
     "packages": [
-        "packages/shard",
         "packages/io-utils",
         "packages/encryption-utils",
         "packages/ipfs-pubsub-direct-channel",
@@ -20,7 +19,7 @@
         "packages/orbit-db-io",
         "packages/orbit-db-string",
         "packages/orbit-db-trust-web",
-        "packages/orbit-db-pubsub",
+        "packages/ipfs-pubsub-shared",
         "packages/time",
         "packages/identity",
         "packages/peer-test-utils",

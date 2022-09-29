@@ -23,7 +23,7 @@ export interface StoreLike<T> extends Addressable, Initiable<T> {
         pin?: boolean;
         timeout?: number;
     })
-    sync(heads: Entry<T>[], findLeaders: (gid: string) => Promise<string[]>): Promise<void>
+    sync(heads: Entry<T>[]): Promise<void>
 
     get replicationTopic(): string;
     get events(): EventEmitter;
@@ -32,7 +32,7 @@ export interface StoreLike<T> extends Addressable, Initiable<T> {
     get cache(): Cache
     get id(): string;
     get replicate(): boolean;
-    get allowForks(): boolean;
+    /*   get allowForks(): boolean; */
     getHeads(): Promise<Entry<T>[]>;
 
 }

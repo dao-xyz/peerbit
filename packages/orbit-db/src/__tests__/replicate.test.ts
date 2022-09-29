@@ -3,6 +3,8 @@ const assert = require('assert')
 const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
 import { Entry } from '@dao-xyz/ipfs-log-entry'
+import { DirectChannel } from '@dao-xyz/ipfs-pubsub-direct-channel'
+import { delay, waitFor } from '@dao-xyz/time'
 
 import { OrbitDB } from '../orbit-db'
 import { SimpleAccessController } from './utils/access'
@@ -91,8 +93,10 @@ Object.keys(testAPIs).forEach(API => {
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
       // Set 'sync' flag on. It'll prevent creating a new local database and rather
       // fetch the database from the network
-      options = Object.assign({}, options, { directory: dbPath2, sync: true })
+      options = Object.assign({}, options, { directory: dbPath2 })
       db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), options)
+      await waitFor(() => orbitdb1._directConnections.size === 1);
+      await waitFor(() => orbitdb2._directConnections.size === 1);
 
       let finished = false
 
@@ -115,7 +119,7 @@ Object.keys(testAPIs).forEach(API => {
             const db1Entries: Entry<Operation<string>>[] = db1.iterator({ limit: -1 }).collect()
             try {
               expect(db1Entries.length).toEqual(1)
-              expect(db1Entries[0].peers).toContainValues([orbitdb1.id, orbitdb2.id]);
+              expect(orbitdb1.findReplicators(db1.replicationTopic, true, db1Entries[0].gid)).toContainValues([orbitdb1.id, orbitdb2.id]);
               expect(db1Entries[0].payload.value.value).toEqual(value)
             } catch (error) {
               reject(error)
@@ -124,7 +128,7 @@ Object.keys(testAPIs).forEach(API => {
             const db2Entries: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
             try {
               expect(db2Entries.length).toEqual(1)
-              expect(db2Entries[0].peers).toContainValues([orbitdb1.id, orbitdb2.id]);
+              expect(orbitdb2.findReplicators(db2.replicationTopic, true, db2Entries[0].gid)).toContainValues([orbitdb1.id, orbitdb2.id]);
               expect(db2Entries[0].payload.value.value).toEqual(value)
             } catch (error) {
               reject(error)
@@ -140,8 +144,11 @@ Object.keys(testAPIs).forEach(API => {
       console.log("Waiting for peers to connect")
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
 
-      options = Object.assign({}, options, { directory: dbPath2, sync: true })
+      options = Object.assign({}, options, { directory: dbPath2 })
       db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), options)
+
+      /*  await waitFor(() => orbitdb1._directConnections.size === 1);
+       await waitFor(() => orbitdb2._directConnections.size === 1); */
 
       let finished = false
       const entryCount = 100
@@ -410,8 +417,8 @@ Object.keys(testAPIs).forEach(API => {
               expect(values1.length).toEqual(entryCount * 2)
               expect(values2.length).toEqual(entryCount * 2)
               // Verify replication status
-              expect(db2.replicationStatus.progress).toEqual(entryCount * 2)
-              expect(db2.replicationStatus.max).toEqual(entryCount * 2)
+              expect(db2.replicationStatus.progress).toEqual(BigInt(entryCount * 2))
+              expect(db2.replicationStatus.max).toEqual(BigInt(entryCount * 2))
               // Verify replicator state
               expect(db2._replicator.tasksRunning).toEqual(0)
               expect(db2._replicator.tasksQueued).toEqual(0)
