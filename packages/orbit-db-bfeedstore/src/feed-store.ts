@@ -1,13 +1,8 @@
-import { Store } from '@dao-xyz/orbit-db-store'
+import { AccessController, Store } from '@dao-xyz/orbit-db-store'
 import { FeedIndex } from './feed-index'
-import { IPFS as IPFSInstance } from 'ipfs';
-import { Identity } from '@dao-xyz/orbit-db-identity-provider';
-import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
+import { field, serialize } from '@dao-xyz/borsh';
 import bs58 from 'bs58';
-import { OrbitDB } from '@dao-xyz/orbit-db';
 export const BINARY_FEED_STORE_TYPE = 'bfeed_store';
-import { BStoreOptions } from '@dao-xyz/orbit-db-bstores'
-import { IQueryStoreOptions } from '@dao-xyz/orbit-db-query-store'
 
 export interface Operation<T> {
   op: string
@@ -15,51 +10,16 @@ export interface Operation<T> {
   value: string
 }
 
-export type IBinaryFeedStoreOptions<T> = IQueryStoreOptions<Operation<T>, T, FeedIndex<T>> & { clazz: Constructor<T> };
 
-@variant([0, 2])
-export class BinaryFeedStoreOptions<T> extends BStoreOptions<BinaryFeedStore<T>> {
-
+export class BinaryFeedStore<T> extends Store<Operation<T>> {
 
   @field({ type: 'string' })
   objectType: string;
 
-  constructor(opts: {
-    objectType: string;
-
-  }) {
-    super();
-    if (opts) {
-      Object.assign(this, opts);
-    }
-  }
-  async newStore(address: string, orbitDB: OrbitDB, options: IBinaryFeedStoreOptions<T>): Promise<BinaryFeedStore<T>> {
-    let clazz = options.typeMap[this.objectType];
-    if (!clazz) {
-      throw new Error(`Undefined type: ${this.objectType}`);
-    }
-
-    return orbitDB.open(address, { ...options, ...{ clazz, create: true, type: BINARY_FEED_STORE_TYPE } } as any)
-  }
-
-  get identifier(): string {
-    return BINARY_FEED_STORE_TYPE
-  }
-
-}
-
-
-const defaultOptions = <T>(options: IBinaryFeedStoreOptions<T>): any => {
-  if (!options.Index) Object.assign(options, { Index: FeedIndex })
-  return options;
-}
-export class BinaryFeedStore<T> extends Store<Operation<T>, T, FeedIndex<T>, IBinaryFeedStoreOptions<T>> {
-
-  _type: string = undefined;
-  constructor(ipfs: IPFSInstance, id: Identity, dbname: string, options: IBinaryFeedStoreOptions<T>) {
-    super(ipfs, id, dbname, defaultOptions(options))
-    this._type = BINARY_FEED_STORE_TYPE;
-    this._index.init(options.clazz);
+  _index: FeedIndex<T>;
+  constructor(properties: { accessController: AccessController<Operation<T>> }) {
+    super(properties)
+    this._index = new FeedIndex();
 
   }
 
@@ -145,6 +105,11 @@ export class BinaryFeedStore<T> extends Store<Operation<T>, T, FeedIndex<T>, IBi
   public get size(): number {
     return Object.keys(this._index._index).length
   }
+
+  clone(newName: string): BinaryFeedStore<T> {
+    return new BinaryFeedStore({
+      accessController: this.accessController.clone(newName)
+    })
+  }
 }
 
-OrbitDB.addDatabaseType(BINARY_FEED_STORE_TYPE, BinaryFeedStore as any)

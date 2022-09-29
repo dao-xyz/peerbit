@@ -1,13 +1,14 @@
 
 const assert = require('assert')
-const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
 import { Entry, LamportClock } from '@dao-xyz/ipfs-log-entry'
-import { IPFSAccessController } from '@dao-xyz/orbit-db-access-controllers'
 import { BoxKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { Store } from '@dao-xyz/orbit-db-store'
 import { delay, waitFor } from '@dao-xyz/time'
+
 import { OrbitDB } from '../orbit-db'
-import { EventStore, EVENT_STORE_TYPE, Operation } from './utils/stores/event-store'
+import { SimpleAccessController } from './utils/access'
+import { EventStore, Operation } from './utils/stores/event-store'
 
 // Include test utilities
 const {
@@ -24,6 +25,7 @@ const orbitdbPath2 = './orbitdb/tests/replication/2'
 const dbPath1 = './orbitdb/tests/replication/1/db1'
 const dbPath2 = './orbitdb/tests/replication/2/db2'
 
+
 Object.keys(testAPIs).forEach(API => {
     describe(`orbit-db - Replication (${API})`, function () {
         jest.setTimeout(config.timeout * 2)
@@ -32,7 +34,6 @@ Object.keys(testAPIs).forEach(API => {
         let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore<string>, db2: EventStore<string>
 
         let timer
-        let options
 
         beforeAll(async () => {
             ipfsd1 = await startIpfs(API, config.daemon1)
@@ -62,30 +63,19 @@ Object.keys(testAPIs).forEach(API => {
             rmrf.sync(dbPath2)
 
             orbitdb1 = await OrbitDB.createInstance(ipfs1, {
-                directory: orbitdbPath1, canAccessKeys: (requester, _keyToAccess) => {
-                    const comp = Buffer.compare(requester.getBuffer(), orbitdb2.identity.publicKey.getBuffer());
-                    return Promise.resolve(comp === 0) // allow orbitdb1 to share keys with orbitdb2
+                directory: orbitdbPath1, canAccessKeys: async (requester, _keyToAccess) => {
+                    return requester.equals(orbitdb2.publicKey); // allow orbitdb1 to share keys with orbitdb2
                 }, waitForKeysTimout: 1000
             })
             orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2 })
-
-            options = {
-                // Set write access for both clients
-                accessController: {
-                    write: [
-                        orbitdb1.identity.id,
-                        orbitdb2.identity.id,
-                    ]
-                }
-            }
-
-            options = Object.assign({}, options, { directory: dbPath1, encryption: orbitdb1.replicationTopicEncryption() })
-            db1 = await orbitdb1.create('replication-tests', EVENT_STORE_TYPE, options)
+            db1 = await orbitdb1.open(new EventStore<string>({
+                name: 'abc',
+                accessController: new SimpleAccessController()
+            }), { directory: dbPath1, encryption: orbitdb1.replicationTopicEncryption() })
         })
 
         afterEach(async () => {
             clearInterval(timer)
-            options = {}
 
             if (db1)
                 await db1.drop()
@@ -100,113 +90,66 @@ Object.keys(testAPIs).forEach(API => {
                 await orbitdb2.stop()
         })
 
-        it('replicates database of 1 entry', async () => {
+        it('write 1 entry replicate false', async () => {
             console.log("Waiting for peers to connect")
             await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
-            options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true, replicate: false, encryption: undefined })
-            db2 = await orbitdb2.open(db1.address.toString(), options)
-            let finished = false
+            db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), { directory: dbPath2, replicate: false, encryption: undefined })
+
             await db1.add('hello');
-            await waitFor(() => db2._oplog.clock.time > 0);
+            /*   await waitFor(() => db2._oplog.clock.time > 0); */
             await db2.add('world');
 
-            await new Promise((resolve, reject) => {
-                let replicatedEventCount = 0
-                db1.events.on('replicated', (address, length) => {
-                    replicatedEventCount++
-                    const all = db1.iterator({ limit: -1 }).collect().length
-                    finished = (all === 2) // the thing I added + the thing db2 added
-                })
+            await waitFor(() => db1.oplog.values.length === 2);
+            expect(db1.oplog.values.map(x => x.payload.value.value)).toContainAllValues(['hello', 'world'])
+            expect(db2.oplog.values.length).toEqual(1);
 
-                db2.events.on('replicated', (address, length) => {
-                    reject(); // should not happen since db2 is write only (no reads from peers)
-                })
-
-                timer = setInterval(() => {
-                    if (finished) {
-                        clearInterval(timer)
-                        const entries1: Entry<Operation<string>>[] = db1.iterator({ limit: -1 }).collect()
-                        try {
-                            assert.equal(entries1.length, 2)
-                            assert.equal(entries1[0].clock.time, 1n)
-                            assert.equal(entries1[0].payload.value.value, 'hello')
-                            assert.equal(entries1[1].clock.time, 2n)
-                            assert.equal(entries1[1].payload.value.value, 'world')
-                            assert.equal(replicatedEventCount, 1)
-                        } catch (error) {
-                            reject(error)
-                        }
-
-                        const entries2: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
-                        try {
-                            assert.equal(entries2.length, 1)
-                        } catch (error) {
-                            reject(error)
-                        }
-                        resolve(true)
-                    }
-                }, 100)
-            })
         })
 
-        it('replicates database of 1 entry encrypted', async () => {
+        it('encrypted clock sync write 1 entry replicate false', async () => {
             console.log("Waiting for peers to connect")
             await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
             const encryptionKey = await orbitdb1.keystore.createKey('encryption key', BoxKeyWithMeta, db1.replicationTopic);
-            options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, directory: dbPath2, sync: true, replicate: false, encryption: orbitdb2.replicationTopicEncryption() })
-            db2 = await orbitdb2.open(db1.address.toString(), options)
-            let finished = false
+            db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), { directory: dbPath2, replicate: false, encryption: orbitdb2.replicationTopicEncryption() })
+
             await db1.add('hello', {
                 reciever: {
                     clock: encryptionKey.publicKey,
-                    id: encryptionKey.publicKey,
-                    identity: encryptionKey.publicKey,
+                    publicKey: encryptionKey.publicKey,
                     payload: encryptionKey.publicKey,
                     signature: encryptionKey.publicKey
                 }
             });
-            await waitFor(() => db2._oplog.clock.time > 0);
+
+            /*   await waitFor(() => db2._oplog.clock.time > 0); */
 
             // Now the db2 will request sync clocks even though it does not replicate any content
             await db2.add('world');
 
-            await new Promise((resolve, reject) => {
-                let replicatedEventCount = 0
-                db1.events.on('replicated', (address, length) => {
-                    replicatedEventCount++
-                    const all = db1.iterator({ limit: -1 }).collect().length
-                    finished = (all === 2) // the thing I added + the thing db2 added
-                })
+            await waitFor(() => db1.oplog.values.length === 2);
+            expect(db1.oplog.values.map(x => x.payload.value.value)).toContainAllValues(['hello', 'world'])
+            expect(db2.oplog.values.length).toEqual(1);
+        })
 
-                db2.events.on('replicated', (address, length) => {
-                    reject(); // should not happen since db2 is write only (no reads from peers)
-                })
+        it('will open store on exchange heads message', async () => {
 
-                timer = setInterval(() => {
-                    if (finished) {
-                        clearInterval(timer)
-                        const entries1: Entry<Operation<string>>[] = db1.iterator({ limit: -1 }).collect()
-                        try {
-                            assert.equal(entries1.length, 2)
-                            assert.equal(entries1[0].clock.time, 1n)
-                            assert.equal(entries1[0].payload.value.value, 'hello')
-                            assert.equal(entries1[1].clock.time, 2n)
-                            assert.equal(entries1[1].payload.value.value, 'world')
-                            assert.equal(replicatedEventCount, 1)
-                        } catch (error) {
-                            reject(error)
-                        }
+            const replicationTopic = 'x';
+            const store = new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() });
+            await orbitdb2.subscribeForReplicationStart(replicationTopic);
+            await orbitdb1.open(store, { replicate: false, replicationTopic }); // this would be a "light" client, write -only
 
-                        const entries2: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
-                        try {
-                            assert.equal(entries2.length, 1)
-                        } catch (error) {
-                            reject(error)
-                        }
-                        resolve(true)
-                    }
-                }, 100)
-            })
+            const hello = await store.add('hello', { nexts: [] });
+            const world = await store.add('world', { nexts: [hello] });
+
+            expect(store.oplog.heads).toHaveLength(1);
+
+            await waitFor(() => Object.values(orbitdb2.stores[replicationTopic]).length > 0, { timeout: 20 * 1000, delayInterval: 50 });
+
+            const replicatedStore = Object.values(orbitdb2.stores[replicationTopic])[0];
+            await waitFor(() => replicatedStore.oplog.values.length == 2);
+            expect(replicatedStore).toBeDefined();
+            expect(replicatedStore.oplog.heads).toHaveLength(1);
+            expect(replicatedStore.oplog.heads[0].hash).toEqual(world.hash);
+
         })
     })
 })

@@ -1,7 +1,5 @@
 const assert = require('assert')
 const rmrf = require('rimraf')
-import { Identity } from "@dao-xyz/orbit-db-identity-provider"
-import { Keystore } from "@dao-xyz/orbit-db-keystore"
 import { OrbitDB } from "../orbit-db"
 
 // Include test utilities
@@ -19,8 +17,7 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Offline mode (${API})`, function () {
     jest.setTimeout(config.timeout)
 
-    let ipfsd1, ipfsd2, ipfs1, ipfs2, orbitdb, db, keystore: Keystore
-    let localDataPath
+    let ipfsd1, ipfsd2, ipfs1, ipfs2, orbitdb
 
     beforeAll(async () => {
       rmrf.sync(dbPath1)
@@ -48,7 +45,7 @@ Object.keys(testAPIs).forEach(API => {
 
     it('starts in offline mode', async () => {
       orbitdb = await OrbitDB.createInstance(ipfs1, { id: 'A', offline: true, directory: dbPath1 })
-      assert.equal(orbitdb._pubsub, null)
+      expect(orbitdb._pubsub).toEqual(null)
       await orbitdb.stop()
     })
 
@@ -71,7 +68,7 @@ Object.keys(testAPIs).forEach(API => {
       } catch (e) {
         err = e.message
       }
-      assert.equal(err, 'Offline mode requires passing an `id` in the options')
+      expect(err).toEqual('Offline mode requires passing an `id` in the options')
       await orbitdb.stop()
     })
   })

@@ -3,23 +3,32 @@ import { EventEmitter } from 'events'
 import mapSeries from 'p-each-series'
 import { default as PQueue } from 'p-queue'
 import { Log, ISortFunction, RecycleOptions, LogOptions } from '@dao-xyz/ipfs-log'
-import { Payload, IOOptions, EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry'
+import { IOOptions, EncryptionTemplateMaybeEncrypted, Payload, getPeerID } from '@dao-xyz/ipfs-log-entry'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
-import { Index } from './store-index'
 import { Replicator } from './replicator'
 import { ReplicationInfo } from './replication-info'
 import Logger from 'logplease'
 import io from '@dao-xyz/orbit-db-io'
 import Cache from '@dao-xyz/orbit-db-cache';
-import { variant, field, vec } from '@dao-xyz/borsh';
+import { variant, field, vec, option } from '@dao-xyz/borsh';
 import { IPFS } from 'ipfs-core-types/src/'
-import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider'
-import { OrbitDBAccessController, AccessController } from '@dao-xyz/orbit-db-access-controllers'
 import stringify from 'json-stringify-deterministic'
 import { serialize, deserialize } from '@dao-xyz/borsh';
 import { Snapshot } from './snapshot'
-import { AccessError, MaybeEncrypted, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
+import { AccessError, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
+import { Address, load, save } from './io'
+import { AccessController } from './access-controller'
+import { v4 as uuid } from 'uuid';
+import { StoreLike } from './store-like'
+import { Ed25519PublicKeyData, PublicKey } from '@dao-xyz/identity'
+import { Ed25519PublicKey } from 'sodium-plus';
+import { joinUint8Arrays } from '@dao-xyz/io-utils';
+import isNode from 'is-node';
 
+/* let v8 = undefined;
+if (isNode) {
+  v8 = require('v8');
+} */
 export type Constructor<T> = new (...args: any[]) => T;
 
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
@@ -52,30 +61,8 @@ export type StorePublicKeyEncryption = (replicationTopic: string) => PublicKeyEn
   decrypt: (data: Uint8Array, senderPublicKey: X25519PublicKey, recieverPublicKey: X25519PublicKey) => Promise<Uint8Array | undefined>
 } */
 
-interface ICreateOptions {
-  /**
-   * The directory where data will be stored (Default: uses directory option passed to OrbitDB constructor or ./orbitdb if none was provided).
-   */
-  directory?: string;
 
-  /**
-   * Overwrite an existing database (Default: false)
-   */
-  overwrite?: boolean;
-
-  /**
-   * Replicate the database with peers, requires IPFS PubSub. (Default: true)
-   */
-  replicate?: boolean;
-
-
-  /**
-   * Name to name conditioned some external property
-   */
-  nameResolver?: (name: string) => string
-}
-
-interface IOpenOptions {
+export interface IStoreOptions<T> {
   /**
    * f set to true, will throw an error if the database can't be found locally. (Default: false)
    */
@@ -87,63 +74,62 @@ interface IOpenOptions {
   directory?: string;
 
   /**
-   * Whether or not to create the database if a valid OrbitDB address is not provided. (Default: false, only if using the OrbitDB#open method, otherwise this is true by default)
-   */
-  create?: boolean;
-
-  /**
-   * A supported database type (i.e. eventlog or an added custom type).
-   * Required if create is set to true.
-   * Otherwise it's used to validate the manifest.
-   * You ony need to set this if using OrbitDB#open
-   */
-  type?: string;
-
-  /**
-   * Overwrite an existing database (Default: false)
-   */
-  overwrite?: boolean;
-
-  /**
    * Replicate the database with peers, requires IPFS PubSub. (Default: true)
    */
   replicate?: boolean;
-}
 
 
-export interface IStoreOptions<T, X, I extends Index<T, X>> extends ICreateOptions, IOpenOptions {
-  Index?: Constructor<I>,
   replicationTopic?: string | (() => string),
+
+
+
+  /**
+   * Name to name conditioned some external property
+   */
+  /*   nameResolver?: (name: string) => string */
+
+  encryption?: StorePublicKeyEncryption,
+  encoding?: IOOptions<T>
+
   maxHistory?: number,
   fetchEntryTimeout?: number,
   referenceCount?: number,
   replicationConcurrency?: number,
+  fallbackAccessController?: AccessController<T>,
   syncLocal?: boolean,
   sortFn?: ISortFunction,
-  cache?: any;
-  accessController?: AccessController<T>,
   recycle?: RecycleOptions,
-  typeMap?: { [key: string]: Constructor<any> },
+  typeMap?: { [key: string]: Constructor<any> }
+  onUpdate?: (oplog: Log<T>, entries?: Entry<T>[]) => void,
+  resourceOptions?: ResourceOptions<T>,
 
-  onClose?: (store: Store<T, X, I, any>) => void,
-  onDrop?: (store: Store<T, X, I, any>) => void,
-  onLoad?: (store: Store<T, X, I, any>) => void,
+}
+
+export type ResourceOptions<T> = { heapSizeLimit: () => number };
+
+
+export interface IInitializationOptions<T> extends IStoreOptions<T> {
 
   /* encryption?: {
     encrypt: (arr: Uint8Array, keyGroup: string) => Promise<{ bytes: Uint8Array, keyId: Uint8Array }>
     decrypt: (arr: Uint8Array, keyGroup: string, keyId: Uint8Array) => Promise<Uint8Array>
   }, */
-  encryption?: StorePublicKeyEncryption,
-  encoding?: IOOptions<T>
 
+  saveAndResolveStore: (store: StoreLike<any>) => Promise<StoreLike<any>>,
+  resolveCache: (address: Address) => Promise<Cache>,
+  onClose?: (store: Store<T>) => void,
+  onDrop?: (store: Store<T>) => void,
+  onLoad?: (store: Store<T>) => void,
+  onWrite?: (topic: string, address: string, _entry: Entry<T>, heads: Entry<T>[]) => void
+  onOpen?: (store: Store<any>) => Promise<void>,
 }
 export const JSON_ENCODER = {
   encoder: (obj) => new Uint8Array(Buffer.from(stringify(obj))),
   decoder: (obj) => JSON.parse(Buffer.from(obj).toString())
 };
 
-export const DefaultOptions: IStoreOptions<any, any, Index<any, any>> = {
-  Index: Index,
+export const DefaultOptions: IInitializationOptions<any> = {
+  onUpdate: () => { },
   maxHistory: -1,
   fetchEntryTimeout: null,
   referenceCount: 32,
@@ -151,21 +137,41 @@ export const DefaultOptions: IStoreOptions<any, any, Index<any, any>> = {
   syncLocal: false,
   sortFn: undefined,
   typeMap: {},
-  nameResolver: (name: string) => name,
-  encoding: JSON_ENCODER
+  /* nameResolver: (name: string) => name, */
+  encoding: JSON_ENCODER,
+  onClose: undefined,
+  onDrop: undefined,
+  onLoad: undefined,
+  resolveCache: undefined,
+  resourceOptions: undefined,
+  saveAndResolveStore: async (store: Store<any>) => {
+    await store.save(store._ipfs, { pin: true })
+    return store;
+  }
 }
-export interface Address {
-  root: string;
-  path: string;
-  toString(): string;
-};
 
-export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>> {
 
-  options: O;
-  _type: string;
+
+
+@variant(0)
+export class Store<T> implements StoreLike<T> {
+
+  @field({ type: 'string' })
+  name: string;
+
+  /* @field({ type: Sharding })
+  sharding: Sharding */
+
+  @field({ type: option(AccessController) })
+  accessController?: AccessController<T> | (StoreLike<any> & AccessController<T>)
+
+  // An access controller that is note part of the store manifest, usefull for circular store -> access controller -> store structures
+  fallbackAccessController?: AccessController<T> | (StoreLike<any> & AccessController<T>)
+
   id: string;
-  identity: Identity;
+  options: IInitializationOptions<T>;
+  publicKey: PublicKey;
+  sign: (data: Uint8Array) => Promise<Uint8Array>;
   address: Address;
   dbname: string;
   events: EventEmitter;
@@ -174,68 +180,100 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
   snapshotPath: string;
   queuePath: string;
   manifestPath: string;
+  initialized: boolean;
+  /*   allowForks: boolean = true;
+   */
+
   _ipfs: IPFS;
   _cache: Cache;
-  access: any; // options
   _oplog: Log<T>;
   _queue: PQueue<any, any>
-  _index: I;
   _replicationStatus: ReplicationInfo;
   _stats: any;
   _replicator: Replicator<T>;
   _loader: Replicator<T>;
   _key: string;
 
-  constructor(ipfs: IPFS, identity: Identity, address: Address | string, options: O) {
-    if (!identity) {
-      throw new Error('Identity required')
+  /* 
+  
+  */
+
+  constructor(properties?: { /* sharding?: Sharding, */ name?: string, accessController?: AccessController<T> | (StoreLike<any> & AccessController<T>) }) {
+
+    if (properties) {
+      this.name = properties.name || uuid();
+      this.accessController = properties.accessController;
+      /* this.sharding = properties.sharding || new NoSharding() */
     }
 
-    // Set the options
-    const opts = Object.assign({}, DefaultOptions) as O
+
+    // Access mapping
+    /*   this.access = options.accessController || {
+        canAppend: async (payload: MaybeEncrypted<Payload<T>>, entryIdentity: MaybeEncrypted<IdentitySerializable>, _identityProvider: Identities) => true,
+        type: undefined,
+        address: undefined,
+        close: undefined,
+        load: undefined,
+        save: undefined
+      } as any as AccessController<T> */ // TODO fix types
+
+
+  }
+  async init(ipfs: IPFS, publicKey: PublicKey | Ed25519PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<T>): Promise<StoreLike<T>> {
+
+    if (this.initialized) {
+      throw new Error("Already initialized");
+    }
+
+    // Set ipfs since we are to save the store
+    this._ipfs = ipfs
+
+    // Set the options (we will use the replicationTopic property after thiis)
+    const opts = Object.assign({}, DefaultOptions)
     Object.assign(opts, options)
     this.options = opts
 
-    // Default type
-    this._type = 'store'
+
+    const thisAlternative = await options.saveAndResolveStore(this);
+    if (thisAlternative !== this) {
+      return thisAlternative;
+    }
+
+
+    this.publicKey = publicKey instanceof Ed25519PublicKey ? new Ed25519PublicKeyData({ publicKey }) : publicKey;
+
+    if ((this.accessController as StoreLike<any>)?.init) {
+      this.accessController = (await (this.accessController as StoreLike<any>).init(ipfs, this.publicKey, sign, options)) as (StoreLike<any> & AccessController<any>);
+    }
+
+    const address = this.address; // will exist since options.saveAndResolveStore will save
 
     // Create IDs, names and paths
-    this.id = address.toString()
-    this.identity = identity
+    this.id = address.toString();
     this.address = address as Address
     this.dbname = (address as Address).path || ''
     this.events = new EventEmitter()
-
     this.remoteHeadsPath = path.join(this.id, '_remoteHeads')
     this.localHeadsPath = path.join(this.id, '_localHeads')
     this.snapshotPath = path.join(this.id, 'snapshot')
     this.queuePath = path.join(this.id, 'queue')
     this.manifestPath = path.join(this.id, '_manifest')
+    this.sign = sign;
+    this.fallbackAccessController = options.fallbackAccessController;
+    /* this.sharding.init(options.requestNewShard); */
+
+
 
     // External dependencies
-    this._ipfs = ipfs
-    this._cache = options.cache
-
-    // Access mapping
-    this.access = options.accessController || {
-      canAppend: async (payload: MaybeEncrypted<Payload<T>>, entryIdentity: MaybeEncrypted<IdentitySerializable>, _identityProvider: Identities) => true,
-      type: undefined,
-      address: undefined,
-      close: undefined,
-      load: undefined,
-      save: undefined
-    } as any as AccessController<T> // TODO fix types
+    this._cache = await options.resolveCache(this.address);
 
     // Create the operations log
-    this._oplog = new Log<T>(this._ipfs, this.identity, this.logOptions)
+    this._oplog = new Log<T>(this._ipfs, publicKey, sign, this.logOptions)
 
     // _addOperation and log-joins queue. Adding ops and joins to the queue
     // makes sure they get processed sequentially to avoid race conditions
     // between writes and joins (coming from Replicator)
     this._queue = new PQueue({ concurrency: 1 })
-
-    // Create the index
-    this._index = new this.options.Index(this.address.root)
 
     // Replication progress info
     this._replicationStatus = new ReplicationInfo()
@@ -261,7 +299,14 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
       const onReplicationProgress = async (entry: Entry<T>) => {
         const previousProgress = this.replicationStatus.progress
         const previousMax = this.replicationStatus.max
-        this._recalculateReplicationStatus((await entry.clock).time)
+
+        // TODO below is not nice, do we really need replication status?
+        try {
+          this._recalculateReplicationStatus((await entry.getClock()).time)
+        } catch (error) {
+          this._recalculateReplicationStatus(0)
+        }
+
         if (this._oplog.length + 1 > this.replicationStatus.progress ||
           this.replicationStatus.progress > previousProgress ||
           this.replicationStatus.max > previousMax) {
@@ -269,7 +314,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
         }
       }
 
-      const onReplicationComplete = async (logs) => {
+      const onReplicationComplete = async (logs: Log<any>[]) => {
         const updateState = async () => {
           try {
             if (this._oplog && logs.length > 0) {
@@ -317,25 +362,30 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
     } catch (e) {
       console.error('Store Error:', e)
     }
-    // TODO: verify if this is working since we don't seem to emit "replicated.progress" anywhere
-    this.events.on('replicated.progress', (address, hash, entry, progress, have) => {
-      this._procEntry(entry)
-    })
+
     this.events.on('write', (topic, address, entry, heads) => {
-      this._procEntry(entry)
+      if (this.options.onWrite) {
+        this.options.onWrite(topic, address, entry, heads);
+      }
     })
+
+    if (this.options.onOpen) {
+      await this.options.onOpen(this);
+
+    }
+    this.initialized = true;
   }
 
-  get type() {
-    return this._type
+
+  get oplog(): Log<any> {
+    return this._oplog;
+  }
+  get cache(): Cache {
+    return this._cache;
   }
 
   get key() {
     return this._key
-  }
-
-  get index() {
-    return this._index;
   }
 
   get logOptions(): LogOptions<T> {
@@ -346,7 +396,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
         getAnySecret: this.options.encryption(this.replicationTopic).getAnySecret,
         getEncryptionKey: this.options.encryption(this.replicationTopic).getEncryptionKey
       } : undefined, //this.options.encryption
-      access: this.access,
+      access: this.accessController || this.fallbackAccessController,
       sortFn: this.options.sortFn,
       recycle: this.options.recycle,
     };
@@ -363,26 +413,48 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
   get replicationTopic() {
     return Store.getReplicationTopic(this.address, this.options)
   }
-  static getReplicationTopic(address: Address | string, options: IStoreOptions<any, any, any>) {
+
+  static getReplicationTopic(address: Address | string, options: IStoreOptions<any>) {
     return options.replicationTopic ? (typeof options.replicationTopic === 'string' ? options.replicationTopic : options.replicationTopic()) : (typeof address === 'string' ? address : address.toString());
   }
 
-  setIdentity(identity) {
-    this.identity = identity
-    this._oplog.setIdentity(identity)
+  setPublicKey(publicKey: PublicKey) {
+    this.publicKey = publicKey
+    this._oplog.setPublicKey(publicKey)
   }
 
+
+  /* 
+    checkMemory(): boolean {
+      if (!v8) {
+        return true; // Assume no memory checks
+      }
+      if (this.options.resourceOptions?.heapSizeLimit) {
+        const usedHeapSize = v8?.getHeapStatistics().used_heap_size;
+        if (usedHeapSize > this.options.resourceOptions.heapSizeLimit()) {
+      
+  
+          return false;
+        }
+      }
+      return true;
+    }
+     */
   async close() {
+    if (!this.initialized) {
+      return
+    };
+
     // Stop the Replicator
-    await this._replicator.stop()
+    await this._replicator?.stop()
 
     // Wait for the operations queue to finish processing
     // to make sure everything that all operations that have
     // been queued will be written to disk
-    await this._queue.onIdle()
+    await this._queue?.onIdle()
 
     // Reset replication statistics
-    this._replicationStatus.reset()
+    this._replicationStatus?.reset()
 
     // Reset database statistics
     this._stats = {
@@ -397,8 +469,8 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
     }
 
     // Close store access controller
-    if (this.access.close) {
-      await this.access.close()
+    if ((this.accessController || this.fallbackAccessController).close) {
+      await (this.accessController || this.fallbackAccessController).close()
     }
 
     // Remove all event listeners
@@ -409,14 +481,19 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
     this._oplog = null
 
     // Database is now closed
+
+    this.initialized = false;
     return Promise.resolve()
   }
 
   /**
    * Drops a database and removes local data
-   * @return {[None]}
    */
   async drop() {
+    if (!this._oplog && !this._cache) {
+      return; // already dropped
+    }
+
     if (this.options.onDrop) {
       await this.options.onDrop(this)
     }
@@ -430,16 +507,12 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
     await this.close()
 
     // Reset
-    this._index = new this.options.Index(this.address.root)
-    this._oplog = new Log(this._ipfs, this.identity, this.logOptions)
-    this._cache = this.options.cache
+    this._oplog = undefined;
+    this._cache = undefined;
   }
 
   async load(amount?: number, opts: { fetchEntryTimeout?: number } = {}) {
-    if (typeof amount === 'object') {
-      opts = amount
-      amount = undefined
-    }
+
     amount = amount || this.options.maxHistory
     const fetchEntryTimeout = opts.fetchEntryTimeout || this.options.fetchEntryTimeout
 
@@ -461,7 +534,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
     }
 
     // Load the log
-    const log = await Log.fromEntryHash(this._ipfs, this.identity, heads.map(e => e.hash), {
+    const log = await Log.fromEntry(this._ipfs, this.publicKey, this.sign, heads, {
       ...this.logOptions,
       length: amount,
       timeout: fetchEntryTimeout,
@@ -480,27 +553,54 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
   }
 
   async sync(heads: Entry<T>[]) {
+
+
+    /* const mem = await this.checkMemory();
+    if (!mem) {
+      return; // TODO state will not be accurate
+    } */
+
     this._stats.syncRequestsReceieved += 1
     logger.debug(`Sync request #${this._stats.syncRequestsReceieved} ${heads.length}`)
     if (heads.length === 0) {
       return
     }
 
-    // To simulate network latency, uncomment this line
-    // and comment out the rest of the function
-    // That way the object (received as head message from pubsub)
-    // doesn't get written to IPFS and so when the Replicator is fetching
-    // the log, it'll fetch it from the network instead from the disk.
-    // return this._replicator.load(heads)
+    /*     this.allowForks = await this.checkMemory();
+     */
+    /* let hasKnown = false;
+    outer:
+    for (const head of heads) {
+      for (const hash of head.next) {
+        if (this._oplog.has(hash)) {
+          hasKnown = true;
+        }
+        if (hasKnown) {
+          break outer;
+        }
+      }
+    }
 
-    const saveToIpfs = async (head: Entry<T>) => {
-      if (!head) {
-        console.warn("Warning: Given input entry was 'null'.")
+    if (!hasKnown) {
+      // Is a fork/independent state
+      if (!this.allowForks) {
+        logger.info("Seems to be a fork, and this store does not allow them")
         return Promise.resolve(null)
       }
+    }
+ */
 
-      const identityProvider = this.identity.provider
-      if (!identityProvider) throw new Error('Identity-provider is required, cannot verify entry')
+
+
+    /* if (!hasKnown) {
+      if (!leaderInfo.isLeader) {
+        logger.info("Is not leader so I am rejecting the fork")
+        return Promise.resolve(null);
+      }
+    } */
+
+
+    const handle = async (head: Entry<T>) => {
 
       // TODO Fix types
       head.init({
@@ -508,7 +608,8 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
         encryption: this._oplog._encryption
       })
       try {
-        const canAppend = await this.access.canAppend(head._payload, head._identity, identityProvider as any)
+        // TODO add can append, because it referenses things I know, or is a new root. BTW new roots should only be accepted if the access controller allows it
+        const canAppend = await this.accessController.canAppend(head._payload, head._publicKey)
         if (!canAppend) {
           logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
           return Promise.resolve(null)
@@ -517,24 +618,52 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
         return Promise.resolve(null);
       }
 
-      const logEntry = Entry.toEntryNoHash(head)
-      const hash = await io.write(this._ipfs, Entry.getWriteFormat(), logEntry.serialize(), { links: Entry.IPLD_LINKS }) ///, onlyHash: true
-
+      /*       head.peers = new Set(leaderInfo.leaders);
+       */
+      const hash = await io.write(this._ipfs, 'dag-cbor', head.serialize(), { links: Entry.IPLD_LINKS })
       if (hash !== head.hash) {
-        console.warn('"WARNING! Head hash didn\'t match the contents')
+        throw new Error("Head hash didn\'t match the contents")
       }
-
       return head
     }
 
-    return mapSeries(heads, saveToIpfs)
+    return mapSeries(heads, handle)
       .then(async (saved) => {
         return this._replicator.load(saved.filter(e => e !== null))
       })
   }
 
+  async save(ipfs: any, options?: {
+    format?: string;
+    pin?: boolean;
+    timeout?: number;
+  }): Promise<Address> {
+    const address = await save(ipfs, this, options)
+    this.address = address;
+    return address;
+  }
+
+  static load(ipfs: any, address: Address, options?: {
+    timeout?: number;
+  }) {
+    return load(ipfs, address, Store, options)
+  }
+
   loadMoreFrom(amount, entries) {
     this._replicator.load(entries)
+  }
+
+  get replicate(): boolean {
+    return this.options.replicate;
+  }
+
+  async getHeads(): Promise<Entry<T>[]> {
+    if (!(this.cache)) {
+      return [];
+    }
+    const localHeads = (await this.cache.getBinary<HeadsCache<T>>(this.localHeadsPath, HeadsCache))?.heads || []
+    const remoteHeads = (await this.cache.getBinary<HeadsCache<T>>(this.remoteHeadsPath, HeadsCache))?.heads || []
+    return [...localHeads, ...remoteHeads]
   }
 
   async saveSnapshot() {
@@ -544,8 +673,7 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
       id: snapshotData.id,
       heads: snapshotData.heads,
       size: BigInt(snapshotData.values.length),
-      values: snapshotData.values,
-      type: this.type
+      values: snapshotData.values
     })))
 
     const snapshot = await this._ipfs.add(buf)
@@ -580,15 +708,14 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
       for await (const chunk of this._ipfs.cat(snapshot["hash"])) {
         chunks.push(chunk)
       }
-      const buffer = Buffer.concat(chunks)
-      const snapshotData = deserialize(buffer, Snapshot);
+      const snapshotData = deserialize(joinUint8Arrays(chunks), Snapshot);
 
       // Fetch the entries
       // Timeout 1 sec to only load entries that are already fetched (in order to not get stuck at loading)
       this._recalculateReplicationMax(snapshotData.values.reduce(maxClock, 0n))
       if (snapshotData) {
-        this._oplog = await Log.fromJSON(this._ipfs, this.identity, snapshotData, {
-          access: this.access,
+        this._oplog = await Log.fromEntry(this._ipfs, this.publicKey, this.sign, snapshotData.heads, {
+          access: this.accessController,
           sortFn: this.options.sortFn,
           length: -1,
           timeout: 1000,
@@ -606,7 +733,9 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
   }
 
   async _updateIndex(entries?: Entry<T>[]) {
-    await this._index.updateIndex(this._oplog, entries);
+    if (this.options.onUpdate) {
+      this.options.onUpdate(this._oplog, entries);
+    }
   }
 
   async syncLocal() {
@@ -622,17 +751,24 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
     }
   }
 
-  async _addOperation(data: T, options: { onProgressCallback?: (any) => void, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = {}) {
+  async _addOperation(data: T, options: { nexts?: Entry<T>[], onProgressCallback?: (any) => void, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = {}): Promise<Entry<T>> {
     const addOperation = async () => {
       if (this._oplog) {
         // check local cache for latest heads
         if (this.options.syncLocal) {
           await this.syncLocal()
         }
+
         const entry = await this._oplog.append(data, {
-          pointerCount: this.options.referenceCount, pin: options.pin, reciever: options.reciever
+          nexts: options.nexts, pin: options.pin, reciever: options.reciever
         })
-        this._recalculateReplicationStatus((await entry.clock).time)
+
+        // TODO below is not nice, do we really need replication status?
+        try {
+          this._recalculateReplicationStatus((await entry.getClock()).time)
+        } catch (error) {
+          this._recalculateReplicationStatus(0)
+        }
         await this._cache.setBinary(this.localHeadsPath, new HeadsCache({ heads: [entry] }))
         await this._updateIndex([entry])
 
@@ -641,28 +777,19 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
         // to all the connected peers to tell them that a new entry has been added
         // TODO: don't use events, or make it more transparent that there is a vital subscription in the background
         // that is handling replication
-        this.events.emit('write', this.replicationTopic, this.address.toString(), entry, this._oplog.heads)
+        const headsFromWrite = await this.oplog.getHeads(entry.hash);
+        this.events.emit('write', this.replicationTopic, this.address.toString(), entry, headsFromWrite)
         if (options?.onProgressCallback) options.onProgressCallback(entry)
-        return entry.hash
+        return entry
 
       }
     }
     return this._queue.add(addOperation.bind(this))
   }
 
-  _addOperationBatch(data, batchOperation?, lastOperation?, onProgressCallback?) {
-    throw new Error('Not implemented!')
-  }
 
-  _procEntry(entry: Entry<T>) {
-    /* const { op } = payload
-    if (op) {
-      this.events.emit(`log.op.${op}`, this.address.toString(), hash, payload)
-    } else {
-      this.events.emit('log.op.none', this.address.toString(), hash, payload)
-    }
-    this.events.emit('log.op', op, this.address.toString(), hash, payload) */
-  }
+
+
 
   /* Replication Status state updates */
   _recalculateReplicationProgress() {
@@ -690,5 +817,9 @@ export class Store<T, X, I extends Index<T, X>, O extends IStoreOptions<T, X, I>
   _onLoadProgress(entry: Entry<any>) {
     this._recalculateReplicationStatus(entry.clock.time)
     this.events.emit('load.progress', this.address.toString(), entry.hash, entry, this.replicationStatus.progress, this.replicationStatus.max)
+  }
+
+  clone(): Store<T> {
+    return deserialize(serialize(this), this.constructor as any as Constructor<any>);
   }
 }

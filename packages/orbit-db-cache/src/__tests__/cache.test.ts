@@ -46,13 +46,13 @@ describe(`Cache - level`, function () {
       await cache.set(d.key, d.value)
       const val = await cache.get(d.key)
       assert.deepStrictEqual(val, d.value)
-      assert.strictEqual(typeof val, d.type)
+      expect(typeof val).toEqual(d.type)
 
 
       try {
         await cache.get('fooKey')
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
 
       await cache.set(d.key, JSON.stringify(d.value))
@@ -60,13 +60,13 @@ describe(`Cache - level`, function () {
       try {
         await store.get(d.key)
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
 
       try {
         await cache.del('fooKey')
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
     }
   })
@@ -89,14 +89,14 @@ describe(`Cache - level`, function () {
       await cache.set(d.key, d.value)
       const val = await cache.get(d.key)
       assert.deepStrictEqual(val, d.value)
-      assert.strictEqual(typeof val, d.type)
+      expect(typeof val).toEqual(d.type)
     })
 
     it('throws an error trying to get an unknown key', async () => {
       try {
         await cache.get('fooKey')
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
     })
 
@@ -106,7 +106,7 @@ describe(`Cache - level`, function () {
       try {
         await store.get(d.key)
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
     })
 
@@ -114,7 +114,7 @@ describe(`Cache - level`, function () {
       try {
         await cache.delete('fooKey')
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
     })
   }) */

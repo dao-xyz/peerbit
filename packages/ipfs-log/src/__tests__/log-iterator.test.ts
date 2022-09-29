@@ -2,8 +2,7 @@ const assert = require('assert')
 const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
-import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
-import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { LogCreator } from './utils/log-creator'
 import { assertPayload } from './utils/assert'
 
@@ -15,7 +14,7 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity: Identity, testIdentity2: Identity, testIdentity3: Identity
+let ipfsd, ipfs, signKey: SignKeyWithMeta, signKey2: SignKeyWithMeta, signKey3: SignKeyWithMeta
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe('Log - Iterator', function () {
@@ -34,9 +33,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
       keystore = new Keystore(identityKeysPath)
       signingKeystore = new Keystore(signingKeysPath)
 
-      testIdentity = await Identities.createIdentity({ id: new Uint8Array([3]), keystore, signingKeystore })
-      testIdentity2 = await Identities.createIdentity({ id: new Uint8Array([2]), keystore, signingKeystore })
-      testIdentity3 = await Identities.createIdentity({ id: new Uint8Array([1]), keystore, signingKeystore })
+      signKey = await keystore.getKeyByPath(new Uint8Array([3]), SignKeyWithMeta);
+      signKey2 = await keystore.getKeyByPath(new Uint8Array([2]), SignKeyWithMeta);
+      signKey3 = await keystore.getKeyByPath(new Uint8Array([1]), SignKeyWithMeta);
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })
@@ -54,7 +53,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       let log1: Log<string>
 
       beforeEach(async () => {
-        log1 = new Log(ipfs, testIdentity, { logId: 'X' })
+        log1 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'X' })
 
         for (let i = 0; i <= 100; i++) {
           await log1.append('entry' + i)
@@ -67,7 +66,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           amount: 0
         })
 
-        assert.strictEqual(typeof it[Symbol.iterator], 'function')
+        expect(typeof it[Symbol.iterator]).toEqual('function')
         assert.deepStrictEqual(it.next(), { value: undefined, done: true })
       })
 
@@ -78,7 +77,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           amount: amount
         })
         const length = [...it].length;
-        assert.strictEqual(length, 10)
+        expect(length).toEqual(10)
       })
 
       it('returns entries with lte and amount and payload', async () => {
@@ -93,7 +92,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         for (const entry of it) {
           assertPayload(entry.payload.value, 'entry' + (67 - i++))
         }
-        assert.strictEqual(i, amount)
+        expect(i).toEqual(amount)
 
       })
 
@@ -110,7 +109,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         for (const entry of it) {
           assertPayload(entry.payload.value, 'entry' + (72 - i++))
         }
-        assert.strictEqual(i, amount)
+        expect(i).toEqual(amount)
       })
 
 
@@ -127,7 +126,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         for (const entry of it) {
           assertPayload(entry.payload.value, 'entry' + (79 - i++))
         }
-        assert.strictEqual(i, amount);
+        expect(i).toEqual(amount);
       })
 
       /* eslint-disable camelcase */
@@ -141,7 +140,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         // neither hash should appear in the array
         assert.strictEqual(hashes.indexOf('zdpuAo48H2WjBVJJUJ9aPtmynJbHCFYUaXUdXyY8SsU38bE23'), -1)
         assert.strictEqual(hashes.indexOf('zdpuAq4vvCjcNF99gJfgyuzr23Jggqg8HH69PkgJeAkSFEgbq'), -1)
-        assert.strictEqual(hashes.length, 10)
+        expect(hashes.length).toEqual(10)
       })
 
       it('iterates with lt and gte', async () => {
@@ -154,7 +153,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         // only the gte hash should appear in the array
         assert.strictEqual(hashes.indexOf('zdpuAwLMpxr8soCH1QC6XbvkHMxVDViBo1viPXJ48sRV7FUPc'), 24)
         assert.strictEqual(hashes.indexOf('zdpuAyATysiVgqZKrgmLLs5V8MXb7XjTc1FrgDWm6KAfnhxbd'), -1)
-        assert.strictEqual(hashes.length, 25)
+        expect(hashes.length).toEqual(25)
       })
 
       it('iterates with lte and gt', async () => {
@@ -167,7 +166,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         // only the lte hash should appear in the array
         assert.strictEqual(hashes.indexOf('zdpuAyUCayar44SgPxTC3P9UvVr2B4DARQ9mbiaTd9aGkwFwg'), -1)
         assert.strictEqual(hashes.indexOf('zdpuAoxE82TvJQQYzvgNAh4UtXh8bd6ka8jVVosyK11dYGNDs'), 0)
-        assert.strictEqual(hashes.length, 4)
+        expect(hashes.length).toEqual(4)
       })
 
       it('iterates with lte and gte', async () => {
@@ -180,7 +179,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         // neither hash should appear in the array
         assert.strictEqual(hashes.indexOf('zdpuAv1v9krPN1ctgV8RzrqzFqpG7978nfyDyaawGSwhVjpGQ'), 9)
         assert.strictEqual(hashes.indexOf('zdpuB2Y7A7TSwFhENZCUtDtt1WEiMttngkxxhaXHnkGEi9ttZ'), 0)
-        assert.strictEqual(hashes.length, 10)
+        expect(hashes.length).toEqual(10)
       })
 
       it('returns length with gt and default amount', async () => {
@@ -188,7 +187,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           gt: 'zdpuApRErChG8jJptFerzSgfFSj89z49dFanFt9XtPMujVtKc'
         })
 
-        assert.strictEqual([...it].length, 33)
+        expect([...it].length).toEqual(33)
       })
 
       it('returns entries with gt and default amount', async () => {
@@ -207,7 +206,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           gte: 'zdpuApRErChG8jJptFerzSgfFSj89z49dFanFt9XtPMujVtKc'
         })
 
-        assert.strictEqual([...it].length, 34)
+        expect([...it].length).toEqual(34)
       })
 
       it('returns entries with gte and default amount', async () => {
@@ -226,7 +225,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           lt: 'zdpuApRErChG8jJptFerzSgfFSj89z49dFanFt9XtPMujVtKc'
         })
 
-        assert.strictEqual([...it].length, 67)
+        expect([...it].length).toEqual(67)
       })
 
       it('returns entries with lt and default amount value', async () => {
@@ -245,7 +244,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           lte: 'zdpuApRErChG8jJptFerzSgfFSj89z49dFanFt9XtPMujVtKc'
         })
 
-        assert.strictEqual([...it].length, 68)
+        expect([...it].length).toEqual(68)
       })
 
       it('returns entries with lte and default amount value', async () => {
@@ -268,8 +267,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
       }, identities
 
       beforeAll(async () => {
-        identities = [testIdentity3, testIdentity2, testIdentity3, testIdentity]
-        fixture = await LogCreator.createLogWithSixteenEntries(Log, ipfs, identities)
+        identities = [signKey3, signKey2, signKey3, signKey]
+        fixture = await LogCreator.createLogWithSixteenEntries(ipfs, identities)
       })
 
       it('returns the full length from all heads', async () => {
@@ -277,7 +276,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           lte: fixture.log.heads
         })
 
-        assert.strictEqual([...it].length, 16)
+        expect([...it].length).toEqual(16)
       })
 
       it('returns partial entries from all heads', async () => {
@@ -295,7 +294,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           lte: [fixture.log.heads[0]]
         })
 
-        assert.strictEqual([...it].length, 10)
+        expect([...it].length).toEqual(10)
       })
 
       it('returns partial logs from single heads #2', async () => {
@@ -303,7 +302,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           lte: [fixture.log.heads[1]]
         })
 
-        assert.strictEqual([...it].length, 11)
+        expect([...it].length).toEqual(11)
       })
 
       it('throws error if lt/lte not a string or array of entries', async () => {
@@ -317,7 +316,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           errMsg = e.message
         }
 
-        assert.strictEqual(errMsg, 'lt or lte must be a string or array of Entries')
+        expect(errMsg).toEqual('lt or lte must be a string or array of Entries')
       })
     })
   })

@@ -1,13 +1,14 @@
-import { Identities } from "@dao-xyz/orbit-db-identity-provider"
 import { OrbitDB } from "../orbit-db"
 
 const fs = require('fs')
 const assert = require('assert')
 const rmrf = require('rimraf')
-import { Keystore } from '@dao-xyz/orbit-db-keystore'
-import { EVENT_STORE_TYPE } from "./utils/stores"
-const leveldown = require('leveldown')
-const storage = require('orbit-db-storage-adapter')(leveldown)
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { EventStore } from "./utils/stores"
+import { SimpleAccessController } from "./utils/access"
+import { Level } from "level"
+import { Ed25519PublicKeyData } from "@dao-xyz/identity"
+
 
 // Include test utilities
 const {
@@ -20,12 +21,19 @@ const {
 const keysPath = './orbitdb/identity/identitykeys'
 const dbPath = './orbitdb/tests/change-identity'
 
+export const createStore = (path = './keystore'): Level => {
+  if (fs && fs.mkdirSync) {
+    fs.mkdirSync(path, { recursive: true })
+  }
+  return new Level(path, { valueEncoding: 'view' })
+}
+
 Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Set identities (${API})`, function () {
     jest.setTimeout(config.timeout)
 
-    let ipfsd, ipfs, orbitdb: OrbitDB, keystore, options
-    let identity1, identity2
+    let ipfsd, ipfs, orbitdb: OrbitDB, keystore: Keystore, options
+    let signKey1: SignKeyWithMeta, signKey2: SignKeyWithMeta
 
     beforeAll(async () => {
       rmrf.sync(dbPath)
@@ -33,11 +41,11 @@ Object.keys(testAPIs).forEach(API => {
       ipfs = ipfsd.api
 
       if (fs && fs.mkdirSync) fs.mkdirSync(keysPath, { recursive: true })
-      const identityStore = await storage.createStore(keysPath)
+      const identityStore = await createStore(keysPath)
 
       keystore = new Keystore(identityStore)
-      identity1 = await Identities.createIdentity({ id: new Uint8Array([0]), keystore })
-      identity2 = await Identities.createIdentity({ id: new Uint8Array([1]), keystore })
+      signKey1 = await keystore.createKey(new Uint8Array([0]), SignKeyWithMeta);
+      signKey2 = await keystore.createKey(new Uint8Array([1]), SignKeyWithMeta);
       orbitdb = await OrbitDB.createInstance(ipfs, { directory: dbPath })
     })
 
@@ -51,52 +59,20 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     beforeEach(async () => {
-      options = {}
-      options.accessController = {
-        write: [
-          orbitdb.identity.id,
-          identity1.id
-        ]
-      }
-      options = Object.assign({}, options, { create: true, type: EVENT_STORE_TYPE, overwrite: true })
+      options = Object.assign({}, options, {})
     })
 
     it('sets identity', async () => {
-      const db = await orbitdb.open('abc', options)
-      assert.equal(db.identity, orbitdb.identity)
-      db.setIdentity(identity1)
-      assert.equal(db.identity, identity1)
+      const db = await orbitdb.open(new EventStore<string>({
+        name: 'abc',
+        accessController: new SimpleAccessController()
+      }), options)
+      expect(db.publicKey).toEqual(orbitdb.identity)
+      db.setPublicKey(new Ed25519PublicKeyData({
+        publicKey: signKey1.publicKey
+      }))
+      expect(db.publicKey).toEqual(signKey1.publicKey)
       await db.close()
-    })
-
-    it('writes with new identity with access', async () => {
-      const db = await orbitdb.open('abc', options)
-      assert.equal(db.identity, orbitdb.identity)
-      db.setIdentity(identity1)
-      assert.equal(db.identity, identity1)
-      let err
-      try {
-        await db.add({ hello: '1' })
-      } catch (e) {
-        err = e.message
-      }
-      assert.equal(err, null)
-      await db.drop()
-    })
-
-    it('cannot write with new identity without access', async () => {
-      const db = await orbitdb.open('abc', options)
-      assert.equal(db.identity, orbitdb.identity)
-      db.setIdentity(identity2)
-      assert.equal(db.identity, identity2)
-      let err
-      try {
-        await db.add({ hello: '1' })
-      } catch (e) {
-        err = e.message
-      }
-      assert.equal(err, `Could not append Entry<T>, key "${identity2.id}" is not allowed to write to the log`)
-      await db.drop()
     })
   })
 })

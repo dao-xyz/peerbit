@@ -1,25 +1,24 @@
 
 import path from 'path';
 import assert from 'assert';
-import LRU from 'lru';
+import LRU from 'lru-cache';
 import { BoxKeyWithMeta, createStore, Keystore, KeyWithMeta, SignKeyWithMeta } from '../keystore';
 import rmrf from 'rimraf'
 import { waitFor } from '@dao-xyz/time';
 import { Level } from 'level';
 import { Ed25519PublicKey, X25519PublicKey, X25519SecretKey } from 'sodium-plus';
-import { deserialize, serialize } from '@dao-xyz/borsh';
 
 const fs = require('fs-extra')
-
 let store: Level;
 const fixturePath = path.join('packages/orbit-db-keystore/src/__tests__', 'fixtures', 'signingKeys')
 const storagePath = path.join('packages/orbit-db-keystore/src/__tests__', 'signingKeys')
 const upgradePath = path.join('packages/orbit-db-keystore/src/__tests__', 'upgrade')
 const tempKeyPath = "packages/orbit-db-keystore/src/__tests__/keystore-test";
-
-jest.setTimeout(10000);
+jest.useRealTimers();
+jest.setTimeout(100000);
 
 describe('keystore', () => {
+
   beforeAll(async () => {
     await fs.copy(fixturePath, storagePath)
     rmrf.sync(tempKeyPath)
@@ -38,13 +37,11 @@ describe('keystore', () => {
     it('creates a new Keystore instance', async () => {
       const keystore = new Keystore(store)
 
-      assert.strictEqual(typeof keystore.close, 'function')
-      assert.strictEqual(typeof keystore.openStore, 'function')
-      assert.strictEqual(typeof keystore.hasKey, 'function')
-      assert.strictEqual(typeof keystore.createKey, 'function')
-      assert.strictEqual(typeof keystore.getKeyByPath, 'function')
-      assert.strictEqual(typeof keystore.sign, 'function')
-      assert.strictEqual(typeof keystore.verify, 'function')
+      expect(typeof keystore.close).toEqual('function')
+      expect(typeof keystore.openStore).toEqual('function')
+      expect(typeof keystore.hasKey).toEqual('function')
+      expect(typeof keystore.createKey).toEqual('function')
+      expect(typeof keystore.getKeyByPath).toEqual('function')
     })
 
     it('assigns this._store', async () => {
@@ -55,31 +52,31 @@ describe('keystore', () => {
 
     it('assigns this.cache with default of 100', async () => {
       const keystore = new Keystore(store)
-      assert.strictEqual(keystore._cache.max, 100)
+      expect(keystore._cache.max).toEqual(100)
     })
 
     it('creates a proper leveldown / level-js store if not passed a store', async () => {
       const keystore = new Keystore()
-      assert.strictEqual(keystore._store.status, 'opening')
+      expect(keystore._store.status).toEqual('opening')
       await keystore.close()
     })
 
     it('creates a keystore with empty options', async () => {
       const keystore = new Keystore({})
-      assert.strictEqual(keystore._store.status, 'opening')
+      expect(keystore._store.status).toEqual('opening')
       await keystore.close()
     })
 
     it('creates a keystore with only cache', async () => {
-      const cache = new LRU(10)
+      const cache = new LRU({ max: 10 })
       const keystore = new Keystore({ cache })
-      assert.strictEqual(keystore._store.status, 'opening')
+      expect(keystore._store.status).toEqual('opening')
       assert(keystore._cache === cache)
       await keystore.close()
     })
 
     it('creates a keystore with both', async () => {
-      const cache = new LRU(10)
+      const cache = new LRU({ max: 10 })
       const keystore = new Keystore({ store, cache })
       assert(['open', 'opening'].includes(keystore._store.status))
       assert(keystore._cache === cache)
@@ -102,14 +99,14 @@ describe('keystore', () => {
       const id = 'a new key'
       await keystore.createKey(id, SignKeyWithMeta)
       const hasKey = await keystore.hasKey(id, SignKeyWithMeta)
-      assert.strictEqual(hasKey, true)
+      expect(hasKey).toEqual(true)
     })
 
     it('throws an error upon not receiving an ID', async () => {
       try {
         await keystore.createKey(undefined, undefined)
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
     })
     it('throws an error if key already exist', async () => {
@@ -118,7 +115,7 @@ describe('keystore', () => {
       try {
         await keystore.createKey(id, SignKeyWithMeta)
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
     })
     it('throws an error accessing a closed store', async () => {
@@ -128,7 +125,7 @@ describe('keystore', () => {
         await store.close()
         await keystore.createKey(id, SignKeyWithMeta)
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
     })
 
@@ -193,7 +190,7 @@ describe('keystore', () => {
       try {
         await keystore.createKey(undefined, undefined)
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
     })
     it('throws an error if key already exist', async () => {
@@ -202,7 +199,7 @@ describe('keystore', () => {
       try {
         await keystore.createKey(id, SignKeyWithMeta)
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
     })
     it('throws an error accessing a closed store', async () => {
@@ -212,7 +209,7 @@ describe('keystore', () => {
         await store.close()
         await keystore.createKey(id, SignKeyWithMeta)
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
     })
 
@@ -236,7 +233,7 @@ describe('keystore', () => {
 
     it('returns true if key exists', async () => {
       const hasKey = await keystore.hasKey('YYZ', SignKeyWithMeta)
-      assert.strictEqual(hasKey, true)
+      expect(hasKey).toEqual(true)
     })
 
     it('returns false if key does not exist', async () => {
@@ -244,7 +241,7 @@ describe('keystore', () => {
       try {
         hasKey = await keystore.hasKey('XXX', SignKeyWithMeta)
       } catch (e) {
-        assert.strictEqual(hasKey, true)
+        expect(hasKey).toEqual(true)
       }
     })
 
@@ -252,7 +249,7 @@ describe('keystore', () => {
       try {
         await keystore.hasKey(undefined, undefined)
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
     })
 
@@ -261,7 +258,7 @@ describe('keystore', () => {
         await store.close()
         await keystore.hasKey('XXX', SignKeyWithMeta)
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
     })
 
@@ -282,15 +279,15 @@ describe('keystore', () => {
 
     it('gets an existing key', async () => {
       const key = await keystore.getKeyByPath('ZZZ', SignKeyWithMeta)
-      assert.strictEqual(key.publicKey.getLength(), 32)
-      assert.strictEqual(key.secretKey.getLength(), 64)
+      expect(key.publicKey.getLength()).toEqual(32)
+      expect(key.secretKey.getLength()).toEqual(64)
     })
 
     it('throws an error upon accessing a non-existant key', async () => {
       try {
         await keystore.getKeyByPath('ZZZZ', SignKeyWithMeta)
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
     })
 
@@ -298,7 +295,7 @@ describe('keystore', () => {
       try {
         await keystore.getKeyByPath(undefined, undefined)
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
     })
 
@@ -307,7 +304,7 @@ describe('keystore', () => {
         await store.close()
         await keystore.getKeyByPath('ZZZ', SignKeyWithMeta)
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
     })
 
@@ -319,34 +316,21 @@ describe('keystore', () => {
   describe('getKeys', () => {
     let keystore: Keystore, aSignKey: KeyWithMeta, aBoxKey: KeyWithMeta, aBox2Key: KeyWithMeta, bSignKey: KeyWithMeta
 
-    beforeAll(async () => {
+    it('gets keys by group amd type', async () => {
 
-      keystore = new Keystore(tempKeyPath)
-      aSignKey = await keystore.createKey('asign', SignKeyWithMeta, 'group')
-      aBoxKey = await keystore.createKey('abox', BoxKeyWithMeta, 'group')
-      aBox2Key = await keystore.createKey('abox2', BoxKeyWithMeta, 'group')
-      bSignKey = await keystore.createKey('bsign', SignKeyWithMeta, 'group2')
-
-    })
-
-    it('gets keys by group', async () => {
-      const keys = await keystore.getKeys('group')
-      assert(keys[0].equals(aBoxKey))
-      assert(keys[1].equals(aBox2Key))
-      assert(keys[2].equals(aSignKey))
-
-    })
+      keystore = new Keystore(store)
+      aSignKey = await keystore.createKey('asign', SignKeyWithMeta, 'group', { overwrite: true })
+      aBoxKey = await keystore.createKey('abox', BoxKeyWithMeta, 'group', { overwrite: true })
+      aBox2Key = await keystore.createKey('abox2', BoxKeyWithMeta, 'group', { overwrite: true })
+      bSignKey = await keystore.createKey('bsign', SignKeyWithMeta, 'group2', { overwrite: true })
 
 
-    it('gets keys by group by type', async () => {
-      const keys = await keystore.getKeys('group', BoxKeyWithMeta)
-      assert(keys[0].equals(aBoxKey))
-      assert(keys[1].equals(aBox2Key))
-    })
+      const keysByGroup = await keystore.getKeys('group')
+      expect(keysByGroup).toHaveLength(3);
+      expect(keysByGroup.map(k => (k as (BoxKeyWithMeta | SignKeyWithMeta)).publicKey.toString('hex'))).toContainAllValues([aBoxKey, aBox2Key, aSignKey].map(k => (k as (BoxKeyWithMeta | SignKeyWithMeta)).publicKey.toString('hex')));
+      const keysByType = await keystore.getKeys('group', BoxKeyWithMeta)
+      expect(keysByType.map(k => (k as (BoxKeyWithMeta | SignKeyWithMeta)).publicKey.toString('hex'))).toContainAllValues([aBoxKey, aBox2Key].map(k => (k as (BoxKeyWithMeta | SignKeyWithMeta)).publicKey.toString('hex')));
 
-
-    afterAll(async () => {
-      // keystore.close()
     })
   })
 
@@ -366,30 +350,30 @@ describe('keystore', () => {
       /* 
       await keystore.close(); */
       /* const createdKey = await keystore.createKey('signing', SignKeyWithMeta, undefined, { overwrite: true })
-      const y = deserialize(Buffer.from(serialize(createdKey)), KeyWithMeta); */
+      const y = deserialize(serialize(createdKey), KeyWithMeta); */
       key = await keystore.getKeyByPath('signing', SignKeyWithMeta)
       /* await keystore.close();  */ //
       const x = 123;
     })
 
     it('signs data', async () => {
-      const signature = await keystore.sign(Buffer.from('data data data'), key)
+      const signature = await Keystore.sign(Buffer.from('data data data'), key)
       expect(signature).toMatchSnapshot('signature');
     })
 
     it('throws an error if no key is passed', async () => {
       try {
-        await keystore.sign(Buffer.from('data data data'), null)
+        await Keystore.sign(Buffer.from('data data data'), null)
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
     })
 
     it('throws an error if no data is passed', async () => {
       try {
-        await keystore.sign(null, key)
+        await Keystore.sign(null, key)
       } catch (e) {
-        assert.strictEqual(true, true)
+        assert(true)
       }
     })
 
@@ -412,8 +396,8 @@ describe('keystore', () => {
     it('verifies content', async () => {
       const signature = '4FAJrjPESeuDK5AhhHVmrCdVbb6gTqczxex1CydLfCHH4kP4CBmoMLfH6UxLF2UmPkisNMU15RVHo63NbWiNvyyb2f4h8x5cKWtQrHY3mUL'
       try {
-        const verified = await keystore.verify(Buffer.from(signature), publicKey, Buffer.from('data data data'))
-        assert.strictEqual(verified, true)
+        const verified = await Keystore.verify(Buffer.from(signature), publicKey, Buffer.from('data data data'))
+        expect(verified).toEqual(true)
       } catch (error) {
         const x = 123;
       }
@@ -421,11 +405,11 @@ describe('keystore', () => {
 
     it('verifies content with cache', async () => {
       const data = new Uint8Array(Buffer.from('data'.repeat(1024 * 1024)))
-      const sig = await keystore.sign(Buffer.from(data), key)
+      const sig = await Keystore.sign(Buffer.from(data), key)
       const startTime = new Date().getTime()
-      await keystore.verify(sig, publicKey, Buffer.from(data))
+      await Keystore.verify(sig, publicKey, Buffer.from(data))
       const first = new Date().getTime()
-      await keystore.verify(sig, publicKey, Buffer.from(data))
+      await Keystore.verify(sig, publicKey, Buffer.from(data))
       const after = new Date().getTime()
       console.log('First pass:', first - startTime, 'ms', 'Cached:', after - first, 'ms')
       assert.strictEqual(first - startTime > after - first, true)
@@ -433,8 +417,8 @@ describe('keystore', () => {
 
     it('does not verify content with bad signature', async () => {
       const signature = 'xxxxxx'
-      const verified = await keystore.verify((new Uint8Array(Buffer.from(signature))), publicKey, Buffer.from('data data data'))
-      assert.strictEqual(verified, false)
+      const verified = await Keystore.verify((new Uint8Array(Buffer.from(signature))), publicKey, Buffer.from('data data data'))
+      expect(verified).toEqual(false)
     })
 
     afterAll(async () => {
@@ -454,7 +438,7 @@ describe('keystore', () => {
     it('closes then open', async () => {
       await waitFor(() => signingStore.status === 'closed');
       await keystore.openStore()
-      assert.strictEqual(signingStore.status, 'open')
+      expect(signingStore.status).toEqual('open')
     })
 
     it('fails when no store', async () => {
@@ -465,7 +449,7 @@ describe('keystore', () => {
       } catch (e) {
         error = e.message
       }
-      assert.strictEqual(error, 'Keystore: No store found to open')
+      expect(error).toEqual('Keystore: No store found to open')
     })
 
     afterEach(async () => {

@@ -3,7 +3,7 @@ const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { Log } from '../log'
 import { SortByEntryHash } from '../log-sorting'
-import { Identities, Identity } from '@dao-xyz/orbit-db-identity-provider'
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
 const {
@@ -13,7 +13,7 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity: Identity
+let ipfsd, ipfs, signKey: SignKeyWithMeta
 
 Object.keys(testAPIs).forEach(IPFS => {
   describe('Log - Join Concurrent Entries', function () {
@@ -26,7 +26,7 @@ Object.keys(testAPIs).forEach(IPFS => {
       rmrf.sync(signingKeysPath)
       await fs.copy(identityKeyFixtures(__dirname), identityKeysPath)
       await fs.copy(signingKeyFixtures(__dirname), signingKeysPath)
-      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), identityKeysPath, signingKeysPath })
+      signKey = await signingKeysPath.getKeyByPath(new Uint8Array([0]), SignKeyWithMeta);
 
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
@@ -34,8 +34,6 @@ Object.keys(testAPIs).forEach(IPFS => {
 
     afterAll(async () => {
       await stopIpfs(ipfsd)
-      await testIdentity.provider.keystore.close()
-      await testIdentity.provider.signingKeystore.close()
       rmrf.sync(identityKeysPath)
       rmrf.sync(signingKeysPath)
     })
@@ -45,8 +43,8 @@ Object.keys(testAPIs).forEach(IPFS => {
 
       beforeAll(async () => {
 
-        log1 = new Log(ipfs, testIdentity, { logId: 'A', sortFn: SortByEntryHash })
-        log2 = new Log(ipfs, testIdentity, { logId: 'A', sortFn: SortByEntryHash })
+        log1 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A', sortFn: SortByEntryHash })
+        log2 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A', sortFn: SortByEntryHash })
       })
 
       it('joins consistently', async () => {
@@ -61,8 +59,8 @@ Object.keys(testAPIs).forEach(IPFS => {
         const hash1 = await log1.toMultihash()
         const hash2 = await log2.toMultihash()
 
-        assert.strictEqual(hash1, hash2)
-        assert.strictEqual(log1.length, 20)
+        expect(hash1).toEqual(hash2)
+        expect(log1.length).toEqual(20)
         assert.deepStrictEqual(log1.values.map(e => e.payload.value), log2.values.map(e => e.payload.value))
       })
 
@@ -81,9 +79,9 @@ Object.keys(testAPIs).forEach(IPFS => {
         const hash1 = await log1.toMultihash()
         const hash2 = await log2.toMultihash()
 
-        assert.strictEqual(hash1, hash2)
-        assert.strictEqual(log1.length, 41)
-        assert.strictEqual(log2.length, 41)
+        expect(hash1).toEqual(hash2)
+        expect(log1.length).toEqual(41)
+        expect(log2.length).toEqual(41)
         assert.deepStrictEqual(log1.values.map(e => e.payload.value), log2.values.map(e => e.payload.value))
       })
 
@@ -91,8 +89,8 @@ Object.keys(testAPIs).forEach(IPFS => {
         await log1.join(log2)
         await log2.join(log1)
 
-        assert.strictEqual(log1.length, log2.length)
-        assert.strictEqual(log1.length, 41)
+        expect(log1.length).toEqual(log2.length)
+        expect(log1.length).toEqual(41)
         assert.deepStrictEqual(log1.values.map(e => e.payload.value), log2.values.map(e => e.payload.value))
       })
     })

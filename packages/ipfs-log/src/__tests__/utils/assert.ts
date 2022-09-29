@@ -4,8 +4,8 @@ export const assertPayload = (value: string | Uint8Array, compare: string | Uint
 
 
     if (typeof compare === 'string')
-        assert.strictEqual(Buffer.from(value).toString(), compare)
+        expect(Buffer.from(value).toString()).toEqual(compare)
     else {
-        assert.strictEqual(value, compare)
+        expect(value).toEqual(compare)
     }
 }

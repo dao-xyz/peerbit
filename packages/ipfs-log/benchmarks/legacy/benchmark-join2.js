@@ -60,8 +60,8 @@ const run = (() => {
     const identity = await IdentityProvider.createIdentity({ id: 'userA', keystore })
     const identity2 = await IdentityProvider.createIdentity({ id: 'userB', keystore })
 
-    log1 = new Log(ipfs, identity, { logId: 'A' })
-    log2 = new Log(ipfs, identity2, { logId: 'A' })
+    log1 = new Log(ipfs, identity, { gid: 'A' })
+    log2 = new Log(ipfs, identity2, { gid: 'A' })
 
     const amount = 10000
     console.log('log length:', amount)
@@ -82,7 +82,7 @@ const run = (() => {
 
     console.log('Loading log...')
     const st2 = new Date().getTime()
-    const l2 = await Log.fromEntryHash(ipfs, identity, log1.heads[0].hash, { logId: 'A' })
+    const l2 = await Log.fromEntryHash(ipfs, identity, log1.heads[0].hash, { gid: 'A' })
     const et2 = new Date().getTime()
     console.log('load took', (et2 - st2), 'ms')
     console.log('Entry size:', Buffer.from(JSON.stringify(l2.heads)).length, 'bytes')

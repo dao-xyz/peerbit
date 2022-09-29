@@ -3,10 +3,11 @@ const rmrf = require('rimraf')
 const fs = require('fs-extra')
 import { CanAppendAccessController } from '../default-access-controller'
 import { Log } from '../log'
-import { Identities, Identity, IdentitySerializable } from '@dao-xyz/orbit-db-identity-provider'
 import { assertPayload } from './utils/assert'
-import { Keystore } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
+import { Ed25519PublicKeyData } from '@dao-xyz/identity'
+import { MaybeEncrypted } from '@dao-xyz/encryption-utils'
 
 // Test utils
 const {
@@ -16,7 +17,7 @@ const {
   stopIpfs
 } = require('orbit-db-test-utils')
 
-let ipfsd, ipfs, testIdentity: Identity, testIdentity2: Identity
+let ipfsd, ipfs, signKey: SignKeyWithMeta, signKey2: SignKeyWithMeta
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe('Signed Log', function () {
@@ -36,8 +37,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
       signingKeystore = new Keystore(signingKeysPath)
 
 
-      testIdentity = await Identities.createIdentity({ id: new Uint8Array([0]), keystore, signingKeystore })
-      testIdentity2 = await Identities.createIdentity({ id: new Uint8Array([1]), keystore, signingKeystore })
+      signKey = await keystore.getKeyByPath(new Uint8Array([0]), SignKeyWithMeta);
+      signKey2 = await keystore.getKeyByPath(new Uint8Array([1]), SignKeyWithMeta);
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
     })
@@ -50,39 +51,33 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await signingKeystore?.close()
     })
 
-    it('creates a signed log', () => {
-      const logId = 'A'
-      const log = new Log(ipfs, testIdentity, { logId })
-      assert.notStrictEqual(log.id, null)
-      assert.strictEqual(log.id, logId)
-    })
+
 
     it('has the correct identity', () => {
-      const log = new Log(ipfs, testIdentity, { logId: 'A' })
-      assert.notStrictEqual(log.id, null)
-      expect(log._identity.toSerializable()).toMatchSnapshot('identity');
+      const log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
+      expect(log._publicKey).toMatchSnapshot('publicKeyFromLog');
     })
 
     it('has the correct public key', () => {
-      const log = new Log(ipfs, testIdentity, { logId: 'A' })
-      assert.strictEqual(log._identity.publicKey, testIdentity.publicKey)
+      const log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
+      expect(log._publicKey).toEqual(signKey.publicKey)
     })
 
     it('has the correct pkSignature', () => {
-      const log = new Log(ipfs, testIdentity, { logId: 'A' })
-      assert.strictEqual(log._identity.signatures.id, testIdentity.signatures.id)
+      const log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
+      expect(log._publicKey).toEqual(signKey.publicKey)
     })
 
     it('has the correct signature', () => {
-      const log = new Log(ipfs, testIdentity, { logId: 'A' })
-      assert.strictEqual(log._identity.signatures.publicKey, testIdentity.signatures.publicKey)
+      const log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
+      expect(log._publicKey).toEqual(signKey.publicKey)
     })
 
     it('entries contain an identity', async () => {
-      const log = new Log(ipfs, testIdentity, { logId: 'A' })
+      const log = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
       await log.append('one')
       assert.notStrictEqual(await log.values[0].signature, null)
-      assert.deepStrictEqual(await log.values[0].identity, testIdentity.toSerializable())
+      assert.deepStrictEqual(await log.values[0].publicKey, signKey.publicKey)
     })
 
     it('doesn\'t sign entries when identity is not defined', async () => {
@@ -92,12 +87,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
       } catch (e) {
         err = e
       }
-      assert.strictEqual(err.message, 'Identity is required')
+      expect(err.message).toEqual('Identity is required')
     })
 
     it('doesn\'t join logs with different IDs ', async () => {
-      const log1 = new Log<string>(ipfs, testIdentity, { logId: 'A' })
-      const log2 = new Log<string>(ipfs, testIdentity2, { logId: 'B' })
+      const log1 = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
+      const log2 = new Log<string>(ipfs, signKey2.publicKey, (data) => Keystore.sign(data, signKey2), { logId: 'B' })
 
       let err
       try {
@@ -110,17 +105,17 @@ Object.keys(testAPIs).forEach((IPFS) => {
         throw e
       }
 
-      assert.strictEqual(err, undefined)
-      assert.strictEqual(log1.id, 'A')
-      assert.strictEqual(log1.values.length, 1)
+      expect(err).toEqual(undefined)
+      expect(log1._id).toEqual('A')
+      expect(log1.values.length).toEqual(1)
       assertPayload(log1.values[0].payload.value, 'one')
     })
 
 
 
     it('throws an error if log is signed but trying to merge an entry that doesn\'t have a signature', async () => {
-      const log1 = new Log<string>(ipfs, testIdentity, { logId: 'A' })
-      const log2 = new Log<string>(ipfs, testIdentity2, { logId: 'A' })
+      const log1 = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
+      const log2 = new Log<string>(ipfs, signKey2.publicKey, (data) => Keystore.sign(data, signKey2), { logId: 'A' })
 
       let err
       try {
@@ -131,12 +126,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
       } catch (e) {
         err = e.toString()
       }
-      assert.strictEqual(err, 'Error: Unsupported')
+      expect(err).toEqual('Error: Unsupported')
     })
 
     it('throws an error if log is signed but the signature doesn\'t verify', async () => {
-      const log1 = new Log<string>(ipfs, testIdentity, { logId: 'A' })
-      const log2 = new Log<string>(ipfs, testIdentity2, { logId: 'A' })
+      const log1 = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
+      const log2 = new Log<string>(ipfs, signKey2.publicKey, (data) => Keystore.sign(data, signKey2), { logId: 'A' })
       let err
 
       try {
@@ -150,15 +145,15 @@ Object.keys(testAPIs).forEach((IPFS) => {
       }
 
       const entry = log2.values[0]
-      assert.strictEqual(err, `Error: Could not validate signature "${await entry.signature}" for entry "${entry.hash}" and key "${(await entry.identity).publicKey}"`)
-      assert.strictEqual(log1.values.length, 1)
+      expect(err).toEqual(`Error: Could not validate signature "${await entry.signature}" for entry "${entry.hash}" and key "${(await entry.publicKey)}"`)
+      expect(log1.values.length).toEqual(1)
       assertPayload(log1.values[0].payload.value, 'one')
     })
 
     it('throws an error if entry doesn\'t have append access', async () => {
       const denyAccess = { canAppend: (_, __) => Promise.resolve(false) } as CanAppendAccessController<string>
-      const log1 = new Log(ipfs, testIdentity, { logId: 'A' })
-      const log2 = new Log(ipfs, testIdentity2, { logId: 'A', access: denyAccess })
+      const log1 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A' })
+      const log2 = new Log(ipfs, signKey2.publicKey, (data) => Keystore.sign(data, signKey2), { logId: 'A', access: denyAccess })
 
       let err
       try {
@@ -169,15 +164,15 @@ Object.keys(testAPIs).forEach((IPFS) => {
         err = e.toString()
       }
 
-      assert.strictEqual(err, `Error: Could not append Entry<T>, key "${testIdentity2.id}" is not allowed to write to the log`)
+      expect(err).toEqual(`Error: Could not append Entry<T>, key "${signKey2.publicKey}" is not allowed to write to the log`)
     })
 
     it('throws an error upon join if entry doesn\'t have append access', async () => {
       const testACL = {
-        canAppend: async (_entry, identity, _) => Buffer.compare(Buffer.from(identity.decrypted.getValue(IdentitySerializable).id), Buffer.from(testIdentity.id)) === 0
+        canAppend: async (_entry, publicKey: MaybeEncrypted<Ed25519PublicKeyData>, _) => Buffer.compare(publicKey.decrypted.getValue(Ed25519PublicKeyData).publicKey.getBuffer(), signKey.publicKey.getBuffer()) === 0
       } as CanAppendAccessController<string>;
-      const log1 = new Log<string>(ipfs, testIdentity, { logId: 'A', access: testACL })
-      const log2 = new Log<string>(ipfs, testIdentity2, { logId: 'A' })
+      const log1 = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A', access: testACL })
+      const log2 = new Log<string>(ipfs, signKey2.publicKey, (data) => Keystore.sign(data, signKey2), { logId: 'A' })
 
       let err
       try {
@@ -188,7 +183,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         err = e.toString()
       }
 
-      assert.strictEqual(err, `Error: Could not append Entry<T>, key "${testIdentity2.id}" is not allowed to write to the log`)
+      expect(err).toEqual(`Error: Could not append Entry<T>, key "${signKey2.publicKey}" is not allowed to write to the log`)
     })
   })
 })

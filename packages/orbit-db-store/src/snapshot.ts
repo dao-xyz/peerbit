@@ -16,23 +16,18 @@ export class Snapshot {
     @field({ type: vec(Entry) })
     values: Entry<any>[]
 
-    @field({ type: 'string' })
-    type: string;
-
 
     constructor(props?: {
         id: string
         heads: Entry<any>[]
         size: bigint
         values: Entry<any>[]
-        type: string;
     }) {
         if (props) {
             this.heads = props.heads;
             this.id = props.id;
             this.size = props.size;
             this.values = props.values;
-            this.type = props.type;
         }
     }
 }

@@ -37,18 +37,18 @@
   "author": "Haad",
   "license": "MIT",
   "dependencies": {
-    "@dao-xyz/orbit-db-access-controllers": "^0.3.2",
+    "multihashes": "~3.0.1",
+    "@dao-xyz/orbit-db-cache": "^0.4.0",
+    "@dao-xyz/orbit-db-io": "^1.1.0",
     "@dao-xyz/ipfs-log": "^5.5.15",
     "it-to-stream": "^1.0.0",
     "logplease": "^1.2.14",
-    "@dao-xyz/orbit-db-io": "^1.1.0",
     "p-each-series": "^2.1.0",
     "p-map": "^4.0.0",
     "p-queue": "^6.6.2",
     "readable-stream": "~3.6.0"
   },
   "devDependencies": {
-    "@dao-xyz/orbit-db-identity-provider": "^0.5.10",
     "go-ipfs": "^0.9.1",
     "ipfs": "^0.62.3",
     "ipfsd-ctl": "^10.0.3",

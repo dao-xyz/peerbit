@@ -1,114 +1,144 @@
 import path from 'path'
-import { Address, Constructor, IStoreOptions, Store, StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store'
-import io from '@dao-xyz/orbit-db-io'
-import { PubSub, Subscription } from '@dao-xyz/orbit-db-pubsub'
+import { Address, IStoreOptions, ResourceOptions, Store, StoreLike, StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store'
+/* import {  Subscription } from '@dao-xyz/ipfs-pubsub-shared' */
 import Logger from 'logplease'
 const logger = Logger.create('orbit-db')
-import { Identity, Identities } from '@dao-xyz/orbit-db-identity-provider'
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
-/* import { AccessControllers } from '@dao-xyz/orbit-db-access-controllers' // Fix fork
- */
 import Cache from '@dao-xyz/orbit-db-cache'
 import { BoxKeyWithMeta, Keystore, KeyWithMeta, SignKeyWithMeta, WithType } from '@dao-xyz/orbit-db-keystore'
 import { isDefined } from './is-defined'
-import { OrbitDBAddress } from './orbit-db-address'
-import { createDBManifest } from './db-manifest'
 import { Level } from 'level';
 import { exchangeHeads, ExchangeHeadsMessage, RequestHeadsMessage } from './exchange-heads'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { serialize, deserialize } from '@dao-xyz/borsh'
 import { Message } from './message'
-import { getOrCreateChannel } from './channel'
+import { SharedChannel, SharedIPFSChannel } from './channel'
 import { exchangeKeys, KeyResponseMessage, KeyAccessCondition, recieveKeys, requestAndWaitForKeys, RequestKeyMessage, RequestKeyCondition, RequestKeysByKey, RequestKeysByReplicationTopic } from './exchange-keys'
-import { DecryptedThing, EncryptedThing, MaybeEncrypted, MaybeSigned, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
-import { Ed25519PublicKey, X25519PublicKey } from 'sodium-plus'
-import LRU from 'lru';
-import { DirectChannel } from '@dao-xyz/ipfs-pubsub-1on1'
+import { DecryptedThing, EncryptedThing, MaybeEncrypted, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
+import { X25519PublicKey } from 'sodium-plus'
+import LRU from 'lru-cache';
+import { DirectChannel } from '@dao-xyz/ipfs-pubsub-direct-channel'
 import { encryptionWithRequestKey, replicationTopicEncryptionWithRequestKey } from './encryption'
+import { Ed25519PublicKeyData, PublicKey } from '@dao-xyz/identity';
+import { MaybeSigned } from '@dao-xyz/identity';
+import { WAIT_FOR_PEERS_TIME, exchangePeerInfo, ReplicatorInfo, PeerInfoWithMeta, RequestReplicatorInfo, requestPeerInfo } from './exchange-replication'
+import { createHash } from 'crypto'
+import isNode from 'is-node';
+import { delay, waitFor } from '@dao-xyz/time'
+import { LRUCounter } from './lru-counter'
+import { IpfsPubsubPeerMonitor } from '@dao-xyz/ipfs-pubsub-peer-monitor';
+let v8 = undefined;
+if (isNode) {
+  v8 = require('v8');
+}
 
 /* let AccessControllersModule = AccessControllers;
  */
 Logger.setLogLevel('ERROR')
 
-// Mapping for 'database type' -> Class
-const databaseTypes: { [key: string]: Constructor<Store<any, any, any, any>> } = {}
-
 const defaultTimeout = 30000 // 30 seconds
+const STORE_MIN_HEAP_SIZE = 50 * 1000;
+
+const MIN_REPLICAS = 2;
 
 export type StoreOperations = 'write' | 'all'
 export type Storage = { createStore: (string) => any }
 export type CreateOptions = {
-  AccessControllers?: any, cache?: Cache, keystore?: Keystore, peerId?: string, offline?: boolean, directory?: string, storage?: Storage, broker?: any, waitForKeysTimout?: number, canAccessKeys?: KeyAccessCondition, isTrusted?: (key: Ed25519PublicKey, replicationTopic: string) => Promise<boolean>
+  AccessControllers?: any, cache?: Cache, keystore?: Keystore, peerId?: string, offline?: boolean, directory?: string, storage?: Storage, broker?: any, minReplicas?: number, heapsizeLimitForForks?: number, waitForKeysTimout?: number, canAccessKeys?: KeyAccessCondition, isTrusted?: (key: PublicKey, replicationTopic: string) => Promise<boolean>
 };
-export type CreateInstanceOptions = CreateOptions & { identity?: Identity, id?: string };
-export class OrbitDB {
-  _ipfs: IPFSInstance;
-  identity: Identity;
-  id: string;
-  _pubsub: PubSub;
-  _directConnections: { [key: string]: { channel: DirectChannel, dependencies: Set<string> } };
-  /*   _directConnectionsByTopic: { [key: string]: { [key: string]: DirectChannel } } = {};
-   */
+export type CreateInstanceOptions = CreateOptions & { publicKey?: PublicKey, sign?: (data: Uint8Array) => Promise<Uint8Array>, id?: string };
 
+const groupByGid = (entries: Entry<any>[]) => {
+  const groupByGid: Map<string, Entry<any>[]> = new Map()
+  for (const head of entries) {
+    let arr = groupByGid.get(head.gid);
+    if (!arr) {
+      arr = [];
+      groupByGid.set(head.gid, arr)
+    }
+    arr.push(head);
+  }
+  return groupByGid;
+}
+
+export class OrbitDB {
+
+  _ipfs: IPFSInstance;
+  /* 
+    _pubsub: PubSub; */
+  _directConnections: Map<string, SharedChannel<DirectChannel>>;
+  _replicationTopicSubscriptions: Map<string, SharedChannel<SharedIPFSChannel>>;
+
+  publicKey: PublicKey;
+  sign: (data: Uint8Array) => Promise<Uint8Array>;
+  id: string;
   directory: string;
   storage: Storage;
   caches: any;
   keystore: Keystore;
-  stores: { [topic: string]: { [address: string]: Store<any, any, any, any> } };
+  minReplicas: number;
+  heapsizeLimitForForks: number = 1000 * 1000 * 1000;
+  stores: { [topic: string]: { [address: string]: StoreLike<any> } };
 
+  _gidPeersHistory: Map<string, Set<string>> = new Map()
   _waitForKeysTimeout = 10000;
   _keysInflightMap: Map<string, Promise<any>> = new Map(); // TODO fix types
-  _keyRequestsLRU: LRU = new LRU({ max: 100, maxAge: 10000 });
+  _keyRequestsLRU: LRU<string, KeyWithMeta[] | null> = new LRU({ max: 100, ttl: 10000 });
+  /*   _replicationTopicJobs: Map<string, { controller: AbortController }> = new Map(); */
+  _peerInfoLRU: Map<string, PeerInfoWithMeta> = new Map();// LRU = new LRU({ max: 1000, ttl:  EMIT_HEALTHCHECK_INTERVAL * 4 });
+  _supportedHashesLRU: LRUCounter = new LRUCounter(new LRU({ ttl: 60000 }))
+  _peerInfoResponseCounter: LRUCounter = new LRUCounter(new LRU({ ttl: 100000 }))
 
-  isTrusted: (key: Ed25519PublicKey, replicationTopic: string) => Promise<boolean>
+  //_peerInfoMap: Map<string, Map<string, Set<string>>> // peer -> store -> heads
+
+
+  isTrusted: (key: PublicKey, replicationTopic: string) => Promise<boolean>
   canAccessKeys: KeyAccessCondition
 
-  constructor(ipfs: IPFSInstance, identity: Identity, options: CreateOptions = {}) {
-    if (!isDefined(ipfs)) { throw new Error('IPFS is a required argument. See https://github.com/orbitdb/orbit-db/blob/master/API.md#createinstance') }
-    if (!isDefined(identity)) { throw new Error('identity is a required argument. See https://github.com/orbitdb/orbit-db/blob/master/API.md#createinstance') }
+
+  constructor(ipfs: IPFSInstance, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: CreateOptions = {}) {
+    if (!isDefined(ipfs)) { throw new Error('IPFS required') }
+    if (!isDefined(publicKey)) { throw new Error('public key required') }
+    if (!isDefined(sign)) { throw new Error('sign function required') }
 
     this._ipfs = ipfs
-    this.identity = identity
+    this.publicKey = publicKey
+    this.sign = sign;
     this.id = options.peerId
-    this._pubsub = !options.offline
-      ? new (
-        options.broker ? options.broker : PubSub
-      )(this._ipfs, this.id)
-      : null
+    /*     this._pubsub = !options.offline
+          ? new (
+            options.broker ? options.broker : PubSub
+          )(this._ipfs, this.id)
+          : null */
     this.directory = options.directory || './orbitdb'
     this.storage = options.storage
-    this._directConnections = {}
-
+    this._directConnections = new Map();
+    this.stores = {}
     this.caches = {}
+    this.minReplicas = options.minReplicas || MIN_REPLICAS;
     this.caches[this.directory] = { cache: options.cache, handlers: new Set() }
     this.keystore = options.keystore
     this.canAccessKeys = options.canAccessKeys || (() => Promise.resolve(false));
     this.isTrusted = options.isTrusted || (() => Promise.resolve(true))
-    this.stores = {}
     if (options.waitForKeysTimout) {
       this._waitForKeysTimeout = options.waitForKeysTimout;
     }
-
+    this.heapsizeLimitForForks = options.heapsizeLimitForForks;
+    this._ipfs.pubsub.subscribe(DirectChannel.getTopic([this.id]), this._onMessage.bind(this));
     // AccessControllers module can be passed in to enable
     // testing with orbit-db-access-controller
     /*     AccessControllersModule = options.AccessControllers || AccessControllers
      */
+    this._replicationTopicSubscriptions = new Map();
   }
-
-  static get Pubsub() { return PubSub }
-  static get Cache() { return Cache }
-  static get Keystore() { return Keystore }
-  static get Identities() { return Identities }
-  /*   static get AccessControllers() { return AccessControllersModule }
-   */
-  static get OrbitDBAddress() { return OrbitDBAddress }
-
-  static get Store() { return Store }
 
   get cache() { return this.caches[this.directory].cache }
 
+  get identity(): PublicKey {
+    return this.publicKey;
+  }
   get encryption(): PublicKeyEncryption {
-    return encryptionWithRequestKey(this.identity, this.keystore)
+    return encryptionWithRequestKey(this.publicKey, this.keystore)
   }
 
   async requestAndWaitForKeys<T extends KeyWithMeta>(replicationTopic: string, condition: RequestKeyCondition<T>): Promise<T[]> {
@@ -120,12 +150,12 @@ export class OrbitDB {
 
     let lruCache = this._keyRequestsLRU.get(promiseKey);
     if (lruCache !== undefined) {
-      return lruCache;
+      return lruCache as T[];
     }
 
     const promise = new Promise<T[] | undefined>((resolve, reject) => {
-      const send = (message: Uint8Array) => this._pubsub.publish(replicationTopic, message)
-      requestAndWaitForKeys(condition, send, this.keystore, this.identity, this._waitForKeysTimeout).then((results) => {
+      const send = (message: Uint8Array) => this._ipfs.pubsub.publish(replicationTopic, message)
+      requestAndWaitForKeys(condition, send, this.keystore, this.publicKey, this.sign, this._waitForKeysTimeout).then((results) => {
         if (results?.length > 0) {
           resolve(results);
         }
@@ -194,6 +224,9 @@ export class OrbitDB {
     let id: string = undefined;
     if (options.id || options.offline) {
 
+      if (!options.offline) {
+        throw new Error("Custom id is only supported for offline peers");
+      }
       id = options.id;
     }
     else {
@@ -220,22 +253,40 @@ export class OrbitDB {
 
 
 
-    if (options.identity && options.identity.provider.keystore) {
+    /* if (options.identity && options.identity.provider.keystore) {
       options.keystore = options.identity.provider.keystore
-    }
+    } */
 
     if (!options.keystore) {
       const keystorePath = path.join(options.directory, id, '/keystore')
       const keyStorage = await options.storage.createStore(keystorePath)
       options.keystore = new (Keystore as any)(keyStorage) // TODO fix typings
     }
+    let publicKey: PublicKey = undefined;
+    let sign: (data: Uint8Array) => Promise<Uint8Array> = undefined;
+    if (!!options.publicKey != !!options.sign) {
+      throw new Error("Either both publicKey and sign function has to be provided, or neither")
+    }
+    if (options.publicKey) {
+      publicKey = options.publicKey;
+      sign = options.sign;
+    }
+    else {
+      const signKey = await options.keystore.createKey(Buffer.from(id), SignKeyWithMeta);
+      publicKey = new Ed25519PublicKeyData({
+        publicKey: signKey.publicKey
+      });
+      sign = (data) => Keystore.sign(data, signKey);
+    }
 
-    if (!options.identity) {
+    /* const signKey = options.signKey || await options.keystore.createKey(Buffer.from(id), SignKeyWithMeta); */
+    /* if (!options.identity) {
       options.identity = await Identities.createIdentity({
         id: new Uint8Array(Buffer.from(id)),
         keystore: options.keystore
       })
-    }
+    } */
+
 
     if (!options.cache) {
       const cachePath = path.join(options.directory, id, '/cache')
@@ -244,24 +295,33 @@ export class OrbitDB {
     }
 
     const finalOptions = Object.assign({}, options, { peerId: id })
-    return new OrbitDB(ipfs, options.identity, finalOptions)
+    return new OrbitDB(ipfs, publicKey, sign, finalOptions)
   }
 
 
   async disconnect() {
     // Close a direct connection and remove it from internal state
+
+    for (const [_topic, channel] of this._replicationTopicSubscriptions) {
+      await channel.close();
+    }
+
+
+    await this._ipfs.pubsub.unsubscribe(DirectChannel.getTopic([this.id]));
     const removeDirectConnect = e => {
-      this._directConnections[e].channel.close()
-      delete this._directConnections[e]
+      this._directConnections.get(e)?.close()
+      this._directConnections.delete(e);
     }
 
     // Close all direct connections to peers
-    Object.keys(this._directConnections).forEach(removeDirectConnect)
+    this._directConnections.forEach(removeDirectConnect);
+
 
     // Disconnect from pubsub
-    if (this._pubsub) {
-      await this._pubsub.disconnect()
-    }
+    /*   if (this._pubsub) {
+        await this._ipfs.pubsub.disconnect()
+      } */
+
 
     // close keystore
     await this.keystore.close()
@@ -287,70 +347,9 @@ export class OrbitDB {
     await this.disconnect()
   }
 
-  async _createCache(path: string) {
-    const cacheStorage = await this.storage.createStore(path)
+  async _createCache(directory: string) {
+    const cacheStorage = await this.storage.createStore(directory)
     return new Cache(cacheStorage)
-  }
-
-  /* Private methods */
-  async _createStore<T>(type: string, address: Address, options: { identity?: Identity, accessControllerAddress?: string } & IStoreOptions<T, any, any>) {
-    // Get the type -> class mapping
-    const Store = databaseTypes[type]
-
-    if (!Store) { throw new Error(`Invalid database type '${type}'`) }
-
-    let accessController
-    if (options.accessControllerAddress) {
-      // Access controller options also gathers some properties from the options, so that if the access controller
-      // does also contain a store (i.e. Store -> AccessController -> Store), we can create this store on the "load" 
-      // method on the AccessController
-      const accessControllerOptions = {
-        storeOptions: {
-          create: options.create, replicate: options.replicate, directory: options.directory, nameResolver: options.nameResolver
-        }, ...options.accessController
-      };
-      accessController = await AccessControllersModule.resolve(this, options.accessControllerAddress, accessControllerOptions)
-    }
-    const opts = Object.assign({ replicate: true }, options, {
-      accessController: accessController,
-      cache: options.cache,
-      onClose: this._onClose.bind(this),
-      onDrop: this._onDrop.bind(this),
-      onLoad: this._onLoad.bind(this),
-    } as IStoreOptions<any, any, any>)
-    const identity = options.identity || this.identity
-
-    const store = new Store(this._ipfs, identity, address, opts)
-    store.events.on('write', this._onWrite.bind(this))
-
-    // ID of the store is the address as a string
-    this.addStore(store)
-
-    // Subscribe to pubsub to get updates from peers,
-    // this is what hooks us into the message propagation layer
-    // and the p2p network
-    if (this._pubsub) {
-      if (!this._pubsub._subscriptions[store.replicationTopic]) {
-        await this._pubsub.subscribe(store.replicationTopic, store.id, this._onMessage.bind(this), {
-          onNewPeerCallback: this._onPeerConnected.bind(this)
-        })
-      }
-      else {
-
-        const msg = new RequestHeadsMessage({
-          address: address.toString(),
-          replicationTopic: store.replicationTopic
-        });
-        await this._pubsub.publish(store.replicationTopic, serialize(await this.decryptedSignedThing(serialize(msg))));
-
-      }
-    }
-
-    if (accessController.setStore) {
-      accessController.setStore(store);
-    }
-
-    return store
   }
 
 
@@ -360,27 +359,27 @@ export class OrbitDB {
     if (!heads) {
       throw new Error("'heads' not defined")
     }
-    if (this._pubsub) {
+    if (this._ipfs.pubsub && heads.length > 0) {
       this.decryptedSignedThing(serialize(new ExchangeHeadsMessage({
         address,
         heads,
         replicationTopic: topic
       }))).then((thing) => {
-        this._pubsub.publish(topic, serialize(thing))
+        this._ipfs.pubsub.publish(topic, serialize(thing))
       })
     }
   }
 
   // Callback for receiving a message from the network
-  async _onMessage(onMessageTopic: string, data: Uint8Array, peer: string) {
+  async _onMessage(topic: string, data: Uint8Array, peer: string) {
     try {
 
-      const maybeEncryptedMessage = deserialize(Buffer.from(data), MaybeEncrypted) as MaybeEncrypted<MaybeSigned<Message>>
+      const maybeEncryptedMessage = deserialize(data, MaybeEncrypted) as MaybeEncrypted<MaybeSigned<Message>>
       const decrypted = await maybeEncryptedMessage.init(this.encryption).decrypt()
       const signedMessage = decrypted.getValue(MaybeSigned);
-      await signedMessage.verify(this.keystore.verify);
+      await signedMessage.verify();
       const msg = signedMessage.getValue(Message);
-      const sender: Ed25519PublicKey | undefined = signedMessage.signature?.publicKey;
+      const sender: PublicKey | undefined = signedMessage.signature?.publicKey;
       const checkTrustedSender = async (replicationTopic: string): Promise<boolean> => {
         let isTrusted = false;
         if (sender) {
@@ -403,74 +402,245 @@ export class OrbitDB {
         if (!(await checkTrustedSender(replicationTopic))) {
           return;
         }
-        const stores = this.stores[replicationTopic]
-        if (heads && stores) {
-          for (const [storeAddress, store] of Object.entries(stores)) {
-            if (store) {
-              if (storeAddress !== address) {
-                continue // this messages was intended for another store
-              }
-              if (heads.length > 0) {
-                if (!store.options.replicate) {
-                  // if we are only to write, then only care about others clock
-                  for (const head of heads) {
-                    head.init({
-                      encoding: store._oplog._encoding,
-                      encryption: store._oplog._encryption
-                    })
-                    const clock = await head.getClock();
-                    store._oplog.mergeClock(clock)
-                  }
-                }
-                else {
-                  // Full sync
-                  await store.sync(heads)
+        let stores = this.stores[replicationTopic]
+        if (!stores) {
+          stores = {};
+          this.stores[replicationTopic] = stores
+        }
+        const isReplicating = this._replicationTopicSubscriptions.has(replicationTopic);
 
-                }
+        if (heads && stores) {
+
+          /*   let isLeaderResolver: () => Promise<{ leaders: string[], isLeader: boolean }> = async () => {
+              const leaders = await this.findLeaders(replicationTopic, address, Buffer.from(signedMessage.signature.signature).toString('base64'), this.minReplicas);
+              return {
+                leaders,
+                isLeader: this.isLeader(leaders)
               }
-              store.events.emit('peer.exchanged', peer, address, heads)
+            } */
+
+          /**
+           * Filter our heads that we should not care about
+           */
+          // We should sync heads if 
+          // - We already support next
+          // or 
+          // - Or we are a leader
+          // DO CHECKS here and dont pass isLeader check to sync methodd
+
+          const leaderCache: Map<string, string[]> = new Map();
+          if (!stores[address]) {
+            // open store if is leader
+
+            for (const [gid, value] of groupByGid(heads)) {
+              // Check if root, if so, we check if we should open the store
+              const leaders = this.findLeaders(replicationTopic, isReplicating, gid, this.minReplicas); // Todo reuse calculations
+              leaderCache.set(gid, leaders);
+              if (leaders.find(x => x === this.id)) {
+                await this.open(Address.parse(address), { replicationTopic })
+              }
+            }
+            if (!stores[address]) {
+              return;
             }
           }
+
+          const store = stores[address];
+          /*           heads.sort(store.oplog._sortFn); */
+          /*    const mergeable = [];
+             const newItems: Map<string, Entry<any>> = new Map(); */
+
+          const toMerge: Entry<any>[] = [];
+          for (const [gid, value] of groupByGid(heads)) {
+            const leaders = leaderCache.get(gid) || this.findLeaders(replicationTopic, isReplicating, gid, this.minReplicas);
+            const isLeader = leaders.find((l) => l === this.id);
+            if (!isLeader) {
+              continue;
+            }
+            value.forEach((head) => {
+              toMerge.push(head);
+            })
+
+          }
+          if (toMerge.length > 0) {
+            await store.sync(toMerge);
+            store.events.emit('peer.exchanged', peer, address, toMerge)
+
+          }
+          /*   for (const head of heads) {
+              if (store.oplog._peersByGid.has(head.gid) || head.next.find(n => store.oplog.has(n))) {
+                mergeable.push(head);
+              }
+              else { */
+          // if new root, then check if we should merge this
+
+          /*  if (head.next.length === 0) {
+             if (leaders.find((l) => l === this.id)) {
+               // is leader
+               newItems.set(head.hash, head);
+               store.oplog.setPeersByGid(head.gid, new Set(leaders))
+             }
+             else {
+               // Safely ignore item, since its a not root element, and we are not the leader
+             }
+           }
+           else {
+             // Unexpected if not new items contains nexts
+             head.next.forEach((next) => {
+               if (!newItems.has(next) && !store.oplog.has(next)) {
+                 logger.error("Failed to sync item with next elements that are unknown")
+               }
+             })
+             mergeable.push(head);
+             newItems.set(head.hash, head);
+           } */
+          /*  }
+         } */
+
+
+
+          /* 
+                    for (const [storeAddress, store] of Object.entries(stores)) {
+                      if (store) {
+                        if (storeAddress !== address) {
+                          continue // this messages was intended for another store
+                        }
+                        if (heads.length > 0) { */
+          /*    if (!store.replicate) {
+               // if we are only to write, then only care about others clock
+               for (const head of heads) {
+                 head.init({
+                   encoding: store.oplog._encoding,
+                   encryption: store.oplog._encryption
+                 })
+                 const clock = await head.getClock();
+                 store.oplog.mergeClock(clock)
+               }
+             }
+             else {
+               // Full sync
+               
+ 
+             } */
+
+          /*      }
+           
+             }
+           } */
         }
 
         logger.debug(`Received ${heads.length} heads for '${address}':\n`, JSON.stringify(heads.map(e => e.hash), null, 2))
       }
-      else if (msg instanceof RequestHeadsMessage) {
-        /**
-         * I have recieved a message urging me to share my heads
-         * so that another peer can clone my log and join with theirs
-         */
-        const { replicationTopic, address } = msg
-        if (!(await checkTrustedSender(replicationTopic))) {
-          return;
-        }
-        const channel = await this.getChannel(peer, replicationTopic);
-        await exchangeHeads(channel, replicationTopic, (address: string) => this.stores[address], await this.getSigner());
-        logger.debug(`Received exchange heades request for topic: ${replicationTopic}, address: ${address}`)
-      }
-      else if (msg instanceof KeyResponseMessage) {
-        await recieveKeys(msg, (keys) => {
-          const keysToSave = keys.filter(key => key instanceof SignKeyWithMeta || key instanceof BoxKeyWithMeta);
-          return Promise.all(keysToSave.map((key) => this.keystore.saveKey(key)))
-        })
-        /*         
-        this._keysInFlightResolver?.();
-         */
-      }
+      /*  else if (msg instanceof RequestHeadsMessage) {
+          // I have recieved a message urging me to share my heads
+          // so that another peer can clone my log and join with theirs
+         const { replicationTopic, address } = msg
+         if (!(await checkTrustedSender(replicationTopic))) {
+           return;
+         }
+ 
+         const stores = this.stores[replicationTopic];  // Send the heads if we have any
+         if (stores) {
+           for (const [storeAddress, store] of Object.entries(stores)) {
+             if (store.replicate) {
+               await exchangeHeads(async (peer, msg) => {
+                 const channel = await this.getChannel(peer, replicationTopic);
+                 return channel.send(Buffer.from(msg));
+               }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner());
+             }
+             else {
+               // Ignore for now (dont share headss)
+             }
+           }
+         }
+         logger.debug(`Received exchange heades request for topic: ${replicationTopic}, address: ${address}`)
+       }
+       else if (msg instanceof KeyResponseMessage) {
+         await recieveKeys(msg, (keys) => {
+           const keysToSave = keys.filter(key => key instanceof SignKeyWithMeta || key instanceof BoxKeyWithMeta);
+           return Promise.all(keysToSave.map((key) => this.keystore.saveKey(key)))
+         })
+         
+       } */
       else if (msg instanceof RequestKeyMessage) {
 
         /**
          * Someone is requesting X25519 Secret keys for me so that they can open encrypted messages (and encrypt)
          * 
          */
-
-        const channel = await this.getChannel(peer, onMessageTopic);
+        const send = (message: Uint8Array) => this._ipfs.pubsub.publish(DirectChannel.getTopic([peer]), message);
         const getKeysByGroup = <T extends KeyWithMeta>(group: string, type: WithType<T>) => this.keystore.getKeys(group, type);
         const getKeysByPublicKey = (key: Uint8Array) => this.keystore.getKeyById(key);
-
-        await exchangeKeys(channel, msg, sender, this.canAccessKeys, getKeysByPublicKey, getKeysByGroup, await this.getSigner(), this.encryption)
+        await exchangeKeys(send, msg, sender, this.canAccessKeys, getKeysByPublicKey, getKeysByGroup, await this.getSigner(), this.encryption)
         logger.debug(`Exchanged keys`)
       }
+      else if (msg instanceof RequestReplicatorInfo) {
+
+        const store = this.stores[msg.replicationTopic]?.[msg.address];
+        if (!store || !store.replicate) {
+          return;
+        }
+
+        if (!(await checkTrustedSender(msg.replicationTopic))) {
+          return;
+        }
+
+        // if supports store, return resp
+        if (store) {
+          const send = this._directConnections.has(peer) ? (message) => this._directConnections.get(peer).channel.send(message) : (message) => this._ipfs.pubsub.publish(msg.replicationTopic, message);
+          if (msg.heads) {
+            let ownedHeads = msg.heads.filter(h => !!store.oplog._entryIndex.get(h));
+            if (ownedHeads.length > 0) {
+              await exchangePeerInfo(msg.id, msg.replicationTopic, store, ownedHeads, send, await this.getSigner())
+            }
+          }
+          else {
+            await exchangePeerInfo(msg.id, msg.replicationTopic, store, undefined, send, await this.getSigner())
+          }
+        }
+      }
+      else if (msg instanceof ReplicatorInfo) {
+
+        if (!(await checkTrustedSender(msg.replicationTopic))) {
+          return;
+        }
+        // TODO singleton
+        const hashcode = sender.hashCode();
+
+        this._peerInfoLRU.set(hashcode, {
+          peerInfo: msg,
+          publicKey: sender
+        } as PeerInfoWithMeta)
+
+        if (msg.fromId) {
+          await this._peerInfoResponseCounter.increment(msg.fromId);
+        }
+        msg.heads?.forEach((h) => {
+          this._supportedHashesLRU.increment(h);
+        })
+
+      }
+
+      /*  else if (msg instanceof RequestReplication) {
+ 
+         if (!this._subscribeForReplication.has(msg.replicationTopic)) {
+           return;
+         }
+ 
+         if (!(await checkTrustedSender(msg.replicationTopic))) {
+           return;
+         }
+         for (const r of msg.resourceRequirements) {
+           if (!await r.ok(this)) {
+             return; // does not fulfill criteria
+           }
+         }
+         // TODO only leader open?
+         await this.open(msg.store, { replicationTopic: msg.replicationTopic });
+         if (msg.heads.length > 0) {
+           await msg.store.sync(msg.heads, () => this.isLeader(msg.store, Buffer.from(data).toString('base64'), XXX))
+         }
+       } */
 
       else {
         throw new Error("Unexpected message")
@@ -480,99 +650,239 @@ export class OrbitDB {
     }
   }
 
-  // Callback for when a peer connected to a database
-  async _onPeerConnected(replicationTopic: string, peer: string, subscription: Subscription) {
+
+  async _onPeerConnected(replicationTopic: string, peer: string) {
     logger.debug(`New peer '${peer}' connected to '${replicationTopic}'`)
 
-    // create a channel for sending/receiving messages
-    const channel = await this.getChannel(peer, subscription.topicMonitor.topic)
+    const stores = this.stores[replicationTopic];  // Send the heads if we have any
+    if (stores) {
+      for (const [_storeAddress, store] of Object.entries(stores)) {
+        if (store.replicate) {
+          // create a channel for sending/receiving messages
+          /*  const channel = await this.getChannel(peer, replicationTopic); */
+          /*  await exchangeHeads((msg) => channel.send(Buffer.from(msg)), store, (key) => this._supportedHashesLRU.get(key) >= this.minReplicas, await this.getSigner()); */
+          /*    await exchangeHeads(this.id, async (peer, msg) => {
+               const channel = await this.getChannel(peer, replicationTopic);
+               return channel.send(Buffer.from(msg));
+             }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner()); */
 
-    const getStore = (address: string) => this.stores[address]
 
-    // Exchange heads
-    await exchangeHeads(channel, replicationTopic, getStore, await this.getSigner())
+          // Creation of this channel here, will make sure it is created even though a head might not be exchanged
+          await this.getChannel(peer, replicationTopic);
+
+          /*       await exchangeHeads(this.id, async (peer, msg) => {
+                  const channel = await this.getChannel(peer, replicationTopic);
+                  return channel.send(Buffer.from(msg));
+                }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner()); */
+
+        }
+        else {
+          const x = 123;
+          // If replicate false, we are in write mode. Means we should exchange all heads 
+          /*   await exchangeHeads((message) => this._ipfs.pubsub.publish(replicationTopic, message), store, () => false, await this.getSigner()) */
+        }
+
+
+      }
+    }
+  }
+
+  /* async _onPeerDisconnected(topic: string, peer: string) {
+
+    // get all topics for this peer
+    if (this._directConnections.has(peer)) {
+      for (const replicationTopic of this._directConnections.get(peer).dependencies) {
+        for (const store of Object.values(this.stores[replicationTopic])) {
+          const heads = await store.getHeads();
+          const groupedByGid = groupByGid(heads);
+          for (const [gid, entries] of groupedByGid) {
+            const peers = this.findReplicators(store, gid); // would not work if peer got disconnected?
+            const index = peers.findIndex(p => p === peer);
+            if (index !== -1) { //
+              // We lost an important peer,
+              if (peers[(index + 1) & peers.length] === this.id) {
+
+                // is should tell the others that we need one more replicator
+                //const
+              }
+            }
+          }
+        }
+      }
+    }
+
+  } */
+
+
+  /**
+   * When a peers join the networkk and want to participate the leaders for particular log subgraphs might change, hence some might start replicating, might some stop
+   * This method will go through my owned entries, and see whether I should share them with a new leader, and/or I should stop care about specific entries
+   * @param channel
+   */
+  async replicationReorganization(modifiedChannel: DirectChannel) {
+    for (const replicationTopic of this._directConnections.get(modifiedChannel.recieverId).dependencies) {
+      for (const store of Object.values(this.stores[replicationTopic])) {
+        const heads = await store.getHeads();
+        const groupedByGid = groupByGid(heads);
+        for (const [gid, entries] of groupedByGid) {
+          if (entries.length === 0) {
+            continue; // TODO maybe close store?
+          }
+          /*     const oldPeers = this.findReplicators(store, gid, [channel.recieverId]);
+              const oldPeersSet = new Set(this.findReplicators(store, gid, [channel.recieverId])); */
+          const oldPeersSet = this._gidPeersHistory.get(gid);
+          const newPeers = this.findReplicators(store.replicationTopic, store.replicate, gid);
+          /* const index = oldPeers.findIndex(p => p === channel.recieverId); */
+          for (const newPeer of newPeers) {
+            if (!oldPeersSet?.has(newPeer) && newPeer !== this.id) { // second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
+
+              // send heads to the new peer
+              const abc = 123
+              const channel = this._directConnections.get(newPeer).channel;
+              await exchangeHeads(async (message) => {
+                try {
+                  await channel.send(message);
+                } catch (error) {
+                  const x = 123;
+                }
+              }, store, await this.getSigner(), entries)
+            }
+          }
+
+          if (!newPeers.find(x => x === this.id)) {
+            // delete entries since we are not suppose to replicate this anymore
+            // TODO add delay? freeze time? (to ensure resiliance for bad io)
+            store.oplog.removeAll(entries);
+
+            // TODO if length === 0 maybe close store? 
+          }
+          this._gidPeersHistory.set(gid, new Set(newPeers))
+          /* if (index !== -1)  */{ //
+            // We lost an replicating peer,
+            // find diff
+
+            /* if (peers[(index + 1) & peers.length] === this.id) { */
+
+            // is should tell the others that we need one more replicator
+            //const
+            /* } */
+          }
+        }
+      }
+    }
 
   }
 
   async getSigner() {
-    const senderSignerSecretKey = await this.keystore.getKeyByPath(this.identity.id, SignKeyWithMeta)
     return async (bytes) => {
       return {
-        signature: await this.keystore.sign(bytes, senderSignerSecretKey),
-        publicKey: senderSignerSecretKey.publicKey
+        signature: await this.sign(bytes),
+        publicKey: this.publicKey
       }
     }
   }
 
 
   async getChannel(peer: string, fromTopic: string) {
+
     // TODO what happens if disconnect and connection to direct connection is happening
     // simultaneously
-    const getDirectConnection = (peer: string) => this._directConnections[peer]?.channel
-    const _onChannelCreated = (channel: DirectChannel) => {
-      this._directConnections[channel.recieverId] = {
-        channel,
-        dependencies: new Set([fromTopic])
+    const getDirectConnection = (peer: string) => this._directConnections.get(peer)?._channel
+
+    let channel = getDirectConnection(peer)
+    if (!channel) {
+      try {
+        logger.debug(`Create a channel to ${peer}`)
+        channel = await DirectChannel.open(this._ipfs, peer, this._onMessage.bind(this), {
+          onPeerLeaveCallback: (channel) => {
+
+            // First modify direct connections
+            this._directConnections.get(channel.recieverId).close(channel.recieverId)
+
+            // Then perform replication reorg
+            this.replicationReorganization(channel);
+          },
+          onNewPeerCallback: (channel) => {
+
+            // First modify direct connections
+            if (!this._directConnections.has(channel.recieverId)) {
+              this._directConnections.set(channel.recieverId, new SharedChannel(channel, new Set([fromTopic])));
+            }
+            else {
+              this._directConnections.get(channel.recieverId).dependencies.add(fromTopic);
+            }
+
+            // Then perform replication reorg
+            this.replicationReorganization(channel);
+          }
+        })
+        logger.debug(`Channel created to ${peer}`)
+      } catch (e) {
+        logger.error(e)
       }
     }
 
-    const handleMessage = (message: { data: Uint8Array }) => {
-      this._onMessage(undefined, message.data, peer)
-    }
-    let channel = await getOrCreateChannel(this._ipfs, peer, getDirectConnection, handleMessage, _onChannelCreated);
-
-    this._directConnections[channel.recieverId].dependencies.add(fromTopic);
+    // Wait for the direct channel to be fully connected
+    await channel.connect()
+    logger.debug(`Connected to ${peer}`)
 
     return channel;
   }
 
 
 
-  // Callback when database was closed
-  async _onClose(db: Store<any, any, any, any>) {
+  // Callback when a database was closed
+  async _onClose(db: Store<any>) { // TODO Can we really close a this.stores, either we close all stores in the replication topic or none
     const address = db.address.toString()
     logger.debug(`Close ${address}`)
 
     // Unsubscribe from pubsub
-    let subscriptionId = undefined;
-    if (this._pubsub) {
-      subscriptionId = await this._pubsub.unsubscribe(db.replicationTopic, db.id)
-    }
+    await this._replicationTopicSubscriptions.get(db.replicationTopic).close(db.id);
+
 
     const dir = db && db.options.directory ? db.options.directory : this.directory
     const cache = this.caches[dir]
 
     if (cache && cache.handlers.has(address)) {
       cache.handlers.delete(address)
-      if (!cache.handlers.size) await cache.cache.close()
+      if (!cache.handlers.size) {
+        await cache.cache.close()
+      }
     }
 
     delete this.stores[db.replicationTopic][address]
 
-    const otherStoresUsingSameReplicaitonTopic = this.stores[db.replicationTopic]
+    const otherStoresUsingSameReplicationTopic = this.stores[db.replicationTopic]
 
+    // close all connections with this repplication topic if this is the last dependency
+    const isLastStoreForReplicationTopic = Object.keys(otherStoresUsingSameReplicationTopic).length === 0;
+    if (isLastStoreForReplicationTopic) {
 
-    // close all connections with this repplication topic
-    const deleteDirectConnectionsForTopic = Object.keys(otherStoresUsingSameReplicaitonTopic).length === 0;
-    for (const [key, connection] of Object.entries(this._directConnections)) {
-      connection.dependencies.delete(db.replicationTopic);
-      if (deleteDirectConnectionsForTopic && connection.dependencies.size === 0) {
-        await connection?.channel.close();
-        delete this._directConnections[key];
+      /*   const cron = this._replicationTopicJobs.get(db.replicationTopic);
+        if (cron) {
+          cron.controller.abort();
+          this._replicationTopicJobs.delete(db.replicationTopic);
+        }
+   */
+      for (const [key, connection] of this._directConnections) {
+        await connection.close(db.replicationTopic);
+        // Delete connection from thing
+
+        // TODO what happens if we close a store, but not its direct connection? we should open direct connections and make it dependenct on the replciation topic
       }
-      // Delete connection from thing
     }
+
 
 
   }
 
-  async _onDrop(db: Store<any, any, any, any>) {
+  async _onDrop(db: Store<any>) {
     const address = db.address.toString()
     const dir = db && db.options.directory ? db.options.directory : this.directory
     await this._requestCache(address, dir, db._cache)
   }
 
-  async _onLoad(db: Store<any, any, any, any>) {
+  async _onLoad(db: Store<any>) {
     const address = db.address.toString()
     const dir = db && db.options.directory ? db.options.directory : this.directory
     await this._requestCache(address, dir, db._cache)
@@ -580,7 +890,7 @@ export class OrbitDB {
   }
 
 
-  /* addStore(store: Store<any, any, any, any>) {
+  /* addStore(store: Store<any>) {
     const storeAddress = store.address.toString();
     if (!storeAddress) { throw new Error("Address undefined") }
    
@@ -591,35 +901,244 @@ export class OrbitDB {
     this.stores[storeAddress] = store;
   }
   */
-  addStore(store: Store<any, any, any, any>) {
+  async addStore(store: StoreLike<any>) {
     const replicationTopic = store.replicationTopic;
     if (!this.stores[replicationTopic]) {
       this.stores[replicationTopic] = {};
     }
+    if (this.stores[replicationTopic] === undefined) {
+      throw new Error("Unexpected behaviour")
+    }
+
     const storeAddress = store.address.toString();
     const existingStore = this.stores[replicationTopic][storeAddress];
     if (!!existingStore && existingStore !== store) { // second condition only makes this throw error if we are to add a new instance with the same address
       throw new Error(`Store at ${replicationTopic}/${storeAddress} is already created`)
     }
     this.stores[replicationTopic][storeAddress] = store;
+
+    /* if (!this._replicationTopicJobs.has(replicationTopic) && store.replicate) {
+      const controller = new AbortController();
+      const job = await createEmitHealthCheckJob({
+        stores: () => Object.keys(this.stores[replicationTopic]),
+        subscribingForReplication: (topic) => this._subscribeForReplication.has(topic)
+      }, replicationTopic, (r, d) => this._ipfs.pubsub.publish(r, d), () => this._ipfs.isOnline(), controller, await this.getSigner(), this.encryption);
+      job();
+      this._replicationTopicJobs.set(replicationTopic, {
+        controller
+      })
+    } */
   }
 
-  async _determineAddress(name: string, type: string, options: { nameResolver?: (name: string) => string, accessController?: any, onlyHash?: boolean } = {}) {
-    if (!OrbitDB.isValidType(type)) { throw new Error(`Invalid database type '${type}'`) }
+  _getPeersLRU: LRU<string, Promise<PeerInfoWithMeta[]>> = new LRU({ max: 500, ttl: WAIT_FOR_PEERS_TIME })
 
-    name = options?.nameResolver ? options.nameResolver(name) : name;
-    if (OrbitDBAddress.isValid(name)) { throw new Error('Given database name is an address. Please give only the name of the database!') }
-
-    // Create an AccessController, use IPFS AC as the default
-    options.accessController = Object.assign({}, { name: name, type: 'ipfs' }, options.accessController)
-    const accessControllerAddress = await AccessControllersModule.create(this, options.accessController.type, options.accessController || {})
-
-    // Save the manifest to IPFS
-    const manifestHash = await createDBManifest(this._ipfs, name, type, accessControllerAddress, options)
-
-    // Create the database address
-    return OrbitDBAddress.parse(OrbitDBAddress.join(manifestHash, name))
+  getPeersOnTopic(topic: string): string[] {
+    const ret: string[] = [];
+    for (const [k, v] of this._directConnections) {
+      if (v.dependencies.has(topic)) {
+        ret.push(k);
+      }
+    }
+    return ret;
   }
+
+
+  async getPeers(request: RequestReplicatorInfo, options: { ignoreCache?: boolean, waitForPeersTime?: number } = {}): Promise<PeerInfoWithMeta[]> {
+    const serializedRequest = serialize(request);
+    const hashKey = Buffer.from(serializedRequest).toString('base64');
+    if (!options.ignoreCache) {
+      const promise = this._getPeersLRU.get(hashKey);
+      if (promise) {
+        return promise;
+      }
+    }
+
+    const promise = new Promise<PeerInfoWithMeta[]>(async (r, c) => {
+      await this.subscribeToReplicationTopic(request.replicationTopic);
+      await requestPeerInfo(serializedRequest, request.replicationTopic, (topic, message) => this._ipfs.pubsub.publish(topic, message), await this.getSigner())
+      const directConnectionsOnTopic = this.getPeersOnTopic(request.replicationTopic).length
+      const timeout = options?.waitForPeersTime || WAIT_FOR_PEERS_TIME * 3;
+      if (directConnectionsOnTopic) {
+        // Assume that all peers are connected
+        // TODO What happens if directConnectionsOnTopic changes?
+        try {
+          await waitFor(() => this._peerInfoResponseCounter.get(request.id) >= directConnectionsOnTopic, { timeout, delayInterval: 400 })
+          const y = 123;
+        } catch (error) {
+          // failed to resolve all peers
+          // it is "ok" since we are going to pick a leader from the peers that we got
+          // (though this assumes that all other peers also reaches the same conclusion)
+          // TODO make more deterministic
+          const x = 123;
+        }
+      }
+      else {
+        await delay(timeout);
+      }
+
+      /* const caches: { value: PeerInfoWithMeta }[] = Object.values(this._peerInfoLRU); */
+      const peersSupportingAddress = [];
+      this._peerInfoLRU.forEach((v, k) => {
+        if (v.peerInfo.store === request.address) {
+          peersSupportingAddress.push(v)
+        }
+      })
+      r(peersSupportingAddress)
+    })
+    this._getPeersLRU.set(hashKey, promise);
+    return promise
+  }
+
+  /**
+  * An intentionally imperfect leader rotation routine
+  * @param slot, some time measure
+  * @returns 
+  */
+  isLeader(leaders: string[]): boolean {
+    return !!(leaders.find(id => id === this.id))
+  }
+
+  findReplicators(replicationTopic: string, replicating: boolean, gid: string/* , addPeers: string[] = [], removePeers: string[] = [] */): string[] {
+    return this.findLeaders(replicationTopic, replicating, gid, this.minReplicas);
+  }
+
+
+  findLeaders(replicationTopic: string, replicating: boolean, slot: { toString(): string }, numberOfLeaders: number/* , addPeers: string[] = [], removePeers: string[] = [] */): string[] {
+    // Hash the time, and find the closest peer id to this hash
+    const h = (h: string) => createHash('sha1').update(h).digest('hex');
+    const slotHash = h(slot.toString())
+
+    // Assumptions: All peers wanting to replicate on topic has direct connections with me (Fully connected network)
+    const peers: string[] = this.getPeersOnTopic(replicationTopic);
+    const hashToPeer: Map<string, string> = new Map();
+    //const peers: (OrbitDB | PeerInfoWithMeta)[] = await this.getPeers(new RequestReplicatorInfo({ address, replicationTopic }), options);
+
+    const peerHashed: string[] = [];
+
+
+    if (peers.length === 0) {
+      return [this.id];
+    }
+
+    // Add self
+    if (!replicating) {
+      peers.push(this.id)
+    }
+
+
+    // Hash step
+    peers.forEach((peer) => {
+      const peerHash = h(peer + slotHash); // we do peer + slotHash because we want peerHashed.sort() to be different for each slot, (so that uniformly random pick leaders). You can see this as seed
+      hashToPeer.set(peerHash, peer);
+      peerHashed.push(peerHash);
+    })
+    numberOfLeaders = Math.min(numberOfLeaders, peerHashed.length);
+    peerHashed.push(slotHash);
+
+    // Choice step
+
+    // TODO make more efficient
+    peerHashed.sort((a, b) => a.localeCompare(b)) // sort is needed, since "getPeers" order is not deterministic
+    let slotIndex = peerHashed.findIndex(x => x === slotHash);
+    // we only step forward 1 step (ignoring that step backward 1 could be 'closer')
+    // This does not matter, we only have to make sure all nodes running the code comes to somewhat the 
+    // same conclusion (are running the same leader selection algorithm)
+    const leaders: string[] = [];
+    let offset = 0;
+    for (let i = 0; i < numberOfLeaders; i++) {
+      let nextIndex = (slotIndex + 1 + i + offset) % peerHashed.length;
+      if (nextIndex === slotIndex) {
+        offset = 1;
+        nextIndex = (nextIndex + 1) % peerHashed.length;
+      }
+      leaders.push(hashToPeer.get(peerHashed[nextIndex]));
+    }
+    return leaders;
+  }
+
+
+
+  /*  _requestingReplicationPromise: Promise<void>;
+   async requestReplication(store: Store<any>, options: { heads?: Entry<any>[], replicationTopic?: string, waitForPeersTime?: number } = {}) {
+     const replicationTopic = options?.replicationTopic || store.replicationTopic;
+     if (!replicationTopic) {
+       throw new Error("Missing replication topic for replication");
+     }
+     await this._requestingReplicationPromise;
+     if (!store.address) {
+       await store.save(this._ipfs);
+     }
+     const currentPeersCountFn = async () => (await this.getPeers(replicationTopic, store.address, options)).length
+     const currentPeersCount = await currentPeersCountFn();
+     this._requestingReplicationPromise = new Promise(async (resolve, reject) => {
+       const signedThing = new DecryptedThing({
+         data: await serialize(await (new MaybeSigned({
+           data: serialize(new RequestReplication({
+             replicationTopic,
+             store,
+             heads: options?.heads,
+             resourceRequirements: [new HeapSizeRequirement({
+               heapSize: BigInt(STORE_MIN_HEAP_SIZE)
+             })]
+           }))
+         })).sign(await this.getSigner()))
+       }) /// TODO add encryption?
+   
+       await this._ipfs.pubsub.publish(replicationTopic, serialize(signedThing));
+       await waitForAsync(async () => await currentPeersCountFn() >= currentPeersCount + 1, {
+         timeout: (options?.waitForPeersTime || 5000) * 2,
+         delayInterval: 50
+       })
+       resolve();
+   
+     })
+     await this._requestingReplicationPromise;
+   } */
+
+
+  async subscribeToReplicationTopic(topic: string): Promise<void> {
+    if (!this.stores[topic]) {
+      this.stores[topic] = {};
+    }
+    if (!this._replicationTopicSubscriptions.has(topic)) {
+      const topicMonitor = new IpfsPubsubPeerMonitor(this._ipfs.pubsub, topic)
+      topicMonitor.on('join', (peer) => {
+        logger.debug(`Peer joined ${topic}:`)
+        logger.debug(peer)
+        this._onPeerConnected(topic, peer);
+      })
+      topicMonitor.on('leave', (peer) => {
+        logger.debug(`Peer ${peer} left ${topic}`)
+        /*    this._onPeerDisconnected(topic, peer); */
+      })
+      topicMonitor.on('error', (e) => logger.error(e))
+      this._replicationTopicSubscriptions.set(topic, new SharedChannel(await new SharedIPFSChannel(this._ipfs, this.id, topic, this._onMessage.bind(this), topicMonitor).start()));
+
+    }
+
+    /* if (!this._ipfs.pubsub._subscriptions[topic]) {
+      
+    } */
+
+  }
+  hasSubscribedToReplicationTopic(topic: string): boolean {
+    return !!this.stores[topic]
+  }
+  unsubscribeToReplicationTopic(topic: string, id: string = '_'): Promise<boolean> {
+    /* if (this._ipfs.pubsub._subscriptions[topic]) { */
+    return this._replicationTopicSubscriptions.get(topic).close(id);
+    /* } */
+  }
+
+  subscribeForReplicationStart(topic: string): Promise<any> {
+    return this.subscribeToReplicationTopic(topic);
+  }
+
+  subscribeForReplicationStop(topic: string): Promise<any> {
+    return this.unsubscribeToReplicationTopic(topic);
+
+  }
+
 
   /* Create and Open databases */
 
@@ -629,42 +1148,44 @@ export class OrbitDB {
       overwrite: false, // whether we should overwrite the existing database if it exists
     }
   */
-  async create(name, type, options: {
+
+
+  /*  directory?: string,
+   onlyHash?: boolean,
+   overwrite?: boolean,
+   accessController?: any,
+   create?: boolean,
+   type?: string,
+   localOnly?: boolean,
+   replicationConcurrency?: number,
+   replicate?: boolean,
+   replicationTopic?: string | (() => string),
+ 
+   encoding?: IOOptions<any>;
+   encryption?: (keystore: Keystore) => StorePublicKeyEncryption; */
+  /* async create<S extends StoreLike<any>>(store: S, options: {
     timeout?: number,
     identity?: Identity,
-    meta?: any,
     cache?: Cache,
 
 
-    /*  directory?: string,
-     onlyHash?: boolean,
-     overwrite?: boolean,
-     accessController?: any,
-     create?: boolean,
-     type?: string,
-     localOnly?: boolean,
-     replicationConcurrency?: number,
-     replicate?: boolean,
-     replicationTopic?: string | (() => string),
-   
-     encoding?: IOOptions<any>;
-     encryption?: (keystore: Keystore) => StorePublicKeyEncryption; */
 
-  } & IStoreOptions<any, any, any> = {}) {
+  } & IStoreOptions<any> = {}): Promise<S> {
 
     logger.debug('create()')
-    logger.debug(`Creating database '${name}' as ${type}`)
+    logger.debug(`Creating database '${store.name}' as ${store.constructor.name}`)
 
     // Create the database address
-    const dbAddress = await this._determineAddress(name, type, options)
+
+    // TODO prevent double save (store is also saved on init)
+    const dbAddress = await store.save(this._ipfs, { pin: true });
 
     if (!options.cache)
       options.cache = await this._requestCache(dbAddress.toString(), options.directory)
 
     // Check if we have the database locally
     const haveDB = await this._haveLocalData(options.cache, dbAddress)
-
-    if (haveDB && !options.overwrite) { throw new Error(`Database '${dbAddress}' already exists!`) }
+    if (haveDB) { throw new Error(`Database '${dbAddress}' already exists!`) }
 
     // Save the database locally
     await this._addManifestToCache(options.cache, dbAddress)
@@ -672,13 +1193,8 @@ export class OrbitDB {
     logger.debug(`Created database '${dbAddress}'`)
 
     // Open the database
-    return this.open(dbAddress, options)
-  }
-
-  async determineAddress(name: string, type: string, options: { nameResolver?: (name: string) => string, accessController?: any, onlyHash?: boolean } = {}) {
-    const opts = Object.assign({}, { onlyHash: true }, options)
-    return this._determineAddress(name, type, opts)
-  }
+    return this.open<S>(store, options)
+  } */
 
   async _requestCache(address: string, directory: string, existingCache?: Cache) {
     const dir = directory || this.directory
@@ -695,25 +1211,26 @@ export class OrbitDB {
     return cache
   }
 
-  /*
-      options = {
-        localOnly: false // if set to true, throws an error if database can't be found locally
-        create: false // whether to create the database
-        type: TODO
-        overwrite: TODO
 
-      }
+  _openStorePromise: Promise<StoreLike<any>>
+
+  /**
+   * Default behaviour of a store is only to accept heads that are forks (new roots) with some probability
+   * and to replicate heads (and updates) which is requested by another peer
+   * @param store 
+   * @param options 
+   * @returns 
    */
-  async open(address, options: {
+  async open<S extends StoreLike<any>>(storeOrAddress: /* string | Address |  */S | Address | string, options: {
     timeout?: number,
-    identity?: Identity,
-    meta?: any
+    publicKey?: PublicKey,
+    sign?: (data: Uint8Array) => Promise<Uint8Array>,
+    rejectIfAlreadyOpen?: boolean,
 
     /* cache?: Cache,
     directory?: string,
     accessController?: any,
     onlyHash?: boolean,
-    overwrite?: boolean,
     create?: boolean,
     type?: string,
     localOnly?: boolean,
@@ -721,86 +1238,105 @@ export class OrbitDB {
     replicate?: boolean,
     replicationTopic?: string | (() => string),
     encryption?: (keystore: Keystore) => StorePublicKeyEncryption; */
-  } & IStoreOptions<any, any, any> = {}) {
-    logger.debug('open()')
+  } & IStoreOptions<any> = {}): Promise<S> {
 
-    options = Object.assign({ localOnly: false, create: false }, options)
-    logger.debug(`Open database '${address}'`)
 
-    // If address is just the name of database, check the options to crate the database
-    if (!OrbitDBAddress.isValid(address)) {
-      if (!options.create) {
-        throw new Error('\'options.create\' set to \'false\'. If you want to create a database, set \'options.create\' to \'true\'.')
-      } else if (options.create && !options.type) {
-        throw new Error(`Database type not provided! Provide a type with 'options.type' (${OrbitDB.databaseTypes.join('|')})`)
-      } else {
-        logger.warn(`Not a valid OrbitDB address '${address}', creating the database`)
-        options.overwrite = options.overwrite ? options.overwrite : true
-        return this.create(address, options.type, options)
+    // TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?
+    await this._openStorePromise;
+
+    this._openStorePromise = new Promise<S | undefined>(async (resolve, reject) => {
+      let store = storeOrAddress as S;
+      if (typeof storeOrAddress === 'string') {
+        storeOrAddress = Address.parse(storeOrAddress);
       }
-    }
-
-    // Parse the database address
-    const dbAddress = OrbitDBAddress.parse(address)
-
-    // If database is already open, return early by returning the instance
-    // if (this.stores[dbAddress]) {
-    //   return this.stores[dbAddress]
-    // }
-
-    options.cache = await this._requestCache(dbAddress.toString(), options.directory)
-
-    // Check if we have the database
-    const haveDB = await this._haveLocalData(options.cache, dbAddress)
-
-    logger.debug((haveDB ? 'Found' : 'Didn\'t find') + ` database '${dbAddress}'`)
-
-    // If we want to try and open the database local-only, throw an error
-    // if we don't have the database locally
-    if (options.localOnly && !haveDB) {
-      logger.warn(`Database '${dbAddress}' doesn't exist!`)
-      throw new Error(`Database '${dbAddress}' doesn't exist!`)
-    }
-
-    logger.debug(`Loading Manifest for '${dbAddress}'`)
-
-    let manifest
-    try {
-      // Get the database manifest from IPFS
-      manifest = await io.read(this._ipfs, dbAddress.root, { timeout: options.timeout || defaultTimeout })
-      logger.debug(`Manifest for '${dbAddress}':\n${JSON.stringify(manifest, null, 2)}`)
-    } catch (e) {
-      if (e.name === 'TimeoutError' && e.code === 'ERR_TIMEOUT') {
-        console.error(e)
-        throw new Error('ipfs unable to find and fetch manifest for this address.')
-      } else {
-        throw e
+      if (storeOrAddress instanceof Address) {
+        try {
+          store = await Store.load(this._ipfs, storeOrAddress as any as Address) as any as S // TODO fix typings
+        } catch (error) {
+          logger.error("Failed to load store with address: " + storeOrAddress.toString());
+          reject(error);
+        }
       }
-    }
 
-    if (manifest.name !== dbAddress.path) {
-      logger.warn(`Manifest name '${manifest.name}' and path name '${dbAddress.path}' do not match`)
-    }
+      try {
+        logger.debug('open()')
 
-    // Make sure the type from the manifest matches the type that was given as an option
-    if (options.type && manifest.type !== options.type) {
-      throw new Error(`Database '${dbAddress}' is type '${manifest.type}' but was opened as '${options.type}'`)
-    }
+        options = Object.assign({ localOnly: false, create: false }, options)
+        logger.debug(`Open database '${store}'`)
 
-    if (!options.encryption) {
-      options.encryption = this.replicationTopicEncryption();
-    }
+        const resolveCache = async (address: Address) => {
+          const cache = await this._requestCache(address.toString(), options.directory)
+          const haveDB = await this._haveLocalData(cache, address)
+          logger.debug((haveDB ? 'Found' : 'Didn\'t find') + ` database '${address}'`)
+          if (options.localOnly && !haveDB) {
+            logger.warn(`Database '${address}' doesn't exist!`)
+            throw new Error(`Database '${address}' doesn't exist!`)
+          }
 
-    // Save the database locally
-    await this._addManifestToCache(options.cache, dbAddress)
+          if (!haveDB) {
+            await this._addManifestToCache(cache, address)
+          }
+          return cache;
+        }
 
-    // Open the the database
-    options = Object.assign({}, options, { accessControllerAddress: manifest.accessController, meta: manifest.meta })
-    return this._createStore(options.type || manifest.type, dbAddress, options)
+        if (!options.encryption) {
+          options.encryption = this.replicationTopicEncryption();
+        }
+
+        // Open the the database
+        const initializedStore = await store.init(this._ipfs, options.publicKey || this.publicKey, options.sign || this.sign, {
+          replicate: true, ...options, ...{
+            resolveCache,
+            saveAndResolveStore: async (store: StoreLike<any>) => {
+              const address = await store.save(this._ipfs);
+              const r = Store.getReplicationTopic(address, options);
+              const a = address.toString();
+              const alreadyHaveStore = this.stores[r]?.[a];
+              if (options.rejectIfAlreadyOpen) {
+                new Error(`Store at ${r}/${a} is already created`)
+              }
+              return alreadyHaveStore || store;
+            }
+          },
+          resourceOptions: options.resourceOptions || this.heapsizeLimitForForks ? { heapSizeLimit: () => this.heapsizeLimitForForks } : undefined,
+          onClose: this._onClose.bind(this),
+          onDrop: this._onDrop.bind(this),
+          onLoad: this._onLoad.bind(this),
+          onWrite: this._onWrite.bind(this),
+          onOpen: async (store) => {
+
+            // ID of the store is the address as a string
+
+            // Subscribe to pubsub to get updates from peers,
+            // this is what hooks us into the message propagation layer
+            // and the p2p network
+            /*   if (this._ipfs.pubsub.ls()) { */
+            await this.addStore(store)
+            await this.subscribeToReplicationTopic(store.replicationTopic);
+
+            /* else {
+              const msg = new RequestHeadsMessage({
+                address: store.address.toString(),
+                replicationTopic: store.replicationTopic
+              });
+              await this._ipfs.pubsub.publish(store.replicationTopic, serialize(await this.decryptedSignedThing(serialize(msg))));
+
+            } */
+            /*  } */
+          }
+        });
+        resolve(store)
+      } catch (error) {
+        reject(error);
+      }
+    })
+    return this._openStorePromise as Promise<S>;
+    /*  } */
+
   }
 
   // Save the database locally
-  async _addManifestToCache(cache, dbAddress) {
+  async _addManifestToCache(cache, dbAddress: Address) {
     await cache.set(path.join(dbAddress.toString(), '_manifest'), dbAddress.root)
     logger.debug(`Saved manifest to IPFS as '${dbAddress.root}'`)
   }
@@ -808,10 +1344,10 @@ export class OrbitDB {
   /**
    * Check if we have the database, or part of it, saved locally
    * @param  {[Cache]} cache [The OrbitDBCache instance containing the local data]
-   * @param  {[OrbitDBAddress]} dbAddress [Address of the database to check]
+   * @param  {[Address]} dbAddress [Address of the database to check]
    * @return {[Boolean]} [Returns true if we have cached the db locally, false if not]
    */
-  async _haveLocalData(cache, dbAddress) {
+  async _haveLocalData(cache, dbAddress: Address) {
     if (!cache) {
       return false
     }
@@ -820,37 +1356,5 @@ export class OrbitDB {
     const data = await cache.get(path.join(addr, '_manifest'))
     return data !== undefined && data !== null
   }
-
-  /**
-   * Returns supported database types as an Array of strings
-   * Eg. [ 'counter', 'eventlog', 'feed', 'docstore', 'keyvalue']
-   * @return {[Array]} [Supported database types]
-   */
-  static get databaseTypes() {
-    return Object.keys(databaseTypes)
-  }
-
-  static isValidType(type) {
-    return Object.keys(databaseTypes).includes(type)
-  }
-
-  static addDatabaseType(type, store) {
-    if (databaseTypes[type]) throw new Error(`Type already exists: ${type}`)
-    databaseTypes[type] = store
-  }
-
-  static getDatabaseTypes() {
-    return databaseTypes
-  }
-
-  static isValidAddress(address) {
-    return OrbitDBAddress.isValid(address)
-  }
-
-  static parseAddress(address) {
-    return OrbitDBAddress.parse(address)
-  }
-
-
 
 }

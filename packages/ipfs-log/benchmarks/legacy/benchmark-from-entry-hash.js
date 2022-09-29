@@ -44,7 +44,7 @@ const run = (() => {
     const keystore = new Keystore('./ipfs-log-benchmarks/keys/')
     const identity = await IdentityProvider.createIdentity({ id: 'userA', keystore })
 
-    log = new Log(ipfs, identity, { logId: 'A' })
+    log = new Log(ipfs, identity, { gid: 'A' })
 
     const count = parseInt(process.argv[2]) || 50000
     const refCount = 64
@@ -97,7 +97,7 @@ if (global.gc) {
 const m1 = process.memoryUsage()
 
 await Log.fromEntryHash(ipfs, log._identity, log.heads.map(e => e.hash), {
-  logId: log._id,
+  gid: log._id,
   length: -1,
   exclude: [],
   onProgressCallback: onDataUpdated

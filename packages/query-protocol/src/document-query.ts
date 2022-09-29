@@ -9,17 +9,18 @@ export enum SortDirection {
 export class FieldSort {
 
     @field({ type: vec('string') })
-    fieldPath: string[]
+    key: string[]
 
     @field({ type: 'u8' })
     direction: SortDirection
 
-    constructor(opts: {
-        fieldPath: string[],
+    constructor(props: {
+        key: string[] | string,
         direction: SortDirection
     }) {
-        if (opts) {
-            Object.assign(this, opts);
+        if (props) {
+            this.key = Array.isArray(props.key) ? props.key : [props.key];
+            this.direction = props.direction;
         }
     }
 }
@@ -27,15 +28,16 @@ export class FieldSort {
 
 @variant(1)
 export class FieldQuery extends Query {
-    @field({ type: 'string' })
-    key: string
+
+    @field({ type: vec('string') })
+    key: string[]
 
     constructor(props?: {
-        key: string
+        key: string[] | string
     }) {
         super();
         if (props) {
-            this.key = props.key;
+            this.key = Array.isArray(props.key) ? props.key : [props.key];
         }
     }
 }
@@ -44,11 +46,10 @@ export class FieldQuery extends Query {
 export class FieldByteMatchQuery extends FieldQuery {
 
 
-
     @field({ type: vec('u8') })
     value: Uint8Array
 
-    constructor(props?: { key: string, value: Uint8Array }) {
+    constructor(props?: { key: string[], value: Uint8Array }) {
         super(props);
         if (props) {
             this.value = props.value;
@@ -67,7 +68,7 @@ export class FieldStringMatchQuery extends FieldQuery {
     value: string
 
     constructor(props?: {
-        key: string
+        key: string[] | string
         value: string
     }) {
         super(props);
@@ -99,7 +100,7 @@ export class FieldBigIntCompareQuery extends FieldQuery {
 
 
     constructor(props?: {
-        key: string
+        key: string[] | string,
         value: bigint,
         compare: Compare
     }) {

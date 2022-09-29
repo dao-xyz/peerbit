@@ -1,7 +1,8 @@
 import { Wallet, verifyMessage } from '@ethersproject/wallet'
-import { Identity, IdentitySerializable } from './identity';
+import { Identity } from './identity';
 import { IdentityProvider } from './identity-provider-interface';
 import { joinUint8Arrays } from '@dao-xyz/io-utils';
+import { Secp256k1PublicKeyData, verifySignatureSecp256k1 } from '@dao-xyz/identity';
 
 export type EthIdentityProviderOptions = { wallet?: Wallet };
 export class EthIdentityProvider extends IdentityProvider {
@@ -30,14 +31,17 @@ export class EthIdentityProvider extends IdentityProvider {
     return new Uint8Array(Buffer.from((await wallet.signMessage(data))))
   }
 
-  static async verify(signature: Uint8Array, data: string | Uint8Array, publicKey: Uint8Array): Promise<boolean> {
-    const signerAddress = verifyMessage(data, Buffer.from(signature).toString())
-    return (signerAddress === Buffer.from(publicKey).toString())
-  }
+  /*   static async verify(signature: Uint8Array, data: string | Uint8Array, publicKey: Uint8Array): Promise<boolean> {
+      const signerAddress = verifyMessage(data, Buffer.from(signature).toString())
+      return (signerAddress === Buffer.from(publicKey).toString())
+    } */
 
-  static async verifyIdentity(identity: Identity | IdentitySerializable) {
+  static async verifyIdentity(identity: Identity) {
     // Verify that identity was signed by the id
-    return EthIdentityProvider.verify(identity.signatures.publicKey, Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id]), identity.id)
+    if (identity.id instanceof Secp256k1PublicKeyData) {
+      return verifySignatureSecp256k1(identity.signatures.publicKey, identity.id, Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id])) // EthIdentityProvider.verify(identity.signatures.publicKey, Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id]), identity.id)
+    }
+    return false;
   }
 
   async _createWallet(options?: { encryptedJsonOpts?: { progressCallback: any, json: any, password: any }, mnemonicOpts?: { mnemonic: any, path: any, wordlist: any } }) {

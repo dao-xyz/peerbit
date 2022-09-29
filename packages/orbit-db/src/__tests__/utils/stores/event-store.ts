@@ -1,13 +1,12 @@
 import { Log } from "@dao-xyz/ipfs-log";
 import { Entry } from "@dao-xyz/ipfs-log-entry";
-import { JSON_ENCODER } from "@dao-xyz/orbit-db-store";
+import { Address, JSON_ENCODER, load } from "@dao-xyz/orbit-db-store";
 import { Store } from "@dao-xyz/orbit-db-store"
-import { OrbitDB } from "../../../orbit-db";
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry';
-import { AccessController } from "@dao-xyz/orbit-db-access-controllers";
+import { AccessController } from "@dao-xyz/orbit-db-store";
+import { variant } from '@dao-xyz/borsh';
 
 // TODO: generalize the Iterator functions and spin to its own module
-export const EVENT_STORE_TYPE = 'event';
 export interface Operation<T> {
     op: string
     key: string
@@ -28,21 +27,29 @@ export class EventIndex<T> {
     }
 }
 
-export class EventStore<T> extends Store<Operation<T>, T, EventIndex<Operation<T>>, any> {
-    constructor(ipfs, id, dbname, options: any = {}) {
-        if (options.Index === undefined) Object.assign(options, { Index: EventIndex })
+@variant(0)
+export class EventStore<T> extends Store<Operation<T>> {
+
+    _index: EventIndex<Operation<T>>;
+
+    constructor(properties: {
+        name?: string;
+        accessController?: AccessController<Operation<T>>;
+    }) {
+        super(properties)
+        this._index = new EventIndex();
+    }
+
+    async init(ipfs: any, key, sign, options: any) {
         if (options.encoding === undefined) Object.assign(options, { encoding: JSON_ENCODER })
-        super(ipfs, id, dbname, options)
-        this._type = EVENT_STORE_TYPE;
-        /*  this.events.on("log.op.ADD", (address, hash, payload) => {
-             this.events.emit("db.append", payload.value)
-         }) */
+        return super.init(ipfs, key, sign, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
     }
 
     add(data, options?: {
         onProgressCallback?: (any: any) => void;
         pin?: boolean;
-        reciever?: EncryptionTemplateMaybeEncrypted
+        reciever?: EncryptionTemplateMaybeEncrypted,
+        nexts?: Entry<any>[]
     }) {
         return this._addOperation({
             op: 'ADD',
@@ -108,5 +115,15 @@ export class EventStore<T> extends Store<Operation<T>, T, EventIndex<Operation<T
         const res = ops.slice(startIndex).slice(0, amount)
         return res
     }
+
+    static async load<T>(ipfs: any, address: Address, options?: {
+        timeout?: number;
+    }): Promise<EventStore<T>> {
+        const instance = await load(ipfs, address, Store, options)
+        if (instance instanceof EventStore === false) {
+            throw new Error("Unexpected")
+        };
+        return instance as EventStore<T>;
+    }
+
 }
-OrbitDB.addDatabaseType(EVENT_STORE_TYPE, EventStore)

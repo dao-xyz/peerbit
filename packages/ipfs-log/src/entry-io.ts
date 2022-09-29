@@ -1,9 +1,8 @@
 import pMap from 'p-map'
 import pDoWhilst from 'p-do-whilst'
-import { Entry } from '@dao-xyz/ipfs-log-entry';
+import { bigIntMin, Entry } from '@dao-xyz/ipfs-log-entry';
 import { IPFS } from 'ipfs-core-types/src/'
 import { PublicKeyEncryption } from '@dao-xyz/encryption-utils';
-import { bigIntMin } from './utils';
 
 const hasItems = arr => arr && arr.length > 0
 
@@ -54,8 +53,8 @@ export const strictFetchOptions = <T>(options: EntryFetchOptions<T>): EntryFetch
 
 export class EntryIO {
   // Fetch log graphs in parallel
-  static async fetchParallel<T>(ipfs: IPFS, hashes: string | string[], options: EntryFetchAllOptions<T>) {
-    const fetchOne = async (hash) => EntryIO.fetchAll(ipfs, hash, strictFetchOptions(options))
+  static async fetchParallel<T>(ipfs: IPFS, hashes: string | string[], options: EntryFetchAllOptions<T>): Promise<Entry<T>[]> {
+    const fetchOne = async (hash) => EntryIO.fetchAll(ipfs, hash, options)
     const concatArrays = (arr1, arr2) => arr1.concat(arr2)
     const flatten = (arr) => arr.reduce(concatArrays, [])
     const res = await pMap(hashes, fetchOne, { concurrency: Math.max(options.concurrency || hashes.length, 1) })
@@ -75,9 +74,9 @@ export class EntryIO {
    * @param {function(entry)} onProgressCallback Called when an entry was fetched
    * @returns {Promise<Array<Entry<T>>>}
    */
-  static async fetchAll<T>(ipfs: IPFS, hashes: string | string[], options: EntryFetchAllOptions<T>) {
-    options = strictFetchOptions(options);
-    const result = []
+  static async fetchAll<T>(ipfs: IPFS, hashes: string | string[], fetchOptions: EntryFetchAllOptions<T>): Promise<Entry<T>[]> {
+    const options = strictAllFetchOptions(fetchOptions);
+    const result: Entry<T>[] = []
     const cache = {}
     const loadingCache = {}
     const loadingQueue = Array.isArray(hashes)
@@ -139,8 +138,9 @@ export class EntryIO {
           : null
 
         const addToResults = async (entry: Entry<T>) => {
-          if (Entry.isEntry(entry) && !cache[entry.hash] && !shouldExclude(entry.hash)) {
+          if (!cache[entry.hash] && !shouldExclude(entry.hash)) {
             entry.init({ encryption: options.encryption, encoding: undefined });
+
 
             // Todo check bigint conversions
             const ts = Number((await entry.getClock()).time)
@@ -167,19 +167,17 @@ export class EntryIO {
               }
             }
 
+
             if (options.length < 0) {
               // If we're fetching all entries (length === -1), adds nexts and refs to the queue
               entry.next.forEach(addToLoadingQueue)
-              if (entry.refs) entry.refs.forEach(addToLoadingQueue)
+
             } else {
               // If we're fetching entries up to certain length,
               // fetch the next if result is filled up, to make sure we "check"
               // the next entry if its clock is later than what we have in the result
               if (result.length < options.length || ts > minClock || (ts === minClock && !cache[entry.hash] && !shouldExclude(entry.hash))) {
                 entry.next.forEach(e => addToLoadingQueue(e, calculateIndex(0)))
-              }
-              if (entry.refs && (result.length + entry.refs.length <= options.length)) {
-                entry.refs.forEach((e, i) => addToLoadingQueue(e, calculateIndex(i)))
               }
             }
           }

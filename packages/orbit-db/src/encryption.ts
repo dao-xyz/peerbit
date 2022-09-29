@@ -1,17 +1,17 @@
 import { AccessError, PublicKeyEncryption } from '@dao-xyz/encryption-utils';
-import { Identity } from '@dao-xyz/orbit-db-identity-provider';
-import { BoxKeyWithMeta, Keystore } from '@dao-xyz/orbit-db-keystore';
+import { BoxKeyWithMeta, Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore';
 import { StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store';
-import { X25519PublicKey } from 'sodium-plus';
-
-export const replicationTopicEncryptionWithRequestKey = (identity: Identity, keystore: Keystore, requestKey?: (key: X25519PublicKey, replicationTopic) => Promise<BoxKeyWithMeta[] | undefined>): StorePublicKeyEncryption => {
+import { X25519PublicKey, Ed25519PublicKey } from 'sodium-plus';
+import { PublicKey } from "@dao-xyz/identity";
+import { serialize } from '@dao-xyz/borsh'
+export const replicationTopicEncryptionWithRequestKey = (identity: PublicKey, keystore: Keystore, requestKey?: (key: X25519PublicKey, replicationTopic) => Promise<BoxKeyWithMeta[] | undefined>): StorePublicKeyEncryption => {
     return (replicationTopic: string) => {
         return encryptionWithRequestKey(identity, keystore, (key) => requestKey(key, replicationTopic))
     }
 }
 
 
-export const encryptionWithRequestKey = (identity: Identity, keystore: Keystore, requestKey?: (key: X25519PublicKey) => Promise<BoxKeyWithMeta[] | undefined>): PublicKeyEncryption => {
+export const encryptionWithRequestKey = (identity: PublicKey, keystore: Keystore, requestKey?: (key: X25519PublicKey) => Promise<BoxKeyWithMeta[] | undefined>): PublicKeyEncryption => {
 
     return {
         getAnySecret: async (publicKeys) => {
@@ -39,11 +39,17 @@ export const encryptionWithRequestKey = (identity: Identity, keystore: Keystore,
             throw new AccessError("Failed to access key")
         },
         getEncryptionKey: async () => {
-            let key = await keystore.getKeyByPath(identity.id, BoxKeyWithMeta); // TODO add key rotation, potentially generate new key every call
+            // TODO key rotation
+            const keyId = serialize(identity);
+            let key = await keystore.getKeyByPath(keyId, BoxKeyWithMeta); // TODO add key rotation, potentially generate new key every call
             if (!key) {
-                key = await keystore.createKey(identity.id, BoxKeyWithMeta);
+                key = await keystore.createKey(keyId, BoxKeyWithMeta);
             }
+
             // TODO can secretKey be missing?
+            if (!key.secretKey) {
+                throw new Error("Missing secret key using the sign key for retrieval")
+            }
             return key.secretKey;
         }
     }

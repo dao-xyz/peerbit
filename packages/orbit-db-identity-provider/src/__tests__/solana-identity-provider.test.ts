@@ -52,15 +52,15 @@ describe('Solana Identity Provider', function () {
 
         it('has a signature for the id', async () => {
             const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(keypair.publicKey.toBuffer().toString('base64'))
-            const idSignature = await keystore.sign(keypair.publicKey.toBytes(), signingKey)
+            const idSignature = await Keystore.sign(keypair.publicKey.toBytes(), signingKey)
             const verifies = await Keystore.verify(idSignature, signingKey.publicKey, keypair.publicKey.toBytes())
-            assert.strictEqual(verifies, true)
+            expect(verifies).toEqual(true)
             assert.deepStrictEqual(identity.signatures.id, idSignature)
         })
 
         it('has a signature for the publicKey', async () => {
             const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(keypair.publicKey.toBuffer().toString('base64'))
-            const idSignature = await keystore.sign(keypair.publicKey.toBytes(), signingKey)
+            const idSignature = await Keystore.sign(keypair.publicKey.toBytes(), signingKey)
             const publicKeyAndIdSignature = await nacl.sign(Buffer.concat([identity.publicKey.getBuffer(), idSignature]), keypair.secretKey)
             assert.deepStrictEqual(identity.signatures.publicKey, new Uint8Array(Buffer.from(publicKeyAndIdSignature)))
         })
@@ -75,7 +75,7 @@ describe('Solana Identity Provider', function () {
 
         it('solana identity verifies', async () => {
             const verified = await Identities.verifyIdentity(identity)
-            assert.strictEqual(verified, true)
+            expect(verified).toEqual(true)
         })
 
         it('solana identity with incorrect id does not verify', async () => {
@@ -85,7 +85,7 @@ describe('Solana Identity Provider', function () {
                 id: new Uint8Array([1, 1, 1]),
             })
             const verified = await Identities.verifyIdentity(identity2)
-            assert.strictEqual(verified, false)
+            expect(verified).toEqual(false)
         })
     })
 
@@ -99,7 +99,7 @@ describe('Solana Identity Provider', function () {
 
         it('sign data', async () => {
             const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(identity.id)
-            const expectedSignature = await keystore.sign(Buffer.from(data), signingKey)
+            const expectedSignature = await Keystore.sign(Buffer.from(data), signingKey)
             const signature = await identity.provider.sign(data, identity)
             assert.deepStrictEqual(signature, expectedSignature)
         })
@@ -116,8 +116,8 @@ describe('Solana Identity Provider', function () {
             } catch (e) {
                 err = e.toString()
             }
-            assert.strictEqual(signature, undefined)
-            assert.strictEqual(err, 'Error: Private signing key not found from Keystore')
+            expect(signature).toEqual(undefined)
+            expect(err).toEqual('Error: Private signing key not found from Keystore')
         })
 
         describe('verify data signed by an identity', () => {
@@ -132,12 +132,12 @@ describe('Solana Identity Provider', function () {
 
             it('verifies that the signature is valid', async () => {
                 const verified = await identity.provider.verify(signature, identity.publicKey, data)
-                assert.strictEqual(verified, true)
+                expect(verified).toEqual(true)
             })
 
             it('doesn\'t verify invalid signature', async () => {
                 const verified = await identity.provider.verify(new Uint8Array(Buffer.from('invalid')), identity.publicKey, data)
-                assert.strictEqual(verified, false)
+                expect(verified).toEqual(false)
             })
         })
     })

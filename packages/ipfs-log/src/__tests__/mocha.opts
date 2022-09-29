@@ -1,5 +1,0 @@
---reporter spec
---colors
---recursive
---exit
---exclude test/browser/**/*.js

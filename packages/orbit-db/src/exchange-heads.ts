@@ -1,10 +1,11 @@
 import { variant, field, vec, serialize } from '@dao-xyz/borsh';
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Message } from './message';
-import { HeadsCache, Store } from '@dao-xyz/orbit-db-store';
+import { StoreLike } from '@dao-xyz/orbit-db-store';
 import Logger from 'logplease'
-import { DecryptedThing, MaybeSigned } from '@dao-xyz/encryption-utils';
-import { Ed25519PublicKey } from 'sodium-plus';
+import { DecryptedThing } from '@dao-xyz/encryption-utils';
+import { MaybeSigned, PublicKey } from '@dao-xyz/identity';
+import { ResourceRequirement } from './exchange-replication';
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
@@ -20,13 +21,18 @@ export class ExchangeHeadsMessage<T> extends Message {
   @field({ type: vec(Entry) })
   heads: Entry<T>[];
 
+  @field({ type: vec(ResourceRequirement) })
+  resourceRequirements: ResourceRequirement[];
+
   constructor(props?: {
     replicationTopic: string,
     address: string,
-    heads: Entry<T>[]
+    heads: Entry<T>[],
+    resourceRequirements?: ResourceRequirement[]
   }) {
     super();
     if (props) {
+      this.resourceRequirements = props.resourceRequirements || [];
       this.replicationTopic = props.replicationTopic;
       this.address = props.address;
       this.heads = props.heads;
@@ -55,31 +61,79 @@ export class RequestHeadsMessage extends Message {
   }
 }
 
+/* export const exchangeHeads = async (send: (peer, message: Uint8Array) => Promise<void>, store: StoreLike<any>, isSupported: (hash: string) => boolean, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
+  const heads = await store.getHeads();
+  logger.debug(`Send latest heads of '${store.replicationTopic}'`)
+  if (heads && heads.length > 0) {
 
+    const headsToSend = heads.filter(head => !isSupported(head.hash));
 
-const getHeadsForDatabase = async (store: Store<any, any, any, any>) => {
-  if (!(store && store._cache)) return []
-  const localHeads = (await store._cache.getBinary(store.localHeadsPath, HeadsCache))?.heads || []
-  const remoteHeads = (await store._cache.getBinary(store.remoteHeadsPath, HeadsCache))?.heads || []
-  return [...localHeads, ...remoteHeads]
+    // Calculate leaders and send directly ? Batch by channel instead
+    const message = new ExchangeHeadsMessage({ replicationTopic: store.replicationTopic, address: store.address.toString(), heads: headsToSend });
+    const signedMessage = await new MaybeSigned({ data: serialize(message) }).sign(sign)
+    const decryptedMessage = new DecryptedThing({
+      data: serialize(signedMessage)
+    }) // TODO encryption?
+    const serializedMessage = serialize(decryptedMessage);
+    await send(serializedMessage)
+  }
 }
+ */
 
-export const exchangeHeads = async (channel: any, topic: string, getStore: (address: string) => { [key: string]: Store<any, any, any, any> }, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: Ed25519PublicKey }>) => {
+export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>, store: StoreLike<any>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>, headsToShare?: Entry<any>[]) => {
+  const heads = headsToShare || await store.getHeads();
+  logger.debug(`Send latest heads of '${store.replicationTopic}'`)
+  if (heads && heads.length > 0) {
 
-  // Send the heads if we have any
-  const stores = getStore(topic);
-  for (const [storeAddress, store] of Object.entries(stores)) {
-    const heads = await getHeadsForDatabase(store)
-    logger.debug(`Send latest heads of '${topic}':\n`, JSON.stringify(heads.map(e => e.hash), null, 2))
-    if (heads) {
-      const message = new ExchangeHeadsMessage({ replicationTopic: topic, address: storeAddress, heads: heads });
-      const signedMessage = await new MaybeSigned({ data: serialize(message) }).sign(sign)
-      const decryptedMessage = new DecryptedThing({
-        data: serialize(signedMessage)
-      })
-      const serializedMessage = serialize(decryptedMessage);
-      await channel.send(serializedMessage)
+    /*  const mapFromPeerToHead: Map<string, Entry<any>[]> = new Map();
+     heads.forEach((head) => {
+       const ls = leaders(head.gid);
+       store.oplog.setPeersByGid(head.gid, new Set(ls))
+       store.oplog.getPeersByGid(head.gid).forEach((peer) => {
+         let arr = mapFromPeerToHead.get(peer);
+         if (!arr) {
+           arr = [];
+           mapFromPeerToHead.set(peer, arr)
+         };
+         arr.push(head)
+       }) */
+    /*  if (head.next.length === 0) {
+       if (!head.peers) {
+         head.peers = new Set(leaders(head.gid));
+       }
+     }
+     if (head.peers.size === 0) {
+       throw new Error("Unexpected");
+     }
+ 
+     head.peers.forEach((peer) => {
+       if (peer === id) {
+         return;
+       }
+       let hs: Entry<any>[] = mapFromPeerToHead.get(peer);
+       if (!hs) {
+         hs = [];
+         mapFromPeerToHead.set(peer, hs);
+       }
+       hs.push(head);
+     }) */
+
+    /*  });
+  */
+    /* const promises = [];
+    for (const [peer, headsToPeer] of mapFromPeerToHead) {
+     
+      promises.push()
     }
+    await Promise.all(promises); */
+
+    const message = new ExchangeHeadsMessage({ replicationTopic: store.replicationTopic, address: store.address.toString(), heads });
+    const signedMessage = await new MaybeSigned({ data: serialize(message) }).sign(sign)
+    const decryptedMessage = new DecryptedThing({
+      data: serialize(signedMessage)
+    }) // TODO encryption?
+    const serializedMessage = serialize(decryptedMessage);
+    await send(serializedMessage)
   }
 }
 

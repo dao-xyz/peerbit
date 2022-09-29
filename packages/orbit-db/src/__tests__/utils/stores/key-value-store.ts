@@ -1,10 +1,11 @@
 import { Log } from "@dao-xyz/ipfs-log";
-import { JSON_ENCODER } from "@dao-xyz/orbit-db-store";
+import { Address, JSON_ENCODER, load, StoreLike } from "@dao-xyz/orbit-db-store";
 import { Store } from "@dao-xyz/orbit-db-store"
-import { OrbitDB } from "../../../orbit-db";
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry';
+import { AccessController } from "@dao-xyz/orbit-db-store";
+import { Operation } from "./event-store";
+import { variant } from '@dao-xyz/borsh';
 
-export const KEY_VALUE_STORE_TYPE = 'keyvalue';
 
 export class KeyValueIndex {
     _index: any
@@ -38,15 +39,22 @@ export class KeyValueIndex {
 }
 
 
-export class KeyValueStore extends Store<any, any, any, any> {
+@variant(2)
+export class KeyValueStore<T> extends Store<Operation<T>> {
     _type: string;
-    _index: any;
-    constructor(ipfs, id, dbname, options: any) {
+    _index: KeyValueIndex;
+    constructor(properties: {
+        name: string;
+        accessController: AccessController<Operation<T>>;
+    }) {
+        super(properties)
+        this._index = new KeyValueIndex();
+    }
+    async init(ipfs, key, sign, options): Promise<StoreLike<Operation<T>>> {
         let opts = Object.assign({}, { Index: KeyValueIndex })
         if (options.encoding === undefined) Object.assign(options, { encoding: JSON_ENCODER })
         Object.assign(opts, options)
-        super(ipfs, id, dbname, opts)
-        this._type = KEY_VALUE_STORE_TYPE
+        return super.init(ipfs, key, sign, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
     }
 
     get all() {
@@ -88,6 +96,15 @@ export class KeyValueStore extends Store<any, any, any, any> {
             value: null
         }, options)
     }
+
+    static async load<T>(ipfs: any, address: Address, options?: {
+        timeout?: number;
+    }): Promise<KeyValueStore<T>> {
+        const instance = await load(ipfs, address, Store, options)
+        if (instance instanceof KeyValueStore === false) {
+            throw new Error("Unexpected")
+        };
+        return instance as KeyValueStore<T>;
+    }
 }
 
-OrbitDB.addDatabaseType(KEY_VALUE_STORE_TYPE, KeyValueStore)

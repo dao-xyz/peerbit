@@ -1,8 +1,7 @@
 import assert from 'assert'
 import { Log } from '@dao-xyz/ipfs-log'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
-import { Keystore } from "@dao-xyz/orbit-db-keystore"
-import { Identities } from '@dao-xyz/orbit-db-identity-provider'
+import { Keystore, SignKeyWithMeta } from "@dao-xyz/orbit-db-keystore"
 
 import {
   config,
@@ -10,20 +9,20 @@ import {
   startIpfs,
   stopIpfs
 } from 'orbit-db-test-utils'
-import { Replicator } from '../replicator'
 import { DefaultOptions, Store } from '../store'
 import { createStore } from './storage'
+import { SimpleAccessController, SimpleIndex } from './utils'
 
 // Tests timeout
 const timeout = 30000
 
 Object.keys(testAPIs).forEach((IPFS) => {
-  describe(`Replicator, ${IPFS}`, function () {
+  describe(`Replicator, ${IPFS}`, () => {
 
     jest.setTimeout(timeout);
 
-    let log: Log<string>, ipfsd, ipfs, replicator: Replicator<string>, store: Store<any, any, any, any>, keystore: Keystore, signingKeystore: Keystore, cacheStore
-
+    let ipfsd, ipfs, signKey: SignKeyWithMeta, store: Store<any>, keystore: Keystore, signingKeystore: Keystore, cacheStore
+    let index: SimpleIndex<string>
     const { identityKeysPath } = config
 
     beforeAll(async () => {
@@ -31,25 +30,28 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       ipfsd = await startIpfs(IPFS, config.daemon1)
       ipfs = ipfsd.api
-      const id = (await ipfsd.api.id()).id
-
-      const testIdentity = await Identities.createIdentity({ id, keystore })
-      log = new Log(ipfs, testIdentity)
+      /*       const id = (await ipfsd.api.id()).id
+       */
+      signKey = await keystore.createKey(new Uint8Array([0]), SignKeyWithMeta, undefined, { overwrite: true });
       cacheStore = await createStore('cache')
       const cache = new Cache(cacheStore)
-      const options = Object.assign({}, DefaultOptions, { cache })
-      store = new Store(ipfs, testIdentity, log.id, options)
-      replicator = new Replicator(store, 123)
+      index = new SimpleIndex();
+
+      const options = Object.assign({}, DefaultOptions, { replicationConcurrency: 123, resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index) })
+      store = new Store({ name: 'name', accessController: new SimpleAccessController() })
+      await store.init(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), options);
+
+
     })
 
     afterAll(async () => {
-      await replicator?.stop()
+      await store._replicator?.stop()
       ipfsd && await stopIpfs(ipfsd)
       await keystore?.close()
     })
 
     it('default options', async () => {
-      assert.deepStrictEqual(replicator._logs, [])
+      assert.deepStrictEqual(store._replicator._logs, [])
     })
 
     describe('concurrency = 123', function () {
@@ -60,40 +62,39 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const logLength = 100
 
       beforeAll(async () => {
-        const testIdentity = await Identities.createIdentity({ id: new Uint8Array([1]), keystore, signingKeystore })
-        log2 = new Log(ipfs, testIdentity, { logId: log.id })
 
+        log2 = new Log(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: store._oplog._id })
         console.log(`writing ${logLength} entries to the log`)
+        let prev = undefined;
         for (let i = 0; i < logLength; i++) {
-          await log2.append(`entry${i}`, { pointerCount: 123 })
+          prev = await log2.append(`entry${i}`, { nexts: prev ? [prev] : undefined })
         }
         expect(log2.values.length).toEqual(logLength)
       })
 
       it('replicates all entries in the log', (done) => {
         let replicated = 0
-        assert.strictEqual(log.id, log2.id)
+        expect(store._oplog._id).toEqual(log2._id)
 
-        assert.strictEqual(replicator._logs.length, 0)
-        assert.strictEqual(replicator.tasksQueued, 0)
-
-        replicator.onReplicationProgress = () => replicated++
-        replicator.onReplicationComplete = async (replicatedLogs) => {
-          assert.strictEqual(replicator.tasksRunning, 0)
-          assert.strictEqual(replicator.tasksQueued, 0)
-          assert.strictEqual(replicator.unfinished.length, 0)
+        expect(store._replicator._logs.length).toEqual(0)
+        expect(store._replicator.tasksQueued).toEqual(0)
+        store._replicator.onReplicationProgress = () => replicated++
+        store._replicator.onReplicationComplete = async (replicatedLogs) => {
+          expect(store._replicator.tasksRunning).toEqual(0)
+          expect(store._replicator.tasksQueued).toEqual(0)
+          expect(store._replicator.unfinished.length).toEqual(0)
           for (const replicatedLog of replicatedLogs) {
-            await log.join(replicatedLog)
+            await store._oplog.join(replicatedLog)
           }
-          assert.strictEqual(log.values.length, logLength)
-          assert.strictEqual(log.values.length, log2.values.length)
-          for (let i = 0; i < log.values.length; i++) {
-            assert(log.values[i].equals(log2.values[i]))
+          expect(store._oplog.values.length).toEqual(logLength)
+          expect(store._oplog.values.length).toEqual(log2.values.length)
+          for (let i = 0; i < store._oplog.values.length; i++) {
+            assert(store._oplog.values[i].equals(log2.values[i]))
           }
           done();
         }
 
-        replicator.load(log2.heads)
+        store._replicator.load(log2.heads)
       })
     })
   })

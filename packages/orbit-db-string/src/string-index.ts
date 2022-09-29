@@ -1,6 +1,6 @@
 import { field, option, variant } from '@dao-xyz/borsh';
 import { Log } from '@dao-xyz/ipfs-log';
-import { Entry, Payload } from '@dao-xyz/ipfs-log-entry';
+import { Entry } from '@dao-xyz/ipfs-log-entry';
 import { Range } from './range';
 
 @variant(0)

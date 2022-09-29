@@ -17,7 +17,7 @@ const base = {
   cycle: async function ({ log, ipfsd, access, identity }) {
     await Log.fromEntryHash(ipfsd.api, identity, log.heads.map(e => e.hash), {
       access,
-      logId: log._id
+      gid: log._id
     })
   },
   teardown: async function ({ ipfsd }) {

@@ -2,9 +2,9 @@
 const assert = require('assert')
 const mapSeries = require('p-each-series')
 const rmrf = require('rimraf')
-import { IPFSAccessController } from '@dao-xyz/orbit-db-access-controllers'
 import { OrbitDB } from '../orbit-db'
-import { EventStore, EVENT_STORE_TYPE, Operation } from './utils/stores'
+import { SimpleAccessController } from './utils/access'
+import { EventStore } from './utils/stores'
 
 // Include test utilities
 const {
@@ -42,7 +42,7 @@ Object.keys(testAPIs).forEach(API => {
 
       ipfsd1 = await startIpfs(API, config.daemon1)
       ipfsd2 = await startIpfs(API, config.daemon2)
-      ipfsd3 = await startIpfs(API, config.daemon3)
+      ipfsd3 = await startIpfs(API, config.daemon2)
 
       ipfs1 = ipfsd1.api
       ipfs2 = ipfsd2.api
@@ -81,32 +81,26 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     beforeEach(async () => {
-      let options: any = {}
       // Set write access for both clients
-      options.write = [
-        orbitdb1.identity.publicKey,
-        orbitdb2.identity.publicKey,
-        orbitdb3.identity.publicKey
 
-      ],
 
-        console.log("Creating databases and waiting for peers to connect")
+      console.log("Creating databases and waiting for peers to connect")
 
       // Open the databases on the first node
-      options = Object.assign({}, options, { create: true })
+      const options = {}
 
       // Open the databases on the first node
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb1.create('local-' + i, EVENT_STORE_TYPE, options)
+        const db = await orbitdb1.open(new EventStore<string>({ name: 'local-' + i, accessController: new SimpleAccessController() }), options)
         localDatabases.push(db)
       }
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb2.open(localDatabases[i].address.toString(), { type: EVENT_STORE_TYPE, directory: dbPath2, ...options })
+        const db = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, localDatabases[i].address), { directory: dbPath2, ...options })
         remoteDatabasesA.push(db)
       }
 
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb3.open(localDatabases[i].address.toString(), { type: EVENT_STORE_TYPE, directory: dbPath3, ...options })
+        const db = await orbitdb3.open<EventStore<string>>(await EventStore.load(orbitdb3._ipfs, localDatabases[i].address), { directory: dbPath3, ...options })
         remoteDatabasesB.push(db)
       }
 
@@ -160,8 +154,8 @@ Object.keys(testAPIs).forEach(API => {
             remoteDatabasesA.forEach((db) => {
               try {
                 const result = db.iterator({ limit: -1 }).collect().length;
-                assert.equal(result, entryCount)
-                assert.equal(db._oplog.length, entryCount)
+                expect(result).toEqual(entryCount)
+                expect(db._oplog.length).toEqual(entryCount)
               } catch (error) {
                 reject(error)
               }
@@ -170,8 +164,8 @@ Object.keys(testAPIs).forEach(API => {
             remoteDatabasesB.forEach((db) => {
               try {
                 const result = db.iterator({ limit: -1 }).collect().length;
-                assert.equal(result, entryCount)
-                assert.equal(db._oplog.length, entryCount)
+                expect(result).toEqual(entryCount)
+                expect(db._oplog.length).toEqual(entryCount)
               } catch (error) {
                 reject(error)
               }
@@ -183,19 +177,18 @@ Object.keys(testAPIs).forEach(API => {
 
       // check gracefully shut down (with no leak)
       let directConnections = 2;
-      assert.strictEqual((await orbitdb3._ipfs.pubsub.ls()).length, directConnections + dbCount);
+      expect((await orbitdb3._ipfs.pubsub.ls()).length).toEqual(directConnections + dbCount);
       for (let i = 0; i < dbCount; i++) {
         await remoteDatabasesB[i].drop();
         const connections = (await orbitdb3._ipfs.pubsub.ls()).length;
         if (i < dbCount - 1) {
-          assert.strictEqual(connections, dbCount - (i + 1) + directConnections)
+          expect(connections).toEqual(dbCount - (i + 1) + directConnections)
         }
         else {
           // Direct connection should close because no databases "in common" are open
-          assert.strictEqual(connections, 0)
+          expect(connections).toEqual(0)
         }
       }
-
     })
   })
 })

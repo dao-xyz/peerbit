@@ -1,6 +1,0 @@
-test
-conf
-.circleci
-orbitdb
-dist/*.js.map
-Makefile

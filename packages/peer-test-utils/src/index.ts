@@ -1,11 +1,11 @@
 import fs from 'mz/fs';
-import { Identity } from '@dao-xyz/orbit-db-identity-provider';
 import { IPFS as IPFSInstance } from 'ipfs-core-types'
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { v4 as uuid } from 'uuid';
-import { PubSub } from '@dao-xyz/orbit-db-pubsub'
 import Ctl, { Controller } from 'ipfsd-ctl'
 import * as ipfs from 'ipfs';
+import { SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore';
+import { PublicKey } from '@dao-xyz/identity';
 
 export const clean = (id?: string) => {
     let suffix = id ? id + '/' : '';
@@ -19,11 +19,11 @@ export const clean = (id?: string) => {
     }
 }
 
-export const createOrbitDBInstance = (node: IPFSInstance | any, id: string, identity?: Identity) => OrbitDB.createInstance(node,
+export const createOrbitDBInstance = (node: IPFSInstance | any, id: string, publicKey?: PublicKey, sign?: (data: Uint8Array) => Promise<Uint8Array>) => OrbitDB.createInstance(node,
     {
-        identity: identity,
-        directory: './orbit-db/' + id,
-        broker: PubSub
+        publicKey,
+        sign,
+        directory: './orbit-db/' + id
     })
 
 export interface Peer {
@@ -32,7 +32,7 @@ export interface Peer {
     orbitDB: OrbitDB,
     disconnect: () => Promise<void>
 }
-export const getPeer = async (identity?: Identity): Promise<Peer> => {
+export const getPeer = async (publicKey?: PublicKey, sign?: (data: Uint8Array) => Promise<Uint8Array>): Promise<Peer> => {
     require('events').EventEmitter.prototype._maxListeners = 100;
     require('events').defaultMaxListeners = 100;
 
@@ -43,7 +43,8 @@ export const getPeer = async (identity?: Identity): Promise<Peer> => {
     let node = await controller.api;
     /*     let node = await createIPFSNode('./ipfs/' + id + '/');
      */
-    let orbitDB = await createOrbitDBInstance(node, id, identity);
+    // publicKey?: PublicKey, sign?: (data: Uint8Array) => Promise<Uint8Array>
+    let orbitDB = await createOrbitDBInstance(node, id, publicKey, sign);
     return {
         id,
         node: node,
@@ -58,11 +59,11 @@ export const getPeer = async (identity?: Identity): Promise<Peer> => {
         }
     };
 }
-export const getConnectedPeers = async (numberOf: number, identity?: Identity): Promise<Peer[]> => {
+export const getConnectedPeers = async (numberOf: number): Promise<Peer[]> => {
 
     const peersPromises: Promise<Peer>[] = [];
     for (let i = 0; i < numberOf; i++) {
-        peersPromises.push(getPeer(identity));
+        peersPromises.push(getPeer());
     }
     const peers = await Promise.all(peersPromises);
     const connectPromises = [];

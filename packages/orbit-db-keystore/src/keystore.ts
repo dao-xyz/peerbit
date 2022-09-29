@@ -1,11 +1,10 @@
 const fs = (typeof window === 'object' || typeof self === 'object') ? null : eval('require("fs")') // eslint-disable-line
 import { Level } from 'level';
-import LRU from 'lru';
+import LRU from 'lru-cache';
 import { variant, field, serialize, deserialize, option, Constructor } from '@dao-xyz/borsh';
-import { U8IntArraySerializer } from '@dao-xyz/io-utils';
+import { U8IntArraySerializer, bufferSerializer } from '@dao-xyz/io-utils';
 import { SodiumPlus, X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519SecretKey } from 'sodium-plus';
 import { waitFor } from '@dao-xyz/time';
-import { bufferSerializer } from '@dao-xyz/encryption-utils';
 import { createHash, Sign } from 'crypto';
 export interface Type<T> extends Function {
   new(...args: any[]): T;
@@ -39,7 +38,8 @@ export const createStore = (path = './keystore'): Level => {
   return new Level(path, { valueEncoding: 'view' })
 }
 
-const verifiedCache: { get(string: string): { publicKey: Ed25519PublicKey, data: Uint8Array }, set(string: string, { publicKey: Ed25519PublicKey, data: Uint8Array }) } = new LRU(1000)
+const verifiedCache: { get(string: string): { publicKey: Ed25519PublicKey, data: Uint8Array }, set(string: string, value: { publicKey: Ed25519PublicKey, data: Uint8Array }) } = new LRU({ max: 1000 })
+
 const _crypto = SodiumPlus.auto();
 
 const NONCE_LENGTH = 24;
@@ -230,7 +230,7 @@ export class BoxKeyWithMeta extends KeyWithMeta {
 export class Keystore {
 
   _store: Level;
-  _cache: LRU
+  _cache: LRU<string, KeyWithMeta>
 
   constructor(input: (Level | { store?: string } | { store?: Level }) & { cache?: any } | string = {}) {
     if (typeof input === 'string') {
@@ -242,7 +242,7 @@ export class Keystore {
     } else {
       this._store = input["store"] || createStore()
     }
-    this._cache = input["cache"] || new LRU(100)
+    this._cache = input["cache"] || new LRU({ max: 100 })
   }
 
   async openStore() {
@@ -418,7 +418,7 @@ export class Keystore {
         // not found
         return Promise.resolve(null)
       }
-      loadedKey = deserialize(Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer), KeyWithMeta);
+      loadedKey = deserialize(buffer, KeyWithMeta);
     }
 
     if (!loadedKey) {
@@ -454,11 +454,11 @@ export class Keystore {
       if (type) {
         prefix += '/' + type.type;
       }
-      const iterator = this.groupStore.iterator({ gte: prefix, lte: prefix + "\xFF", valueEncoding: 'view' });
+      const iterator = this.groupStore.iterator<any, Uint8Array>({ gte: prefix, lte: prefix + "\xFF", valueEncoding: 'view' });
       const ret: KeyWithMeta[] = [];
 
       for await (const [_key, value] of iterator) {
-        ret.push(deserialize(Buffer.from(value), KeyWithMeta));
+        ret.push(deserialize(value, KeyWithMeta));
       }
 
       return ret as T[];
@@ -468,7 +468,7 @@ export class Keystore {
     }
   }
 
-  async sign(arrayLike: string | Uint8Array | Buffer, key: SignKeyWithMeta | Ed25519SecretKey, signHashed: boolean = false): Promise<Uint8Array> {
+  static async sign(arrayLike: string | Uint8Array | Buffer, key: SignKeyWithMeta | Ed25519SecretKey, signHashed: boolean = false): Promise<Uint8Array> {
     key = key instanceof SignKeyWithMeta ? key.secretKey : key;
     if (!key) {
       throw new Error('No signing key given')
@@ -551,7 +551,7 @@ export class Keystore {
     const sender = bytes.slice(bytes.length - X25519PublicKey_LENGTH * 2, bytes.length - X25519PublicKey_LENGTH)
     const reciever = bytes.slice(bytes.length - X25519PublicKey_LENGTH, bytes.length) */
 
-    const msg = deserialize(Buffer.from(bytes), EncryptedMessage);
+    const msg = deserialize(bytes, EncryptedMessage);
     return new Uint8Array(await crypto.crypto_box_open(Buffer.from(msg.cipher), Buffer.from(msg.nonce), key.secretKey, sender))
     /* }
     else {
@@ -560,9 +560,9 @@ export class Keystore {
     } */
   }
 
-  async verify(signature: Uint8Array, publicKey: Ed25519PublicKey, data: Uint8Array, signedHash = false) {
-    return Keystore.verify(signature, publicKey, data, signedHash)
-  }
+  /*   async verify(signature: Uint8Array, publicKey: Ed25519PublicKey, data: Uint8Array, signedHash = false) {
+      return Keystore.verify(signature, publicKey, data, signedHash)
+    } */
 
   static async verify(signature: Uint8Array, publicKey: Ed25519PublicKey, data: Uint8Array, signedHash = false) {
     const signatureString = Buffer.from(signature).toString()

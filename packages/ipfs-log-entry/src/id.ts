@@ -8,3 +8,19 @@ export class Id {
         this.id = props?.id;
     }
 }
+
+
+export const getPeerID = async (ipfs: { id(): Promise<{ id: string }> }) => {
+    /*   const peerInfo = await ipfs.id()
+      return peerInfo.id */
+    let id: string = undefined;
+    const idFromIpfs: string | { toString: () => string } = (await ipfs.id()).id;
+    if (typeof idFromIpfs !== 'string') {
+        id = idFromIpfs.toString(); //  ipfs 57+ seems to return an id object rather than id
+    }
+    else {
+        id = idFromIpfs
+    }
+    return id;
+
+}

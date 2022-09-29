@@ -71,8 +71,8 @@ export class LogIO {
    */
   static async fromEntryHash<T>(ipfs, hash: string[] | string,
     options: EntryFetchAllOptions<T> & { sortFn?: ISortFunction }) {
-    if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(hash)) throw new Error("'hash' must be defined")
+
     // Convert input hash(s) to an array
     const hashes = Array.isArray(hash) ? hash : [hash]
     // Fetch given length, return size at least the given input entries
@@ -101,11 +101,10 @@ export class LogIO {
    * @param {number} options.length How many entries to include
    * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
    **/
-  static async fromJSON<T>(ipfs, json: { id: string, heads: string[] | Entry<T>[] }, options: EntryFetchAllOptions<T>) {
-    if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
+  static async fromJSON<T>(ipfs, json: { id: string, heads: string[] }, options: EntryFetchAllOptions<T>) {
+
     const { id, heads } = json
-    const headHashes = heads.map(e => e.hash)
-    const all: Entry<T>[] = await EntryIO.fetchParallel(ipfs, headHashes, options)
+    const all: Entry<T>[] = await EntryIO.fetchParallel(ipfs, heads, options)
     const entries = all.sort(Entry.compare)
     return { logId: id, entries, heads }
   }
@@ -119,14 +118,7 @@ export class LogIO {
    * @param {Array<Entry<T>>} options.exclude Entries to not fetch (cached)
    * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
    */
-  static async fromEntry<T>(ipfs, sourceEntries: Entry<T>[] | Entry<T>, options: EntryFetchAllOptions<T>): Promise<{ logId: string, entries: Entry<T>[] }> {
-    if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
-    if (!isDefined(sourceEntries)) throw new Error("'sourceEntries' must be defined")
-
-    // Make sure we only have Entry objects as input
-    if (!Array.isArray(sourceEntries) && !Entry.isEntry(sourceEntries)) {
-      throw new Error('\'sourceEntries\' argument must be an array of Entry instances or a single Entry')
-    }
+  static async fromEntry<T>(ipfs, sourceEntries: Entry<T>[] | Entry<T>, options: EntryFetchAllOptions<T>): Promise<{ entries: Entry<T>[] }> {
 
     if (!Array.isArray(sourceEntries)) {
       sourceEntries = [sourceEntries]
@@ -141,7 +133,22 @@ export class LogIO {
     }
 
     // Make sure we pass hashes instead of objects to the fetcher function
-    const hashes = sourceEntries.map(e => e.hash)
+    let hashes = [];
+    sourceEntries.forEach((e) => {
+      e.next.forEach((n) => {
+        hashes.push(n);
+      })
+    })
+
+    if (options.shouldExclude) {
+      hashes = hashes.filter(h => !options.shouldExclude(h))
+    }
+    if (options.onProgressCallback) {
+      sourceEntries.forEach((entry) => {
+        options.onProgressCallback(entry)
+      })
+    }
+
 
     // Fetch the entries
     const all = await EntryIO.fetchParallel(ipfs, hashes,
@@ -166,8 +173,7 @@ export class LogIO {
     // Add the input entries at the beginning of the array and remove
     // as many elements from the array before inserting the original entries
     const entries = replaceInFront(sliced, missingSourceEntries)
-    const logId = await entries[entries.length - 1].id
-    return { logId, entries }
+    return { entries }
   }
 }
 

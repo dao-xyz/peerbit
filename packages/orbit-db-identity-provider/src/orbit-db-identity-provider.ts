@@ -1,8 +1,8 @@
-import { Identity, IdentitySerializable } from './identity';
+import { Identity } from './identity';
 import { IdentityProvider } from './identity-provider-interface'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { Ed25519PublicKey } from 'sodium-plus';
-import { joinUint8Arrays } from '@dao-xyz/io-utils';
+import { verifySignatureEd25519 } from '@dao-xyz/identity';
 
 export class OrbitDBIdentityProvider extends IdentityProvider {
   _keystore: Keystore;
@@ -41,24 +41,29 @@ export class OrbitDBIdentityProvider extends IdentityProvider {
     if (!key) {
       throw new Error(`Signing key for '${idString}' not found`)
     }
-    return keystore.sign(data, key);
+    return Keystore.sign(data, key);
   }
 
-  static async verify(signature: Uint8Array, data: Uint8Array, publicKey: Uint8Array): Promise<boolean> {
+  /* static async verify(signature: Uint8Array, data: Uint8Array, publicKey: Uint8Array): Promise<boolean> {
     return Keystore.verify(
       signature,
       new Ed25519PublicKey(Buffer.from(publicKey)),
       data,
     )
+  } */
+
+  static async verifyIdentity(identity: Identity) {
+    // Verify that identity was signed by the ID
+    if (identity.id instanceof Ed25519PublicKey) {
+      return verifySignatureEd25519(identity.signatures.publicKey, identity.id, Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id]));
+      /* return OrbitDBIdentityProvider.verify(
+        identity.signatures.publicKey,
+        new Uint8Array(Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id])),
+        identity.id
+      ) */
+    }
+    return false;
   }
 
-  static async verifyIdentity(identity: Identity | IdentitySerializable) {
-    // Verify that identity was signed by the ID
-    return OrbitDBIdentityProvider.verify(
-      identity.signatures.publicKey,
-      new Uint8Array(Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id])),
-      identity.id
-    )
-  }
 }
 

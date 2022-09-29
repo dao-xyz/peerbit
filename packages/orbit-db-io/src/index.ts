@@ -105,7 +105,8 @@ async function write(ipfs, format: string, value, options: { base?: any, pin?: b
   const cid = codec.code === dagPb.code
     ? block.cid.toV0()
     : block.cid
-  return cid.toString(options.base || defaultBase)
+  const cidString = cid.toString(options.base || defaultBase)
+  return cidString;
 }
 
 export default {

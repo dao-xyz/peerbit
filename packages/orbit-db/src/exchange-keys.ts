@@ -1,18 +1,20 @@
 import { variant, field, serialize, vec } from '@dao-xyz/borsh';
 import { Message } from './message';
-import { U8IntArraySerializer } from '@dao-xyz/io-utils';
-import { Identity } from '@dao-xyz/orbit-db-identity-provider';
+import { bufferSerializer, U8IntArraySerializer } from '@dao-xyz/io-utils';
 import { X25519PublicKey, Ed25519PublicKey } from 'sodium-plus'
 import Logger from 'logplease'
 import { BoxKeyWithMeta, Keystore, KeyWithMeta, SignKeyWithMeta, WithType } from '@dao-xyz/orbit-db-keystore';
-import { MaybeSigned, PublicKeyEncryption, bufferSerializer, SignatureWithKey } from '@dao-xyz/encryption-utils';
+import { PublicKeyEncryption } from '@dao-xyz/encryption-utils';
+import { MaybeSigned, SignatureWithKey } from '@dao-xyz/identity';
+
 import { DecryptedThing } from '@dao-xyz/encryption-utils';
 import { TimeoutError, waitForAsync } from '@dao-xyz/time';
+import { PublicKey } from '@dao-xyz/identity';
 
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 
 Logger.setLogLevel('ERROR')
-export type KeyAccessCondition = (requester: Ed25519PublicKey, keyToAccess: KeyWithMeta) => Promise<boolean>;
+export type KeyAccessCondition = (requester: PublicKey, keyToAccess: KeyWithMeta) => Promise<boolean>;
 export type KeyType = 'ethereum' | 'solana' | 'orbitdb';
 
 
@@ -144,6 +146,10 @@ export class RequestKeyMessage<T extends KeyWithMeta> extends Message {
     @field({ type: RequestKeyCondition })
     condition: RequestKeyCondition<T>
 
+
+
+    // TODO peer info for sending repsonse directly
+
     constructor(props?: { encryptionKey: X25519PublicKey, condition: RequestKeyCondition<T> }) {
         super();
         if (props) {
@@ -170,8 +176,8 @@ export class KeyResponseMessage extends Message {
     }
 }
 
-export const requestAndWaitForKeys = async<T extends KeyWithMeta>(condition: RequestKeyCondition<T>, send: (message: Uint8Array) => void | Promise<void>, keystore: Keystore, myIdentity: Identity, timeout = 10000): Promise<T[]> => {
-    await requestKeys(condition, send, keystore, myIdentity);
+export const requestAndWaitForKeys = async<T extends KeyWithMeta>(condition: RequestKeyCondition<T>, send: (message: Uint8Array) => void | Promise<void>, keystore: Keystore, signPublicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, timeout = 10000): Promise<T[]> => {
+    await requestKeys(condition, send, keystore, signPublicKey, sign);
     if (condition instanceof RequestKeysByReplicationTopic) {
         try {
             // timeout
@@ -211,12 +217,15 @@ export const requestAndWaitForKeys = async<T extends KeyWithMeta>(condition: Req
 
 
 
-export const requestKeys = async <T extends KeyWithMeta>(condition: RequestKeyCondition<T>, send: (message: Uint8Array) => void | Promise<void>, keystore: Keystore, myIdentity: Identity) => {
-    const signKey = await keystore.getKeyByPath(myIdentity.id, SignKeyWithMeta); // should exist
-    let key = await keystore.getKeyByPath(myIdentity.id, BoxKeyWithMeta);
+export const requestKeys = async <T extends KeyWithMeta>(condition: RequestKeyCondition<T>, send: (message: Uint8Array) => void | Promise<void>, keystore: Keystore, signPublicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>) => {
+
+    // TODO key rotation?
+    const keyId = serialize(signPublicKey);
+    let key = await keystore.getKeyByPath(keyId, BoxKeyWithMeta);
     if (!key) {
-        key = await keystore.createKey(myIdentity.id, BoxKeyWithMeta);
+        key = await keystore.createKey(keyId, BoxKeyWithMeta);
     }
+
     const encryptionKey = key.publicKey;
     const signedMessage = await new MaybeSigned<RequestKeyMessage<T>>({
         data: serialize(new RequestKeyMessage<T>({
@@ -225,8 +234,8 @@ export const requestKeys = async <T extends KeyWithMeta>(condition: RequestKeyCo
         }))
     }).sign(async (bytes) => {
         return {
-            signature: await keystore.sign(bytes, signKey),
-            publicKey: await signKey.publicKey
+            signature: await sign(bytes),
+            publicKey: await signPublicKey
         }
     })
     const unencryptedMessage = new DecryptedThing(
@@ -237,7 +246,7 @@ export const requestKeys = async <T extends KeyWithMeta>(condition: RequestKeyCo
     await send(serialize(unencryptedMessage))
 }
 
-export const exchangeKeys = async <T extends KeyWithMeta>(channel: any, request: RequestKeyMessage<T>, requester: Ed25519PublicKey, canAccessKey: KeyAccessCondition, getKeyByPublicKey: (key: Uint8Array) => Promise<T>, getKeysByGroup: (group: string, type: WithType<T>) => Promise<T[]>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: Ed25519PublicKey }>, encryption: PublicKeyEncryption) => { //  encrypt: (data: Uint8Array, recieverPublicKey: X25519PublicKey) => Promise<{ publicKey: X25519PublicKey, bytes: Uint8Array }>
+export const exchangeKeys = async <T extends KeyWithMeta>(send: (Uint8Array) => Promise<void>, request: RequestKeyMessage<T>, requester: PublicKey, canAccessKey: KeyAccessCondition, getKeyByPublicKey: (key: Uint8Array) => Promise<T>, getKeysByGroup: (group: string, type: WithType<T>) => Promise<T[]>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>, encryption: PublicKeyEncryption) => { //  encrypt: (data: Uint8Array, recieverPublicKey: X25519PublicKey) => Promise<{ publicKey: X25519PublicKey, bytes: Uint8Array }>
 
     // Validate signature
     let secretKeys: KeyWithMeta[] = []
@@ -269,7 +278,7 @@ export const exchangeKeys = async <T extends KeyWithMeta>(channel: any, request:
     }));
 
     const signatureResult = await sign(secretKeyResponseMessage);
-    await channel.send(serialize(await new DecryptedThing<KeyResponseMessage>({
+    await send(serialize(await new DecryptedThing<KeyResponseMessage>({
         data: serialize(new MaybeSigned({
             signature: new SignatureWithKey({
                 signature: signatureResult.signature,

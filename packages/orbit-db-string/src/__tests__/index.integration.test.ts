@@ -1,10 +1,10 @@
 
 import { StringResultSource, StringStore, STRING_STORE_TYPE } from '../string-store';
 import { QueryRequestV0, QueryResponseV0, ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates, StoreAddressMatchQuery } from '@dao-xyz/query-protocol';
-import { query } from '@dao-xyz/query-protocol';
+import { query } from '@dao-xyz/orbit-db-query-store';
 import { disconnectPeers, getConnectedPeers, Peer } from '@dao-xyz/peer-test-utils';
 import { Range } from '../range';
-
+import { IPFSAccessController } from '@dao-xyz/orbit-db-ipfs-access-controller';
 const storeTestSetup = async (): Promise<{
     creator: Peer,
     observer: Peer,
@@ -15,7 +15,18 @@ const storeTestSetup = async (): Promise<{
     let [peer, observer] = await getConnectedPeers(2);
 
     // Create store
-    let storeCreator = await peer.orbitDB.open('store', { ...{ create: true, type: STRING_STORE_TYPE, queryRegion: 'world', subscribeToQueries: true } })
+    const accessController = new IPFSAccessController({
+        write: ['*']
+    });
+    accessController.allowAll = true;
+    const store = new StringStore({
+        name: 'store',
+        accessController: accessController
+    });
+
+    store.queryRegion = 'world';
+
+    let storeCreator = await peer.orbitDB.open<StringStore>(store)
     await storeCreator.load();
     await storeCreator._initializationPromise;
 
