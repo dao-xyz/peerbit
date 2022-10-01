@@ -1,10 +1,9 @@
 import assert from 'assert'
 import rmrf from 'rimraf'
 import fs from 'fs-extra'
-import { Log } from '../log'
+import { Log } from '../log.js'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
-import { LogCreator } from './utils/log-creator'
-import { assertPayload } from './utils/assert'
+import { LogCreator } from './utils/log-creator.js'
 
 // Test utils
 import {
@@ -90,7 +89,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          assertPayload(entry.payload.value, 'entry' + (67 - i++))
+          expect(entry.payload.value).toEqual('entry' + (67 - i++))
         }
         expect(i).toEqual(amount)
 
@@ -107,7 +106,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          assertPayload(entry.payload.value, 'entry' + (72 - i++))
+          expect(entry.payload.value).toEqual('entry' + (72 - i++))
         }
         expect(i).toEqual(amount)
       })
@@ -124,7 +123,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          assertPayload(entry.payload.value, 'entry' + (79 - i++))
+          expect(entry.payload.value).toEqual('entry' + (79 - i++))
         }
         expect(i).toEqual(amount);
       })
@@ -197,7 +196,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          assertPayload(entry.payload.value, 'entry' + (100 - i++))
+          expect(entry.payload.value).toEqual('entry' + (100 - i++))
         }
       })
 
@@ -216,7 +215,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          assertPayload(entry.payload.value, 'entry' + (100 - i++))
+          expect(entry.payload.value).toEqual('entry' + (100 - i++))
         }
       })
 
@@ -235,7 +234,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          assertPayload(entry.payload.value, 'entry' + (66 - i++))
+          expect(entry.payload.value).toEqual('entry' + (66 - i++))
         }
       })
 
@@ -254,7 +253,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          assertPayload(entry.payload.value, 'entry' + (67 - i++))
+          expect(entry.payload.value).toEqual('entry' + (67 - i++))
         }
       })
     })

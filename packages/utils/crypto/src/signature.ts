@@ -1,8 +1,8 @@
 import { deserialize, Constructor, variant, field, option, serialize } from "@dao-xyz/borsh";
 import { arraysEqual, U8IntArraySerializer } from "@dao-xyz/borsh-utils";
-import { PublicKey, } from ".";
-import { Ed25519PublicKeyData, verifySignatureEd25519 } from './ed25519';
-import { Secp256k1PublicKeyData, verifySignatureSecp256k1 } from './sepc256k1';
+import { SignKey } from "./index.js";
+import { Ed25519PublicKey, verifySignatureEd25519 } from './ed25519';
+import { Secp256k1PublicKeyData, verifySignatureSecp256k1 } from './sepc256k1.js';
 
 @variant(0)
 export class SignatureWithKey {
@@ -10,12 +10,12 @@ export class SignatureWithKey {
     @field(U8IntArraySerializer)
     signature: Uint8Array
 
-    @field({ type: PublicKey })
-    publicKey: PublicKey
+    @field({ type: SignKey })
+    publicKey: SignKey
 
     constructor(props?: {
         signature: Uint8Array,
-        publicKey: PublicKey
+        publicKey: SignKey
     }) {
         if (props) {
             this.signature = props.signature;
@@ -85,7 +85,7 @@ export class MaybeSigned<T>  {
      * In place
      * @param signer 
      */
-    async sign(signer: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>): Promise<MaybeSigned<T>> {
+    async sign(signer: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: SignKey }>): Promise<MaybeSigned<T>> {
         const signatureResult = await signer(this.data)
         this.signature = new SignatureWithKey({
             publicKey: signatureResult.publicKey,
@@ -97,11 +97,11 @@ export class MaybeSigned<T>  {
 }
 
 
-export const verify = async (signature: Uint8Array, publicKey: PublicKey, data: Uint8Array) => {
+export const verify = async (signature: Uint8Array, publicKey: SignKey, data: Uint8Array) => {
     if (!signature) {
         return true;
     }
-    if (publicKey instanceof Ed25519PublicKeyData) {
+    if (publicKey instanceof Ed25519PublicKey) {
         return await verifySignatureEd25519(signature, publicKey, data)
     }
     else if (publicKey instanceof Secp256k1PublicKeyData) {

@@ -1,5 +1,5 @@
 import { field, variant, vec } from "@dao-xyz/borsh";
-import { ResultCoordinates } from "./result";
+import { ResultCoordinates } from './result.js';
 
 @variant(0)
 export class RangeCoordinate {

@@ -1,6 +1,6 @@
-import { Address, Addressable } from "./io";
-import { IPFS } from 'ipfs-core-types/src/'
-import { IInitializationOptions } from "./store";
+import { Address, Addressable } from "./io.js";
+import { IPFS } from 'ipfs-core-types'
+import { IInitializationOptions } from "./store.js";
 import EventEmitter from "events";
 import { Log } from "@dao-xyz/ipfs-log";
 import Cache from '@dao-xyz/orbit-db-cache';

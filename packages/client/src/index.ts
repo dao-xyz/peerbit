@@ -1,3 +1,3 @@
 
-export * from './orbit-db';
-export * from './channel';
+export * from './orbit-db.js';
+export * from './channel.js';

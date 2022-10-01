@@ -1,15 +1,14 @@
 import { IStoreOptions, Store, Address, IInitializationOptions } from '@dao-xyz/orbit-db-store'
 import { field, option } from '@dao-xyz/borsh';
-import { Message } from 'ipfs-core-types/types/src/pubsub'
+import type { Message } from '@libp2p/interface-pubsub'
 import { QueryRequestV0, QueryResponseV0, Result, MultipleQueriesType, StoreAddressMatchQuery } from '@dao-xyz/query-protocol';
-import { Ed25519PublicKey, X25519PublicKey } from 'sodium-plus';
+import { X25519PublicKey } from 'sodium-plus';
 import { AccessError, decryptVerifyInto } from '@dao-xyz/encryption-utils';
 import { AccessController } from '@dao-xyz/orbit-db-store';
 import { ReadWriteAccessController } from './read-write-access-controller';
-import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore';
-import { IPFS } from 'ipfs-core-types/src';
+import { IPFS } from 'ipfs-core-types';
 import { PublicKey } from '@dao-xyz/identity';
-import { query, respond } from './io';
+import { query, respond } from './io.js';
 
 export const getQueryTopic = (region: string): string => {
     return region + '/query';

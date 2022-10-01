@@ -1,4 +1,4 @@
-import { Store, DefaultOptions } from '../store'
+import { Store, DefaultOptions } from '../store.js'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
 import { Keystore, SignKeyWithMeta } from "@dao-xyz/orbit-db-keystore"
 
@@ -9,8 +9,8 @@ import {
   startIpfs,
   stopIpfs
 } from '@dao-xyz/orbit-db-test-utils'
-import { createStore } from './storage'
-import { SimpleAccessController } from './utils'
+import { createStore } from './storage.js'
+import { SimpleAccessController } from './utils.js'
 
 
 Object.keys(testAPIs).forEach((IPFS) => {

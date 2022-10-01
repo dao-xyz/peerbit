@@ -1,26 +1,29 @@
-import EventEmitter from "events"
-import { difference } from "./utils";
-
-
+import { difference } from "./utils.js";
+import { IPFS } from 'ipfs-core-types'
+import type { PeerId } from '@libp2p/interface-peer-id';
 const DEFAULT_OPTIONS = {
   start: true,
   pollInterval: 1000,
 }
+interface PubSub {
+  peers: (topic?: string) => Promise<PeerId[]>
+}
 
-export class IpfsPubsubPeerMonitor extends EventEmitter {
-  _pubsub: any;
+interface Callbacks { onJoin?: (peer: PeerId) => void, onLeave?: (peer: PeerId) => void, onError?: (err) => void };
+export class IpfsPubsubPeerMonitor {
+  _pubsub: PubSub;
   _topic: string;
   _options: any;
-  _peers: string[];
+  _peers: PeerId[];
   _interval: any;
-
-  constructor(ipfsPubsub: any, topic: string, options?: { start?: boolean, pollInterval?: number }) {
-    super()
-    this._pubsub = ipfsPubsub
+  _callbacks: Callbacks;
+  constructor(pubsub: PubSub, topic: string, callbacks: Callbacks, options?: { start?: boolean, pollInterval?: number }) {
+    this._pubsub = pubsub
     this._topic = topic
     this._options = Object.assign({}, DEFAULT_OPTIONS, options)
     this._peers = []
     this._interval = null
+    this._callbacks = callbacks;
 
     if (this._options.start)
       this.start()
@@ -46,9 +49,6 @@ export class IpfsPubsubPeerMonitor extends EventEmitter {
   stop() {
     clearInterval(this._interval)
     this._interval = null
-    this.removeAllListeners('error')
-    this.removeAllListeners('join')
-    this.removeAllListeners('leave')
   }
 
   async getPeers() {
@@ -63,17 +63,17 @@ export class IpfsPubsubPeerMonitor extends EventEmitter {
   async _pollPeers() {
     try {
       const peers = await this._pubsub.peers(this._topic)
-      IpfsPubsubPeerMonitor._emitJoinsAndLeaves(new Set(this._peers), new Set(peers), this)
+      IpfsPubsubPeerMonitor._emitJoinsAndLeaves(this._peers, peers, this._callbacks)
       this._peers = peers
     } catch (err) {
       clearInterval(this._interval)
-      this.emit('error', err)
+      this._callbacks.onError && this._callbacks.onError(err);
     }
   }
 
-  static _emitJoinsAndLeaves(oldValues, newValues, events) {
-    const emitJoin = addedPeer => events.emit('join', addedPeer)
-    const emitLeave = removedPeer => events.emit('leave', removedPeer)
+  static _emitJoinsAndLeaves(oldValues: PeerId[], newValues: PeerId[], callbacks: Callbacks) {
+    const emitJoin = (addedPeer: PeerId) => callbacks.onJoin && callbacks.onJoin(addedPeer)
+    const emitLeave = (removedPeer: PeerId) => callbacks.onLeave && callbacks.onLeave(removedPeer)
     difference(newValues, oldValues).forEach(emitJoin)
     difference(oldValues, newValues).forEach(emitLeave)
   }

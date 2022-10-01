@@ -5,7 +5,7 @@ import { DIDIdentityProvider } from "../did-identity-provider"
 import { Identities } from "../identities"
 
 import assert from 'assert'
-const path = require('path')
+import path from 'path'
 import rmrf from 'rimraf'
 import { Ed25519Provider } from 'key-did-provider-ed25519'
 import { Ed25519PublicKey } from 'sodium-plus'

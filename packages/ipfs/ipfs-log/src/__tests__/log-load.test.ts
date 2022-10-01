@@ -1,14 +1,13 @@
 import assert from 'assert'
 import rmrf from 'rimraf'
 import fs from 'fs-extra'
-import { LastWriteWins } from '../log-sorting'
-import bigLogString from './fixtures/big-log.fixture';
+import { LastWriteWins } from '../log-sorting.js'
+import bigLogString from './fixtures/big-log.fixture.js';
 import { Entry, JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log-entry';
-import { Log } from '../log'
+import { Log } from '../log.js'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
-import { LogCreator } from './utils/log-creator'
-import { assertPayload } from './utils/assert';
-import { Ed25519PublicKeyData } from '@dao-xyz/identity';
+import { LogCreator } from './utils/log-creator.js'
+import { Ed25519PublicKey } from '@dao-xyz/identity';
 import { arraysCompare } from '@dao-xyz/borsh-utils';
 const v0Entries = require('./fixtures/v0-entries.fixture')
 const v1Entries = require('./fixtures/v1-entries.fixture')
@@ -204,27 +203,27 @@ Object.keys(testAPIs).forEach((IPFS) => {
           { length: data.heads.length })
         expect(log1.heads[0].gid).toEqual(data.heads[0].gid)
         expect(log1.length).toEqual(data.heads.length)
-        assertPayload(log1.values[0].payload.value, 'entryC0')
-        assertPayload(log1.values[1].payload.value, 'entryA10')
+        expect(log1.values[0].payload.value).toEqual('entryC0')
+        expect(log1.values[1].payload.value).toEqual('entryA10')
 
         const log2 = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), data.heads, { length: 4 })
         expect(log2.heads[0].gid).toEqual(data.heads[0].gid)
         expect(log2.length).toEqual(4)
-        assertPayload(log2.values[0].payload.value, 'entryC0')
-        assertPayload(log2.values[1].payload.value, 'entryA8')
-        assertPayload(log2.values[2].payload.value, 'entryA9')
-        assertPayload(log2.values[3].payload.value, 'entryA10')
+        expect(log2.values[0].payload.value).toEqual('entryC0')
+        expect(log2.values[1].payload.value).toEqual('entryA8')
+        expect(log2.values[2].payload.value).toEqual('entryA9')
+        expect(log2.values[3].payload.value).toEqual('entryA10')
 
         const log3 = await Log.fromEntry<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), data.heads, { length: 7 })
         expect(log3.heads[0].gid).toEqual(data.heads[0].gid)
         expect(log3.length).toEqual(7)
-        assertPayload(log3.values[0].payload.value, 'entryB5')
-        assertPayload(log3.values[1].payload.value, 'entryA6')
-        assertPayload(log3.values[2].payload.value, 'entryC0')
-        assertPayload(log3.values[3].payload.value, 'entryA7')
-        assertPayload(log3.values[4].payload.value, 'entryA8')
-        assertPayload(log3.values[5].payload.value, 'entryA9')
-        assertPayload(log3.values[6].payload.value, 'entryA10')
+        expect(log3.values[0].payload.value).toEqual('entryB5')
+        expect(log3.values[1].payload.value).toEqual('entryA6')
+        expect(log3.values[2].payload.value).toEqual('entryC0')
+        expect(log3.values[3].payload.value).toEqual('entryA7')
+        expect(log3.values[4].payload.value).toEqual('entryA8')
+        expect(log3.values[5].payload.value).toEqual('entryA9')
+        expect(log3.values[6].payload.value).toEqual('entryA10')
       })
 
       it('onProgress callback is fired for each entry', async () => {
@@ -233,7 +232,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         for (let i = 1; i <= amount; i++) {
           const prev1 = last(items1)
           const n1 = await Entry.create({
-            ipfs, publicKey: new Ed25519PublicKeyData({
+            ipfs, publicKey: new Ed25519PublicKey({
               publicKey: signKey.publicKey
             }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryA' + i, next: prev1 ? [prev1] : undefined
           })
@@ -245,7 +244,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           entry.init({ encoding: JSON_ENCODING_OPTIONS });
           assert.notStrictEqual(entry, null)
           expect(entry.hash).toEqual(items1[items1.length - i - 1].hash)
-          assertPayload(entry.payload.value, items1[items1.length - i - 1].payload.value)
+          expect(entry.payload.value).toEqual(items1[items1.length - i - 1].payload.value)
           i++
         }
 

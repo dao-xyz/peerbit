@@ -4,7 +4,7 @@ import { waitFor } from '@dao-xyz/time';
 import { AccessError } from '@dao-xyz/encryption-utils';
 import { DocumentQueryRequest, QueryRequestV0, QueryResponseV0, ResultWithSource } from '@dao-xyz/query-protocol';
 import { query } from '@dao-xyz/orbit-db-query-store';
-import { Ed25519PublicKeyData, Secp256k1PublicKeyData } from '@dao-xyz/identity';
+import { Ed25519PublicKey, Secp256k1PublicKeyData } from '@dao-xyz/identity';
 import { SodiumPlus } from 'sodium-plus';
 import { Wallet } from '@ethersproject/wallet'
 
@@ -17,7 +17,7 @@ describe('identity-graph', () => {
 
         let [peer] = await getConnectedPeers(1);
         const crypto = await SodiumPlus.auto();
-        const a = new Ed25519PublicKeyData({
+        const a = new Ed25519PublicKey({
             publicKey: await crypto.crypto_sign_publickey((await crypto.crypto_sign_keypair()))
         })
 
@@ -25,7 +25,7 @@ describe('identity-graph', () => {
             address: await Wallet.createRandom().getAddress()
         })
 
-        const c = new Ed25519PublicKeyData({
+        const c = new Ed25519PublicKey({
             publicKey: await crypto.crypto_sign_publickey((await crypto.crypto_sign_keypair()))
         })
 

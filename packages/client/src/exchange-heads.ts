@@ -1,11 +1,11 @@
 import { variant, field, vec, serialize } from '@dao-xyz/borsh';
 import { Entry } from '@dao-xyz/ipfs-log-entry'
-import { Message } from './message';
+import { Message } from './message.js';
 import { StoreLike } from '@dao-xyz/orbit-db-store';
 import Logger from 'logplease'
 import { DecryptedThing } from '@dao-xyz/encryption-utils';
 import { MaybeSigned, PublicKey } from '@dao-xyz/identity';
-import { ResourceRequirement } from './exchange-replication';
+import { ResourceRequirement } from './exchange-replication.js';
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 

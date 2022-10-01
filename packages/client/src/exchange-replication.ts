@@ -1,11 +1,11 @@
 import { variant, field, vec, option, serialize } from '@dao-xyz/borsh';
 import { delay } from '@dao-xyz/time';
-import { Message } from './message';
+import { Message } from './message.js';
 import isNode from 'is-node';
 import { MaybeSigned, PublicKey } from '@dao-xyz/identity';
 import { DecryptedThing, PublicKeyEncryption } from '@dao-xyz/encryption-utils';
 import { Address, Store, StoreLike } from '@dao-xyz/orbit-db-store';
-import { OrbitDB } from './orbit-db';
+import { OrbitDB } from './orbit-db.js';
 import { StringSetSerializer } from '@dao-xyz/borsh-utils';
 import { v4 as uuid } from 'uuid';
 let v8 = undefined;

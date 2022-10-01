@@ -7,7 +7,7 @@ import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { EventStore } from "./utils/stores"
 import { SimpleAccessController } from "./utils/access"
 import { Level } from "level"
-import { Ed25519PublicKeyData } from "@dao-xyz/identity"
+import { Ed25519PublicKey } from "@dao-xyz/identity"
 
 
 // Include test utilities
@@ -68,7 +68,7 @@ Object.keys(testAPIs).forEach(API => {
         accessController: new SimpleAccessController()
       }), options)
       expect(db.publicKey).toEqual(orbitdb.identity)
-      db.setPublicKey(new Ed25519PublicKeyData({
+      db.setPublicKey(new Ed25519PublicKey({
         publicKey: signKey1.publicKey
       }))
       expect(db.publicKey).toEqual(signKey1.publicKey)

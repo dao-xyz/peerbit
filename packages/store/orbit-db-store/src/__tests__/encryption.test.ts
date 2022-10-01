@@ -1,13 +1,13 @@
 
 import assert from 'assert'
-import { Store, DefaultOptions, HeadsCache, StorePublicKeyEncryption, IInitializationOptions } from '../store'
+import { Store, DefaultOptions, HeadsCache, StorePublicKeyEncryption, IInitializationOptions } from '../store.js'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
 import { BoxKeyWithMeta, Keystore, KeyWithMeta, SignKeyWithMeta } from "@dao-xyz/orbit-db-keystore"
-import { createStore } from './storage'
+import { createStore } from './storage.js'
 import { X25519PublicKey, SodiumPlus } from 'sodium-plus'
 import { AccessError } from '@dao-xyz/encryption-utils'
-import { SimpleAccessController, SimpleIndex } from './utils'
-import { Address } from '../io'
+import { SimpleAccessController, SimpleIndex } from './utils.js'
+import { Address } from '../io.js'
 
 // Test utils
 import {

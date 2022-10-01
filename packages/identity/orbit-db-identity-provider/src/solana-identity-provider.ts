@@ -1,7 +1,7 @@
 import { Keypair, PublicKey as SPublicKey } from '@solana/web3.js';
 import nacl from "tweetnacl";
 import { IdentityProvider } from './identity-provider-interface';
-import { Ed25519PublicKeyData, verifySignatureEd25519 } from '@dao-xyz/identity';
+import { Ed25519PublicKey, verifySignatureEd25519 } from '@dao-xyz/identity';
 import { Identity } from './identity';
 
 type Signer = (data: Uint8Array) => Uint8Array;
@@ -53,7 +53,7 @@ export class SolanaIdentityProvider extends IdentityProvider {
         /* const signedKey = nacl.sign.open(Uint8Array.from(Buffer.from(identity.signatures.publicKey)), bs58.decode(identity.id));
         let verified = nacl.verify(signedKey, Uint8Array.from(Buffer.from(identity.publicKey + identity.signatures.id)));
         return verified */
-        if (identity.id instanceof Ed25519PublicKeyData) {
+        if (identity.id instanceof Ed25519PublicKey) {
             return verifySignatureEd25519(identity.signatures.publicKey, identity.id, Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id]));
         }
         return false;

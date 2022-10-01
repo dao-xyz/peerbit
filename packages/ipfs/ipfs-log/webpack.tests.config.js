@@ -1,7 +1,7 @@
 
 const glob = require('glob')
 const webpack = require('webpack')
-const path = require('path')
+import path from 'path'
 const NodePolyfillPlugin = require('node-polyfill-webpack-plugin')
 
 module.exports = {

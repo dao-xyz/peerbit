@@ -2,7 +2,7 @@ import assert from 'assert'
 import rmrf from 'rimraf'
 import fs from 'fs-extra'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
-import { Log } from '../log'
+import { Log } from '../log.js'
 
 // Test utils
 const {

@@ -1,24 +1,21 @@
 
 import assert from 'assert'
-const mapSeries = require('p-map-series')
+import pMapSeries from 'p-map-series'
 import rmrf from 'rimraf'
-const path = require('path')
-
+import path from 'path'
 import { Address } from '@dao-xyz/orbit-db-store'
-import { OrbitDB } from '../orbit-db'
-import { SimpleAccessController } from './utils/access'
-import { EventStore, Operation } from './utils/stores/event-store'
+import { OrbitDB } from '../orbit-db.js'
+import { SimpleAccessController } from './utils/access.js'
+import { EventStore, Operation } from './utils/stores/event-store.js'
 const Cache = require('@dao-xyz/orbit-db-cache')
-
 const localdown = require('localstorage-down')
 
 // Include test utilities
-const {
+import {
   config,
   startIpfs,
-  stopIpfs,
-  testAPIs
-} = require('@dao-xyz/orbit-db-test-utils')
+  stopIpfs
+} from '@dao-xyz/orbit-db-test-utils'
 
 const dbPath = './orbitdb/tests/persistency'
 

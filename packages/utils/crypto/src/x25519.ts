@@ -1,14 +1,12 @@
-export * from './errors';
+export * from './errors.js';
 import { Constructor, deserialize, field, serialize, variant, vec } from '@dao-xyz/borsh';
-import { bufferSerializer, U8IntArraySerializer } from '@dao-xyz/borsh-utils';
-import { X25519SecretKey, X25519PublicKey, SodiumPlus, CryptographyKey } from 'sodium-plus';
+import { arraysCompare, bufferSerializer, U8IntArraySerializer } from '@dao-xyz/borsh-utils';
 import { arraysEqual } from '@dao-xyz/borsh-utils'
-import { AccessError } from './errors';
-import { PublicKey } from '@dao-xyz/identity';
-import { MaybeSigned } from '@dao-xyz/identity'
-
+import { AccessError } from './errors.js';
+import sodium from 'libsodium-wrappers';
+import { PublicKeyEncryptionKey } from './key.js';
 const NONCE_LENGTH = 24;
-const _crypto = SodiumPlus.auto();
+
 export interface PublicKeyEncryption {
     getEncryptionKey: () => Promise<X25519SecretKey>
     getAnySecret: (publicKey: X25519PublicKey[]) => Promise<{ index: number, secretKey: X25519SecretKey } | undefined>
@@ -16,6 +14,64 @@ export interface PublicKeyEncryption {
 }
 
 
+@variant(0)
+export class X25519PublicKey extends PublicKeyEncryptionKey {
+
+    @field(U8IntArraySerializer)
+    publicKey: Uint8Array;
+
+    constructor(properties?: { publicKey: Uint8Array }) {
+        super();
+        if (properties) {
+            this.publicKey = properties.publicKey;
+        }
+    }
+
+    equals(other: PublicKeyEncryptionKey): boolean {
+        if (other instanceof X25519PublicKey) {
+            return arraysCompare(this.publicKey, other.publicKey) === 0
+        }
+        return false;
+    }
+    toString(): string {
+        return "x25519public/" + Buffer.from(this.publicKey).toString('hex');
+    }
+}
+
+
+@variant(1)
+export class X25519SecretKey extends PublicKeyEncryptionKey {
+
+    @field(U8IntArraySerializer)
+    secretKey: Uint8Array;
+
+    constructor(properties?: { secretKey: Uint8Array }) {
+        super();
+        if (properties) {
+            this.secretKey = properties.secretKey;
+        }
+    }
+
+    equals(other: PublicKeyEncryptionKey): boolean {
+        if (other instanceof X25519SecretKey) {
+            return arraysCompare(this.secretKey, other.secretKey) === 0
+        }
+        return false;
+    }
+    toString(): string {
+        return "x25519secret" + Buffer.from(this.secretKey).toString('hex');
+    }
+
+    async publicKey(): Promise<X25519PublicKey> {
+        await sodium.ready;
+        return new X25519PublicKey({
+            publicKey: sodium.crypto_scalarmult_base(this.secretKey)
+        })
+    }
+}
+
+
+export type MaybeX25519PublicKey = (X25519PublicKey | X25519PublicKey[] | undefined);
 
 
 @variant(0)
@@ -78,23 +134,23 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 
     async encrypt(...recieverPublicKeys: X25519PublicKey[]): Promise<EncryptedThing<T>> {
         const bytes = serialize(this)
-        const crypto = await _crypto;
-        const epheremalKey = await crypto.crypto_secretbox_keygen();
-        const nonce = new Uint8Array(await crypto.randombytes_buf(NONCE_LENGTH));
-        const cipher = await crypto.crypto_secretbox(Buffer.from(bytes), Buffer.from(nonce), epheremalKey);
+        await sodium.ready;
+        const epheremalKey = await sodium.crypto_secretbox_keygen();
+        const nonce = new Uint8Array(await sodium.randombytes_buf(NONCE_LENGTH));
+        const cipher = await sodium.crypto_secretbox_easy(bytes, nonce, epheremalKey);
         const encryptionKey = await this._encryption.getEncryptionKey();
         const ks = await Promise.all(recieverPublicKeys.map(async recieverPublicKey => {
-            const kNonce = new Uint8Array(await crypto.randombytes_buf(NONCE_LENGTH));
+            const kNonce = new Uint8Array(await sodium.randombytes_buf(NONCE_LENGTH));
             return new K({
                 encryptedKey: new CipherWithNonce({
-                    cipher: await crypto.crypto_box(epheremalKey.getBuffer(), Buffer.from(kNonce), encryptionKey, recieverPublicKey),
+                    cipher: await sodium.crypto_box_easy(epheremalKey, kNonce, recieverPublicKey.publicKey, encryptionKey.secretKey),
                     nonce: kNonce
                 }), recieverPublicKey
             })
         }))
         const enc = new EncryptedThing<T>({
             encrypted: new Uint8Array(cipher), nonce, envelope: new Envelope({
-                senderPublicKey: await crypto.crypto_box_publickey_from_secretkey(encryptionKey), ks
+                senderPublicKey: await encryptionKey.publicKey(), ks
             })
         })
         enc._decrypted = this;
@@ -161,7 +217,7 @@ export class K {
     @field({ type: CipherWithNonce })
     _encryptedKey: CipherWithNonce;
 
-    @field(bufferSerializer(X25519PublicKey))
+    @field({ type: X25519PublicKey })
     _recieverPublicKey: X25519PublicKey
 
     constructor(props?: {
@@ -178,7 +234,7 @@ export class K {
 
     equals(other: K): boolean {
         if (other instanceof K) {
-            return this._encryptedKey.equals(other._encryptedKey) && Buffer.compare(this._recieverPublicKey.getBuffer(), other._recieverPublicKey.getBuffer()) === 0
+            return this._encryptedKey.equals(other._encryptedKey) && this._recieverPublicKey.equals(other._recieverPublicKey)
         }
         else {
             return false;
@@ -189,7 +245,7 @@ export class K {
 
 @variant(0)
 export class Envelope {
-    @field(bufferSerializer(X25519PublicKey))
+    @field({ type: X25519PublicKey })
     _senderPublicKey: X25519PublicKey
 
     @field({ type: vec(K) })
@@ -208,7 +264,7 @@ export class Envelope {
 
     equals(other: Envelope): boolean {
         if (other instanceof Envelope) {
-            if (Buffer.compare(this._senderPublicKey.getBuffer(), other._senderPublicKey.getBuffer()) !== 0) {
+            if (!this._senderPublicKey.equals(other._senderPublicKey)) {
                 return false;
             }
 
@@ -275,16 +331,16 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
         if (!this._encryption) {
             throw new Error("Not initialized");
         }
-        const crypto = await _crypto;
+        await sodium.ready;
         // We only need to open with one of the keys
         const key = await this._encryption.getAnySecret(this._envelope._ks.map(k => k._recieverPublicKey))
         if (key) {
             const k = this._envelope._ks[key.index];
-            const epheremalKey = new CryptographyKey(await crypto.crypto_box_open(Buffer.from(k._encryptedKey.cipher), Buffer.from(k._encryptedKey.nonce), key.secretKey, this._envelope._senderPublicKey));
+            const epheremalKey = await sodium.crypto_box_open_easy(k._encryptedKey.cipher, k._encryptedKey.nonce, this._envelope._senderPublicKey.publicKey, key.secretKey.secretKey);
             let der: any = this;
             let counter = 0;
             while (der instanceof EncryptedThing) {
-                const decrypted = await crypto.crypto_secretbox_open(Buffer.from(this._encrypted), Buffer.from(this._nonce), epheremalKey);
+                const decrypted = await sodium.crypto_secretbox_open_easy(this._encrypted, this._nonce, epheremalKey);
                 der = deserialize(decrypted, DecryptedThing)
                 counter += 1;
                 if (counter >= 10) {
@@ -325,25 +381,6 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
     }
 }
 
-export const decryptVerifyInto = async <T>(data: Uint8Array, clazz: Constructor<T>, encryption?: PublicKeyEncryption, options: { isTrusted?: (key: PublicKey) => Promise<boolean> } = {}) => {
-    const maybeEncrypted = deserialize<MaybeEncrypted<MaybeSigned<any>>>(Buffer.from(data), MaybeEncrypted);
-    const decrypted = await (encryption ? maybeEncrypted.init(encryption) : maybeEncrypted).decrypt();
-    const maybeSigned = decrypted.getValue(MaybeSigned);
-    if (!await maybeSigned.verify()) {
-        throw new AccessError();
-    }
-
-    if (options.isTrusted) {
-        if (!maybeSigned.signature) {
-            throw new AccessError();
-        }
-
-        if (!await options.isTrusted(maybeSigned.signature.publicKey)) {
-            throw new AccessError();
-        }
-    }
-    return deserialize(maybeSigned.data, clazz);
-}
 /* 
 
 export const verifySignature = async (signature: Uint8Array, publicKey: PublicKey, data: Uint8Array, signedHash = false) => {

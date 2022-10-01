@@ -32,7 +32,7 @@
   },
   "homepage": "https://github.com/orbitdb/orbit-db-access-controllers#readme",
   "dependencies": {
-    "p-map-series": "^2.1.0",
+    "p-map-series": "^3.0.0",
     "@dao-xyz/ipfs-log-entry": "^5.5.15",
     "@dao-xyz/ipfs-log": "^5.5.15",
     "@dao-xyz/orbit-db-store": "^0.0.20",
@@ -52,21 +52,15 @@
     "@colony/purser-software": "^1.1.2",
     "eslint": "^7.32.0",
     "ganache-cli": "^6.12.2",
-    "go-ipfs": "^0.10.0-rc1",
+    "go-ipfs": "^0.16.0-rc1",
     "ipfs": "^0.64.2",
     "ipfsd-ctl": "^12.0.3",
-    "mocha": "^5.2.0",
     "node-pre-gyp": "^0.13.0",
     "@dao-xyz/io-utils": "^1.1.0",
     "@dao-xyz/orbit-db-keystore": "^0.0.1",
     "@dao-xyz/orbit-db-test-utils": "^0.0.1",
     "standard": "^14.1.0",
     "web3": "^1.5.2"
-  },
-  "standard": {
-    "env": [
-      "mocha"
-    ]
   },
   "localMaintainers": [
     "shamb0t <shams@haja.io>",

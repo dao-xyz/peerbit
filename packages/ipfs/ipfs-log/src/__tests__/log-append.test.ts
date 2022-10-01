@@ -1,8 +1,7 @@
 import assert from 'assert'
 import rmrf from 'rimraf'
 import fs from 'fs-extra'
-import { Log } from '../log'
-import { assertPayload } from './utils/assert'
+import { Log } from '../log.js'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
@@ -60,7 +59,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('added the correct values', async () => {
         log.values.forEach((entry) => {
-          assertPayload(entry.payload.value, 'hello1')
+          expect(entry.payload.value).toEqual('hello1')
         })
       })
 
@@ -108,7 +107,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('added the correct values', async () => {
         log.values.forEach((entry, index) => {
-          assertPayload(entry.payload.value, 'hello' + index)
+          expect(entry.payload.value).toEqual('hello' + index)
         })
       })
 

@@ -1,5 +1,5 @@
 import { field } from "@dao-xyz/borsh"
-import Cache from ".."
+import Cache from "../index.js"
 
 import assert from 'assert'
 const timeout = 50000

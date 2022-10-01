@@ -7,7 +7,7 @@ import { createHash } from "crypto";
 import { PublicKey } from "@dao-xyz/identity";
 import isNode from 'is-node';
 import { MaybeEncrypted } from "@dao-xyz/encryption-utils";
-import { IPFS } from "ipfs-core-types/src";
+import { IPFS } from 'ipfs-core-types';
 import { DeleteOperation } from "@dao-xyz/orbit-db-bdocstore";
 import { ReadWriteAccessController } from "@dao-xyz/orbit-db-query-store";
 import { Log } from "@dao-xyz/ipfs-log";

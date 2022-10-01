@@ -1,12 +1,11 @@
 import assert from 'assert'
 import rmrf from 'rimraf'
 import fs from 'fs-extra'
-import { CanAppendAccessController } from '../default-access-controller'
-import { Log } from '../log'
-import { assertPayload } from './utils/assert'
+import { CanAppendAccessController } from '../default-access-controller.js'
+import { Log } from '../log.js'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
-import { Ed25519PublicKeyData } from '@dao-xyz/identity'
+import { Ed25519PublicKey } from '@dao-xyz/identity'
 import { MaybeEncrypted } from '@dao-xyz/encryption-utils'
 
 // Test utils
@@ -108,7 +107,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       expect(err).toEqual(undefined)
       expect(log1._id).toEqual('A')
       expect(log1.values.length).toEqual(1)
-      assertPayload(log1.values[0].payload.value, 'one')
+      expect(log1.values[0].payload.value).toEqual('one')
     })
 
 
@@ -147,7 +146,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const entry = log2.values[0]
       expect(err).toEqual(`Error: Could not validate signature "${await entry.signature}" for entry "${entry.hash}" and key "${(await entry.publicKey)}"`)
       expect(log1.values.length).toEqual(1)
-      assertPayload(log1.values[0].payload.value, 'one')
+      expect(log1.values[0].payload.value).toEqual('one')
     })
 
     it('throws an error if entry doesn\'t have append access', async () => {
@@ -169,7 +168,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('throws an error upon join if entry doesn\'t have append access', async () => {
       const testACL = {
-        canAppend: async (_entry, publicKey: MaybeEncrypted<Ed25519PublicKeyData>, _) => Buffer.compare(publicKey.decrypted.getValue(Ed25519PublicKeyData).publicKey.getBuffer(), signKey.publicKey.getBuffer()) === 0
+        canAppend: async (_entry, publicKey: MaybeEncrypted<Ed25519PublicKey>, _) => Buffer.compare(publicKey.decrypted.getValue(Ed25519PublicKey).publicKey.getBuffer(), signKey.publicKey.getBuffer()) === 0
       } as CanAppendAccessController<string>;
       const log1 = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A', access: testACL })
       const log2 = new Log<string>(ipfs, signKey2.publicKey, (data) => Keystore.sign(data, signKey2), { logId: 'A' })

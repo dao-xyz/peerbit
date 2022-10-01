@@ -1,8 +1,7 @@
 import assert from 'assert'
 import rmrf from 'rimraf'
 import fs from 'fs-extra'
-import { Log } from '../log'
-import { assertPayload } from './utils/assert'
+import { Log } from '../log.js'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
@@ -155,14 +154,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
         expect(result.length).toEqual(amount * 2)
         expect(log1.length).toEqual(amount)
         expect(log2.length).toEqual(amount)
-        assertPayload(result.values[0].payload.value, 'A1')
-        assertPayload(result.values[1].payload.value, 'B1')
-        assertPayload(result.values[2].payload.value, 'A2')
-        assertPayload(result.values[3].payload.value, 'B2')
-        assertPayload(result.values[99].payload.value, 'B50')
-        assertPayload(result.values[100].payload.value, 'A51')
-        assertPayload(result.values[198].payload.value, 'A100')
-        assertPayload(result.values[199].payload.value, 'B100')
+        expect(result.values[0].payload.value).toEqual('A1')
+        expect(result.values[1].payload.value).toEqual('B1')
+        expect(result.values[2].payload.value).toEqual('A2')
+        expect(result.values[3].payload.value).toEqual('B2')
+        expect(result.values[99].payload.value).toEqual('B50')
+        expect(result.values[100].payload.value).toEqual('A51')
+        expect(result.values[198].payload.value).toEqual('A100')
+        expect(result.values[199].payload.value).toEqual('B100')
       })
     })
   })

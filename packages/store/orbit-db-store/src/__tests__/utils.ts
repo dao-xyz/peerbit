@@ -3,12 +3,12 @@ import { Entry, Payload } from "@dao-xyz/ipfs-log-entry"
 import { variant } from '@dao-xyz/borsh';
 import { Log } from "@dao-xyz/ipfs-log";
 import { AccessController } from "../access-controller";
-import { Ed25519PublicKeyData } from '@dao-xyz/identity';
+import { Ed25519PublicKey } from '@dao-xyz/identity';
 
 @variant([0, 254])
 export class SimpleAccessController<T> extends AccessController<T>
 {
-    async canAppend(payload: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<Ed25519PublicKeyData>) {
+    async canAppend(payload: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<Ed25519PublicKey>) {
         return true;
     }
 }

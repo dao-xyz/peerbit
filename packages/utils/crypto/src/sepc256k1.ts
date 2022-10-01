@@ -1,16 +1,14 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { arraysEqual, U8IntArraySerializer } from "@dao-xyz/borsh-utils";
-import { PublicKey } from "./key";
+import { SignKey } from './key.js';
 import { verifyMessage } from '@ethersproject/wallet'
-import { SodiumPlus } from 'sodium-plus';
+import sodium from 'libsodium-wrappers';
 
-const _crypto = SodiumPlus.auto();
 
 @variant(1)
-export class Secp256k1PublicKeyData extends PublicKey {
+export class Secp256k1PublicKeyData extends SignKey {
 
     @field({ type: 'string' })
-    address: string;
+    address: string; // this is really an ethereum variant of the publickey, that is calculated by hashing the publickey
 
     constructor(properties?: { address: string }) {
         super();
@@ -19,7 +17,7 @@ export class Secp256k1PublicKeyData extends PublicKey {
         }
     }
 
-    equals(other: PublicKey): boolean {
+    equals(other: SignKey): boolean {
         if (other instanceof Secp256k1PublicKeyData) {
             return this.address === other.address;
         }
@@ -32,8 +30,8 @@ export class Secp256k1PublicKeyData extends PublicKey {
 
 
 export const verifySignatureSecp256k1 = async (signature: Uint8Array, publicKey: Secp256k1PublicKeyData, data: Uint8Array, signedHash = false): Promise<boolean> => {
-    const crypto = await _crypto;
-    let signedData = signedHash ? await crypto.crypto_generichash(Buffer.from(data)) : data;
+    await sodium.ready;
+    let signedData = signedHash ? await sodium.crypto_generichash(32, Buffer.from(data)) : data;
     const signerAddress = verifyMessage(signedData, Buffer.from(signature).toString());
     return (signerAddress === publicKey.address)
 }

@@ -1,9 +1,9 @@
-import { PayloadOperation, StringIndex } from './string-index'
+import { PayloadOperation, StringIndex } from './string-index.js'
 import { IPFS as IPFSInstance } from 'ipfs';
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 import { QueryRequestV0, RangeCoordinate, RangeCoordinates, Result, ResultWithSource, StringMatchQuery } from '@dao-xyz/query-protocol';
 import { StringQueryRequest } from '@dao-xyz/query-protocol';
-import { Range } from './range';
+import { Range } from './range.js';
 import { deserialize, field, serialize, variant } from '@dao-xyz/borsh';
 
 import { BinaryPayload, CustomBinaryPayload } from '@dao-xyz/bpayload';

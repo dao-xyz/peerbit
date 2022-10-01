@@ -4,17 +4,16 @@ import rmrf from 'rimraf'
 const { CID } = require('multiformats/cid')
 const { base58btc } = require('multiformats/bases/base58')
 import { Entry, getPeerID, LamportClock as Clock, Payload, Signature } from '@dao-xyz/ipfs-log-entry';
-import { Log } from '../log'
+import { Log } from '../log.js'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import fs from 'fs-extra'
 import io from '@dao-xyz/io-utils'
 
 // For tiebreaker testing
-import { LastWriteWins } from '../log-sorting';
-import { assertPayload } from './utils/assert'
+import { LastWriteWins } from '../log-sorting.js';
 import { DecryptedThing } from '@dao-xyz/encryption-utils';
 import { serialize } from '@dao-xyz/borsh';
-import { Ed25519PublicKeyData, PublicKey } from '@dao-xyz/identity';
+import { Ed25519PublicKey, PublicKey } from '@dao-xyz/identity';
 const FirstWriteWins = (a, b) => LastWriteWins(a, b) * -1
 
 // Test utils
@@ -96,41 +95,41 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('sets items if given as params', async () => {
         const one = await Entry.create({
-          ipfs, publicKey: new Ed25519PublicKeyData({
+          ipfs, publicKey: new Ed25519PublicKey({
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryA', next: [], clock: new Clock(new Uint8Array([0]), 0)
         })
         const two = await Entry.create({
-          ipfs, publicKey: new Ed25519PublicKeyData({
+          ipfs, publicKey: new Ed25519PublicKey({
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryB', next: [], clock: new Clock(new Uint8Array([1]), 0)
         })
         const three = await Entry.create({
-          ipfs, publicKey: new Ed25519PublicKeyData({
+          ipfs, publicKey: new Ed25519PublicKey({
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryC', next: [], clock: new Clock(new Uint8Array([2]), 0)
         })
         const log = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey),
           { logId: 'A', entries: [one, two, three] })
         expect(log.length).toEqual(3)
-        assertPayload(log.values[0].payload.value, 'entryA')
-        assertPayload(log.values[1].payload.value, 'entryB')
-        assertPayload(log.values[2].payload.value, 'entryC')
+        expect(log.values[0].payload.value).toEqual('entryA')
+        expect(log.values[1].payload.value).toEqual('entryB')
+        expect(log.values[2].payload.value).toEqual('entryC')
       })
 
       it('sets heads if given as params', async () => {
         const one = await Entry.create({
-          ipfs, publicKey: new Ed25519PublicKeyData({
+          ipfs, publicKey: new Ed25519PublicKey({
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryA', next: []
         })
         const two = await Entry.create({
-          ipfs, publicKey: new Ed25519PublicKeyData({
+          ipfs, publicKey: new Ed25519PublicKey({
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryB', next: []
         })
         const three = await Entry.create({
-          ipfs, publicKey: new Ed25519PublicKeyData({
+          ipfs, publicKey: new Ed25519PublicKey({
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryC', next: []
         })
@@ -142,17 +141,17 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('finds heads if heads not given as params', async () => {
         const one = await Entry.create({
-          ipfs, publicKey: new Ed25519PublicKeyData({
+          ipfs, publicKey: new Ed25519PublicKey({
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryA', next: []
         })
         const two = await Entry.create({
-          ipfs, publicKey: new Ed25519PublicKeyData({
+          ipfs, publicKey: new Ed25519PublicKey({
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryB', next: []
         })
         const three = await Entry.create({
-          ipfs, publicKey: new Ed25519PublicKeyData({
+          ipfs, publicKey: new Ed25519PublicKey({
             publicKey: signKey.publicKey
           }), sign: (data) => Keystore.sign(data, signKey), gidSeed: 'A', data: 'entryC', next: []
         })
@@ -279,7 +278,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         });
         const gid = 'aaa';
         const publicKey = new DecryptedThing<PublicKey>({
-          data: serialize(new Ed25519PublicKeyData({ publicKey: signKey.publicKey }))
+          data: serialize(new Ed25519PublicKey({ publicKey: signKey.publicKey }))
         })
         expectedData = new Entry<string>({
           hash: 'zdpuAozwfaZEdTCimGoLbXrz3hsJdCQZATpVgyVDMJLVrACqw',
@@ -449,7 +448,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const res = await Log.fromMultihash<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), hash, { length: -1 })
           expect(JSON.stringify(res.toJSON())).toEqual(JSON.stringify(expectedData))
           expect(res.length).toEqual(1)
-          assertPayload(res.values[0].payload.value, 'one')
+          expect(res.values[0].payload.value).toEqual('one')
           assert.deepStrictEqual(res.values[0].clock.id, signKey.publicKey)
           expect(res.values[0].clock.time).toEqual(1)
         })
@@ -458,11 +457,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const hash = await log.toMultihash()
           const res = await Log.fromMultihash<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), hash, { length: -1 })
           expect(res.length).toEqual(3)
-          assertPayload(res.values[0].payload.value, 'one')
+          expect(res.values[0].payload.value).toEqual('one')
           expect(res.values[0].clock.time).toEqual(1)
-          assertPayload(res.values[1].payload.value, 'two')
+          expect(res.values[1].payload.value).toEqual('two')
           expect(res.values[1].clock.time).toEqual(2)
-          assertPayload(res.values[2].payload.value, 'three')
+          expect(res.values[2].payload.value).toEqual('three')
           expect(res.values[2].clock.time).toEqual(3)
         })
 
@@ -477,7 +476,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const res = await Log.fromMultihash<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), multihash, { length: -1 })
           expect(JSON.stringify(res.toJSON())).toEqual(JSON.stringify(expectedData))
           expect(res.length).toEqual(1)
-          assertPayload(res.values[0].payload.value, 'one')
+          expect(res.values[0].payload.value).toEqual('one')
           expect(res.values[0].clock.id).toEqual(signKey.publicKey)
           expect(res.values[0].clock.time).toEqual(1)
         })
@@ -488,7 +487,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           expect(res.length).toEqual(3)
           await res.append('four')
           expect(res.length).toEqual(4)
-          assertPayload(res.values[3].payload.value, 'four')
+          expect(res.values[3].payload.value).toEqual('four')
           expect(res.values[3].clock.time).toEqual(4)
         })
 
@@ -505,9 +504,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const res = await Log.fromMultihash<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), hash, { length: -1 })
           expect(res.length).toEqual(3)
           expect(res.heads.length).toEqual(3)
-          assertPayload(res.heads[2].payload.value, 'three')
-          assertPayload(res.heads[1].payload.value, 'two') // order is determined by the identity's publicKey
-          assertPayload(res.heads[0].payload.value, 'one')
+          expect(res.heads[2].payload.value).toEqual('three')
+          expect(res.heads[1].payload.value).toEqual('two') // order is determined by the identity's publicKey
+          expect(res.heads[0].payload.value).toEqual('one')
         })
 
         it('creates a log from ipfs CID that has three heads w/ custom tiebreaker', async () => {
@@ -524,9 +523,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
             { sortFn: FirstWriteWins })
           expect(res.length).toEqual(3)
           expect(res.heads.length).toEqual(3)
-          assertPayload(res.heads[2].payload.value, 'one')
-          assertPayload(res.heads[1].payload.value, 'two') // order is determined by the identity's publicKey
-          assertPayload(res.heads[0].payload.value, 'three')
+          expect(res.heads[2].payload.value).toEqual('one')
+          expect(res.heads[1].payload.value).toEqual('two') // order is determined by the identity's publicKey
+          expect(res.heads[0].payload.value).toEqual('three')
         })
 
         it('creates a log from ipfs CID up to a size limit', async () => {
@@ -610,7 +609,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const loadProgressCallback = (entry: Entry<string>) => {
             assert.notStrictEqual(entry, null)
             expect(entry.hash).toEqual(items[items.length - i - 1].hash)
-            assertPayload(entry.payload.value, items[items.length - i - 1].payload.value)
+            expect(entry.payload.value).toEqual(items[items.length - i - 1].payload.value)
             i++
           }
 
@@ -622,7 +621,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           expect(i).toEqual(amount)
           // Make sure the log entries are correct ones
           expect(result.values[0].clock.time).toEqual(1)
-          assertPayload(result.values[0].payload.value, '0')
+          expect(result.values[0].payload.value).toEqual('0')
           expect(result.values[result.length - 1].clock.time).toEqual(100)
           expect(result.values[result.length - 1].payload.value).toEqual('99')
         })
@@ -692,9 +691,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log.append('hello3')
         expect(log.values instanceof Array).toEqual(true)
         expect(log.length).toEqual(3)
-        assertPayload(log.values[0].payload.value, 'hello1')
-        assertPayload(log.values[1].payload.value, 'hello2')
-        assertPayload(log.values[2].payload.value, 'hello3')
+        expect(log.values[0].payload.value).toEqual('hello1')
+        expect(log.values[1].payload.value).toEqual('hello2')
+        expect(log.values[2].payload.value).toEqual('hello3')
       })
     })
   })

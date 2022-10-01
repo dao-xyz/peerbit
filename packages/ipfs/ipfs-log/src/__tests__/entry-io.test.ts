@@ -1,5 +1,5 @@
-import { EntryIO } from "../entry-io"
-import { Log } from "../log"
+import { EntryIO } from '../entry-io.js'
+import { Log } from "../log.js"
 import assert from 'assert'
 import rmrf from 'rimraf'
 import fs from 'fs-extra'

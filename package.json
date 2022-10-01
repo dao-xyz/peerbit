@@ -1,6 +1,6 @@
 {
     "private": true,
-    "name": "@dao-xyz/shorbit",
+    "name": "@dao-xyz/peerbit",
     "author": "dao.xyz",
     "repository": "https://github.com/@dao-xyz/sdk",
     "license": "Apache-2.0",
@@ -14,8 +14,8 @@
             "packages/client",
             "packages/acl/dynamic-access-controller",
             "packages/acl/orbit-db-trust-web",
-            "packages/identity/orbit-db-keystore",
-            "packages/identity/sign",
+            "packages/identity/keystore",
+            "packages/utils/crypto",
             "packages/store/orbit-db-bdocstore",
             "packages/store/orbit-db-bfeedstore",
             "packages/store/orbit-db-query-store",
@@ -23,13 +23,11 @@
             "packages/store/query-protocol",
             "packages/store/orbit-db-store",
             "packages/utils/io-utils",
-            "packages/utils/peer-test-utils",
             "packages/utils/test-utils",
             "packages/utils/bpayload",
             "packages/utils/cache",
             "packages/utils/borsh-utils",
-            "packages/utils/time",
-            "packages/utils/encryption-utils"
+            "packages/utils/time"
         ],
         "nohoist": [
             "**/@babel/preset-env",
@@ -41,7 +39,7 @@
         ]
     },
     "engines": {
-        "node": ">= 10"
+        "node": ">=16.0"
     },
     "publishConfig": {
         "access": "public"
@@ -75,6 +73,7 @@
         "eslint-config-react-app": "^7.0.0",
         "eslint-plugin-prettier": "^4.0.0",
         "gh-pages": "^4.0.0",
+        "dotenv": "^16.0.3",
         "ipfs-core-types": "^0.12.1",
         "jest": "^29.1.2",
         "jest-extended": "^3.1.0",

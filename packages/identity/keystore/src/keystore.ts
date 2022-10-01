@@ -3,7 +3,7 @@ import { Level } from 'level';
 import LRU from 'lru-cache';
 import { variant, field, serialize, deserialize, option, Constructor } from '@dao-xyz/borsh';
 import { U8IntArraySerializer, bufferSerializer } from '@dao-xyz/borsh-utils';
-import { SodiumPlus, X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519SecretKey } from 'sodium-plus';
+/* import { SodiumPlus, X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519SecretKey } from 'sodium-plus'; */
 import { waitFor } from '@dao-xyz/time';
 import { createHash, Sign } from 'crypto';
 export interface Type<T> extends Function {

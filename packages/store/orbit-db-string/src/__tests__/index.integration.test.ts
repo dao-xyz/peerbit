@@ -1,18 +1,20 @@
 
-import { StringResultSource, StringStore, STRING_STORE_TYPE } from '../string-store';
+import { StringResultSource, StringStore, STRING_STORE_TYPE } from '../string-store.js';
 import { QueryRequestV0, QueryResponseV0, ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates, StoreAddressMatchQuery } from '@dao-xyz/query-protocol';
 import { query } from '@dao-xyz/orbit-db-query-store';
-import { disconnectPeers, getConnectedPeers, Peer } from '@dao-xyz/peer-test-utils';
-import { Range } from '../range';
+import { Range } from '../range.js';
+import { Session } from '@dao-xyz/orbit-db-test-utils';
 import { IPFSAccessController } from '@dao-xyz/orbit-db-ipfs-access-controller';
+
 const storeTestSetup = async (): Promise<{
     creator: Peer,
     observer: Peer,
     storeCreator: StringStore
 }> => {
 
+    const session = await Session.connected(2)
 
-    let [peer, observer] = await getConnectedPeers(2);
+    let [peer, observer] = session.peers;
 
     // Create store
     const accessController = new IPFSAccessController({

@@ -1,7 +1,7 @@
 import { Constructor, deserialize, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
 import { v4 as uuid } from 'uuid';
-import { QueryType } from "./query-interface";
-import { Result } from "./result";
+import { QueryType } from './query-interface.js';
+import { Result } from './result.js';
 import { bufferSerializer } from '@dao-xyz/borsh-utils';
 import { X25519PublicKey } from 'sodium-plus'
 @variant(0)

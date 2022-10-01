@@ -1,4 +1,4 @@
-import { delay } from '../index'
+import { delay } from '../index.js'
 describe('delay', () => {
     it('delay', async () => {
         let startTime = +new Date;

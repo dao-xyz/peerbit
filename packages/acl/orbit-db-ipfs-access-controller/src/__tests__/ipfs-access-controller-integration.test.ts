@@ -4,7 +4,7 @@ import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import io from '@dao-xyz/io-utils'
 import { EventStore } from './event-store';
 import { IPFSAccessController } from '../ipfs-access-controller';
-import { Ed25519PublicKeyData } from '@dao-xyz/identity';
+import { Ed25519PublicKey } from '@dao-xyz/identity';
 // Include test utilities
 const {
   config,
@@ -43,13 +43,13 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
 
     orbitdb1 = await OrbitDB.createInstance(ipfs1, {
       directory: dbPath1,
-      publicKey: new Ed25519PublicKeyData({ publicKey: signKey1.publicKey }),
+      publicKey: new Ed25519PublicKey({ publicKey: signKey1.publicKey }),
       sign: (data) => Keystore.sign(data, signKey1)
     })
 
     orbitdb2 = await OrbitDB.createInstance(ipfs2, {
       directory: dbPath2,
-      publicKey: new Ed25519PublicKeyData({ publicKey: signKey2.publicKey }),
+      publicKey: new Ed25519PublicKey({ publicKey: signKey2.publicKey }),
       sign: (data) => Keystore.sign(data, signKey2)
     })
   })

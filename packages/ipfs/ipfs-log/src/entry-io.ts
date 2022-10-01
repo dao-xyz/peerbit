@@ -1,7 +1,7 @@
 import pMap from 'p-map'
 import pDoWhilst from 'p-do-whilst'
 import { bigIntMin, Entry } from '@dao-xyz/ipfs-log-entry';
-import { IPFS } from 'ipfs-core-types/src/'
+import { IPFS } from 'ipfs-core-types'
 import { PublicKeyEncryption } from '@dao-xyz/encryption-utils';
 
 const hasItems = arr => arr && arr.length > 0

@@ -1,12 +1,12 @@
 
 import assert, { rejects } from 'assert'
-import { Store, DefaultOptions, HeadsCache } from '../store'
+import { Store, DefaultOptions, HeadsCache } from '../store.js'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
 import { Keystore, SignKeyWithMeta } from "@dao-xyz/orbit-db-keystore"
 import { Entry, JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log-entry'
-import { createStore } from './storage'
-import { SimpleAccessController, SimpleIndex } from './utils'
-import { Address } from '../io'
+import { createStore } from './storage.js'
+import { SimpleAccessController, SimpleIndex } from './utils.js'
+import { Address } from '../io.js'
 
 
 // Test utils

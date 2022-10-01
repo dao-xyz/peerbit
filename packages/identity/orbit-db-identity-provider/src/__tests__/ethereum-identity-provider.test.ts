@@ -4,7 +4,7 @@ import { Identity, Signatures } from "../identity"
 import { Wallet } from '@ethersproject/wallet'
 
 import assert from 'assert'
-const path = require('path')
+import path from 'path'
 import rmrf from 'rimraf'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { joinUint8Arrays } from "@dao-xyz/borsh-utils";

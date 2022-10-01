@@ -1,14 +1,14 @@
 
 
 import { Constructor, deserialize, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
-import { API as PubSubAPI, Message } from 'ipfs-core-types/src/pubsub';
+import type { Message, PubSub } from '@libp2p/interface-pubsub'
 import { delay, waitFor } from "@dao-xyz/time";
 import { decryptVerifyInto, DecryptedThing, MaybeEncrypted, PublicKeyEncryption, AccessError } from '@dao-xyz/encryption-utils'
 import { X25519PublicKey, Ed25519PublicKey } from 'sodium-plus'
 import { QueryRequestV0, QueryResponseV0 } from "@dao-xyz/query-protocol";
 import { MaybeSigned, PublicKey } from "@dao-xyz/identity";
 
-export const query = async (pubsub: PubSubAPI, topic: string, query: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, options: {
+export const query = async (pubsub: PubSub, topic: string, query: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, options: {
     signer?: (bytes: Uint8Array) => Promise<{
         signature: Uint8Array;
         publicKey: PublicKey;

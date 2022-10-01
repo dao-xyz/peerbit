@@ -1,3 +1,3 @@
-export * from './query-store';
-export * from './read-write-access-controller';
-export * from './io';
+export * from './query-store.js';
+export * from './read-write-access-controller.js';
+export * from './io.js';

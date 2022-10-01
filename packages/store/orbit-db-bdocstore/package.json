@@ -41,7 +41,6 @@
   },
   "devDependencies": {
     "@dao-xyz-types/orbit-db": "^0.0.39",
-    "@dao-xyz/peer-test-utils": "^0.0.30",
     "@dao-xyz/time": "^0.0.11",
     "ipfs": "^0.64.2"
   },

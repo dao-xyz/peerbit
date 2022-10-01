@@ -1,5 +1,5 @@
 {
-  "name": "@dao-xyz/identity",
+  "name": "@dao-xyz/crypto",
   "version": "0.0.12",
   "description": "Identity classes",
   "type": "module",
@@ -29,11 +29,14 @@
   },
   "author": "dao.xyz",
   "license": "MIT",
+  "devDependencies": {
+    "@types/libsodium-wrappers": "^0.7.9"
+  },
   "dependencies": {
     "@dao-xyz/borsh": "^3.2.5",
     "@dao-xyz/bpayload": "^0.0.11",
     "@dao-xyz/borsh-utils": "^0.0.1",
     "@ethersproject/wallet": "^5.7.0",
-    "sodium-plus": "^0.9.0"
+    "libsodium-wrappers": "^0.7.10"
   }
 }

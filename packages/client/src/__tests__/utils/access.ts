@@ -2,7 +2,7 @@ import { MaybeEncrypted } from "@dao-xyz/encryption-utils"
 import { Entry, Payload } from "@dao-xyz/ipfs-log-entry"
 import { AccessController, Address, IInitializationOptions, save, Store, StoreLike } from "@dao-xyz/orbit-db-store"
 import { variant, field } from '@dao-xyz/borsh';
-import { Ed25519PublicKeyData } from "@dao-xyz/identity";
+import { Ed25519PublicKey } from "@dao-xyz/identity";
 import { Log } from "@dao-xyz/ipfs-log";
 import Cache from '@dao-xyz/orbit-db-cache';
 import { EventStore, Operation } from "./stores";
@@ -10,7 +10,7 @@ import EventEmitter from "events";
 @variant([0, 253])
 export class SimpleAccessController<T> extends AccessController<T>
 {
-    async canAppend(payload: MaybeEncrypted<Payload<T>>, signKey: MaybeEncrypted<Ed25519PublicKeyData>) {
+    async canAppend(payload: MaybeEncrypted<Payload<T>>, signKey: MaybeEncrypted<Ed25519PublicKey>) {
         return true;
     }
 }
@@ -30,7 +30,7 @@ export class SimpleStoreAccessController extends AccessController<any> implement
         }
     }
 
-    async canAppend(payload: MaybeEncrypted<Payload<any>>, signKey: MaybeEncrypted<Ed25519PublicKeyData>) {
+    async canAppend(payload: MaybeEncrypted<Payload<any>>, signKey: MaybeEncrypted<Ed25519PublicKey>) {
         return true;
     }
 

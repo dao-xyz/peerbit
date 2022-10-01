@@ -25,7 +25,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">= 14"
+    "node": ">=16.0"
   },
   "repository": {
     "type": "git",
@@ -58,6 +58,6 @@
   "dependencies": {
     "@ipld/dag-cbor": "^7.0.2",
     "@ipld/dag-pb": "^2.1.9",
-    "multiformats": "^9.4.7"
+    "multiformats": "^9.9.0"
   }
 }

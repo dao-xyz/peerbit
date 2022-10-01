@@ -2,15 +2,15 @@ import { OrbitDB } from "../orbit-db"
 
 import assert from 'assert'
 import rmrf from 'rimraf'
-const path = require('path')
+import path from 'path'
 
 // Include test utilities
-const {
+import {
   config,
   startIpfs,
   stopIpfs,
   testAPIs
-} = require('@dao-xyz/orbit-db-test-utils')
+} from '@dao-xyz/orbit-db-test-utils'
 
 const {
   databases

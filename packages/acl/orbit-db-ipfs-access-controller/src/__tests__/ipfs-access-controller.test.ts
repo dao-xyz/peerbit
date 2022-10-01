@@ -4,14 +4,15 @@ import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { DecryptedThing } from '@dao-xyz/encryption-utils';
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { IPFSAccessController } from '../ipfs-access-controller'
-import { Ed25519PublicKeyData } from '@dao-xyz/identity';
+import { Ed25519PublicKey } from '@dao-xyz/identity';
 
 // Include test utilities
-const {
+import {
   config,
   startIpfs,
-  stopIpfs
-} = require('@dao-xyz/orbit-db-test-utils')
+  stopIpfs,
+  testAPIs
+} from '@dao-xyz/orbit-db-test-utils'
 const API = 'js-ipfs';
 const dbPath1 = './orbitdb/tests/ipfs-access-controller/1'
 const dbPath2 = './orbitdb/tests/ipfs-access-controller/2'
@@ -39,13 +40,13 @@ describe(`orbit-db - IPFSAccessController`, function () {
 
     orbitdb1 = await OrbitDB.createInstance(ipfs1, {
       directory: dbPath1,
-      publicKey: new Ed25519PublicKeyData({ publicKey: signKey1.publicKey }),
+      publicKey: new Ed25519PublicKey({ publicKey: signKey1.publicKey }),
       sign: (data) => Keystore.sign(data, signKey1)
     })
 
     orbitdb2 = await OrbitDB.createInstance(ipfs2, {
       directory: dbPath2,
-      publicKey: new Ed25519PublicKeyData({ publicKey: signKey2.publicKey }),
+      publicKey: new Ed25519PublicKey({ publicKey: signKey2.publicKey }),
       sign: (data) => Keystore.sign(data, signKey2)
     })
   })
@@ -105,7 +106,7 @@ describe(`orbit-db - IPFSAccessController`, function () {
         // doesn't matter what we put here, only identity is used for the check
       }
       const canAppend = await accessController.canAppend(mockEntry.data as any, new DecryptedThing({
-        value: new Ed25519PublicKeyData({
+        value: new Ed25519PublicKey({
           publicKey: signKey1.publicKey
         })
       }))

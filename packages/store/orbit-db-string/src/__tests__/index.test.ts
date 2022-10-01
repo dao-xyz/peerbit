@@ -1,5 +1,5 @@
-import { Range } from "../range";
-import { PayloadOperation, applyOperations } from "../string-index";
+import { Range } from "../range.js";
+import { PayloadOperation, applyOperations } from "../string-index.js";
 
 describe('operations', () => {
     it('add', () => {

@@ -32,7 +32,7 @@
     "url": "https://github.com/orbitdb/orbit-db-store"
   },
   "engines": {
-    "node": ">=14.16"
+    "node": ">=16.0"
   },
   "author": "Haad",
   "license": "MIT",
@@ -43,13 +43,13 @@
     "@dao-xyz/ipfs-log": "^5.5.15",
     "it-to-stream": "^1.0.0",
     "logplease": "^1.2.14",
-    "p-each-series": "^2.1.0",
-    "p-map": "^4.0.0",
+    "p-each-series": "^3.0.0",
+    "p-map": "^5.5.0",
     "p-queue": "^6.6.2",
     "readable-stream": "~3.6.0"
   },
   "devDependencies": {
-    "go-ipfs": "^0.9.1",
+    "go-ipfs": "^0.16.0-rc1",
     "ipfs": "^0.64.2",
     "ipfsd-ctl": "^12.0.3",
     "memdown": "^6.0.0",

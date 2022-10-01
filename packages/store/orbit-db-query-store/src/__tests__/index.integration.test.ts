@@ -1,12 +1,12 @@
 import { QueryRequestV0, QueryResponseV0, DocumentQueryRequest, FieldStringMatchQuery, StoreAddressMatchQuery, ResultWithSource } from "@dao-xyz/query-protocol"
 import { v4 as uuid } from 'uuid';
-import { Message } from "ipfs-core-types/src/pubsub";
+import type { Message } from '@libp2p/interface-pubsub'
 import { field, variant } from "@dao-xyz/borsh";
 import { delay, waitFor } from "@dao-xyz/time";
 import { disconnectPeers, getConnectedPeers } from '@dao-xyz/peer-test-utils';
 import { CustomBinaryPayload } from '@dao-xyz/bpayload';
 import { decryptVerifyInto } from "@dao-xyz/encryption-utils";
-import { query, respond } from "../io";
+import { query, respond } from '../io.js';
 
 @variant("number")//@variant([1, 1])
 class NumberResult extends CustomBinaryPayload {

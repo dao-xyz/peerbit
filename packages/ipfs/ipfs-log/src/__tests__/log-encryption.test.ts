@@ -2,8 +2,7 @@ import assert from 'assert'
 import rmrf from 'rimraf'
 import fs from 'fs-extra'
 import { Entry, LamportClock as Clock } from '@dao-xyz/ipfs-log-entry';
-import { Log } from '../log'
-import { assertPayload } from './utils/assert'
+import { Log } from '../log.js'
 import { BoxKeyWithMeta, Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { X25519PublicKey } from 'sodium-plus'
 // Test utils

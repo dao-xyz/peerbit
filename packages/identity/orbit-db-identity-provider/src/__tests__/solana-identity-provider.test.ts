@@ -1,7 +1,7 @@
 import { Identity, Signatures } from "../identity"
 import { PublicKey as SPublicKey, Keypair } from '@solana/web3.js';
 import assert from 'assert'
-const path = require('path')
+import path from 'path'
 import rmrf from 'rimraf'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { Identities } from "../identities"

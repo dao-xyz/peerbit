@@ -5,22 +5,22 @@ import { default as PQueue } from 'p-queue'
 import { Log, ISortFunction, RecycleOptions, LogOptions } from '@dao-xyz/ipfs-log'
 import { IOOptions, EncryptionTemplateMaybeEncrypted, Payload, getPeerID } from '@dao-xyz/ipfs-log-entry'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
-import { Replicator } from './replicator'
-import { ReplicationInfo } from './replication-info'
+import { Replicator } from './replicator.js'
+import { ReplicationInfo } from './replication-info.js'
 import Logger from 'logplease'
 import io from '@dao-xyz/io-utils'
 import Cache from '@dao-xyz/orbit-db-cache';
 import { variant, field, vec, option } from '@dao-xyz/borsh';
-import { IPFS } from 'ipfs-core-types/src/'
+import { IPFS } from 'ipfs-core-types'
 import stringify from 'json-stringify-deterministic'
 import { serialize, deserialize } from '@dao-xyz/borsh';
-import { Snapshot } from './snapshot'
+import { Snapshot } from './snapshot.js'
 import { AccessError, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
-import { Address, load, save } from './io'
-import { AccessController } from './access-controller'
+import { Address, load, save } from './io.js'
+import { AccessController } from './access-controller.js'
 import { v4 as uuid } from 'uuid';
-import { StoreLike } from './store-like'
-import { Ed25519PublicKeyData, PublicKey } from '@dao-xyz/identity'
+import { StoreLike } from './store-like.js'
+import { Ed25519PublicKey, PublicKey } from '@dao-xyz/identity'
 import { Ed25519PublicKey } from 'sodium-plus';
 import { joinUint8Arrays } from '@dao-xyz/borsh-utils';
 import isNode from 'is-node';
@@ -240,7 +240,7 @@ export class Store<T> implements StoreLike<T> {
     }
 
 
-    this.publicKey = publicKey instanceof Ed25519PublicKey ? new Ed25519PublicKeyData({ publicKey }) : publicKey;
+    this.publicKey = publicKey instanceof Ed25519PublicKey ? new Ed25519PublicKey({ publicKey }) : publicKey;
 
     if ((this.accessController as StoreLike<any>)?.init) {
       this.accessController = (await (this.accessController as StoreLike<any>).init(ipfs, this.publicKey, sign, options)) as (StoreLike<any> & AccessController<any>);

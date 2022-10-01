@@ -1,5 +1,5 @@
 
-import { arraysCompare, U8IntArraySerializer } from '..';
+import { arraysCompare, U8IntArraySerializer } from '../index.js';
 import { field, serialize, deserialize } from '@dao-xyz/borsh';
 
 describe('U8IntArraySerializer', () => {

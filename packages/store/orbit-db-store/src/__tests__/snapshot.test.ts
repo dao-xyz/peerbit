@@ -2,10 +2,10 @@ import assert from 'assert'
 
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore';
-import { Store, DefaultOptions } from '../store'
+import { Store, DefaultOptions } from '../store.js'
 import { Entry } from '@dao-xyz/ipfs-log-entry';
-import { createStore } from './storage';
-import { SimpleAccessController, SimpleIndex } from './utils';
+import { createStore } from './storage.js';
+import { SimpleAccessController, SimpleIndex } from './utils.js';
 
 // Test utils
 import {

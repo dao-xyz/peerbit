@@ -5,26 +5,26 @@ const logger = Logger.create('orbit-db')
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import Cache from '@dao-xyz/orbit-db-cache'
 import { BoxKeyWithMeta, Keystore, KeyWithMeta, SignKeyWithMeta, WithType } from '@dao-xyz/orbit-db-keystore'
-import { isDefined } from './is-defined'
+import { isDefined } from './is-defined.js'
 import { Level } from 'level';
-import { exchangeHeads, ExchangeHeadsMessage, RequestHeadsMessage } from './exchange-heads'
+import { exchangeHeads, ExchangeHeadsMessage, RequestHeadsMessage } from './exchange-heads.js'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { serialize, deserialize } from '@dao-xyz/borsh'
-import { Message } from './message'
-import { SharedChannel, SharedIPFSChannel } from './channel'
-import { exchangeKeys, KeyResponseMessage, KeyAccessCondition, recieveKeys, requestAndWaitForKeys, RequestKeyMessage, RequestKeyCondition, RequestKeysByKey, RequestKeysByReplicationTopic } from './exchange-keys'
+import { Message } from './message.js'
+import { SharedChannel, SharedIPFSChannel } from './channel.js'
+import { exchangeKeys, KeyResponseMessage, KeyAccessCondition, recieveKeys, requestAndWaitForKeys, RequestKeyMessage, RequestKeyCondition, RequestKeysByKey, RequestKeysByReplicationTopic } from './exchange-keys.js'
 import { DecryptedThing, EncryptedThing, MaybeEncrypted, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
 import { X25519PublicKey } from 'sodium-plus'
 import LRU from 'lru-cache';
 import { DirectChannel } from '@dao-xyz/ipfs-pubsub-direct-channel'
-import { encryptionWithRequestKey, replicationTopicEncryptionWithRequestKey } from './encryption'
-import { Ed25519PublicKeyData, PublicKey } from '@dao-xyz/identity';
+import { encryptionWithRequestKey, replicationTopicEncryptionWithRequestKey } from './encryption.js'
+import { Ed25519PublicKey, PublicKey } from '@dao-xyz/identity';
 import { MaybeSigned } from '@dao-xyz/identity';
-import { WAIT_FOR_PEERS_TIME, exchangePeerInfo, ReplicatorInfo, PeerInfoWithMeta, RequestReplicatorInfo, requestPeerInfo } from './exchange-replication'
+import { WAIT_FOR_PEERS_TIME, exchangePeerInfo, ReplicatorInfo, PeerInfoWithMeta, RequestReplicatorInfo, requestPeerInfo } from './exchange-replication.js'
 import { createHash } from 'crypto'
 import isNode from 'is-node';
 import { delay, waitFor } from '@dao-xyz/time'
-import { LRUCounter } from './lru-counter'
+import { LRUCounter } from './lru-counter.js'
 import { IpfsPubsubPeerMonitor } from '@dao-xyz/ipfs-pubsub-peer-monitor';
 let v8 = undefined;
 if (isNode) {
@@ -272,7 +272,7 @@ export class OrbitDB {
     }
     else {
       const signKey = await options.keystore.createKey(Buffer.from(id), SignKeyWithMeta);
-      publicKey = new Ed25519PublicKeyData({
+      publicKey = new Ed25519PublicKey({
         publicKey: signKey.publicKey
       });
       sign = (data) => Keystore.sign(data, signKey);

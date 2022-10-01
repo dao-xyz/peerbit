@@ -1,2 +1,2 @@
-export * from './string-store';
-export * from './string-index';
+export * from './string-store.js';
+export * from './string-index.js';

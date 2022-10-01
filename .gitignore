@@ -4,6 +4,6 @@ orbitdb
 orbit-db-stores
 lib
 .vscode
-keystore
+/keystore/
 keystore-test
 **/__tests__/**/tmp

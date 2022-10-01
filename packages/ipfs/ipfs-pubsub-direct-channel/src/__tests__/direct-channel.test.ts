@@ -2,18 +2,17 @@
 import rmrf from 'rimraf';
 import path from 'path';
 import assert from 'assert'
-const pMapSeries = require('p-map-series')
-const {
+import {
     connectPeers,
     startIpfs,
     stopIpfs,
     getIpfsPeerId,
-    testAPIs,
-    waitForPeers,
-} = require('@dao-xyz/orbit-db-test-utils')
-import { DirectChannel as Channel } from '../direct-channel';
-import { v1 as PROTOCOL } from '../protocol';
+} from '@dao-xyz/orbit-db-test-utils'
+import { DirectChannel as Channel } from '../direct-channel.js';
+import { v1 as PROTOCOL } from '../protocol.js';
 import { delay, waitFor } from '@dao-xyz/time';
+import { waitForPeers } from '../wait-for-peers.js';
+
 const API = 'js-ipfs'
 
 describe(`DirectChannel js-ipfs`, function () {
@@ -51,7 +50,7 @@ describe(`DirectChannel js-ipfs`, function () {
     describe('create a channel', function () {
         it('has two participants', async () => {
             const c = await Channel.open(ipfs1, id2, () => { })
-            assert.deepEqual(c.peers, expectedPeerIDs)
+            expect(c.peers).toContainAllValues(expectedPeerIDs)
             c.close()
         })
 
@@ -65,8 +64,8 @@ describe(`DirectChannel js-ipfs`, function () {
         it('has two peers', async () => {
             const c1 = await Channel.open(ipfs1, id2, () => { })
             const c2 = await Channel.open(ipfs2, id1, () => { })
-            assert.deepEqual(c1.peers, expectedPeerIDs)
-            assert.deepEqual(c2.peers, expectedPeerIDs)
+            expect(c1.peers).toContainAllValues(expectedPeerIDs)
+            expect(c2.peers).toContainAllValues(expectedPeerIDs)
             expect(c1.id).toEqual(path.join('/', PROTOCOL, expectedPeerIDs.join('/')))
             expect(c2.id).toEqual(path.join('/', PROTOCOL, expectedPeerIDs.join('/')))
             c1.close()
@@ -101,7 +100,7 @@ describe(`DirectChannel js-ipfs`, function () {
 
         it('has two peers', async () => {
             expect(c.peers.length).toEqual(2)
-            assert.deepEqual(c.peers, expectedPeerIDs)
+            expect(c.peers).toContainAllValues(expectedPeerIDs)
         })
 
 
@@ -112,7 +111,7 @@ describe(`DirectChannel js-ipfs`, function () {
 
             let c1Response = undefined;
             const c1 = await Channel.open(ipfs1, id2, (topic, content, from) => {
-                expect(from).toEqual(id2)
+                expect(from.equals(id2))
                 expect(content).toEqual(new Uint8Array([1]))
                 expect(topic).toEqual(c1.id)
                 expect(topic).toEqual(c2.id)
@@ -121,7 +120,7 @@ describe(`DirectChannel js-ipfs`, function () {
                 c1Response = true;
             })
             const c2 = await Channel.open(ipfs2, id1, (topic, content, from) => {
-                expect(from).toEqual(id1)
+                expect(from.equals(id1))
                 expect(content).toEqual(new Uint8Array([0]))
                 expect(topic).toEqual(c1.id)
                 expect(topic).toEqual(c2.id)
@@ -179,7 +178,7 @@ describe(`DirectChannel js-ipfs`, function () {
             await c1.connect()
 
             peers = await ipfs1.pubsub.peers(c1.id)
-            assert.deepEqual(peers, [id2])
+            expect(peers.map(x => x.toString())).toContainAllValues([id2.toString()])
             await delay(2000); // wait for all callbacks
             expect(callbackJoinedCounter).toEqual(1);
             await c2.close()
@@ -229,8 +228,8 @@ describe(`DirectChannel js-ipfs`, function () {
     describe('non-participant peers can\'t send messages', function () {
         it('doesn\'t receive unwanted messages', async () => {
             const c1 = await Channel.open(ipfs1, id2, (topic, content, from) => {
-                expect(from).toEqual(id2)
-                expect(content.toString()).toEqual(new Uint8Array([0]))
+                expect(from.equals(id2))
+                expect(content).toEqual(new Uint8Array([0]))
                 expect(topic).toEqual(c1.id)
                 expect(topic).toEqual(c2.id)
             })

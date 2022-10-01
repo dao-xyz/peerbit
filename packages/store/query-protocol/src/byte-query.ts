@@ -1,6 +1,6 @@
 import { field, variant, vec } from "@dao-xyz/borsh";
 import { U8IntArraySerializer } from "@dao-xyz/borsh-utils";
-import { Query } from "./query-interface";
+import { Query } from "./query-interface.js";
 
 @variant(0)
 export class MemoryCompare {

@@ -1,8 +1,8 @@
 import { default as PQueue } from 'p-queue'
 import { Log } from '@dao-xyz/ipfs-log'
-import { IPFS } from 'ipfs-core-types/src/'
+import { IPFS } from 'ipfs-core-types'
 import { Entry } from '@dao-xyz/ipfs-log-entry';
-import { AccessController } from './access-controller';
+import { AccessController } from './access-controller.js';
 import { PublicKey } from '@dao-xyz/identity';
 
 const flatMap = (res, val) => res.concat(val)

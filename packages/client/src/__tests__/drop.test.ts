@@ -1,7 +1,7 @@
 
 import assert from 'assert'
 const fs = require('fs')
-const path = require('path')
+import path from 'path'
 import rmrf from 'rimraf'
 
 import { Address } from '@dao-xyz/orbit-db-store'

@@ -10,7 +10,7 @@
     "url": "https://github.com/orbitdb/orbit-db"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=16.0"
   },
   "files": [
     "lib",
@@ -56,7 +56,7 @@
     "eslint": "^6.8.0",
     "fs-extra": "^9.0.1",
     "ganache-cli": "^6.12.2",
-    "go-ipfs": "^0.9.1",
+    "go-ipfs": "^0.16.0-rc1",
     "ipfs": "^0.64.2",
     "ipfsd-ctl": "^12.0.3",
     "markdown-toc": "^1.2.0",
@@ -64,10 +64,10 @@
     "node-pre-gyp": "^0.13.0",
     "open-cli": "^7.0.1",
     "@dao-xyz/orbit-db-test-utils": "^0.0.1",
-    "p-each-series": "^2.1.0",
-    "p-map": "^4.0.0",
-    "p-map-series": "^2.1.0",
-    "p-whilst": "^2.1.0",
+    "p-each-series": "^3.0.0",
+    "p-map": "^5.5.0",
+    "p-map-series": "^3.0.0",
+    "p-whilst": "^3.0.0",
     "pify": "^5.0.0",
     "puppeteer-core": "^13.4.0",
     "remark-cli": "^8.0.1",
@@ -75,7 +75,7 @@
     "rimraf": "^3.0.2",
     "standard": "^14.3.4",
     "validate-maintainers": "^1.2.2",
-    "web3": "^1.5.3",
+    "web3": "^1.8.0",
     "webpack": "^4.41.2",
     "webpack-cli": "^3.3.10"
   },

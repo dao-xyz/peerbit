@@ -1,5 +1,5 @@
 import { Constructor, field, option, variant, vec } from "@dao-xyz/borsh";
-import { MultipleQueriesType, Query } from "./query-interface";
+import { MultipleQueriesType, Query } from "./query-interface.js";
 
 export enum SortDirection {
     Ascending = 0,

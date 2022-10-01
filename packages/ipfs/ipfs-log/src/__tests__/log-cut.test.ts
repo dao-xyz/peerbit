@@ -1,8 +1,7 @@
 import assert from 'assert'
 import rmrf from 'rimraf'
 import fs from 'fs-extra'
-import { Log } from '../log'
-import { assertPayload } from './utils/assert'
+import { Log } from '../log.js'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 
 // Test utils
@@ -54,7 +53,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await log.append('hello2')
       await log.append('hello3')
       expect(log.length).toEqual(1);
-      assertPayload(log.values[0].payload.value, 'hello3');
+      expect(log.values[0].payload.value).toEqual('hello3');
     })
 
     it('cut back to cut length', async () => {
@@ -65,7 +64,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       expect(log.length).toEqual(3);
       await log.append('hello4')
       expect(log.length).toEqual(1); // We exceed 'maxOplogLength' and cut back to 'cutOplogToLength'
-      assertPayload(log.values[0].payload.value, 'hello4');
+      expect(log.values[0].payload.value).toEqual('hello4');
     })
   })
 })

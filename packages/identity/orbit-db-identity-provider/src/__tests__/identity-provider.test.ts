@@ -5,7 +5,7 @@ import { Identities } from "../identities"
 import { Identity, Signatures } from "../identity"
 
 import assert from 'assert'
-const path = require('path')
+import path from 'path'
 import rmrf from 'rimraf'
 const fixturesPath = path.resolve(__dirname, 'fixtures/keys')
 const savedKeysPath = path.resolve(__dirname, 'fixtures/savedKeys')

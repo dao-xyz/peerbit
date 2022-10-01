@@ -6,10 +6,10 @@ import io from '@dao-xyz/io-utils'
 import { MaybeEncrypted } from "@dao-xyz/encryption-utils"
 import { CanAppendAccessController } from "@dao-xyz/ipfs-log"
 import { Payload } from "@dao-xyz/ipfs-log-entry"
-import { IInitializationOptions } from './store';
-import { IPFS } from 'ipfs-core-types/src';
+import { IInitializationOptions } from './store.js';
+import { IPFS } from 'ipfs-core-types';
 import { PublicKey } from '@dao-xyz/identity';
-import { Initiable } from './store-like';
+import { Initiable } from './store-like.js';
 /**
  * Interface for OrbitDB Access Controllers
  *

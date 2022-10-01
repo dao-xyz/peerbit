@@ -1,7 +1,7 @@
 import { variant, field, serialize, vec } from '@dao-xyz/borsh';
-import { Message } from './message';
+import { Message } from './message.js';
 import { bufferSerializer, U8IntArraySerializer } from '@dao-xyz/borsh-utils';
-import { X25519PublicKey, Ed25519PublicKey } from 'sodium-plus'
+import { X25519PublicKey } from 'sodium-plus'
 import Logger from 'logplease'
 import { BoxKeyWithMeta, Keystore, KeyWithMeta, SignKeyWithMeta, WithType } from '@dao-xyz/orbit-db-keystore';
 import { PublicKeyEncryption } from '@dao-xyz/encryption-utils';

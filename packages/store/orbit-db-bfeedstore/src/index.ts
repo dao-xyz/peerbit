@@ -1,2 +1,2 @@
-export * from './feed-store';
-export * from './feed-index';
+export * from './feed-store.js';
+export * from './feed-index.js';

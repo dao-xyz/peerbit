@@ -1,5 +1,5 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Query } from "./query-interface";
+import { Query } from "./query-interface.js";
 
 @variant(0)
 export class ContextMatchQuery extends Query {

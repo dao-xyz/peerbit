@@ -1,7 +1,7 @@
 import { DeleteOperation, DocumentIndex, IndexedValue, Operation, PutAllOperation, PutOperation } from './document-index'
 import pMap from 'p-map'
 import { Constructor, deserialize, field, serialize, variant } from '@dao-xyz/borsh';
-import { asString } from './utils';
+import { asString } from './utils.js';
 import { DocumentQueryRequest, FieldQuery, FieldStringMatchQuery, QueryRequestV0, Result, ResultWithSource, SortDirection, FieldByteMatchQuery, FieldBigIntCompareQuery, Compare, Query, MemoryCompareQuery } from '@dao-xyz/query-protocol';
 import { BinaryPayload } from '@dao-xyz/bpayload';
 import { arraysEqual } from '@dao-xyz/borsh-utils';

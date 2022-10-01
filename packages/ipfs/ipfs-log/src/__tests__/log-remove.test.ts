@@ -4,18 +4,17 @@ import rmrf from 'rimraf'
 const { CID } = require('multiformats/cid')
 const { base58btc } = require('multiformats/bases/base58')
 import { Entry, getPeerID, LamportClock as Clock, Payload, Signature } from '@dao-xyz/ipfs-log-entry';
-import { Log } from '../log'
+import { Log } from '../log.js'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import fs from 'fs-extra'
 import io from '@dao-xyz/io-utils'
 
 // For tiebreaker testing
-import { LastWriteWins } from '../log-sorting';
-import { assertPayload } from './utils/assert'
+import { LastWriteWins } from '../log-sorting.js';
 import { DecryptedThing } from '@dao-xyz/encryption-utils';
 import { serialize } from '@dao-xyz/borsh';
 import { Id } from '@dao-xyz/ipfs-log-entry';
-import { Ed25519PublicKeyData, Identity, PublicKey } from '@dao-xyz/identity';
+import { Ed25519PublicKey, Identity, PublicKey } from '@dao-xyz/identity';
 const FirstWriteWins = (a, b) => LastWriteWins(a, b) * -1
 
 // Test utils
@@ -65,9 +64,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 const h3 = await log.append('hello3')
                 expect(log.values instanceof Array).toEqual(true)
                 expect(log.length).toEqual(3)
-                assertPayload(log.values[0].payload.value, 'hello1')
-                assertPayload(log.values[1].payload.value, 'hello2')
-                assertPayload(log.values[2].payload.value, 'hello3')
+                expect(log.values[0].payload.value).toEqual('hello1')
+                expect(log.values[1].payload.value).toEqual('hello2')
+                expect(log.values[2].payload.value).toEqual('hello3')
                 log.removeAll([h3]);
                 expect(log.length).toEqual(0)
                 expect(log.values.length).toEqual(0)

@@ -11,9 +11,9 @@ export class Identity extends SystemBinaryPayload {
 
 
 @variant(0)
-export class PublicKey extends Identity {
+class Key extends Identity {
 
-    equals(other: PublicKey): boolean {
+    equals(other: Key): boolean {
         throw new Error("Not implemented");
     }
 
@@ -28,10 +28,19 @@ export class PublicKey extends Identity {
     toString(): string {
         throw new Error("Not implemented");
     }
-
 }
 
 
+
+@variant(1)
+export class SignKey extends Key {
+
+}
+
+@variant(2)
+export class PublicKeyEncryptionKey extends Key {
+
+}
 
 /* 
 @variant(1)

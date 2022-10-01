@@ -1,6 +1,7 @@
 import { IpfsPubsubPeerMonitor } from '@dao-xyz/ipfs-pubsub-peer-monitor'
-import { IPFS } from 'ipfs-core-types/src'
-import { MessageHandlerFn } from 'ipfs-core-types/src/pubsub'
+import { IPFS } from 'ipfs-core-types'
+import type { Message, SignedMessage } from '@libp2p/interface-pubsub'
+import type { EventHandler } from '@libp2p/interfaces/events'
 
 /* export const getOrCreateChannel = async (pubsub: SharedPubSub, peer: string, getDirectConnection: (peer: string) => DirectChannel, onMessage: (message: { data: Uint8Array }) => void, monitor?: {
     onNewPeerCallback?: (channel: DirectChannel, peer: string) => void,
@@ -43,7 +44,7 @@ export class SharedChannel<T extends Closable>
 export class SharedIPFSChannel implements Closable {
     _ipfs: IPFS;
     _topic: string;
-    _handler: MessageHandlerFn;
+    _handler: EventHandler<Message>;
     _monitor: IpfsPubsubPeerMonitor
     _id: string;
     constructor(ipfs: IPFS, id: string, topic: string, handler: (topic: string, content: Buffer, peer: string) => void, monitor?: IpfsPubsubPeerMonitor) {
@@ -58,23 +59,21 @@ export class SharedIPFSChannel implements Closable {
      * @param messageCallback 
      * @returns MessageHandlerFn
      */
-    _messageHandler(messageCallback: (topic: string, data: Buffer, from: string) => void): MessageHandlerFn {
-        return (message: {
-            data: Buffer
-            from: string
-            key: Buffer
-            receivedFrom: string
-            seqno: Buffer
-            signature: Uint8Array
-            topic: string,
-            topicIDs: string[]
-        }) => {
-            if (message.from === this._id) {
-                return;
+    _messageHandler(messageCallback: (topic: string, data: Uint8Array, from: string) => void): EventHandler<Message> {
+        return (message: Message) => {
+            if (message.type === 'signed') {
+                const signedMessage = message as SignedMessage;
+                if (signedMessage.from.toString() === this._id) {
+                    return;
+                }
+
+                const topicId = signedMessage.topic;
+                messageCallback(topicId, message.data, message.from.toString())
+            }
+            else {
+                // unsigned message
             }
 
-            const topicId = message.topic ? message.topic : message.topicIDs[0]
-            messageCallback(topicId, message.data, message.from)
 
         }
     }

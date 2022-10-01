@@ -1,6 +1,6 @@
 'use strict'
 
-const path = require('path')
+import path from 'path'
 
 module.exports = {
   entry: './src/log.js',

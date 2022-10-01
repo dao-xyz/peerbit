@@ -1,22 +1,21 @@
 import { EncryptionTemplateMaybeEncrypted, Entry, getPeerID, LamportClock as Clock, LamportClock, maxClockTimeReducer } from '@dao-xyz/ipfs-log-entry';
-import { EntryIndex } from "./entry-index"
+import { EntryIndex } from "./entry-index.js"
 import pMap from 'p-map'
-import { GSet } from './g-set'
-import { LogIO } from './log-io'
-import * as LogError from './log-errors'
-import * as Sorting from './log-sorting'
-import { EntryFetchAllOptions, EntryFetchOptions, strictFetchOptions } from "./entry-io"
-import { IPFS } from "ipfs-core-types/src/"
-import { CanAppendAccessController, DefaultAccessController } from "./default-access-controller"
-import { isDefined } from './is-defined'
-import { findUniques } from "./find-uniques"
+import { GSet } from './g-set.js'
+import { LogIO } from './log-io.js'
+import * as LogError from './log-errors.js'
+import * as Sorting from './log-sorting.js'
+import { EntryFetchAllOptions, EntryFetchOptions, strictFetchOptions } from "./entry-io.js"
+import { IPFS } from "ipfs-core-types"
+import { CanAppendAccessController, DefaultAccessController } from "./default-access-controller.js"
+import { isDefined } from './is-defined.js'
+import { findUniques } from "./find-uniques.js"
 import { IOOptions } from "@dao-xyz/ipfs-log-entry";
 import { JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log-entry';
 import { AccessError, PublicKeyEncryption } from '@dao-xyz/encryption-utils';
-import { Ed25519PublicKeyData, PublicKey } from '@dao-xyz/identity';
+import { Ed25519PublicKey, PublicKey } from '@dao-xyz/identity';
 import { serialize } from '@dao-xyz/borsh';
 import { Ed25519PublicKey } from 'sodium-plus';
-import { createHash } from 'crypto';
 
 const { LastWriteWins, NoZeroes } = Sorting
 const randomId = () => new Date().getTime().toString()
@@ -104,13 +103,13 @@ export class Log<T> extends GSet {
       throw new Error('Identity is required')
     }
     if (publicKey instanceof Ed25519PublicKey) {
-      publicKey = new Ed25519PublicKeyData({
+      publicKey = new Ed25519PublicKey({
         publicKey
       })
     }
 
     if (publicKey instanceof Ed25519PublicKey) {
-      publicKey = new Ed25519PublicKeyData({
+      publicKey = new Ed25519PublicKey({
         publicKey
       })
     }

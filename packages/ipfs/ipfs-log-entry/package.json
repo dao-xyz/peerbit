@@ -21,7 +21,7 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=14.16"
+    "node": ">=16.0"
   },
   "keywords": [
     "ipfs",
@@ -34,7 +34,7 @@
     "@dao-xyz/borsh": "^3.2.5",
     "@dao-xyz/borsh-utils": "^0.0.1",
     "@dao-xyz/io-utils": "^1.0.2",
-    "sodium-plus": "^0.9.0"
+    "libsodium-wrappers": "^0.7.10"
   },
   "devDependencies": {
     "@dao-xyz/orbit-db-keystore": "^0.0.1",
@@ -50,7 +50,7 @@
     "babel-loader": "~8.2.1",
     "eslint": "^7.32.0",
     "fs-extra": "^10.0.0",
-    "go-ipfs": "^0.10.0-rc1",
+    "go-ipfs": "^0.16.0-rc1",
     "http-server": "^0.12.3",
     "ipfs": "^0.64.2",
     "ipfsd-ctl": "^12.0.3",
@@ -70,13 +70,6 @@
     "stream-browserify": "^3.0.0",
     "webpack": "^5.37.1",
     "webpack-cli": "^4.7.0"
-  },
-  "standard": {
-    "env": "mocha",
-    "ignore": [
-      "lib/es5/",
-      "docs/"
-    ]
   },
   "contributors": [
     "haadcode",

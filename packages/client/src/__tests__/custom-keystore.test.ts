@@ -1,8 +1,8 @@
 
 import assert from 'assert'
 import rmrf from 'rimraf'
-const path = require('path')
-import { Ed25519PublicKeyData } from '@dao-xyz/identity'
+import path from 'path'
+import { Ed25519PublicKey } from '@dao-xyz/identity'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { OrbitDB } from '../orbit-db'
 /* const Identities = require('@dao-xyz/orbit-db-identity-provider') */
@@ -39,7 +39,7 @@ Object.keys(testAPIs).forEach(API => {
       //const identity = await Identities.createIdentity({ type: 'custom', keystore: CustomTestKeystore().create() })
       orbitdb1 = await OrbitDB.createInstance(ipfs, {
         directory: path.join(dbPath, '1'),
-        publicKey: new Ed25519PublicKeyData({
+        publicKey: new Ed25519PublicKey({
           publicKey: signKey.publicKey
         }),
         sign: (data) => Keystore.sign(data, signKey)

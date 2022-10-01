@@ -1,5 +1,5 @@
 import { Keystore, SignKeyWithMeta } from "@dao-xyz/orbit-db-keystore"
-import { Log } from "../../log"
+import { Log } from "../../log.js"
 
 export class LogCreator {
   static async createLogWithSixteenEntries(ipfs, signKeys: SignKeyWithMeta[]) {

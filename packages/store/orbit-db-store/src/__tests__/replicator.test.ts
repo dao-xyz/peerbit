@@ -9,9 +9,9 @@ import {
   startIpfs,
   stopIpfs
 } from '@dao-xyz/orbit-db-test-utils'
-import { DefaultOptions, Store } from '../store'
-import { createStore } from './storage'
-import { SimpleAccessController, SimpleIndex } from './utils'
+import { DefaultOptions, Store } from '../store.js'
+import { createStore } from './storage.js'
+import { SimpleAccessController, SimpleIndex } from './utils.js'
 
 // Tests timeout
 const timeout = 30000

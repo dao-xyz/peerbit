@@ -2,22 +2,28 @@ import { LamportClock as Clock, LamportClock } from './lamport-clock'
 import { isDefined } from './is-defined'
 import { variant, field, vec, option, serialize, deserialize } from '@dao-xyz/borsh';
 import io from '@dao-xyz/io-utils';
-import { IPFS } from 'ipfs-core-types/src/'
+import { IPFS } from 'ipfs-core-types'
 import { arraysEqual, joinUint8Arrays, StringSetSerializer, U8IntArraySerializer } from '@dao-xyz/borsh-utils';
-import { X25519PublicKey } from 'sodium-plus';
 import { PublicKeyEncryption, DecryptedThing, MaybeEncrypted } from '@dao-xyz/encryption-utils';
-import { Signature } from './signature';
+import { Signature } from './signature.js';
 import { PublicKey } from '@dao-xyz/identity';
-import { bigIntMax } from './utils';
+import { bigIntMax } from './utils.js';
 import { SodiumPlus } from 'sodium-plus';
-
-const _crypto = SodiumPlus.auto();
+import sodium from 'libsodium-wrappers';
 export const maxClockTimeReducer = <T>(res: bigint, acc: Entry<T>): bigint => bigIntMax(res, acc.clock.time);
-export type MaybeX25519PublicKey = (X25519PublicKey | X25519PublicKey[] | undefined);
+
+
 export type EncryptionTemplateMaybeEncrypted = EntryEncryptionTemplate<MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey>;
 export interface EntryEncryption {
   reciever: EncryptionTemplateMaybeEncrypted,
   options: PublicKeyEncryption
+}
+export function toBufferLE(num: bigint, width: number): Uint8Array {
+  const hex = num.toString(16);
+  const padded = hex.padStart(width * 2, '0').slice(0, width * 2);
+  const buffer = Uint8Array.from(padded.match(/.{1,2}/g).map((byte) => parseInt(byte, 16)));
+  buffer.reverse();
+  return buffer;
 }
 
 export interface IOOptions<T> {
@@ -37,7 +43,7 @@ const IpfsNotDefinedError = () => new Error('Ipfs instance not defined')
 
 
 export interface EntrySerialized<T> {
-  gid: string,
+  gid: Uint8Array,
   payload: Uint8Array,
   publicKey: Uint8Array,
   signature: Uint8Array,
@@ -97,8 +103,8 @@ export interface EntryEncryptionTemplate<A, B, C, D> {
 @variant(0)
 export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, PublicKey, Signature> {
 
-  @field({ type: 'string' })
-  gid: string // graph id
+  @field(U8IntArraySerializer)
+  gid: Uint8Array // graph id
 
   @field({ type: MaybeEncrypted })
   _clock: MaybeEncrypted<Clock>
@@ -138,7 +144,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
 
 
   constructor(obj?: {
-    gid: string,
+    gid: Uint8Array,
     payload: MaybeEncrypted<Payload<T>>
     publicKey: MaybeEncrypted<PublicKey>,
     signature: MaybeEncrypted<Signature>,
@@ -236,14 +242,17 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
 
 
 
-  static createDataToSign(gid: string, payload: MaybeEncrypted<Payload<any>>, clock: MaybeEncrypted<Clock>, next: string[], fork: string[], state: number, reserved: number,): Buffer { // TODO fix types
-    const arrays: Uint8Array[] = [new Uint8Array(Buffer.from(gid)), serialize(payload), serialize(clock)];
+  static createDataToSign(gid: Uint8Array, payload: MaybeEncrypted<Payload<any>>, clock: MaybeEncrypted<Clock>, next: string[], fork: string[], state: number, reserved: number,): Buffer { // TODO fix types
+    const arrays: Uint8Array[] = [gid, serialize(payload), serialize(clock)];
+    arrays.push(toBufferLE(BigInt(next.length), 4))
+    next.forEach((n) => {
+      arrays.push(new Uint8Array(Buffer.from(n)));
+    })
+    arrays.push(toBufferLE(BigInt(fork.length), 4))
+    fork.forEach((f) => {
+      arrays.push(new Uint8Array(Buffer.from(f)));
+    })
     arrays.push(new Uint8Array([state, reserved]))
-    if (next) {
-      next.forEach((n) => {
-        arrays.push(new Uint8Array(Buffer.from(n)));
-      })
-    }
     return Buffer.from(joinUint8Arrays(arrays));
   }
 
@@ -256,9 +265,9 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
     return this.gid === other.gid && this._clock.equals(other._clock) && this._signature.equals(other._signature) && arraysEqual(this.next, other.next) && this._payload.equals(other._payload) // dont compare hashes because the hash is a function of the other properties
   }
 
-  static async createGid(seed?: string): Promise<string> {
-    const crypto = await _crypto;
-    return (await crypto.crypto_generichash(seed || (await crypto.randombytes_buf(32)))).toString('base64')
+  static async createGid(seed?: string): Promise<Uint8Array> {
+    await sodium.ready;
+    return (await sodium.crypto_generichash(32, seed || (await sodium.randombytes_buf(32))))
   }
   /**
    * Create an Entry
@@ -274,7 +283,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
    * console.log(entry)
    * // { hash: null, payload: "hello", next: [] }
    */
-  static async create<T>(properties: { ipfs: IPFS, gid?: string, gidSeed?: string, data: T, encodingOptions?: IOOptions<T>, next?: Entry<T>[], clock?: Clock, pin?: boolean, assertAllowed?: (entryData: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicKey>) => Promise<void>, encryption?: EntryEncryption, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array> }) {
+  static async create<T>(properties: { ipfs: IPFS, gid?: Uint8Array, gidSeed?: string, data: T, encodingOptions?: IOOptions<T>, next?: Entry<T>[], clock?: Clock, pin?: boolean, assertAllowed?: (entryData: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicKey>) => Promise<void>, encryption?: EntryEncryption, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array> }) {
     if (!properties.encodingOptions || !properties.next) {
       properties = {
         ...properties,
@@ -297,7 +306,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
     });
 
 
-    const maybeEncrypt = async<Q>(thing: Q, reciever: X25519PublicKey | X25519PublicKey[] | undefined): Promise<MaybeEncrypted<Q>> => {
+    const maybeEncrypt = async<Q>(thing: Q, reciever?: X25519PublicKey | X25519PublicKey[]): Promise<MaybeEncrypted<Q>> => {
       const recievers = reciever ? (Array.isArray(reciever) ? reciever : [reciever]) : undefined
       return recievers?.length > 0 ? await new DecryptedThing<Q>({ data: serialize(thing), value: thing }).init(properties.encryption.options).encrypt(...recievers) : new DecryptedThing<Q>({
         data: serialize(thing),
@@ -335,7 +344,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
 
 
     const nextHashes = [];
-    let gid: string = undefined
+    let gid: Uint8Array = undefined
 
     if (nexts?.length > 0) {
       // take min gid as our gid

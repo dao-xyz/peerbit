@@ -4,7 +4,7 @@ import path from 'path'
 import io from '@dao-xyz/io-utils';
 import { CID } from 'multiformats/cid'
 import { serialize, deserialize, Constructor } from '@dao-xyz/borsh';
-import { IPFS } from 'ipfs-core-types/src/'
+import { IPFS } from 'ipfs-core-types'
 
 const notEmpty = e => e !== '' && e !== ' '
 
