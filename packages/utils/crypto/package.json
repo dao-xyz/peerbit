@@ -1,0 +1,42 @@
+{
+  "name": "@dao-xyz/crypto",
+  "version": "0.0.12",
+  "description": "Identity classes",
+  "type": "module",
+  "sideEffects": false,
+  "main": "lib/cjs/index.js",
+  "module": "lib/esm/index.mjs",
+  "types": "lib/esm/index.d.ts",
+  "exports": {
+    "import": "./lib/esm/index.mjs",
+    "require": "./lib/cjs/index.js"
+  },
+  "files": [
+    "lib",
+    "src",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "shx rm -rf lib/*",
+    "build": "yarn clean && tsc -p tsconfig.json; tsc-esm -p tsconfig.json && tsc -p tsconfig.cjs.json",
+    "postbuild": "echo '{\"type\":\"commonjs\"}' | node ../../../node_modules/.bin/json > lib/cjs/package.json && echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
+    "test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
+    "test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
+    "test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
+  },
+  "author": "dao.xyz",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/libsodium-wrappers": "^0.7.9"
+  },
+  "dependencies": {
+    "@dao-xyz/borsh": "^3.2.5",
+    "@dao-xyz/bpayload": "^0.0.11",
+    "@dao-xyz/borsh-utils": "^0.0.1",
+    "@ethersproject/wallet": "^5.7.0",
+    "libsodium-wrappers": "^0.7.10"
+  }
+}

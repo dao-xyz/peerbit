@@ -1,37 +1,33 @@
 {
     "private": true,
-    "name": "@dao-xyz/shorbit",
+    "name": "@dao-xyz/peerbit",
     "author": "dao.xyz",
     "repository": "https://github.com/@dao-xyz/sdk",
     "license": "Apache-2.0",
     "type": "module",
     "workspaces": {
         "packages": [
-            "packages/shard",
-            "packages/io-utils",
-            "packages/encryption-utils",
-            "packages/ipfs-pubsub-direct-channel",
-            "packages/ipfs-pubsub-peer-monitor",
-            "packages/ipfs-log",
-            "packages/ipfs-log-entry",
-            "packages/orbit-db",
-            "packages/orbit-db-ipfs-access-controller",
-            "packages/dynamic-access-controller",
-            "packages/orbit-db-store",
-            "packages/orbit-db-cache",
-            "packages/orbit-db-bdocstore",
-            "packages/orbit-db-bfeedstore",
-            "packages/orbit-db-keystore",
-            "packages/orbit-db-query-store",
-            "packages/orbit-db-io",
-            "packages/orbit-db-string",
-            "packages/orbit-db-trust-web",
-            "packages/ipfs-pubsub-shared",
-            "packages/time",
-            "packages/identity",
-            "packages/peer-test-utils",
-            "packages/query-protocol",
-            "packages/bpayload"
+            "packages/ipfs/ipfs-pubsub-direct-channel",
+            "packages/ipfs/ipfs-pubsub-peer-monitor",
+            "packages/ipfs/ipfs-log",
+            "packages/ipfs/ipfs-log-entry",
+            "packages/client",
+            "packages/acl/dynamic-access-controller",
+            "packages/acl/orbit-db-trust-web",
+            "packages/identity/keystore",
+            "packages/utils/crypto",
+            "packages/store/orbit-db-bdocstore",
+            "packages/store/orbit-db-bfeedstore",
+            "packages/store/orbit-db-query-store",
+            "packages/store/orbit-db-string",
+            "packages/store/query-protocol",
+            "packages/store/orbit-db-store",
+            "packages/utils/io-utils",
+            "packages/utils/test-utils",
+            "packages/utils/bpayload",
+            "packages/utils/cache",
+            "packages/utils/borsh-utils",
+            "packages/utils/time"
         ],
         "nohoist": [
             "**/@babel/preset-env",
@@ -43,7 +39,7 @@
         ]
     },
     "engines": {
-        "node": ">= 10"
+        "node": ">=16.0"
     },
     "publishConfig": {
         "access": "public"
@@ -51,8 +47,8 @@
     "scripts": {
         "clean": "lerna run clean",
         "build": "lerna run build",
-        "test": "node ./node_modules/.bin/jest test  -c jest.config.unit.cjs --runInBand --forceExit",
-        "test:integration": "node ./node_modules/.bin/jest test -c jest.config.integration.cjs --runInBand --forceExit",
+        "test": "node ./node_modules/.bin/jest test  -c jest.config.unit.ts --runInBand --forceExit",
+        "test:integration": "node ./node_modules/.bin/jest test -c jest.config.integration.ts --runInBand --forceExit",
         "deploy": "yarn deploy:docs && yarn deploy:example",
         "deploy:docs": "yarn docs && gh-pages --dist docs --dotfiles",
         "docs": "shx rm -rf docs && NODE_OPTIONS=--max_old_space_size=8192 typedoc && shx cp ./{.nojekyll} docs/",
@@ -77,8 +73,9 @@
         "eslint-config-react-app": "^7.0.0",
         "eslint-plugin-prettier": "^4.0.0",
         "gh-pages": "^4.0.0",
-        "ipfs-core-types": "^0.10.3",
-        "jest": "^29.0.3",
+        "dotenv": "^16.0.3",
+        "ipfs-core-types": "^0.12.1",
+        "jest": "^29.1.2",
         "jest-extended": "^3.1.0",
         "json": "^11.0.0",
         "lerna": "^5.5.1",
@@ -86,10 +83,11 @@
         "prettier": "^2.7.1",
         "shx": "^0.3.4",
         "start-server-and-test": "^1.14.0",
-        "ts-jest": "^29.0.1",
+        "ts-jest": "^29.0.3",
+        "ts-node": "^10.9.1",
         "tslib": "^2.4.0",
         "typedoc": "^0.22.10",
-        "typescript": "~4.4.4",
+        "typescript": "^4.8.4",
         "typescript-esm": "^2.0.0"
     }
 }

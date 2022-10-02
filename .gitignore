@@ -1,11 +1,9 @@
 node_modules
-ipfs
 orbitdb
 /orbit-db
 orbit-db-stores
-ipfs
 lib
 .vscode
-keystore
+/keystore/
 keystore-test
 **/__tests__/**/tmp

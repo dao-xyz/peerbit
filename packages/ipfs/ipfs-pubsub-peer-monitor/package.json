@@ -1,0 +1,45 @@
+{
+  "name": "@dao-xyz/ipfs-pubsub-peer-monitor",
+  "version": "0.0.8",
+  "description": "Peer monitor",
+  "type": "module",
+  "license": "MIT",
+  "main": "lib/esm/index.mjs",
+  "module": "lib/esm/index.mjs",
+  "types": "lib/esm/index.d.ts",
+  "exports": {
+    "import": "./lib/esm/index.mjs"
+  },
+  "files": [
+    "lib",
+    "src",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=16.0"
+  },
+  "dependencies": {
+    "p-forever": "^3.0.1"
+  },
+  "devDependencies": {
+    "@dao-xyz/time": "^0.0.11"
+  },
+  "scripts": {
+    "clean": "shx rm -rf lib/*",
+    "build": "yarn clean && tsc -p tsconfig.json; tsc-esm -p tsconfig.json",
+    "postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
+    "test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
+    "test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
+    "test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit",
+    "test:browser": "npm run build:tests && mocha-headless-chrome -t 360000 -f ./test/browser/index.html -a no-sandbox",
+    "benchmark": "nyc  --require ts-node/register benchmark-runner -r -b --baselineLimit 1000",
+    "benchmark:stress": "benchmark-runner -r --grep stress",
+    "examples": "http-server examples/browser"
+  },
+  "localMaintainers": [
+    "dao.xyz"
+  ]
+}

@@ -1,0 +1,105 @@
+{
+  "name": "@dao-xyz/ipfs-log-entry",
+  "version": "5.5.15",
+  "description": "Append-only log entry model",
+  "type": "module",
+  "author": "Haad",
+  "license": "MIT",
+  "main": "lib/cjs/index.js",
+  "module": "lib/esm/index.mjs",
+  "types": "lib/esm/index.d.ts",
+  "exports": {
+    "import": "./lib/esm/index.mjs",
+    "require": "./lib/cjs/index.js"
+  },
+  "files": [
+    "lib",
+    "src",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=16.0"
+  },
+  "keywords": [
+    "ipfs",
+    "log",
+    "crdts",
+    "crdt"
+  ],
+  "dependencies": {
+    "@dao-xyz/encryption-utils": "^0.0.1",
+    "@dao-xyz/borsh": "^3.2.5",
+    "@dao-xyz/borsh-utils": "^0.0.1",
+    "@dao-xyz/io-utils": "^1.0.2",
+    "libsodium-wrappers": "^0.7.10"
+  },
+  "devDependencies": {
+    "@dao-xyz/orbit-db-keystore": "^0.0.1",
+    "@babel/cli": "^7.14.3",
+    "@babel/core": "^7.14.3",
+    "@babel/plugin-syntax-object-rest-spread": "~7.8.3",
+    "@babel/plugin-transform-modules-commonjs": "^7.14.0",
+    "@babel/plugin-transform-runtime": "^7.14.3",
+    "@babel/preset-env": "^7.14.2",
+    "@babel/runtime": "^7.14.0",
+    "@mapbox/node-pre-gyp": "^1.0.5",
+    "assert": "^2.0.0",
+    "babel-loader": "~8.2.1",
+    "eslint": "^7.32.0",
+    "fs-extra": "^10.0.0",
+    "go-ipfs": "^0.16.0-rc1",
+    "http-server": "^0.12.3",
+    "ipfs": "^0.64.2",
+    "ipfsd-ctl": "^12.0.3",
+    "is-node": "^1.0.2",
+    "jsdoc": "^3.6.6",
+    "json-loader": "~0.5.7",
+    "mocha": "^8.4.0",
+    "mocha-headless-chrome": "^3.1.0",
+    "node-polyfill-webpack-plugin": "^1.1.4",
+    "node-pre-gyp": "^0.13.0",
+    "nyc": "^15.0.1",
+    "orbit-db-benchmark-runner": "^1.0.3",
+    "@dao-xyz/orbit-db-test-utils": "^0.0.1",
+    "path-browserify": "^1.0.1",
+    "rimraf": "~3.0.2",
+    "standard": "~16.0.3",
+    "stream-browserify": "^3.0.0",
+    "webpack": "^5.37.1",
+    "webpack-cli": "^4.7.0"
+  },
+  "contributors": [
+    "haadcode",
+    "aphelionz",
+    "shamb0t",
+    "thiagodelgado111",
+    "mistakia",
+    "satazor",
+    "RichardLitt",
+    "greenkeeperio-bot",
+    "chrisdostert",
+    "zachferland",
+    "kaibakker",
+    "dignifiedquire",
+    "adam-palazzo"
+  ],
+  "scripts": {
+    "clean": "shx rm -rf lib/*",
+    "build": "yarn clean && tsc -p tsconfig.json; tsc-esm -p tsconfig.json && tsc -p tsconfig.cjs.json",
+    "postbuild": "echo '{\"type\":\"commonjs\"}' | node ../../../node_modules/.bin/json > lib/cjs/package.json && echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
+    "test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
+    "test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
+    "test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit",
+    "test:browser": "npm run build:tests && mocha-headless-chrome -t 360000 -f ./test/browser/index.html -a no-sandbox",
+    "benchmark": "nyc  --require ts-node/register benchmark-runner -r -b --baselineLimit 1000",
+    "benchmark:stress": "benchmark-runner -r --grep stress",
+    "examples": "http-server examples/browser"
+  },
+  "localMaintainers": [
+    "dao.xyz"
+  ],
+  "gitHead": "d10b89ef1a120a58e1a7e92aadcc2bb536a37e3e"
+}
