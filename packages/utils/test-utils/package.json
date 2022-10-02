@@ -1,0 +1,46 @@
+{
+  "name": "@dao-xyz/orbit-db-test-utils",
+  "version": "0.0.1",
+  "description": "Test utils for orbit-db",
+  "type": "module",
+  "sideEffects": false,
+  "module": "./lib/esm/index.mjs",
+  "types": "./lib/esm/index.d.ts",
+  "exports": {
+    "import": "./lib/esm/index.mjs"
+  },
+  "scripts": {
+    "clean": "shx rm -rf lib/*",
+    "build": "yarn clean && tsc -p tsconfig.json; tsc-esm -p tsconfig.json",
+    "postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json && rimraf lib/esm/__tests__  && rimraf lib/cjs/__tests__",
+    "test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
+    "test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
+    "test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
+  },
+  "files": [
+    "lib",
+    "src",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/orbitdb/orbit-db-test-utils"
+  },
+  "author": "shamb0t <shams@haja.io>",
+  "license": "MIT",
+  "devDependencies": {
+    "c8": "^7.11.3",
+    "go-ipfs": "^0.16.0-rc1",
+    "ipfs": "^0.64.2",
+    "ipfsd-ctl": "^12.0.3"
+  },
+  "peerDependencies": {
+    "go-ipfs": "*",
+    "ipfs": "*",
+    "ipfsd-ctl": "*"
+  },
+  "localMaintainers": [
+    "shamb0t <shams@haja.io>",
+    "hajamark <mark@haja.io>"
+  ]
+}
