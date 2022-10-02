@@ -3,7 +3,7 @@ import { delay } from '@dao-xyz/time';
 import { Message } from './message.js';
 import isNode from 'is-node';
 import { MaybeSigned, PublicKey } from '@dao-xyz/identity';
-import { DecryptedThing, PublicKeyEncryption } from '@dao-xyz/encryption-utils';
+import { DecryptedThing, PublicKeyEncryption } from "@dao-xyz/peerbit-crypto";
 import { Address, Store, StoreLike } from '@dao-xyz/orbit-db-store';
 import { OrbitDB } from './orbit-db.js';
 import { StringSetSerializer } from '@dao-xyz/borsh-utils';

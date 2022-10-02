@@ -15,7 +15,7 @@ import { IPFS } from 'ipfs-core-types'
 import stringify from 'json-stringify-deterministic'
 import { serialize, deserialize } from '@dao-xyz/borsh';
 import { Snapshot } from './snapshot.js'
-import { AccessError, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
+import { AccessError, PublicKeyEncryption } from "@dao-xyz/peerbit-crypto"
 import { Address, load, save } from './io.js'
 import { AccessController } from './access-controller.js'
 import { v4 as uuid } from 'uuid';

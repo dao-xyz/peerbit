@@ -11,7 +11,7 @@ import io from '@dao-xyz/io-utils'
 
 // For tiebreaker testing
 import { LastWriteWins } from '../log-sorting.js';
-import { DecryptedThing } from '@dao-xyz/encryption-utils';
+import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { serialize } from '@dao-xyz/borsh';
 import { Id } from '@dao-xyz/ipfs-log-entry';
 import { Ed25519PublicKey, Identity, PublicKey } from '@dao-xyz/identity';

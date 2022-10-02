@@ -3,7 +3,7 @@ import io from '@dao-xyz/io-utils'
 
 // TODO extend IPFS-LOG access controller interface for canAppend method
 
-import { MaybeEncrypted } from "@dao-xyz/encryption-utils"
+import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto"
 import { CanAppendAccessController } from "@dao-xyz/ipfs-log"
 import { Payload } from "@dao-xyz/ipfs-log-entry"
 import { IInitializationOptions } from './store.js';

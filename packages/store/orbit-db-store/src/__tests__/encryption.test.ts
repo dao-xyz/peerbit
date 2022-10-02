@@ -5,7 +5,7 @@ import { default as Cache } from '@dao-xyz/orbit-db-cache'
 import { BoxKeyWithMeta, Keystore, KeyWithMeta, SignKeyWithMeta } from "@dao-xyz/orbit-db-keystore"
 import { createStore } from './storage.js'
 import { X25519PublicKey, SodiumPlus } from 'sodium-plus'
-import { AccessError } from '@dao-xyz/encryption-utils'
+import { AccessError } from "@dao-xyz/peerbit-crypto"
 import { SimpleAccessController, SimpleIndex } from './utils.js'
 import { Address } from '../io.js'
 

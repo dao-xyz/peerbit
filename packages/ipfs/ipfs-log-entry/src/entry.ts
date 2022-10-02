@@ -4,7 +4,7 @@ import { variant, field, vec, option, serialize, deserialize } from '@dao-xyz/bo
 import io from '@dao-xyz/io-utils';
 import { IPFS } from 'ipfs-core-types'
 import { arraysEqual, joinUint8Arrays, StringSetSerializer, U8IntArraySerializer } from '@dao-xyz/borsh-utils';
-import { PublicKeyEncryption, DecryptedThing, MaybeEncrypted } from '@dao-xyz/encryption-utils';
+import { PublicKeyEncryption, DecryptedThing, MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
 import { Signature } from './signature.js';
 import { PublicKey } from '@dao-xyz/identity';
 import { bigIntMax } from './utils.js';

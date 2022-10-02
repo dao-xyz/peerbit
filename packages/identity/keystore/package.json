@@ -31,7 +31,7 @@
   "dependencies": {
     "@dao-xyz/borsh": "^3.2.5",
     "@dao-xyz/borsh-utils": "^0.0.1",
-    "@dao-xyz/encryption-utils": "^0.0.1",
+    "@dao-xyz/peerbit-crypto": "^0.0.1",
     "elliptic": "^6.5.4",
     "level": "^8.0.0",
     "libp2p-crypto": "^0.19.4",

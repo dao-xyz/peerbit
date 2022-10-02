@@ -3,7 +3,7 @@
 import { Constructor, deserialize, field, option, serialize, variant, vec } from "@dao-xyz/borsh";
 import type { Message, PubSub } from '@libp2p/interface-pubsub'
 import { delay, waitFor } from "@dao-xyz/time";
-import { decryptVerifyInto, DecryptedThing, MaybeEncrypted, PublicKeyEncryption, AccessError } from '@dao-xyz/encryption-utils'
+import { decryptVerifyInto, DecryptedThing, MaybeEncrypted, PublicKeyEncryption, AccessError } from "@dao-xyz/peerbit-crypto"
 import { X25519PublicKey, Ed25519PublicKey } from 'sodium-plus'
 import { QueryRequestV0, QueryResponseV0 } from "@dao-xyz/query-protocol";
 import { MaybeSigned, PublicKey } from "@dao-xyz/identity";

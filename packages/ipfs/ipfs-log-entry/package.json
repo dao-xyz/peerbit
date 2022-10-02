@@ -30,7 +30,7 @@
     "crdt"
   ],
   "dependencies": {
-    "@dao-xyz/encryption-utils": "^0.0.1",
+    "@dao-xyz/peerbit-crypto": "^0.0.1",
     "@dao-xyz/borsh": "^3.2.5",
     "@dao-xyz/borsh-utils": "^0.0.1",
     "@dao-xyz/io-utils": "^1.0.2",
@@ -51,7 +51,6 @@
     "eslint": "^7.32.0",
     "fs-extra": "^10.0.0",
     "go-ipfs": "^0.16.0-rc1",
-    "http-server": "^0.12.3",
     "ipfs": "^0.64.2",
     "ipfsd-ctl": "^12.0.3",
     "is-node": "^1.0.2",
@@ -95,8 +94,7 @@
     "test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit",
     "test:browser": "npm run build:tests && mocha-headless-chrome -t 360000 -f ./test/browser/index.html -a no-sandbox",
     "benchmark": "nyc  --require ts-node/register benchmark-runner -r -b --baselineLimit 1000",
-    "benchmark:stress": "benchmark-runner -r --grep stress",
-    "examples": "http-server examples/browser"
+    "benchmark:stress": "benchmark-runner -r --grep stress"
   },
   "localMaintainers": [
     "dao.xyz"

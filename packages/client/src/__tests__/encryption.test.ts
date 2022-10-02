@@ -8,7 +8,7 @@ import { OrbitDB } from '../orbit-db'
 import { EventStore, Operation } from './utils/stores/event-store'
 import { IStoreOptions } from '@dao-xyz/orbit-db-store';
 import { X25519PublicKey } from 'sodium-plus';
-import { AccessError } from '@dao-xyz/encryption-utils'
+import { AccessError } from "@dao-xyz/peerbit-crypto"
 import { SimpleAccessController } from './utils/access'
 
 

@@ -6,7 +6,7 @@ import { Entry, Payload } from "@dao-xyz/ipfs-log-entry";
 import { createHash } from "crypto";
 import { PublicKey } from "@dao-xyz/identity";
 import isNode from 'is-node';
-import { MaybeEncrypted } from "@dao-xyz/encryption-utils";
+import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from 'ipfs-core-types';
 import { DeleteOperation } from "@dao-xyz/orbit-db-bdocstore";
 import { ReadWriteAccessController } from "@dao-xyz/orbit-db-query-store";

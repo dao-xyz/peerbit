@@ -28,7 +28,7 @@
     "require": "./lib/cjs/index.js"
   },
   "dependencies": {
-    "@dao-xyz/encryption-utils": "^0.0.1",
+    "@dao-xyz/peerbit-crypto": "^0.0.1",
     "@dao-xyz/orbit-db-store": "^0.0.20",
     "@dao-xyz/ipfs-pubsub-direct-channel": "^0.0.8",
     "is-node": "^1.0.2",

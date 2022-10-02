@@ -13,7 +13,7 @@ import { serialize, deserialize } from '@dao-xyz/borsh'
 import { Message } from './message.js'
 import { SharedChannel, SharedIPFSChannel } from './channel.js'
 import { exchangeKeys, KeyResponseMessage, KeyAccessCondition, recieveKeys, requestAndWaitForKeys, RequestKeyMessage, RequestKeyCondition, RequestKeysByKey, RequestKeysByReplicationTopic } from './exchange-keys.js'
-import { DecryptedThing, EncryptedThing, MaybeEncrypted, PublicKeyEncryption } from '@dao-xyz/encryption-utils'
+import { DecryptedThing, EncryptedThing, MaybeEncrypted, PublicKeyEncryption } from "@dao-xyz/peerbit-crypto"
 import { X25519PublicKey } from 'sodium-plus'
 import LRU from 'lru-cache';
 import { DirectChannel } from '@dao-xyz/ipfs-pubsub-direct-channel'

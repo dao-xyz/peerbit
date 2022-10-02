@@ -4,10 +4,10 @@ import { bufferSerializer, U8IntArraySerializer } from '@dao-xyz/borsh-utils';
 import { X25519PublicKey } from 'sodium-plus'
 import Logger from 'logplease'
 import { BoxKeyWithMeta, Keystore, KeyWithMeta, SignKeyWithMeta, WithType } from '@dao-xyz/orbit-db-keystore';
-import { PublicKeyEncryption } from '@dao-xyz/encryption-utils';
+import { PublicKeyEncryption } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned, SignatureWithKey } from '@dao-xyz/identity';
 
-import { DecryptedThing } from '@dao-xyz/encryption-utils';
+import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { TimeoutError, waitForAsync } from '@dao-xyz/time';
 import { PublicKey } from '@dao-xyz/identity';
 

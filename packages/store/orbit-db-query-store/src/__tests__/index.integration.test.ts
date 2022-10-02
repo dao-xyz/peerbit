@@ -5,7 +5,7 @@ import { field, variant } from "@dao-xyz/borsh";
 import { delay, waitFor } from "@dao-xyz/time";
 import { disconnectPeers, getConnectedPeers } from '@dao-xyz/peer-test-utils';
 import { CustomBinaryPayload } from '@dao-xyz/bpayload';
-import { decryptVerifyInto } from "@dao-xyz/encryption-utils";
+import { decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
 import { query, respond } from '../io.js';
 
 @variant("number")//@variant([1, 1])

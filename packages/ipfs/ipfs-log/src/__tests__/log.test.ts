@@ -11,7 +11,7 @@ import io from '@dao-xyz/io-utils'
 
 // For tiebreaker testing
 import { LastWriteWins } from '../log-sorting.js';
-import { DecryptedThing } from '@dao-xyz/encryption-utils';
+import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { serialize } from '@dao-xyz/borsh';
 import { Ed25519PublicKey, PublicKey } from '@dao-xyz/identity';
 const FirstWriteWins = (a, b) => LastWriteWins(a, b) * -1

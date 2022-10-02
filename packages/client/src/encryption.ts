@@ -1,4 +1,4 @@
-import { AccessError, PublicKeyEncryption } from '@dao-xyz/encryption-utils';
+import { AccessError, PublicKeyEncryption } from "@dao-xyz/peerbit-crypto";
 import { BoxKeyWithMeta, Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore';
 import { StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store';
 import { X25519PublicKey, Ed25519PublicKey } from 'sodium-plus';

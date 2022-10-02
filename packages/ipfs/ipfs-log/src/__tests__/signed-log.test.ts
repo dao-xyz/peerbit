@@ -6,7 +6,7 @@ import { Log } from '../log.js'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Ed25519PublicKey } from '@dao-xyz/identity'
-import { MaybeEncrypted } from '@dao-xyz/encryption-utils'
+import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto"
 
 // Test utils
 import {

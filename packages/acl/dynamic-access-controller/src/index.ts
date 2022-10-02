@@ -13,7 +13,7 @@ import { AccessStore } from './acl-db';
 import { Access } from './access';
 export * from './access';
 import isNode from 'is-node';
-import { MaybeEncrypted } from "@dao-xyz/encryption-utils";
+import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
 import { PublicKey } from "@dao-xyz/identity";
 import { RegionAccessController } from "@dao-xyz/orbit-db-trust-web";
 import { Log } from "@dao-xyz/ipfs-log";

@@ -1,6 +1,6 @@
 import { Payload } from '@dao-xyz/ipfs-log-entry';
 import io from '@dao-xyz/io-utils'
-import { MaybeEncrypted } from '@dao-xyz/encryption-utils';
+import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
 import { variant, field, vec } from '@dao-xyz/borsh';
 import { ReadWriteAccessController } from '@dao-xyz/orbit-db-query-store';
 import { PublicKey } from '@dao-xyz/identity';

@@ -5,7 +5,7 @@ import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
 import { waitFor } from '@dao-xyz/time';
 import { DocumentQueryRequest, FieldStringMatchQuery, QueryRequestV0, QueryResponseV0 } from "@dao-xyz/query-protocol";
-import { AccessError } from "@dao-xyz/encryption-utils";
+import { AccessError } from "@dao-xyz/peerbit-crypto";
 import { CustomBinaryPayload } from "@dao-xyz/bpayload";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
 import { query } from "@dao-xyz/orbit-db-query-store";

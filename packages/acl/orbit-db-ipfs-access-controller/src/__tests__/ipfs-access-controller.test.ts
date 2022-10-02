@@ -1,7 +1,7 @@
 import assert from 'assert'
 import rmrf from 'rimraf'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
-import { DecryptedThing } from '@dao-xyz/encryption-utils';
+import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { IPFSAccessController } from '../ipfs-access-controller'
 import { Ed25519PublicKey } from '@dao-xyz/identity';

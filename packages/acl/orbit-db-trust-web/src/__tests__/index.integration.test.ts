@@ -1,7 +1,7 @@
 import { getConnectedPeers, disconnectPeers } from '@dao-xyz/peer-test-utils'
 import { AllowAllAccessController, AnyRelation, createIdentityGraphStore, getFromByTo, getFromByToGenerator, RegionAccessController } from '..';
 import { waitFor } from '@dao-xyz/time';
-import { AccessError } from '@dao-xyz/encryption-utils';
+import { AccessError } from "@dao-xyz/peerbit-crypto";
 import { DocumentQueryRequest, QueryRequestV0, QueryResponseV0, ResultWithSource } from '@dao-xyz/query-protocol';
 import { query } from '@dao-xyz/orbit-db-query-store';
 import { Ed25519PublicKey, Secp256k1PublicKeyData } from '@dao-xyz/identity';

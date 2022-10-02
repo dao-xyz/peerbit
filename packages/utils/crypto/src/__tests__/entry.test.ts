@@ -39,40 +39,34 @@ describe('thing', function () {
         const decrypted = new DecryptedThing({
             data
         })
-        const encSender: PublicKeyEncryption = {
-            getEncryptionKey: () => Promise.resolve(senderKey),
-            getAnySecret: async (publicKeys: X25519PublicKey[]) => {
-                for (let i = 0; i < publicKeys.length; i++) {
-                    if (publicKeys[i].equals(await senderKey.publicKey())) {
-                        return {
-                            index: i,
-                            secretKey: senderKey
+        const config = (key: X25519SecretKey) => {
+            return {
+                getEncryptionKey: () => Promise.resolve(key),
+                getAnySecret: async (publicKeys: X25519PublicKey[]) => {
+                    for (let i = 0; i < publicKeys.length; i++) {
+                        if (publicKeys[i].equals(await key.publicKey())) {
+                            return {
+                                index: i,
+                                secretKey: key
+                            }
                         }
                     }
-                    if (publicKeys[i].equals(await recieverKey1.publicKey())) {
-                        return {
-                            index: i,
-                            secretKey: recieverKey1
-                        }
-                    }
-
-                    if (publicKeys[i].equals(await recieverKey2.publicKey())) {
-                        return {
-                            index: i,
-                            secretKey: recieverKey2
-                        }
-                    }
-
                 }
-            }
-        };
+            } as PublicKeyEncryption
+        }
+        const senderConfig = config(senderKey)
+        const reciever1Config = config(recieverKey1)
+        const reciever2Config = config(recieverKey2)
 
 
-
-        const encrypted = await decrypted.init(enc).encrypt(await recieverKey1.publicKey(), await recieverKey2.publicKey())
+        const encrypted = await decrypted.init(senderConfig).encrypt(await recieverKey1.publicKey(), await recieverKey2.publicKey())
         encrypted._decrypted = undefined;
-        const decryptedFromEncrypted = await encrypted.init(enc).decrypt();
-        expect(decryptedFromEncrypted._data).toStrictEqual(data)
+
+        const decryptedFromEncrypted1 = await encrypted.init(reciever1Config).decrypt();
+        expect(decryptedFromEncrypted1._data).toStrictEqual(data)
+
+        const decryptedFromEncrypted2 = await encrypted.init(reciever2Config).decrypt();
+        expect(decryptedFromEncrypted2._data).toStrictEqual(data)
     })
 });
 

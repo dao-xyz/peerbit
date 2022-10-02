@@ -36,8 +36,7 @@
     "test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit",
     "test:browser": "npm run build:tests && mocha-headless-chrome -t 360000 -f ./test/browser/index.html -a no-sandbox",
     "benchmark": "nyc  --require ts-node/register benchmark-runner -r -b --baselineLimit 1000",
-    "benchmark:stress": "benchmark-runner -r --grep stress",
-    "examples": "http-server examples/browser"
+    "benchmark:stress": "benchmark-runner -r --grep stress"
   },
   "localMaintainers": [
     "dao.xyz"
