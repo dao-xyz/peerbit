@@ -1,65 +1,41 @@
 
-import { variant, field } from '@dao-xyz/borsh';
-import { DecryptedThing, X25519PublicKey, PublicKeyEncryption, X25519SecretKey } from '../index.js';
-import { arraysCompare, U8IntArraySerializer } from '@dao-xyz/borsh-utils';
+import { DecryptedThing, X25519PublicKey, PublicKeyEncryptionResolver, Ed25519PrivateKey, verifySignatureEd25519, Ed25519Keypair, X25519Keypair } from '../index.js';
 import sodium from 'libsodium-wrappers';
 
-@variant(0)
-export class EncryptedMessage {
+describe('x25519', function () {
 
-    @field(U8IntArraySerializer)
-    nonce: Uint8Array
-
-    @field(U8IntArraySerializer)
-    cipher: Uint8Array
-
-    constructor(props?: EncryptedMessage) {
-        if (props) {
-            this.nonce = props.nonce;
-            this.cipher = props.cipher;
-        }
-    }
-}
-
-describe('thing', function () {
-
-    it('encrypt', async () => {
-        await sodium.ready;
-        const data = new Uint8Array([1, 2, 3]);
-        const senderKey = new X25519SecretKey({
-            secretKey: (await sodium.crypto_box_keypair()).privateKey
-        })
-        const recieverKey1 = new X25519SecretKey({
-            secretKey: (await sodium.crypto_box_keypair()).privateKey
-        })
-
-        const recieverKey2 = new X25519SecretKey({
-            secretKey: (await sodium.crypto_box_keypair()).privateKey
-        })
-        const decrypted = new DecryptedThing({
-            data
-        })
-        const config = (key: X25519SecretKey) => {
-            return {
-                getEncryptionKey: () => Promise.resolve(key),
-                getAnySecret: async (publicKeys: X25519PublicKey[]) => {
-                    for (let i = 0; i < publicKeys.length; i++) {
-                        if (publicKeys[i].equals(await key.publicKey())) {
-                            return {
-                                index: i,
-                                secretKey: key
-                            }
+    const config = (keypair: (Ed25519Keypair | X25519Keypair)) => {
+        return {
+            getEncryptionKeypair: () => Promise.resolve(keypair),
+            getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
+                const pk = keypair.publicKey instanceof X25519PublicKey ? keypair.publicKey : await X25519PublicKey.from(keypair.publicKey);
+                for (let i = 0; i < publicKeys.length; i++) {
+                    if (publicKeys[i].equals(pk)) {
+                        return {
+                            index: i,
+                            keypair
                         }
                     }
                 }
-            } as PublicKeyEncryption
-        }
+            }
+        } as PublicKeyEncryptionResolver
+    }
+    it('encrypt', async () => {
+        await sodium.ready;
+        const senderKey = await X25519Keypair.create();
+        const recieverKey1 = await X25519Keypair.create();
+        const recieverKey2 = await X25519Keypair.create();
+
+        const data = new Uint8Array([1, 2, 3]);
+        const decrypted = new DecryptedThing({
+            data
+        })
+
         const senderConfig = config(senderKey)
         const reciever1Config = config(recieverKey1)
         const reciever2Config = config(recieverKey2)
 
-
-        const encrypted = await decrypted.init(senderConfig).encrypt(await recieverKey1.publicKey(), await recieverKey2.publicKey())
+        const encrypted = await decrypted.init(senderConfig).encrypt(recieverKey1.publicKey, recieverKey2.publicKey)
         encrypted._decrypted = undefined;
 
         const decryptedFromEncrypted1 = await encrypted.init(reciever1Config).decrypt();
@@ -68,5 +44,46 @@ describe('thing', function () {
         const decryptedFromEncrypted2 = await encrypted.init(reciever2Config).decrypt();
         expect(decryptedFromEncrypted2._data).toStrictEqual(data)
     })
+
+    it('it can use ed25519 for encryption', async () => {
+        const senderKey = await Ed25519Keypair.create();
+        const recieverKey1 = await Ed25519Keypair.create();
+        const recieverKey2 = await Ed25519Keypair.create();
+
+        const senderConfig = config(senderKey)
+        const reciever1Config = config(recieverKey1)
+        const reciever2Config = config(recieverKey2)
+
+        const data = new Uint8Array([1, 2, 3]);
+        const decrypted = new DecryptedThing({
+            data
+        })
+
+        const encrypted = await decrypted.init(senderConfig).encrypt(recieverKey1.publicKey, recieverKey2.publicKey)
+        encrypted._decrypted = undefined;
+
+        const decryptedFromEncrypted1 = await encrypted.init(reciever1Config).decrypt();
+        expect(decryptedFromEncrypted1._data).toStrictEqual(data)
+
+        const decryptedFromEncrypted2 = await encrypted.init(reciever2Config).decrypt();
+        expect(decryptedFromEncrypted2._data).toStrictEqual(data)
+
+    })
 });
 
+
+
+
+describe('ed25519', function () {
+
+    it('can sign verify', async () => {
+        await sodium.ready;
+        const data = new Uint8Array([1, 2, 3]);
+        const senderKey = await Ed25519Keypair.create();
+        const signature = await senderKey.sign(data);
+        expect(signature.publicKey.publicKey).toEqual(senderKey.publicKey.publicKey);
+        expect(signature.signature).toHaveLength(64); // detached
+        const verify = await verifySignatureEd25519(signature.signature, signature.publicKey, data);
+        expect(verify)
+    })
+});

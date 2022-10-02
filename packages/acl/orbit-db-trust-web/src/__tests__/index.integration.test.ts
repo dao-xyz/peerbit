@@ -4,7 +4,7 @@ import { waitFor } from '@dao-xyz/time';
 import { AccessError } from "@dao-xyz/peerbit-crypto";
 import { DocumentQueryRequest, QueryRequestV0, QueryResponseV0, ResultWithSource } from '@dao-xyz/query-protocol';
 import { query } from '@dao-xyz/orbit-db-query-store';
-import { Ed25519PublicKey, Secp256k1PublicKeyData } from '@dao-xyz/identity';
+import { Ed25519PublicKey, Secp256k1PublicKey } from '@dao-xyz/peerbit-crypto';
 import { SodiumPlus } from 'sodium-plus';
 import { Wallet } from '@ethersproject/wallet'
 
@@ -21,7 +21,7 @@ describe('identity-graph', () => {
             publicKey: await crypto.crypto_sign_publickey((await crypto.crypto_sign_keypair()))
         })
 
-        const b = new Secp256k1PublicKeyData({
+        const b = new Secp256k1PublicKey({
             address: await Wallet.createRandom().getAddress()
         })
 
@@ -158,11 +158,11 @@ describe('RegionAccessController', () => {
         await peer.orbitDB.open(l0a);
 
         expect(l0a.trustGraph.put(new AnyRelation({
-            to: new Secp256k1PublicKeyData({
+            to: new Secp256k1PublicKey({
                 address: await Wallet.createRandom().getAddress()
             })
             ,
-            from: new Secp256k1PublicKeyData({
+            from: new Secp256k1PublicKey({
                 address: await Wallet.createRandom().getAddress()
             })
         }))).rejects.toBeInstanceOf(AccessError);

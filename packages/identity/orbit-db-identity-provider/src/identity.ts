@@ -4,8 +4,7 @@ import { isDefined } from "./is-defined";
 import { variant, field, serialize, vec, option } from '@dao-xyz/borsh';
 import { createHash } from "crypto";
 import { bufferSerializer, U8IntArraySerializer, arraysEqual } from "@dao-xyz/borsh-utils";
-import { Ed25519PublicKey } from "sodium-plus";
-import { PublicKey } from "@dao-xyz/identity";
+import { PublicKey } from "@dao-xyz/peerbit-crypto";
 
 @variant(0)
 export class Signatures {

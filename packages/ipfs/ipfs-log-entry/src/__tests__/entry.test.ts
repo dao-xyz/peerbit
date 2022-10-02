@@ -4,10 +4,8 @@ import fs from 'fs-extra'
 import { Entry, Payload } from '../entry.js';
 import { BoxKeyWithMeta, Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { deserialize, serialize } from '@dao-xyz/borsh';
-import { SodiumPlus, X25519PublicKey } from 'sodium-plus';
-import { Ed25519PublicKey } from '@dao-xyz/identity';
-const _crypto = SodiumPlus.auto();
-
+import { Ed25519PublicKey, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
+import sodium from 'libsodium-wrappers';
 // Test utils
 
 import {
@@ -25,9 +23,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
     let keystore: Keystore, signingKeystore: Keystore, signKey: SignKeyWithMeta
-    let crypto: SodiumPlus;
 
     beforeAll(async () => {
+      await sodium.ready;
+
       await fs.copy(identityKeyFixtures(__dirname), identityKeysPath)
       await fs.copy(signingKeyFixtures(__dirname), signingKeysPath)
 
@@ -37,8 +36,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
       signKey = await signingKeystore.getKeyByPath(new Uint8Array([0]), SignKeyWithMeta)
-      crypto = await _crypto;
-      const x = 123;
     })
 
     afterAll(async () => {
@@ -117,13 +114,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
               getEncryptionKey: () => Promise.resolve(senderKey.secretKey),
               getAnySecret: async (publicKeys: X25519PublicKey[]) => {
                 for (let i = 0; i < publicKeys.length; i++) {
-                  if (Buffer.compare(publicKeys[i].getBuffer(), senderKey.secretKey.getBuffer()) === 0) {
+                  if (publicKeys[i].equals(await senderKey.secretKey.publicKey)) {
                     return {
                       index: i,
                       secretKey: senderKey.secretKey
                     }
                   }
-                  if (Buffer.compare(publicKeys[i].getBuffer(), receiverKey.secretKey.getBuffer()) === 0) {
+                  if (publicKeys[i].equals(await receiverKey.secretKey.publicKey)) {
                     return {
                       index: i,
                       secretKey: receiverKey.secretKey
@@ -366,7 +363,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const final = await Entry.fromMultihash<string>(ipfs, entry2.hash)
         final.init(entry2);
         assert(final.equals(entry2));
-        expect(final.gid).toEqual((await crypto.crypto_generichash('A')).toString('base64'))
+        expect(final.gid).toEqual((await sodium.crypto_generichash(32, 'A')))
         expect(final.payload.value).toEqual(payload2)
         expect(final.next.length).toEqual(1)
         expect(final.next[0]).toEqual(entry1.hash)

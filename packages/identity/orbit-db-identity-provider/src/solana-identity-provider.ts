@@ -1,7 +1,7 @@
 import { Keypair, PublicKey as SPublicKey } from '@solana/web3.js';
 import nacl from "tweetnacl";
 import { IdentityProvider } from './identity-provider-interface';
-import { Ed25519PublicKey, verifySignatureEd25519 } from '@dao-xyz/identity';
+import { Ed25519PublicKey, verifySignatureEd25519 } from '@dao-xyz/peerbit-crypto';
 import { Identity } from './identity';
 
 type Signer = (data: Uint8Array) => Uint8Array;

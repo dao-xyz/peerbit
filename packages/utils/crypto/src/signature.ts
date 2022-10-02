@@ -2,7 +2,8 @@ import { deserialize, Constructor, variant, field, option, serialize } from "@da
 import { arraysEqual, U8IntArraySerializer } from "@dao-xyz/borsh-utils";
 import { SignKey } from "./index.js";
 import { Ed25519PublicKey, verifySignatureEd25519 } from './ed25519';
-import { Secp256k1PublicKeyData, verifySignatureSecp256k1 } from './sepc256k1.js';
+import { Secp256k1PublicKey, verifySignatureSecp256k1 } from './sepc256k1.js';
+import { Signer } from "./signer.js";
 
 @variant(0)
 export class SignatureWithKey {
@@ -85,8 +86,8 @@ export class MaybeSigned<T>  {
      * In place
      * @param signer 
      */
-    async sign(signer: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: SignKey }>): Promise<MaybeSigned<T>> {
-        const signatureResult = await signer(this.data)
+    async sign(signer: Signer): Promise<MaybeSigned<T>> {
+        const signatureResult = await signer.sign(this.data)
         this.signature = new SignatureWithKey({
             publicKey: signatureResult.publicKey,
             signature: signatureResult.signature
@@ -104,7 +105,7 @@ export const verify = async (signature: Uint8Array, publicKey: SignKey, data: Ui
     if (publicKey instanceof Ed25519PublicKey) {
         return await verifySignatureEd25519(signature, publicKey, data)
     }
-    else if (publicKey instanceof Secp256k1PublicKeyData) {
+    else if (publicKey instanceof Secp256k1PublicKey) {
         return await verifySignatureSecp256k1(signature, publicKey, data)
     }
     return false

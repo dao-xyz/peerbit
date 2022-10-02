@@ -18,8 +18,8 @@ import { X25519PublicKey } from 'sodium-plus'
 import LRU from 'lru-cache';
 import { DirectChannel } from '@dao-xyz/ipfs-pubsub-direct-channel'
 import { encryptionWithRequestKey, replicationTopicEncryptionWithRequestKey } from './encryption.js'
-import { Ed25519PublicKey, PublicKey } from '@dao-xyz/identity';
-import { MaybeSigned } from '@dao-xyz/identity';
+import { Ed25519PublicKey, PublicKey } from '@dao-xyz/peerbit-crypto';
+import { MaybeSigned } from '@dao-xyz/peerbit-crypto';
 import { WAIT_FOR_PEERS_TIME, exchangePeerInfo, ReplicatorInfo, PeerInfoWithMeta, RequestReplicatorInfo, requestPeerInfo } from './exchange-replication.js'
 import { createHash } from 'crypto'
 import isNode from 'is-node';

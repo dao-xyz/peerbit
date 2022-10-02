@@ -5,7 +5,7 @@ import { CanAppendAccessController } from '../default-access-controller.js'
 import { Log } from '../log.js'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
-import { Ed25519PublicKey } from '@dao-xyz/identity'
+import { Ed25519PublicKey } from '@dao-xyz/peerbit-crypto'
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto"
 
 // Test utils

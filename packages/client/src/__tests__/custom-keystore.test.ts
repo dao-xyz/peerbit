@@ -2,7 +2,7 @@
 import assert from 'assert'
 import rmrf from 'rimraf'
 import path from 'path'
-import { Ed25519PublicKey } from '@dao-xyz/identity'
+import { Ed25519PublicKey } from '@dao-xyz/peerbit-crypto'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { OrbitDB } from '../orbit-db'
 /* const Identities = require('@dao-xyz/orbit-db-identity-provider') */

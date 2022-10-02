@@ -2,7 +2,7 @@ import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto"
 import { Entry, Payload } from "@dao-xyz/ipfs-log-entry"
 import { AccessController, Address, IInitializationOptions, save, Store, StoreLike } from "@dao-xyz/orbit-db-store"
 import { variant, field } from '@dao-xyz/borsh';
-import { Ed25519PublicKey } from "@dao-xyz/identity";
+import { Ed25519PublicKey } from "@dao-xyz/peerbit-crypto";
 import { Log } from "@dao-xyz/ipfs-log";
 import Cache from '@dao-xyz/orbit-db-cache';
 import { EventStore, Operation } from "./stores";

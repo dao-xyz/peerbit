@@ -2,7 +2,7 @@ import { variant, field, vec, option, serialize } from '@dao-xyz/borsh';
 import { delay } from '@dao-xyz/time';
 import { Message } from './message.js';
 import isNode from 'is-node';
-import { MaybeSigned, PublicKey } from '@dao-xyz/identity';
+import { MaybeSigned, PublicKey } from '@dao-xyz/peerbit-crypto';
 import { DecryptedThing, PublicKeyEncryption } from "@dao-xyz/peerbit-crypto";
 import { Address, Store, StoreLike } from '@dao-xyz/orbit-db-store';
 import { OrbitDB } from './orbit-db.js';

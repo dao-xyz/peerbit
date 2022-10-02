@@ -2,7 +2,7 @@ import { Identity } from './identity';
 import { IdentityProvider } from './identity-provider-interface'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { Ed25519PublicKey } from 'sodium-plus';
-import { verifySignatureEd25519 } from '@dao-xyz/identity';
+import { verifySignatureEd25519 } from '@dao-xyz/peerbit-crypto';
 
 export class OrbitDBIdentityProvider extends IdentityProvider {
   _keystore: Keystore;

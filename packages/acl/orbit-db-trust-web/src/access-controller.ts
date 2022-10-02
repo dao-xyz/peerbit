@@ -4,7 +4,7 @@ import { OrbitDB } from "@dao-xyz/orbit-db";
 import { Address, IInitializationOptions, load, save, StoreLike } from "@dao-xyz/orbit-db-store";
 import { Entry, Payload } from "@dao-xyz/ipfs-log-entry";
 import { createHash } from "crypto";
-import { PublicKey } from "@dao-xyz/identity";
+import { PublicKey } from "@dao-xyz/peerbit-crypto";
 import isNode from 'is-node';
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from 'ipfs-core-types';

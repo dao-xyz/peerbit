@@ -42,8 +42,7 @@
     "@dao-xyz-types/orbit-db": "^0.0.39",
     "ipfs": "^0.64.2",
     "@dao-xyz/time": "^0.0.11",
-    "@ethersproject/wallet": "^5.7.0",
-    "sodium-plus": "^0.9.0"
+    "@ethersproject/wallet": "^5.7.0"
   },
   "gitHead": "d10b89ef1a120a58e1a7e92aadcc2bb536a37e3e"
 }

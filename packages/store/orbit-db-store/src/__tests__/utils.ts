@@ -3,7 +3,7 @@ import { Entry, Payload } from "@dao-xyz/ipfs-log-entry"
 import { variant } from '@dao-xyz/borsh';
 import { Log } from "@dao-xyz/ipfs-log";
 import { AccessController } from "../access-controller";
-import { Ed25519PublicKey } from '@dao-xyz/identity';
+import { Ed25519PublicKey } from '@dao-xyz/peerbit-crypto';
 
 @variant([0, 254])
 export class SimpleAccessController<T> extends AccessController<T>

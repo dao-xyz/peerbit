@@ -1,5 +1,4 @@
 import fs from 'fs-extra';
-import { Ed25519PublicKey } from "sodium-plus"
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { Identities } from "../identities"
 import { Identity, Signatures } from "../identity"

@@ -7,7 +7,7 @@ import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { EventStore } from "./utils/stores"
 import { SimpleAccessController } from "./utils/access"
 import { Level } from "level"
-import { Ed25519PublicKey } from "@dao-xyz/identity"
+import { Ed25519PublicKey } from "@dao-xyz/peerbit-crypto"
 
 
 // Include test utilities

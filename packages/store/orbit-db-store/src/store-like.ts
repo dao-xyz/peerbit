@@ -5,7 +5,7 @@ import EventEmitter from "events";
 import { Log } from "@dao-xyz/ipfs-log";
 import Cache from '@dao-xyz/orbit-db-cache';
 import { Entry } from "@dao-xyz/ipfs-log-entry";
-import { PublicKey } from "@dao-xyz/identity";
+import { PublicKey } from "@dao-xyz/peerbit-crypto";
 
 export interface Initiable<T> {
     init?(ipfs: IPFS, key: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<any>): Promise<Initiable<T>>;

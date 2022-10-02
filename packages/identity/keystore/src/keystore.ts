@@ -2,10 +2,12 @@ const fs = (typeof window === 'object' || typeof self === 'object') ? null : eva
 import { Level } from 'level';
 import LRU from 'lru-cache';
 import { variant, field, serialize, deserialize, option, Constructor } from '@dao-xyz/borsh';
-import { U8IntArraySerializer, bufferSerializer } from '@dao-xyz/borsh-utils';
-/* import { SodiumPlus, X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519SecretKey } from 'sodium-plus'; */
+import { U8IntArraySerializer, bufferSerializer, arraysEqual } from '@dao-xyz/borsh-utils';
+import { X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519PrivateKey, Keypair } from '@dao-xyz/peerbit-crypto';
 import { waitFor } from '@dao-xyz/time';
 import { createHash, Sign } from 'crypto';
+import sodium from 'libsodium-wrappers';
+
 export interface Type<T> extends Function {
   new(...args: any[]): T;
 }
@@ -13,7 +15,7 @@ const DEFAULT_KEY_GROUP = '_';
 const getGroupKey = (group: string) => group === DEFAULT_KEY_GROUP ? DEFAULT_KEY_GROUP : createHash('sha1').update(group).digest('base64')
 const getIdKey = (id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519PublicKey): string => {
   if (id instanceof X25519PublicKey || id instanceof Ed25519PublicKey) {
-    return id.getBuffer().toString('base64');
+    return id.hashCode()
   }
 
   if (typeof id !== 'string') {
@@ -25,7 +27,7 @@ const getIdKey = (id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519Pu
 const isId = (id: string) => id.indexOf('/') !== -1
 
 const idFromKey = async (key: X25519PublicKey | Ed25519PublicKey): Promise<string> => {
-  return key.toString('base64')
+  return key.hashCode()
 }
 
 /* import { ready, crypto_sign, crypto_sign_keypair, crypto_sign_verify_detached } from 'libsodium-wrappers';
@@ -40,7 +42,6 @@ export const createStore = (path = './keystore'): Level => {
 
 const verifiedCache: { get(string: string): { publicKey: Ed25519PublicKey, data: Uint8Array }, set(string: string, value: { publicKey: Ed25519PublicKey, data: Uint8Array }) } = new LRU({ max: 1000 })
 
-const _crypto = SodiumPlus.auto();
 
 const NONCE_LENGTH = 24;
 
@@ -80,13 +81,18 @@ export class KeyWithMeta {
   @field({ type: 'u64' })
   timestamp: bigint
 
+  @field({ type: Keypair })
+  keypair: Keypair
+
   constructor(props?: {
+    timestamp: bigint,
     group: string,
-    timestamp: bigint
+    keypair: Keypair
   }) {
     if (props) {
-      this.group = props.group
       this.timestamp = props.timestamp;
+      this.group = props.group
+      this.keypair = props.keypair;
     }
   }
 
@@ -103,19 +109,19 @@ export class KeyWithMeta {
   }
 }
 
-
+/* 
 @variant(0)
 export class SignKeyWithMeta extends KeyWithMeta {
 
-  @field(bufferSerializer(Ed25519PublicKey))
+  @field({ type: Ed25519PublicKey })
   publicKey: Ed25519PublicKey
 
-  @field({ type: option(bufferSerializer(Ed25519SecretKey)) })
-  secretKey?: Ed25519SecretKey
+  @field({ type: option(Ed25519PrivateKey) })
+  secretKey?: Ed25519PrivateKey
 
   constructor(props?: {
     publicKey: Ed25519PublicKey,
-    secretKey?: Ed25519SecretKey,
+    secretKey?: Ed25519PrivateKey,
     group: string,
     timestamp: bigint
   }) {
@@ -135,7 +141,7 @@ export class SignKeyWithMeta extends KeyWithMeta {
       if (!super.equals(other, ignoreMissingSecret)) {
         return false;
       }
-      if (Buffer.compare(this.publicKey.getBuffer(), other.publicKey.getBuffer()) !== 0) {
+      if (!this.publicKey.equals(other.publicKey)) {
         return false;
       }
 
@@ -145,7 +151,7 @@ export class SignKeyWithMeta extends KeyWithMeta {
       if (!this.secretKey && !other.secretKey) {
         return true
       }
-      return Buffer.compare(this.secretKey.getBuffer(), other.secretKey.getBuffer()) === 0
+      return this.secretKey.equals(other.secretKey)
 
     }
     return false;
@@ -160,17 +166,17 @@ export class SignKeyWithMeta extends KeyWithMeta {
     })
   }
 
-}
+} */
 
-
+/* 
 @variant(1)
 export class BoxKeyWithMeta extends KeyWithMeta {
 
 
-  @field(bufferSerializer(X25519PublicKey))
+  @field({ type: X25519PublicKey })
   publicKey: X25519PublicKey
 
-  @field({ type: option(bufferSerializer(X25519SecretKey)) })
+  @field({ type: option(X25519SecretKey) })
   secretKey?: X25519SecretKey
 
   constructor(props?: {
@@ -195,7 +201,7 @@ export class BoxKeyWithMeta extends KeyWithMeta {
       if (!super.equals(other, ignoreMissingSecret)) {
         return false;
       }
-      if (Buffer.compare(this.publicKey.getBuffer(), other.publicKey.getBuffer()) !== 0) {
+      if (!this.publicKey.equals(other.publicKey)) {
         return false;
       }
 
@@ -205,7 +211,7 @@ export class BoxKeyWithMeta extends KeyWithMeta {
       if (!this.secretKey && !other.secretKey) {
         return true
       }
-      return Buffer.compare(this.secretKey.getBuffer(), other.secretKey.getBuffer()) === 0
+      return this.secretKey.equals(other.secretKey)
 
     }
     return false;
@@ -220,7 +226,7 @@ export class BoxKeyWithMeta extends KeyWithMeta {
     })
   }
 }
-
+ */
 
 
 
@@ -299,37 +305,36 @@ export class Keystore {
   }
 
 
-  async createKey<T extends KeyWithMeta>(id?: string | Buffer | Uint8Array, type: WithType<T> = SignKeyWithMeta as any, group?: string, options: { overwrite: boolean } = { overwrite: false }): Promise<T> { // TODO fix types
+  async createKey(id: string | Buffer | Uint8Array, keypair: Keypair, group?: string, options: { overwrite: boolean } = { overwrite: false }): Promise<KeyWithMeta> { // TODO fix types
 
-    const crypto = await _crypto;
-    let key: { secretKey: X25519SecretKey, publicKey: X25519PublicKey } | { secretKey: Ed25519SecretKey, publicKey: Ed25519PublicKey } = undefined;
+    await sodium.ready;
+    let key: { secretKey: X25519SecretKey, publicKey: X25519PublicKey } | { secretKey: Ed25519PrivateKey, publicKey: Ed25519PublicKey } = undefined;
+    /* 
+        if (type as any === BoxKeyWithMeta) { // TODO fix types
+          let kp = await sodium.crypto_box_keypair();
+          key = {
+            secretKey: new X25519SecretKey({ secretKey: kp.privateKey }),
+            publicKey: new X25519PublicKey({ publicKey: kp.publicKey }),
+          }
+        }
+        else if (type as any === SignKeyWithMeta) { // TODO fix types
+          let kp = await sodium.crypto_sign_keypair()
+          key = {
+            secretKey: new Ed25519PrivateKey({ secretKey: kp.privateKey }),
+            publicKey: new Ed25519PublicKey({ publicKey: kp.publicKey }),
+          }
+        }
+        else {
+          throw new Error("Unuspported")
+        } */
+    const keyWithMeta = new KeyWithMeta({
 
-    if (type as any === BoxKeyWithMeta) { // TODO fix types
-      let kp = await crypto.crypto_box_keypair();
-      key = {
-        secretKey: await crypto.crypto_box_secretkey(kp),
-        publicKey: await crypto.crypto_box_publickey(kp)
-      }
-    }
-    else if (type as any === SignKeyWithMeta) { // TODO fix types
-      let kp = await crypto.crypto_sign_keypair()
-      key = {
-        secretKey: await crypto.crypto_sign_secretkey(kp),
-        publicKey: await crypto.crypto_sign_publickey(kp)
-      }
-    }
-    else {
-      throw new Error("Unuspported")
-    }
-    const keyWithMeta: T = new type({
-      secretKey: key.secretKey,
-      publicKey: key.publicKey,
-      timestamp: +new Date,
-      group: group || DEFAULT_KEY_GROUP
-    }) as T;
+      timestamp: BigInt(+new Date),
+      group: group || DEFAULT_KEY_GROUP,
+      keypair
+    });
 
-
-    await this.saveKey<T>(keyWithMeta, id, options)
+    await this.saveKey(keyWithMeta, id, options)
     return keyWithMeta;
 
   }
@@ -370,7 +375,7 @@ export class Keystore {
     }
 
     const ser = serialize(key);
-    const publicKeyString = key.publicKey.toString('base64');
+    const publicKeyString = key.publicKey.hashCode();
     await this.groupStore.put(path, Buffer.from(ser), { valueEncoding: 'view' }) // TODO fix types, are just wrong 
     await this.keyStore.put(publicKeyString, Buffer.from(ser), { valueEncoding: 'view' }) // TODO fix types, are just wrong 
     this._cache.set(path, key)
@@ -378,7 +383,7 @@ export class Keystore {
     return key as any as T; // TODO fix types
   }
 
-  async getKeyByPath<T extends KeyWithMeta>(id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519PublicKey, type: WithType<T> = SignKeyWithMeta as any, group = DEFAULT_KEY_GROUP): Promise<T> { // TODO fix types of type
+  async getKeyByPath(id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519PublicKey, type: WithType<T> = SignKeyWithMeta as any, group = DEFAULT_KEY_GROUP): Promise<KeyWithMeta> { // TODO fix types of type
     if (!id) {
       throw new Error('id needed to get a key')
     }
@@ -400,7 +405,7 @@ export class Keystore {
     return this.getKeyById(storeId)
   }
 
-  async getKeyById<T extends KeyWithMeta>(id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519PublicKey): Promise<T> {
+  async getKeyById(id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519PublicKey): Promise<KeyWithMeta> {
 
     id = getIdKey(id);
 
@@ -429,7 +434,7 @@ export class Keystore {
       this._cache.set(id, loadedKey)
     }
 
-    return loadedKey as any as T; // TODO fix types, we make assumptions here
+    return loadedKey; // TODO fix types, we make assumptions here
   }
 
   async getKeys<T extends KeyWithMeta>(group: string, type?: WithType<T>): Promise<T[]> {
@@ -468,7 +473,7 @@ export class Keystore {
     }
   }
 
-  static async sign(arrayLike: string | Uint8Array | Buffer, key: SignKeyWithMeta | Ed25519SecretKey, signHashed: boolean = false): Promise<Uint8Array> {
+  /* static async sign(arrayLike: string | Uint8Array | Buffer, key: SignKeyWithMeta | Ed25519PrivateKey, signHashed: boolean = false): Promise<Uint8Array> {
     key = key instanceof SignKeyWithMeta ? key.secretKey : key;
     if (!key) {
       throw new Error('No signing key given')
@@ -489,20 +494,22 @@ export class Keystore {
       data = arrayLike;
     }
 
-    /* await ready;
-  const keypair = await crypto_sign_keypair();
-    const signature2 = await crypto_sign(data, keypair.privateKey);
-       const verified2 = await crypto_sign_verify_detached(signature2, data, keypair.publicKey);
-   */
 
-    const crypto = await _crypto;
-    const signature = await new Uint8Array(await crypto.crypto_sign(signHashed ? await crypto.crypto_generichash(Buffer.from(data)) : Buffer.from(data), key));
+    await sodium.ready;
+    const signature = await new Uint8Array(await sodium.crypto_sign_detached(signHashed ? await sodium.crypto_generichash(32, data) : data, key.secretKey));
     //const verified = await crypto.crypto_sign_verify_detached(data, await crypto.crypto_sign_publickey(key), Buffer.from(signature));
 
     return signature
-  }
+  } */
 
-  async encrypt(arrayLike: string | Uint8Array | Buffer, key: BoxKeyWithMeta, reciever: X25519PublicKey): Promise<Uint8Array> {
+
+  /* await ready;
+const keypair = await crypto_sign_keypair();
+  const signature2 = await crypto_sign(data, keypair.privateKey);
+     const verified2 = await crypto_sign_verify_detached(signature2, data, keypair.publicKey);
+ */
+
+  /* async encrypt(arrayLike: string | Uint8Array | Buffer, key: BoxKeyWithMeta, reciever: X25519PublicKey): Promise<Uint8Array> {
     if (!key) {
       throw new Error('No signing key given')
     }
@@ -524,94 +531,78 @@ export class Keystore {
     }
 
     let encrypted = undefined;
-    const crypto = await _crypto;
-    const nonce = new Uint8Array(await crypto.randombytes_buf(NONCE_LENGTH));
+    await sodium.ready;
+    const nonce = new Uint8Array(await sodium.randombytes_buf(NONCE_LENGTH));
     reciever = reciever instanceof BoxKeyWithMeta ? reciever.publicKey : reciever;
-    encrypted = new Uint8Array(await crypto.crypto_box(Buffer.from(data), Buffer.from(nonce), key.secretKey, reciever))
+    encrypted = new Uint8Array(await sodium.crypto_box_easy(data, nonce, reciever.publicKey, key.secretKey.secretKey))
 
-    /* }
-    else {
-      encrypted = new Uint8Array(await crypto.crypto_secretbox(Buffer.from(data), Buffer.from(nonce), key.secretKey))
-      ret.push(encrypted)
-    } */
     return serialize(new EncryptedMessage({
       cipher: encrypted,
       nonce
     }))
-  }
+  } */
 
-  async decrypt(bytes: Uint8Array, key: BoxKeyWithMeta, sender: X25519PublicKey): Promise<Uint8Array> {
+  /*   async decrypt(bytes: Uint8Array, key: BoxKeyWithMeta, sender: X25519PublicKey): Promise<Uint8Array> {
+   */
 
-    const crypto = await _crypto;
+  /* if (sender) { */
+  // Nonce??
+  /* const nonce = bytes.slice(0, NONCE_LENGTH)
+  const cipher = bytes.slice(NONCE_LENGTH, bytes.length - X25519PublicKey_LENGTH * 2)
+  const sender = bytes.slice(bytes.length - X25519PublicKey_LENGTH * 2, bytes.length - X25519PublicKey_LENGTH)
+  const reciever = bytes.slice(bytes.length - X25519PublicKey_LENGTH, bytes.length) */
+  /* await sodium.ready;
 
-    /* if (sender) { */
-    // Nonce??
-    /* const nonce = bytes.slice(0, NONCE_LENGTH)
-    const cipher = bytes.slice(NONCE_LENGTH, bytes.length - X25519PublicKey_LENGTH * 2)
-    const sender = bytes.slice(bytes.length - X25519PublicKey_LENGTH * 2, bytes.length - X25519PublicKey_LENGTH)
-    const reciever = bytes.slice(bytes.length - X25519PublicKey_LENGTH, bytes.length) */
-
-    const msg = deserialize(bytes, EncryptedMessage);
-    return new Uint8Array(await crypto.crypto_box_open(Buffer.from(msg.cipher), Buffer.from(msg.nonce), key.secretKey, sender))
-    /* }
-    else {
-      const cipher = bytes.slice(NONCE_LENGTH, bytes.length)
-      return new Uint8Array(await crypto.crypto_secretbox_open(Buffer.from(cipher), Buffer.from(nonce), key.secretKey))
-    } */
-  }
+  const msg = deserialize(bytes, EncryptedMessage);
+  return new Uint8Array(await sodium.crypto_box_open_easy(msg.cipher, msg.nonce, sender.publicKey, key.secretKey.secretKey)) */
+  /* }
+  else {
+    const cipher = bytes.slice(NONCE_LENGTH, bytes.length)
+    return new Uint8Array(await crypto.crypto_secretbox_open(Buffer.from(cipher), Buffer.from(nonce), key.secretKey))
+  } */
+  /* } */
 
   /*   async verify(signature: Uint8Array, publicKey: Ed25519PublicKey, data: Uint8Array, signedHash = false) {
       return Keystore.verify(signature, publicKey, data, signedHash)
     } */
 
-  static async verify(signature: Uint8Array, publicKey: Ed25519PublicKey, data: Uint8Array, signedHash = false) {
-    const signatureString = Buffer.from(signature).toString()
-    const cached = verifiedCache.get(signatureString)
-    let res = false
-    if (!cached) {
-      const crypto = await _crypto;
-      /*       const signedData = await crypto.crypto_sign_open(Buffer.from(signature), publicKey);
-       */
-      /*   const verified = await crypto.crypto_sign_verify_detached(signedData, publicKey, Buffer.from(signature));
-       */
-      /*       const open = await crypto.crypto_sign_open(Buffer.from(signature), await crypto.crypto_sign_publickey(key));
-       */
+  /*  static async verify(signature: Uint8Array, publicKey: Ed25519PublicKey, data: Uint8Array, signedHash = false) {
+     const signatureString = Buffer.from(signature).toString()
+     const cached = verifiedCache.get(signatureString)
+     let res = false
+     if (!cached) {
+       await sodium.ready;
+ 
+ 
+       try {
+         const signedData = await Keystore.open(signature, publicKey);
+         const verified = Buffer.compare(signedData, signedHash ? await sodium.crypto_generichash(32, data) : data) === 0;
+         res = verified
+         if (verified) {
+           verifiedCache.set(signatureString, { publicKey, data })
+         }
+       } catch (error) {
+         return false;
+       }
+ 
+     } else {
+       const compare = (cached: Uint8Array, data: Uint8Array) => {
+         return Buffer.isBuffer(data) ? Buffer.compare(cached, data) === 0 : arraysEqual(cached, data)
+       }
+       res = cached.publicKey.equals(publicKey) && compare(cached.data, data)
+     }
+     return res
+   } */
 
-      try {
-        const signedData = await Keystore.open(signature, publicKey);
-        const verified = Buffer.compare(signedData, signedHash ? await crypto.crypto_generichash(Buffer.from(data)) : Buffer.from(data)) === 0;
-        res = verified
-        if (verified) {
-          verifiedCache.set(signatureString, { publicKey, data })
-        }
-      } catch (error) {
-        return false;
-      }
-
-    } else {
-      const compare = (cached: Uint8Array, data: Uint8Array) => {
-        return Buffer.isBuffer(data) ? Buffer.compare(cached, data) === 0 : arraysEqual(cached, data)
-      }
-      res = Buffer.compare(cached.publicKey.getBuffer(), publicKey.getBuffer()) === 0 && compare(cached.data, data)
-    }
-    return res
-  }
-
-  async open(signature: Uint8Array, publicKey: Ed25519PublicKey): Promise<Buffer> {
-    return Keystore.open(signature, publicKey)
-  }
-
-  static async open(signature: Uint8Array, publicKey: Ed25519PublicKey): Promise<Buffer> {
-    const crypto = await _crypto;
-    return await crypto.crypto_sign_open(Buffer.from(signature), publicKey);
-  }
+  /*  async open(signature: Uint8Array, publicKey: Ed25519PublicKey): Promise<Buffer> {
+     return Keystore.open(signature, publicKey)
+   }
+ 
+   static async open(signature: Uint8Array, publicKey: Ed25519PublicKey): Promise<Buffer> {
+     const crypto = await _crypto;
+     return await crypto.crypto_sign_open(Buffer.from(signature), publicKey);
+   } */
 
 
 }
 
-
-export const arraysEqual = (array1?: Uint8Array, array2?: Uint8Array) => {
-  if (!!array1 != !!array2)
-    return false;
-  return array1.length === array2.length && array1.every(function (value, index) { return value === array2[index] });
-}

@@ -15,7 +15,8 @@
             "ES2021",
             "ES2021.Promise",
             "ES2021.String",
-            "ES2020.BigInt"
+            "ES2020.BigInt",
+            "DOM"
         ],
         "moduleResolution": "node",
         "esModuleInterop": true,

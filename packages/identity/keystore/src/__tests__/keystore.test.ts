@@ -2,11 +2,11 @@
 import path from 'path';
 import assert from 'assert';
 import LRU from 'lru-cache';
-import { BoxKeyWithMeta, createStore, Keystore, KeyWithMeta, SignKeyWithMeta } from '../keystore';
+import { createStore, Keystore, KeyWithMeta } from '../keystore';
 import rmrf from 'rimraf'
 import { waitFor } from '@dao-xyz/time';
 import { Level } from 'level';
-import { Ed25519PublicKey, X25519PublicKey, X25519SecretKey } from 'sodium-plus';
+import { Ed25519PublicKey, X25519PublicKey, X25519SecretKey } from '@dao-xyz/peerbit-crypto';
 
 import fs from 'fs-extra'
 let store: Level;
@@ -148,7 +148,7 @@ describe('keystore', () => {
 
     it('can overwrite if secret key is missing', async () => {
       const id = 'overwrite key'
-      let keyWithMeta = new BoxKeyWithMeta({
+      let keyWithMeta = new KeyWithMeta({
         secretKey: undefined,
         publicKey: new X25519PublicKey(Buffer.from(new Array(32).fill(0))),
         timestamp: BigInt(+new Date),
@@ -156,7 +156,7 @@ describe('keystore', () => {
       });
       let savedKey = await keystore.saveKey(keyWithMeta, id)
       assert(!savedKey.secretKey);
-      keyWithMeta = new BoxKeyWithMeta({
+      keyWithMeta = new KeyWithMeta({
         secretKey: new X25519SecretKey(Buffer.from(new Array(32).fill(0))),
         publicKey: new X25519PublicKey(Buffer.from(new Array(32).fill(0))),
         timestamp: keyWithMeta.timestamp,
@@ -168,7 +168,7 @@ describe('keystore', () => {
 
     it('will return secret key if missing when saving', async () => {
       const id = 'overwrite key 2'
-      let keyWithMeta = new BoxKeyWithMeta({
+      let keyWithMeta = new KeyWithMeta({
         secretKey: new X25519SecretKey(Buffer.from(new Array(32).fill(0))),
         publicKey: new X25519PublicKey(Buffer.from(new Array(32).fill(0))),
         timestamp: BigInt(+new Date),
@@ -176,7 +176,7 @@ describe('keystore', () => {
       });
       let savedKey = await keystore.saveKey(keyWithMeta, id)
       assert(!!savedKey.secretKey);
-      keyWithMeta = new BoxKeyWithMeta({
+      keyWithMeta = new KeyWithMeta({
         secretKey: undefined,
         publicKey: new X25519PublicKey(Buffer.from(new Array(32).fill(0))),
         timestamp: keyWithMeta.timestamp,

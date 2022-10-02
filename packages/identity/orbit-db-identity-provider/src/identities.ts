@@ -8,7 +8,7 @@ import path from 'path'
 import { Ed25519PublicKey } from 'sodium-plus';
 import { SolanaIdentityProviderOptions } from "./solana-identity-provider"
 import Cache from "@dao-xyz/orbit-db-cache"
-import { verify } from "@dao-xyz/identity"
+import { verify } from "@dao-xyz/peerbit-crypto"
 const defaultType = 'orbitdb'
 const identityKeysPath = path.join('./orbitdb', 'identity', 'identitykeys')
 

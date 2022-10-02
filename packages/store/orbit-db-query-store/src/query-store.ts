@@ -7,7 +7,7 @@ import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
 import { AccessController } from '@dao-xyz/orbit-db-store';
 import { ReadWriteAccessController } from './read-write-access-controller';
 import { IPFS } from 'ipfs-core-types';
-import { PublicKey } from '@dao-xyz/identity';
+import { PublicKey } from '@dao-xyz/peerbit-crypto';
 import { query, respond } from './io.js';
 
 export const getQueryTopic = (region: string): string => {

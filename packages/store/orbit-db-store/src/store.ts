@@ -20,7 +20,7 @@ import { Address, load, save } from './io.js'
 import { AccessController } from './access-controller.js'
 import { v4 as uuid } from 'uuid';
 import { StoreLike } from './store-like.js'
-import { Ed25519PublicKey, PublicKey } from '@dao-xyz/identity'
+import { Ed25519PublicKey, PublicKey } from '@dao-xyz/peerbit-crypto'
 import { Ed25519PublicKey } from 'sodium-plus';
 import { joinUint8Arrays } from '@dao-xyz/borsh-utils';
 import isNode from 'is-node';

@@ -14,7 +14,7 @@ import { Access } from './access';
 export * from './access';
 import isNode from 'is-node';
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
-import { PublicKey } from "@dao-xyz/identity";
+import { PublicKey } from "@dao-xyz/peerbit-crypto";
 import { RegionAccessController } from "@dao-xyz/orbit-db-trust-web";
 import { Log } from "@dao-xyz/ipfs-log";
 import Cache from '@dao-xyz/orbit-db-cache';

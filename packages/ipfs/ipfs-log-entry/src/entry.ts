@@ -4,11 +4,9 @@ import { variant, field, vec, option, serialize, deserialize } from '@dao-xyz/bo
 import io from '@dao-xyz/io-utils';
 import { IPFS } from 'ipfs-core-types'
 import { arraysEqual, joinUint8Arrays, StringSetSerializer, U8IntArraySerializer } from '@dao-xyz/borsh-utils';
-import { PublicKeyEncryption, DecryptedThing, MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
+import { PublicKeyEncryption, DecryptedThing, MaybeEncrypted, MaybeX25519PublicKey, PublicSignKey, SignKey, X25519PublicKey, PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { Signature } from './signature.js';
-import { PublicKey } from '@dao-xyz/identity';
 import { bigIntMax } from './utils.js';
-import { SodiumPlus } from 'sodium-plus';
 import sodium from 'libsodium-wrappers';
 export const maxClockTimeReducer = <T>(res: bigint, acc: Entry<T>): bigint => bigIntMax(res, acc.clock.time);
 
@@ -16,7 +14,7 @@ export const maxClockTimeReducer = <T>(res: bigint, acc: Entry<T>): bigint => bi
 export type EncryptionTemplateMaybeEncrypted = EntryEncryptionTemplate<MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey>;
 export interface EntryEncryption {
   reciever: EncryptionTemplateMaybeEncrypted,
-  options: PublicKeyEncryption
+  options: PublicKeyEncryptionResolver
 }
 export function toBufferLE(num: bigint, width: number): Uint8Array {
   const hex = num.toString(16);
@@ -101,7 +99,7 @@ export interface EntryEncryptionTemplate<A, B, C, D> {
 }
 
 @variant(0)
-export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, PublicKey, Signature> {
+export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, PublicSignKey, Signature> {
 
   @field(U8IntArraySerializer)
   gid: Uint8Array // graph id
@@ -113,7 +111,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
   _payload: MaybeEncrypted<Payload<T>>
 
   @field({ type: MaybeEncrypted })
-  _publicKey: MaybeEncrypted<PublicKey>
+  _publicKey: MaybeEncrypted<PublicSignKey>
 
   @field({ type: MaybeEncrypted })
   _signature: MaybeEncrypted<Signature>
@@ -139,14 +137,14 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
   static IPLD_LINKS = ['next']
 
   _encoding: IOOptions<T>
-  _encryption?: PublicKeyEncryption
+  _encryption?: PublicKeyEncryptionResolver
 
 
 
   constructor(obj?: {
     gid: Uint8Array,
     payload: MaybeEncrypted<Payload<T>>
-    publicKey: MaybeEncrypted<PublicKey>,
+    publicKey: MaybeEncrypted<PublicSignKey>,
     signature: MaybeEncrypted<Signature>,
     clock: MaybeEncrypted<Clock>;
     next: string[]
@@ -165,7 +163,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
     }
   }
 
-  init(props: { encoding: IOOptions<T>, encryption?: PublicKeyEncryption } | Entry<T>): Entry<T> {
+  init(props: { encoding: IOOptions<T>, encryption?: PublicKeyEncryptionResolver } | Entry<T>): Entry<T> {
     const encryption = props instanceof Entry ? props._encryption : props.encryption;
     const encoding = props instanceof Entry ? props._encoding : props.encoding;
     this._encryption = encryption;
@@ -221,11 +219,11 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
     return this.payload;
   }
 
-  get publicKey(): PublicKey {
-    return this._publicKey.decrypted.getValue(PublicKey)
+  get publicKey(): PublicSignKey {
+    return this._publicKey.decrypted.getValue(SignKey)
   }
 
-  async getPublicKey(): Promise<PublicKey> {
+  async getPublicKey(): Promise<PublicSignKey> {
     await this._publicKey.decrypt()
     return this.publicKey;
   }
@@ -283,7 +281,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
    * console.log(entry)
    * // { hash: null, payload: "hello", next: [] }
    */
-  static async create<T>(properties: { ipfs: IPFS, gid?: Uint8Array, gidSeed?: string, data: T, encodingOptions?: IOOptions<T>, next?: Entry<T>[], clock?: Clock, pin?: boolean, assertAllowed?: (entryData: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicKey>) => Promise<void>, encryption?: EntryEncryption, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array> }) {
+  static async create<T>(properties: { ipfs: IPFS, gid?: Uint8Array, gidSeed?: string, data: T, encodingOptions?: IOOptions<T>, next?: Entry<T>[], clock?: Clock, pin?: boolean, assertAllowed?: (entryData: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicSignKey>) => Promise<void>, encryption?: EntryEncryption, publicKey: PublicSignKey, sign: (data: Uint8Array) => Promise<Uint8Array> }) {
     if (!properties.encodingOptions || !properties.next) {
       properties = {
         ...properties,
@@ -455,7 +453,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
     let clock: MaybeEncrypted<Clock> = undefined;
     let payload: MaybeEncrypted<Payload<T>> = undefined;
     let signature: MaybeEncrypted<Signature> = undefined;
-    let publicKey: MaybeEncrypted<PublicKey> = undefined;
+    let publicKey: MaybeEncrypted<PublicSignKey> = undefined;
     if (entry instanceof Entry) {
       clock = entry._clock;
       payload = entry._payload;
@@ -466,7 +464,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
       clock = deserialize<MaybeEncrypted<Clock>>(Buffer.from(entry.clock), MaybeEncrypted);
       payload = deserialize<MaybeEncrypted<Payload<T>>>(Buffer.from(entry.payload), MaybeEncrypted);
       signature = deserialize<MaybeEncrypted<Signature>>(Buffer.from(entry.signature), MaybeEncrypted);
-      publicKey = deserialize<MaybeEncrypted<PublicKey>>(Buffer.from(entry.publicKey), MaybeEncrypted);
+      publicKey = deserialize<MaybeEncrypted<PublicSignKey>>(Buffer.from(entry.publicKey), MaybeEncrypted);
     }
     const e: Entry<T> = new Entry<T>({
       hash: null,

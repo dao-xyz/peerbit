@@ -4,14 +4,9 @@ import { arraysCompare, bufferSerializer, U8IntArraySerializer } from '@dao-xyz/
 import { arraysEqual } from '@dao-xyz/borsh-utils'
 import { AccessError } from './errors.js';
 import sodium from 'libsodium-wrappers';
-import { PublicKeyEncryptionKey } from './key.js';
-const NONCE_LENGTH = 24;
+import { Keypair, PrivateEncryptionKey, PublicKeyEncryptionKey } from './key.js';
+import { Ed25519Keypair, Ed25519PublicKey, Ed25519PrivateKey } from './ed25519.js';
 
-export interface PublicKeyEncryption {
-    getEncryptionKey: () => Promise<X25519SecretKey>
-    getAnySecret: (publicKey: X25519PublicKey[]) => Promise<{ index: number, secretKey: X25519SecretKey } | undefined>
-
-}
 
 
 @variant(0)
@@ -36,11 +31,25 @@ export class X25519PublicKey extends PublicKeyEncryptionKey {
     toString(): string {
         return "x25519public/" + Buffer.from(this.publicKey).toString('hex');
     }
+
+    static async from(ed25119PublicKey: Ed25519PublicKey): Promise<X25519PublicKey> {
+        await sodium.ready;
+        return new X25519PublicKey({
+            publicKey: sodium.crypto_sign_ed25519_pk_to_curve25519(ed25119PublicKey.publicKey)
+        })
+    }
+
+    static async create(): Promise<X25519PublicKey> {
+        await sodium.ready;
+        return new X25519PublicKey({
+            publicKey: sodium.crypto_box_keypair().publicKey
+        })
+    }
 }
 
 
-@variant(1)
-export class X25519SecretKey extends PublicKeyEncryptionKey {
+@variant(0)
+export class X25519SecretKey extends PrivateEncryptionKey {
 
     @field(U8IntArraySerializer)
     secretKey: Uint8Array;
@@ -68,318 +77,57 @@ export class X25519SecretKey extends PublicKeyEncryptionKey {
             publicKey: sodium.crypto_scalarmult_base(this.secretKey)
         })
     }
-}
-
-
-export type MaybeX25519PublicKey = (X25519PublicKey | X25519PublicKey[] | undefined);
-
-
-@variant(0)
-export class MaybeEncrypted<T>  {
-
-    _encryption: PublicKeyEncryption
-    init(encryption?: PublicKeyEncryption) {
-        this._encryption = encryption;
-        return this;
-    }
-    constructor() {
-
-    }
-
-    /**
-     * Will throw error if not decrypted
-     */
-    get decrypted(): DecryptedThing<T> {
-        throw new Error("Not implented")
-    }
-
-    async decrypt(): Promise<DecryptedThing<T>> {
-        throw new Error("Not implemented")
-    }
-    equals(other: MaybeEncrypted<T>): boolean {
-        throw new Error("Not implemented")
-    }
-
-    /**
-     * Clear cached data
-     */
-    clear() {
-        throw new Error("Not implemented")
-    }
-
-
-}
-
-@variant(0)
-export class DecryptedThing<T> extends MaybeEncrypted<T> {
-
-    @field(U8IntArraySerializer)
-    _data: Uint8Array;
-
-    constructor(props?: { data?: Uint8Array, value?: T }) {
-        super();
-        if (props) {
-            this._data = props.data;
-            this._value = props.value
-        }
-    }
-
-    _value?: T;
-    getValue(clazz: Constructor<T>): T {
-        if (this._value) {
-            return this._value;
-        }
-        return deserialize(this._data, clazz)
-    }
-
-    async encrypt(...recieverPublicKeys: X25519PublicKey[]): Promise<EncryptedThing<T>> {
-        const bytes = serialize(this)
+    static async from(ed25119SecretKey: Ed25519PrivateKey): Promise<X25519SecretKey> {
         await sodium.ready;
-        const epheremalKey = await sodium.crypto_secretbox_keygen();
-        const nonce = new Uint8Array(await sodium.randombytes_buf(NONCE_LENGTH));
-        const cipher = await sodium.crypto_secretbox_easy(bytes, nonce, epheremalKey);
-        const encryptionKey = await this._encryption.getEncryptionKey();
-        const ks = await Promise.all(recieverPublicKeys.map(async recieverPublicKey => {
-            const kNonce = new Uint8Array(await sodium.randombytes_buf(NONCE_LENGTH));
-            return new K({
-                encryptedKey: new CipherWithNonce({
-                    cipher: await sodium.crypto_box_easy(epheremalKey, kNonce, recieverPublicKey.publicKey, encryptionKey.secretKey),
-                    nonce: kNonce
-                }), recieverPublicKey
-            })
-        }))
-        const enc = new EncryptedThing<T>({
-            encrypted: new Uint8Array(cipher), nonce, envelope: new Envelope({
-                senderPublicKey: await encryptionKey.publicKey(), ks
-            })
+        return new X25519SecretKey({
+            secretKey: sodium.crypto_sign_ed25519_sk_to_curve25519(ed25119SecretKey.privateKey)
         })
-        enc._decrypted = this;
-        return enc;
     }
 
-    get decrypted(): DecryptedThing<T> {
-        return this;
-    }
-
-    async decrypt(): Promise<DecryptedThing<T>> {
-        return this;
-    }
-
-    equals(other: MaybeEncrypted<T>) {
-        if (other instanceof DecryptedThing) {
-            return arraysEqual(this._data, other._data)
-        }
-        else {
-            return false;
-        }
-    }
-
-    clear() {
-        this._value = undefined;
-    }
-}
-
-@variant(0)
-export class CipherWithNonce {
-
-
-    @field(U8IntArraySerializer)
-    nonce: Uint8Array
-
-    @field(U8IntArraySerializer)
-    cipher: Uint8Array
-
-    constructor(props?: {
-        nonce: Uint8Array
-        cipher: Uint8Array
-
-    }) {
-        if (props) {
-            this.nonce = props.nonce;
-            this.cipher = props.cipher;
-        }
-    }
-
-    equals(other: CipherWithNonce): boolean {
-        if (other instanceof CipherWithNonce) {
-            return arraysEqual(this.nonce, other.nonce) && arraysEqual(this.cipher, other.cipher);
-        }
-        else {
-            return false;
-        }
-    }
-}
-
-
-@variant(0)
-export class K {
-
-    @field({ type: CipherWithNonce })
-    _encryptedKey: CipherWithNonce;
-
-    @field({ type: X25519PublicKey })
-    _recieverPublicKey: X25519PublicKey
-
-    constructor(props?: {
-        encryptedKey: CipherWithNonce,
-        recieverPublicKey: X25519PublicKey;
-    }) {
-        if (props) {
-            this._encryptedKey = props.encryptedKey
-            this._recieverPublicKey = props.recieverPublicKey
-
-        }
-    }
-
-
-    equals(other: K): boolean {
-        if (other instanceof K) {
-            return this._encryptedKey.equals(other._encryptedKey) && this._recieverPublicKey.equals(other._recieverPublicKey)
-        }
-        else {
-            return false;
-        }
+    static async create(): Promise<X25519SecretKey> {
+        await sodium.ready;
+        return new X25519SecretKey({
+            secretKey: sodium.crypto_box_keypair().privateKey
+        })
     }
 
 }
 
-@variant(0)
-export class Envelope {
-    @field({ type: X25519PublicKey })
-    _senderPublicKey: X25519PublicKey
-
-    @field({ type: vec(K) })
-    _ks: K[];
-
-
-    constructor(props?: {
-        senderPublicKey: X25519PublicKey
-        ks: K[]
-    }) {
-        if (props) {
-            this._senderPublicKey = props.senderPublicKey;
-            this._ks = props.ks;
-        }
-    }
-
-    equals(other: Envelope): boolean {
-        if (other instanceof Envelope) {
-            if (!this._senderPublicKey.equals(other._senderPublicKey)) {
-                return false;
-            }
-
-            if (this._ks.length !== other._ks.length) {
-                return false;
-            }
-            for (let i = 0; i < this._ks.length; i++) {
-                if (!this._ks[i].equals(other._ks[i])) {
-                    return false;
-                }
-
-            }
-            return true;
-        }
-        else {
-            return false;
-        }
-    }
-}
 
 @variant(1)
-export class EncryptedThing<T> extends MaybeEncrypted<T> {
+export class X25519Keypair extends Keypair {
 
-    _encryption: PublicKeyEncryption
+    @field({ type: X25519PublicKey })
+    publicKey: X25519PublicKey;
 
+    @field({ type: X25519SecretKey })
+    secretKey: X25519SecretKey;
 
-    @field(U8IntArraySerializer)
-    _encrypted: Uint8Array;
+    static async create(): Promise<X25519Keypair> {
 
-    @field(U8IntArraySerializer)
-    _nonce: Uint8Array;
-
-    @field({ type: Envelope })
-    _envelope: Envelope
-
-    constructor(props?: {
-        encrypted: Uint8Array;
-        nonce: Uint8Array;
-        envelope: Envelope
-    }) {
-        super();
-        if (props) {
-            this._encrypted = props.encrypted;
-            this._nonce = props.nonce;
-            this._envelope = props.envelope;
-
-        }
-    }
-
-    _decrypted: DecryptedThing<T>
-    get decrypted(): DecryptedThing<T> {
-        if (!this._decrypted) {
-            throw new Error("Entry has not been decrypted, invoke decrypt method before")
-        }
-        return this._decrypted;
-    }
-
-
-    async decrypt(): Promise<DecryptedThing<T>> {
-        if (this._decrypted) {
-            return this._decrypted
-        }
-
-        if (!this._encryption) {
-            throw new Error("Not initialized");
-        }
         await sodium.ready;
-        // We only need to open with one of the keys
-        const key = await this._encryption.getAnySecret(this._envelope._ks.map(k => k._recieverPublicKey))
-        if (key) {
-            const k = this._envelope._ks[key.index];
-            const epheremalKey = await sodium.crypto_box_open_easy(k._encryptedKey.cipher, k._encryptedKey.nonce, this._envelope._senderPublicKey.publicKey, key.secretKey.secretKey);
-            let der: any = this;
-            let counter = 0;
-            while (der instanceof EncryptedThing) {
-                const decrypted = await sodium.crypto_secretbox_open_easy(this._encrypted, this._nonce, epheremalKey);
-                der = deserialize(decrypted, DecryptedThing)
-                counter += 1;
-                if (counter >= 10) {
-                    throw new Error("Unexpected decryption behaviour, data seems to always be in encrypted state")
-                }
-            }
-            this._decrypted = der as DecryptedThing<T>
-        }
-        else {
-            throw new AccessError("Failed to resolve decryption key");
-        }
-        return this._decrypted;
+        const generated = sodium.crypto_box_keypair();
+        const kp = new X25519Keypair();
+        kp.publicKey = new X25519PublicKey({
+            publicKey: generated.publicKey
+        });
+        kp.secretKey = new X25519SecretKey({
+            secretKey: generated.privateKey
+        });
+        return kp;
     }
 
-
-    equals(other: MaybeEncrypted<T>): boolean {
-        if (other instanceof EncryptedThing) {
-            if (!arraysEqual(this._encrypted, other._encrypted)) {
-                return false;
-            }
-            if (!arraysEqual(this._nonce, other._nonce)) {
-                return false;
-            }
-
-            if (!this._envelope.equals(other._envelope)) {
-                return false;
-            }
-            return true;
-        }
-        else {
-            return false;
-        }
-    }
-
-
-    clear() {
-        this._decrypted = undefined;
+    static async from(ed25119Keypair: Ed25519Keypair): Promise<X25519Keypair> {
+        const pk = await X25519PublicKey.from(ed25119Keypair.publicKey);
+        const sk = await X25519SecretKey.from(ed25119Keypair.privateKey);
+        const kp = new X25519Keypair()
+        kp.publicKey = pk;
+        kp.secretKey = sk;
+        return kp;
     }
 }
+
+
 
 /* 
 

@@ -1,4 +1,4 @@
-import { serialize, variant } from "@dao-xyz/borsh";
+import { field, serialize, variant } from "@dao-xyz/borsh";
 import { SystemBinaryPayload } from "@dao-xyz/bpayload";
 
 export type IdentityProviderType = 'orbitdb' | 'ethereum' | 'solana';
@@ -7,6 +7,7 @@ export type IdentityProviderType = 'orbitdb' | 'ethereum' | 'solana';
 export class Identity extends SystemBinaryPayload {
 
 }
+
 
 
 
@@ -30,15 +31,43 @@ class Key extends Identity {
     }
 }
 
-
-
 @variant(1)
+export class Keypair extends Identity {
+
+    static async create(): Promise<Keypair> {
+        throw new Error("Not implemented")
+    }
+}
+
+
+
+// ---- SIGNATURE KEYS -----
+
+@variant(0)
 export class SignKey extends Key {
 
 }
+@variant(0)
+export class PublicSignKey extends SignKey {
 
-@variant(2)
-export class PublicKeyEncryptionKey extends Key {
+}
+@variant(1)
+export class PrivateSignKey extends SignKey {
+
+}
+
+// ---- PUBLIC KEY ENCRYPTION -----
+@variant(1)
+export class PublicKeyEncryption extends Key {
+
+}
+@variant(0)
+export class PublicKeyEncryptionKey extends PublicKeyEncryption {
+
+}
+
+@variant(1)
+export class PrivateEncryptionKey extends PublicKeyEncryption {
 
 }
 

@@ -3,7 +3,7 @@ import io from '@dao-xyz/io-utils'
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
 import { variant, field, vec } from '@dao-xyz/borsh';
 import { ReadWriteAccessController } from '@dao-xyz/orbit-db-query-store';
-import { PublicKey } from '@dao-xyz/identity';
+import { PublicKey } from '@dao-xyz/peerbit-crypto';
 
 @variant([1, 0])
 export class IPFSAccessController<T> extends ReadWriteAccessController<T> {

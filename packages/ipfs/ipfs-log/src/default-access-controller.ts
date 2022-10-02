@@ -1,7 +1,7 @@
 const EventEmitter = require('events').EventEmitter
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
 import { Payload } from '@dao-xyz/ipfs-log-entry';
-import { Ed25519PublicKey, PublicKey } from '@dao-xyz/identity'
+import { Ed25519PublicKey, PublicKey } from '@dao-xyz/peerbit-crypto'
 import { Ed25519PublicKey } from 'sodium-plus'
 // TODO extend IPFS-LOG access controller interface for canAppend method
 /**

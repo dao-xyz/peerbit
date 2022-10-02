@@ -8,7 +8,7 @@ import { CanAppendAccessController } from "@dao-xyz/ipfs-log"
 import { Payload } from "@dao-xyz/ipfs-log-entry"
 import { IInitializationOptions } from './store.js';
 import { IPFS } from 'ipfs-core-types';
-import { PublicKey } from '@dao-xyz/identity';
+import { PublicKey } from '@dao-xyz/peerbit-crypto';
 import { Initiable } from './store-like.js';
 /**
  * Interface for OrbitDB Access Controllers

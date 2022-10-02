@@ -4,7 +4,7 @@ import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import io from '@dao-xyz/io-utils'
 import { EventStore } from './event-store';
 import { IPFSAccessController } from '../ipfs-access-controller';
-import { Ed25519PublicKey } from '@dao-xyz/identity';
+import { Ed25519PublicKey } from '@dao-xyz/peerbit-crypto';
 // Include test utilities
 const {
   config,

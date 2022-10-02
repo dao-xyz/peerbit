@@ -4,7 +4,7 @@ import fs from 'fs-extra'
 import { Entry, LamportClock as Clock } from '@dao-xyz/ipfs-log-entry';
 import { Log } from '../log.js'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
-import { Ed25519PublicKey } from '@dao-xyz/identity';
+import { Ed25519PublicKey } from '@dao-xyz/peerbit-crypto';
 import { arraysCompare } from '@dao-xyz/borsh-utils';
 
 // Test utils

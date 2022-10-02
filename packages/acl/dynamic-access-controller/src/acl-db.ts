@@ -3,7 +3,7 @@ import { BinaryDocumentStore, Operation } from '@dao-xyz/orbit-db-bdocstore';
 import { getFromByToGenerator, RegionAccessController, RelationAccessController } from '@dao-xyz/orbit-db-trust-web';
 import { Access, AccessData, AccessType } from './access';
 import { Entry } from '@dao-xyz/ipfs-log-entry'
-import { PublicKey } from '@dao-xyz/identity';
+import { PublicKey } from '@dao-xyz/peerbit-crypto';
 import { Address, IInitializationOptions, StoreLike } from '@dao-xyz/orbit-db-store';
 import { Log } from '@dao-xyz/ipfs-log';
 import { v4 as uuid } from 'uuid';

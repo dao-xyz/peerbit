@@ -4,7 +4,7 @@ import { Message } from './message.js';
 import { StoreLike } from '@dao-xyz/orbit-db-store';
 import Logger from 'logplease'
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
-import { MaybeSigned, PublicKey } from '@dao-xyz/identity';
+import { MaybeSigned, PublicKey } from '@dao-xyz/peerbit-crypto';
 import { ResourceRequirement } from './exchange-replication.js';
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')

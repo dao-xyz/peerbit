@@ -1,6 +1,6 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
-import { PublicKey } from "@dao-xyz/identity";
+import { PublicKey } from "@dao-xyz/peerbit-crypto";
 import { U8IntArraySerializer, arraysEqual } from '@dao-xyz/borsh-utils';
 import { Payload } from "@dao-xyz/ipfs-log-entry";
 

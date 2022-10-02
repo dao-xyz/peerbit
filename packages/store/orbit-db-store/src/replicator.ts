@@ -3,7 +3,7 @@ import { Log } from '@dao-xyz/ipfs-log'
 import { IPFS } from 'ipfs-core-types'
 import { Entry } from '@dao-xyz/ipfs-log-entry';
 import { AccessController } from './access-controller.js';
-import { PublicKey } from '@dao-xyz/identity';
+import { PublicKey } from '@dao-xyz/peerbit-crypto';
 
 const flatMap = (res, val) => res.concat(val)
 

@@ -2,7 +2,7 @@ import { Wallet, verifyMessage } from '@ethersproject/wallet'
 import { Identity } from './identity';
 import { IdentityProvider } from './identity-provider-interface';
 import { joinUint8Arrays } from '@dao-xyz/borsh-utils';
-import { Secp256k1PublicKeyData, verifySignatureSecp256k1 } from '@dao-xyz/identity';
+import { Secp256k1PublicKey, verifySignatureSecp256k1 } from '@dao-xyz/peerbit-crypto';
 
 export type EthIdentityProviderOptions = { wallet?: Wallet };
 export class EthIdentityProvider extends IdentityProvider {
@@ -38,7 +38,7 @@ export class EthIdentityProvider extends IdentityProvider {
 
   static async verifyIdentity(identity: Identity) {
     // Verify that identity was signed by the id
-    if (identity.id instanceof Secp256k1PublicKeyData) {
+    if (identity.id instanceof Secp256k1PublicKey) {
       return verifySignatureSecp256k1(identity.signatures.publicKey, identity.id, Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id])) // EthIdentityProvider.verify(identity.signatures.publicKey, Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id]), identity.id)
     }
     return false;

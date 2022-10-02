@@ -11,7 +11,7 @@ import { SimpleAccessController } from './utils/access'
 import { Address, Store } from '@dao-xyz/orbit-db-store'
 import { EventStore } from './utils/stores'
 import { BoxKeyWithMeta, Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
-import { Ed25519PublicKey } from '@dao-xyz/identity'
+import { Ed25519PublicKey } from '@dao-xyz/peerbit-crypto'
 // Include test utilities
 const {
   config,

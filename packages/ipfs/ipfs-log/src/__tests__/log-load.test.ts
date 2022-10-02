@@ -7,7 +7,7 @@ import { Entry, JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log-entry';
 import { Log } from '../log.js'
 import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { LogCreator } from './utils/log-creator.js'
-import { Ed25519PublicKey } from '@dao-xyz/identity';
+import { Ed25519PublicKey } from '@dao-xyz/peerbit-crypto';
 import { arraysCompare } from '@dao-xyz/borsh-utils';
 const v0Entries = require('./fixtures/v0-entries.fixture')
 const v1Entries = require('./fixtures/v1-entries.fixture')

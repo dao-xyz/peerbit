@@ -13,7 +13,7 @@ import { findUniques } from "./find-uniques.js"
 import { IOOptions } from "@dao-xyz/ipfs-log-entry";
 import { JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log-entry';
 import { AccessError, PublicKeyEncryption } from "@dao-xyz/peerbit-crypto";
-import { Ed25519PublicKey, PublicKey } from '@dao-xyz/identity';
+import { Ed25519PublicKey, PublicKey } from '@dao-xyz/peerbit-crypto';
 import { serialize } from '@dao-xyz/borsh';
 import { Ed25519PublicKey } from 'sodium-plus';
 
