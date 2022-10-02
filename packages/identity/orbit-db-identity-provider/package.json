@@ -46,9 +46,7 @@
     "json-loader": "^0.5.7",
     "key-did-provider-ed25519": "^1.0.0",
     "key-did-resolver": "^1.2.1",
-    "mocha-headless-chrome": "^3.1.0",
-    "process": "^0.11.10",
-    "standard": "^16.0.3"
+    "process": "^0.11.10"
   },
   "dependencies": {
     "@solana/web3.js": "^1.41.3",

@@ -59,7 +59,6 @@
     "@dao-xyz/io-utils": "^1.1.0",
     "@dao-xyz/orbit-db-keystore": "^0.0.1",
     "@dao-xyz/orbit-db-test-utils": "^0.0.1",
-    "standard": "^14.1.0",
     "web3": "^1.5.2"
   },
   "localMaintainers": [

@@ -56,8 +56,6 @@
     "is-node": "^1.0.2",
     "jsdoc": "^3.6.6",
     "json-loader": "~0.5.7",
-    "mocha": "^8.4.0",
-    "mocha-headless-chrome": "^3.1.0",
     "node-polyfill-webpack-plugin": "^1.1.4",
     "node-pre-gyp": "^0.13.0",
     "nyc": "^15.0.1",
@@ -65,7 +63,6 @@
     "@dao-xyz/orbit-db-test-utils": "^0.0.1",
     "path-browserify": "^1.0.1",
     "rimraf": "~3.0.2",
-    "standard": "~16.0.3",
     "stream-browserify": "^3.0.0",
     "webpack": "^5.37.1",
     "webpack-cli": "^4.7.0"

@@ -47,7 +47,6 @@
     "node-pre-gyp": "^0.13.0",
     "nyc": "^15.0.1",
     "rimraf": "~3.0.2",
-    "standard": "~16.0.3",
     "webpack": "^5.37.1",
     "p-map-series": "^3.0.0"
   },
