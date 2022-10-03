@@ -48,7 +48,7 @@ afterAll(async () => {
 
 
 it('cut back to max oplog length', async () => {
-  const log = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A', recycle: { maxOplogLength: 1 } })
+  const log = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A', recycle: { maxLength: 1 } })
   await log.append('hello1')
   await log.append('hello2')
   await log.append('hello3')
@@ -57,13 +57,13 @@ it('cut back to max oplog length', async () => {
 })
 
 it('cut back to cut length', async () => {
-  const log = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A', recycle: { maxOplogLength: 3, cutOplogToLength: 1 } })
+  const log = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A', recycle: { maxLength: 3, cutToLength: 1 } })
   await log.append('hello1')
   await log.append('hello2')
   await log.append('hello3')
   expect(log.length).toEqual(3);
   await log.append('hello4')
-  expect(log.length).toEqual(1); // We exceed 'maxOplogLength' and cut back to 'cutOplogToLength'
+  expect(log.length).toEqual(1); // We exceed 'maxLength' and cut back to 'cutToLength'
   expect(log.values[0].payload.value).toEqual('hello4');
 })
 })

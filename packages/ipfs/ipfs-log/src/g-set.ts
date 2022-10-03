@@ -6,11 +6,11 @@
  * https://hal.inria.fr/inria-00555588
  */
 export abstract class GSet {
-  constructor(values?) { } // eslint-disable-line
-  append(value) { throw new Error("Not implemented") }
-  merge(set) { throw new Error("Not implemented") }
-  get(value) { throw new Error("Not implemented") }
-  has(value) { throw new Error("Not implemented") }
+  constructor(values?: any) { } // eslint-disable-line
+  append(value: any) { throw new Error("Not implemented") }
+  merge(set: any) { throw new Error("Not implemented") }
+  get(value: any) { throw new Error("Not implemented") }
+  has(value: any) { throw new Error("Not implemented") }
   get values(): any { throw new Error("Not implemented") }
   get length(): number { throw new Error("Not implemented") }
 }

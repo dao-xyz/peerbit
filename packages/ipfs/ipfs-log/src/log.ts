@@ -1,4 +1,4 @@
-import { EncryptionTemplateMaybeEncrypted, Entry, getPeerID, LamportClock as Clock, LamportClock, maxClockTimeReducer } from '@dao-xyz/ipfs-log-entry';
+import { EncryptionTemplateMaybeEncrypted, Entry, getPeerID, Identity, LamportClock as Clock, LamportClock, maxClockTimeReducer } from '@dao-xyz/ipfs-log-entry';
 import { EntryIndex } from "./entry-index.js"
 import pMap from 'p-map'
 import { GSet } from './g-set.js'
@@ -12,16 +12,19 @@ import { isDefined } from './is-defined.js'
 import { findUniques } from "./find-uniques.js"
 import { IOOptions } from "@dao-xyz/ipfs-log-entry";
 import { JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log-entry';
-import { AccessError, PublicKeyEncryption } from "@dao-xyz/peerbit-crypto";
-import { Ed25519PublicKey, PublicKey } from '@dao-xyz/peerbit-crypto';
+import { AccessError, PublicKeyEncryption, PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
+import { Ed25519PublicKey, PublicSignKey } from '@dao-xyz/peerbit-crypto';
 import { serialize } from '@dao-xyz/borsh';
-import { Ed25519PublicKey } from 'sodium-plus';
+// @ts-ignore
+import Logger from 'logplease'
+const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
+Logger.setLogLevel('ERROR')
 
 const { LastWriteWins, NoZeroes } = Sorting
 const randomId = () => new Date().getTime().toString()
 const getHash = <T>(e: Entry<T>) => e.hash
-const flatMap = (res, acc) => res.concat(acc)
-const getNextPointers = entry => entry.next
+const flatMap = (res: any[], acc: any[]) => res.concat(acc)
+const getNextPointers = (entry: Entry<any>) => entry.next
 /* const maxSizeReducer = <T>(res: bigint, acc: Entry<T>): bigint => bigIntMax(res, acc.cumulativeSize); */
 
 const uniqueEntriesReducer = <T>(res: { [key: string]: Entry<T> }, acc: Entry<T>) => {
@@ -30,11 +33,11 @@ const uniqueEntriesReducer = <T>(res: { [key: string]: Entry<T> }, acc: Entry<T>
 }
 
 export interface RecycleOptions {
-  maxOplogLength: number, // Max length of oplog before cutting
-  cutOplogToLength?: number, // When oplog shorter, cut to length
+  maxLength: number, // Max length of oplog before cutting
+  cutToLength: number, // When oplog shorter, cut to length
 }
 
-export type LogOptions<T> = { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, /* rootGid?: string, */ logId?: string, entries?: Entry<T>[], heads?: any, clock?: LamportClock, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction, concurrency?: number, recycle?: RecycleOptions };
+export type LogOptions<T> = { encoding?: IOOptions<T>, encryption?: PublicKeyEncryptionResolver, /* rootGid?: string, */ logId?: string, entries?: Entry<T>[], heads?: any, clock?: LamportClock, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction, concurrency?: number, recycle?: RecycleOptions };
 /**
  * @description
  * Log implements a G-Set CRDT and adds ordering.
@@ -47,15 +50,13 @@ export class Log<T> extends GSet {
   _sortFn: Sorting.ISortFunction;
   _storage: any;
   _id: string;
-  _peerId: string;
   /*   _rootGid: string; */
 
   // Access Controller
   _access: CanAppendAccessController<T>
 
   // Identity
-  _publicKey: PublicKey
-  _sign: (data: Uint8Array) => Promise<Uint8Array>
+  _identity: Identity
 
   // Add entries to the internal cache
   _entryIndex: EntryIndex<T>
@@ -63,8 +64,6 @@ export class Log<T> extends GSet {
 
   // Index of all next pointers in this log
   _nextsIndex: { [key: string]: Set<string> }
-
-  _peersByGid: Map<string, { peers: Set<string>, links: Set<string> }> // if set, this is a list of peers, if array, represents keys
 
   // next -> entry
   _nextsIndexToHead: { [key: string]: Set<string> } // TODO make to LRU since this will become invalid quickly (and potentially huge)
@@ -76,7 +75,7 @@ export class Log<T> extends GSet {
   /*  _clock: Clock; */
   _recycle?: RecycleOptions
   _encoding: IOOptions<T>
-  _encryption: PublicKeyEncryption
+  _encryption?: PublicKeyEncryptionResolver
 
   joinConcurrency: number;
   /**
@@ -93,16 +92,16 @@ export class Log<T> extends GSet {
    * @return {Log} The log instance
    */
 
-  constructor(ipfs: IPFS, publicKey: PublicKey | Ed25519PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: LogOptions<T> = {}) {
+  constructor(ipfs: IPFS, identity: Identity, options: LogOptions<T> = {}) {
 
     if (!isDefined(ipfs)) {
       throw LogError.IPFSNotDefinedError()
     }
 
-    if (!isDefined(publicKey)) {
+    if (!isDefined(identity)) {
       throw new Error('Identity is required')
     }
-    if (publicKey instanceof Ed25519PublicKey) {
+    /* if (publicKey instanceof Ed25519PublicKey) {
       publicKey = new Ed25519PublicKey({
         publicKey
       })
@@ -113,11 +112,12 @@ export class Log<T> extends GSet {
         publicKey
       })
     }
-
+ */
     let { logId, access, entries, heads, clock, sortFn, concurrency, recycle, encoding, encryption } = options;
     if (!isDefined(access)) {
       access = new DefaultAccessController()
     }
+    access = access as CanAppendAccessController<any>;
 
     if (isDefined(entries) && !Array.isArray(entries)) {
       throw new Error('\'entries\' argument must be an array of Entry instances')
@@ -130,6 +130,7 @@ export class Log<T> extends GSet {
     if (!isDefined(sortFn)) {
       sortFn = LastWriteWins
     }
+    sortFn = sortFn as Sorting.ISortFunction;
 
     super()
 
@@ -143,15 +144,10 @@ export class Log<T> extends GSet {
     this._access = access
 
     // Identity
-    this._publicKey = publicKey
-    this._sign = sign;
+    this._identity = identity;
 
     // encoder/decoder
-    this._encoding = encoding;
-    if (!this._encoding) {
-      this._encoding = JSON_ENCODING_OPTIONS;
-    }
-
+    this._encoding = encoding || JSON_ENCODING_OPTIONS;
     this._encryption = encryption;
 
     // Add entries to the internal cache
@@ -173,7 +169,6 @@ export class Log<T> extends GSet {
     // Index of all next pointers in this log
     this._nextsIndex = {}
     this._nextsIndexToHead = {}
-    this._peersByGid = new Map();
 
     const addToNextsIndex = (e: Entry<T>) => {
       e.next.forEach(a => {
@@ -201,20 +196,12 @@ export class Log<T> extends GSet {
 
     this.joinConcurrency = concurrency || 16
 
-    this._recycle = { ...recycle };
-    if (this._recycle.cutOplogToLength == undefined) {
-      this._recycle.cutOplogToLength = this._recycle.maxOplogLength;
+    this._recycle = { ...recycle } as RecycleOptions;
+    if (this._recycle.cutToLength == undefined) {
+      this._recycle.cutToLength = this._recycle.maxLength;
     }
   }
 
-  async init() {
-    const id = await this.getPeerId();
-    const set = new Set([id]);
-    this.values.forEach((entry) => {
-      this.setPeersByGid(entry.gid, set);
-    })
-    return this;
-  }
   /**
    * Returns the ID of the log.
    * @returns {string}
@@ -247,13 +234,7 @@ export class Log<T> extends GSet {
       return this._clock
     } */
 
-  async getPeerId(): Promise<string> {
-    if (this._peerId) {
-      return this._peerId;
-    }
-    this._peerId = await getPeerID(this._storage);
-    return this._peerId
-  }
+
   /**
    * Returns the length of the log.
    * @return {number} Length
@@ -305,46 +286,12 @@ export class Log<T> extends GSet {
   }
 
 
-  getPeersByGid(gid: string): Set<string> {
-
-    // assume no loops
-    const map = this._peersByGid.get(gid);
-    let set: Set<string> = map.peers;
-
-    if (map.links?.size > 0) {
-      set = new Set(...set);
-      map.links.forEach((l) => {
-        this.getPeersByGid(l).forEach((peer) => {
-          set.add(peer)
-        })
-      })
-    }
-
-    return set;
-  }
-  setPeersByGid(gid: string, peers: Set<string>) {
-
-    // assume no loops
-    let map = this._peersByGid.get(gid);
-    if (!map) {
-      map = {
-        links: new Set(),
-        peers: peers
-      }
-      this._peersByGid.set(gid, map);
-    }
-    else {
-      peers.forEach((peer) => {
-        map.peers.add(peer);
-      })
-    }
-  }
   /**
    * Set the identity for the log
    * @param {Identity} [identity] The identity to be set
    */
-  setPublicKey(publicKey: PublicKey) {
-    this._publicKey = publicKey
+  setIdentity(identity: Identity) {
+    this._identity = identity
     // Find the latest clock from the heads
     /*     const time = bigIntMax(this.clock.time, this.heads.reduce(maxClockTimeReducer, 0n))
         this._clock = new Clock(new Uint8Array(serialize(this._publicKey)), time) */
@@ -412,6 +359,9 @@ export class Log<T> extends GSet {
     while (stack.length > 0 && (count < amount || amount < 0)) { // eslint-disable-line no-unmodified-loop-condition
       // Get the next element from the stack
       const entry = stack.shift()
+      if (!entry) {
+        throw new Error("Unexpected")
+      }
       // Add to the result
       addEntry(entry)
       // If it is the specified end hash, break out of the while loop
@@ -429,7 +379,7 @@ export class Log<T> extends GSet {
     return result
   }
 
-  getPow2Refs(pointerCount = 1) {
+  /* getPow2Refs(pointerCount = 1) {
 
     const all = Object.values(this.traverse(this.heads, Math.max(pointerCount, this.heads.length)))
 
@@ -453,7 +403,7 @@ export class Log<T> extends GSet {
     }
     return Array.from(references).map(getHash);
 
-  }
+  } */
 
   getHeadsFromHashes(refs: string[]): Entry<T>[] {
     let headsFromRefs = new Map<string, Entry<T>>();
@@ -498,14 +448,13 @@ export class Log<T> extends GSet {
 
     // Calculate max time for log/graph
     const newTime = nexts?.length > 0 ? this.heads.concat(nexts).reduce(maxClockTimeReducer, 0n) + 1n : 0n; // this.getHeadsFromHashes(nexts.map(n => n.hash)).reduce(maxClockTimeReducer, 0n)
-    const clock = new Clock(new Uint8Array(serialize(this._publicKey)), newTime)
+    const clock = new Clock(new Uint8Array(serialize(this._identity.publicKey)), newTime) // TODO privacy leak?
 
 
     const entry = await Entry.create<T>(
       {
         ipfs: this._storage,
-        publicKey: this._publicKey,
-        sign: this._sign,
+        identity: this._identity,
         data,
         clock,
         // cumulativeSize
@@ -518,12 +467,12 @@ export class Log<T> extends GSet {
           }
           const canAppend = await this._access.canAppend(payload, key);
           if (!canAppend) {
-            throw new AccessError(`Could not append entry, key "${this._publicKey}" is not allowed to write to the log`)
+            throw new AccessError(`Could not append entry, key "${this._identity.publicKey}" is not allowed to write to the log`)
           }
         },
         encodingOptions: this._encoding,
         encryption: (options.reciever) ? {
-          options: this._encryption,
+          options: this._encryption as PublicKeyEncryptionResolver,
           reciever: {
             ...options.reciever
           }
@@ -536,12 +485,8 @@ export class Log<T> extends GSet {
       throw new Error("Unexpected")
     }
 
-    this.setPeersByGid(entry.gid, new Set([await this.getPeerId()]));
     this._entryIndex.set(entry.hash, entry)
     nexts.forEach(e => {
-      if (e.gid !== entry.gid) {
-        this._peersByGid.get(entry.gid).links.add(e.gid);
-      }
       let nextIndexSet = this._nextsIndex[e.hash];
       if (!nextIndexSet) {
         nextIndexSet = new Set();
@@ -561,8 +506,8 @@ export class Log<T> extends GSet {
     // Update the length
     this._length++
 
-    if (this._recycle && this.length > this._recycle.maxOplogLength) {
-      this.prune(this._recycle.cutOplogToLength);
+    if (this._recycle && this.length > this._recycle.maxLength) {
+      this.prune(this._recycle.cutToLength);
     }
     return entry
   }
@@ -597,8 +542,11 @@ export class Log<T> extends GSet {
    *
    *
    */
-  iterator({ gt = undefined, gte = undefined, lt = undefined, lte = undefined, amount = -1 } =
-    {}) {
+  iterator(options: { gt?: string, gte?: string, lt?: Entry<T>[] | string, lte?: Entry<T>[] | string, amount?: number }) {
+    if (options.amount === undefined) {
+      options.amount = -1;
+    }
+    let { lt, lte, gt, gte, amount } = options;
     if (amount === 0) return (function* () { })()
     if (typeof lte === 'string') lte = [this.get(lte)]
     if (typeof lt === 'string') lt = [this.get(this.get(lt).next[0])]
@@ -607,7 +555,7 @@ export class Log<T> extends GSet {
     if (lt && !Array.isArray(lt)) throw LogError.LtOrLteMustBeStringOrArray()
 
     const start = (lte || (lt || this.heads)).filter(isDefined)
-    const endHash = gte ? this.get(gte).hash : gt ? this.get(gt).hash : null
+    const endHash = gte ? this.get(gte).hash : gt ? this.get(gt).hash : undefined
     const count = endHash ? -1 : amount || -1
 
     const entries = this.traverse(start, count, endHash)
@@ -657,7 +605,7 @@ export class Log<T> extends GSet {
         encoding: this._encoding,
         encryption: this._encryption
       })
-      const canAppend = await this._access.canAppend(entry._payload, entry._publicKey)
+      const canAppend = await this._access.canAppend(entry._payload, entry._signature.decrypted)
       if (!canAppend) {
         throw new AccessError(`Could not append Entry<T>, key "${(await entry.publicKey)}" is not allowed to write to the log`)
       }
@@ -750,41 +698,6 @@ export class Log<T> extends GSet {
     }); */
 
 
-    // TODO add cumulatve size calc
-
-
-    // Slice to the requested size
-
-    const peerId = await this.getPeerId();
-    log._peersByGid.forEach((map, gid) => {
-      let current = this._peersByGid.get(gid);
-      if (!current) {
-        this._peersByGid.set(gid, {
-          peers: new Set([...map.peers, peerId]),
-          links: new Set([...map.links])
-        })
-      }
-      else {
-        map.peers.forEach((peer) => {
-          current.peers.add(peer)
-        })
-        map.links.forEach((link) => {
-          current.links.add(link)
-          this._peersByGid.set(link, log._peersByGid.get(link));
-        })
-      }
-    })
-
-    log._peersByGid.forEach((map, gid) => {
-      map.links.forEach((link) => {
-        if (!this._peersByGid.has(link)) {
-          throw new Error("Unexpected")
-        }
-      })
-    });
-
-
-
     if (size > -1) {
       this.prune(size);
     }
@@ -811,6 +724,10 @@ export class Log<T> extends GSet {
 
     while (stack.length > 0) {
       const hash = stack.shift()
+      if (!hash) {
+        logger.error("Missing hash when `getHeads`");
+        continue;
+      }
       const links = this._nextsIndex[hash];
       /*     const currentSize = this.get(hash).cumulativeSize; */
       const isConstrainedBySize = false; // currentSize - startSize > options.maxSize;
@@ -853,7 +770,6 @@ export class Log<T> extends GSet {
     // Slice to the requested size
     let tmp = this.values
     tmp = tmp.slice(-size)
-    this._entryIndex = null
     this._entryIndex = new EntryIndex(tmp.reduce(uniqueEntriesReducer, {}))
     this._headsIndex = Log.findHeads(tmp).reduce(uniqueEntriesReducer, {})
     this._length = this._entryIndex.length
@@ -863,6 +779,11 @@ export class Log<T> extends GSet {
     let stack: Entry<any>[] = [...heads];
     while (stack.length > 0) {
       const next = stack.shift();
+      if (!next) {
+        logger.error("Tried to remove null head");
+        continue;
+      }
+
       this._entryIndex.delete(next.hash);
       delete this._nextsIndexToHead[next.hash]
       delete this._headsIndex[next.hash]
@@ -924,7 +845,7 @@ export class Log<T> extends GSet {
       .slice()
       .reverse()
       .map((e, idx) => {
-        const parents = Entry.findChildren(e, this.values)
+        const parents = Entry.findDirectChildren(e, this.values)
         const len = parents.length
         let padding = new Array(Math.max(len - 1, 0))
         padding = len > 1 ? padding.fill('  ') : padding
@@ -933,17 +854,6 @@ export class Log<T> extends GSet {
         return padding.join('') + (payloadMapper ? payloadMapper(e.payload.value) : e.payload.value)
       })
       .join('\n')
-  }
-
-  /**
-   * Check whether an object is a Log instance.
-   * @param {Object} log An object to check
-   * @returns {boolean}
-   */
-  static isLog(log) {
-    return log.id !== undefined &&
-      log.heads !== undefined &&
-      log._entryIndex !== undefined
   }
 
   /**
@@ -969,12 +879,12 @@ export class Log<T> extends GSet {
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @returns {Promise<Log>}
    */
-  static async fromMultihash<T>(ipfs, key: PublicKey | Ed25519PublicKey, sign: (Uint8Array) => Promise<Uint8Array>, hash,
-    options?: { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction } & EntryFetchAllOptions<T>) {
+  static async fromMultihash<T>(ipfs: IPFS, identity: Identity, hash: string,
+    options?: { encoding: IOOptions<T>, encryption?: PublicKeyEncryption, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction } & EntryFetchAllOptions<T>) {
     // TODO: need to verify the entries with 'key'
-    const { logId, entries, heads } = await LogIO.fromMultihash(ipfs, hash,
-      { length: options?.length, exclude: options?.exclude, shouldExclude: options?.shouldExclude, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback, concurrency: options?.concurrency, sortFn: options?.sortFn })
-    return new Log(ipfs, key, sign, { encoding: options?.encoding, encryption: options?.encryption, logId, access: options?.access, entries, heads, sortFn: options?.sortFn }).init()
+    // @ts-ignore
+    const { logId, entries, heads } = await LogIO.fromMultihash(ipfs, hash, { length: options?.length, exclude: options?.exclude, shouldExclude: options?.shouldExclude, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback, concurrency: options?.concurrency, sortFn: options?.sortFn })
+    return new Log(ipfs, identity, { encoding: options?.encoding, encryption: options?.encryption, logId, access: options?.access, entries, heads, sortFn: options?.sortFn })
   }
 
   /**
@@ -991,12 +901,11 @@ export class Log<T> extends GSet {
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise<Log>} New Log
    */
-  static async fromEntryHash<T>(ipfs: IPFS, key: PublicKey | Ed25519PublicKey, sign: (Uint8Array) => Promise<Uint8Array>, hash: string | string[],
-    options: { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, logId?: string, access?: any, length?: number, exclude?: any[], shouldExclude?: (string) => boolean, timeout?: number, concurrency?: number, sortFn?: any, onProgressCallback?: any } = { length: -1, exclude: [] }) {
+  static async fromEntryHash<T>(ipfs: IPFS, identity: Identity, hash: string | string[],
+    options: { encoding: IOOptions<T>, encryption?: PublicKeyEncryptionResolver, logId?: string, access?: any, length?: number, exclude?: any[], shouldExclude?: (hash: string) => boolean, timeout?: number, concurrency?: number, sortFn?: any, onProgressCallback?: any } = { length: -1, exclude: [], encoding: JSON_ENCODING_OPTIONS }) {
     // TODO: need to verify the entries with 'key'
-    const { entries } = await LogIO.fromEntryHash(ipfs, hash,
-      { length: options.length, exclude: options.exclude, encryption: options?.encryption, shouldExclude: options.shouldExclude, timeout: options.timeout, concurrency: options.concurrency, onProgressCallback: options.onProgressCallback, sortFn: options.sortFn })
-    return new Log(ipfs, key, sign, { encoding: options?.encoding, encryption: options?.encryption, logId: options.logId, access: options.access, entries, sortFn: options.sortFn }).init()
+    const { entries } = await LogIO.fromEntryHash(ipfs, hash, { encoding: options.encoding, length: options.length, exclude: options.exclude, encryption: options?.encryption, shouldExclude: options.shouldExclude, timeout: options.timeout, concurrency: options.concurrency, onProgressCallback: options.onProgressCallback, sortFn: options.sortFn })
+    return new Log(ipfs, identity, { encoding: options?.encoding, encryption: options?.encryption, logId: options.logId, access: options.access, entries, sortFn: options.sortFn })
   }
 
   /**
@@ -1011,12 +920,11 @@ export class Log<T> extends GSet {
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise<Log>} New Log
    */
-  static async fromJSON<T>(ipfs: IPFS, key: PublicKey | Ed25519PublicKey, sign: (Uint8Array) => Promise<Uint8Array>, json: { id: string, heads: string[] },
-    options?: { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, access?: CanAppendAccessController<T>, length?: number, timeout?: number, sortFn?: Sorting.ISortFunction, onProgressCallback?: (entry: Entry<T>) => void }) {
+  static async fromJSON<T>(ipfs: IPFS, identity: Identity, json: { id: string, heads: string[] },
+    options: { encoding: IOOptions<T>, encryption?: PublicKeyEncryptionResolver, access?: CanAppendAccessController<T>, length?: number, timeout?: number, sortFn?: Sorting.ISortFunction, onProgressCallback?: (entry: Entry<T>) => void } = { encoding: JSON_ENCODING_OPTIONS }) {
     // TODO: need to verify the entries with 'key'
-    const { logId, entries } = await LogIO.fromJSON(ipfs, json,
-      { length: options?.length, encryption: options?.encryption, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback })
-    return new Log(ipfs, key, sign, { encoding: options?.encoding, encryption: options?.encryption, logId, entries, access: options?.access, sortFn: options?.sortFn }).init()
+    const { logId, entries } = await LogIO.fromJSON(ipfs, json, { encoding: options?.encoding, length: options?.length, encryption: options?.encryption, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback })
+    return new Log(ipfs, identity, { encoding: options?.encoding, encryption: options?.encryption, logId, entries, access: options?.access, sortFn: options?.sortFn })
   }
 
   /**
@@ -1032,12 +940,11 @@ export class Log<T> extends GSet {
    * @param {Function} options.sortFn The sort function - by default LastWriteWins
    * @return {Promise<Log>} New Log
    */
-  static async fromEntry<T>(ipfs: IPFS, key: PublicKey | Ed25519PublicKey, sign: (Uint8Array) => Promise<Uint8Array>, sourceEntries: Entry<T>[] | Entry<T>, options: EntryFetchOptions<T> & { encoding?: IOOptions<T>, shouldExclude?: (string) => boolean, encryption?: PublicKeyEncryption, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction }) {
+  static async fromEntry<T>(ipfs: IPFS, identity: Identity, sourceEntries: Entry<T>[] | Entry<T>, options: EntryFetchOptions<T> & { encoding?: IOOptions<T>, shouldExclude?: (hash: string) => boolean, encryption?: PublicKeyEncryptionResolver, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction }) {
     // TODO: need to verify the entries with 'key'
     options = strictFetchOptions(options);
-    const { entries } = await LogIO.fromEntry(ipfs, sourceEntries,
-      { length: options.length, exclude: options.exclude, encryption: options?.encryption, timeout: options.timeout, concurrency: options.concurrency, shouldExclude: options.shouldExclude, onProgressCallback: options.onProgressCallback })
-    return new Log(ipfs, key, sign, { encoding: options?.encoding, encryption: options?.encryption, access: options.access, entries, sortFn: options.sortFn }).init()
+    const { entries } = await LogIO.fromEntry(ipfs, sourceEntries, { encoding: options.encoding, length: options.length, exclude: options.exclude, encryption: options?.encryption, timeout: options.timeout, concurrency: options.concurrency, shouldExclude: options.shouldExclude, onProgressCallback: options.onProgressCallback })
+    return new Log(ipfs, identity, { encoding: options?.encoding, encryption: options?.encryption, access: options.access, entries, sortFn: options.sortFn })
 
   }
 
@@ -1051,8 +958,8 @@ export class Log<T> extends GSet {
    * @returns {Array<Entry<T>>}
    */
   static findHeads<T>(entries: Entry<T>[]) {
-    const indexReducer = (res, entry, idx, arr) => {
-      const addToResult = e => (res[e] = entry.hash)
+    const indexReducer = (res: { [key: string]: string }, entry: Entry<any>, idx: number) => {
+      const addToResult = (e: string) => (res[e] = entry.hash)
       entry.next.forEach(addToResult)
       return res
     }
@@ -1072,7 +979,7 @@ export class Log<T> extends GSet {
     // Null index containing entries that have no parents (nexts)
     const nullIndex: Entry<T>[] = []
     // Hashes for all entries for quick lookups
-    const hashes = {}
+    const hashes: { [key: string]: boolean } = {}
     // Hashes of all next entries
     let nexts: string[] = []
 
@@ -1099,7 +1006,7 @@ export class Log<T> extends GSet {
     // Create our indices
     entries.forEach(addToIndex)
 
-    const addUniques = (res: Entry<T>[], entries: Entry<T>[], _idx, _arr) => res.concat(findUniques(entries, 'hash'))
+    const addUniques = (res: Entry<T>[], entries: Entry<T>[], _idx: any, _arr: any) => res.concat(findUniques(entries, 'hash'))
     const exists = (e: string) => hashes[e] === undefined
     const findFromReverseIndex = (e: string) => reverseIndex[e]
 
@@ -1117,10 +1024,10 @@ export class Log<T> extends GSet {
   // Find the hashes to entries that are not in a collection
   // but referenced by other entries
   static findTailHashes(entries: Entry<any>[]) {
-    const hashes = {}
-    const addToIndex = e => (hashes[e.hash] = true)
-    const reduceTailHashes = (res, entry, idx, arr) => {
-      const addToResult = (e) => {
+    const hashes: { [key: string]: boolean } = {}
+    const addToIndex = (e: Entry<any>) => (hashes[e.hash] = true)
+    const reduceTailHashes = (res: string[], entry: Entry<any>, idx: number, arr: Entry<any>[]) => {
+      const addToResult = (e: string) => {
         /* istanbul ignore else */
         if (hashes[e] === undefined) {
           res.splice(0, 0, e)
@@ -1135,7 +1042,7 @@ export class Log<T> extends GSet {
   }
 
   static async difference<T>(a: Log<T>, b: Log<T>) {
-    const stack = Object.keys(a._headsIndex)
+    const stack: string[] = Object.keys(a._headsIndex)
     const traversed: { [key: string]: boolean } = {}
     const res: { [key: string]: Entry<T> } = {}
 
@@ -1148,6 +1055,9 @@ export class Log<T> extends GSet {
 
     while (stack.length > 0) {
       const hash = stack.shift()
+      if (!hash) {
+        throw new Error("Unexpected");
+      }
       const entry = a.get(hash)
       if (entry && !b.get(hash)) { // TODO do we need to do som GID checks?
         res[entry.hash] = entry

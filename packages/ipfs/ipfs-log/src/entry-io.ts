@@ -1,17 +1,17 @@
 import pMap from 'p-map'
 import pDoWhilst from 'p-do-whilst'
-import { bigIntMin, Entry } from '@dao-xyz/ipfs-log-entry';
+import { min, Entry, IOOptions } from '@dao-xyz/ipfs-log-entry';
 import { IPFS } from 'ipfs-core-types'
-import { PublicKeyEncryption } from "@dao-xyz/peerbit-crypto";
+import { PublicKeyEncryption, PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 
-const hasItems = arr => arr && arr.length > 0
+const hasItems = (arr: any[]) => arr && arr.length > 0
 
 
-export interface EntryFetchOptions<T> { length?: number, timeout?: number, exclude?: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency?: number, encryption?: PublicKeyEncryption }
-interface EntryFetchStrictOptions<T> { length: number, timeout?: number, exclude: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency: number, encryption?: PublicKeyEncryption }
+export interface EntryFetchOptions<T> { length?: number, timeout?: number, exclude?: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency?: number, encryption?: PublicKeyEncryptionResolver, encoding: IOOptions<T> }
+interface EntryFetchStrictOptions<T> { length: number, timeout?: number, exclude: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency: number, encryption?: PublicKeyEncryptionResolver, encoding: IOOptions<T> }
 
-export interface EntryFetchAllOptions<T> extends EntryFetchOptions<T> { shouldExclude?: (string) => boolean, onStartProgressCallback?: any, delay?: number }
-interface EntryFetchAllStrictOptions<T> extends EntryFetchStrictOptions<T> { shouldExclude?: (string) => boolean, onStartProgressCallback?: any, delay: number }
+export interface EntryFetchAllOptions<T> extends EntryFetchOptions<T> { shouldExclude?: (string: string) => boolean, onStartProgressCallback?: any, delay?: number }
+interface EntryFetchAllStrictOptions<T> extends EntryFetchStrictOptions<T> { shouldExclude?: (string: string) => boolean, onStartProgressCallback?: any, delay: number }
 
 
 
@@ -54,9 +54,9 @@ export const strictFetchOptions = <T>(options: EntryFetchOptions<T>): EntryFetch
 export class EntryIO {
   // Fetch log graphs in parallel
   static async fetchParallel<T>(ipfs: IPFS, hashes: string | string[], options: EntryFetchAllOptions<T>): Promise<Entry<T>[]> {
-    const fetchOne = async (hash) => EntryIO.fetchAll(ipfs, hash, options)
-    const concatArrays = (arr1, arr2) => arr1.concat(arr2)
-    const flatten = (arr) => arr.reduce(concatArrays, [])
+    const fetchOne = async (hash: string) => EntryIO.fetchAll(ipfs, hash, options)
+    const concatArrays = (arr1: any[], arr2: any) => arr1.concat(arr2)
+    const flatten = (arr: any[]) => arr.reduce(concatArrays, [])
     const res = await pMap(hashes, fetchOne, { concurrency: Math.max(options.concurrency || hashes.length, 1) })
     return flatten(res)
   }
@@ -76,10 +76,11 @@ export class EntryIO {
    */
   static async fetchAll<T>(ipfs: IPFS, hashes: string | string[], fetchOptions: EntryFetchAllOptions<T>): Promise<Entry<T>[]> {
     const options = strictAllFetchOptions(fetchOptions);
+
     const result: Entry<T>[] = []
-    const cache = {}
-    const loadingCache = {}
-    const loadingQueue = Array.isArray(hashes)
+    const cache: { [key: string]: any } = {}
+    const loadingCache: { [key: string]: any } = {}
+    const loadingQueue: { [key: number | string]: string[] } = Array.isArray(hashes)
       ? { 0: hashes.slice() }
       : { 0: [hashes] }
     let running = 0 // keep track of how many entries are being fetched at any time
@@ -92,23 +93,29 @@ export class EntryIO {
 
     // Add a multihash to the loading queue
     const addToLoadingQueue = (e: Entry<T> | string, idx: number) => {
-      if (!loadingCache[e["hash"] || e] && !shouldExclude(e)) {
-        if (!loadingQueue[idx]) loadingQueue[idx] = []
-        if (!loadingQueue[idx].includes(e)) {
-          loadingQueue[idx].push(e)
+      const hash = e instanceof Entry ? e.hash : e;
+      if (!loadingCache[hash] && !shouldExclude(hash)) {
+        if (!loadingQueue[idx]) {
+          loadingQueue[idx] = []
         }
-        loadingCache[e["hash"] || e] = true
+        if (!loadingQueue[idx].includes(hash)) {
+          loadingQueue[idx].push(hash)
+        }
+        loadingCache[hash] = true
       }
     }
 
     // Get the next items to process from the loading queue
     const getNextFromQueue = (length = 1) => {
-      const getNext = (res, key, idx) => {
+      const getNext = (res: string[], key: string, idx: number) => {
         const nextItems = loadingQueue[key]
-        while (nextItems.length > 0 && res.length < length) {
-          const hash = nextItems.shift()
+        for (const hash of nextItems) {
+          if (res.length >= length) {
+            break;
+          }
           res.push(hash)
         }
+
         if (nextItems.length === 0) {
           delete loadingQueue[key]
         }
@@ -118,10 +125,10 @@ export class EntryIO {
     }
 
     // Add entries that we don't need to fetch to the "cache"
-    const addToExcludeCache = e => { cache[e.hash || e] = true }
+    const addToExcludeCache = (e: Entry<any> | string) => { cache[(e instanceof Entry) ? e.hash : e] = true }
 
     // Fetch one entry and add it to the results
-    const fetchEntry = async (hash) => {
+    const fetchEntry = async (hash: string) => {
       if (!hash || cache[hash] || shouldExclude(hash)) {
         return
       }
@@ -139,16 +146,16 @@ export class EntryIO {
 
         const addToResults = async (entry: Entry<T>) => {
           if (!cache[entry.hash] && !shouldExclude(entry.hash)) {
-            entry.init({ encryption: options.encryption, encoding: undefined });
+            entry.init({ encryption: options.encryption, encoding: options.encoding });
 
 
             // Todo check bigint conversions
             const ts = Number((await entry.getClock()).time)
 
             // Update min/max clocks'
-            maxClock = Number(bigIntMin(maxClock, ts))
+            maxClock = Number(min(maxClock, ts))
             minClock = Number(result.length > 0
-              ? bigIntMin((await result[result.length - 1].clock).time, minClock)
+              ? min<bigint | number>((await result[result.length - 1].clock).time, minClock)
               : maxClock)
 
             const isLater = (result.length >= options.length && ts >= minClock)
@@ -201,8 +208,8 @@ export class EntryIO {
         } catch (e) {
           reject(e)
         } finally {
-          clearTimeout(timer)
-
+          if (timer)
+            clearTimeout(timer)
         }
       })
     }

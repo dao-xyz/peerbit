@@ -8,27 +8,29 @@ import { Level } from 'level';
 import { Ed25519Keypair, Ed25519PublicKey, X25519Keypair, X25519PublicKey, X25519SecretKey } from '@dao-xyz/peerbit-crypto';
 import { jest } from '@jest/globals';
 import fs from 'fs-extra'
+import { StoreError } from '../errors';
+import { delay } from '@dao-xyz/time';
 
 let store: Level;
 const fixturePath = path.join('packages/identity/keystore/src/__tests__', 'fixtures', 'signingKeys')
 const storagePath = path.join('packages/identity/keystore/src/__tests__', 'signingKeys')
-const upgradePath = path.join('packages/identity/keystore/src/__tests__', 'upgrade')
 const tempKeyPath = "packages/identity/keystore/src/__tests__/keystore-test";
-jest.useRealTimers();
-jest.setTimeout(100000);
+
+jest.setTimeout(600000)
+/* jest.useRealTimers();
+; */
 
 describe('keystore', () => {
 
   beforeAll(async () => {
     await fs.copy(fixturePath, storagePath)
     rmrf.sync(tempKeyPath)
-    store = await createStore(tempKeyPath) // storagePath
+    store = await createStore(tempKeyPath + '/1') // storagePath
 
   })
 
   afterAll(async () => {
     rmrf.sync(storagePath)
-    rmrf.sync(upgradePath)
     rmrf.sync(tempKeyPath)
 
   })
@@ -41,7 +43,7 @@ describe('keystore', () => {
       expect(typeof keystore.openStore).toEqual('function')
       expect(typeof keystore.hasKey).toEqual('function')
       expect(typeof keystore.createKey).toEqual('function')
-      expect(typeof keystore.getKeyByPath).toEqual('function')
+      expect(typeof keystore.getKey).toEqual('function')
     })
 
     it('assigns this._store', async () => {
@@ -61,7 +63,6 @@ describe('keystore', () => {
       let store = await createStore();
       const keystore = new Keystore(store)
       expect(keystore._store.status).toEqual('opening')
-      await keystore.close()
     })
 
 
@@ -71,8 +72,8 @@ describe('keystore', () => {
       const cache = new LRU({ max: 10 })
       const keystore = new Keystore(store, { cache })
       assert(['open', 'opening'].includes(keystore._store.status))
-      assert(keystore._cache === cache)
-      assert(keystore._store === store)
+      expect(keystore._cache === cache)
+      expect(keystore._store === store)
     })
   })
 
@@ -80,19 +81,28 @@ describe('keystore', () => {
   describe('createKey', () => {
     let keystore: Keystore
 
-    beforeEach(async () => {
+    beforeAll(async () => {
       keystore = new Keystore(store)
-      if (store.status !== 'open') {
-        await store.open()
-      }
     })
 
     it('creates a new key', async () => {
-      const id = 'a new key'
+      const id = new Uint8Array([1, 2, 4]);
       await keystore.createEd25519Key({ id })
       const hasKey = await keystore.hasKey(id)
+      const getKey = await keystore.getKey(id)
+      expect(getKey)
       expect(hasKey).toEqual(true)
     })
+
+
+    it('creates id from key', async () => {
+      const key = await keystore.createEd25519Key()
+      const hasKey = await keystore.hasKey(key.keypair.publicKey)
+      const getKey = await keystore.getKey(key.keypair.publicKey)
+      expect(getKey)
+      expect(hasKey).toEqual(true)
+    })
+
 
 
     it('throws an error if key already exist', async () => {
@@ -100,18 +110,18 @@ describe('keystore', () => {
       await keystore.createEd25519Key({ id })
       try {
         await keystore.createEd25519Key({ id })
+        fail()
       } catch (e) {
-        assert(true)
       }
     })
     it('throws an error accessing a closed store', async () => {
+      const closedKeysStore = new Keystore({ status: 'closed' } as any);
       try {
         const id = 'X'
-
-        await store.close()
-        await keystore.createEd25519Key({ id })
+        await closedKeysStore.createEd25519Key({ id })
       } catch (e) {
-        assert(true)
+        expect(e).toBeInstanceOf(StoreError)
+        expect((e as StoreError).message).toEqual('Keystore not open')
       }
     })
 
@@ -127,9 +137,7 @@ describe('keystore', () => {
 
     beforeEach(async () => {
       keystore = new Keystore(store)
-      if (store.status !== 'open') {
-        await store.open()
-      }
+      await keystore.waitForOpen();
     })
 
     /* it('can overwrite if secret key is missing', async () => {
@@ -174,6 +182,7 @@ describe('keystore', () => {
   */
     it('throws an error if key already exist', async () => {
       const id = 'already'
+      const keystore = new Keystore(await createStore(tempKeyPath + '/unique'))
       await keystore.createEd25519Key({ id })
       try {
         await keystore.createEd25519Key({ id })
@@ -181,18 +190,6 @@ describe('keystore', () => {
         assert(true)
       }
     })
-    it('throws an error accessing a closed store', async () => {
-      try {
-        const id = 'X'
-
-        await store.close()
-        await keystore.createEd25519Key({ id })
-      } catch (e) {
-        assert(true)
-      }
-    })
-
-
 
     afterEach(async () => {
       // await keystore.close()
@@ -203,10 +200,9 @@ describe('keystore', () => {
     let keystore: Keystore
 
     beforeAll(async () => {
-      if (store.status !== 'open') {
-        await store.open()
-      }
+
       keystore = new Keystore(store)
+      await keystore.waitForOpen();
       await keystore.createEd25519Key({ id: 'YYZ' })
     })
 
@@ -216,21 +212,21 @@ describe('keystore', () => {
     })
 
     it('returns false if key does not exist', async () => {
-      let hasKey
-      try {
-        hasKey = await keystore.hasKey('XXX')
-      } catch (e) {
-        expect(hasKey).toEqual(true)
-      }
+      let hasKey = await keystore.hasKey('XXX')
+      let getKey = await keystore.getKey('XXX')
+      expect(getKey).toBeUndefined();
+      expect(hasKey).toEqual(false)
+
     })
 
 
     it('throws an error accessing a closed store', async () => {
+      const closedKeysStore = new Keystore({ status: 'closed' } as any);
       try {
-        await store.close()
-        await keystore.hasKey('XXX')
+        await closedKeysStore.hasKey('XXX')
       } catch (e) {
-        assert(true)
+        expect(e).toBeInstanceOf(StoreError)
+        expect((e as StoreError).message).toEqual('Keystore not open')
       }
     })
 
@@ -250,13 +246,13 @@ describe('keystore', () => {
     })
 
     it('gets an existing key', async () => {
-      const key = await keystore.getKeyByPath('ZZZ')
+      const key = await keystore.getKey('ZZZ')
       expect(key?.keypair).toBeDefined();
     })
 
     it('throws an error upon accessing a non-existant key', async () => {
       try {
-        await keystore.getKeyByPath('ZZZZ')
+        await keystore.getKey('ZZZZ')
       } catch (e) {
         assert(true)
       }
@@ -265,11 +261,12 @@ describe('keystore', () => {
 
 
     it('throws an error accessing a closed store', async () => {
+      const closedKeysStore = new Keystore({ status: 'closed' } as any);
       try {
-        await store.close()
-        await keystore.getKeyByPath('ZZZ')
+        await closedKeysStore.getKey('ZZZ')
       } catch (e) {
-        assert(true)
+        expect(e).toBeInstanceOf(StoreError)
+        expect((e as StoreError).message).toEqual('Keystore not open')
       }
     })
 

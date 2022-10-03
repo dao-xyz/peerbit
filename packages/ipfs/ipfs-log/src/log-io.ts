@@ -7,9 +7,9 @@ import { isDefined } from './is-defined';
 import { findUniques } from './find-uniques';
 import { difference } from './difference';
 import { Log } from './log';
-
+import { IPFS } from 'ipfs-core-types';
 const IPLD_LINKS = ['heads']
-const last = (arr, n) => arr.slice(arr.length - Math.min(arr.length, n), arr.length)
+const last = (arr: any[], n: number) => arr.slice(arr.length - Math.min(arr.length, n), arr.length)
 
 export class LogIO {
   //
@@ -20,14 +20,16 @@ export class LogIO {
    * @returns {Promise<string>}
    * @deprecated
    */
-  static async toMultihash(ipfs, log: Log<any>, options: { format?: string } = {}) {
+  static async toMultihash(ipfs: IPFS, log: Log<any>, options: { format?: string } = {}) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(log)) throw LogError.LogNotDefinedError()
     let format = options.format;
-    if (!isDefined(format)) format = 'dag-cbor'
+    if (!isDefined(format)) {
+      format = 'dag-cbor'
+    }
     if (log.values.length < 1) throw new Error('Can\'t serialize an empty log')
 
-    return io.write(ipfs, format, log.toJSON(), { links: IPLD_LINKS })
+    return io.write(ipfs, format as string, log.toJSON(), { links: IPLD_LINKS })
   }
 
   /**
@@ -39,7 +41,7 @@ export class LogIO {
    * @param {Array<Entry<T>>} options.exclude Entries to not fetch (cached)
    * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
    */
-  static async fromMultihash<T>(ipfs, hash, options: EntryFetchAllOptions<T> & { sortFn: any }) {
+  static async fromMultihash<T>(ipfs: IPFS, hash: string, options: EntryFetchAllOptions<T> & { sortFn: any }) {
     if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError()
     if (!isDefined(hash)) throw new Error(`Invalid hash: ${hash}`)
 
@@ -49,13 +51,13 @@ export class LogIO {
 
     // Use user provided sorting function or the default one
     const sortFn = options.sortFn || NoZeroes(LastWriteWins)
-    const isHead = e => logData.heads.includes(e.hash)
+    const isHead = (e: Entry<any>) => logData.heads.includes(e.hash)
 
     const all = await EntryIO.fetchAll(ipfs, logData.heads as any as string[],
       strictFetchOptions(options)) // TODO fix typings
-
+    const length = options.length || -1;
     const logId = logData.id
-    const entries = options.length > -1 ? last(all.sort(sortFn), options.length) : all
+    const entries = length > -1 ? last(all.sort(sortFn), length) : all
     const heads = entries.filter(isHead)
     return { logId, entries, heads }
   }
@@ -69,17 +71,18 @@ export class LogIO {
    * @param {Array<Entry<T>>} options.exclude Entries to not fetch (cached)
    * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
    */
-  static async fromEntryHash<T>(ipfs, hash: string[] | string,
+  static async fromEntryHash<T>(ipfs: IPFS, hash: string[] | string,
     options: EntryFetchAllOptions<T> & { sortFn?: ISortFunction }) {
     if (!isDefined(hash)) throw new Error("'hash' must be defined")
+    const length = options.length || -1;
 
     // Convert input hash(s) to an array
     const hashes = Array.isArray(hash) ? hash : [hash]
     // Fetch given length, return size at least the given input entries
-    if (options.length > -1) {
+    if (length > -1) {
       options = {
         ...options,
-        length: Math.max(options.length, 1)
+        length: Math.max(length, 1)
       }
     }
 
@@ -88,7 +91,7 @@ export class LogIO {
     // Cap the result at the right size by taking the last n entries,
     // or if given length is -1, then take all
     options.sortFn = options.sortFn || NoZeroes(LastWriteWins)
-    const entries = options.length > -1 ? last(all.sort(options.sortFn), options.length) : all
+    const entries = length > -1 ? last(all.sort(options.sortFn), length) : all
     return { entries }
   }
 
@@ -101,7 +104,7 @@ export class LogIO {
    * @param {number} options.length How many entries to include
    * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
    **/
-  static async fromJSON<T>(ipfs, json: { id: string, heads: string[] }, options: EntryFetchAllOptions<T>) {
+  static async fromJSON<T>(ipfs: IPFS, json: { id: string, heads: string[] }, options: EntryFetchAllOptions<T>) {
 
     const { id, heads } = json
     const all: Entry<T>[] = await EntryIO.fetchParallel(ipfs, heads, options)
@@ -118,22 +121,23 @@ export class LogIO {
    * @param {Array<Entry<T>>} options.exclude Entries to not fetch (cached)
    * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
    */
-  static async fromEntry<T>(ipfs, sourceEntries: Entry<T>[] | Entry<T>, options: EntryFetchAllOptions<T>): Promise<{ entries: Entry<T>[] }> {
+  static async fromEntry<T>(ipfs: IPFS, sourceEntries: Entry<T>[] | Entry<T>, options: EntryFetchAllOptions<T>): Promise<{ entries: Entry<T>[] }> {
 
     if (!Array.isArray(sourceEntries)) {
       sourceEntries = [sourceEntries]
     }
+    const length = options.length || -1;
 
     // Fetch given length, return size at least the given input entries
-    if (options.length > -1) {
+    if (length > -1) {
       options = {
         ...options,
-        length: Math.max(options.length, sourceEntries.length)
+        length: Math.max(length, sourceEntries.length)
       }
     }
 
     // Make sure we pass hashes instead of objects to the fetcher function
-    let hashes = [];
+    let hashes: string[] = [];
     sourceEntries.forEach((e) => {
       e.next.forEach((n) => {
         hashes.push(n);
@@ -141,12 +145,13 @@ export class LogIO {
     })
 
     if (options.shouldExclude) {
-      hashes = hashes.filter(h => !options.shouldExclude(h))
+      hashes = hashes.filter(h => !(options.shouldExclude as (h: string) => boolean)(h))
     }
     if (options.onProgressCallback) {
-      sourceEntries.forEach((entry) => {
+      for (const entry of sourceEntries) {
         options.onProgressCallback(entry)
-      })
+      }
+
     }
 
 
@@ -155,11 +160,11 @@ export class LogIO {
       options)
 
     // Combine the fetches with the source entries and take only uniques
-    const combined = sourceEntries.concat(all).concat(options.exclude)
+    const combined = sourceEntries.concat(all).concat(options.exclude || [])
     const uniques = findUniques(combined, 'hash').sort(Entry.compare)
 
     // Cap the result at the right size by taking the last n entries
-    const sliced = uniques.slice(options.length > -1 ? -options.length : -uniques.length)
+    const sliced = uniques.slice(length > -1 ? -length : -uniques.length)
 
     // Make sure that the given input entries are present in the result
     // in order to not lose references
