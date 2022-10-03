@@ -63,7 +63,10 @@ export class Ed25519PrivateKey extends PrivateSignKey {
 @variant(0)
 export class Ed25519Keypair extends Keypair implements Signer {
 
+    @field({ type: Ed25519PublicKey })
     publicKey: Ed25519PublicKey;
+
+    @field({ type: Ed25519PrivateKey })
     privateKey: Ed25519PrivateKey;
 
     static async create(): Promise<Ed25519Keypair> {
@@ -79,12 +82,18 @@ export class Ed25519Keypair extends Keypair implements Signer {
         });
         return kp;
     }
-    async sign(data) {
+    async sign(data: Uint8Array) {
         const signature = await sign(data, this.privateKey)
         return {
             signature,
             publicKey: this.publicKey
         }
+    }
+    equals(other: Keypair) {
+        if (other instanceof Ed25519Keypair) {
+            return this.publicKey.equals(other.publicKey) && this.privateKey.equals(other.privateKey)
+        }
+        return false;
     }
 }
 

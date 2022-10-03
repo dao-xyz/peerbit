@@ -72,7 +72,6 @@
     "puppeteer-core": "^13.4.0",
     "remark-cli": "^8.0.1",
     "remark-validate-links": "^10.0.2",
-    "rimraf": "^3.0.2",
     "validate-maintainers": "^1.2.2",
     "web3": "^1.8.0",
     "webpack": "^4.41.2",

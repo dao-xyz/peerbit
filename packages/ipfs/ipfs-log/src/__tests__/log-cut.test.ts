@@ -28,43 +28,43 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await fs.copy(identityKeyFixtures(__dirname), identityKeysPath)
       await fs.copy(signingKeyFixtures(__dirname), signingKeysPath)
 
-      keystore = new Keystore(identityKeysPath)
-      signingKeystore = new Keystore(signingKeysPath)
+      keystore = new Keystore(await createStore(identityKeysPath)))
+    signingKeystore = new Keystore(await createStore(signingKeysPath)))
 
-      signKey = await keystore.getKeyByPath(new Uint8Array([0]), SignKeyWithMeta);
+  signKey = await keystore.getKeyByPath(new Uint8Array([0]), SignKeyWithMeta);
 
-      ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
-      ipfs = ipfsd.api
-    })
+  ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
+  ipfs = ipfsd.api
+})
 
-    afterAll(async () => {
-      await stopIpfs(ipfsd)
-      rmrf.sync(identityKeysPath)
-      rmrf.sync(signingKeysPath)
+afterAll(async () => {
+  await stopIpfs(ipfsd)
+  rmrf.sync(identityKeysPath)
+  rmrf.sync(signingKeysPath)
 
-      await keystore?.close()
-      await signingKeystore?.close()
-    })
+  await keystore?.close()
+  await signingKeystore?.close()
+})
 
 
-    it('cut back to max oplog length', async () => {
-      const log = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A', recycle: { maxOplogLength: 1 } })
-      await log.append('hello1')
-      await log.append('hello2')
-      await log.append('hello3')
-      expect(log.length).toEqual(1);
-      expect(log.values[0].payload.value).toEqual('hello3');
-    })
+it('cut back to max oplog length', async () => {
+  const log = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A', recycle: { maxOplogLength: 1 } })
+  await log.append('hello1')
+  await log.append('hello2')
+  await log.append('hello3')
+  expect(log.length).toEqual(1);
+  expect(log.values[0].payload.value).toEqual('hello3');
+})
 
-    it('cut back to cut length', async () => {
-      const log = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A', recycle: { maxOplogLength: 3, cutOplogToLength: 1 } })
-      await log.append('hello1')
-      await log.append('hello2')
-      await log.append('hello3')
-      expect(log.length).toEqual(3);
-      await log.append('hello4')
-      expect(log.length).toEqual(1); // We exceed 'maxOplogLength' and cut back to 'cutOplogToLength'
-      expect(log.values[0].payload.value).toEqual('hello4');
-    })
-  })
+it('cut back to cut length', async () => {
+  const log = new Log<string>(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), { logId: 'A', recycle: { maxOplogLength: 3, cutOplogToLength: 1 } })
+  await log.append('hello1')
+  await log.append('hello2')
+  await log.append('hello3')
+  expect(log.length).toEqual(3);
+  await log.append('hello4')
+  expect(log.length).toEqual(1); // We exceed 'maxOplogLength' and cut back to 'cutOplogToLength'
+  expect(log.values[0].payload.value).toEqual('hello4');
+})
+})
 })

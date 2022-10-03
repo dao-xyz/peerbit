@@ -43,7 +43,7 @@ export class MaybeSigned<T>  {
     signature?: SignatureWithKey
 
     constructor(props?: {
-        data?: Uint8Array,
+        data: Uint8Array,
         value?: T,
         signature?: SignatureWithKey
     }) {
@@ -54,7 +54,7 @@ export class MaybeSigned<T>  {
         }
     }
 
-    _value: T
+    _value?: T
 
     getValue(constructor: Constructor<T>): T {
         return deserialize(this.data, constructor)

@@ -6,12 +6,13 @@ import testAPIs from './test-apis.js'
  * @param  {Object}  config  [IPFS configuration to use]
  * @return {[Promise<IPFS>]} [IPFS instance]
  */
-export const startIpfs = async (type, config = {}) => {
-  if (!testAPIs[type]) {
+export const startIpfs = async (type: 'js-ipfs' | 'go-ipfs' | string, config = {}) => {
+
+
+  const controllerConfig = testAPIs[type as 'js-ipfs' | 'go-ipfs']
+  if (!controllerConfig) {
     throw new Error(`Wanted API type ${JSON.stringify(type)} is unknown. Available types: ${Object.keys(testAPIs).join(', ')}`)
   }
-
-  const controllerConfig = testAPIs[type]
   controllerConfig.ipfsOptions = config
 
   // Spawn an IPFS daemon (type defined in)
@@ -19,7 +20,7 @@ export const startIpfs = async (type, config = {}) => {
     const ipfsd = createController(controllerConfig)
     return ipfsd
   } catch (err) {
-    throw new Error(err)
+    throw new Error(err as any)
   }
 }
 

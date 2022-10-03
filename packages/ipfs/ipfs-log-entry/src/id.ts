@@ -6,7 +6,10 @@ export class Id {
     @field({ type: 'string' })
     id: string;
     constructor(props?: { id: string }) {
-        this.id = props?.id;
+        if (props) {
+            this.id = props.id;
+
+        }
     }
 }
 

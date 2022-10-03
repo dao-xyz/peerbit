@@ -30,7 +30,7 @@
   "license": "MIT",
   "devDependencies": {
     "c8": "^7.11.3",
-    "go-ipfs": "^0.16.0-rc1",
+    "go-ipfs": "^0.15.0",
     "ipfs": "^0.64.2",
     "ipfsd-ctl": "^12.0.3"
   },

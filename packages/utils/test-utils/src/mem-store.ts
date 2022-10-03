@@ -8,9 +8,9 @@ const defaultBase = base58btc
 
 const DAG_CBOR_CODE = 0x71
 
-const cidifyString = (str) => {
+const cidifyString = (str: string | string[]): CID | any => {
   if (!str) {
-    return str
+    return str;
   }
 
   if (Array.isArray(str)) {

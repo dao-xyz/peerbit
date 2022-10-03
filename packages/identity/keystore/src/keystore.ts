@@ -1,12 +1,11 @@
-const fs = (typeof window === 'object' || typeof self === 'object') ? null : eval('require("fs")') // eslint-disable-line
 import { Level } from 'level';
 import LRU from 'lru-cache';
 import { variant, field, serialize, deserialize, option, Constructor } from '@dao-xyz/borsh';
 import { U8IntArraySerializer, bufferSerializer, arraysEqual } from '@dao-xyz/borsh-utils';
-import { X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519PrivateKey, Keypair } from '@dao-xyz/peerbit-crypto';
+import { X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519PrivateKey, Keypair, X25519Keypair, Ed25519Keypair } from '@dao-xyz/peerbit-crypto';
 import { waitFor } from '@dao-xyz/time';
 import { createHash, Sign } from 'crypto';
-import sodium from 'libsodium-wrappers';
+import sodium, { KeyPair } from 'libsodium-wrappers';
 
 export interface Type<T> extends Function {
   new(...args: any[]): T;
@@ -26,29 +25,45 @@ const getIdKey = (id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519Pu
 
 const isId = (id: string) => id.indexOf('/') !== -1
 
-const idFromKey = async (key: X25519PublicKey | Ed25519PublicKey): Promise<string> => {
-  return key.hashCode()
+const idFromKey = async (keypair: Keypair): Promise<string> => {
+  return publicKeyFromKeyPair(keypair).hashCode();
+}
+
+const publicKeyFromKeyPair = (keypair: Keypair) => {
+  if (keypair instanceof X25519Keypair) {
+    return keypair.publicKey;
+  }
+  else if (keypair instanceof Ed25519Keypair) {
+    return keypair.publicKey;
+  }
+  throw new Error("Unsupported")
 }
 
 /* import { ready, crypto_sign, crypto_sign_keypair, crypto_sign_verify_detached } from 'libsodium-wrappers';
  */
 //import { ready, crypto_sign_keypair, crypto_sign, crypto_box_keypair, type KeyType as CryptoKeyType, KeyPair } from 'sodium-plus';
-export const createStore = (path = './keystore'): Level => {
+/**
+ * Node only
+ * @param path 
+ * @returns 
+ */
+export const createStore = async (path = './keystore'): Promise<Level> => {
+  const fs = await import('fs');
   if (fs && fs.mkdirSync) {
     fs.mkdirSync(path, { recursive: true })
   }
   return new Level(path, { valueEncoding: 'view' })
 }
 
-const verifiedCache: { get(string: string): { publicKey: Ed25519PublicKey, data: Uint8Array }, set(string: string, value: { publicKey: Ed25519PublicKey, data: Uint8Array }) } = new LRU({ max: 1000 })
-
+/* const verifiedCache: { get(string: string): { publicKey: Ed25519PublicKey, data: Uint8Array }, set(string: string, value: { publicKey: Ed25519PublicKey, data: Uint8Array }): void } = new LRU({ max: 1000 })
+ */
 
 const NONCE_LENGTH = 24;
 
-export type WithType<T> = Constructor<T> & { type: string };
-
-export const getPath = (group: string, type: WithType<any>, key: string) => {
-  return group + '/' + type.type + '/' + key
+/* export type WithType<T> = Constructor<T> & { type: string };
+ */
+export const getPath = (group: string, key: string) => {
+  return group + '/' + key
 };
 
 /**
@@ -73,7 +88,7 @@ export class EncryptedMessage {
 }
 
 @variant(0)
-export class KeyWithMeta {
+export class KeyWithMeta<T extends Keypair> {
 
   @field({ type: 'string' })
   group: string
@@ -82,12 +97,12 @@ export class KeyWithMeta {
   timestamp: bigint
 
   @field({ type: Keypair })
-  keypair: Keypair
+  keypair: T
 
   constructor(props?: {
     timestamp: bigint,
     group: string,
-    keypair: Keypair
+    keypair: T
   }) {
     if (props) {
       this.timestamp = props.timestamp;
@@ -100,13 +115,10 @@ export class KeyWithMeta {
     throw new Error("Unsupported")
   }
 
-  equals(other: KeyWithMeta, ignoreMissingSecret: boolean = false) {
-    return this.timestamp === other.timestamp && this.group === other.group
+  equals(other: KeyWithMeta<T>, ignoreMissingSecret: boolean = false) {
+    return this.timestamp === other.timestamp && this.group === other.group && this.keypair.equals(other.keypair);
   }
 
-  clone(sensitive: boolean): KeyWithMeta {
-    throw new Error("Unsupported")
-  }
 }
 
 /* 
@@ -236,19 +248,17 @@ export class BoxKeyWithMeta extends KeyWithMeta {
 export class Keystore {
 
   _store: Level;
-  _cache: LRU<string, KeyWithMeta>
+  _cache: LRU<string, KeyWithMeta<any>>
 
-  constructor(input: (Level | { store?: string } | { store?: Level }) & { cache?: any } | string = {}) {
-    if (typeof input === 'string') {
-      this._store = createStore(input)
-    } else if (typeof input["open"] === 'function') {
-      this._store = input as Level
-    } else if (typeof input["store"] === 'string') {
-      this._store = createStore(input["store"])
-    } else {
-      this._store = input["store"] || createStore()
+  constructor(store: Level, cache?: any) {
+    this._store = store;
+    if (this._store.open) {
+      this._store.open()
     }
-    this._cache = input["cache"] || new LRU({ max: 100 })
+    if (!this._store) {
+      throw new Error("Store needs to be provided");
+    }
+    this._cache = cache || new LRU({ max: 100 })
   }
 
   async openStore() {
@@ -257,6 +267,12 @@ export class Keystore {
       return Promise.resolve()
     }
     return Promise.reject(new Error('Keystore: No store found to open'))
+  }
+
+  assertOpen() {
+    if (this._store.status && this._store.status !== 'open') {
+      throw new Error("Keystore not open")
+    }
   }
 
   async close(): Promise<void> {
@@ -273,7 +289,7 @@ export class Keystore {
   }
 
 
-  async hasKey(key: string | Buffer | Uint8Array, type: WithType<KeyWithMeta>, group: string = DEFAULT_KEY_GROUP): Promise<boolean> {
+  async hasKey(key: string | Buffer | Uint8Array, group: string = DEFAULT_KEY_GROUP): Promise<boolean> {
     if (!key) {
       throw new Error('id needed to check a key')
     }
@@ -284,11 +300,9 @@ export class Keystore {
       await waitFor(() => this._store.status === 'open')
     }
 
-    if (this._store.status && this._store.status !== 'open') {
-      return Promise.resolve(null)
-    }
+    this.assertOpen();
 
-    const storeId = getPath(group, type, idKey);
+    const storeId = getPath(group, idKey);
     return this.hasKeyById(storeId);
   }
 
@@ -299,16 +313,20 @@ export class Keystore {
       hasKey = storedKey !== undefined && storedKey !== null
     } catch (e) {
 
-      return undefined;
+      throw e;
     }
     return hasKey
   }
 
-
-  async createKey(id: string | Buffer | Uint8Array, keypair: Keypair, group?: string, options: { overwrite: boolean } = { overwrite: false }): Promise<KeyWithMeta> { // TODO fix types
-
+  async createEd25519Key(options: { id?: string | Buffer | Uint8Array, group?: string, overwrite?: boolean } = {}): Promise<KeyWithMeta<Ed25519Keypair>> {
+    return this.createKey(await Ed25519Keypair.create(), options)
+  }
+  async createX25519Key(options: { id?: string | Buffer | Uint8Array, group?: string, overwrite?: boolean } = {}): Promise<KeyWithMeta<X25519Keypair>> {
+    return this.createKey(await X25519Keypair.create(), options)
+  }
+  async createKey<T extends Keypair>(keypair: T, options: { id?: string | Buffer | Uint8Array, group?: string, overwrite?: boolean } = {}): Promise<KeyWithMeta<T>> {
     await sodium.ready;
-    let key: { secretKey: X25519SecretKey, publicKey: X25519PublicKey } | { secretKey: Ed25519PrivateKey, publicKey: Ed25519PublicKey } = undefined;
+    /*  let key: { secretKey: X25519SecretKey, publicKey: X25519PublicKey } | { secretKey: Ed25519PrivateKey, publicKey: Ed25519PublicKey } = undefined; */
     /* 
         if (type as any === BoxKeyWithMeta) { // TODO fix types
           let kp = await sodium.crypto_box_keypair();
@@ -330,11 +348,11 @@ export class Keystore {
     const keyWithMeta = new KeyWithMeta({
 
       timestamp: BigInt(+new Date),
-      group: group || DEFAULT_KEY_GROUP,
+      group: options.group || DEFAULT_KEY_GROUP,
       keypair
     });
 
-    await this.saveKey(keyWithMeta, id, options)
+    await this.saveKey(keyWithMeta, options)
     return keyWithMeta;
 
   }
@@ -345,23 +363,26 @@ export class Keystore {
     }
   }
 
-  async saveKey<T extends KeyWithMeta>(toSave: T, id?: string | Buffer | Uint8Array, options: { overwrite: boolean } = { overwrite: false }): Promise<T> { // TODO fix types 
-    const key = toSave as any as (BoxKeyWithMeta | SignKeyWithMeta);
-    const idKey = id ? getIdKey(id) : await idFromKey(key.publicKey);
+  async saveKey<T extends Keypair>(key: KeyWithMeta<T>, options: { id?: string | Buffer | Uint8Array, overwrite?: boolean } = {}): Promise<KeyWithMeta<T>> { // TODO fix types 
+    const idKey = options.id ? getIdKey(options.id) : await idFromKey(key);
     await this.waitForOpen();
-    if (this._store.status && this._store.status !== 'open') {
-      return Promise.resolve(null)
-    }
+    this.assertOpen();
+
 
 
 
     // Normalize group names
     const groupHash = getGroupKey(key.group);
-    const path = getPath(groupHash, key.constructor as any, idKey);
-
+    const path = getPath(groupHash, idKey);
 
     if (!options.overwrite) {
-      const existingKey = await this.getKeyById<BoxKeyWithMeta | SignKeyWithMeta>(path);
+      const existingKey = await this.getKeyById(path);
+      if (existingKey && !existingKey.equals(key)) {
+        throw new Error("Key already exist with this id, and is different")
+      }
+    }
+    /* if (!options.overwrite) {
+      const existingKey = await this.getKeyById(path);
       if (existingKey && !existingKey.equals(key)) {
 
         if (!existingKey.equals(key, true)) {
@@ -372,18 +393,18 @@ export class Keystore {
         }
         return key as any as T; // Already save, TODO fix types
       }
-    }
+    } */
 
     const ser = serialize(key);
-    const publicKeyString = key.publicKey.hashCode();
+    const publicKeyString = publicKeyFromKeyPair(key.keypair).hashCode();
     await this.groupStore.put(path, Buffer.from(ser), { valueEncoding: 'view' }) // TODO fix types, are just wrong 
     await this.keyStore.put(publicKeyString, Buffer.from(ser), { valueEncoding: 'view' }) // TODO fix types, are just wrong 
     this._cache.set(path, key)
     this._cache.set(publicKeyString, key)
-    return key as any as T; // TODO fix types
+    return key
   }
 
-  async getKeyByPath(id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519PublicKey, type: WithType<T> = SignKeyWithMeta as any, group = DEFAULT_KEY_GROUP): Promise<KeyWithMeta> { // TODO fix types of type
+  async getKeyByPath<T extends Keypair>(id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519PublicKey, group = DEFAULT_KEY_GROUP): Promise<KeyWithMeta<T> | null> { // TODO fix types of type
     if (!id) {
       throw new Error('id needed to get a key')
     }
@@ -395,23 +416,21 @@ export class Keystore {
 
     await this.waitForOpen();
 
-    if (this._store.status && this._store.status !== 'open') {
-      return Promise.resolve(null)
-    }
+    this.assertOpen();
 
     // Normalize group names
     group = getGroupKey(group);
-    const storeId = getPath(group, type, idKey);
+    const storeId = getPath(group, idKey);
     return this.getKeyById(storeId)
   }
 
-  async getKeyById(id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519PublicKey): Promise<KeyWithMeta> {
+  async getKeyById<T extends Keypair>(id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519PublicKey): Promise<KeyWithMeta<T> | null> {
 
     id = getIdKey(id);
 
     const cachedKey = this._cache.get(id)
 
-    let loadedKey: KeyWithMeta
+    let loadedKey: KeyWithMeta<T>
     if (cachedKey)
       loadedKey = cachedKey
     else {
@@ -423,11 +442,11 @@ export class Keystore {
         // not found
         return Promise.resolve(null)
       }
-      loadedKey = deserialize(buffer, KeyWithMeta);
+      loadedKey = deserialize(buffer, KeyWithMeta) as KeyWithMeta<T>;
     }
 
     if (!loadedKey) {
-      return
+      return null
     }
 
     if (!cachedKey) {
@@ -437,7 +456,7 @@ export class Keystore {
     return loadedKey; // TODO fix types, we make assumptions here
   }
 
-  async getKeys<T extends KeyWithMeta>(group: string, type?: WithType<T>): Promise<T[]> {
+  async getKeys(group: string): Promise<KeyWithMeta<any>[] | null> {
     if (!this._store) {
       await this.openStore()
     }
@@ -445,9 +464,8 @@ export class Keystore {
     await this.waitForOpen();
 
 
-    if (this._store.status && this._store.status !== 'open') {
-      return Promise.resolve(null)
-    }
+    this.assertOpen();
+
 
     try {
 
@@ -455,18 +473,14 @@ export class Keystore {
       const groupHash = getGroupKey(group);
       let prefix = groupHash;
 
-      // Add type suffix
-      if (type) {
-        prefix += '/' + type.type;
-      }
       const iterator = this.groupStore.iterator<any, Uint8Array>({ gte: prefix, lte: prefix + "\xFF", valueEncoding: 'view' });
-      const ret: KeyWithMeta[] = [];
+      const ret: KeyWithMeta<any>[] = [];
 
       for await (const [_key, value] of iterator) {
         ret.push(deserialize(value, KeyWithMeta));
       }
 
-      return ret as T[];
+      return ret;
     } catch (e) {
       // not found
       return Promise.resolve(null)

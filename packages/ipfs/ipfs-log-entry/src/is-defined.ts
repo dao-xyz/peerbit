@@ -1,2 +1,2 @@
-export const isDefined = (arg) => arg !== undefined && arg !== null
+export const isDefined = (arg: any) => arg !== undefined && arg !== null
 

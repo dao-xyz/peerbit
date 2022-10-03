@@ -1,4 +1,7 @@
-const waitForPeers = (ipfs, peersToWait, topic) => {
+import { IPFS } from "ipfs-core-types"
+import type { PeerId } from '@libp2p/interface-peer-id';
+
+const waitForPeers = (ipfs: IPFS, peersToWait: (PeerId | string)[], topic: string) => {
   return new Promise<void>((resolve, reject) => {
     const interval = setInterval(async () => {
       try {

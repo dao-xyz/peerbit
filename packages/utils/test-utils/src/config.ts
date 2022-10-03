@@ -3,6 +3,7 @@ import path from 'path'
 import * as ipfs from 'ipfs';
 import * as ipfsModule from 'ipfs'
 import * as ipfsHttpModule from 'ipfs-http-client'
+// @ts-ignore
 import * as ipfsBin from 'go-ipfs'
 
 export const factoryConfig = {
@@ -35,8 +36,8 @@ export const factoryConfig = {
 
 export const browserConfig = {
     timeout: 30000,
-    identityKeyFixtures: (dir) => path.resolve(dir, 'fixtures/keys/identity-keys'),
-    signingKeyFixtures: (dir) => path.resolve(dir, 'fixtures/keys/signing-keys'),
+    identityKeyFixtures: (dir: string) => path.resolve(dir, 'fixtures/keys/identity-keys'),
+    signingKeyFixtures: (dir: string) => path.resolve(dir, 'fixtures/keys/signing-keys'),
     identityKeysPath: './orbitdb/identity/identitykeys',
     signingKeysPath: './orbitdb/identity/signingkeys',
     defaultIpfsConfig: {
@@ -115,8 +116,8 @@ export const browserConfig = {
 
 export const nodeConfig = {
     timeout: 30000,
-    identityKeyFixtures: (dir) => path.resolve(dir, 'fixtures/keys/identity-keys'),
-    signingKeyFixtures: (dir) => path.resolve(dir, 'fixtures/keys/signing-keys'),
+    identityKeyFixtures: (dir: string) => path.resolve(dir, 'fixtures/keys/identity-keys'),
+    signingKeyFixtures: (dir: string) => path.resolve(dir, 'fixtures/keys/signing-keys'),
     identityKeysPath: './orbitdb/identity/identitykeys',
     signingKeysPath: './orbitdb/identity/signingkeys',
     defaultIpfsConfig: {

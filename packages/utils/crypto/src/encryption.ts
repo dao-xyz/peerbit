@@ -28,7 +28,7 @@ const getKeypairAsX25519Keypair = async (keypair: X25519Keypair | Ed25519Keypair
 @variant(0)
 export class MaybeEncrypted<T>  {
 
-    _encryption: PublicKeyEncryptionResolver
+    _encryption?: PublicKeyEncryptionResolver
     init(encryption?: PublicKeyEncryptionResolver) {
         this._encryption = encryption;
         return this;
@@ -65,7 +65,7 @@ export class MaybeEncrypted<T>  {
 export class DecryptedThing<T> extends MaybeEncrypted<T> {
 
     @field(U8IntArraySerializer)
-    _data: Uint8Array;
+    _data?: Uint8Array;
 
     constructor(props?: { data?: Uint8Array, value?: T }) {
         super();
@@ -80,10 +80,17 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
         if (this._value) {
             return this._value;
         }
+        if (!this._data) {
+            throw new Error("Missing data");
+        }
         return deserialize(this._data, clazz)
     }
 
     async encrypt(...recieverPublicKeys: (X25519PublicKey | Ed25519PublicKey)[]): Promise<EncryptedThing<T>> {
+        if (!this._encryption) {
+            throw new Error("Not initialized with encryption config")
+        }
+
         const bytes = serialize(this)
         await sodium.ready;
         const epheremalKey = await sodium.crypto_secretbox_keygen();
@@ -277,7 +284,7 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
         }
     }
 
-    _decrypted: DecryptedThing<T>
+    _decrypted?: DecryptedThing<T>
     get decrypted(): DecryptedThing<T> {
         if (!this._decrypted) {
             throw new Error("Entry has not been decrypted, invoke decrypt method before")
@@ -299,7 +306,7 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
         const key = await this._encryption.getAnyKeypair(this._envelope._ks.map(k => k._recieverPublicKey))
         if (key) {
             const k = this._envelope._ks[key.index];
-            let secretKey: X25519SecretKey = undefined;
+            let secretKey: X25519SecretKey = undefined as any;
             if (key.keypair instanceof X25519Keypair) {
                 secretKey = key.keypair.secretKey
             }

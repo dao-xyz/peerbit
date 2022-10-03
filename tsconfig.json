@@ -19,6 +19,10 @@
             "DOM"
         ],
         "moduleResolution": "node",
+        "strict": true,
+        "strictPropertyInitialization": false,
+        "noUnusedLocals": false,
+        "strictFunctionTypes": true,
         "esModuleInterop": true,
         "noEmit": true,
         "noEmitOnError": false,

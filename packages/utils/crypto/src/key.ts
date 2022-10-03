@@ -4,7 +4,7 @@ import { SystemBinaryPayload } from "@dao-xyz/bpayload";
 export type IdentityProviderType = 'orbitdb' | 'ethereum' | 'solana';
 
 @variant(0)
-export class Identity extends SystemBinaryPayload {
+export class Crypto extends SystemBinaryPayload {
 
 }
 
@@ -12,7 +12,7 @@ export class Identity extends SystemBinaryPayload {
 
 
 @variant(0)
-class Key extends Identity {
+class Key extends Crypto {
 
     equals(other: Key): boolean {
         throw new Error("Not implemented");
@@ -32,10 +32,14 @@ class Key extends Identity {
 }
 
 @variant(1)
-export class Keypair extends Identity {
+export class Keypair extends Crypto {
 
     static async create(): Promise<Keypair> {
         throw new Error("Not implemented")
+    }
+
+    equals(other: Keypair): boolean {
+        throw new Error("Not implemented");
     }
 }
 

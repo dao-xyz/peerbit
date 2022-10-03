@@ -10,7 +10,7 @@ import { bigIntMax } from './utils.js';
 import sodium from 'libsodium-wrappers';
 export const maxClockTimeReducer = <T>(res: bigint, acc: Entry<T>): bigint => bigIntMax(res, acc.clock.time);
 
-
+export type Identity = { publicKey: PublicSignKey, sign: (data: Uint8Array) => Promise<Uint8Array> }
 export type EncryptionTemplateMaybeEncrypted = EntryEncryptionTemplate<MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey>;
 export interface EntryEncryption {
   reciever: EncryptionTemplateMaybeEncrypted,
@@ -19,7 +19,11 @@ export interface EntryEncryption {
 export function toBufferLE(num: bigint, width: number): Uint8Array {
   const hex = num.toString(16);
   const padded = hex.padStart(width * 2, '0').slice(0, width * 2);
-  const buffer = Uint8Array.from(padded.match(/.{1,2}/g).map((byte) => parseInt(byte, 16)));
+  const arr = padded.match(/.{1,2}/g)?.map((byte) => parseInt(byte, 16));
+  if (!arr) {
+    throw new Error("Unexpected")
+  }
+  const buffer = Uint8Array.from(arr);
   buffer.reverse();
   return buffer;
 }
@@ -40,6 +44,7 @@ export const JSON_ENCODING_OPTIONS: IOOptions<any> = {
 const IpfsNotDefinedError = () => new Error('Ipfs instance not defined')
 
 
+// TODO do we really need to cbor all this way, only two fields are "normal". Raw storage could perhaps work better
 export interface EntrySerialized<T> {
   gid: Uint8Array,
   payload: Uint8Array,
@@ -49,8 +54,7 @@ export interface EntrySerialized<T> {
   state: Uint8Array,
   reserved: Uint8Array,
   next: string[],
-  fork: string[],
-
+  forks: string[],
 }
 
 @variant(0)
@@ -81,7 +85,7 @@ export class Payload<T>
     return Buffer.compare(Buffer.from(this._data), Buffer.from(other._data)) === 0;
   }
 
-  _value: T
+  _value?: T
   get value(): T {
     if (this._value)
       return this._value;
@@ -120,16 +124,16 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
   next: string[] // Array of hashes (the tree)
 
   @field(({ type: vec('string') }))
-  _fork: string[] = []; // not used yet
+  _forks: string[] = []; // not used yet
 
   /*  @field({ type: vec('string') })
    refs: string[] // Array of hashes (jumps in the tree, indicating dependencies or used for jumping for faster iteration or fail safe behaviour if gaps occur)
   */
   @field({ type: 'u8' })
-  _state: number = 0; // reserved for states
+  _state: number; // reserved for states
 
   @field({ type: 'u8' })
-  _reserved: number = 0; // reserved for future changes
+  _reserved: number; // reserved for future changes
 
   @field({ type: 'string' })
   hash: string // "zd...Foo", we'll set the hash after persisting the entry
@@ -148,8 +152,10 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
     signature: MaybeEncrypted<Signature>,
     clock: MaybeEncrypted<Clock>;
     next: string[]
+    forks: string[], //  (not used)
+    state: 0, // intentational type 0 (not used)
+    reserved: 0  // intentational type 0  (not used)
     /*  refs: string[]  */// Array of hashes
-    hash?: string // "zd...Foo", we'll set the hash after persisting the entry
   }) {
     if (obj) {
       this.gid = obj.gid;
@@ -158,8 +164,9 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
       this._signature = obj.signature;
       this._publicKey = obj.publicKey;
       this.next = obj.next;
+      this._reserved = obj.reserved;
+      this._state = obj.state;
       /*     this.refs = obj.refs; */
-      this.hash = obj.hash;
     }
   }
 
@@ -184,7 +191,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
       signature: serialize(this._signature),
       clock: serialize(this._clock),
       next: this.next,
-      fork: this._fork,
+      forks: this._forks,
       state: new Uint8Array(this._state),
       reserved: new Uint8Array(this._reserved),
     }
@@ -255,7 +262,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
   }
 
   async createDataToSign(): Promise<Buffer> {
-    return Entry.createDataToSign(this.gid, this._payload, this._clock, this.next, this._fork, this._state, this._reserved)
+    return Entry.createDataToSign(this.gid, this._payload, this._clock, this.next, this._forks, this._state, this._reserved)
   }
 
 
@@ -281,13 +288,17 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
    * console.log(entry)
    * // { hash: null, payload: "hello", next: [] }
    */
-  static async create<T>(properties: { ipfs: IPFS, gid?: Uint8Array, gidSeed?: string, data: T, encodingOptions?: IOOptions<T>, next?: Entry<T>[], clock?: Clock, pin?: boolean, assertAllowed?: (entryData: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicSignKey>) => Promise<void>, encryption?: EntryEncryption, publicKey: PublicSignKey, sign: (data: Uint8Array) => Promise<Uint8Array> }) {
+  static async create<T>(properties: { ipfs: IPFS, gid?: Uint8Array, gidSeed?: string, data: T, encodingOptions?: IOOptions<T>, next?: Entry<T>[], clock?: Clock, pin?: boolean, assertAllowed?: (entryData: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicSignKey>) => Promise<void>, encryption?: EntryEncryption, identity: Identity }): Promise<Entry<T>> {
     if (!properties.encodingOptions || !properties.next) {
       properties = {
         ...properties,
         next: properties.next ? properties.next : [],
         encodingOptions: properties.encodingOptions ? properties.encodingOptions : JSON_ENCODING_OPTIONS
       }
+    }
+
+    if (!properties.encodingOptions) {
+      throw new Error("Missing encoding options")
     }
 
     if (!isDefined(properties.ipfs)) throw IpfsNotDefinedError()
@@ -305,8 +316,12 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
 
 
     const maybeEncrypt = async<Q>(thing: Q, reciever?: X25519PublicKey | X25519PublicKey[]): Promise<MaybeEncrypted<Q>> => {
+      if (!properties.encryption) {
+        throw new Error("Encrpryption config not initialized")
+      }
+
       const recievers = reciever ? (Array.isArray(reciever) ? reciever : [reciever]) : undefined
-      return recievers?.length > 0 ? await new DecryptedThing<Q>({ data: serialize(thing), value: thing }).init(properties.encryption.options).encrypt(...recievers) : new DecryptedThing<Q>({
+      return recievers?.length && recievers?.length > 0 ? await new DecryptedThing<Q>({ data: serialize(thing), value: thing }).init(properties.encryption.options).encrypt(...recievers) : new DecryptedThing<Q>({
         data: serialize(thing),
         value: thing
       })
@@ -315,39 +330,39 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
 
     if (properties.assertAllowed) {
       await properties.assertAllowed(new DecryptedThing({ value: payloadToSave }), new DecryptedThing({
-        value: properties.publicKey
+        value: properties.identity.publicKey
       })); // TODO fix types
     }
 
-    let clockValue = properties.clock;
+    let clockValue: Clock | undefined = properties.clock;
     if (!clockValue) {
       const newTime = nexts?.length > 0 ? nexts.reduce(maxClockTimeReducer, 0n) + 1n : 0n;
-      clockValue = new Clock(new Uint8Array(serialize(properties.publicKey)), newTime)
+      clockValue = new Clock(new Uint8Array(serialize(properties.identity.publicKey)), newTime)
     }
     else {
+      const cv = clockValue;
       // check if nexts, that all nexts are happening BEFORE this clock value (else clock make no sense)
       nexts.forEach((n) => {
-        if (n.clock.time >= clockValue.time) {
-          throw new Error("Expecting next(s) to happen before entry, got: " + n.clock.time + " > " + clockValue.time);
+        if (n.clock.time >= cv.time) {
+          throw new Error("Expecting next(s) to happen before entry, got: " + n.clock.time + " > " + cv.time);
         }
       })
     }
 
     const clock = await maybeEncrypt(clockValue, properties.encryption?.reciever.clock);
-    const publicKey = await maybeEncrypt(properties.publicKey, properties.encryption?.reciever.publicKey);
+    const publicKey = await maybeEncrypt(properties.identity.publicKey, properties.encryption?.reciever.publicKey);
     /* const id = await maybeEncrypt(new Id({
       id: properties.logId
     }), properties.encryption?.reciever.id); */
     const payload = await maybeEncrypt(payloadToSave, properties.encryption?.reciever.payload);
 
 
-    const nextHashes = [];
-    let gid: Uint8Array = undefined
+    const nextHashes: string[] = [];
+    let gid!: Uint8Array;
 
     if (nexts?.length > 0) {
       // take min gid as our gid
       nexts.forEach((n) => {
-
         if (!n.hash) {
           throw new Error("Expecting hash to be defined to next entries")
         }
@@ -362,37 +377,44 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
           gid = n.gid;
         }
       })
+      if (!gid) {
+        throw new Error("Unexpected behaviour, could not find gid")
+      }
     }
-
     else {
       gid = properties.gid || (await Entry.createGid(properties.gidSeed));
     }
+
+
+    const next = nextHashes;
+    next?.forEach((next) => {
+      if (typeof next !== 'string') {
+        throw new Error("Unsupported next type")
+      }
+    })
+    const forks: string[] = [];
+    const state = 0;
+    const reserved = 0;
+    // Sign id, encrypted payload, clock, nexts, refs 
+    const signature = await properties.identity.sign(Entry.createDataToSign(gid, payload, clock, next, forks, state, reserved))
+
 
     const entry: Entry<T> = new Entry<T>({
       payload,
       clock,
       gid,
       publicKey,
-      signature: null,
-      hash: null, // "zd...Foo", we'll set the hash after persisting the entry
-      next: nextHashes, // Array of hashes
+      signature: await maybeEncrypt(new Signature({
+        signature
+      }), properties.encryption?.reciever.signature),
+      forks,
+      state,
+      reserved,
+      next, // Array of hashes
       /* refs: properties.refs, */
     })
 
-
-    entry.next?.forEach((next) => {
-      if (typeof next !== 'string') {
-        throw new Error("Unsupported next type")
-      }
-    })
-
-    // Sign id, encrypted payload, clock, nexts, refs 
-    const signature = await properties.sign(Entry.createDataToSign(gid, payload, clock, entry.next, entry._fork, entry._state, entry._reserved))
-
     // Append hash and signature
-    entry._signature = await maybeEncrypt(new Signature({
-      signature
-    }), properties.encryption?.reciever.signature)
     entry.hash = await Entry.toMultihash(properties.ipfs, entry, properties.pin)
     entry.init({ encoding: properties.encodingOptions, encryption: properties.encryption?.options });
     return entry
@@ -450,10 +472,10 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
    * @returns 
    */
   static toEntryNoHash<T>(entry: EntrySerialized<T>): Entry<T> {
-    let clock: MaybeEncrypted<Clock> = undefined;
-    let payload: MaybeEncrypted<Payload<T>> = undefined;
-    let signature: MaybeEncrypted<Signature> = undefined;
-    let publicKey: MaybeEncrypted<PublicSignKey> = undefined;
+    let clock: MaybeEncrypted<Clock>;
+    let payload: MaybeEncrypted<Payload<T>>;
+    let signature: MaybeEncrypted<Signature>;
+    let publicKey: MaybeEncrypted<PublicSignKey>;
     if (entry instanceof Entry) {
       clock = entry._clock;
       payload = entry._payload;
@@ -467,17 +489,19 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
       publicKey = deserialize<MaybeEncrypted<PublicSignKey>>(Buffer.from(entry.publicKey), MaybeEncrypted);
     }
     const e: Entry<T> = new Entry<T>({
-      hash: null,
       clock,
       payload,
       signature,
       publicKey,
       gid: entry.gid,
-      next: entry.next
+      next: entry.next,
+      forks: entry.forks,
+      reserved: 0,
+      state: 0
     })
+
     e._state = entry.state[0];
     e._reserved = entry.reserved[0];
-
     return e
   }
 
@@ -495,7 +519,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Publ
    * console.log(entry)
    * // { hash: "Zd...Foo", payload: "hello", next: [] }
    */
-  static async fromMultihash<T>(ipfs, hash) {
+  static async fromMultihash<T>(ipfs: IPFS, hash: string) {
     if (!ipfs) throw IpfsNotDefinedError()
     if (!hash) throw new Error(`Invalid hash: ${hash}`)
     const e: EntrySerialized<T> = await io.read(ipfs, hash, { links: Entry.IPLD_LINKS })

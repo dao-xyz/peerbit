@@ -16,7 +16,7 @@ export class Session {
         this.peers = peers;
     }
 
-    static async connected(n: number, api: 'js-ipfs' | 'go-ipfs' = 'js-ipfs', config?: any, connectFilter?: { filter: (addrs: string) => boolean }) {
+    static async connected(n: number, api: 'js-ipfs' | 'go-ipfs' | string = 'js-ipfs', config?: any, connectFilter?: { filter: (addrs: string) => boolean }) {
         const promises = [];
         for (let i = 0; i < n; i++) {
             promises.push(startIpfs(api, config))

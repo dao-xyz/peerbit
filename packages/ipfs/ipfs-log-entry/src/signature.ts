@@ -8,6 +8,8 @@ export class Signature {
     signature: Uint8Array;
 
     constructor(props?: { signature: Uint8Array }) {
-        this.signature = props?.signature;
+        if (props) {
+            this.signature = props?.signature;
+        }
     }
 }

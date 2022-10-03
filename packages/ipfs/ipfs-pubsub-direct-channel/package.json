@@ -46,7 +46,6 @@
     "json-loader": "~0.5.7",
     "node-pre-gyp": "^0.13.0",
     "nyc": "^15.0.1",
-    "rimraf": "~3.0.2",
     "webpack": "^5.37.1",
     "p-map-series": "^3.0.0"
   },

@@ -125,6 +125,13 @@ export class X25519Keypair extends Keypair {
         kp.secretKey = sk;
         return kp;
     }
+
+    equals(other: Keypair) {
+        if (other instanceof X25519Keypair) {
+            return this.publicKey.equals(other.publicKey) && this.secretKey.equals(other.secretKey)
+        }
+        return false;
+    }
 }
 
 
