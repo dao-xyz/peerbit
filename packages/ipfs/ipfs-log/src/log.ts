@@ -1,4 +1,3 @@
-import { EncryptionTemplateMaybeEncrypted, Entry, getPeerID, Identity, LamportClock as Clock, LamportClock, maxClockTimeReducer } from '@dao-xyz/ipfs-log-entry';
 import { EntryIndex } from "./entry-index.js"
 import pMap from 'p-map'
 import { GSet } from './g-set.js'
@@ -10,10 +9,9 @@ import { IPFS } from "ipfs-core-types"
 import { CanAppendAccessController, DefaultAccessController } from "./default-access-controller.js"
 import { isDefined } from './is-defined.js'
 import { findUniques } from "./find-uniques.js"
-import { IOOptions } from "@dao-xyz/ipfs-log-entry";
-import { JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log-entry';
+import { IOOptions, EncryptionTemplateMaybeEncrypted, Entry, Identity, JSON_ENCODING_OPTIONS, maxClockTimeReducer } from './entry';
+import { LamportClock as Clock, LamportClock } from './lamport-clock'
 import { AccessError, PublicKeyEncryption, PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
-import { Ed25519PublicKey, PublicSignKey } from '@dao-xyz/peerbit-crypto';
 import { serialize } from '@dao-xyz/borsh';
 // @ts-ignore
 import Logger from 'logplease'
@@ -32,12 +30,12 @@ const uniqueEntriesReducer = <T>(res: { [key: string]: Entry<T> }, acc: Entry<T>
   return res
 }
 
-export interface RecycleOptions {
+export interface PruneOptions {
   maxLength: number, // Max length of oplog before cutting
   cutToLength: number, // When oplog shorter, cut to length
 }
 
-export type LogOptions<T> = { encoding?: IOOptions<T>, encryption?: PublicKeyEncryptionResolver, /* rootGid?: string, */ logId?: string, entries?: Entry<T>[], heads?: any, clock?: LamportClock, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction, concurrency?: number, recycle?: RecycleOptions };
+export type LogOptions<T> = { encoding?: IOOptions<T>, encryption?: PublicKeyEncryptionResolver, /* rootGid?: string, */ logId?: string, entries?: Entry<T>[], heads?: any, clock?: LamportClock, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction, concurrency?: number, prune?: PruneOptions };
 /**
  * @description
  * Log implements a G-Set CRDT and adds ordering.
@@ -73,7 +71,7 @@ export class Log<T> extends GSet {
   // Set the length, we calculate the length manually internally
   _length: number // Total amount of elements in the log
   /*  _clock: Clock; */
-  _recycle?: RecycleOptions
+  _prune?: PruneOptions
   _encoding: IOOptions<T>
   _encryption?: PublicKeyEncryptionResolver
 
@@ -113,7 +111,7 @@ export class Log<T> extends GSet {
       })
     }
  */
-    let { logId, access, entries, heads, clock, sortFn, concurrency, recycle, encoding, encryption } = options;
+    let { logId, access, entries, heads, clock, sortFn, concurrency, prune, encoding, encryption } = options;
     if (!isDefined(access)) {
       access = new DefaultAccessController()
     }
@@ -196,10 +194,8 @@ export class Log<T> extends GSet {
 
     this.joinConcurrency = concurrency || 16
 
-    this._recycle = { ...recycle } as RecycleOptions;
-    if (this._recycle.cutToLength == undefined) {
-      this._recycle.cutToLength = this._recycle.maxLength;
-    }
+    this._prune = prune;
+
   }
 
   /**
@@ -422,7 +418,7 @@ export class Log<T> extends GSet {
    * @param {Entry} entry Entry to add
    * @return {Log} New Log containing the appended value
    */
-  async append(data: T, options: { nexts?: Entry<any>[], pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = { pin: false }) {
+  async append(data: T, options: { gidSeed?: string, nexts?: Entry<any>[], pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = { pin: false }) {
 
     if (options.reciever && !this._encryption) {
       throw new Error("Message is intended to be encrypted but no encryption methods are provided for the log")
@@ -460,12 +456,13 @@ export class Log<T> extends GSet {
         // cumulativeSize
         next: nexts,
         /*    refs, */
+        gidSeed: options.gidSeed,
         pin: options.pin,
-        assertAllowed: async (payload, key) => {
+        assertAllowed: async (payload, signature) => {
           if (this._access.allowAll) {
             return;
           }
-          const canAppend = await this._access.canAppend(payload, key);
+          const canAppend = await this._access.canAppend(payload, signature);
           if (!canAppend) {
             throw new AccessError(`Could not append entry, key "${this._identity.publicKey}" is not allowed to write to the log`)
           }
@@ -506,8 +503,8 @@ export class Log<T> extends GSet {
     // Update the length
     this._length++
 
-    if (this._recycle && this.length > this._recycle.maxLength) {
-      this.prune(this._recycle.cutToLength);
+    if (this._prune && this.length > this._prune.maxLength) {
+      this.prune(this._prune.cutToLength);
     }
     return entry
   }
@@ -605,7 +602,7 @@ export class Log<T> extends GSet {
         encoding: this._encoding,
         encryption: this._encryption
       })
-      const canAppend = await this._access.canAppend(entry._payload, entry._signature.decrypted)
+      const canAppend = await this._access.canAppend(entry._payload, entry._signature)
       if (!canAppend) {
         throw new AccessError(`Could not append Entry<T>, key "${(await entry.publicKey)}" is not allowed to write to the log`)
       }
@@ -880,7 +877,7 @@ export class Log<T> extends GSet {
    * @returns {Promise<Log>}
    */
   static async fromMultihash<T>(ipfs: IPFS, identity: Identity, hash: string,
-    options?: { encoding: IOOptions<T>, encryption?: PublicKeyEncryption, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction } & EntryFetchAllOptions<T>) {
+    options?: { encoding?: IOOptions<T>, encryption?: PublicKeyEncryption, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction } & EntryFetchAllOptions<T>) {
     // TODO: need to verify the entries with 'key'
     // @ts-ignore
     const { logId, entries, heads } = await LogIO.fromMultihash(ipfs, hash, { length: options?.length, exclude: options?.exclude, shouldExclude: options?.shouldExclude, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback, concurrency: options?.concurrency, sortFn: options?.sortFn })
@@ -902,7 +899,7 @@ export class Log<T> extends GSet {
    * @return {Promise<Log>} New Log
    */
   static async fromEntryHash<T>(ipfs: IPFS, identity: Identity, hash: string | string[],
-    options: { encoding: IOOptions<T>, encryption?: PublicKeyEncryptionResolver, logId?: string, access?: any, length?: number, exclude?: any[], shouldExclude?: (hash: string) => boolean, timeout?: number, concurrency?: number, sortFn?: any, onProgressCallback?: any } = { length: -1, exclude: [], encoding: JSON_ENCODING_OPTIONS }) {
+    options: { encoding?: IOOptions<T>, encryption?: PublicKeyEncryptionResolver, logId?: string, access?: any, length?: number, exclude?: any[], shouldExclude?: (hash: string) => boolean, timeout?: number, concurrency?: number, sortFn?: any, onProgressCallback?: any } = { length: -1, exclude: [], encoding: JSON_ENCODING_OPTIONS }) {
     // TODO: need to verify the entries with 'key'
     const { entries } = await LogIO.fromEntryHash(ipfs, hash, { encoding: options.encoding, length: options.length, exclude: options.exclude, encryption: options?.encryption, shouldExclude: options.shouldExclude, timeout: options.timeout, concurrency: options.concurrency, onProgressCallback: options.onProgressCallback, sortFn: options.sortFn })
     return new Log(ipfs, identity, { encoding: options?.encoding, encryption: options?.encryption, logId: options.logId, access: options.access, entries, sortFn: options.sortFn })
@@ -921,7 +918,7 @@ export class Log<T> extends GSet {
    * @return {Promise<Log>} New Log
    */
   static async fromJSON<T>(ipfs: IPFS, identity: Identity, json: { id: string, heads: string[] },
-    options: { encoding: IOOptions<T>, encryption?: PublicKeyEncryptionResolver, access?: CanAppendAccessController<T>, length?: number, timeout?: number, sortFn?: Sorting.ISortFunction, onProgressCallback?: (entry: Entry<T>) => void } = { encoding: JSON_ENCODING_OPTIONS }) {
+    options: { encoding?: IOOptions<T>, encryption?: PublicKeyEncryptionResolver, access?: CanAppendAccessController<T>, length?: number, timeout?: number, sortFn?: Sorting.ISortFunction, onProgressCallback?: (entry: Entry<T>) => void } = { encoding: JSON_ENCODING_OPTIONS }) {
     // TODO: need to verify the entries with 'key'
     const { logId, entries } = await LogIO.fromJSON(ipfs, json, { encoding: options?.encoding, length: options?.length, encryption: options?.encryption, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback })
     return new Log(ipfs, identity, { encoding: options?.encoding, encryption: options?.encryption, logId, entries, access: options?.access, sortFn: options?.sortFn })

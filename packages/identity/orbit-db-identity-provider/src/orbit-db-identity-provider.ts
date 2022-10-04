@@ -1,6 +1,6 @@
 import { Identity } from './identity';
 import { IdentityProvider } from './identity-provider-interface'
-import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, KeyWithMeta<Ed25519Keypair> } from '@dao-xyz/orbit-db-keystore'
 import { Ed25519PublicKey } from 'sodium-plus';
 import { verifySignatureEd25519 } from '@dao-xyz/peerbit-crypto';
 
@@ -25,8 +25,8 @@ export class OrbitDBIdentityProvider extends IdentityProvider {
 
     const keystore = this._keystore
     const idString = Buffer.from(id).toString('base64');
-    const existingKey = await keystore.getKeyByPath(idString, SignKeyWithMeta);
-    const key = (existingKey) || (await keystore.createKey(idString, SignKeyWithMeta))
+    const existingKey = await keystore.getKeyByPath(idString, KeyWithMeta<Ed25519Keypair>);
+    const key = (existingKey) || (await keystore.createKey(idString, KeyWithMeta<Ed25519Keypair>))
     return new Uint8Array(key.publicKey.getBuffer());
   }
 
@@ -37,7 +37,7 @@ export class OrbitDBIdentityProvider extends IdentityProvider {
     }
     const keystore = this._keystore
     const idString = Buffer.from(id).toString('base64');
-    const key = await keystore.getKeyByPath(idString, SignKeyWithMeta)
+    const key = await keystore.getKeyByPath(idString, KeyWithMeta<Ed25519Keypair>)
     if (!key) {
       throw new Error(`Signing key for '${idString}' not found`)
     }

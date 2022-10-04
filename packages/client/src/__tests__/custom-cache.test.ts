@@ -24,7 +24,7 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Use a Custom Cache (${API})`, function () {
     jest.setTimeout(20000)
 
-    let ipfsd, ipfs, orbitdb1, store
+    let ipfsd: Controller, ipfs: IPFS, orbitdb1, store
 
     beforeAll(async () => {
       store = await createStore("local")

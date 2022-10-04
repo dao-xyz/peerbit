@@ -15,7 +15,7 @@ describe('start and stop', () => {
     let err
     try {
       m.started = true
-    } catch (e) {
+    } catch (e: any) {
       err = e
     }
     expect(err.toString()).toEqual("Error: 'started' is read-only")

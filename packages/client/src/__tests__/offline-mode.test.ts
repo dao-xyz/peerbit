@@ -65,7 +65,7 @@ Object.keys(testAPIs).forEach(API => {
       let err
       try {
         orbitdb = await OrbitDB.createInstance(ipfs1, { offline: true, directory: dbPath1 })
-      } catch (e) {
+      } catch (e: any) {
         err = e.message
       }
       expect(err).toEqual('Offline mode requires passing an `id` in the options')

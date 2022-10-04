@@ -7,7 +7,7 @@ describe('Parse Address', () => {
     let err
     try {
       const result = Address.parse('')
-    } catch (e) {
+    } catch (e: any) {
       err = e.toString()
     }
     expect(err).toEqual('Error: Not a valid OrbitDB address: ')

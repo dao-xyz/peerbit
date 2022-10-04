@@ -1,5 +1,5 @@
-import { Entry } from '@dao-xyz/ipfs-log-entry';
-import { LamportClock as Clock } from '@dao-xyz/ipfs-log-entry'
+import { Entry } from './entry'
+import { LamportClock as Clock } from './lamport-clock'
 import { arraysCompare } from '@dao-xyz/borsh-utils';
 
 const First = (a: any, b: any) => a

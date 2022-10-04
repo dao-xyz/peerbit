@@ -47,7 +47,7 @@ Identity {
             "modified": 0,
             "next": null,
             "prev": "_/sign/cr+V7hhVq0Km9Jc9WqpAQ8+NWel2E8ZL3dYxcGOLCtc=",
-            "value": SignKeyWithMeta {
+            "value": KeyWithMeta<Ed25519Keypair> {
               "group": "_",
               "publicKey": Ed25519PublicKey {
                 "keyType": "ed25519",
@@ -64,7 +64,7 @@ Identity {
             "modified": 0,
             "next": "_/sign/aWQ=",
             "prev": null,
-            "value": SignKeyWithMeta {
+            "value": KeyWithMeta<Ed25519Keypair> {
               "group": "_",
               "publicKey": Ed25519PublicKey {
                 "keyType": "ed25519",
@@ -237,7 +237,7 @@ Identity {
             "modified": 0,
             "next": null,
             "prev": "_/sign/cr+V7hhVq0Km9Jc9WqpAQ8+NWel2E8ZL3dYxcGOLCtc=",
-            "value": SignKeyWithMeta {
+            "value": KeyWithMeta<Ed25519Keypair> {
               "group": "_",
               "publicKey": Ed25519PublicKey {
                 "keyType": "ed25519",
@@ -254,7 +254,7 @@ Identity {
             "modified": 0,
             "next": "_/sign/aWQ=",
             "prev": null,
-            "value": SignKeyWithMeta {
+            "value": KeyWithMeta<Ed25519Keypair> {
               "group": "_",
               "publicKey": Ed25519PublicKey {
                 "keyType": "ed25519",

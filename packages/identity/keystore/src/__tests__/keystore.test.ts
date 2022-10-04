@@ -111,7 +111,7 @@ describe('keystore', () => {
       try {
         await keystore.createEd25519Key({ id })
         fail()
-      } catch (e) {
+      } catch (e: any) {
       }
     })
     it('throws an error accessing a closed store', async () => {
@@ -119,7 +119,7 @@ describe('keystore', () => {
       try {
         const id = 'X'
         await closedKeysStore.createEd25519Key({ id })
-      } catch (e) {
+      } catch (e: any) {
         expect(e).toBeInstanceOf(StoreError)
         expect((e as StoreError).message).toEqual('Keystore not open')
       }
@@ -186,7 +186,7 @@ describe('keystore', () => {
       await keystore.createEd25519Key({ id })
       try {
         await keystore.createEd25519Key({ id })
-      } catch (e) {
+      } catch (e: any) {
         assert(true)
       }
     })
@@ -224,7 +224,7 @@ describe('keystore', () => {
       const closedKeysStore = new Keystore({ status: 'closed' } as any);
       try {
         await closedKeysStore.hasKey('XXX')
-      } catch (e) {
+      } catch (e: any) {
         expect(e).toBeInstanceOf(StoreError)
         expect((e as StoreError).message).toEqual('Keystore not open')
       }
@@ -253,7 +253,7 @@ describe('keystore', () => {
     it('throws an error upon accessing a non-existant key', async () => {
       try {
         await keystore.getKey('ZZZZ')
-      } catch (e) {
+      } catch (e: any) {
         assert(true)
       }
     })
@@ -264,7 +264,7 @@ describe('keystore', () => {
       const closedKeysStore = new Keystore({ status: 'closed' } as any);
       try {
         await closedKeysStore.getKey('ZZZ')
-      } catch (e) {
+      } catch (e: any) {
         expect(e).toBeInstanceOf(StoreError)
         expect((e as StoreError).message).toEqual('Keystore not open')
       }
@@ -307,8 +307,8 @@ describe('keystore', () => {
   const y = deserialize(serialize(createdKey), KeyWithMeta); */
   /* await keystore.close();  */ //
   /* 
-    describe(SignKeyWithMeta, () => {
-      let keystore: Keystore, key: SignKeyWithMeta, signingStore
+    describe(KeyWithMeta<Ed25519Keypair>, () => {
+      let keystore: Keystore, key: KeyWithMeta<Ed25519Keypair>, signingStore
   
       beforeAll(async () => {
   
@@ -328,7 +328,7 @@ describe('keystore', () => {
       it('throws an error if no key is passed', async () => {
         try {
           await Keystore.sign(Buffer.from('data data data'), null)
-        } catch (e) {
+        } catch (e: any) {
           assert(true)
         }
       })
@@ -336,7 +336,7 @@ describe('keystore', () => {
       it('throws an error if no data is passed', async () => {
         try {
           await Keystore.sign(null, key)
-        } catch (e) {
+        } catch (e: any) {
           assert(true)
         }
       })
@@ -350,7 +350,7 @@ describe('keystore', () => {
 
   /* describe('verify', () => {
     jest.setTimeout(5000)
-    let keystore: Keystore, signingStore, publicKey: Ed25519PublicKey, key: SignKeyWithMeta
+    let keystore: Keystore, signingStore, publicKey: Ed25519PublicKey, key: KeyWithMeta<Ed25519Keypair>
 
     beforeAll(async () => {
       signingStore = await createStore(storagePath)
@@ -412,7 +412,7 @@ describe('keystore', () => {
       try {
         keystore._store = undefined
         await keystore.openStore()
-      } catch (e) {
+      } catch (e: any) {
         error = e.message
       }
       expect(error).toEqual('Keystore: No store found to open')

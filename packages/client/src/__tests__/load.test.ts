@@ -39,7 +39,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
   const entryCount = 65
 
-  let ipfsd, ipfs, orbitdb1: OrbitDB, db: EventStore<string>, address
+  let ipfsd: Controller, ipfs: IPFS, orbitdb1: OrbitDB, db: EventStore<string>, address
 
   beforeAll(async () => {
     const options: any = Object.assign({}, test.orbitDBConfig)
@@ -176,7 +176,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
                 resolve(true)
               }, 200)
             }
-          } catch (e) {
+          } catch (e: any) {
             reject(e)
           }
         })
@@ -253,7 +253,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       let err
       try {
         await db.loadFromSnapshot()
-      } catch (e) {
+      } catch (e: any) {
         err = e.toString()
       }
       expect(err).toEqual(`Error: Snapshot for ${address} not found!`)
@@ -291,7 +291,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
             if (progress === BigInt(entryCount) && count === entryCount) {
               resolve(true)
             }
-          } catch (e) {
+          } catch (e: any) {
             reject(e)
           }
         })

@@ -1,5 +1,5 @@
-import { Entry } from "@dao-xyz/ipfs-log-entry"
-
+import { Entry } from './entry'
+import { LamportClock as Clock } from './lamport-clock'
 export class EntryIndex<T> {
   _cache: { [key: string]: Entry<T> }
   constructor(entries = {}) {

@@ -2,7 +2,7 @@
 import assert from 'assert'
 import { Store, DefaultOptions, HeadsCache, StorePublicKeyEncryption, IInitializationOptions } from '../store.js'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
-import { BoxKeyWithMeta, Keystore, KeyWithMeta, SignKeyWithMeta } from "@dao-xyz/orbit-db-keystore"
+import { Keystore, KeyWithMeta } from "@dao-xyz/orbit-db-keystore"
 import { createStore } from './storage.js'
 import { X25519PublicKey, SodiumPlus } from 'sodium-plus'
 import { AccessError } from "@dao-xyz/peerbit-crypto"
@@ -19,7 +19,7 @@ import {
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`addOperation ${IPFS}`, function () {
-    let ipfsd, ipfs, signKey: SignKeyWithMeta, keystore: Keystore, identityStore, store: Store<any>, cacheStore, senderKey: BoxKeyWithMeta, recieverKey: BoxKeyWithMeta, encryption: StorePublicKeyEncryption
+    let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, keystore: Keystore, identityStore, store: Store<any>, cacheStore, senderKey: BoxKeyWithMeta, recieverKey: BoxKeyWithMeta, encryption: StorePublicKeyEncryption
     let index: SimpleIndex<string>
 
     jest.setTimeout(config.timeout);
@@ -35,7 +35,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       cacheStore = await createStore('cache')
       const cache = new Cache(cacheStore)
 
-      signKey = await keystore.getKeyByPath(new Uint8Array([0]), SignKeyWithMeta);
+      signKey = await keystore.getKey(new Uint8Array([0]));
       ipfsd = await startIpfs(IPFS, ipfsConfig.daemon1)
       ipfs = ipfsd.api
       index = new SimpleIndex();
@@ -66,7 +66,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const options: IInitializationOptions<any> = Object.assign({}, DefaultOptions, { resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index) })
       options.encryption = encryption
       store = new Store({ name: 'name', accessController: new SimpleAccessController() })
-      await store.init(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), options);
+      await store.init(ipfs, {
+        publicKey: signKey.keypair.publicKey,
+        sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
+      }, options);
 
     })
 

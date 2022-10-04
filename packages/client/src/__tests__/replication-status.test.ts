@@ -21,7 +21,7 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Replication Status (${API})`, function () {
     jest.setTimeout(config.timeout)
 
-    let ipfsd, ipfs, orbitdb1: OrbitDB, orbitdb2: OrbitDB, db: EventStore<string>
+    let ipfsd: Controller, ipfs: IPFS, orbitdb1: OrbitDB, orbitdb2: OrbitDB, db: EventStore<string>
 
     beforeAll(async () => {
       rmrf.sync(dbPath1)
@@ -74,7 +74,7 @@ Object.keys(testAPIs).forEach(API => {
           try {
             assert.deepEqual(db2.replicationStatus, { progress: 2, max: 2 })
             resolve(true)
-          } catch (e) {
+          } catch (e: any) {
             reject(e)
           }
         }, 100)

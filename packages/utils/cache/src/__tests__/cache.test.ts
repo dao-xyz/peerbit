@@ -51,7 +51,7 @@ describe(`Cache - level`, function () {
 
       try {
         await cache.get('fooKey')
-      } catch (e) {
+      } catch (e: any) {
         assert(true)
       }
 
@@ -59,13 +59,13 @@ describe(`Cache - level`, function () {
       await cache.del(d.key)
       try {
         await store.get(d.key)
-      } catch (e) {
+      } catch (e: any) {
         assert(true)
       }
 
       try {
         await cache.del('fooKey')
-      } catch (e) {
+      } catch (e: any) {
         assert(true)
       }
     }
@@ -95,7 +95,7 @@ describe(`Cache - level`, function () {
     it('throws an error trying to get an unknown key', async () => {
       try {
         await cache.get('fooKey')
-      } catch (e) {
+      } catch (e: any) {
         assert(true)
       }
     })
@@ -105,7 +105,7 @@ describe(`Cache - level`, function () {
       await cache.del(d.key)
       try {
         await store.get(d.key)
-      } catch (e) {
+      } catch (e: any) {
         assert(true)
       }
     })
@@ -113,7 +113,7 @@ describe(`Cache - level`, function () {
     it('throws an error trying to delete an unknown key', async () => {
       try {
         await cache.delete('fooKey')
-      } catch (e) {
+      } catch (e: any) {
         assert(true)
       }
     })

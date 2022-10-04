@@ -2,7 +2,7 @@ import path from 'path'
 import { EventEmitter } from 'events'
 import mapSeries from 'p-each-series'
 import { default as PQueue } from 'p-queue'
-import { Log, ISortFunction, RecycleOptions, LogOptions } from '@dao-xyz/ipfs-log'
+import { Log, ISortFunction, PruneOptions, LogOptions } from '@dao-xyz/ipfs-log'
 import { IOOptions, EncryptionTemplateMaybeEncrypted, Payload, getPeerID } from '@dao-xyz/ipfs-log-entry'
 import { Entry } from '@dao-xyz/ipfs-log-entry'
 import { Replicator } from './replicator.js'
@@ -98,7 +98,7 @@ export interface IStoreOptions<T> {
   fallbackAccessController?: AccessController<T>,
   syncLocal?: boolean,
   sortFn?: ISortFunction,
-  recycle?: RecycleOptions,
+  recycle?: PruneOptions,
   typeMap?: { [key: string]: Constructor<any> }
   onUpdate?: (oplog: Log<T>, entries?: Entry<T>[]) => void,
   resourceOptions?: ResourceOptions<T>,

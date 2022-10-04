@@ -1,6 +1,5 @@
-const EventEmitter = require('events').EventEmitter
-import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
-import { Payload, Signature } from '@dao-xyz/ipfs-log-entry';
+import { MaybeEncrypted, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
+import { Payload } from './entry';
 import { Ed25519PublicKey, PublicSignKey } from '@dao-xyz/peerbit-crypto'
 // TODO extend IPFS-LOG access controller interface for canAppend method
 /**
@@ -12,7 +11,7 @@ import { Ed25519PublicKey, PublicSignKey } from '@dao-xyz/peerbit-crypto'
 export interface CanAppendAccessController<T> {
 
   get allowAll(): boolean;
-  canAppend(payload: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicSignKey> | MaybeEncrypted<Signature>): Promise<boolean>;
+  canAppend(payload: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<SignatureWithKey>): Promise<boolean>;
 
 }
 
@@ -21,7 +20,7 @@ export class DefaultAccessController<T> implements CanAppendAccessController<T> 
     return true;
   }
 
-  async canAppend(payload: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicSignKey>): Promise<boolean> {
+  async canAppend(payload: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<SignatureWithKey>): Promise<boolean> {
     return true
   }
 }

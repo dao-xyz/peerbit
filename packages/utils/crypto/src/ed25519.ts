@@ -82,13 +82,10 @@ export class Ed25519Keypair extends Keypair implements Signer {
         });
         return kp;
     }
-    async sign(data: Uint8Array) {
-        const signature = await sign(data, this.privateKey)
-        return {
-            signature,
-            publicKey: this.publicKey
-        }
+    async sign(data: Uint8Array): Promise<Uint8Array> {
+        return sign(data, this.privateKey)
     }
+
     equals(other: Keypair) {
         if (other instanceof Ed25519Keypair) {
             return this.publicKey.equals(other.publicKey) && this.privateKey.equals(other.privateKey)

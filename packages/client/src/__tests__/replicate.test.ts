@@ -169,7 +169,7 @@ Object.keys(testAPIs).forEach(API => {
         try {
           const add = i => db1.add('hello' + i)
           await mapSeries(entryArr, add)
-        } catch (e) {
+        } catch (e: any) {
           reject(e)
         }
 
@@ -250,7 +250,7 @@ Object.keys(testAPIs).forEach(API => {
 
               resolve(true)
             }
-          } catch (e) {
+          } catch (e: any) {
             reject(e)
           }
         }, 1000)
@@ -345,7 +345,7 @@ Object.keys(testAPIs).forEach(API => {
               expect(Object.keys(db2._replicator._fetching).length).toEqual(0)
 
               resolve(true)
-            } catch (e) {
+            } catch (e: any) {
               reject(e)
             }
           }
@@ -428,7 +428,7 @@ Object.keys(testAPIs).forEach(API => {
               expect(Object.keys(db2._replicator._fetching).length).toEqual(0)
 
               resolve(true)
-            } catch (e) {
+            } catch (e: any) {
               reject(e)
             }
           }

@@ -22,7 +22,7 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Write Permissions (${API})`, function () {
     this.timeout(20000)
 
-    let ipfsd, ipfs, orbitdb1, orbitdb2
+    let ipfsd: Controller, ipfs: IPFS, orbitdb1, orbitdb2
 
     beforeAll(async () => {
       rmrf.sync(dbPath)
@@ -160,7 +160,7 @@ Object.keys(testAPIs).forEach(API => {
             db1.events.on('replicated', () => err = new Error('Shouldn\'t replicate!'))
             // Try to update from peer 2, this shouldn't be allowed
             await database.tryInsert(db2)
-          } catch (e) {
+          } catch (e: any) {
             // Make sure peer 2's instance throws an error
             err = e.toString()
           }
@@ -206,7 +206,7 @@ Object.keys(testAPIs).forEach(API => {
             options = Object.assign({}, options, { sync: true })
             const db2 = await database.create(orbitdb2, db1.address.toString(), options)
             await database.tryInsert(db2)
-          } catch (e) {
+          } catch (e: any) {
             err = e.toString()
           }
           expect(err).toEqual(`Error: Could not append Entry<T>, key "${orbitdb2.identity.id}" is not allowed to write to the log`)

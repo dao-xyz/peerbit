@@ -3,7 +3,7 @@ import { arraysEqual, U8IntArraySerializer } from "@dao-xyz/borsh-utils";
 import { SignKey } from "./index.js";
 import { Ed25519PublicKey, verifySignatureEd25519 } from './ed25519';
 import { Secp256k1PublicKey, verifySignatureSecp256k1 } from './sepc256k1.js';
-import { Signer } from "./signer.js";
+import { Signer, SignerWithKey } from "./signer.js";
 
 @variant(0)
 export class SignatureWithKey {
@@ -86,7 +86,7 @@ export class MaybeSigned<T>  {
      * In place
      * @param signer 
      */
-    async sign(signer: Signer): Promise<MaybeSigned<T>> {
+    async sign(signer: SignerWithKey): Promise<MaybeSigned<T>> {
         const signatureResult = await signer.sign(this.data)
         this.signature = new SignatureWithKey({
             publicKey: signatureResult.publicKey,

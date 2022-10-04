@@ -4,8 +4,7 @@ import { variant, field, vec, option, serialize, deserialize } from '@dao-xyz/bo
 import io from '@dao-xyz/io-utils';
 import { IPFS } from 'ipfs-core-types'
 import { arraysEqual, joinUint8Arrays, StringSetSerializer, U8IntArraySerializer } from '@dao-xyz/borsh-utils';
-import { PublicKeyEncryption, DecryptedThing, MaybeEncrypted, MaybeX25519PublicKey, PublicSignKey, SignKey, X25519PublicKey, PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
-import { Signature } from './signature.js';
+import { PublicKeyEncryption, DecryptedThing, MaybeEncrypted, MaybeX25519PublicKey, PublicSignKey, SignKey, X25519PublicKey, PublicKeyEncryptionResolver, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { max } from './utils.js';
 import sodium from 'libsodium-wrappers';
 export const maxClockTimeReducer = <T>(res: bigint, acc: Entry<T>): bigint => max(res, acc.clock.time);
@@ -120,7 +119,7 @@ export interface EntryEncryptionTemplate<A, B, C> {
 }
 
 @variant(0)
-export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Signature> {
+export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, SignatureWithKey> {
 
   @field(U8IntArraySerializer)
   gid: Uint8Array // graph id
@@ -133,7 +132,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
 
 
   @field({ type: MaybeEncrypted })
-  _signature: MaybeEncrypted<Signature>
+  _signature: MaybeEncrypted<SignatureWithKey>
 
   @field({ type: vec('string') })
   next: string[] // Array of hashes (the tree)
@@ -167,7 +166,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
   constructor(obj?: {
     gid: Uint8Array,
     payload: MaybeEncrypted<Payload<T>>
-    signature: MaybeEncrypted<Signature>,
+    signature: MaybeEncrypted<SignatureWithKey>,
     clock: MaybeEncrypted<Clock>;
     next: string[]
     forks: string[], //  (not used)
@@ -255,18 +254,18 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
   }
 
 
-  get signature(): Signature {
-    return this._signature.decrypted.getValue(Signature)
+  get signature(): SignatureWithKey {
+    return this._signature.decrypted.getValue(SignatureWithKey)
   }
 
-  async getSignature(): Promise<Signature> {
+  async getSignature(): Promise<SignatureWithKey> {
     await this._signature.decrypt()
     return this.signature;
   }
 
 
 
-  static createDataToSign(gid: Uint8Array, payload: MaybeEncrypted<Payload<any>>, clock: MaybeEncrypted<Clock>, next: string[], fork: string[], state: number, reserved: number,): Buffer { // TODO fix types
+  static createDataToSign(gid: Uint8Array, payload: MaybeEncrypted<Payload<any>>, clock: MaybeEncrypted<Clock>, next: string[], fork: string[], state: number, reserved: number,): Uint8Array { // TODO fix types
     const arrays: Uint8Array[] = [gid, serialize(payload), serialize(clock)];
     arrays.push(toBufferLE(BigInt(next.length), 4))
     next.forEach((n) => {
@@ -277,10 +276,10 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
       arrays.push(new Uint8Array(Buffer.from(f)));
     })
     arrays.push(new Uint8Array([state, reserved]))
-    return Buffer.from(joinUint8Arrays(arrays));
+    return joinUint8Arrays(arrays);
   }
 
-  async createDataToSign(): Promise<Buffer> {
+  async createDataToSign(): Promise<Uint8Array> {
     return Entry.createDataToSign(this.gid, this._payload, this._clock, this.next, this._forks, this._state, this._reserved)
   }
 
@@ -294,7 +293,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
     return (await sodium.crypto_generichash(32, seed || (await sodium.randombytes_buf(32))))
   }
 
-  static async create<T>(properties: { ipfs: IPFS, gid?: Uint8Array, gidSeed?: string, data: T, encodingOptions?: IOOptions<T>, next?: Entry<T>[], clock?: Clock, pin?: boolean, assertAllowed?: (entryData: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicSignKey>) => Promise<void>, encryption?: EntryEncryption, identity: Identity }): Promise<Entry<T>> {
+  static async create<T>(properties: { ipfs: IPFS, gid?: Uint8Array, gidSeed?: string, data: T, encodingOptions?: IOOptions<T>, next?: Entry<T>[], clock?: Clock, pin?: boolean, assertAllowed?: (entryData: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<SignatureWithKey>) => Promise<void>, encryption?: EntryEncryption, identity: Identity }): Promise<Entry<T>> {
     if (!properties.encodingOptions || !properties.next) {
       properties = {
         ...properties,
@@ -339,12 +338,6 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
       })
     }
 
-
-    if (properties.assertAllowed) {
-      await properties.assertAllowed(new DecryptedThing({ value: payloadToSave }), new DecryptedThing({
-        value: properties.identity.publicKey
-      })); // TODO fix types
-    }
 
     let clockValue: Clock | undefined = properties.clock;
     if (!clockValue) {
@@ -418,23 +411,25 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
     // Sign id, encrypted payload, clock, nexts, refs 
     const signature = await properties.identity.sign(Entry.createDataToSign(gid, payload, clock, next, forks, state, reserved))
 
-
+    const signatureEncrypted = await maybeEncrypt(new SignatureWithKey({
+      publicKey: properties.identity.publicKey,
+      signature
+    }), properties.encryption?.reciever.signature);
     const entry: Entry<T> = new Entry<T>({
       payload,
       clock,
       gid,
       maxChainLength,
-      signature: await maybeEncrypt(new Signature({
-        publicKey: properties.identity.publicKey,
-        signature
-      }), properties.encryption?.reciever.signature),
+      signature: signatureEncrypted,
       forks,
       state,
       reserved,
       next, // Array of hashes
       /* refs: properties.refs, */
     })
-
+    if (properties.assertAllowed) {
+      await properties.assertAllowed(new DecryptedThing({ value: payloadToSave }), signatureEncrypted); // TODO fix types
+    }
     // Append hash and signature
     entry.hash = await Entry.toMultihash(properties.ipfs, entry, properties.pin)
     entry.init({ encoding: properties.encodingOptions, encryption: properties.encryption?.options });
@@ -495,7 +490,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
   static toEntry<T>(entry: EntrySerialized<T>): Entry<T> {
     let clock: MaybeEncrypted<Clock>;
     let payload: MaybeEncrypted<Payload<T>>;
-    let signature: MaybeEncrypted<Signature>;
+    let signature: MaybeEncrypted<SignatureWithKey>;
     if (entry instanceof Entry) {
       clock = entry._clock;
       payload = entry._payload;
@@ -504,7 +499,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
     else {
       clock = deserialize<MaybeEncrypted<Clock>>(Buffer.from(entry.clock), MaybeEncrypted);
       payload = deserialize<MaybeEncrypted<Payload<T>>>(Buffer.from(entry.payload), MaybeEncrypted);
-      signature = deserialize<MaybeEncrypted<Signature>>(Buffer.from(entry.signature), MaybeEncrypted);
+      signature = deserialize<MaybeEncrypted<SignatureWithKey>>(Buffer.from(entry.signature), MaybeEncrypted);
     }
     const e: Entry<T> = new Entry<T>({
       clock,
@@ -615,7 +610,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
    * @param {Array<Entry<T>>} values Entries to search parents from
    * @returns {Array<Entry<T>>}
    */
-  static findDirectChildren<T>(entry: Entry<T>, values: Entry<T>[]) {
+  static findDirectChildren<T>(entry: Entry<T>, values: Entry<T>[]): Entry<T>[] {
     let stack: Entry<T>[] = []
     let parent = values.find((e) => Entry.isDirectParent(entry, e))
     let prev = entry

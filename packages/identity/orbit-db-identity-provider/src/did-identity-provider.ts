@@ -59,7 +59,7 @@ export class DIDIdentityProvider extends IdentityProvider {
       const jws = [header, payload, signature].join('.')
       await this.did.verifyJWS(jws)
 
-    } catch (e) {
+    } catch (e: any) {
       return false
     }
     return true

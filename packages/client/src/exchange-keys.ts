@@ -3,7 +3,7 @@ import { Message } from './message.js';
 import { bufferSerializer, U8IntArraySerializer } from '@dao-xyz/borsh-utils';
 import { X25519PublicKey } from 'sodium-plus'
 import Logger from 'logplease'
-import { BoxKeyWithMeta, Keystore, KeyWithMeta, SignKeyWithMeta, WithType } from '@dao-xyz/orbit-db-keystore';
+import { BoxKeyWithMeta, Keystore, KeyWithMeta, KeyWithMeta<Ed25519Keypair>, WithType } from '@dao-xyz/orbit-db-keystore';
 import { PublicKeyEncryption } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned, SignatureWithKey } from '@dao-xyz/peerbit-crypto';
 
@@ -66,7 +66,7 @@ export class RequestKeyCondition<T extends KeyWithMeta> {
 
     constructor(props?: { type: WithType<T> }) {
         if (props) {
-            if (props.type === SignKeyWithMeta as any) { // TODO fix types
+            if (props.type === KeyWithMeta<Ed25519Keypair> as any) { // TODO fix types
                 this._type = 0;
             }
             else if (props.type === BoxKeyWithMeta as any) { // TODO fix types
@@ -77,7 +77,7 @@ export class RequestKeyCondition<T extends KeyWithMeta> {
 
     get type(): WithType<T> {
         if (this._type === 0) {
-            return SignKeyWithMeta as any as WithType<T>
+            return KeyWithMeta<Ed25519Keypair> as any as WithType<T>
         }
         else if (this._type === 1) {
             return BoxKeyWithMeta as any as WithType<T>

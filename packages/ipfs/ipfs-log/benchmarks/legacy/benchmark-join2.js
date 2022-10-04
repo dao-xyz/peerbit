@@ -23,7 +23,7 @@ let log1, log2
 //     await log2.join(log1)
 //     totalQueries++
 //     setImmediate(queryLoop)
-//   } catch (e) {
+//   } catch (e: any) {
 //     console.error(e)
 //     process.exit(0)
 //   }

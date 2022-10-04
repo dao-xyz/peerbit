@@ -10,7 +10,7 @@ import rmrf from 'rimraf'
 import { Ed25519Provider } from 'key-did-provider-ed25519'
 import { Ed25519PublicKey } from 'sodium-plus'
 const { default: KeyResolver } = require('key-did-resolver')
-import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 const keypath = path.resolve(__dirname, 'keys')
 
 let keystore: Keystore
@@ -49,13 +49,13 @@ describe('DID Identity Provider', function () {
     })
 
     it('has the correct public key', async () => {
-      const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(didStr)
+      const signingKey = await keystore.getKeyByPath<KeyWithMeta<Ed25519Keypair>>(didStr)
       assert.notStrictEqual(signingKey, undefined)
       assert.deepStrictEqual(identity.publicKey, signingKey.publicKey);
     })
 
     it('has a signature for the id', async () => {
-      const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(didStr)
+      const signingKey = await keystore.getKeyByPath<KeyWithMeta<Ed25519Keypair>>(didStr)
       const idSignature = await Keystore.sign(didStr, signingKey)
       const verifies = await Keystore.verify(idSignature, identity.publicKey, new Uint8Array(Buffer.from(didStr)))
       expect(verifies).toEqual(true)
@@ -63,7 +63,7 @@ describe('DID Identity Provider', function () {
     })
 
     it('has a signature for the publicKey', async () => {
-      const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(didStr)
+      const signingKey = await keystore.getKeyByPath<KeyWithMeta<Ed25519Keypair>>(didStr)
       const idSignature = await Keystore.sign(didStr, signingKey)
       assert.notStrictEqual(idSignature, undefined)
     })
@@ -101,7 +101,7 @@ describe('DID Identity Provider', function () {
     })
 
     it('sign data', async () => {
-      const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(identity.id)
+      const signingKey = await keystore.getKeyByPath<KeyWithMeta<Ed25519Keypair>>(identity.id)
       const expectedSignature = await Keystore.sign(data, signingKey)
       const signature = await identity.provider.sign(data, identity)
       assert.deepStrictEqual(signature, expectedSignature)
@@ -116,7 +116,7 @@ describe('DID Identity Provider', function () {
       let err
       try {
         signature = await identity.provider.sign(data, modifiedIdentity)
-      } catch (e) {
+      } catch (e: any) {
         err = e.toString()
       }
       expect(signature).toEqual(undefined)

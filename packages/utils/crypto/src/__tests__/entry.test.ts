@@ -81,9 +81,8 @@ describe('ed25519', function () {
         const data = new Uint8Array([1, 2, 3]);
         const senderKey = await Ed25519Keypair.create();
         const signature = await senderKey.sign(data);
-        expect(signature.publicKey.publicKey).toEqual(senderKey.publicKey.publicKey);
-        expect(signature.signature).toHaveLength(64); // detached
-        const verify = await verifySignatureEd25519(signature.signature, signature.publicKey, data);
+        expect(signature).toHaveLength(64); // detached
+        const verify = await verifySignatureEd25519(signature, senderKey.publicKey.publicKey, data);
         expect(verify)
     })
 });

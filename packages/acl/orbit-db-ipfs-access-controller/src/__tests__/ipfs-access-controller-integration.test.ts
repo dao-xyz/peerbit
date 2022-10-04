@@ -1,6 +1,6 @@
 import rmrf from 'rimraf'
 import { OrbitDB } from '@dao-xyz/orbit-db';
-import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 import io from '@dao-xyz/io-utils'
 import { EventStore } from './event-store';
 import { IPFSAccessController } from '../ipfs-access-controller';
@@ -20,7 +20,7 @@ const API = 'js-ipfs'
 describe(`orbit-db - IPFSAccessController Integration`, function () {
   jest.setTimeout(config.timeout)
 
-  let ipfsd1, ipfsd2, ipfs1, ipfs2, signKey1: SignKeyWithMeta, signKey2: SignKeyWithMeta
+  let ipfsd1, ipfsd2, ipfs1, ipfs2, signKey1: KeyWithMeta<Ed25519Keypair>, signKey2: KeyWithMeta<Ed25519Keypair>
   let orbitdb1: OrbitDB, orbitdb2: OrbitDB
 
   beforeAll(async () => {
@@ -38,8 +38,8 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
     const keystore1 = new Keystore(dbPath1 + '/keys')
     const keystore2 = new Keystore(dbPath2 + '/keys')
 
-    signKey1 = await keystore1.createKey(new Uint8Array([0]), SignKeyWithMeta)
-    signKey2 = await keystore2.createKey(new Uint8Array([1]), SignKeyWithMeta)
+    signKey1 = await keystore1.createKey(new Uint8Array([0]), KeyWithMeta<Ed25519Keypair>)
+    signKey2 = await keystore2.createKey(new Uint8Array([1]), KeyWithMeta<Ed25519Keypair>)
 
     orbitdb1 = await OrbitDB.createInstance(ipfs1, {
       directory: dbPath1,
@@ -49,7 +49,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
 
     orbitdb2 = await OrbitDB.createInstance(ipfs2, {
       directory: dbPath2,
-      publicKey: new Ed25519PublicKey({ publicKey: signKey2.publicKey }),
+      publicKey: signKey2.keypair.publicKey,
       sign: (data) => Keystore.sign(data, signKey2)
     })
   })
@@ -125,7 +125,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
         let err
         try {
           await db.add('hello?')
-        } catch (e) {
+        } catch (e: any) {
           err = e.toString()
         }
 
@@ -139,7 +139,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
         try {
           await db2.add('hello!!')
           fail();
-        } catch (e) {
+        } catch (e: any) {
           err = e
         }
 

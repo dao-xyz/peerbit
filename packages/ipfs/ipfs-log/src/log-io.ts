@@ -1,4 +1,4 @@
-import { Entry } from '@dao-xyz/ipfs-log-entry'
+import { Entry } from './entry'
 import { EntryFetchAllOptions, EntryIO, strictFetchOptions } from './entry-io'
 import { ISortFunction, LastWriteWins, NoZeroes } from './log-sorting'
 import * as LogError from './log-errors'

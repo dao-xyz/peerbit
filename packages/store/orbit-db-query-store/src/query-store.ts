@@ -127,7 +127,7 @@ export class QueryStore<T> extends Store<T> {
                     encryption: this._oplog._encryption, signer: async (bytes) => {
                         return {
                             signature: await this._oplog._sign(bytes),
-                            publicKey: this._oplog._publicKey
+                            publicKey: this._oplog._identity.publicKey
                         }
                     }
                 })

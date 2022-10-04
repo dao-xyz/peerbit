@@ -3,7 +3,7 @@ import { OrbitDB } from "../orbit-db"
 const fs = require('fs')
 import assert from 'assert'
 import rmrf from 'rimraf'
-import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 import { EventStore } from "./utils/stores"
 import { SimpleAccessController } from "./utils/access"
 import { Level } from "level"
@@ -32,8 +32,8 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Set identities (${API})`, function () {
     jest.setTimeout(config.timeout)
 
-    let ipfsd, ipfs, orbitdb: OrbitDB, keystore: Keystore, options
-    let signKey1: SignKeyWithMeta, signKey2: SignKeyWithMeta
+    let ipfsd: Controller, ipfs: IPFS, orbitdb: OrbitDB, keystore: Keystore, options
+    let signKey1: KeyWithMeta<Ed25519Keypair>, signKey2: KeyWithMeta<Ed25519Keypair>
 
     beforeAll(async () => {
       rmrf.sync(dbPath)
@@ -44,8 +44,8 @@ Object.keys(testAPIs).forEach(API => {
       const identityStore = await createStore(keysPath)
 
       keystore = new Keystore(identityStore)
-      signKey1 = await keystore.createKey(new Uint8Array([0]), SignKeyWithMeta);
-      signKey2 = await keystore.createKey(new Uint8Array([1]), SignKeyWithMeta);
+      signKey1 = await keystore.createKey(await Ed25519Keypair.create(), { id: new Uint8Array([0]) });
+      signKey2 = await keystore.createKey(await Ed25519Keypair.create(), { id: new Uint8Array([1]) });
       orbitdb = await OrbitDB.createInstance(ipfs, { directory: dbPath })
     })
 

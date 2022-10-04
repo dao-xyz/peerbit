@@ -3,7 +3,6 @@
         "packages/ipfs/ipfs-pubsub-direct-channel",
         "packages/ipfs/ipfs-pubsub-peer-monitor",
         "packages/ipfs/ipfs-log",
-        "packages/ipfs/ipfs-log-entry",
         "packages/client",
         "packages/acl/dynamic-access-controller",
         "packages/acl/orbit-db-trust-web",

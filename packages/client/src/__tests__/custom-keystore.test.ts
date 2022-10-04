@@ -3,7 +3,7 @@ import assert from 'assert'
 import rmrf from 'rimraf'
 import path from 'path'
 import { Ed25519PublicKey } from '@dao-xyz/peerbit-crypto'
-import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, KeyWithMeta<Ed25519Keypair> } from '@dao-xyz/orbit-db-keystore'
 import { OrbitDB } from '../orbit-db'
 /* const Identities = require('@dao-xyz/orbit-db-identity-provider') */
 // Include test utilities
@@ -27,14 +27,14 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Use a Custom Keystore (${API})`, function () {
     jest.setTimeout(20000)
 
-    let ipfsd, ipfs, orbitdb1
+    let ipfsd: Controller, ipfs: IPFS, orbitdb1
 
     beforeAll(async () => {
       rmrf.sync(dbPath)
       ipfsd = await startIpfs(API, config.daemon1)
       ipfs = ipfsd.api
 
-      const signKey: SignKeyWithMeta = await CustomTestKeystore().create().createKey(new Uint8Array([0]), SignKeyWithMeta);
+      const signKey: KeyWithMeta<Ed25519Keypair> = await CustomTestKeystore().create().createKey(new Uint8Array([0]), KeyWithMeta<Ed25519Keypair>);
 
       //const identity = await Identities.createIdentity({ type: 'custom', keystore: CustomTestKeystore().create() })
       orbitdb1 = await OrbitDB.createInstance(ipfs, {

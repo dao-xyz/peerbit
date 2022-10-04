@@ -4,7 +4,7 @@ import Logger from 'logplease'
 const logger = Logger.create('orbit-db')
 import { IPFS as IPFSInstance } from 'ipfs-core-types';
 import Cache from '@dao-xyz/orbit-db-cache'
-import { BoxKeyWithMeta, Keystore, KeyWithMeta, SignKeyWithMeta, WithType } from '@dao-xyz/orbit-db-keystore'
+import { BoxKeyWithMeta, Keystore, KeyWithMeta, KeyWithMeta<Ed25519Keypair>, WithType } from '@dao-xyz/orbit-db-keystore'
 import { isDefined } from './is-defined.js'
 import { Level } from 'level';
 import { exchangeHeads, ExchangeHeadsMessage, RequestHeadsMessage } from './exchange-heads.js'
@@ -271,14 +271,14 @@ export class OrbitDB {
       sign = options.sign;
     }
     else {
-      const signKey = await options.keystore.createKey(Buffer.from(id), SignKeyWithMeta);
+      const signKey = await options.keystore.createKey(Buffer.from(id), KeyWithMeta<Ed25519Keypair>);
       publicKey = new Ed25519PublicKey({
         publicKey: signKey.publicKey
       });
       sign = (data) => Keystore.sign(data, signKey);
     }
 
-    /* const signKey = options.signKey || await options.keystore.createKey(Buffer.from(id), SignKeyWithMeta); */
+    /* const signKey = options.signKey || await options.keystore.createKey(Buffer.from(id), KeyWithMeta<Ed25519Keypair>); */
     /* if (!options.identity) {
       options.identity = await Identities.createIdentity({
         id: new Uint8Array(Buffer.from(id)),
@@ -556,7 +556,7 @@ export class OrbitDB {
        }
        else if (msg instanceof KeyResponseMessage) {
          await recieveKeys(msg, (keys) => {
-           const keysToSave = keys.filter(key => key instanceof SignKeyWithMeta || key instanceof BoxKeyWithMeta);
+           const keysToSave = keys.filter(key => key instanceof KeyWithMeta<Ed25519Keypair> || key instanceof BoxKeyWithMeta);
            return Promise.all(keysToSave.map((key) => this.keystore.saveKey(key)))
          })
          
@@ -644,7 +644,7 @@ export class OrbitDB {
       else {
         throw new Error("Unexpected message")
       }
-    } catch (e) {
+    } catch (e: any) {
       logger.error(e)
     }
   }
@@ -816,7 +816,7 @@ export class OrbitDB {
           }
         })
         logger.debug(`Channel created to ${peer}`)
-      } catch (e) {
+      } catch (e: any) {
         logger.error(e)
       }
     }

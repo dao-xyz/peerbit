@@ -25,7 +25,7 @@ const identityFromSignKey = (key: KeyWithMeta<Ed25519Keypair>): Identity => {
   }
   return {
     publicKey: key.keypair.publicKey,
-    sign: async (data: Uint8Array) => (await key.keypair.sign(data)).signature
+    sign: async (data: Uint8Array) => (await key.keypair.sign(data))
   }
 }
 const API = 'js-ipfs';
@@ -38,6 +38,7 @@ describe('Entry', function () {
   let keystore: Keystore, signingKeystore: Keystore, signKey: KeyWithMeta<Ed25519Keypair>
 
   beforeAll(async () => {
+    await sodium.ready;
     session = await Session.connected(1, API, config.defaultIpfsConfig);
     ipfs = session.peers[0].ipfs;
     await sodium.ready;
@@ -73,12 +74,13 @@ describe('Entry', function () {
 
   describe('create', () => {
     it('creates a an empty entry', async () => {
-      const expectedHash = 'zdpuApS4BkTKZksWdzcnXmSRMAeWp3jz7icQ6t8VGf99q1hMW'
+      const expectedHash = 'zdpuAu2hhNXwq1Ht7aLezRWWBQa6h3vZUtuxSicHAxL8SQDvM'
       const entry = await Entry.create({
         ipfs, identity: identityFromSignKey(signKey), gidSeed: 'A', data: 'hello'
       })
+
       expect(entry.hash).toEqual(expectedHash)
-      expect(entry.gid).toEqual('A')
+      expect(entry.gid).toEqual(await sodium.crypto_generichash(32, 'A'))
       assert.deepStrictEqual(entry.clock.id, new Ed25519PublicKey({
         publicKey: signKey.keypair.publicKey.publicKey
       }).bytes);
@@ -88,14 +90,14 @@ describe('Entry', function () {
     })
 
     it('creates a entry with payload', async () => {
-      const expectedHash = 'zdpuAta2Dkk2g5tuWYFz4jZWJN9Mv6NcRPz1fzJcmeBzs8Xfm'
+      const expectedHash = 'zdpuB19QcmFWCKRAtJsrmkkqTH5AB5YCCyvFaPZp4eynt26WY'
       const payload = 'hello world'
       const entry = await Entry.create({
         ipfs, identity: identityFromSignKey(signKey), gidSeed: 'A', data: payload, next: []
       })
       expect(entry.hash).toEqual(expectedHash)
       expect(entry.payload.value).toEqual(payload)
-      expect(entry.gid).toEqual('A')
+      expect(entry.gid).toEqual(await sodium.crypto_generichash(32, 'A'))
       assert.deepStrictEqual(entry.clock.id, new Ed25519PublicKey({
         publicKey: signKey.keypair.publicKey.publicKey
       }).bytes);
@@ -141,14 +143,14 @@ describe('Entry', function () {
       expect(entry.payload.value).toEqual(payload);
 
       // We can not have a hash check because nonce of encryption will always change
-      expect(entry.gid).toEqual('A')
+      expect(entry.gid).toEqual(await sodium.crypto_generichash(32, 'A'))
       assert.deepStrictEqual(entry.clock.id, (new Ed25519PublicKey({ publicKey: signKey.keypair.publicKey.publicKey })).bytes)
       expect(entry.clock.time).toEqual(0n)
       expect(entry.next.length).toEqual(0)
     })
 
     it('creates a entry with payload and next', async () => {
-      const expectedHash = 'zdpuAuRqSyYhfbaeQA9pqcvDNkKwe9MTgXLESw8WxAeMSwc3f'
+      const expectedHash = 'zdpuAkpzJgLJWpdaYMb59BxVk1xaAbkBWfowhN9pUmNsZd87x'
       const payload1 = 'hello world'
       const payload2 = 'hello again'
       const entry1 = await Entry.create({
@@ -294,7 +296,7 @@ describe('Entry', function () {
         await Entry.create({
           ipfs, identity: identityFromSignKey(signKey), gidSeed: 'A', data: null, next: []
         })
-      } catch (e) {
+      } catch (e: any) {
         err = e
       }
       expect(err.message).toEqual('Entry requires data')
@@ -306,7 +308,7 @@ describe('Entry', function () {
         await Entry.create({
           ipfs, identity: identityFromSignKey(signKey), gidSeed: 'A', data: 'hello', next: {} as any
         })
-      } catch (e) {
+      } catch (e: any) {
         err = e
       }
       expect(err.message).toEqual('\'next\' argument is not an array')
@@ -316,7 +318,7 @@ describe('Entry', function () {
   describe('toMultihash', () => {
 
     it('returns an ipfs multihash', async () => {
-      const expectedMultihash = 'zdpuAosLHVTzgARcsiK75DTkaVpYZpoGKdhEqFQd9RPsXkrJx'
+      const expectedMultihash = 'zdpuAu2hhNXwq1Ht7aLezRWWBQa6h3vZUtuxSicHAxL8SQDvM'
       const entry = await Entry.create({
         ipfs, identity: identityFromSignKey(signKey), gidSeed: 'A', data: 'hello', next: []
       })
@@ -333,7 +335,7 @@ describe('Entry', function () {
         const entry = await Entry.create({ ipfs, identity: identityFromSignKey(signKey), gidSeed:   'A', data: 'hello', next: [] })
         delete ((entry.metadata as MetadataSecure)._metadata as DecryptedThing<Metadata>)
         await Entry.toMultihash(ipfs, entry)
-      } catch (e) {
+      } catch (e: any) {
         err = e
       }
       expect(err.message).toEqual('Invalid object format, cannot generate entry hash')
@@ -342,7 +344,7 @@ describe('Entry', function () {
 
   describe('fromMultihash', () => {
     it('creates a entry from ipfs hash', async () => {
-      const expectedHash = 'zdpuAntdp36rWjayXXDJbYET6FhPCe598d9w5FPs9VeTpvDZc'
+      const expectedHash = 'zdpuAkpzJgLJWpdaYMb59BxVk1xaAbkBWfowhN9pUmNsZd87x'
       const payload1 = 'hello world'
       const payload2 = 'hello again'
       const entry1 = await Entry.create({

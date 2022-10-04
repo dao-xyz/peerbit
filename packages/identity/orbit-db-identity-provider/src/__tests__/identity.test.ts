@@ -55,7 +55,7 @@ describe('Identity', function () {
       let err
       try {
         identity = new Identity({} as any)
-      } catch (e) {
+      } catch (e: any) {
         err = e.toString()
       }
       expect(err).toEqual('Error: Identity id is required')
@@ -65,7 +65,7 @@ describe('Identity', function () {
       let err
       try {
         identity = new Identity({ id: 'abc' } as any)
-      } catch (e) {
+      } catch (e: any) {
         err = e.toString()
       }
       expect(err).toEqual('Error: Invalid public key')
@@ -77,7 +77,7 @@ describe('Identity', function () {
         identity = new Identity({
           id: 'abc', publicKey
         } as any)
-      } catch (e) {
+      } catch (e: any) {
         err = e.toString()
       }
       expect(err).toEqual('Error: Signatures are required')
@@ -91,7 +91,7 @@ describe('Identity', function () {
             id: idSignature
           } as any)
         } as any)
-      } catch (e) {
+      } catch (e: any) {
         err = e.toString()
       }
       expect(err).toEqual('Error: Signature of (publicKey + idSignature) is required')
@@ -106,7 +106,7 @@ describe('Identity', function () {
             publicKey: publicKeyAndIdSignature
           }), type
         } as any)
-      } catch (e) {
+      } catch (e: any) {
         err = e.toString()
       }
       expect(err).toEqual('Error: Identity provider is required')
@@ -121,7 +121,7 @@ describe('Identity', function () {
             publicKey: publicKeyAndIdSignature
           }), provider: provider as any
         } as any)
-      } catch (e) {
+      } catch (e: any) {
         err = e.toString()
       }
       expect(err).toEqual('Error: Identity type is required')

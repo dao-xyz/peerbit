@@ -145,7 +145,7 @@ Object.keys(testAPIs).forEach(API => {
               resolve(true)
             }
           }, 1000)
-        } catch (e) {
+        } catch (e: any) {
           reject(e)
         }
       })

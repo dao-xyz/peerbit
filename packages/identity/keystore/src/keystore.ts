@@ -131,7 +131,7 @@ export class KeyWithMeta<T extends Keypair> {
 
 /* 
 @variant(0)
-export class SignKeyWithMeta extends KeyWithMeta {
+export class KeyWithMeta<Ed25519Keypair> extends KeyWithMeta {
 
   @field({ type: Ed25519PublicKey })
   publicKey: Ed25519PublicKey
@@ -157,7 +157,7 @@ export class SignKeyWithMeta extends KeyWithMeta {
   }
 
   equals(other: KeyWithMeta, ignoreMissingSecret: boolean = false) {
-    if (other instanceof SignKeyWithMeta) {
+    if (other instanceof KeyWithMeta<Ed25519Keypair>) {
       if (!super.equals(other, ignoreMissingSecret)) {
         return false;
       }
@@ -178,7 +178,7 @@ export class SignKeyWithMeta extends KeyWithMeta {
   }
 
   clone(sensitive: boolean) {
-    return new SignKeyWithMeta({
+    return new KeyWithMeta<Ed25519Keypair>({
       group: this.group,
       publicKey: this.publicKey,
       timestamp: this.timestamp,
@@ -321,7 +321,7 @@ export class Keystore {
             publicKey: new X25519PublicKey({ publicKey: kp.publicKey }),
           }
         }
-        else if (type as any === SignKeyWithMeta) { // TODO fix types
+        else if (type as any === KeyWithMeta<Ed25519Keypair>) { // TODO fix types
           let kp = await sodium.crypto_sign_keypair()
           key = {
             secretKey: new Ed25519PrivateKey({ secretKey: kp.privateKey }),
@@ -452,7 +452,7 @@ export class Keystore {
       try {
 
         buffer = id instanceof X25519PublicKey || id instanceof Ed25519PublicKey ? await this.keyStore.get(publicKeyFromKeyPair(id).hashCode(), { valueEncoding: 'view' }) : await this.groupStore.get(path, { valueEncoding: 'view' });
-      } catch (e) {
+      } catch (e: any) {
         // not found
         return
       }
@@ -495,14 +495,14 @@ export class Keystore {
       }
 
       return ret;
-    } catch (e) {
+    } catch (e: any) {
       // not found
       return Promise.resolve(null)
     }
   }
 
-  /* static async sign(arrayLike: string | Uint8Array | Buffer, key: SignKeyWithMeta | Ed25519PrivateKey, signHashed: boolean = false): Promise<Uint8Array> {
-    key = key instanceof SignKeyWithMeta ? key.secretKey : key;
+  /* static async sign(arrayLike: string | Uint8Array | Buffer, key: KeyWithMeta<Ed25519Keypair> | Ed25519PrivateKey, signHashed: boolean = false): Promise<Uint8Array> {
+    key = key instanceof KeyWithMeta<Ed25519Keypair> ? key.secretKey : key;
     if (!key) {
       throw new Error('No signing key given')
     }

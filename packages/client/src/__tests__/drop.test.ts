@@ -23,7 +23,7 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Drop Database (${API})`, function () {
     jest.setTimeout(config.timeout)
 
-    let ipfsd, ipfs, orbitdb: OrbitDB, db: EventStore<string>
+    let ipfsd: Controller, ipfs: IPFS, orbitdb: OrbitDB, db: EventStore<string>
     let localDataPath
 
     beforeAll(async () => {

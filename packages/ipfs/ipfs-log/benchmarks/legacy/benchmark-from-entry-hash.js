@@ -60,7 +60,7 @@ const run = (() => {
       }
       const dt1 = new Date().getTime()
       process.stdout.write(' (' + (dt1 - st) + ' ms)\n')
-    } catch (e) {
+    } catch (e: any) {
       console.log(e)
     }
 

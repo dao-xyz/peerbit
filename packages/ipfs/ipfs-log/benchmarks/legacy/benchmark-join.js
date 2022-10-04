@@ -29,7 +29,7 @@ const queryLoop = async () => {
     lastTenSeconds++
     queriesPerSecond++
     setImmediate(queryLoop)
-  } catch (e) {
+  } catch (e: any) {
     console.error(e)
     process.exit(0)
   }

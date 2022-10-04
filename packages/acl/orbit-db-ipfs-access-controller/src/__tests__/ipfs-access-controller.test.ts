@@ -1,6 +1,6 @@
 import assert from 'assert'
 import rmrf from 'rimraf'
-import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { IPFSAccessController } from '../ipfs-access-controller'
@@ -20,7 +20,7 @@ const dbPath2 = './orbitdb/tests/ipfs-access-controller/2'
 describe(`orbit-db - IPFSAccessController`, function () {
   jest.setTimeout(config.timeout)
 
-  let ipfsd1, ipfsd2, ipfs1, ipfs2, signKey1: SignKeyWithMeta, signKey2: SignKeyWithMeta
+  let ipfsd1, ipfsd2, ipfs1, ipfs2, signKey1: KeyWithMeta<Ed25519Keypair>, signKey2: KeyWithMeta<Ed25519Keypair>
   let orbitdb1: OrbitDB, orbitdb2: OrbitDB
 
   beforeAll(async () => {
@@ -35,8 +35,8 @@ describe(`orbit-db - IPFSAccessController`, function () {
     const keystore1 = new Keystore(dbPath1 + '/keys')
     const keystore2 = new Keystore(dbPath2 + '/keys')
 
-    signKey1 = await keystore1.createKey(new Uint8Array([0]), SignKeyWithMeta)
-    signKey2 = await keystore2.createKey(new Uint8Array([1]), SignKeyWithMeta)
+    signKey1 = await keystore1.createKey(new Uint8Array([0]), KeyWithMeta<Ed25519Keypair>)
+    signKey2 = await keystore2.createKey(new Uint8Array([1]), KeyWithMeta<Ed25519Keypair>)
 
     orbitdb1 = await OrbitDB.createInstance(ipfs1, {
       directory: dbPath1,
@@ -46,7 +46,7 @@ describe(`orbit-db - IPFSAccessController`, function () {
 
     orbitdb2 = await OrbitDB.createInstance(ipfs2, {
       directory: dbPath2,
-      publicKey: new Ed25519PublicKey({ publicKey: signKey2.publicKey }),
+      publicKey: signKey2.keypair.publicKey,
       sign: (data) => Keystore.sign(data, signKey2)
     })
   })

@@ -43,7 +43,7 @@ describe('Manual Workflow', function () {
 
       try {
         ipfsd = await startIpfs('xxx' as any)
-      } catch (e) {
+      } catch (e: any) {
         expect((e as any).message).toStartWith('Wanted API type "xxx" is unknown. Available types')
         await stopIpfs(ipfsd)
       }

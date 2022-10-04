@@ -145,7 +145,7 @@ Object.keys(testAPIs).forEach(API => {
 
                 await db3.drop()
                 await db4.drop()
-              } catch (e) {
+              } catch (e: any) {
                 reject(e)
               }
               resolve(true)

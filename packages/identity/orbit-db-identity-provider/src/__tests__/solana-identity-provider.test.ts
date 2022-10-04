@@ -3,7 +3,7 @@ import { PublicKey as SPublicKey, Keypair } from '@solana/web3.js';
 import assert from 'assert'
 import path from 'path'
 import rmrf from 'rimraf'
-import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 import { Identities } from "../identities"
 const keypath = path.resolve(__dirname, 'keys')
 import nacl from "tweetnacl";
@@ -45,13 +45,13 @@ describe('Solana Identity Provider', function () {
         })
 
         it('has the correct public key', async () => {
-            const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(keypair.publicKey.toBuffer().toString('base64'))
+            const signingKey = await keystore.getKeyByPath<KeyWithMeta<Ed25519Keypair>>(keypair.publicKey.toBuffer().toString('base64'))
             assert.notStrictEqual(signingKey, undefined)
             assert.deepStrictEqual(identity.publicKey, signingKey.publicKey)
         })
 
         it('has a signature for the id', async () => {
-            const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(keypair.publicKey.toBuffer().toString('base64'))
+            const signingKey = await keystore.getKeyByPath<KeyWithMeta<Ed25519Keypair>>(keypair.publicKey.toBuffer().toString('base64'))
             const idSignature = await Keystore.sign(keypair.publicKey.toBytes(), signingKey)
             const verifies = await Keystore.verify(idSignature, signingKey.publicKey, keypair.publicKey.toBytes())
             expect(verifies).toEqual(true)
@@ -59,7 +59,7 @@ describe('Solana Identity Provider', function () {
         })
 
         it('has a signature for the publicKey', async () => {
-            const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(keypair.publicKey.toBuffer().toString('base64'))
+            const signingKey = await keystore.getKeyByPath<KeyWithMeta<Ed25519Keypair>>(keypair.publicKey.toBuffer().toString('base64'))
             const idSignature = await Keystore.sign(keypair.publicKey.toBytes(), signingKey)
             const publicKeyAndIdSignature = await nacl.sign(Buffer.concat([identity.publicKey.getBuffer(), idSignature]), keypair.secretKey)
             assert.deepStrictEqual(identity.signatures.publicKey, new Uint8Array(Buffer.from(publicKeyAndIdSignature)))
@@ -98,7 +98,7 @@ describe('Solana Identity Provider', function () {
         })
 
         it('sign data', async () => {
-            const signingKey = await keystore.getKeyByPath<SignKeyWithMeta>(identity.id)
+            const signingKey = await keystore.getKeyByPath<KeyWithMeta<Ed25519Keypair>>(identity.id)
             const expectedSignature = await Keystore.sign(Buffer.from(data), signingKey)
             const signature = await identity.provider.sign(data, identity)
             assert.deepStrictEqual(signature, expectedSignature)
@@ -113,7 +113,7 @@ describe('Solana Identity Provider', function () {
             let err
             try {
                 signature = await identity.provider.sign(data, modifiedIdentity)
-            } catch (e) {
+            } catch (e: any) {
                 err = e.toString()
             }
             expect(signature).toEqual(undefined)

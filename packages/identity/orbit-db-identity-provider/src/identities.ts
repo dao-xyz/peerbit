@@ -3,9 +3,8 @@
 import { Identity, Signatures } from "./identity"
 import { IdentityProvider } from "./identity-provider-interface"
 import { OrbitDBIdentityProvider } from "./orbit-db-identity-provider"
-import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { Keystore } from '@dao-xyz/orbit-db-keystore'
 import path from 'path'
-import { Ed25519PublicKey } from 'sodium-plus';
 import { SolanaIdentityProviderOptions } from "./solana-identity-provider"
 import Cache from "@dao-xyz/orbit-db-cache"
 import { verify } from "@dao-xyz/peerbit-crypto"
@@ -43,7 +42,7 @@ export class Identities {
   get signingKeystore() { return this._signingKeystore }
 
   async sign(data: Uint8Array, identity: Identity) {
-    const signingKey = await this.keystore.getKeyByPath<SignKeyWithMeta>(Buffer.from(identity.id).toString('base64'))
+    const signingKey = await this.keystore.getKeyByPath<KeyWithMeta<Ed25519Keypair>>(Buffer.from(identity.id).toString('base64'))
     if (!signingKey) {
       throw new Error('Private signing key not found from Keystore')
     }
@@ -96,8 +95,8 @@ export class Identities {
 
   async signId(id: Uint8Array) {
     const keystore = this.keystore
-    const existingKey = await keystore.getKeyByPath(id, SignKeyWithMeta);
-    const key = existingKey || await keystore.createKey(id, SignKeyWithMeta)
+    const existingKey = await keystore.getKeyByPath(id, KeyWithMeta<Ed25519Keypair>);
+    const key = existingKey || await keystore.createKey(id, KeyWithMeta<Ed25519Keypair>)
     const publicKey = key.publicKey
     const idSignature = await Keystore.sign(id, key)
     return { publicKey, idSignature }

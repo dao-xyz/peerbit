@@ -1,8 +1,10 @@
-import { Keystore, SignKeyWithMeta } from "@dao-xyz/orbit-db-keystore"
+import { KeyWithMeta } from "@dao-xyz/orbit-db-keystore"
+import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto"
+import { IPFS } from "ipfs-core-types"
 import { Log } from "../../log.js"
 
 export class LogCreator {
-  static async createLogWithSixteenEntries(ipfs, signKeys: SignKeyWithMeta[]) {
+  static async createLogWithSixteenEntries(ipfs: IPFS, signKeys: KeyWithMeta<Ed25519Keypair>[]) {
     const expectedData = [
       'entryA1', 'entryB1', 'entryA2', 'entryB2', 'entryA3', 'entryB3',
       'entryA4', 'entryB4', 'entryA5', 'entryB5',
@@ -12,10 +14,10 @@ export class LogCreator {
     ]
 
     const create = async (): Promise<Log<string>> => {
-      const logA = new Log<string>(ipfs, signKeys[0].publicKey, (data) => Keystore.sign(data, signKeys[0]), { logId: 'X' })
-      const logB = new Log<string>(ipfs, signKeys[1].publicKey, (data) => Keystore.sign(data, signKeys[1]), { logId: 'X' })
-      const log3 = new Log<string>(ipfs, signKeys[2].publicKey, (data) => Keystore.sign(data, signKeys[2]), { logId: 'X' })
-      const log = new Log<string>(ipfs, signKeys[3].publicKey, (data) => Keystore.sign(data, signKeys[3]), { logId: 'X' })
+      const logA = new Log<string>(ipfs, { publicKey: signKeys[0].keypair.publicKey, sign: (data) => signKeys[0].keypair.sign(data) }, { logId: 'X' })
+      const logB = new Log<string>(ipfs, { publicKey: signKeys[1].keypair.publicKey, sign: (data) => signKeys[1].keypair.sign(data) }, { logId: 'X' })
+      const log3 = new Log<string>(ipfs, { publicKey: signKeys[2].keypair.publicKey, sign: (data) => signKeys[2].keypair.sign(data) }, { logId: 'X' })
+      const log = new Log<string>(ipfs, { publicKey: signKeys[3].keypair.publicKey, sign: (data) => signKeys[3].keypair.sign(data) }, { logId: 'X' })
 
       for (let i = 1; i <= 5; i++) {
         await logA.append('entryA' + i)
@@ -39,14 +41,14 @@ export class LogCreator {
     return { log: log, expectedData: expectedData, json: log.toJSON() }
   }
 
-  static async createLogWithTwoHundredEntries(ipfs, signKeys: SignKeyWithMeta[]) {
+  static async createLogWithTwoHundredEntries(ipfs: IPFS, signKeys: KeyWithMeta<Ed25519Keypair>[]) {
     const amount = 100
 
     const expectedData: string[] = []
 
     const create = async (): Promise<Log<string>> => {
-      const logA = new Log<string>(ipfs, signKeys[0].publicKey, (data) => Keystore.sign(data, signKeys[0]), { logId: 'X' })
-      const logB = new Log<string>(ipfs, signKeys[1].publicKey, (data) => Keystore.sign(data, signKeys[1]), { logId: 'X' })
+      const logA = new Log<string>(ipfs, { publicKey: signKeys[0].keypair.publicKey, sign: (data) => signKeys[0].keypair.sign(data) }, { logId: 'X' })
+      const logB = new Log<string>(ipfs, { publicKey: signKeys[1].keypair.publicKey, sign: (data) => signKeys[1].keypair.sign(data) }, { logId: 'X' })
       for (let i = 1; i <= amount; i++) {
         await logA.append('entryA' + i)
         await logB.join(logA)

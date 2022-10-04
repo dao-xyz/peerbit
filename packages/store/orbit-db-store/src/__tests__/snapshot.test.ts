@@ -1,7 +1,7 @@
 import assert from 'assert'
 
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
-import { Keystore, SignKeyWithMeta } from '@dao-xyz/orbit-db-keystore';
+import { Keystore } from '@dao-xyz/orbit-db-keystore';
 import { Store, DefaultOptions } from '../store.js'
 import { Entry } from '@dao-xyz/ipfs-log-entry';
 import { createStore } from './storage.js';
@@ -17,7 +17,7 @@ import {
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`Snapshots ${IPFS}`, function () {
-    let ipfsd, ipfs, signKey: SignKeyWithMeta, identityStore, store: Store<any>, cacheStore
+    let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, identityStore, store: Store<any>, cacheStore
     let index: SimpleIndex<string>
     jest.setTimeout(config.timeout)
 
@@ -32,14 +32,17 @@ Object.keys(testAPIs).forEach((IPFS) => {
       cacheStore = await createStore('cache')
       const cache = new Cache(cacheStore)
 
-      signKey = await keystore.getKeyByPath(new Uint8Array([0]), SignKeyWithMeta);
+      signKey = await keystore.getKey(new Uint8Array([0]));
       ipfsd = await startIpfs(IPFS, ipfsConfig.daemon1)
       ipfs = ipfsd.api
 
       index = new SimpleIndex();
       const options = Object.assign({}, DefaultOptions, { resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index) })
       store = new Store({ name: 'name', accessController: new SimpleAccessController() })
-      await store.init(ipfs, signKey.publicKey, (data) => Keystore.sign(data, signKey), options);
+      await store.init(ipfs, {
+        publicKey: signKey.keypair.publicKey,
+        sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
+      }, options);
 
     })
 

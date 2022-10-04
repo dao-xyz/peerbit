@@ -1,13 +1,17 @@
 import pMap from 'p-map'
 import pDoWhilst from 'p-do-whilst'
-import { min, Entry, IOOptions } from '@dao-xyz/ipfs-log-entry';
+import { Entry, IOOptions } from './entry';
 import { IPFS } from 'ipfs-core-types'
 import { PublicKeyEncryption, PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
-
+import { max, min } from './utils';
+//@ts-ignore
+import Logger from 'logplease'
+const logger = Logger.create('entry-io', { color: Logger.Colors.Yellow })
+Logger.setLogLevel('ERROR')
 const hasItems = (arr: any[]) => arr && arr.length > 0
 
 
-export interface EntryFetchOptions<T> { length?: number, timeout?: number, exclude?: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency?: number, encryption?: PublicKeyEncryptionResolver, encoding: IOOptions<T> }
+export interface EntryFetchOptions<T> { length?: number, timeout?: number, exclude?: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency?: number, encryption?: PublicKeyEncryptionResolver, encoding?: IOOptions<T> }
 interface EntryFetchStrictOptions<T> { length: number, timeout?: number, exclude: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency: number, encryption?: PublicKeyEncryptionResolver, encoding: IOOptions<T> }
 
 export interface EntryFetchAllOptions<T> extends EntryFetchOptions<T> { shouldExclude?: (string: string) => boolean, onStartProgressCallback?: any, delay?: number }
@@ -109,13 +113,14 @@ export class EntryIO {
     const getNextFromQueue = (length = 1) => {
       const getNext = (res: string[], key: string, idx: number) => {
         const nextItems = loadingQueue[key]
-        for (const hash of nextItems) {
-          if (res.length >= length) {
-            break;
+        while (nextItems.length > 0 && res.length < length) {
+          const hash = nextItems.shift()
+          if (!hash) {
+            logger.error("Missing hash while getNext")
+            continue;
           }
           res.push(hash)
         }
-
         if (nextItems.length === 0) {
           delete loadingQueue[key]
         }
@@ -153,7 +158,7 @@ export class EntryIO {
             const ts = Number((await entry.getClock()).time)
 
             // Update min/max clocks'
-            maxClock = Number(min(maxClock, ts))
+            maxClock = Number(max(maxClock, ts))
             minClock = Number(result.length > 0
               ? min<bigint | number>((await result[result.length - 1].clock).time, minClock)
               : maxClock)
@@ -205,7 +210,7 @@ export class EntryIO {
           // Add it to the results
           await addToResults(entry)
           resolve(undefined)
-        } catch (e) {
+        } catch (e: any) {
           reject(e)
         } finally {
           if (timer)

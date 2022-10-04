@@ -61,7 +61,7 @@ export class IPFSAccessController<T> extends ReadWriteAccessController<T> {
       if (typeof this.write === 'string') {
         this._write = JSON.parse(this._write as any as string);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.log('IPFSAccessController.load ERROR:', e)
     }
   }
@@ -70,7 +70,7 @@ export class IPFSAccessController<T> extends ReadWriteAccessController<T> {
     let cid
     try {
       cid = await io.write(this._ipfs, 'dag-cbor', { write: JSON.stringify(this.write, null, 2) })
-    } catch (e) {
+    } catch (e: any) {
       console.log('IPFSAccessController.save ERROR:', e)
     }
     // return the manifest data
