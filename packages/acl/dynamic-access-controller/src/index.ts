@@ -6,7 +6,7 @@
 
 // Relation with enc/dec?
 import { field, variant } from "@dao-xyz/borsh";
-import { Entry, Payload } from '@dao-xyz/ipfs-log-entry';
+import { Entry, Payload } from '@dao-xyz/ipfs-log';
 import { Address, IInitializationOptions, StoreLike } from '@dao-xyz/orbit-db-store';
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { AccessStore } from './acl-db';
@@ -14,7 +14,7 @@ import { Access } from './access';
 export * from './access';
 import isNode from 'is-node';
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
-import { PublicKey } from "@dao-xyz/peerbit-crypto";
+import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { RegionAccessController } from "@dao-xyz/orbit-db-trust-web";
 import { Log } from "@dao-xyz/ipfs-log";
 import Cache from '@dao-xyz/orbit-db-cache';
@@ -50,7 +50,7 @@ export class AccessRequest {
 }
 
 export const DYNAMIC_ACCESS_CONTROLER = 'dynamic-access-controller';
-export type AccessVerifier = (identity: PublicKey) => Promise<boolean>
+export type AccessVerifier = (identity: PublicSignKey) => Promise<boolean>
 
 
 @variant([0, 3])
@@ -70,7 +70,7 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<T> imp
 
     constructor(properties?: {
         name?: string,
-        rootTrust?: PublicKey,
+        rootTrust?: PublicSignKey,
         regionAccessController?: RegionAccessController
     }) {
         super();
@@ -156,7 +156,7 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<T> imp
           this._store = store;
       } */
 
-    async canRead(key: PublicKey): Promise<boolean> {
+    async canRead(key: PublicSignKey): Promise<boolean> {
 
         if (this.allowAll) {
             return true;
@@ -168,13 +168,13 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<T> imp
         }
 
         if (await this._db.canRead(key)) {
-            return true; // Creator of entry does not own NFT or token, or publickey etc
+            return true; // Creator of entry does not own NFT or token, or PublicSignKey etc
         }
         return false;
     }
 
-    async canAppend(payload: MaybeEncrypted<Payload<T>>, identityEncrypted: MaybeEncrypted<PublicKey>) {
-        const identity = (await identityEncrypted.decrypt()).getValue(PublicKey);
+    async canAppend(payload: MaybeEncrypted<Payload<T>>, identityEncrypted: MaybeEncrypted<PublicSignKey>) {
+        const identity = (await identityEncrypted.decrypt()).getValue(PublicSignKey);
 
         if (this.allowAll) {
             return true;
@@ -189,7 +189,7 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<T> imp
 
 
         if (await this._db.canWrite(identity)) {
-            return true; // Creator of entry does not own NFT or token, or publickey etc
+            return true; // Creator of entry does not own NFT or token, or PublicSignKey etc
         }
 
 
@@ -204,9 +204,9 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<T> imp
         await this._acldb.close();
     } */
 
-    async init(ipfs, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<Access>): Promise<DynamicAccessController<T>> {
+    async init(ipfs, PublicSignKey: PublicSignKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<Access>): Promise<DynamicAccessController<T>> {
         /*  this._trust = options.trust; */
-        await this._db.init(ipfs, publicKey, sign, options)
+        await this._db.init(ipfs, PublicSignKey, sign, options)
         return this;
     }
 
@@ -291,7 +291,7 @@ export class SignedAccessRequest {
     }
 
     async verifySignature(identities: Identities): Promise<boolean> {
-        return identities.verify(this.signature, this.identity.publicKey, this.serializePresigned(), 'v1')
+        return identities.verify(this.signature, this.identity.PublicSignKey, this.serializePresigned(), 'v1')
     }
 }
  */

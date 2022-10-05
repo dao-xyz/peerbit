@@ -21,18 +21,18 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     jest.setTimeout(timeout);
 
-    let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, store: Store<any>, keystore: Keystore, signingKeystore: Keystore, cacheStore
+    let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, store: Store<any>, keystore: Keystore, cacheStore
     let index: SimpleIndex<string>
     const { identityKeysPath } = config
 
     beforeAll(async () => {
-      keystore = new Keystore(await createStore(identityKeysPath))
+      keystore = new Keystore(await createStore(signingKeysPath(__filenameBase)))
 
       ipfsd = await startIpfs(IPFS, config.daemon1)
       ipfs = ipfsd.api
       /*       const id = (await ipfsd.api.id()).id
        */
-      signKey = await await keystore.createKey(await Ed25519Keypair.create(), { id: new Uint8Array([0]), overwrite: true });
+      signKey = await await keystore.getKey(new Uint8Array([0])) as KeyWithMeta<Ed25519Keypair>;
       cacheStore = await createStore('cache')
       const cache = new Cache(cacheStore)
       index = new SimpleIndex();

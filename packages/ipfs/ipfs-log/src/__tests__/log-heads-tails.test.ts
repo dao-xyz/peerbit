@@ -4,7 +4,8 @@ import fs from 'fs-extra'
 import { Entry } from '../entry';
 import { Log } from '../log.js'
 import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
-
+import { jest } from '@jest/globals';
+import { arraysCompare } from '@dao-xyz/borsh-utils';
 // Test utils
 import {
   nodeConfig as config,
@@ -17,9 +18,10 @@ import { IPFS } from 'ipfs-core-types'
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { jest } from '@jest/globals';
+import path from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
+const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 
 
@@ -33,26 +35,32 @@ Object.keys(testAPIs).forEach((IPFS) => {
   describe('Log - Heads and Tails', function () {
     jest.setTimeout(config.timeout)
 
-    const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
+    const { signingKeyFixtures, signingKeysPath } = config
 
-    let keystore: Keystore, signingKeystore: Keystore
+    let keystore: Keystore
 
     beforeAll(async () => {
-      rmrf.sync(identityKeysPath)
-      rmrf.sync(signingKeysPath)
-      await fs.copy(identityKeyFixtures(__dirname), identityKeysPath)
-      await fs.copy(signingKeyFixtures(__dirname), signingKeysPath)
 
-      keystore = new Keystore(await createStore(identityKeysPath))
-      signingKeystore = new Keystore(await createStore(signingKeysPath))
+      rmrf.sync(signingKeysPath(__filenameBase))
+
+      await fs.copy(signingKeyFixtures(__dirname), signingKeysPath(__filenameBase))
+
+      keystore = new Keystore(await createStore(signingKeysPath(__filenameBase)))
+
+      const keys: KeyWithMeta<Ed25519Keypair>[] = [];
+      for (let i = 0; i < 4; i++) {
+        keys.push(await keystore.getKey(new Uint8Array([i])) as KeyWithMeta<Ed25519Keypair>)
+      }
+      keys.sort((a, b) => arraysCompare(a.keypair.publicKey.publicKey, b.keypair.publicKey.publicKey))
+
       // @ts-ignore
-      signKey = await keystore.getKey(new Uint8Array([0]));
+      signKey = keys[0]
       // @ts-ignore
-      signKey2 = await keystore.getKey(new Uint8Array([1]));
+      signKey2 = keys[1]
       // @ts-ignore
-      signKey3 = await keystore.getKey(new Uint8Array([2]));
+      signKey3 = keys[2]
       // @ts-ignore
-      signKey4 = await keystore.getKey(new Uint8Array([4]));
+      signKey4 = keys[3]
 
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
@@ -60,11 +68,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     afterAll(async () => {
       await stopIpfs(ipfsd)
-      rmrf.sync(identityKeysPath)
-      rmrf.sync(signingKeysPath)
+
+      rmrf.sync(signingKeysPath(__filenameBase))
 
       await keystore?.close()
-      await signingKeystore?.close()
+
     })
 
     describe('heads', () => {
@@ -367,12 +375,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log3.join(log2)
         await log4.join(log3)
         expect(log4.tails.length).toEqual(3)
-        const log4Id = (await log4.tails[0].gid);
-        expect(log4Id).toEqual('XX')
-        assert.deepStrictEqual(log4.tails[0].clock.id, signKey3.keypair.publicKey)
-        assert.deepStrictEqual(log4.tails[1].clock.id, signKey2.keypair.publicKey)
-        assert.deepStrictEqual(log4.tails[2].clock.id, signKey.keypair.publicKey)
-        assert.deepStrictEqual(log4.heads[0].clock.id, signKey4.keypair.publicKey)
+
+        expect(log4.tails[0].clock.id).toEqual(signKey.keypair.publicKey.bytes)
+        expect(log4.tails[1].clock.id).toEqual(signKey2.keypair.publicKey.bytes)
+        expect(log4.tails[2].clock.id).toEqual(signKey3.keypair.publicKey.bytes)
       })
     })
   })

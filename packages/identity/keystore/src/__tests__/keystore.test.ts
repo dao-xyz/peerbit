@@ -5,18 +5,24 @@ import LRU from 'lru-cache';
 import { createStore, Keystore, KeyWithMeta } from '../keystore';
 import rmrf from 'rimraf'
 import { Level } from 'level';
-import { Ed25519Keypair, Ed25519PublicKey, X25519Keypair, X25519PublicKey, X25519SecretKey } from '@dao-xyz/peerbit-crypto';
+import { Ed25519Keypair, X25519Keypair } from '@dao-xyz/peerbit-crypto';
 import { jest } from '@jest/globals';
 import fs from 'fs-extra'
-import { StoreError } from '../errors';
+import { StoreError } from '../errors.js';
 import { delay } from '@dao-xyz/time';
-
-let store: Level;
-const fixturePath = path.join('packages/identity/keystore/src/__tests__', 'fixtures', 'signingKeys')
-const storagePath = path.join('packages/identity/keystore/src/__tests__', 'signingKeys')
-const tempKeyPath = "packages/identity/keystore/src/__tests__/keystore-test";
+import { fixturePath } from './fixture.test.js';
+import { dirname } from 'path';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __filenameBase = path.parse(__filename).base;
+const __dirname = dirname(__filename);
+const storagePath = path.join(__dirname, 'signing-keys')
+const tempKeyPath = path.join(__dirname, "keystore-test");
 
 jest.setTimeout(600000)
+
+let store: Level;
+
 /* jest.useRealTimers();
 ; */
 
@@ -36,6 +42,8 @@ describe('keystore', () => {
   })
 
   describe('constructor', () => {
+
+
     it('creates a new Keystore instance', async () => {
       const keystore = new Keystore(store)
 

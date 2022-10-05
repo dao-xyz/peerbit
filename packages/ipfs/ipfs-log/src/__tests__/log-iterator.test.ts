@@ -4,6 +4,7 @@ import fs from 'fs-extra'
 import { Log } from '../log.js'
 import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { LogCreator } from './utils/log-creator.js'
+import { jest } from '@jest/globals';
 
 // Test utils
 import {
@@ -18,9 +19,10 @@ import { IPFS } from 'ipfs-core-types'
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { jest } from '@jest/globals';
+import path from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
+const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 
 let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, signKey2: KeyWithMeta<Ed25519Keypair>, signKey3: KeyWithMeta<Ed25519Keypair>
@@ -29,18 +31,17 @@ Object.keys(testAPIs).forEach((IPFS) => {
   describe('Log - Iterator', function () {
     jest.setTimeout(config.timeout)
 
-    const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
+    const { signingKeyFixtures, signingKeysPath } = config
 
-    let keystore: Keystore, signingKeystore: Keystore
+    let keystore: Keystore
 
     beforeAll(async () => {
-      rmrf.sync(identityKeysPath)
-      rmrf.sync(signingKeysPath)
-      await fs.copy(identityKeyFixtures(__dirname), identityKeysPath)
-      await fs.copy(signingKeyFixtures(__dirname), signingKeysPath)
 
-      keystore = new Keystore(await createStore(identityKeysPath))
-      signingKeystore = new Keystore(await createStore(signingKeysPath))
+      rmrf.sync(signingKeysPath(__filenameBase))
+
+      await fs.copy(signingKeyFixtures(__dirname), signingKeysPath(__filenameBase))
+
+      keystore = new Keystore(await createStore(signingKeysPath(__filenameBase)))
 
       //@ts-ignore
       signKey = await keystore.getKey(new Uint8Array([3]));
@@ -54,11 +55,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     afterAll(async () => {
       await stopIpfs(ipfsd)
-      rmrf.sync(identityKeysPath)
-      rmrf.sync(signingKeysPath)
+
+      rmrf.sync(signingKeysPath(__filenameBase))
 
       await keystore?.close()
-      await signingKeystore?.close()
+
     })
 
     describe('Basic iterator functionality', () => {

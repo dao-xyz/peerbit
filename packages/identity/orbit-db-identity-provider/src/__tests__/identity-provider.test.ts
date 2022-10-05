@@ -17,12 +17,12 @@ const type = 'orbitdb'
 describe('Identity Provider', function () {
   beforeAll(async () => {
     rmrf.sync(signingKeysPath)
-    rmrf.sync(identityKeysPath)
+
   })
 
   afterAll(async () => {
     rmrf.sync(signingKeysPath)
-    rmrf.sync(identityKeysPath)
+
   })
 
   describe('Creating Identities', () => {
@@ -37,7 +37,7 @@ describe('Identity Provider', function () {
     })
 
     it('identityKeysPath and signingKeysPath - has a different id', async () => {
-      identity = await Identities.createIdentity({ id, identityKeysPath, signingKeysPath })
+      identity = await Identities.createIdentity({ id, signingKeysPath })
       const key = await identity.provider.keystore.getKeyByPath<KeyWithMeta<Ed25519Keypair>>(id)
       const externalId = key.publicKey;
       try {
@@ -58,8 +58,7 @@ describe('Identity Provider', function () {
     const id = new Uint8Array([1]); let identity: Identity; let keystore: Keystore; let signingKeystore: Keystore
 
     beforeAll(async () => {
-      keystore = new Keystore(await createStore(identityKeysPath))
-      signingKeystore = new Keystore(await createStore(signingKeysPath))
+      keystore = new Keystore(await createStore(signingKeysPath))
     })
 
     it('has the correct id', async () => {
@@ -111,7 +110,7 @@ describe('Identity Provider', function () {
   })
 
   describe('create an identity with saved keys', () => {
-    let keystore: Keystore, signingKeystore: Keystore
+    let keystore: Keystore
     let savedKeysKeystore: Keystore, identity: Identity
     const id = new Uint8Array(Buffer.from('id'))
     const expectedPublicKey = new Uint8Array([182, 148, 252, 212, 145, 8, 89, 87, 47, 10, 154, 12, 168, 149, 172, 97, 138, 66, 155, 232, 166, 30, 237, 47, 95, 8, 182, 148, 145, 3, 218, 215])
@@ -119,8 +118,7 @@ describe('Identity Provider', function () {
     const expectedPkIdSignature = new Uint8Array([201, 158, 25, 249, 127, 194, 101, 33, 107, 119, 192, 136, 154, 161, 82, 142, 12, 3, 75, 202, 159, 163, 7, 95, 97, 212, 184, 143, 0, 229, 8, 239, 234, 168, 168, 141, 20, 151, 6, 2, 188, 33, 37, 135, 220, 177, 253, 234, 176, 211, 13, 26, 169, 251, 252, 167, 82, 252, 120, 23, 188, 84, 107, 14, 182, 148, 252, 212, 145, 8, 89, 87, 47, 10, 154, 12, 168, 149, 172, 97, 138, 66, 155, 232, 166, 30, 237, 47, 95, 8, 182, 148, 145, 3, 218, 215, 78, 61, 167, 61, 170, 5, 238, 167, 160, 86, 192, 153, 155, 33, 127, 74, 86, 182, 10, 188, 150, 96, 142, 198, 5, 99, 209, 185, 171, 88, 30, 253, 71, 35, 220, 40, 73, 108, 227, 125, 165, 148, 43, 40, 149, 146, 51, 72, 61, 161, 22, 210, 18, 96, 255, 126, 119, 169, 85, 108, 171, 102, 29, 2, 134, 59, 226, 106, 72, 13, 22, 27, 55, 41, 197, 64, 255, 244, 231, 224, 99, 161, 112, 203, 110, 65, 98, 155, 19, 95, 68, 20, 4, 117, 243, 72])
 
     beforeAll(async () => {
-      keystore = new Keystore(await createStore(identityKeysPath))
-      signingKeystore = new Keystore(await createStore(signingKeysPath))
+      keystore = new Keystore(await createStore(signingKeysPath))
       await fs.copy(fixturesPath, savedKeysPath)
       savedKeysKeystore = new Keystore(savedKeysPath)
       /*       await savedKeysKeystore.createKey(id, KeyWithMeta<Ed25519Keypair>, undefined, { overwrite: true }); */
@@ -164,18 +162,17 @@ describe('Identity Provider', function () {
     let identity: Identity, keystore: Keystore, signingKeystore
 
     beforeAll(async () => {
-      keystore = new Keystore(await createStore(identityKeysPath))
-      signingKeystore = new Keystore(await createStore(signingKeysPath))
+      keystore = new Keystore(await createStore(signingKeysPath))
     })
 
     it('identity pkSignature verifies', async () => {
-      identity = await Identities.createIdentity({ id, type, keystore, signingKeystore })
+      identity = await Identities.createIdentity({ id, type, keystore })
       const verified = await Keystore.verify(identity.signatures.id, identity.publicKey, identity.id)
       expect(verified).toEqual(true)
     })
 
     it('identity signature verifies', async () => {
-      identity = await Identities.createIdentity({ id, type, keystore, signingKeystore })
+      identity = await Identities.createIdentity({ id, type, keystore })
       const verified = await Keystore.verify(identity.signatures.publicKey, new Ed25519PublicKey(Buffer.from(identity.id)), Buffer.concat([identity.publicKey.getBuffer(), identity.signatures.id]))
       expect(verified).toEqual(true)
     })
@@ -192,7 +189,7 @@ describe('Identity Provider', function () {
       }
 
       Identities.addIdentityProvider(IP)
-      identity = await Identities.createIdentity({ type: IP.type, keystore, signingKeystore })
+      identity = await Identities.createIdentity({ type: IP.type, keystore })
       const verified = await Identities.verifyIdentity(identity)
       expect(verified).toEqual(false)
     })
@@ -208,12 +205,11 @@ describe('Identity Provider', function () {
     let identity: Identity, keystore, signingKeystore
 
     beforeAll(async () => {
-      keystore = new Keystore(await createStore(identityKeysPath))
-      signingKeystore = new Keystore(await createStore(signingKeysPath))
+      keystore = new Keystore(await createStore(signingKeysPath))
     })
 
     it('identity verifies', async () => {
-      identity = await Identities.createIdentity({ id, type, keystore, signingKeystore })
+      identity = await Identities.createIdentity({ id, type, keystore })
       const verified = await identity.provider.verifyIdentity(identity)
       expect(verified).toEqual(true)
     })
@@ -227,12 +223,11 @@ describe('Identity Provider', function () {
   describe('sign data with an identity', () => {
     const id = new Uint8Array(Buffer.from('0x01234567890abcdefghijklmnopqrstuvwxyz'))
     const data = new Uint8Array([1, 2, 3])
-    let identity: Identity, keystore: Keystore, signingKeystore: Keystore
+    let identity: Identity, keystore: Keystore
 
     beforeAll(async () => {
-      keystore = new Keystore(await createStore(identityKeysPath))
-      signingKeystore = new Keystore(await createStore(signingKeysPath))
-      identity = await Identities.createIdentity({ id, keystore, signingKeystore })
+      keystore = new Keystore(await createStore(signingKeysPath))
+      identity = await Identities.createIdentity({ id, keystore })
     })
 
     it('sign data', async () => {
@@ -267,16 +262,15 @@ describe('Identity Provider', function () {
   describe('verify data signed by an identity', () => {
     const id = new Uint8Array(Buffer.from('03602a3da3eb35f1148e8028f141ec415ef7f6d4103443edbfec2a0711d716f53f'))
     const data = new Uint8Array(Buffer.from('hello friend'))
-    let identity: Identity, keystore: Keystore, signingKeystore: Keystore
+    let identity: Identity, keystore: Keystore
     let signature
 
     beforeAll(async () => {
-      keystore = new Keystore(await createStore(identityKeysPath))
-      signingKeystore = new Keystore(await createStore(signingKeysPath))
+      keystore = new Keystore(await createStore(signingKeysPath))
     })
 
     beforeEach(async () => {
-      identity = await Identities.createIdentity({ id, type, keystore, signingKeystore })
+      identity = await Identities.createIdentity({ id, type, keystore })
       signature = await identity.provider.sign(data, identity)
     })
 
@@ -300,12 +294,12 @@ describe('Identity Provider', function () {
   /*   describe('create identity from existing keys', () => {
       const source = fixturesPath + '/existing'
       const publicKey = '045756c20f03ec494d07e8dd8456f67d6bd97ca175e6c4882435fe364392f131406db3a37eebe1d634b105a57b55e4f17247c1ec8ffe04d6a95d1e0ee8bed7cfbd'
-      let identity: Identity, keystore: Keystore, signingKeystore: Keystore
+      let identity: Identity, keystore: Keystore
   
       beforeAll(async () => {
-        keystore = new Keystore(await createStore(identityKeysPath))
-        signingKeystore = new Keystore(await createStore(signingKeysPath))
-        identity = await Identities.createIdentity({ id: new Uint8Array(Buffer.from('A')), migrate: migrate(source) as any, keystore, signingKeystore })
+        keystore = new Keystore(await createStore(signingKeysPath))
+        keystore = new Keystore(await createStore(signingKeysPath))
+        identity = await Identities.createIdentity({ id: new Uint8Array(Buffer.from('A')), migrate: migrate(source) as any, keystore })
       })
   
       it('creates identity with correct public key', async () => {

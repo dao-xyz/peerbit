@@ -44,8 +44,8 @@ Object.keys(testAPIs).forEach(API => {
       const identityStore = await createStore(keysPath)
 
       keystore = new Keystore(identityStore)
-      signKey1 = await keystore.createKey(await Ed25519Keypair.create(), { id: new Uint8Array([0]) });
-      signKey2 = await keystore.createKey(await Ed25519Keypair.create(), { id: new Uint8Array([1]) });
+      signKey1 = await keystore.getKey(new Uint8Array([0])) as KeyWithMeta<Ed25519Keypair>;;
+      signKey2 = await keystore.getKey(new Uint8Array([1])) as KeyWithMeta<Ed25519Keypair>;;
       orbitdb = await OrbitDB.createInstance(ipfs, { directory: dbPath })
     })
 

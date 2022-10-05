@@ -16,7 +16,10 @@ import {
 import { IPFS } from 'ipfs-core-types';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
+import path from 'path';
+
 const __filename = fileURLToPath(import.meta.url);
+const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 
 const identityFromSignKey = (key: KeyWithMeta<Ed25519Keypair>): Identity => {
@@ -34,8 +37,8 @@ describe('Entry', function () {
   jest.setTimeout(config.timeout)
   let session: Session, ipfs: IPFS
 
-  const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
-  let keystore: Keystore, signingKeystore: Keystore, signKey: KeyWithMeta<Ed25519Keypair>
+  const { signingKeyFixtures, signingKeysPath } = config
+  let keystore: Keystore, signKey: KeyWithMeta<Ed25519Keypair>
 
   beforeAll(async () => {
     await sodium.ready;
@@ -43,24 +46,23 @@ describe('Entry', function () {
     ipfs = session.peers[0].ipfs;
     await sodium.ready;
 
-    await fs.copy(identityKeyFixtures(__dirname), identityKeysPath)
-    await fs.copy(signingKeyFixtures(__dirname), signingKeysPath)
 
-    keystore = new Keystore(await createStore(identityKeysPath))
-    signingKeystore = new Keystore(await createStore(signingKeysPath))
-    await signingKeystore.waitForOpen();
+    await fs.copy(signingKeyFixtures(__dirname), signingKeysPath(__filenameBase))
 
-    signKey = await signingKeystore.getKey(new Uint8Array([0])) as KeyWithMeta<Ed25519Keypair>
+    keystore = new Keystore(await createStore(signingKeysPath(__filenameBase)));
+    await keystore.waitForOpen();
+
+    signKey = await keystore.getKey(new Uint8Array([0])) as KeyWithMeta<Ed25519Keypair>
   })
 
   afterAll(async () => {
     await session.stop();
-    await fs.copy(identityKeyFixtures(__dirname), identityKeysPath)
-    await fs.copy(signingKeyFixtures(__dirname), signingKeysPath)
-    rmrf.sync(identityKeysPath)
-    rmrf.sync(signingKeysPath)
+
+    await fs.copy(signingKeyFixtures(__dirname), signingKeysPath(__filenameBase))
+
+    rmrf.sync(signingKeysPath(__filenameBase))
     await keystore?.close()
-    await signingKeystore?.close()
+
   })
   describe('endocing', () => {
     it('can serialize and deserialialize', async () => {
@@ -74,7 +76,7 @@ describe('Entry', function () {
 
   describe('create', () => {
     it('creates a an empty entry', async () => {
-      const expectedHash = 'zdpuAu2hhNXwq1Ht7aLezRWWBQa6h3vZUtuxSicHAxL8SQDvM'
+      const expectedHash = 'zdpuAodEgpKQpFjAgCtJPYLDFjLrYJ56j69MvhS7gdrvEVisW'
       const entry = await Entry.create({
         ipfs, identity: identityFromSignKey(signKey), gidSeed: 'A', data: 'hello'
       })
@@ -90,7 +92,7 @@ describe('Entry', function () {
     })
 
     it('creates a entry with payload', async () => {
-      const expectedHash = 'zdpuB19QcmFWCKRAtJsrmkkqTH5AB5YCCyvFaPZp4eynt26WY'
+      const expectedHash = 'zdpuAotgKm27uJe3j1dJTHi29P9Kunt1oKNDdcutcjY4gWY8k'
       const payload = 'hello world'
       const entry = await Entry.create({
         ipfs, identity: identityFromSignKey(signKey), gidSeed: 'A', data: payload, next: []
@@ -150,7 +152,7 @@ describe('Entry', function () {
     })
 
     it('creates a entry with payload and next', async () => {
-      const expectedHash = 'zdpuAkpzJgLJWpdaYMb59BxVk1xaAbkBWfowhN9pUmNsZd87x'
+      const expectedHash = 'zdpuAvEB1kk7M6ZhrhV5eG85pKEiArEbHV2EFgA37qcuk5w1p'
       const payload1 = 'hello world'
       const payload2 = 'hello again'
       const entry1 = await Entry.create({
@@ -318,7 +320,7 @@ describe('Entry', function () {
   describe('toMultihash', () => {
 
     it('returns an ipfs multihash', async () => {
-      const expectedMultihash = 'zdpuAu2hhNXwq1Ht7aLezRWWBQa6h3vZUtuxSicHAxL8SQDvM'
+      const expectedMultihash = 'zdpuAodEgpKQpFjAgCtJPYLDFjLrYJ56j69MvhS7gdrvEVisW'
       const entry = await Entry.create({
         ipfs, identity: identityFromSignKey(signKey), gidSeed: 'A', data: 'hello', next: []
       })
@@ -344,7 +346,7 @@ describe('Entry', function () {
 
   describe('fromMultihash', () => {
     it('creates a entry from ipfs hash', async () => {
-      const expectedHash = 'zdpuAkpzJgLJWpdaYMb59BxVk1xaAbkBWfowhN9pUmNsZd87x'
+      const expectedHash = 'zdpuAvEB1kk7M6ZhrhV5eG85pKEiArEbHV2EFgA37qcuk5w1p'
       const payload1 = 'hello world'
       const payload2 = 'hello again'
       const entry1 = await Entry.create({

@@ -1,13 +1,13 @@
 import { BinaryReader, BinaryWriter, Constructor } from "@dao-xyz/borsh";
 
 export const U8IntArraySerializer = {
-    serialize: (obj: Uint8Array, writer) => {
+    serialize: (obj: Uint8Array, writer: BinaryWriter) => {
         writer.writeU32(obj.length);
         for (let i = 0; i < obj.length; i++) {
             writer.writeU8(obj[i])
         }
     },
-    deserialize: (reader) => {
+    deserialize: (reader: BinaryReader) => {
         const len = reader.readU32();
         const arr = new Uint8Array(len);
         for (let i = 0; i < len; i++) {
@@ -18,14 +18,14 @@ export const U8IntArraySerializer = {
 };
 
 export const StringSetSerializer = {
-    deserialize: (reader) => {
+    deserialize: (reader: BinaryReader) => {
         const len = reader.readU32();
         let resp = new Set();
         for (let i = 0; i < len; i++) {
             resp.add(reader.readString());
         }
     },
-    serialize: (arg: Set<string>, writer) => {
+    serialize: (arg: Set<string>, writer: BinaryWriter) => {
         writer.writeU32(arg.size);
         arg.forEach((s) => {
             writer.writeString(s);
@@ -36,33 +36,22 @@ export const StringSetSerializer = {
 export const arraysEqual = (array1?: any[] | Uint8Array, array2?: any[] | Uint8Array) => {
     if (!!array1 != !!array2)
         return false;
+    if (!array1 || !array2) {
+        return false;
+    }
     return array1.length === array2.length && array1.every(function (value, index) { return value === array2[index] });
 }
 
 export const arraysCompare = (array1: Uint8Array, array2: Uint8Array): number => {
-    const minLength = Math.min(array1.length, array2.length);
-    for (let i = 0; i < minLength; i++) {
-        if (array1[i] === array2[i]) {
-            continue;
-        }
-        if (array1[i] < array2[i]) {
-            return -1;
-        }
+    if (array1 < array2)
+        return -1;
+    if (array1 > array2)
         return 1;
-
-    }
-    if (minLength === array1.length) {
-        return 0;
-    }
-
-    if (array1.length > array2.length) {
-        return 1;
-    }
-    return -1;
+    return 0;
 }
 
 export const joinUint8Arrays = (arrays: Uint8Array[]) => {
-    const flatNumberArray = arrays.reduce((acc, curr) => {
+    const flatNumberArray = arrays.reduce((acc: number[], curr) => {
         acc.push(...curr);
         return acc;
     }, []);

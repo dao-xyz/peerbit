@@ -13,8 +13,10 @@ import { IOOptions, EncryptionTemplateMaybeEncrypted, Entry, Identity, JSON_ENCO
 import { LamportClock as Clock, LamportClock } from './lamport-clock'
 import { AccessError, PublicKeyEncryption, PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { serialize } from '@dao-xyz/borsh';
+
 // @ts-ignore
 import Logger from 'logplease'
+import { fromBase64, toBase64 } from "./utils.js"
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
@@ -24,6 +26,9 @@ const getHash = <T>(e: Entry<T>) => e.hash
 const flatMap = (res: any[], acc: any[]) => res.concat(acc)
 const getNextPointers = (entry: Entry<any>) => entry.next
 /* const maxSizeReducer = <T>(res: bigint, acc: Entry<T>): bigint => bigIntMax(res, acc.cumulativeSize); */
+
+
+
 
 const uniqueEntriesReducer = <T>(res: { [key: string]: Entry<T> }, acc: Entry<T>) => {
   res[acc.hash] = acc
@@ -418,7 +423,7 @@ export class Log<T> extends GSet {
    * @param {Entry} entry Entry to add
    * @return {Log} New Log containing the appended value
    */
-  async append(data: T, options: { gidSeed?: string, nexts?: Entry<any>[], pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = { pin: false }) {
+  async append(data: T, options: { gidSeed?: string, nexts?: Entry<any>[], pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted, onGidsShadowed?: (gids: Uint8Array[]) => void } = { pin: false }) {
 
     if (options.reciever && !this._encryption) {
       throw new Error("Message is intended to be encrypted but no encryption methods are provided for the log")
@@ -446,16 +451,14 @@ export class Log<T> extends GSet {
     const newTime = nexts?.length > 0 ? this.heads.concat(nexts).reduce(maxClockTimeReducer, 0n) + 1n : 0n; // this.getHeadsFromHashes(nexts.map(n => n.hash)).reduce(maxClockTimeReducer, 0n)
     const clock = new Clock(new Uint8Array(serialize(this._identity.publicKey)), newTime) // TODO privacy leak?
 
-
+    let gidsInHeds = options.onGidsShadowed && new Set(this.heads.map(h => toBase64(h.gid))); // could potentially be faster if we first groupBy
     const entry = await Entry.create<T>(
       {
         ipfs: this._storage,
         identity: this._identity,
         data,
         clock,
-        // cumulativeSize
         next: nexts,
-        /*    refs, */
         gidSeed: options.gidSeed,
         pin: options.pin,
         assertAllowed: async (payload, signature) => {
@@ -476,6 +479,8 @@ export class Log<T> extends GSet {
         } : undefined
       }
     )
+
+
 
 
     if (!isDefined(entry.hash)) {
@@ -506,6 +511,25 @@ export class Log<T> extends GSet {
     if (this._prune && this.length > this._prune.maxLength) {
       this.prune(this._prune.cutToLength);
     }
+
+
+    // if next contails all gids
+    if (options.onGidsShadowed) {
+      const gidsInHeadsAfterEntry = new Set(this.heads.map(h => toBase64(h.gid))); // could potentially be faster if we first groupBy
+      gidsInHeds = gidsInHeds as Set<string>;
+      if (gidsInHeadsAfterEntry.size < gidsInHeds.size) {
+        const missingGids: Uint8Array[] = []
+        gidsInHeds.forEach((gid) => {
+          if (!gidsInHeadsAfterEntry.has(gid)) {
+            missingGids.push(fromBase64(gid))
+          }
+        })
+
+        // Call callback
+        options.onGidsShadowed(missingGids);
+      }
+    }
+
     return entry
   }
 

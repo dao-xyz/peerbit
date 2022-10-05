@@ -15,8 +15,10 @@ import { IPFS } from 'ipfs'
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { jest } from '@jest/globals';
+import path from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
+const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 
 let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, signKey2: KeyWithMeta<Ed25519Keypair>, signKey3: KeyWithMeta<Ed25519Keypair>, signKey4: KeyWithMeta<Ed25519Keypair>
@@ -29,26 +31,25 @@ Object.keys(testAPIs).forEach((IPFS) => {
   describe('Log - Encryption', function () {
     jest.setTimeout(config.timeout)
 
-    const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
+    const { signingKeyFixtures, signingKeysPath } = config
 
-    let keystore: Keystore, signingKeystore: Keystore,
+    let keystore: Keystore,
       senderKey: KeyWithMeta<X25519Keypair>, recieverKey: KeyWithMeta<X25519Keypair>
 
     beforeAll(async () => {
-      rmrf.sync(identityKeysPath)
-      rmrf.sync(signingKeysPath)
-      await fs.copy(identityKeyFixtures(__dirname), identityKeysPath)
-      await fs.copy(signingKeyFixtures(__dirname), signingKeysPath)
 
-      keystore = new Keystore(await createStore(identityKeysPath))
-      signingKeystore = new Keystore(await createStore(signingKeysPath))
+      rmrf.sync(signingKeysPath(__filenameBase))
+
+      await fs.copy(signingKeyFixtures(__dirname), signingKeysPath(__filenameBase))
+
+      keystore = new Keystore(await createStore(signingKeysPath(__filenameBase)))
 
       senderKey = await keystore.createKey(await X25519Keypair.create(), { id: 'sender', overwrite: true });
       recieverKey = await keystore.createKey(await X25519Keypair.create(), { id: 'reciever', overwrite: true });
 
       // The ids are choosen so that the tests plays out "nicely", specifically the logs clock id sort will reflect the signKey suffix
-      signKey = await keystore.createKey(await Ed25519Keypair.create(), { id: new Uint8Array([0]) });
-      signKey2 = await keystore.createKey(await Ed25519Keypair.create(), { id: new Uint8Array([1]) });
+      signKey = await keystore.getKey(new Uint8Array([0])) as KeyWithMeta<Ed25519Keypair>;;
+      signKey2 = await keystore.getKey(new Uint8Array([1])) as KeyWithMeta<Ed25519Keypair>;;
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
 
@@ -56,11 +57,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     afterAll(async () => {
       await stopIpfs(ipfsd)
-      rmrf.sync(identityKeysPath)
-      rmrf.sync(signingKeysPath)
+
+      rmrf.sync(signingKeysPath(__filenameBase))
 
       await keystore?.close()
-      await signingKeystore?.close()
+
     })
 
     describe('join', () => {

@@ -1,7 +1,7 @@
 import { Level } from 'level';
 import LRU from 'lru-cache';
 import { variant, field, serialize, deserialize, option, Constructor } from '@dao-xyz/borsh';
-import { U8IntArraySerializer, bufferSerializer, arraysEqual } from '@dao-xyz/borsh-utils';
+import { U8IntArraySerializer, } from '@dao-xyz/borsh-utils';
 import { X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519PrivateKey, Keypair, X25519Keypair, Ed25519Keypair } from '@dao-xyz/peerbit-crypto';
 import { waitFor } from '@dao-xyz/time';
 import { createHash, Sign } from 'crypto';
@@ -430,7 +430,9 @@ export class Keystore {
 
   async getKey<T extends Keypair>(id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519PublicKey, group?: string): Promise<KeyWithMeta<T> | undefined> {
 
+    await this.waitForOpen();
     this.assertOpen();
+
     let path: string;
     if (typeof id === 'string' && isPath(id)) {
       path = id;
@@ -476,8 +478,6 @@ export class Keystore {
     }
 
     await this.waitForOpen();
-
-
     this.assertOpen();
 
 

@@ -1,8 +1,5 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
-import { PublicKey } from "@dao-xyz/peerbit-crypto";
-import { U8IntArraySerializer, arraysEqual } from '@dao-xyz/borsh-utils';
-import { Payload } from "@dao-xyz/ipfs-log-entry";
+import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 
 @variant(0)
 export class Network {
@@ -16,7 +13,7 @@ export class Network {
 
 export class AccessCondition<T> {
 
-    async allowed(_key: PublicKey): Promise<boolean> {
+    async allowed(_key: PublicSignKey): Promise<boolean> {
         throw new Error("Not implemented")
     }
 }
@@ -26,7 +23,7 @@ export class AnyAccessCondition<T> extends AccessCondition<T> {
     constructor() {
         super();
     }
-    async allowed(_key: PublicKey): Promise<boolean> {
+    async allowed(_key: PublicSignKey): Promise<boolean> {
         return true;
     }
 }
@@ -34,11 +31,11 @@ export class AnyAccessCondition<T> extends AccessCondition<T> {
 @variant([0, 1])
 export class PublicKeyAccessCondition<T> extends AccessCondition<T> {
 
-    @field({ type: PublicKey })
-    key: PublicKey
+    @field({ type: PublicSignKey })
+    key: PublicSignKey
 
     constructor(options?: {
-        key: PublicKey
+        key: PublicSignKey
     }) {
         super();
         if (options) {
@@ -46,7 +43,7 @@ export class PublicKeyAccessCondition<T> extends AccessCondition<T> {
         }
     }
 
-    async allowed(identity: PublicKey): Promise<boolean> {
+    async allowed(identity: PublicSignKey): Promise<boolean> {
         return this.key.equals(identity);
     }
 }

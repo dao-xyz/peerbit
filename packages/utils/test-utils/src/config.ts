@@ -38,8 +38,8 @@ export const browserConfig = {
     timeout: 30000,
     identityKeyFixtures: (dir: string) => path.resolve(dir, 'fixtures/keys/identity-keys'),
     signingKeyFixtures: (dir: string) => path.resolve(dir, 'fixtures/keys/signing-keys'),
-    identityKeysPath: './orbitdb/identity/identitykeys',
-    signingKeysPath: './orbitdb/identity/signingkeys',
+    identityKeysPath: (testFileName: string) => path.resolve('./orbitdb/keys/identity-keys', testFileName),
+    signingKeysPath: (testFileName: string) => path.resolve('./orbitdb/keys/signing-keys', testFileName),
     defaultIpfsConfig: {
         preload: {
             enabled: false
@@ -118,8 +118,8 @@ export const nodeConfig = {
     timeout: 30000,
     identityKeyFixtures: (dir: string) => path.resolve(dir, 'fixtures/keys/identity-keys'),
     signingKeyFixtures: (dir: string) => path.resolve(dir, 'fixtures/keys/signing-keys'),
-    identityKeysPath: './orbitdb/identity/identitykeys',
-    signingKeysPath: './orbitdb/identity/signingkeys',
+    identityKeysPath: (testFileName: string) => path.resolve('./orbitdb/keys/identity-keys', testFileName),
+    signingKeysPath: (testFileName: string) => path.resolve('./orbitdb/keys/signing-keys', testFileName),
     defaultIpfsConfig: {
         preload: {
             enabled: false

@@ -5,8 +5,10 @@ import { Entry } from '../entry.js';
 import { Log } from '../log.js'
 import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { Ed25519PublicKey } from '@dao-xyz/peerbit-crypto';
-import { arraysCompare } from '@dao-xyz/borsh-utils';
+import { arraysCompare, arraysEqual } from '@dao-xyz/borsh-utils';
 import { LamportClock as Clock } from '../lamport-clock.js';
+import { jest } from '@jest/globals';
+
 // Test utils
 import {
   nodeConfig as config,
@@ -21,9 +23,10 @@ import { IPFS } from 'ipfs-core-types'
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { jest } from '@jest/globals';
+import path from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
+const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 
 
@@ -37,23 +40,22 @@ Object.keys(testAPIs).forEach((IPFS) => {
   describe('Log - Join', function () {
     jest.setTimeout(config.timeout)
 
-    const { identityKeyFixtures, signingKeyFixtures, identityKeysPath, signingKeysPath } = config
+    const { signingKeyFixtures, signingKeysPath } = config
 
-    let keystore: Keystore, signingKeystore: Keystore
+    let keystore: Keystore
 
     beforeAll(async () => {
-      rmrf.sync(identityKeysPath)
-      rmrf.sync(signingKeysPath)
-      await fs.copy(identityKeyFixtures(__dirname), identityKeysPath)
-      await fs.copy(signingKeyFixtures(__dirname), signingKeysPath)
 
-      keystore = new Keystore(await createStore(identityKeysPath))
-      signingKeystore = new Keystore(await createStore(signingKeysPath))
+      rmrf.sync(signingKeysPath(__filenameBase))
+
+      await fs.copy(signingKeyFixtures(__dirname), signingKeysPath(__filenameBase))
+
+      keystore = new Keystore(await createStore(signingKeysPath(__filenameBase)))
 
       // The ids are choosen so that the tests plays out "nicely", specifically the logs clock id sort will reflect the signKey suffix
       const keys: KeyWithMeta<Ed25519Keypair>[] = []
       for (let i = 0; i < 4; i++) {
-        keys.push(await keystore.createKey(await Ed25519Keypair.create(), { id: new Uint8Array([i]) }))
+        keys.push(await keystore.getKey(new Uint8Array([i])) as KeyWithMeta<Ed25519Keypair>)
       };
       keys.sort((a, b) => {
         return arraysCompare(a.keypair.publicKey.publicKey, b.keypair.publicKey.publicKey)
@@ -77,11 +79,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await stopIpfs(ipfsd)
       await stopIpfs(ipfsd2)
 
-      rmrf.sync(identityKeysPath)
-      rmrf.sync(signingKeysPath)
+
+      rmrf.sync(signingKeysPath(__filenameBase))
 
       await keystore?.close()
-      await signingKeystore?.close()
+
     })
 
     describe('join', () => {
@@ -445,6 +447,55 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.deepStrictEqual(log4.values.map((e) => e.payload.value), expectedData)
       })
 
+      describe('gid shadow callback', () => {
+        it('it emits callback when gid is shadowed, triangle shape', async () => {
+
+          /*  
+           Either A or B shaded
+           ┌─┐┌─┐  
+           │a││b│  
+           └┬┘└┬┘  
+           ┌▽──▽──┐
+           │a or b│
+           └──────┘
+           */
+
+          const a1 = await log1.append('helloA1', { nexts: [] })
+          const b1 = await log1.append('helloB1', { nexts: [] })
+          let callbackValue: Uint8Array[] = undefined as any;
+          const ab1 = await log1.append('helloAB1', { nexts: [a1, b1], onGidsShadowed: (gids) => callbackValue = gids })
+          expect(callbackValue).toHaveLength(1);
+          expect(callbackValue[0]).toEqual(arraysEqual(ab1.gid, a1.gid) ? b1.gid : a1.gid); // if ab1 has gid a then b will be shadowed
+
+        })
+
+        it('it emits callback when gid is shadowed, N shape', async () => {
+
+          /*  
+           No shadows
+            ┌──┐┌───┐ 
+            │a0││b1 │ 
+            └┬─┘└┬─┬┘ 
+            ┌▽─┐ │┌▽─┐
+            │a1│ ││b2│
+            └┬─┘ │└──┘
+            ┌▽───▽┐   
+            │a2   │   
+            └─────┘   
+           */
+
+          const a0 = await log1.append('helloA0', { nexts: [] })
+          const a1 = await log1.append('helloA1', { nexts: [a0] })
+          const b1 = await log1.append('helloB1', { nexts: [] })
+          const b2 = await log1.append('helloB2', { nexts: [b1] })
+
+          let callbackValue: any;
+          // make sure gid is choosen from 1 bs
+
+          const a2 = await log1.append('helloA2', { nexts: [a1, b1], onGidsShadowed: (gids) => callbackValue = gids })
+          expect(callbackValue).toBeUndefined();
+        })
+      })
       describe('takes length as an argument', () => {
         beforeEach(async () => {
           await log1.append('helloA1')

@@ -337,3 +337,42 @@ IdentitySerializable {
   "type": "orbitdb",
 }
 `;
+
+exports[`Signed Log has the correct identity: publicKeyFromLog 1`] = `
+Ed25519PublicKey {
+  "publicKey": Uint8Array [
+    23,
+    43,
+    37,
+    232,
+    10,
+    150,
+    223,
+    23,
+    47,
+    123,
+    113,
+    135,
+    190,
+    203,
+    48,
+    239,
+    81,
+    117,
+    237,
+    45,
+    138,
+    88,
+    34,
+    201,
+    229,
+    46,
+    181,
+    237,
+    125,
+    115,
+    105,
+    164,
+  ],
+}
+`;
