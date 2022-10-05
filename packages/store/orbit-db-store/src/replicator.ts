@@ -1,19 +1,17 @@
-import { default as PQueue } from 'p-queue'
-import { Log } from '@dao-xyz/ipfs-log'
+import PQueue from 'p-queue'
+import { Identity, Log } from '@dao-xyz/ipfs-log'
 import { IPFS } from 'ipfs-core-types'
-import { Entry } from '@dao-xyz/ipfs-log-entry';
+import { Entry } from '@dao-xyz/ipfs-log';
 import { AccessController } from './access-controller.js';
-import { PublicKey } from '@dao-xyz/peerbit-crypto';
 
-const flatMap = (res, val) => res.concat(val)
+const flatMap = (res: any[], val: any) => res.concat(val)
 
 const defaultConcurrency = 32
 
 interface Store<T> {
   _oplog: Log<T>;
   _ipfs: IPFS;
-  publicKey: PublicKey,
-  sign: (data: Uint8Array) => Promise<Uint8Array>,
+  identity: Identity,
   id: string;
   access?: AccessController<T>
 }
@@ -21,14 +19,14 @@ export class Replicator<T> {
   _store: Store<T>
   _concurrency: number;
   _q: PQueue;
-  _logs: any[];
+  _logs: Log<T>[];
   _fetching: any;
   _fetched: any;
   onReplicationComplete?: (logs: any[]) => void
   onReplicationQueued?: (entry: any) => void;
   onReplicationProgress?: (entry: any) => void;
 
-  constructor(store: Store<any>, concurrency: number) {
+  constructor(store: Store<any>, concurrency?: number) {
     this._store = store
     this._concurrency = concurrency || defaultConcurrency
 
@@ -110,20 +108,21 @@ export class Replicator<T> {
     const shouldExclude = (h: string) => h && this._store._oplog && (this._store._oplog.has(h) || this._fetching[h] !== undefined || this._fetched[h])
 
     // A task to process a given entries
-    const createReplicationTask = (e) => {
+    const createReplicationTask = (e: Entry<T> | string) => {
       // Add to internal "currently fetching" cache
-      this._fetching[e.hash || e] = true
+      const hash = e instanceof Entry ? e.hash : e;
+      this._fetching[hash] = true
       // The returned function is the processing function / task
       // to run concurrently
       return async () => {
         // Call onReplicationProgress only for entries that have .hash field,
         // if it is a string don't call it (added internally from .next)
-        if (e.hash && this.onReplicationQueued) {
+        if (hash && this.onReplicationQueued) {
           this.onReplicationQueued(e)
         }
         try {
           // Replicate the log starting from the entry's hash (CID)
-          const log = await this._replicateLog(e)
+          const log = await this._replicateLog(hash)
           // Add the fetched log to the internal cache to wait
           // for "onReplicationComplete"
           this._logs.push(log)
@@ -132,7 +131,7 @@ export class Replicator<T> {
           throw e
         }
         // Remove from internal cache
-        delete this._fetching[e.hash || e]
+        delete this._fetching[hash]
       }
     }
 
@@ -160,7 +159,7 @@ export class Replicator<T> {
     this._fetched = {}
   }
 
-  async _replicateLog(entry: Entry<T>) {
+  async _replicateLog(entry: Entry<T> | string) {
 
 
     // Notify the Store that we made progress
@@ -173,15 +172,30 @@ export class Replicator<T> {
 
     const shouldExclude = (h: string) => {
 
-      return h && this._store._oplog && (this._store._oplog.has(h) || this._fetching[h] !== undefined || this._fetched[h] !== undefined)
+      return h !== (entry instanceof Entry<any> ? entry.hash : entry) && !!h && this._store._oplog && (this._store._oplog.has(h) || this._fetching[h] !== undefined || this._fetched[h] !== undefined)
 
     }
 
     // Fetch and load a log from the entry hash
-    const log = await Log.fromEntry(
+    const log = entry instanceof Entry ? await Log.fromEntry(
       this._store._ipfs,
-      this._store.publicKey,
-      this._store.sign,
+      this._store.identity,
+      entry,
+      {
+        // TODO, load all store options?
+        access: this._store.access,
+        encryption: this._store._oplog._encryption,
+        encoding: this._store._oplog._encoding,
+        sortFn: this._store._oplog._sortFn,
+        length: -1,
+        exclude: [],
+        shouldExclude,
+        concurrency: this._concurrency,
+        onProgressCallback
+      }
+    ) : await Log.fromEntryHash(
+      this._store._ipfs,
+      this._store.identity,
       entry,
       {
         // TODO, load all store options?

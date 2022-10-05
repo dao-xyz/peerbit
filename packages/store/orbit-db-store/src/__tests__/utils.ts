@@ -1,14 +1,13 @@
-import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto"
-import { Entry, Payload } from "@dao-xyz/ipfs-log-entry"
+import { MaybeEncrypted, SignatureWithKey } from "@dao-xyz/peerbit-crypto"
+import { Entry, Payload } from "@dao-xyz/ipfs-log"
 import { variant } from '@dao-xyz/borsh';
 import { Log } from "@dao-xyz/ipfs-log";
 import { AccessController } from "../access-controller";
-import { Ed25519PublicKey } from '@dao-xyz/peerbit-crypto';
 
 @variant([0, 254])
 export class SimpleAccessController<T> extends AccessController<T>
 {
-    async canAppend(payload: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<Ed25519PublicKey>) {
+    async canAppend(payload: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<SignatureWithKey>) {
         return true;
     }
 }

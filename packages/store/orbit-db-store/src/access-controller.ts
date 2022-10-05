@@ -1,21 +1,10 @@
-import { deserialize, serialize } from '@dao-xyz/borsh';
-import io from '@dao-xyz/io-utils'
-
-// TODO extend IPFS-LOG access controller interface for canAppend method
-
-import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto"
-import { CanAppendAccessController } from "@dao-xyz/ipfs-log"
-import { Payload } from "@dao-xyz/ipfs-log-entry"
+import { MaybeEncrypted, SignatureWithKey } from "@dao-xyz/peerbit-crypto"
+import { CanAppendAccessController, Identity } from "@dao-xyz/ipfs-log"
+import { Payload } from "@dao-xyz/ipfs-log"
 import { IInitializationOptions } from './store.js';
 import { IPFS } from 'ipfs-core-types';
-import { PublicKey } from '@dao-xyz/peerbit-crypto';
 import { Initiable } from './store-like.js';
-/**
- * Interface for OrbitDB Access Controllers
- *
- * Any OrbitDB access controller needs to define and implement
- * the methods defined by the interface here.
- */
+
 
 export class AccessController<T> implements CanAppendAccessController<T>, Initiable<T> {
 
@@ -27,11 +16,11 @@ export class AccessController<T> implements CanAppendAccessController<T>, Initia
   set allowAll(value: boolean) {
     this._allowAll = value;
   }
-  async init(ipfs: IPFS, key: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<any>): Promise<AccessController<T>> {
+  async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<any>): Promise<AccessController<T>> {
     return this;
   }
 
-  async canAppend(payload: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<PublicKey>): Promise<boolean> {
+  async canAppend(payload: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<SignatureWithKey>): Promise<boolean> {
     throw new Error("Not implemented")
   }
   clone(newName: string): AccessController<T> {

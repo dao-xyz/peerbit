@@ -6,7 +6,7 @@ import { CID } from 'multiformats/cid'
 import { serialize, deserialize, Constructor } from '@dao-xyz/borsh';
 import { IPFS } from 'ipfs-core-types'
 
-const notEmpty = e => e !== '' && e !== ' '
+const notEmpty = (e: any) => e !== '' && e !== ' '
 
 export interface Manifest {
     data: Uint8Array
@@ -29,7 +29,7 @@ export class Address {
     static isValid(oaddress: { toString(): string }) {
         const address = oaddress.toString().replace(/\\/g, '/')
 
-        const containsProtocolPrefix = (e, i) => !((i === 0 || i === 1) && address.toString().indexOf('/orbit') === 0 && e === 'orbitdb')
+        const containsProtocolPrefix = (e: string, i: number) => !((i === 0 || i === 1) && address.toString().indexOf('/orbit') === 0 && e === 'orbitdb')
 
         const parts = address.toString()
             .split('/')
@@ -38,7 +38,7 @@ export class Address {
 
         let accessControllerHash
 
-        const validateHash = (hash) => {
+        const validateHash = (hash: string) => {
             const prefixes = ['zd', 'Qm', 'ba', 'k5']
             for (const p of prefixes) {
                 if (hash.indexOf(p) > -1) {
@@ -74,7 +74,7 @@ export class Address {
         return new Address(parts[0], parts.slice(1, parts.length).join('/'))
     }
 
-    static join(...paths) {
+    static join(...paths: string[]) {
         return (path.posix || path).join('/orbitdb', ...paths)
     }
 }
@@ -89,7 +89,7 @@ export const save = async (ipfs: IPFS, thing: Addressable, options: { format?: s
 }
 
 
-export const load = async <S extends Addressable & { address: Address }>(ipfs, address: Address, into: Constructor<S>, options: { timeout?: number } = {}): Promise<S> => {
+export const load = async <S extends Addressable & { address: Address }>(ipfs: IPFS, address: Address, into: Constructor<S>, options: { timeout?: number } = {}): Promise<S> => {
     let hash = address.root
     const manifest: Manifest = await io.read(ipfs, hash, options);
     const der = deserialize(manifest.data, into)

@@ -1,17 +1,27 @@
 import assert from 'assert'
 import { Log } from '@dao-xyz/ipfs-log'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
-import { Keystore } from "@dao-xyz/orbit-db-keystore"
+import { Keystore, KeyWithMeta } from "@dao-xyz/orbit-db-keystore"
 
 import {
   nodeConfig as config,
   testAPIs,
   startIpfs,
   stopIpfs
+
 } from '@dao-xyz/orbit-db-test-utils'
 import { DefaultOptions, Store } from '../store.js'
 import { createStore } from './storage.js'
 import { SimpleAccessController, SimpleIndex } from './utils.js'
+import { Controller } from 'ipfsd-ctl'
+import { IPFS } from 'ipfs-core-types'
+import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
+import { jest } from '@jest/globals';
+
+import { fileURLToPath } from 'url';
+import path from 'path';
+const __filename = fileURLToPath(import.meta.url);
+const __filenameBase = path.parse(__filename).base;
 
 // Tests timeout
 const timeout = 30000
@@ -23,7 +33,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, store: Store<any>, keystore: Keystore, cacheStore
     let index: SimpleIndex<string>
-    const { identityKeysPath } = config
+    const { signingKeysPath } = config
 
     beforeAll(async () => {
       keystore = new Keystore(await createStore(signingKeysPath(__filenameBase)))
@@ -32,8 +42,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
       ipfs = ipfsd.api
       /*       const id = (await ipfsd.api.id()).id
        */
-      signKey = await await keystore.getKey(new Uint8Array([0])) as KeyWithMeta<Ed25519Keypair>;
-      cacheStore = await createStore('cache')
+      signKey = await keystore.createEd25519Key();
+      cacheStore = await createStore(__filenameBase + '/cache')
       const cache = new Cache(cacheStore)
       index = new SimpleIndex();
 
@@ -54,7 +64,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     it('default options', async () => {
-      assert.deepStrictEqual(store._replicator._logs, [])
+      expect(store._replicator._logs).toBeEmpty();
     })
 
     describe('concurrency = 123', function () {
@@ -81,7 +91,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
       it('replicates all entries in the log', (done) => {
         let replicated = 0
         expect(store._oplog._id).toEqual(log2._id)
-
         expect(store._replicator._logs.length).toEqual(0)
         expect(store._replicator.tasksQueued).toEqual(0)
         store._replicator.onReplicationProgress = () => replicated++

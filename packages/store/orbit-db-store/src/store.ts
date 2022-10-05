@@ -1,29 +1,28 @@
 import path from 'path'
-import { EventEmitter } from 'events'
 import mapSeries from 'p-each-series'
-import { default as PQueue } from 'p-queue'
-import { Log, ISortFunction, PruneOptions, LogOptions } from '@dao-xyz/ipfs-log'
-import { IOOptions, EncryptionTemplateMaybeEncrypted, Payload, getPeerID } from '@dao-xyz/ipfs-log-entry'
-import { Entry } from '@dao-xyz/ipfs-log-entry'
+import PQueue from 'p-queue'
+import { Log, ISortFunction, PruneOptions, LogOptions, Identity, JSON_ENCODING_OPTIONS, max, min } from '@dao-xyz/ipfs-log'
+import { IOOptions, EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log'
+import { Entry } from '@dao-xyz/ipfs-log'
 import { Replicator } from './replicator.js'
 import { ReplicationInfo } from './replication-info.js'
-import Logger from 'logplease'
 import io from '@dao-xyz/io-utils'
 import Cache from '@dao-xyz/orbit-db-cache';
 import { variant, field, vec, option } from '@dao-xyz/borsh';
 import { IPFS } from 'ipfs-core-types'
-import stringify from 'json-stringify-deterministic'
+// @ts-ignore
 import { serialize, deserialize } from '@dao-xyz/borsh';
 import { Snapshot } from './snapshot.js'
-import { AccessError, PublicKeyEncryption } from "@dao-xyz/peerbit-crypto"
+import { AccessError, PublicKeyEncryption, PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto"
 import { Address, load, save } from './io.js'
 import { AccessController } from './access-controller.js'
+
+// @ts-ignore
 import { v4 as uuid } from 'uuid';
 import { StoreLike } from './store-like.js'
-import { Ed25519PublicKey, PublicKey } from '@dao-xyz/peerbit-crypto'
-import { Ed25519PublicKey } from 'sodium-plus';
 import { joinUint8Arrays } from '@dao-xyz/borsh-utils';
-import isNode from 'is-node';
+// @ts-ignore
+import Logger from 'logplease'
 
 /* let v8 = undefined;
 if (isNode) {
@@ -34,12 +33,44 @@ export type Constructor<T> = new (...args: any[]) => T;
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
 Logger.setLogLevel('ERROR')
 
-const bigIntMax = (...args) => args.reduce((m, e) => e > m ? e : m);
-const bigIntMin = (...args) => args.reduce((m, e) => e < m ? e : m);
-
+export class CachedValue { }
 
 @variant(0)
-export class HeadsCache<T> {
+export class CID extends CachedValue {
+
+  @field({ type: 'string' })
+  hash: string
+
+  constructor(opts?: {
+    hash: string
+  }) {
+    super();
+    if (opts) {
+      this.hash = opts.hash;
+    }
+  }
+}
+
+@variant(1)
+export class UnsfinishedReplication extends CachedValue {
+
+  @field({ type: vec('string') })
+  hashes: string[]
+
+  constructor(opts?: {
+    hashes: string[]
+  }) {
+    super();
+    if (opts) {
+      this.hashes = opts.hashes;
+    }
+  }
+}
+
+
+
+@variant(2)
+export class HeadsCache<T> extends CachedValue {
 
   @field({ type: vec(Entry) })
   heads: Entry<T>[]
@@ -47,13 +78,15 @@ export class HeadsCache<T> {
   constructor(opts?: {
     heads: Entry<T>[]
   }) {
+    super();
     if (opts) {
       this.heads = opts.heads;
     }
   }
 }
 
-export type StorePublicKeyEncryption = (replicationTopic: string) => PublicKeyEncryption/* {
+
+export type StorePublicKeyEncryption = (replicationTopic: string) => PublicKeyEncryptionResolver/* {
   encrypt: (bytes: Uint8Array, reciever: X25519PublicKey) => Promise<{
     data: Uint8Array
     senderPublicKey: X25519PublicKey
@@ -98,7 +131,7 @@ export interface IStoreOptions<T> {
   fallbackAccessController?: AccessController<T>,
   syncLocal?: boolean,
   sortFn?: ISortFunction,
-  recycle?: PruneOptions,
+  prune?: PruneOptions,
   typeMap?: { [key: string]: Constructor<any> }
   onUpdate?: (oplog: Log<T>, entries?: Entry<T>[]) => void,
   resourceOptions?: ResourceOptions<T>,
@@ -108,37 +141,40 @@ export interface IStoreOptions<T> {
 export type ResourceOptions<T> = { heapSizeLimit: () => number };
 
 
-export interface IInitializationOptions<T> extends IStoreOptions<T> {
+export interface IInitializationOptions<T> extends IStoreOptions<T>, IInitializationOptionsDefault<T> {
 
   /* encryption?: {
     encrypt: (arr: Uint8Array, keyGroup: string) => Promise<{ bytes: Uint8Array, keyId: Uint8Array }>
     decrypt: (arr: Uint8Array, keyGroup: string, keyId: Uint8Array) => Promise<Uint8Array>
   }, */
 
-  saveAndResolveStore: (store: StoreLike<any>) => Promise<StoreLike<any>>,
-  resolveCache: (address: Address) => Promise<Cache>,
+  saveAndResolveStore: (store: Store<any>) => Promise<Store<any>>,
+  resolveCache: (address: Address) => Promise<Cache<CachedValue>> | Cache<CachedValue>,
   onClose?: (store: Store<T>) => void,
   onDrop?: (store: Store<T>) => void,
   onLoad?: (store: Store<T>) => void,
-  onWrite?: (topic: string, address: string, _entry: Entry<T>, heads: Entry<T>[]) => void
+  onLoadProgress?: (store: Store<T>, entry: Entry<T>) => void,
+  onWrite?: (store: Store<T>, _entry: Entry<T>) => void
   onOpen?: (store: Store<any>) => Promise<void>,
-}
-export const JSON_ENCODER = {
-  encoder: (obj) => new Uint8Array(Buffer.from(stringify(obj))),
-  decoder: (obj) => JSON.parse(Buffer.from(obj).toString())
-};
+  onReplicationQueued?: (store: StoreLike<any>, entry: Entry<T>) => void,
+  onReplicationProgress?: (store: StoreLike<any>, entry: Entry<T>) => void,
+  onReplicationComplete?: (store: StoreLike<any>) => void
+  onReady?: (store: Store<T>) => void,
 
-export const DefaultOptions: IInitializationOptions<any> = {
-  onUpdate: () => { },
-  maxHistory: -1,
-  fetchEntryTimeout: null,
-  referenceCount: 32,
-  replicationConcurrency: 32,
+
+}
+
+/* export const DefaultOptions: IInitializationOptions<any> = {
+
+  fetchEntryTimeout: undefined,
+
   syncLocal: false,
   sortFn: undefined,
+  maxHistory: -1,
+  referenceCount: 32,
+  replicationConcurrency: 32,
   typeMap: {},
-  /* nameResolver: (name: string) => name, */
-  encoding: JSON_ENCODER,
+  encoding: JSON_ENCODING_OPTIONS,
   onClose: undefined,
   onDrop: undefined,
   onLoad: undefined,
@@ -149,6 +185,33 @@ export const DefaultOptions: IInitializationOptions<any> = {
     return store;
   }
 }
+ */
+interface IInitializationOptionsDefault<T> {
+
+  maxHistory?: number,
+  referenceCount?: number,
+  replicationConcurrency?: number,
+  typeMap?: { [key: string]: Constructor<any> }
+  encoding?: IOOptions<T>,
+  saveAndResolveStore: (store: Store<any>) => Promise<Store<any>>,
+
+}
+
+
+export const DefaultOptions: IInitializationOptionsDefault<any> = {
+
+  maxHistory: -1,
+  referenceCount: 32,
+  replicationConcurrency: 32,
+  typeMap: {},
+  /* nameResolver: (name: string) => name, */
+  encoding: JSON_ENCODING_OPTIONS,
+  saveAndResolveStore: async (store: Store<any>) => {
+    await store.save(store._ipfs, { pin: true })
+    return store;
+  }
+}
+
 
 
 
@@ -170,12 +233,11 @@ export class Store<T> implements StoreLike<T> {
 
   id: string;
   options: IInitializationOptions<T>;
-  publicKey: PublicKey;
-  sign: (data: Uint8Array) => Promise<Uint8Array>;
+  identity: Identity;
   address: Address;
   dbname: string;
-  events: EventEmitter;
-  remoteHeadsPath: string;
+/*   events: EventEmitter;
+ */  remoteHeadsPath: string;
   localHeadsPath: string;
   snapshotPath: string;
   queuePath: string;
@@ -185,7 +247,7 @@ export class Store<T> implements StoreLike<T> {
    */
 
   _ipfs: IPFS;
-  _cache: Cache;
+  _cache: Cache<CachedValue>;
   _oplog: Log<T>;
   _queue: PQueue<any, any>
   _replicationStatus: ReplicationInfo;
@@ -219,7 +281,7 @@ export class Store<T> implements StoreLike<T> {
 
 
   }
-  async init(ipfs: IPFS, publicKey: PublicKey | Ed25519PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<T>): Promise<StoreLike<T>> {
+  async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<T>): Promise<StoreLike<T>> {
 
     if (this.initialized) {
       throw new Error("Already initialized");
@@ -229,8 +291,7 @@ export class Store<T> implements StoreLike<T> {
     this._ipfs = ipfs
 
     // Set the options (we will use the replicationTopic property after thiis)
-    const opts = Object.assign({}, DefaultOptions)
-    Object.assign(opts, options)
+    const opts = { ...DefaultOptions, ...options }
     this.options = opts
 
 
@@ -240,10 +301,9 @@ export class Store<T> implements StoreLike<T> {
     }
 
 
-    this.publicKey = publicKey instanceof Ed25519PublicKey ? new Ed25519PublicKey({ publicKey }) : publicKey;
-
-    if ((this.accessController as StoreLike<any>)?.init) {
-      this.accessController = (await (this.accessController as StoreLike<any>).init(ipfs, this.publicKey, sign, options)) as (StoreLike<any> & AccessController<any>);
+    const acl = this.accessController;
+    if (acl) {
+      this.accessController = (await acl.init(ipfs, this.identity, options)) as (StoreLike<any> & AccessController<any>);
     }
 
     const address = this.address; // will exist since options.saveAndResolveStore will save
@@ -252,13 +312,14 @@ export class Store<T> implements StoreLike<T> {
     this.id = address.toString();
     this.address = address as Address
     this.dbname = (address as Address).path || ''
-    this.events = new EventEmitter()
+    /* this.events = new EventEmitter() */
     this.remoteHeadsPath = path.join(this.id, '_remoteHeads')
     this.localHeadsPath = path.join(this.id, '_localHeads')
     this.snapshotPath = path.join(this.id, 'snapshot')
     this.queuePath = path.join(this.id, 'queue')
     this.manifestPath = path.join(this.id, '_manifest')
-    this.sign = sign;
+    this.identity = identity;
+
     this.fallbackAccessController = options.fallbackAccessController;
     /* this.sharding.init(options.requestNewShard); */
 
@@ -268,7 +329,7 @@ export class Store<T> implements StoreLike<T> {
     this._cache = await options.resolveCache(this.address);
 
     // Create the operations log
-    this._oplog = new Log<T>(this._ipfs, publicKey, sign, this.logOptions)
+    this._oplog = new Log<T>(this._ipfs, identity, this.logOptions)
 
     // _addOperation and log-joins queue. Adding ops and joins to the queue
     // makes sure they get processed sequentially to avoid race conditions
@@ -293,7 +354,7 @@ export class Store<T> implements StoreLike<T> {
         // Update the latest entry state (latest is the entry with largest clock time)
         await entry.getClock();
         this._recalculateReplicationMax(entry.clock.time)
-        this.events.emit('replicate', this.address.toString(), entry)
+        this.options.onReplicationQueued && this.options.onReplicationQueued(this, entry)
       }
 
       const onReplicationProgress = async (entry: Entry<T>) => {
@@ -310,11 +371,11 @@ export class Store<T> implements StoreLike<T> {
         if (this._oplog.length + 1 > this.replicationStatus.progress ||
           this.replicationStatus.progress > previousProgress ||
           this.replicationStatus.max > previousMax) {
-          this.events.emit('replicate.progress', this.address.toString(), entry.hash, entry, this.replicationStatus.progress, this.replicationStatus.max)
+          this.options.onReplicationProgress && this.options.onReplicationProgress(this, entry)
         }
       }
 
-      const onReplicationComplete = async (logs: Log<any>[]) => {
+      const onReplicationComplete = async (logs: Log<T>[]) => {
         const updateState = async () => {
           try {
             if (this._oplog && logs.length > 0) {
@@ -341,8 +402,8 @@ export class Store<T> implements StoreLike<T> {
               if (this._oplog.length > this.replicationStatus.progress) {
                 this._recalculateReplicationStatus(this._oplog.length)
               }
+              this.options.onReplicationComplete && this.options.onReplicationComplete(this)
 
-              this.events.emit('replicated', this.address.toString(), logs.length, this)
             }
           } catch (e) {
             throw e;
@@ -363,24 +424,25 @@ export class Store<T> implements StoreLike<T> {
       console.error('Store Error:', e)
     }
 
-    this.events.on('write', (topic, address, entry, heads) => {
+    /* this.events.on('write', (topic, address, entry, heads) => {
       if (this.options.onWrite) {
         this.options.onWrite(topic, address, entry, heads);
       }
-    })
+    }) */
 
     if (this.options.onOpen) {
       await this.options.onOpen(this);
 
     }
     this.initialized = true;
+    return this;
   }
 
 
   get oplog(): Log<any> {
     return this._oplog;
   }
-  get cache(): Cache {
+  get cache(): Cache<CachedValue> {
     return this._cache;
   }
 
@@ -393,12 +455,12 @@ export class Store<T> implements StoreLike<T> {
       logId: this.id,
       encoding: this.options.encoding,
       encryption: this.options.encryption ? {
-        getAnySecret: this.options.encryption(this.replicationTopic).getAnySecret,
-        getEncryptionKey: this.options.encryption(this.replicationTopic).getEncryptionKey
+        getAnyKeypair: this.options.encryption(this.replicationTopic).getAnyKeypair,
+        getEncryptionKeypair: this.options.encryption(this.replicationTopic).getEncryptionKeypair
       } : undefined, //this.options.encryption
       access: this.accessController || this.fallbackAccessController,
       sortFn: this.options.sortFn,
-      recycle: this.options.recycle,
+      prune: this.options.prune,
     };
   }
 
@@ -418,9 +480,9 @@ export class Store<T> implements StoreLike<T> {
     return options.replicationTopic ? (typeof options.replicationTopic === 'string' ? options.replicationTopic : options.replicationTopic()) : (typeof address === 'string' ? address : address.toString());
   }
 
-  setPublicKey(publicKey: PublicKey) {
-    this.publicKey = publicKey
-    this._oplog.setPublicKey(publicKey)
+  setPublicKey(identity: Identity) {
+    this.identity = identity
+    this._oplog.setIdentity(identity)
   }
 
 
@@ -469,16 +531,17 @@ export class Store<T> implements StoreLike<T> {
     }
 
     // Close store access controller
-    if ((this.accessController || this.fallbackAccessController).close) {
-      await (this.accessController || this.fallbackAccessController).close()
+    const acl = this.accessController || this.fallbackAccessController;
+    if (acl?.close) {
+      await acl.close()
     }
 
     // Remove all event listeners
-    for (const event in this.events["_events"]) {
-      this.events.removeAllListeners(event)
-    }
+    /*   for (const event in this.events["_events"]) {
+        this.events.removeAllListeners(event)
+      } */
 
-    this._oplog = null
+    this._oplog = null as any
 
     // Database is now closed
 
@@ -507,8 +570,9 @@ export class Store<T> implements StoreLike<T> {
     await this.close()
 
     // Reset
-    this._oplog = undefined;
-    this._cache = undefined;
+    // TODO fix types
+    this._oplog = undefined as any;
+    this._cache = undefined as any;
   }
 
   async load(amount?: number, opts: { fetchEntryTimeout?: number } = {}) {
@@ -519,13 +583,9 @@ export class Store<T> implements StoreLike<T> {
     if (this.options.onLoad) {
       await this.options.onLoad(this)
     }
-    const localHeads: Entry<T>[] = (await this._cache.getBinary<HeadsCache<T>>(this.localHeadsPath, HeadsCache))?.heads || []
-    const remoteHeads: Entry<T>[] = (await this._cache.getBinary<HeadsCache<T>>(this.remoteHeadsPath, HeadsCache))?.heads || []
+    const localHeads: Entry<any>[] = (await this._cache.getBinary(this.localHeadsPath, HeadsCache))?.heads || []
+    const remoteHeads: Entry<any>[] = (await this._cache.getBinary(this.remoteHeadsPath, HeadsCache))?.heads || []
     const heads = localHeads.concat(remoteHeads)
-
-    if (heads.length > 0) {
-      this.events.emit('load', this.address.toString(), heads)
-    }
 
     // Update the replication status from the heads
     for (const head of heads) {
@@ -534,7 +594,7 @@ export class Store<T> implements StoreLike<T> {
     }
 
     // Load the log
-    const log = await Log.fromEntry(this._ipfs, this.publicKey, this.sign, heads, {
+    const log = await Log.fromEntry(this._ipfs, this.identity, heads, {
       ...this.logOptions,
       length: amount,
       timeout: fetchEntryTimeout,
@@ -549,7 +609,7 @@ export class Store<T> implements StoreLike<T> {
       await this._updateIndex()
     }
 
-    this.events.emit('ready', this.address.toString(), this._oplog.heads)
+    this.options.onReady && this.options.onReady(this)
   }
 
   async sync(heads: Entry<T>[]) {
@@ -607,16 +667,19 @@ export class Store<T> implements StoreLike<T> {
         encoding: this._oplog._encoding,
         encryption: this._oplog._encryption
       })
-      try {
-        // TODO add can append, because it referenses things I know, or is a new root. BTW new roots should only be accepted if the access controller allows it
-        const canAppend = await this.accessController.canAppend(head._payload, head._publicKey)
-        if (!canAppend) {
-          logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
-          return Promise.resolve(null)
+      if (this.accessController) {
+        try {
+          // TODO add can append, because it referenses things I know, or is a new root. BTW new roots should only be accepted if the access controller allows it
+          const canAppend = await this.accessController.canAppend(head._payload, head._signature)
+          if (!canAppend) {
+            logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
+            return Promise.resolve(null)
+          }
+        } catch (error) {
+          return Promise.resolve(null);
         }
-      } catch (error) {
-        return Promise.resolve(null);
       }
+
 
       /*       head.peers = new Set(leaderInfo.leaders);
        */
@@ -649,20 +712,22 @@ export class Store<T> implements StoreLike<T> {
     return load(ipfs, address, Store, options)
   }
 
-  loadMoreFrom(amount, entries) {
+  loadMoreFrom(entries: (string | Entry<any>)[]) {
     this._replicator.load(entries)
   }
 
   get replicate(): boolean {
-    return this.options.replicate;
+    return !!this.options.replicate;
   }
 
-  async getHeads(): Promise<Entry<T>[]> {
+
+
+  async getCachedHeads(): Promise<Entry<T>[]> {
     if (!(this.cache)) {
       return [];
     }
-    const localHeads = (await this.cache.getBinary<HeadsCache<T>>(this.localHeadsPath, HeadsCache))?.heads || []
-    const remoteHeads = (await this.cache.getBinary<HeadsCache<T>>(this.remoteHeadsPath, HeadsCache))?.heads || []
+    const localHeads = ((await this.cache.getBinary(this.localHeadsPath, HeadsCache))?.heads || []) as Entry<T>[]
+    const remoteHeads = ((await this.cache.getBinary(this.remoteHeadsPath, HeadsCache))?.heads || []) as Entry<T>[]
     return [...localHeads, ...remoteHeads]
   }
 
@@ -677,9 +742,9 @@ export class Store<T> implements StoreLike<T> {
     })))
 
     const snapshot = await this._ipfs.add(buf)
-    snapshot["hash"] = snapshot.cid.toString();
-    await this._cache.set(this.snapshotPath, snapshot)
-    await this._cache.set(this.queuePath, unfinished)
+
+    await this._cache.setBinary(this.snapshotPath, new CID({ hash: snapshot.cid.toString() }))
+    await this._cache.setBinary(this.queuePath, new UnsfinishedReplication({ hashes: unfinished }))
 
     logger.debug(`Saved snapshot: ${snapshot.cid.toString()}, queue length: ${unfinished.length}`)
 
@@ -691,21 +756,19 @@ export class Store<T> implements StoreLike<T> {
       await this.options.onLoad(this)
     }
 
-    this.events.emit('load', this.address.toString()) // TODO emits inconsistent params, missing heads param
-
-    const maxClock = (res: bigint, val: Entry<any>): bigint => bigIntMax(res, val.clock.time)
+    const maxClock = (res: bigint, val: Entry<any>): bigint => max(res, val.clock.time)
     this.sync([])
 
-    const queue = (await this._cache.get(this.queuePath)) as string[]
+    const queue = (await this._cache.getBinary(this.queuePath, UnsfinishedReplication))?.hashes as string[]
     if (queue?.length > 0) {
       this._replicator.load(queue)
     }
 
-    const snapshot = await this._cache.get(this.snapshotPath)
+    const snapshotCID = await this._cache.getBinary(this.snapshotPath, CID)
 
-    if (snapshot) {
+    if (snapshotCID) {
       const chunks = []
-      for await (const chunk of this._ipfs.cat(snapshot["hash"])) {
+      for await (const chunk of this._ipfs.cat(snapshotCID.hash)) {
         chunks.push(chunk)
       }
       const snapshotData = deserialize(joinUint8Arrays(chunks), Snapshot);
@@ -714,7 +777,7 @@ export class Store<T> implements StoreLike<T> {
       // Timeout 1 sec to only load entries that are already fetched (in order to not get stuck at loading)
       this._recalculateReplicationMax(snapshotData.values.reduce(maxClock, 0n))
       if (snapshotData) {
-        this._oplog = await Log.fromEntry(this._ipfs, this.publicKey, this.sign, snapshotData.heads, {
+        this._oplog = await Log.fromEntry(this._ipfs, this.identity, snapshotData.heads, {
           access: this.accessController,
           sortFn: this.options.sortFn,
           length: -1,
@@ -722,9 +785,9 @@ export class Store<T> implements StoreLike<T> {
           onProgressCallback: this._onLoadProgress.bind(this)
         })
         await this._updateIndex()
-        this.events.emit('replicated', this.address.toString()) // TODO: inconsistent params, count param not emited
+        this.options.onReplicationComplete && this.options.onReplicationComplete(this)
       }
-      this.events.emit('ready', this.address.toString(), this._oplog.heads)
+      this.options.onReady && this.options.onReady(this)
     } else {
       throw new Error(`Snapshot for ${this.address} not found!`)
     }
@@ -739,50 +802,50 @@ export class Store<T> implements StoreLike<T> {
   }
 
   async syncLocal() {
-    const localHeads = (await this._cache.getBinary<HeadsCache<T>>(this.localHeadsPath, HeadsCache))?.heads || []
-    const remoteHeads = (await this._cache.getBinary<HeadsCache<T>>(this.remoteHeadsPath, HeadsCache))?.heads || []
+    const localHeads = (await this._cache.getBinary(this.localHeadsPath, HeadsCache))?.heads || []
+    const remoteHeads = (await this._cache.getBinary(this.remoteHeadsPath, HeadsCache))?.heads || []
     const heads = localHeads.concat(remoteHeads)
+    const headsHashes = new Set(this._oplog.heads.map(h => h.hash));
     for (let i = 0; i < heads.length; i++) {
       const head = heads[i]
-      if (!this._oplog.heads.includes(head)) {
+      if (!headsHashes.has(head.hash)) {
         await this.load()
         break
       }
     }
   }
 
-  async _addOperation(data: T, options: { nexts?: Entry<T>[], onProgressCallback?: (any) => void, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = {}): Promise<Entry<T>> {
+  async _addOperation(data: T, options: { nexts?: Entry<T>[], onProgressCallback?: (any: any) => void, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = {}): Promise<Entry<T>> {
     const addOperation = async () => {
-      if (this._oplog) {
-        // check local cache for latest heads
-        if (this.options.syncLocal) {
-          await this.syncLocal()
-        }
-
-        const entry = await this._oplog.append(data, {
-          nexts: options.nexts, pin: options.pin, reciever: options.reciever
-        })
-
-        // TODO below is not nice, do we really need replication status?
-        try {
-          this._recalculateReplicationStatus((await entry.getClock()).time)
-        } catch (error) {
-          this._recalculateReplicationStatus(0)
-        }
-        await this._cache.setBinary(this.localHeadsPath, new HeadsCache({ heads: [entry] }))
-        await this._updateIndex([entry])
-
-        // The row below will emit an "event", which is subscribed to on the orbit-db client (confusing enough)
-        // there, the write is binded to the pubsub publish, with the entry. Which will send this entry 
-        // to all the connected peers to tell them that a new entry has been added
-        // TODO: don't use events, or make it more transparent that there is a vital subscription in the background
-        // that is handling replication
-        const headsFromWrite = await this.oplog.getHeads(entry.hash);
-        this.events.emit('write', this.replicationTopic, this.address.toString(), entry, headsFromWrite)
-        if (options?.onProgressCallback) options.onProgressCallback(entry)
-        return entry
-
+      // check local cache for latest heads
+      if (this.options.syncLocal) {
+        await this.syncLocal()
       }
+
+      const entry = await this._oplog.append(data, {
+        nexts: options.nexts, pin: options.pin, reciever: options.reciever
+      })
+
+      // TODO below is not nice, do we really need replication status?
+      try {
+        this._recalculateReplicationStatus((await entry.getClock()).time)
+      } catch (error) {
+        this._recalculateReplicationStatus(0)
+      }
+      await this._cache.setBinary(this.localHeadsPath, new HeadsCache({ heads: [entry] }))
+      await this._updateIndex([entry])
+
+      // The row below will emit an "event", which is subscribed to on the orbit-db client (confusing enough)
+      // there, the write is binded to the pubsub publish, with the entry. Which will send this entry 
+      // to all the connected peers to tell them that a new entry has been added
+      // TODO: don't use events, or make it more transparent that there is a vital subscription in the background
+      // that is handling replication
+      this.options.onWrite && this.options.onWrite(this, entry);
+
+      /*      const headsFromWrite = await this.oplog.getHeads(entry.hash);
+           this.events.emit('write', this.replicationTopic, this.address.toString(), entry, headsFromWrite) */
+      if (options?.onProgressCallback) options.onProgressCallback(entry)
+      return entry
     }
     return this._queue.add(addOperation.bind(this))
   }
@@ -793,15 +856,15 @@ export class Store<T> implements StoreLike<T> {
 
   /* Replication Status state updates */
   _recalculateReplicationProgress() {
-    this._replicationStatus.progress = bigIntMax(
-      bigIntMin(this._replicationStatus.progress + 1n, this._replicationStatus.max),
+    this._replicationStatus.progress = max(
+      min(this._replicationStatus.progress + 1n, this._replicationStatus.max),
       BigInt(this._oplog ? this._oplog.length : 0)
     )
   }
 
-  _recalculateReplicationMax(max: bigint | number) {
-    const bigMax = BigInt(max);
-    this._replicationStatus.max = bigIntMax(
+  _recalculateReplicationMax(value: bigint | number) {
+    const bigMax = BigInt(value);
+    this._replicationStatus.max = max(
       this.replicationStatus.max,
       BigInt(this._oplog ? this._oplog.length : 0),
       (bigMax || 0n)
@@ -816,7 +879,7 @@ export class Store<T> implements StoreLike<T> {
   /* Loading progress callback */
   _onLoadProgress(entry: Entry<any>) {
     this._recalculateReplicationStatus(entry.clock.time)
-    this.events.emit('load.progress', this.address.toString(), entry.hash, entry, this.replicationStatus.progress, this.replicationStatus.max)
+    this.options.onLoadProgress && this.options.onLoadProgress(this, entry)
   }
 
   clone(): Store<T> {

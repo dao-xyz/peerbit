@@ -1,5 +1,5 @@
 import { field, vec, variant } from '@dao-xyz/borsh';
-import { Entry } from '@dao-xyz/ipfs-log-entry';
+import { Entry } from '@dao-xyz/ipfs-log';
 
 @variant(0)
 export class Snapshot {

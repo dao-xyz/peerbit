@@ -4,10 +4,18 @@ import { Store, DefaultOptions, HeadsCache, StorePublicKeyEncryption, IInitializ
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
 import { Keystore, KeyWithMeta } from "@dao-xyz/orbit-db-keystore"
 import { createStore } from './storage.js'
-import { X25519PublicKey, SodiumPlus } from 'sodium-plus'
+import { X25519PublicKey } from '@dao-xyz/peerbit-crypto'
 import { AccessError } from "@dao-xyz/peerbit-crypto"
 import { SimpleAccessController, SimpleIndex } from './utils.js'
 import { Address } from '../io.js'
+import { Controller } from 'ipfsd-ctl'
+import { IPFS } from 'ipfs-core-types'
+import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
+import { fileURLToPath } from 'url';
+import path from 'path';
+import { jest } from '@jest/globals';
+const __filename = fileURLToPath(import.meta.url);
+const __filenameBase = path.parse(__filename).base;
 
 // Test utils
 import {
@@ -16,156 +24,178 @@ import {
   startIpfs,
   stopIpfs
 } from '@dao-xyz/orbit-db-test-utils'
+import { Level } from 'level'
+import { Entry } from '@dao-xyz/ipfs-log'
+import { waitFor } from '@dao-xyz/time'
+const API = 'js-ipfs'
+describe(`addOperation`, function () {
+  let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, keystore: Keystore, identityStore: Level, store: Store<any>, cacheStore: Level, senderKey: KeyWithMeta<Ed25519Keypair>, recieverKey: KeyWithMeta<Ed25519Keypair>, encryption: StorePublicKeyEncryption
+  let index: SimpleIndex<string>
 
-Object.keys(testAPIs).forEach((IPFS) => {
-  describe(`addOperation ${IPFS}`, function () {
-    let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, keystore: Keystore, identityStore, store: Store<any>, cacheStore, senderKey: BoxKeyWithMeta, recieverKey: BoxKeyWithMeta, encryption: StorePublicKeyEncryption
-    let index: SimpleIndex<string>
+  jest.setTimeout(config.timeout);
 
-    jest.setTimeout(config.timeout);
+  const ipfsConfig = Object.assign({}, config, {
+    repo: 'repo-entry' + __filenameBase + new Date().getTime()
+  })
 
-    const ipfsConfig = Object.assign({}, config, {
-      repo: 'repo-entry' + new Date().getTime()
-    })
+  beforeAll(async () => {
+    identityStore = await createStore(__filenameBase + '/identity')
+    keystore = new Keystore(identityStore)
 
-    beforeAll(async () => {
-      identityStore = await createStore('identity')
-      keystore = new Keystore(identityStore)
+    cacheStore = await createStore(__filenameBase + '/cache')
 
-      cacheStore = await createStore('cache')
-      const cache = new Cache(cacheStore)
-
-      signKey = await keystore.getKey(new Uint8Array([0]));
-      ipfsd = await startIpfs(IPFS, ipfsConfig.daemon1)
-      ipfs = ipfsd.api
-      index = new SimpleIndex();
-      senderKey = await keystore.createKey('sender', BoxKeyWithMeta, undefined, { overwrite: true });
-      recieverKey = await keystore.createKey('reciever', BoxKeyWithMeta, undefined, { overwrite: true });
-      encryption = (_) => {
-        return {
-          getEncryptionKey: () => Promise.resolve(senderKey.secretKey),
-          getAnySecret: async (publicKeys: X25519PublicKey[]) => {
-            for (let i = 0; i < publicKeys.length; i++) {
-              if (Buffer.compare(publicKeys[i].getBuffer(), senderKey.publicKey.getBuffer()) === 0) {
-                return {
-                  index: i,
-                  secretKey: senderKey.secretKey
-                }
+    signKey = await keystore.createEd25519Key()
+    ipfsd = await startIpfs(API, ipfsConfig.daemon1)
+    ipfs = ipfsd.api
+    index = new SimpleIndex();
+    senderKey = await keystore.createEd25519Key()
+    recieverKey = await keystore.createEd25519Key()
+    encryption = (_) => {
+      return {
+        getEncryptionKeypair: () => Promise.resolve(senderKey.keypair),
+        getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
+          for (let i = 0; i < publicKeys.length; i++) {
+            if (publicKeys[i].equals(await X25519PublicKey.from(senderKey.keypair.publicKey))) {
+              return {
+                index: i,
+                keypair: senderKey.keypair
               }
-              if (Buffer.compare(publicKeys[i].getBuffer(), recieverKey.publicKey.getBuffer()) === 0) {
-                return {
-                  index: i,
-                  secretKey: recieverKey.secretKey
-                }
+            }
+            if (publicKeys[i].equals(await X25519PublicKey.from(recieverKey.keypair.publicKey))) {
+              return {
+                index: i,
+                keypair: recieverKey.keypair
               }
-
             }
           }
         }
-      };
-      const options: IInitializationOptions<any> = Object.assign({}, DefaultOptions, { resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index) })
-      options.encryption = encryption
-      store = new Store({ name: 'name', accessController: new SimpleAccessController() })
-      await store.init(ipfs, {
-        publicKey: signKey.keypair.publicKey,
-        sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
-      }, options);
+      }
+    };
 
-    })
 
-    afterAll(async () => {
-      await store?.close()
-      ipfsd && await stopIpfs(ipfsd)
-      await identityStore?.close()
-      await cacheStore?.close()
-    })
+  })
 
-    afterEach(async () => {
-      await store.drop()
-      await cacheStore.open()
-      await identityStore.open()
-    })
+  afterAll(async () => {
+    await store?.close()
+    ipfsd && await stopIpfs(ipfsd)
+    await identityStore?.close()
+    await cacheStore?.close()
+  })
 
-    it('encrypted entry is appended known key', (done) => {
-      const data = { data: 12345 }
+  afterEach(async () => {
+    await store.drop()
+    await cacheStore.open()
+    await identityStore.open()
+  })
 
-      store.events.on('write', (topic, address, entry, heads) => {
-        try {
-          expect(heads.length).toEqual(1)
-          assert(Address.isValid(address))
-          assert.deepStrictEqual(entry.payload.value, data)
-          expect(store.replicationStatus.progress).toEqual(1n)
-          expect(store.replicationStatus.max).toEqual(1n)
-          assert.deepStrictEqual(index._index, heads)
-          store._cache.getBinary(store.localHeadsPath, HeadsCache).then(async (localHeads) => {
-            localHeads.heads[0].init({
-              encoding: store.logOptions.encoding,
-              encryption: store.logOptions.encryption
-            });
-            await localHeads.heads[0].getPayload();
-            assert.deepStrictEqual(localHeads.heads[0].payload.value, data)
-            assert(localHeads.heads[0].equals(heads[0]))
-            expect(heads.length).toEqual(1)
-            expect(localHeads.heads.length).toEqual(1)
-            store.events.removeAllListeners('write')
-            done()
-          })
-        } catch (error) {
-          throw error;
-        }
-      })
+  it('encrypted entry is appended known key', async () => {
+    const data = { data: 12345 }
 
-      store._addOperation(data, {
-        reciever: {
-          clock: recieverKey.publicKey,
-          publicKey: recieverKey.publicKey,
-          payload: recieverKey.publicKey,
-          signature: recieverKey.publicKey
-        }
-      })
-
-    })
-
-    it('encrypted entry is append unkown key', (done) => {
-      const data = { data: 12345 }
-
-      store.events.on('write', (topic, address, entry, heads) => {
+    let done = false;
+    const onWrite = (store: Store<any>, entry: Entry<any>) => {
+      try {
+        const heads = store.oplog.heads;
         expect(heads.length).toEqual(1)
-        assert(Address.isValid(address))
+        assert(Address.isValid(store.address))
         assert.deepStrictEqual(entry.payload.value, data)
         expect(store.replicationStatus.progress).toEqual(1n)
         expect(store.replicationStatus.max).toEqual(1n)
         assert.deepStrictEqual(index._index, heads)
         store._cache.getBinary(store.localHeadsPath, HeadsCache).then(async (localHeads) => {
-          localHeads.heads[0].init({
-            encoding: store.logOptions.encoding,
-            encryption: store.logOptions.encryption
-          });
-          try {
-            await localHeads.heads[0].getPayload();
-            assert(false);
-          } catch (error) {
-            expect(error).toBeInstanceOf(AccessError)
+          if (!localHeads) {
+            fail()
           }
+          localHeads.heads[0].init({
+            encoding: store.oplog._encoding,
+            encryption: store.oplog._encryption
+          });
+          await localHeads.heads[0].getPayload();
+          assert.deepStrictEqual(localHeads.heads[0].payload.value, data)
           assert(localHeads.heads[0].equals(heads[0]))
           expect(heads.length).toEqual(1)
           expect(localHeads.heads.length).toEqual(1)
-          store.events.removeAllListeners('write')
-          done()
+          done = true;
         })
-      })
-      SodiumPlus.auto().then((sodium) => {
-        sodium.crypto_box_keypair().then(kp => sodium.crypto_box_publickey(kp)).then((pk) => {
-          store._addOperation(data, {
-            reciever: {
-              clock: undefined,
-              publicKey: pk,
-              payload: pk,
-              signature: pk,
-            }
-          })
-        })
-      })
+      } catch (error) {
+        throw error;
+      }
+    }
+
+    const cache = new Cache(cacheStore)
+    const options: IInitializationOptions<any> = { ...DefaultOptions, resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index), encryption, onWrite }
+    store = new Store({ name: 'name', accessController: new SimpleAccessController() })
+    await store.init(ipfs, {
+      publicKey: signKey.keypair.publicKey,
+      sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
+    }, options);
+
+    await store._addOperation(data, {
+      reciever: {
+        clock: recieverKey.keypair.publicKey,
+        payload: recieverKey.keypair.publicKey,
+        signature: recieverKey.keypair.publicKey
+      }
     })
+
+    await waitFor(() => done);
+
   })
+
+  it('encrypted entry is append unkown key', async () => {
+    const data = { data: 12345 }
+    let done = false;
+
+    const onWrite = (store: Store<any>, entry: Entry<any>) => {
+      const heads = store.oplog.heads;
+      expect(heads.length).toEqual(1)
+      assert(Address.isValid(store.address))
+      assert.deepStrictEqual(entry.payload.value, data)
+      expect(store.replicationStatus.progress).toEqual(1n)
+      expect(store.replicationStatus.max).toEqual(1n)
+      assert.deepStrictEqual(index._index, heads)
+      store._cache.getBinary(store.localHeadsPath, HeadsCache).then(async (localHeads) => {
+        if (!localHeads) {
+          fail();
+        }
+
+        localHeads.heads[0].init({
+          encoding: store.oplog._encoding,
+          encryption: store.oplog._encryption
+        });
+        try {
+          await localHeads.heads[0].getPayload();
+          assert(false);
+        } catch (error) {
+          expect(error).toBeInstanceOf(AccessError)
+        }
+        assert(localHeads.heads[0].equals(heads[0]))
+        expect(heads.length).toEqual(1)
+        expect(localHeads.heads.length).toEqual(1)
+        done = true
+      })
+    }
+
+    const cache = new Cache(cacheStore)
+    const options: IInitializationOptions<any> = { ...DefaultOptions, resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index), encryption, onWrite }
+    store = new Store({ name: 'name', accessController: new SimpleAccessController() })
+    await store.init(ipfs, {
+      publicKey: signKey.keypair.publicKey,
+      sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
+    }, options);
+
+    const reciever = await keystore.createEd25519Key();
+    await store._addOperation(data, {
+      reciever: {
+        clock: undefined,
+        payload: reciever.keypair.publicKey,
+        signature: reciever.keypair.publicKey,
+      }
+    })
+
+    await waitFor(() => done);
+
+  })
+
+
 })
+
