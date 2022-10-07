@@ -1,14 +1,16 @@
 
 import assert from 'assert'
-const mapSeries = require('p-each-series')
+import mapSeries from 'p-each-series'
 import rmrf from 'rimraf'
-import { Entry } from '@dao-xyz/ipfs-log-entry'
-import { DirectChannel } from '@dao-xyz/ipfs-pubsub-direct-channel'
-import { delay, waitFor } from '@dao-xyz/time'
-
+import { Entry } from '@dao-xyz/ipfs-log'
+import { waitFor } from '@dao-xyz/time'
+import { jest } from '@jest/globals';
+import { Controller } from "ipfsd-ctl";
+import { IPFS } from "ipfs-core-types";
 import { OrbitDB } from '../orbit-db'
 import { SimpleAccessController } from './utils/access'
 import { EventStore, Operation } from './utils/stores/event-store'
+import { IInitializationOptions, IStoreOptions } from '@dao-xyz/orbit-db-store'
 
 // Include test utilities
 const {
@@ -29,11 +31,11 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Replication (${API})`, function () {
     jest.setTimeout(config.timeout * 2)
 
-    let ipfsd1, ipfsd2, ipfs1, ipfs2
+    let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS
     let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore<string>, db2: EventStore<string>
 
-    let timer
-    let options
+    let timer: any
+    let options: IStoreOptions<any>;
 
     beforeAll(async () => {
       ipfsd1 = await startIpfs(API, config.daemon1)
@@ -41,7 +43,7 @@ Object.keys(testAPIs).forEach(API => {
       ipfs1 = ipfsd1.api
       ipfs2 = ipfsd2.api
       // Connect the peers manually to speed up test times
-      const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
+      const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
       await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
       console.log("Peers connected")
     })
@@ -73,7 +75,7 @@ Object.keys(testAPIs).forEach(API => {
 
     afterEach(async () => {
       clearInterval(timer)
-      options = {}
+      options = {} as any
 
       if (db1)
         await db1.drop()
@@ -94,63 +96,53 @@ Object.keys(testAPIs).forEach(API => {
       // Set 'sync' flag on. It'll prevent creating a new local database and rather
       // fetch the database from the network
       options = Object.assign({}, options, { directory: dbPath2 })
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), options)
+      let done = false;
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {
+        ...options, onReplicationComplete: () => {
+          expect(db2.iterator({ limit: -1 }).collect().length).toEqual(1)
+
+          clearInterval(timer)
+          const db1Entries: Entry<Operation<string>>[] = db1.iterator({ limit: -1 }).collect()
+          expect(db1Entries.length).toEqual(1)
+          expect(orbitdb1.findReplicators(db1.replicationTopic, true, db1Entries[0].gid)).toContainValues([orbitdb1.id, orbitdb2.id]);
+          expect(db1Entries[0].payload.getValue().value).toEqual(value)
+
+          const db2Entries: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
+          expect(db2Entries.length).toEqual(1)
+          expect(orbitdb2.findReplicators(db2.replicationTopic, true, db2Entries[0].gid)).toContainValues([orbitdb1.id, orbitdb2.id]);
+          expect(db2Entries[0].payload.getValue().value).toEqual(value)
+          done = true;
+        }
+      })
       await waitFor(() => orbitdb1._directConnections.size === 1);
       await waitFor(() => orbitdb2._directConnections.size === 1);
-
-      let finished = false
 
       const value = 'hello';
       await db1.add(value)
 
-      await new Promise((resolve, reject) => {
-        let replicatedEventCount = 0
-        db2.events.on('replicated', (address, length) => {
-          replicatedEventCount++
-          // Once db2 has finished replication, make sure it has all elements
-          // and process to the asserts below
-          const all = db2.iterator({ limit: -1 }).collect().length
-          finished = (all === 1)
-        })
+      await waitFor(() => done);
 
-        timer = setInterval(() => {
-          if (finished) {
-            clearInterval(timer)
-            const db1Entries: Entry<Operation<string>>[] = db1.iterator({ limit: -1 }).collect()
-            try {
-              expect(db1Entries.length).toEqual(1)
-              expect(orbitdb1.findReplicators(db1.replicationTopic, true, db1Entries[0].gid)).toContainValues([orbitdb1.id, orbitdb2.id]);
-              expect(db1Entries[0].payload.value.value).toEqual(value)
-            } catch (error) {
-              reject(error)
-            }
-
-            const db2Entries: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
-            try {
-              expect(db2Entries.length).toEqual(1)
-              expect(orbitdb2.findReplicators(db2.replicationTopic, true, db2Entries[0].gid)).toContainValues([orbitdb1.id, orbitdb2.id]);
-              expect(db2Entries[0].payload.value.value).toEqual(value)
-            } catch (error) {
-              reject(error)
-            }
-            expect(replicatedEventCount).toEqual(1)
-            resolve(true)
-          }
-        }, 100)
-      })
-    })
+    });
 
     it('replicates database of 100 entries', async () => {
       console.log("Waiting for peers to connect")
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
 
       options = Object.assign({}, options, { directory: dbPath2 })
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), options)
+
+      let done = false
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {
+        ...options, onReplicationComplete: () => {
+          // Once db2 has finished replication, make sure it has all elements
+          // and process to the asserts below
+          const all = db2.iterator({ limit: -1 }).collect().length
+          done = (all === entryCount)
+        }
+      })
 
       /*  await waitFor(() => orbitdb1._directConnections.size === 1);
        await waitFor(() => orbitdb2._directConnections.size === 1); */
 
-      let finished = false
       const entryCount = 100
       const entryArr: number[] = []
 
@@ -158,36 +150,15 @@ Object.keys(testAPIs).forEach(API => {
         entryArr.push(i)
       }
 
-      await new Promise(async (resolve, reject) => {
-        db2.events.on('replicated', () => {
-          // Once db2 has finished replication, make sure it has all elements
-          // and process to the asserts below
-          const all = db2.iterator({ limit: -1 }).collect().length
-          finished = (all === entryCount)
-        })
+      const add = (i: number) => db1.add('hello' + i)
+      await mapSeries(entryArr, add)
 
-        try {
-          const add = i => db1.add('hello' + i)
-          await mapSeries(entryArr, add)
-        } catch (e: any) {
-          reject(e)
-        }
+      await waitFor(() => done);
+      const entries = db2.iterator({ limit: -1 }).collect()
+      expect(entries.length).toEqual(entryCount)
+      expect(entries[0].payload.getValue().value).toEqual('hello0')
+      expect(entries[entries.length - 1].payload.getValue().value).toEqual('hello99')
 
-        timer = setInterval(() => {
-          if (finished) {
-            clearInterval(timer)
-            const entries = db2.iterator({ limit: -1 }).collect()
-            try {
-              expect(entries.length).toEqual(entryCount)
-              expect(entries[0].payload.value.value).toEqual('hello0')
-              expect(entries[entries.length - 1].payload.value.value).toEqual('hello99')
-              resolve(true)
-            } catch (error) {
-              reject(error)
-            }
-          }
-        }, 100)
-      })
     })
 
     it('emits correct replication info', async () => {
@@ -195,248 +166,220 @@ Object.keys(testAPIs).forEach(API => {
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
 
       options = Object.assign({}, options, { directory: dbPath2, sync: true })
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), options)
 
-      let finished = false
-      const entryCount = 99
+      // Test that none of the entries gets into the replication queue twice
+      const replicateSet = new Set()
 
-      return new Promise(async (resolve, reject) => {
-        // Test that none of the entries gets into the replication queue twice
-        const replicateSet = new Set()
-        db2.events.on('replicate', (address, entry) => {
+      // Verify that progress count increases monotonically by saving
+      // each event's current progress into an array
+      const progressEvents: bigint[] = []
+
+      let done = false
+
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {
+        ...options,
+        onReplicationQueued: (store, entry) => {
           if (!replicateSet.has(entry.hash)) {
             replicateSet.add(entry.hash)
           } else {
-            reject(new Error('Shouldn\'t have started replication twice for entry ' + entry.hash + '\n' + entry.payload.value.value))
+            fail(new Error('Shouldn\'t have started replication twice for entry ' + entry.hash + '\n' + entry.payload.getValue().value))
           }
-        })
-
-        // Verify that progress count increases monotonically by saving
-        // each event's current progress into an array
-        const progressEvents = []
-        db2.events.on('replicate.progress', () => {
+        },
+        onReplicationProgress: (store) => {
           progressEvents.push(db2.replicationStatus.progress)
-        })
 
-        db2.events.on('replicated', (address, length) => {
+        },
+
+        onReplicationComplete: (store) => {
           // Once db2 has finished replication, make sure it has all elements
           // and process to the asserts below
           const all = db2.iterator({ limit: -1 }).collect().length
-          finished = (all === entryCount)
-        })
-
-        timer = setInterval(() => {
-          try {
-
-            if (finished) {
-              clearInterval(timer)
-              // All entries should be in the database
-              expect(db2.iterator({ limit: -1 }).collect().length).toEqual(entryCount)
-              // progress events should increase monotonically
-              expect(progressEvents.length).toEqual(entryCount)
-              for (const [idx, e] of progressEvents.entries()) {
-                expect(e).toEqual(idx + 1)
-              }
-              // Verify replication status
-              expect(db2.replicationStatus.progress).toEqual(entryCount)
-              expect(db2.replicationStatus.max).toEqual(entryCount)
-              // Verify replicator state
-              expect(db2._replicator.tasksRunning).toEqual(0)
-              expect(db2._replicator.tasksQueued).toEqual(0)
-              expect(db2._replicator.unfinished.length).toEqual(0)
-              // Replicator's internal caches should be empty
-              expect(db2._replicator._logs.length).toEqual(0)
-              expect(Object.keys(db2._replicator._fetching).length).toEqual(0)
-
-              resolve(true)
-            }
-          } catch (e: any) {
-            reject(e)
-          }
-        }, 1000)
-
-
-        // Trigger replication
-        let adds = []
-        for (let i = 0; i < entryCount; i++) {
-          adds.push(i)
+          done = (all === entryCount)
         }
 
-        await mapSeries(adds, i => db1.add('hello ' + i))
-      })
+      });
+
+      const entryCount = 99
+
+      // Trigger replication
+      let adds = []
+      for (let i = 0; i < entryCount; i++) {
+        adds.push(i)
+      }
+
+      await mapSeries(adds, i => db1.add('hello ' + i))
+
+      await waitFor(() => done);
+
+      // All entries should be in the database
+      expect(db2.iterator({ limit: -1 }).collect().length).toEqual(entryCount)
+      // progress events should increase monotonically
+      expect(progressEvents.length).toEqual(entryCount)
+      for (const [idx, e] of progressEvents.entries()) {
+        expect(e).toEqual(idx + 1)
+      }
+      // Verify replication status
+      expect(db2.replicationStatus.progress).toEqual(entryCount)
+      expect(db2.replicationStatus.max).toEqual(entryCount)
+      // Verify replicator state
+      expect(db2._replicator.tasksRunning).toEqual(0)
+      expect(db2._replicator.tasksQueued).toEqual(0)
+      expect(db2._replicator.unfinished.length).toEqual(0)
+      // Replicator's internal caches should be empty
+      expect(db2._replicator._logs.length).toEqual(0)
+      expect(Object.keys(db2._replicator._fetching).length).toEqual(0)
+
+
+
     })
 
     it('emits correct replication info on fresh replication', async () => {
-      await new Promise(async (resolve, reject) => {
-        let finished = false
-        const entryCount = 512
+      const entryCount = 512
 
-        // Trigger replication
-        const adds = []
-        for (let i = 0; i < entryCount; i++) {
-          adds.push(i)
-        }
+      // Trigger replication
+      const adds = []
+      for (let i = 0; i < entryCount; i++) {
+        adds.push(i)
+      }
 
-        const add = async (i) => {
-          process.stdout.write("\rWriting " + (i + 1) + " / " + entryCount + " ")
-          await db1.add('hello ' + i)
-        }
+      const add = async (i: number) => {
+        process.stdout.write("\rWriting " + (i + 1) + " / " + entryCount + " ")
+        await db1.add('hello ' + i)
+      }
 
-        await mapSeries(adds, add)
+      await mapSeries(adds, add)
 
-        // Open second instance again
-        options = {
-          directory: dbPath2,
-          sync: true,
+      // Open second instance again
+      options = {
+        directory: dbPath2,
+      }
 
-        }
+      // Test that none of the entries gets into the replication queue twice
+      const replicateSet = new Set()
 
-        db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), options)
+      // Verify that progress count increases monotonically by saving
+      // each event's current progress into an array
+      const progressEvents: bigint[] = []
 
-        // Test that none of the entries gets into the replication queue twice
-        const replicateSet = new Set()
-        db2.events.on('replicate', (address, entry) => {
+
+      let replicatedEventCount = 0
+      let done = false
+
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {
+        ...options, onReplicationQueued: (store, entry) => {
           if (!replicateSet.has(entry.hash)) {
             replicateSet.add(entry.hash)
           } else {
-            reject(new Error('Shouldn\'t have started replication twice for entry ' + entry.hash))
+            fail(new Error('Shouldn\'t have started replication twice for entry ' + entry.hash))
           }
-        })
-
-        // Verify that progress count increases monotonically by saving
-        // each event's current progress into an array
-        const progressEvents: bigint[] = []
-        db2.events.on('replicate.progress', (address, hash, entry) => {
+        },
+        onReplicationProgress: (store, entry) => {
           progressEvents.push(db2.replicationStatus.progress)
-        })
 
-        let replicatedEventCount = 0
-        db2.events.on('replicated', (address, length) => {
+        },
+        onReplicationComplete: (store) => {
           replicatedEventCount++
           // Once db2 has finished replication, make sure it has all elements
           // and process to the asserts below
           const all = db2.iterator({ limit: -1 }).collect().length
-          finished = (all === entryCount)
-        })
-
-        timer = setInterval(async () => {
-          if (finished) {
-            clearInterval(timer)
-
-            try {
-              // All entries should be in the database
-              expect(db2.iterator({ limit: -1 }).collect().length).toEqual(entryCount)
-              // 'replicated' event should've been received only once
-              expect(replicatedEventCount).toEqual(1)
-              // progress events should increase monotonically
-              expect(progressEvents.length).toEqual(entryCount)
-              for (const [idx, e] of progressEvents.entries()) {
-                expect(e).toEqual(idx + 1)
-              }
-              // Verify replication status
-              expect(db2.replicationStatus.progress).toEqual(entryCount)
-              expect(db2.replicationStatus.max).toEqual(entryCount)
-              // Verify replicator state
-              expect(db2._replicator.tasksRunning).toEqual(0)
-              expect(db2._replicator.tasksQueued).toEqual(0)
-              expect(db2._replicator.unfinished.length).toEqual(0)
-              // Replicator's internal caches should be empty
-              expect(db2._replicator._logs.length).toEqual(0)
-              expect(Object.keys(db2._replicator._fetching).length).toEqual(0)
-
-              resolve(true)
-            } catch (e: any) {
-              reject(e)
-            }
-          }
-        }, 100)
+          done = (all === entryCount)
+        }
       })
+
+
+      // All entries should be in the database
+      expect(db2.iterator({ limit: -1 }).collect().length).toEqual(entryCount)
+      // 'replicated' event should've been received only once
+      expect(replicatedEventCount).toEqual(1)
+      // progress events should increase monotonically
+      expect(progressEvents.length).toEqual(entryCount)
+      for (const [idx, e] of progressEvents.entries()) {
+        expect(e).toEqual(idx + 1)
+      }
+      // Verify replication status
+      expect(db2.replicationStatus.progress).toEqual(entryCount)
+      expect(db2.replicationStatus.max).toEqual(entryCount)
+      // Verify replicator state
+      expect(db2._replicator.tasksRunning).toEqual(0)
+      expect(db2._replicator.tasksQueued).toEqual(0)
+      expect(db2._replicator.unfinished.length).toEqual(0)
+      // Replicator's internal caches should be empty
+      expect(db2._replicator._logs.length).toEqual(0)
+      expect(Object.keys(db2._replicator._fetching).length).toEqual(0)
+
     })
 
     it('emits correct replication info in two-way replication', async () => {
-      await new Promise(async (resolve, reject) => {
-        console.log("Waiting for peers to connect")
-        await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
+      console.log("Waiting for peers to connect")
+      await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
 
-        let finished = false
-        const entryCount = 100
+      const entryCount = 100
 
-        // Trigger replication
-        const adds = []
-        for (let i = 0; i < entryCount; i++) {
-          adds.push(i)
-        }
+      // Trigger replication
+      const adds = []
+      for (let i = 0; i < entryCount; i++) {
+        adds.push(i)
+      }
 
-        const add = async (i) => {
-          process.stdout.write("\rWriting " + (i + 1) + " / " + entryCount + " ")
-          await Promise.all([db1.add('hello-1-' + i), db2.add('hello-2-' + i)])
-        }
+      const add = async (i: number) => {
+        process.stdout.write("\rWriting " + (i + 1) + " / " + entryCount + " ")
+        await Promise.all([db1.add('hello-1-' + i), db2.add('hello-2-' + i)])
+      }
 
-        // Open second instance again
-        let options = {
-          directory: dbPath2 + '2',
-          overwrite: true,
-          sync: true,
+      // Open second instance again
+      let options = {
+        directory: dbPath2 + '2',
+        overwrite: true,
+        sync: true,
 
-        }
+      }
+      // Test that none of the entries gets into the replication queue twice
+      const replicateSet = new Set()
+      let done = false
 
-        db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), options)
-        expect(db1.address.toString()).toEqual(db2.address.toString())
-
-        // Test that none of the entries gets into the replication queue twice
-        const replicateSet = new Set()
-        db2.events.on('replicate', (address, entry) => {
-          if (!replicateSet.has(entry.hash)) {
-            replicateSet.add(entry.hash)
-          } else {
-            reject(new Error('Shouldn\'t have started replication twice for entry ' + entry.hash))
-          }
-        })
-
-        db2.events.on('replicated', (address, length) => {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {
+        ...options, onReplicationComplete: (store) => {
           // Once db2 has finished replication, make sure it has all elements
           // and process to the asserts below
           const all = db2.iterator({ limit: -1 }).collect().length
-          finished = (all === entryCount * 2)
-        })
-
-        await mapSeries(adds, add)
-        timer = setInterval(() => {
-          if (finished) {
-            clearInterval(timer)
-            try {
-
-              // Database values should match
-              const values1 = db1.iterator({ limit: -1 }).collect()
-              const values2 = db2.iterator({ limit: -1 }).collect()
-              expect(values1.length).toEqual(values2.length)
-              for (let i = 0; i < values1.length; i++) {
-                assert(values1[i].equals(values2[i]))
-              }
-              // All entries should be in the database
-              expect(values1.length).toEqual(entryCount * 2)
-              expect(values2.length).toEqual(entryCount * 2)
-              // Verify replication status
-              expect(db2.replicationStatus.progress).toEqual(BigInt(entryCount * 2))
-              expect(db2.replicationStatus.max).toEqual(BigInt(entryCount * 2))
-              // Verify replicator state
-              expect(db2._replicator.tasksRunning).toEqual(0)
-              expect(db2._replicator.tasksQueued).toEqual(0)
-              expect(db2._replicator.unfinished.length).toEqual(0)
-              // Replicator's internal caches should be empty
-              expect(db2._replicator._logs.length).toEqual(0)
-              expect(Object.keys(db2._replicator._fetching).length).toEqual(0)
-
-              resolve(true)
-            } catch (e: any) {
-              reject(e)
-            }
+          done = (all === entryCount * 2)
+        },
+        onReplicationQueued: (store, entry) => {
+          if (!replicateSet.has(entry.hash)) {
+            replicateSet.add(entry.hash)
+          } else {
+            fail(new Error('Shouldn\'t have started replication twice for entry ' + entry.hash))
           }
-        }, 500)
-
+        }
       })
-    })
+      expect(db1.address.toString()).toEqual(db2.address.toString())
 
+      await mapSeries(adds, add)
+      await waitFor(() => done);
+
+      // Database values should match
+      const values1 = db1.iterator({ limit: -1 }).collect()
+      const values2 = db2.iterator({ limit: -1 }).collect()
+      expect(values1.length).toEqual(values2.length)
+      for (let i = 0; i < values1.length; i++) {
+        assert(values1[i].equals(values2[i]))
+      }
+      // All entries should be in the database
+      expect(values1.length).toEqual(entryCount * 2)
+      expect(values2.length).toEqual(entryCount * 2)
+      // Verify replication status
+      expect(db2.replicationStatus.progress).toEqual(BigInt(entryCount * 2))
+      expect(db2.replicationStatus.max).toEqual(BigInt(entryCount * 2))
+      // Verify replicator state
+      expect(db2._replicator.tasksRunning).toEqual(0)
+      expect(db2._replicator.tasksQueued).toEqual(0)
+      expect(db2._replicator.unfinished.length).toEqual(0)
+      // Replicator's internal caches should be empty
+      expect(db2._replicator._logs.length).toEqual(0)
+      expect(Object.keys(db2._replicator._fetching).length).toEqual(0)
+
+
+    })
 
   })
 })

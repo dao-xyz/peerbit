@@ -1,3 +1,4 @@
+import { Address } from '@dao-xyz/orbit-db-store';
 import path from 'path';
 
 /* export const READ_WRITE = {
@@ -11,7 +12,7 @@ export const getEntryKey = (e) => e.v === 0 ? e.key : e.identity.publicKey
 
 
 // Make sure the given address has '/_access' as the last part
-export const ensureAddress = address => {
+export const ensureAddress = (address: string) => {
     const suffix = address.toString().split('/').pop()
     return suffix === '_access'
         ? address

@@ -1,10 +1,12 @@
-import { Log } from "@dao-xyz/ipfs-log";
-import { Address, JSON_ENCODER, load, StoreLike } from "@dao-xyz/orbit-db-store";
+import { Identity, Log } from "@dao-xyz/ipfs-log";
+import { Address, IInitializationOptions, load, StoreLike } from "@dao-xyz/orbit-db-store";
 import { Store } from "@dao-xyz/orbit-db-store"
-import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry';
+import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log';
 import { AccessController } from "@dao-xyz/orbit-db-store";
 import { Operation } from "./event-store";
 import { variant } from '@dao-xyz/borsh';
+import { IPFS } from "ipfs-core-types";
+import { EncodingType } from "@dao-xyz/orbit-db-store/lib/esm/encoding";
 
 
 export class KeyValueIndex {
@@ -19,19 +21,19 @@ export class KeyValueIndex {
 
     updateIndex(oplog: Log<any>) {
         const values = oplog.values
-        const handled = {}
+        const handled: { [key: string]: boolean } = {}
         for (let i = values.length - 1; i >= 0; i--) {
             const item = values[i]
-            if (handled[item.payload.value.key]) {
+            if (handled[item.payload.getValue().key]) {
                 continue
             }
-            handled[item.payload.value.key] = true
-            if (item.payload.value.op === 'PUT') {
-                this._index[item.payload.value.key] = item.payload.value.value
+            handled[item.payload.getValue().key] = true
+            if (item.payload.getValue().op === 'PUT') {
+                this._index[item.payload.getValue().key] = item.payload.getValue().value
                 continue
             }
-            if (item.payload.value.op === 'DEL') {
-                delete this._index[item.payload.value.key]
+            if (item.payload.getValue().op === 'DEL') {
+                delete this._index[item.payload.getValue().key]
                 continue
             }
         }
@@ -47,25 +49,24 @@ export class KeyValueStore<T> extends Store<Operation<T>> {
         name: string;
         accessController: AccessController<Operation<T>>;
     }) {
-        super(properties)
+        super({ ...properties, encoding: EncodingType.JSON })
         this._index = new KeyValueIndex();
     }
-    async init(ipfs, key, sign, options): Promise<StoreLike<Operation<T>>> {
+    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<Operation<T>>): Promise<StoreLike<Operation<T>>> {
         let opts = Object.assign({}, { Index: KeyValueIndex })
-        if (options.encoding === undefined) Object.assign(options, { encoding: JSON_ENCODER })
         Object.assign(opts, options)
-        return super.init(ipfs, key, sign, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
+        return super.init(ipfs, identity, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
     }
 
     get all() {
         return this._index._index
     }
 
-    get(key) {
+    get(key: string) {
         return this._index.get(key)
     }
 
-    set(key, data, options?: {
+    set(key: string, data: any, options?: {
         onProgressCallback?: (any: any) => void;
         pin?: boolean;
         reciever?: EncryptionTemplateMaybeEncrypted;
@@ -73,7 +74,7 @@ export class KeyValueStore<T> extends Store<Operation<T>> {
         return this.put(key, data, options)
     }
 
-    put(key, data, options?: {
+    put(key: string, data: any, options?: {
         onProgressCallback?: (any: any) => void;
         pin?: boolean;
         reciever?: EncryptionTemplateMaybeEncrypted;
@@ -85,7 +86,7 @@ export class KeyValueStore<T> extends Store<Operation<T>> {
         }, options)
     }
 
-    del(key, options?: {
+    del(key: string, options?: {
         onProgressCallback?: (any: any) => void;
         pin?: boolean;
         reciever?: EncryptionTemplateMaybeEncrypted;
@@ -93,7 +94,7 @@ export class KeyValueStore<T> extends Store<Operation<T>> {
         return this._addOperation({
             op: 'DEL',
             key: key,
-            value: null
+            value: undefined
         }, options)
     }
 

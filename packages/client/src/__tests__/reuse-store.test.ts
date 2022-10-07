@@ -1,25 +1,22 @@
 
 
-import assert from 'assert'
-const mapSeries = require('p-each-series')
-import rmrf from 'rimraf'
-import { Entry } from '@dao-xyz/ipfs-log-entry'
-import { delay, waitFor, waitForAsync } from '@dao-xyz/time'
-import { WAIT_FOR_PEERS_TIME } from '../exchange-replication'
 
+import rmrf from 'rimraf'
 import { OrbitDB } from '../orbit-db'
 import { SimpleAccessController, SimpleStoreAccessController } from './utils/access'
 import { EventStore, Operation } from './utils/stores/event-store'
 
+import { jest } from '@jest/globals';
+import { Controller } from "ipfsd-ctl";
+import { IPFS } from "ipfs-core-types";
 // Include test utilities
-const {
-    config,
+import {
+    nodeConfig as config,
     startIpfs,
     stopIpfs,
     testAPIs,
-    connectPeers,
-    waitForPeers,
-} = require('@dao-xyz/orbit-db-test-utils')
+    connectPeers
+} from '@dao-xyz/orbit-db-test-utils'
 
 const orbitdbPath1 = './orbitdb/tests/replication/1'
 const orbitdbPath2 = './orbitdb/tests/replication/2'
@@ -30,7 +27,7 @@ Object.keys(testAPIs).forEach(API => {
     describe(`orbit-db - Replication (${API})`, function () {
         jest.setTimeout(config.timeout * 2)
 
-        let ipfsd1, ipfsd2, ipfs1, ipfs2
+        let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS
         let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore<string>, db2: EventStore<string>
 
 
@@ -40,7 +37,7 @@ Object.keys(testAPIs).forEach(API => {
             ipfs1 = ipfsd1.api
             ipfs2 = ipfsd2.api
             // Connect the peers manually to speed up test times
-            const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
+            const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
             await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
             console.log("Peers connected")
         })

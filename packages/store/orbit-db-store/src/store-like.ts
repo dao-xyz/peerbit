@@ -1,7 +1,6 @@
 import { Address, Addressable } from "./io.js";
 import { IPFS } from 'ipfs-core-types'
 import { IInitializationOptions } from "./store.js";
-import EventEmitter from "events";
 import { Identity, Log } from "@dao-xyz/ipfs-log";
 import Cache from '@dao-xyz/orbit-db-cache';
 import { Entry } from "@dao-xyz/ipfs-log";
@@ -17,7 +16,7 @@ export interface StoreLike<T> extends Addressable, Initiable<T> {
     drop?(): Promise<void>;
     load?(): Promise<void>;
     close?(): Promise<void>;
-    save?(ipfs: any, options?: {
+    save(ipfs: any, options?: {
         format?: string;
         pin?: boolean;
         timeout?: number;

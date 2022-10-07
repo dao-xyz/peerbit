@@ -3,7 +3,7 @@ import rmrf from 'rimraf'
 import fs from 'fs-extra'
 import { LastWriteWins } from '../log-sorting.js'
 import { jest } from '@jest/globals';
-import { Entry, JSON_ENCODING_OPTIONS } from '../entry.js';
+import { Entry } from '../entry.js';
 import { Log } from '../log.js'
 import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { LogCreator } from './utils/log-creator.js'
@@ -32,6 +32,7 @@ import {
 import { Controller } from 'ipfsd-ctl'
 import { IPFS } from 'ipfs-core-types'
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
+import { JSON_ENCODING } from '../encoding.js';
 
 let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, signKey2: KeyWithMeta<Ed25519Keypair>, signKey3: KeyWithMeta<Ed25519Keypair>, signKey4: KeyWithMeta<Ed25519Keypair>
 
@@ -107,7 +108,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         }, json, {})
         expect(log.heads[0].gid).toEqual(data.heads[0].gid)
         expect(log.length).toEqual(16)
-        assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), fixture.expectedData)
+        assert.deepStrictEqual(log.values.map(e => e.payload.getValue()), fixture.expectedData)
       })
 
       it('creates a log from an entry with custom tiebreaker', async () => {
@@ -122,7 +123,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           { length: -1, sortFn: FirstWriteWins })
 
         expect(log.length).toEqual(16)
-        assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), firstWriteExpectedData)
+        assert.deepStrictEqual(log.values.map(e => e.payload.getValue()), firstWriteExpectedData)
       })
 
       it('respects timeout parameter', async () => {
@@ -139,7 +140,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         // Allow for a few millseconds of skew
         assert.strictEqual((et - st) >= (timeout - 10), true, '' + (et - st) + ' should be greater than timeout ' + timeout)
         expect(log.length).toEqual(0)
-        assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), [])
+        assert.deepStrictEqual(log.values.map(e => e.payload.getValue()), [])
       })
     })
 
@@ -165,7 +166,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         expect(log1.heads[0].gid).toEqual(data.heads[0].gid)
         expect(log1.length).toEqual(16)
-        assert.deepStrictEqual(log1.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), fixture.expectedData)
+        assert.deepStrictEqual(log1.values.map(e => e.payload.getValue()), fixture.expectedData)
       })
 
       it('creates a log from an entry hash with custom tiebreaker', async () => {
@@ -186,7 +187,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log1.join(log2)
 
         expect(log1.length).toEqual(16)
-        assert.deepStrictEqual(log1.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), firstWriteExpectedData)
+        assert.deepStrictEqual(log1.values.map(e => e.payload.getValue()), firstWriteExpectedData)
       })
 
       it('respects timeout parameter', async () => {
@@ -199,7 +200,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const et = new Date().getTime()
         assert.strictEqual((et - st) >= timeout, true, '' + (et - st) + ' should be greater than timeout ' + timeout)
         expect(log.length).toEqual(0)
-        assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), [])
+        assert.deepStrictEqual(log.values.map(e => e.payload.getValue()), [])
       })
     })
 
@@ -215,7 +216,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         }, data.heads, { length: -1 })
         expect(log.heads[0].gid).toEqual(data.heads[0].gid)
         expect(log.length).toEqual(16)
-        assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), fixture.expectedData)
+        assert.deepStrictEqual(log.values.map(e => e.payload.getValue()), fixture.expectedData)
       })
 
       it('creates a log from an entry with custom tiebreaker', async () => {
@@ -228,7 +229,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         }, data.heads,
           { length: -1, sortFn: FirstWriteWins })
         expect(log.length).toEqual(16)
-        assert.deepStrictEqual(log.values.map(e => e.init({ encoding: JSON_ENCODING_OPTIONS }).payload.value), firstWriteExpectedData)
+        assert.deepStrictEqual(log.values.map(e => e.payload.getValue()), firstWriteExpectedData)
       })
 
       it('keeps the original heads', async () => {
@@ -241,8 +242,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
           { length: data.heads.length })
         expect(log1.heads[0].gid).toEqual(data.heads[0].gid)
         expect(log1.length).toEqual(data.heads.length)
-        expect(log1.values[0].payload.value).toEqual('entryC0')
-        expect(log1.values[1].payload.value).toEqual('entryA10')
+        expect(log1.values[0].payload.getValue()).toEqual('entryC0')
+        expect(log1.values[1].payload.getValue()).toEqual('entryA10')
 
         const log2 = await Log.fromEntry<string>(ipfs, {
           publicKey: signKey.keypair.publicKey,
@@ -250,10 +251,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
         }, data.heads, { length: 4 })
         expect(log2.heads[0].gid).toEqual(data.heads[0].gid)
         expect(log2.length).toEqual(4)
-        expect(log2.values[0].payload.value).toEqual('entryC0')
-        expect(log2.values[1].payload.value).toEqual('entryA8')
-        expect(log2.values[2].payload.value).toEqual('entryA9')
-        expect(log2.values[3].payload.value).toEqual('entryA10')
+        expect(log2.values[0].payload.getValue()).toEqual('entryC0')
+        expect(log2.values[1].payload.getValue()).toEqual('entryA8')
+        expect(log2.values[2].payload.getValue()).toEqual('entryA9')
+        expect(log2.values[3].payload.getValue()).toEqual('entryA10')
 
         const log3 = await Log.fromEntry<string>(ipfs, {
           publicKey: signKey.keypair.publicKey,
@@ -261,13 +262,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
         }, data.heads, { length: 7 })
         expect(log3.heads[0].gid).toEqual(data.heads[0].gid)
         expect(log3.length).toEqual(7)
-        expect(log3.values[0].payload.value).toEqual('entryB5')
-        expect(log3.values[1].payload.value).toEqual('entryA6')
-        expect(log3.values[2].payload.value).toEqual('entryC0')
-        expect(log3.values[3].payload.value).toEqual('entryA7')
-        expect(log3.values[4].payload.value).toEqual('entryA8')
-        expect(log3.values[5].payload.value).toEqual('entryA9')
-        expect(log3.values[6].payload.value).toEqual('entryA10')
+        expect(log3.values[0].payload.getValue()).toEqual('entryB5')
+        expect(log3.values[1].payload.getValue()).toEqual('entryA6')
+        expect(log3.values[2].payload.getValue()).toEqual('entryC0')
+        expect(log3.values[3].payload.getValue()).toEqual('entryA7')
+        expect(log3.values[4].payload.getValue()).toEqual('entryA8')
+        expect(log3.values[5].payload.getValue()).toEqual('entryA9')
+        expect(log3.values[6].payload.getValue()).toEqual('entryA10')
       })
 
       it('onProgress callback is fired for each entry', async () => {
@@ -286,10 +287,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         const callback = (entry: Entry<string>) => {
-          entry.init({ encoding: JSON_ENCODING_OPTIONS });
           assert.notStrictEqual(entry, null)
           expect(entry.hash).toEqual(items1[items1.length - i - 1].hash)
-          expect(entry.payload.value).toEqual(items1[items1.length - i - 1].payload.value)
+          expect(entry.payload.getValue()).toEqual(items1[items1.length - i - 1].payload.getValue())
           i++
         }
 
@@ -520,7 +520,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         }, last(items2),
           { length: amount * 2 })
         expect(b.length).toEqual(amount * 2)
-        expect(b.values.map((e) => e.payload.value)).toContainAllValues(itemsInB)
+        expect(b.values.map((e) => e.payload.getValue())).toContainAllValues(itemsInB)
 
         const c = await Log.fromEntry<string>(ipfs, {
           publicKey: signKey4.keypair.publicKey,
@@ -564,7 +564,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           'EOF'
         ]
 
-        expect(c.values.map(e => e.payload.value)).toContainAllValues(tmp)
+        expect(c.values.map(e => e.payload.getValue())).toContainAllValues(tmp)
 
         // make sure logX comes after A, B and C
         const logX = new Log<string>(ipfs, {
@@ -643,7 +643,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           'entryA11', 'entryA12', 'entryA13', 'entryA14', 'entryA15'
         ]
 
-        assert.deepStrictEqual(log1.values.map(e => e.payload.value), expectedData)
+        assert.deepStrictEqual(log1.values.map(e => e.payload.getValue()), expectedData)
       })
 
       it('retrieves randomly joined log deterministically', async () => {
@@ -682,7 +682,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           'entryC0', 'entryA7', 'entryA8', 'entryA9', 'entryA10'
         ]
 
-        expect(log.values.map(e => e.payload.value)).toStrictEqual(expectedData)
+        expect(log.values.map(e => e.payload.getValue())).toStrictEqual(expectedData)
       })
 
       it('sorts', async () => {
@@ -712,7 +712,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         ]
 
         const fetchOrder = log.values.slice().sort(Entry.compare)
-        assert.deepStrictEqual(fetchOrder.map(e => e.payload.value), expectedData)
+        assert.deepStrictEqual(fetchOrder.map(e => e.payload.getValue()), expectedData)
 
         const reverseOrder = log.values.slice().reverse().sort(Entry.compare)
         assert.deepStrictEqual(fetchOrder, reverseOrder)
@@ -724,14 +724,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
         assert.deepStrictEqual(fetchOrder, randomOrder2)
 
         // partial data
-        const partialLog = log.values.filter(e => e.payload.value !== 'entryC0').sort(Entry.compare)
-        assert.deepStrictEqual(partialLog.map(e => e.payload.value), expectedData2)
+        const partialLog = log.values.filter(e => e.payload.getValue() !== 'entryC0').sort(Entry.compare)
+        assert.deepStrictEqual(partialLog.map(e => e.payload.getValue()), expectedData2)
 
-        const partialLog2 = log.values.filter(e => e.payload.value !== 'entryA10').sort(Entry.compare)
-        assert.deepStrictEqual(partialLog2.map(e => e.payload.value), expectedData3)
+        const partialLog2 = log.values.filter(e => e.payload.getValue() !== 'entryA10').sort(Entry.compare)
+        assert.deepStrictEqual(partialLog2.map(e => e.payload.getValue()), expectedData3)
 
-        const partialLog3 = log.values.filter(e => e.payload.value !== 'entryB5').sort(Entry.compare)
-        assert.deepStrictEqual(partialLog3.map(e => e.payload.value), expectedData4)
+        const partialLog3 = log.values.filter(e => e.payload.getValue() !== 'entryB5').sort(Entry.compare)
+        assert.deepStrictEqual(partialLog3.map(e => e.payload.getValue()), expectedData4)
       })
 
       it('sorts deterministically from random order', async () => {
@@ -740,13 +740,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const expectedData = testLog.expectedData
 
         const fetchOrder = log.values.slice().sort(Entry.compare)
-        assert.deepStrictEqual(fetchOrder.map(e => e.payload.value), expectedData)
+        assert.deepStrictEqual(fetchOrder.map(e => e.payload.getValue()), expectedData)
 
         let sorted
         for (let i = 0; i < 1000; i++) {
           const randomOrder = log.values.slice().sort((a, b) => 0.5 - Math.random())
           sorted = randomOrder.sort(Entry.compare)
-          assert.deepStrictEqual(sorted.map(e => e.payload.value), expectedData)
+          assert.deepStrictEqual(sorted.map(e => e.payload.getValue()), expectedData)
         }
       })
 
@@ -754,7 +754,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const testLog = await LogCreator.createLogWithTwoHundredEntries(ipfs, signKeys)
         const log = testLog.log
         const expectedData = testLog.expectedData
-        assert.deepStrictEqual(log.values.map(e => e.payload.value), expectedData)
+        assert.deepStrictEqual(log.values.map(e => e.payload.getValue()), expectedData)
       })
 
       it('sorts entries according to custom tiebreaker function', async () => {
@@ -763,7 +763,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const firstWriteWinsLog =
           new Log<string>(ipfs, { publicKey: signKeys[0].keypair.publicKey, sign: (data) => signKeys[0].keypair.sign(data) }, { logId: 'X', sortFn: FirstWriteWins })
         await firstWriteWinsLog.join(testLog.log)
-        assert.deepStrictEqual(firstWriteWinsLog.values.map(e => e.payload.value),
+        assert.deepStrictEqual(firstWriteWinsLog.values.map(e => e.payload.getValue()),
           firstWriteExpectedData)
       })
 
@@ -818,7 +818,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           'entryC0', 'entryA7', 'entryA8', 'entryA9', 'entryA10'
         ]
 
-        assert.deepStrictEqual(res.values.map(e => e.payload.value), first5)
+        assert.deepStrictEqual(res.values.map(e => e.payload.getValue()), first5)
 
         // First 11
         res = await Log.fromMultihash(ipfs, {
@@ -833,7 +833,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           'entryC0', 'entryA7', 'entryA8', 'entryA9', 'entryA10'
         ]
 
-        assert.deepStrictEqual(res.values.map(e => e.payload.value), first11)
+        assert.deepStrictEqual(res.values.map(e => e.payload.getValue()), first11)
 
         // All but one
         res = await Log.fromMultihash(ipfs, {
@@ -848,7 +848,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           'entryC0', 'entryA7', 'entryA8', 'entryA9', 'entryA10'
         ]
 
-        assert.deepStrictEqual(res.values.map(e => e.payload.value), all)
+        assert.deepStrictEqual(res.values.map(e => e.payload.getValue()), all)
       })
 
       it('retrieves partially joined log deterministically - multiple next pointers', async () => {
@@ -894,7 +894,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           'entryC0', 'entryA7', 'entryA8', 'entryA9', 'entryA10'
         ]
 
-        assert.deepStrictEqual(res.values.map(e => e.payload.value), first5)
+        assert.deepStrictEqual(res.values.map(e => e.payload.getValue()), first5)
 
         // First 11
         res = await Log.fromMultihash(ipfs, {
@@ -909,7 +909,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           'entryA7', 'entryA8', 'entryA9', 'entryA10'
         ]
 
-        assert.deepStrictEqual(res.values.map(e => e.payload.value), first11)
+        assert.deepStrictEqual(res.values.map(e => e.payload.getValue()), first11)
 
         // All but one
         res = await Log.fromMultihash(ipfs, {
@@ -924,7 +924,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           'entryC0', 'entryA7', 'entryA8', 'entryA9', 'entryA10'
         ]
 
-        assert.deepStrictEqual(res.values.map(e => e.payload.value), all)
+        assert.deepStrictEqual(res.values.map(e => e.payload.getValue()), all)
       })
 
 

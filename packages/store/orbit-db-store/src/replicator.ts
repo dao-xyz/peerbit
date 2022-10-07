@@ -185,7 +185,6 @@ export class Replicator<T> {
         // TODO, load all store options?
         access: this._store.access,
         encryption: this._store._oplog._encryption,
-        encoding: this._store._oplog._encoding,
         sortFn: this._store._oplog._sortFn,
         length: -1,
         exclude: [],
@@ -193,7 +192,7 @@ export class Replicator<T> {
         concurrency: this._concurrency,
         onProgressCallback
       }
-    ) : await Log.fromEntryHash(
+    ) : await Log.fromEntryHash<T>(
       this._store._ipfs,
       this._store.identity,
       entry,
@@ -201,7 +200,6 @@ export class Replicator<T> {
         // TODO, load all store options?
         access: this._store.access,
         encryption: this._store._oplog._encryption,
-        encoding: this._store._oplog._encoding,
         sortFn: this._store._oplog._sortFn,
         length: -1,
         exclude: [],

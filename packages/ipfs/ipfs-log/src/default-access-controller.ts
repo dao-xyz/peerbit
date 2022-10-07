@@ -1,6 +1,6 @@
 import { MaybeEncrypted, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { Payload } from './entry';
-import { Ed25519PublicKey, PublicSignKey } from '@dao-xyz/peerbit-crypto'
+
 // TODO extend IPFS-LOG access controller interface for canAppend method
 /**
  * Interface for OrbitDB Access Controllers

@@ -97,7 +97,7 @@ describe(`addOperation`, function () {
         const heads = store.oplog.heads;
         expect(heads.length).toEqual(1)
         assert(Address.isValid(store.address))
-        assert.deepStrictEqual(entry.payload.value, data)
+        assert.deepStrictEqual(entry.payload.getValue(), data)
         expect(store.replicationStatus.progress).toEqual(1n)
         expect(store.replicationStatus.max).toEqual(1n)
         assert.deepStrictEqual(index._index, heads)
@@ -106,11 +106,10 @@ describe(`addOperation`, function () {
             fail()
           }
           localHeads.heads[0].init({
-            encoding: store.oplog._encoding,
             encryption: store.oplog._encryption
           });
           await localHeads.heads[0].getPayload();
-          assert.deepStrictEqual(localHeads.heads[0].payload.value, data)
+          assert.deepStrictEqual(localHeads.heads[0].payload.getValue(), data)
           assert(localHeads.heads[0].equals(heads[0]))
           expect(heads.length).toEqual(1)
           expect(localHeads.heads.length).toEqual(1)
@@ -149,7 +148,7 @@ describe(`addOperation`, function () {
       const heads = store.oplog.heads;
       expect(heads.length).toEqual(1)
       assert(Address.isValid(store.address))
-      assert.deepStrictEqual(entry.payload.value, data)
+      assert.deepStrictEqual(entry.payload.getValue(), data)
       expect(store.replicationStatus.progress).toEqual(1n)
       expect(store.replicationStatus.max).toEqual(1n)
       assert.deepStrictEqual(index._index, heads)
@@ -159,7 +158,6 @@ describe(`addOperation`, function () {
         }
 
         localHeads.heads[0].init({
-          encoding: store.oplog._encoding,
           encryption: store.oplog._encryption
         });
         try {

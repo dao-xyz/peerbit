@@ -33,7 +33,7 @@ export class LogCreator {
       await log.join(log3)
       await log.append('entryC0')
       await log.join(logA)
-      expect(log.values.map(h => h.payload.value)).toStrictEqual(expectedData);
+      expect(log.values.map(h => h.payload.getValue())).toStrictEqual(expectedData);
       return log
     }
 

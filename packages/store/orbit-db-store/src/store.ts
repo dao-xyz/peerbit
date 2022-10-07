@@ -1,8 +1,8 @@
 import path from 'path'
 import mapSeries from 'p-each-series'
 import PQueue from 'p-queue'
-import { Log, ISortFunction, PruneOptions, LogOptions, Identity, JSON_ENCODING_OPTIONS, max, min } from '@dao-xyz/ipfs-log'
-import { IOOptions, EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log'
+import { Log, ISortFunction, PruneOptions, LogOptions, Identity, JSON_ENCODING, max, min, BORSH_ENCODING } from '@dao-xyz/ipfs-log'
+import { Encoding, EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log'
 import { Entry } from '@dao-xyz/ipfs-log'
 import { Replicator } from './replicator.js'
 import { ReplicationInfo } from './replication-info.js'
@@ -10,10 +10,11 @@ import io from '@dao-xyz/io-utils'
 import Cache from '@dao-xyz/orbit-db-cache';
 import { variant, field, vec, option } from '@dao-xyz/borsh';
 import { IPFS } from 'ipfs-core-types'
+
 // @ts-ignore
 import { serialize, deserialize } from '@dao-xyz/borsh';
 import { Snapshot } from './snapshot.js'
-import { AccessError, PublicKeyEncryption, PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto"
+import { AccessError, PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto"
 import { Address, load, save } from './io.js'
 import { AccessController } from './access-controller.js'
 
@@ -23,6 +24,7 @@ import { StoreLike } from './store-like.js'
 import { joinUint8Arrays } from '@dao-xyz/borsh-utils';
 // @ts-ignore
 import Logger from 'logplease'
+import { EncodingType } from './encoding.js'
 
 /* let v8 = undefined;
 if (isNode) {
@@ -114,42 +116,6 @@ export interface IStoreOptions<T> {
 
   replicationTopic?: string | (() => string),
 
-
-
-  /**
-   * Name to name conditioned some external property
-   */
-  /*   nameResolver?: (name: string) => string */
-
-  encryption?: StorePublicKeyEncryption,
-  encoding?: IOOptions<T>
-
-  maxHistory?: number,
-  fetchEntryTimeout?: number,
-  referenceCount?: number,
-  replicationConcurrency?: number,
-  fallbackAccessController?: AccessController<T>,
-  syncLocal?: boolean,
-  sortFn?: ISortFunction,
-  prune?: PruneOptions,
-  typeMap?: { [key: string]: Constructor<any> }
-  onUpdate?: (oplog: Log<T>, entries?: Entry<T>[]) => void,
-  resourceOptions?: ResourceOptions<T>,
-
-}
-
-export type ResourceOptions<T> = { heapSizeLimit: () => number };
-
-
-export interface IInitializationOptions<T> extends IStoreOptions<T>, IInitializationOptionsDefault<T> {
-
-  /* encryption?: {
-    encrypt: (arr: Uint8Array, keyGroup: string) => Promise<{ bytes: Uint8Array, keyId: Uint8Array }>
-    decrypt: (arr: Uint8Array, keyGroup: string, keyId: Uint8Array) => Promise<Uint8Array>
-  }, */
-
-  saveAndResolveStore: (store: Store<any>) => Promise<Store<any>>,
-  resolveCache: (address: Address) => Promise<Cache<CachedValue>> | Cache<CachedValue>,
   onClose?: (store: Store<T>) => void,
   onDrop?: (store: Store<T>) => void,
   onLoad?: (store: Store<T>) => void,
@@ -161,6 +127,42 @@ export interface IInitializationOptions<T> extends IStoreOptions<T>, IInitializa
   onReplicationComplete?: (store: StoreLike<any>) => void
   onReady?: (store: Store<T>) => void,
 
+
+
+
+  /**
+   * Name to name conditioned some external property
+   */
+  /*   nameResolver?: (name: string) => string */
+
+  encryption?: StorePublicKeyEncryption,
+
+  maxHistory?: number,
+  fetchEntryTimeout?: number,
+  referenceCount?: number,
+  replicationConcurrency?: number,
+  fallbackAccessController?: AccessController<T>,
+  syncLocal?: boolean,
+  sortFn?: ISortFunction,
+  prune?: PruneOptions,
+  typeMap?: { [key: string]: Constructor<any> }
+  onUpdate?: (oplog: Log<T>, entries?: Entry<T>[]) => void,
+  /*   resourceOptions?: ResourceOptions<T>,
+   */
+}
+
+/* export type ResourceOptions<T> = { heapSizeLimit: () => number };
+ */
+
+export interface IInitializationOptions<T> extends IStoreOptions<T>, IInitializationOptionsDefault<T> {
+
+  /* encryption?: {
+    encrypt: (arr: Uint8Array, keyGroup: string) => Promise<{ bytes: Uint8Array, keyId: Uint8Array }>
+    decrypt: (arr: Uint8Array, keyGroup: string, keyId: Uint8Array) => Promise<Uint8Array>
+  }, */
+
+  saveAndResolveStore: (store: StoreLike<any>) => Promise<StoreLike<any>>,
+  resolveCache: (address: Address) => Promise<Cache<CachedValue>> | Cache<CachedValue>
 
 }
 
@@ -174,7 +176,7 @@ export interface IInitializationOptions<T> extends IStoreOptions<T>, IInitializa
   referenceCount: 32,
   replicationConcurrency: 32,
   typeMap: {},
-  encoding: JSON_ENCODING_OPTIONS,
+  encoding: JSON_ENCODING,
   onClose: undefined,
   onDrop: undefined,
   onLoad: undefined,
@@ -192,8 +194,7 @@ interface IInitializationOptionsDefault<T> {
   referenceCount?: number,
   replicationConcurrency?: number,
   typeMap?: { [key: string]: Constructor<any> }
-  encoding?: IOOptions<T>,
-  saveAndResolveStore: (store: Store<any>) => Promise<Store<any>>,
+  saveAndResolveStore: (store: Store<any> | StoreLike<any>) => Promise<StoreLike<any>>,
 
 }
 
@@ -205,9 +206,10 @@ export const DefaultOptions: IInitializationOptionsDefault<any> = {
   replicationConcurrency: 32,
   typeMap: {},
   /* nameResolver: (name: string) => name, */
-  encoding: JSON_ENCODING_OPTIONS,
-  saveAndResolveStore: async (store: Store<any>) => {
-    await store.save(store._ipfs, { pin: true })
+  saveAndResolveStore: async (store: Store<any> | StoreLike<any>) => {
+    if (store instanceof Store) {
+      await store.save(store._ipfs, { pin: true })
+    }
     return store;
   }
 }
@@ -228,6 +230,9 @@ export class Store<T> implements StoreLike<T> {
   @field({ type: option(AccessController) })
   accessController?: AccessController<T> | (StoreLike<any> & AccessController<T>)
 
+  @field({ type: 'u8' })
+  _encoding: EncodingType
+
   // An access controller that is note part of the store manifest, usefull for circular store -> access controller -> store structures
   fallbackAccessController?: AccessController<T> | (StoreLike<any> & AccessController<T>)
 
@@ -236,8 +241,9 @@ export class Store<T> implements StoreLike<T> {
   identity: Identity;
   address: Address;
   dbname: string;
-/*   events: EventEmitter;
- */  remoteHeadsPath: string;
+  /*   events: EventEmitter;
+   */
+  remoteHeadsPath: string;
   localHeadsPath: string;
   snapshotPath: string;
   queuePath: string;
@@ -260,11 +266,12 @@ export class Store<T> implements StoreLike<T> {
   
   */
 
-  constructor(properties?: { /* sharding?: Sharding, */ name?: string, accessController?: AccessController<T> | (StoreLike<any> & AccessController<T>) }) {
+  constructor(properties?: { /* sharding?: Sharding, */ name?: string, encoding?: EncodingType, accessController?: AccessController<T> | (StoreLike<any> & AccessController<T>), }) {
 
     if (properties) {
       this.name = properties.name || uuid();
       this.accessController = properties.accessController;
+      this._encoding = properties.encoding || EncodingType.JSON
       /* this.sharding = properties.sharding || new NoSharding() */
     }
 
@@ -438,6 +445,20 @@ export class Store<T> implements StoreLike<T> {
     return this;
   }
 
+  getEncoding(clazz?: Constructor<T>): Encoding<T> {
+    if (this._encoding === EncodingType.JSON) {
+      return JSON_ENCODING
+    }
+    else if (this._encoding === EncodingType.BORSH) {
+      if (!clazz) {
+        throw new Error("Clazz expected");
+      }
+      return BORSH_ENCODING(clazz)
+    }
+    else {
+      throw new Error("Unexpected");
+    }
+  }
 
   get oplog(): Log<any> {
     return this._oplog;
@@ -453,7 +474,6 @@ export class Store<T> implements StoreLike<T> {
   get logOptions(): LogOptions<T> {
     return {
       logId: this.id,
-      encoding: this.options.encoding,
       encryption: this.options.encryption ? {
         getAnyKeypair: this.options.encryption(this.replicationTopic).getAnyKeypair,
         getEncryptionKeypair: this.options.encryption(this.replicationTopic).getEncryptionKeypair
@@ -480,7 +500,7 @@ export class Store<T> implements StoreLike<T> {
     return options.replicationTopic ? (typeof options.replicationTopic === 'string' ? options.replicationTopic : options.replicationTopic()) : (typeof address === 'string' ? address : address.toString());
   }
 
-  setPublicKey(identity: Identity) {
+  setIdentity(identity: Identity) {
     this.identity = identity
     this._oplog.setIdentity(identity)
   }
@@ -664,7 +684,6 @@ export class Store<T> implements StoreLike<T> {
 
       // TODO Fix types
       head.init({
-        encoding: this._oplog._encoding,
         encryption: this._oplog._encryption
       })
       if (this.accessController) {
@@ -706,7 +725,7 @@ export class Store<T> implements StoreLike<T> {
     return address;
   }
 
-  static load(ipfs: any, address: Address, options?: {
+  static load(ipfs: IPFS, address: Address, options?: {
     timeout?: number;
   }) {
     return load(ipfs, address, Store, options)

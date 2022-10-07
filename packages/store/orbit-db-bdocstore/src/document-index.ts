@@ -1,6 +1,6 @@
 import { Constructor, deserialize, field, variant, vec } from "@dao-xyz/borsh";
 import { asString, Hashable } from "./utils";
-import { Entry } from "@dao-xyz/ipfs-log-entry";
+import { Entry } from "@dao-xyz/ipfs-log";
 import { Log } from "@dao-xyz/ipfs-log";
 import { U8IntArraySerializer } from "@dao-xyz/borsh-utils";
 

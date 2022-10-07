@@ -1,24 +1,23 @@
 
-import assert from 'assert'
-const mapSeries = require('p-each-series')
 import rmrf from 'rimraf'
 
 import { DirectChannel } from '@dao-xyz/ipfs-pubsub-direct-channel'
-import { delay, waitFor, waitForAsync } from '@dao-xyz/time'
-
 import { OrbitDB } from '../orbit-db'
 import { SimpleAccessController } from './utils/access'
-import { EventStore, Operation } from './utils/stores/event-store'
+import { EventStore } from './utils/stores/event-store'
+import { jest } from '@jest/globals';
+import { Controller } from "ipfsd-ctl";
+import { IPFS } from "ipfs-core-types";
 
 // Include test utilities
-const {
-    config,
+import {
+    nodeConfig as config,
     startIpfs,
     stopIpfs,
     testAPIs,
     connectPeers,
     waitForPeers,
-} = require('@dao-xyz/orbit-db-test-utils')
+} from '@dao-xyz/orbit-db-test-utils'
 
 const orbitdbPath1 = './orbitdb/tests/leader/1'
 const orbitdbPath2 = './orbitdb/tests/leader/2'
@@ -32,7 +31,7 @@ Object.keys(testAPIs).forEach(API => {
     describe(`orbit-db - leaders`, function () {
         jest.setTimeout(config.timeout * 2)
 
-        let ipfsd1, ipfsd2, ipfsd3, ipfs1, ipfs2, ipfs3
+        let ipfsd1: Controller, ipfsd2: Controller, ipfsd3: Controller, ipfs1: IPFS, ipfs2: IPFS, ipfs3: IPFS
         let orbitdb1: OrbitDB, orbitdb2: OrbitDB, orbitdb3: OrbitDB, db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>
 
 
@@ -46,7 +45,7 @@ Object.keys(testAPIs).forEach(API => {
             ipfs3 = ipfsd3.api
 
             // Connect the peers manually to speed up test times
-            const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
+            const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
             await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
             console.log("Peers connected")
         })
@@ -107,7 +106,7 @@ Object.keys(testAPIs).forEach(API => {
             // perhaps do an event based get peers using the pubsub peers api
             console.log("Waiting for peers to connect")
 
-            const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
+            const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
             await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
 
             const replicationTopicFn = () => 'x';
@@ -142,7 +141,7 @@ Object.keys(testAPIs).forEach(API => {
 
         it('leader are selected from 1 replicating peer', async () => {
 
-            const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
+            const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
             await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
 
             // TODO fix test timeout, isLeader is too slow as we need to wait for peers
@@ -171,7 +170,7 @@ Object.keys(testAPIs).forEach(API => {
 
         it('leader are selected from 2 replicating peers', async () => {
 
-            const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
+            const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
             await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
             await connectPeers(ipfs2, ipfs3, { filter: isLocalhostAddress })
             await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
@@ -211,7 +210,7 @@ Object.keys(testAPIs).forEach(API => {
 
         it('select leaders for three peers', async () => {
 
-            const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
+            const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
             await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
             await connectPeers(ipfs1, ipfs3, { filter: isLocalhostAddress })
             await connectPeers(ipfs2, ipfs3, { filter: isLocalhostAddress })

@@ -1,24 +1,25 @@
 
 import assert from 'assert'
 import rmrf from 'rimraf'
-import { Entry, LamportClock } from '@dao-xyz/ipfs-log-entry'
-import { BoxKeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { Entry, LamportClock } from '@dao-xyz/ipfs-log'
 import { Store } from '@dao-xyz/orbit-db-store'
 import { delay, waitFor } from '@dao-xyz/time'
 
 import { OrbitDB } from '../orbit-db'
 import { SimpleAccessController } from './utils/access'
 import { EventStore, Operation } from './utils/stores/event-store'
-
+import { jest } from '@jest/globals';
+import { Controller } from "ipfsd-ctl";
+import { IPFS } from "ipfs-core-types";
 // Include test utilities
-const {
-    config,
+import {
+    nodeConfig as config,
     startIpfs,
     stopIpfs,
     testAPIs,
     connectPeers,
     waitForPeers,
-} = require('@dao-xyz/orbit-db-test-utils')
+} from '@dao-xyz/orbit-db-test-utils'
 
 const orbitdbPath1 = './orbitdb/tests/replication/1'
 const orbitdbPath2 = './orbitdb/tests/replication/2'
@@ -30,10 +31,10 @@ Object.keys(testAPIs).forEach(API => {
     describe(`orbit-db - Replication (${API})`, function () {
         jest.setTimeout(config.timeout * 2)
 
-        let ipfsd1, ipfsd2, ipfs1, ipfs2
+        let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS
         let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore<string>, db2: EventStore<string>
 
-        let timer
+        let timer: any
 
         beforeAll(async () => {
             ipfsd1 = await startIpfs(API, config.daemon1)
@@ -41,7 +42,7 @@ Object.keys(testAPIs).forEach(API => {
             ipfs1 = ipfsd1.api
             ipfs2 = ipfsd2.api
             // Connect the peers manually to speed up test times
-            const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
+            const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
             await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
             console.log("Peers connected")
         })
@@ -64,7 +65,7 @@ Object.keys(testAPIs).forEach(API => {
 
             orbitdb1 = await OrbitDB.createInstance(ipfs1, {
                 directory: orbitdbPath1, canAccessKeys: async (requester, _keyToAccess) => {
-                    return requester.equals(orbitdb2.publicKey); // allow orbitdb1 to share keys with orbitdb2
+                    return requester.equals(orbitdb2.identity.publicKey); // allow orbitdb1 to share keys with orbitdb2
                 }, waitForKeysTimout: 1000
             })
             orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2 })
@@ -100,7 +101,7 @@ Object.keys(testAPIs).forEach(API => {
             await db2.add('world');
 
             await waitFor(() => db1.oplog.values.length === 2);
-            expect(db1.oplog.values.map(x => x.payload.value.value)).toContainAllValues(['hello', 'world'])
+            expect(db1.oplog.values.map(x => x.payload.getValue().value)).toContainAllValues(['hello', 'world'])
             expect(db2.oplog.values.length).toEqual(1);
 
         })
@@ -108,15 +109,14 @@ Object.keys(testAPIs).forEach(API => {
         it('encrypted clock sync write 1 entry replicate false', async () => {
             console.log("Waiting for peers to connect")
             await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
-            const encryptionKey = await orbitdb1.keystore.createKey('encryption key', BoxKeyWithMeta, db1.replicationTopic);
+            const encryptionKey = await orbitdb1.keystore.createEd25519Key({ id: 'encryption key', group: db1.replicationTopic });
             db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), { directory: dbPath2, replicate: false, encryption: orbitdb2.replicationTopicEncryption() })
 
             await db1.add('hello', {
                 reciever: {
-                    clock: encryptionKey.publicKey,
-                    publicKey: encryptionKey.publicKey,
-                    payload: encryptionKey.publicKey,
-                    signature: encryptionKey.publicKey
+                    clock: encryptionKey.keypair.publicKey,
+                    payload: encryptionKey.keypair.publicKey,
+                    signature: encryptionKey.keypair.publicKey
                 }
             });
 
@@ -126,7 +126,7 @@ Object.keys(testAPIs).forEach(API => {
             await db2.add('world');
 
             await waitFor(() => db1.oplog.values.length === 2);
-            expect(db1.oplog.values.map(x => x.payload.value.value)).toContainAllValues(['hello', 'world'])
+            expect(db1.oplog.values.map(x => x.payload.getValue().value)).toContainAllValues(['hello', 'world'])
             expect(db2.oplog.values.length).toEqual(1);
         })
 

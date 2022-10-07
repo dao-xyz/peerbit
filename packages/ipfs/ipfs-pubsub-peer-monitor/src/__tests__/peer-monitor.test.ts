@@ -4,6 +4,7 @@ import EventEmitter from 'events'
 import { IpfsPubsubPeerMonitor } from '../index.js'
 import { waitFor } from '@dao-xyz/time';
 import type { PeerId } from '@libp2p/interface-peer-id';
+
 const peers = ['A', 'B', 'C', 'D', 'E']
 const topic = 'tests'
 
@@ -27,7 +28,7 @@ describe('peer monitor', () => {
   it('emits \'join\' event for each peer', async () => {
     let resolved = false;
     let count = 0
-    let res = []
+    let res: PeerId[] = []
     const m = new IpfsPubsubPeerMonitor(mockPubsub, topic, {
       onJoin: (peer) => {
         count++

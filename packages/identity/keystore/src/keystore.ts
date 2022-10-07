@@ -2,7 +2,7 @@ import { Level } from 'level';
 import LRU from 'lru-cache';
 import { variant, field, serialize, deserialize, option, Constructor } from '@dao-xyz/borsh';
 import { U8IntArraySerializer, } from '@dao-xyz/borsh-utils';
-import { X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519PrivateKey, Keypair, X25519Keypair, Ed25519Keypair } from '@dao-xyz/peerbit-crypto';
+import { X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519PrivateKey, Keypair, X25519Keypair, Ed25519Keypair, PublicSignKey } from '@dao-xyz/peerbit-crypto';
 import { waitFor } from '@dao-xyz/time';
 import { createHash, Sign } from 'crypto';
 import sodium, { KeyPair } from 'libsodium-wrappers';
@@ -14,8 +14,8 @@ export interface Type<T> extends Function {
 const PATH_KEY = '.'
 const DEFAULT_KEY_GROUP = '_';
 const getGroupKey = (group: string) => group === DEFAULT_KEY_GROUP ? DEFAULT_KEY_GROUP : createHash('sha1').update(group).digest('base64')
-const getIdKey = (id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519PublicKey): string => {
-  if (id instanceof X25519PublicKey || id instanceof Ed25519PublicKey) {
+const getIdKey = (id: string | Buffer | Uint8Array | PublicSignKey): string => {
+  if (id instanceof PublicSignKey) {
     return id.hashCode()
   }
 
@@ -52,9 +52,7 @@ const publicKeyFromKeyPair = (keypair: Keypair) => {
   throw new Error("Unsupported")
 }
 
-/* import { ready, crypto_sign, crypto_sign_keypair, crypto_sign_verify_detached } from 'libsodium-wrappers';
- */
-//import { ready, crypto_sign_keypair, crypto_sign, crypto_box_keypair, type KeyType as CryptoKeyType, KeyPair } from 'sodium-plus';
+
 /**
  * Node only
  * @param path 
@@ -125,6 +123,14 @@ export class KeyWithMeta<T extends Keypair> {
 
   equals(other: KeyWithMeta<T>, ignoreMissingSecret: boolean = false) {
     return this.timestamp === other.timestamp && this.group === other.group && this.keypair.equals(other.keypair);
+  }
+
+  clone() {
+    return new KeyWithMeta<T>({
+      group: this.group,
+      timestamp: this.timestamp,
+      keypair: this.keypair
+    })
   }
 
 }
@@ -310,7 +316,7 @@ export class Keystore {
   async createX25519Key(options: { id?: string | Buffer | Uint8Array, group?: string, overwrite?: boolean } = {}): Promise<KeyWithMeta<X25519Keypair>> {
     return this.createKey(await X25519Keypair.create(), options)
   }
-  async createKey<T extends Keypair>(keypair: T, options: { id?: string | Buffer | Uint8Array, group?: string, overwrite?: boolean } = {}): Promise<KeyWithMeta<T>> {
+  async createKey<T extends Keypair>(keypair: T, options: { id?: string | Buffer | Uint8Array | PublicSignKey, group?: string, overwrite?: boolean } = {}): Promise<KeyWithMeta<T>> {
     await sodium.ready;
     /*  let key: { secretKey: X25519SecretKey, publicKey: X25519PublicKey } | { secretKey: Ed25519PrivateKey, publicKey: Ed25519PublicKey } = undefined; */
     /* 
@@ -363,13 +369,13 @@ export class Keystore {
     }
   }
 
-  async saveKey<T extends Keypair>(key: KeyWithMeta<T>, options: { id?: string | Buffer | Uint8Array, overwrite?: boolean } = {}): Promise<KeyWithMeta<T>> { // TODO fix types 
-
-
-    const idKey = options.id ? getIdKey(options.id) : await idFromKey(key.keypair);
+  async saveKey<T extends Keypair>(key: KeyWithMeta<T>, options: { id?: string | Buffer | Uint8Array | PublicSignKey, overwrite?: boolean } = {}): Promise<KeyWithMeta<T>> { // TODO fix types 
 
     await this.waitForOpen();
     this.assertOpen();
+
+    const idKey = options.id ? getIdKey(options.id) : await idFromKey(key.keypair);
+
 
 
 
@@ -428,7 +434,7 @@ export class Keystore {
   } */
 
 
-  async getKey<T extends Keypair>(id: string | Buffer | Uint8Array | X25519PublicKey | Ed25519PublicKey, group?: string): Promise<KeyWithMeta<T> | undefined> {
+  async getKey<T extends Keypair>(id: string | Buffer | Uint8Array | PublicSignKey, group?: string): Promise<KeyWithMeta<T> | undefined> {
 
     await this.waitForOpen();
     this.assertOpen();
@@ -453,7 +459,7 @@ export class Keystore {
       let buffer: Uint8Array;
       try {
 
-        buffer = id instanceof X25519PublicKey || id instanceof Ed25519PublicKey ? await this.keyStore.get(publicKeyFromKeyPair(id).hashCode(), { valueEncoding: 'view' }) : await this.groupStore.get(path, { valueEncoding: 'view' });
+        buffer = id instanceof PublicSignKey ? await this.keyStore.get(id.hashCode(), { valueEncoding: 'view' }) : await this.groupStore.get(path, { valueEncoding: 'view' });
       } catch (e: any) {
         // not found
         return
@@ -472,7 +478,7 @@ export class Keystore {
     return loadedKey; // TODO fix types, we make assumptions here
   }
 
-  async getKeys(group: string): Promise<KeyWithMeta<any>[] | null> {
+  async getKeys<T extends Keypair>(group: string): Promise<KeyWithMeta<T>[] | undefined> {
     if (!this._store) {
       await this.openStore()
     }
@@ -497,7 +503,7 @@ export class Keystore {
       return ret;
     } catch (e: any) {
       // not found
-      return Promise.resolve(null)
+      return
     }
   }
 

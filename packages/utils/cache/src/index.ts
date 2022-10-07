@@ -1,9 +1,13 @@
+// @ts-ignore
 import Logger from 'logplease'
 const logger = Logger.create('cache', { color: Logger.Colors.Magenta })
 Logger.setLogLevel('ERROR')
+
 import { serialize, deserialize, Constructor } from '@dao-xyz/borsh';
 import { Level } from 'level';
-export default class Cache {
+
+export default class Cache<T> {
+
   _store: Level;
   constructor(store: Level) {
     this._store = store
@@ -27,7 +31,7 @@ export default class Cache {
     }
   }
 
-  async get(key) {
+  async get<T>(key: string) {
     return new Promise((resolve, reject) => {
       this._store.get(key, (err, value) => {
         if (err) {
@@ -43,7 +47,7 @@ export default class Cache {
   }
 
   // Set value in the cache and return the new value
-  set(key, value) {
+  set(key: string, value: T) {
     return new Promise((resolve, reject) => {
       this._store.put(key, JSON.stringify(value), (err) => {
         if (err) {
@@ -59,9 +63,9 @@ export default class Cache {
     })
   }
 
-  async getBinary<T>(key: string, clazz: Constructor<T>): Promise<T | null> {
+  async getBinary<B extends T>(key: string, clazz: Constructor<B>): Promise<B | null> {
     return new Promise((resolve, reject) => {
-      this._store.get(key, { valueEncoding: 'view' }, (err, value: string) => {
+      this._store.get(key, { valueEncoding: 'view' }, (err: any, value: string | undefined) => {
         if (err) {
           // Ignore error if key was not found
           if (err.toString().indexOf('NotFoundError: Key not found in database') === -1 &&
@@ -80,7 +84,7 @@ export default class Cache {
     })
   }
 
-  setBinary(key: string, value: any) {
+  setBinary<B extends T>(key: string, value: B) {
     const bytes = serialize(value);
     this._store.put(key, bytes, {
       valueEncoding: 'view'

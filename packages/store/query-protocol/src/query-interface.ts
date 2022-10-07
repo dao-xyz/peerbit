@@ -15,7 +15,7 @@ export class QueryType {
 export class MultipleQueriesType extends QueryType {
 
     @field({ type: vec(Query) })
-    queries: Query[]
+    queries!: Query[]
 
     constructor(props?: {
         queries: Query[]

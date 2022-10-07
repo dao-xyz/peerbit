@@ -7,7 +7,7 @@ import { Keystore } from '@dao-xyz/orbit-db-keystore'
 import { Identities } from "../identities"
 const keypath = path.resolve(__dirname, 'keys')
 import nacl from "tweetnacl";
-import { Ed25519PublicKey } from 'sodium-plus';
+import { Ed25519PublicKey } from '@dao-xyz/peerbit-crypto';
 import { SolanaIdentityProvider } from "../solana-identity-provider";
 import { joinUint8Arrays } from "@dao-xyz/borsh-utils";
 let keystore: Keystore

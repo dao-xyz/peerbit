@@ -50,7 +50,6 @@
   },
   "dependencies": {
     "@solana/web3.js": "^1.41.3",
-    "bs58": "^5.0.0",
     "@dao-xyz/borsh": "^3.2.5",
     "@dao-xyz/peerbit-crypto": "^0.0.1",
     "@ethersproject/wallet": "^5.7.0",

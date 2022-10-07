@@ -5,14 +5,19 @@ import path from 'path'
 import { OrbitDB } from '../orbit-db'
 import { createStore } from './storage.js'
 import CustomCache from '@dao-xyz/orbit-db-cache'
+import { jest } from '@jest/globals';
+import { Controller } from "ipfsd-ctl";
+import { IPFS } from "ipfs-core-types";
 
 // Include test utilities
-const {
-  config,
+import {
+  nodeConfig as config,
   startIpfs,
   stopIpfs,
   testAPIs,
-} = require('@dao-xyz/orbit-db-test-utils')
+} from '@dao-xyz/orbit-db-test-utils'
+import { EventStore } from './utils/stores'
+import { SimpleAccessController } from './utils/access'
 
 const {
   databases
@@ -24,7 +29,7 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Use a Custom Cache (${API})`, function () {
     jest.setTimeout(20000)
 
-    let ipfsd: Controller, ipfs: IPFS, orbitdb1, store
+    let ipfsd: Controller, ipfs: IPFS, orbitdb1: OrbitDB, store
 
     beforeAll(async () => {
       store = await createStore("local")

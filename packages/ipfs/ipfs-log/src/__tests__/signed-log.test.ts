@@ -131,7 +131,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       expect(err).toEqual(undefined)
       expect(log1._id).toEqual('A')
       expect(log1.values.length).toEqual(1)
-      expect(log1.values[0].payload.value).toEqual('one')
+      expect(log1.values[0].payload.getValue()).toEqual('one')
     })
 
 
@@ -160,7 +160,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const entry = log2.values[0]
       expect(err).toEqual(`Error: Could not validate signature "${await entry.signature}" for entry "${entry.hash}" and key "${(await entry.publicKey)}"`)
       expect(log1.values.length).toEqual(1)
-      expect(log1.values[0].payload.value).toEqual('one')
+      expect(log1.values[0].payload.getValue()).toEqual('one')
     })
 
     it('throws an error if entry doesn\'t have append access', async () => {

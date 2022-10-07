@@ -1,20 +1,21 @@
 
-import assert from 'assert'
-const mapSeries = require('p-each-series')
+import mapSeries from 'p-each-series'
 import rmrf from 'rimraf'
 import { OrbitDB } from '../orbit-db'
 import { SimpleAccessController } from './utils/access'
 import { EventStore } from './utils/stores'
-
+import { jest } from '@jest/globals';
+import { Controller } from "ipfsd-ctl";
+import { IPFS } from "ipfs-core-types";
 // Include test utilities
-const {
-  config,
+import {
+  nodeConfig as config,
   startIpfs,
   stopIpfs,
   connectPeers,
   waitForPeers,
   testAPIs,
-} = require('@dao-xyz/orbit-db-test-utils')
+} from '@dao-xyz/orbit-db-test-utils'
 
 const dbPath1 = './orbitdb/tests/multiple-databases/1'
 const dbPath2 = './orbitdb/tests/multiple-databases/2'
@@ -25,7 +26,7 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Multiple Databases`, function () {
     jest.setTimeout(config.timeout)
 
-    let ipfsd1, ipfsd2, ipfsd3, ipfs1, ipfs2, ipfs3
+    let ipfsd1: Controller, ipfsd2: Controller, ipfsd3: Controller, ipfs1: IPFS, ipfs2: IPFS, ipfs3: IPFS
     let orbitdb1: OrbitDB, orbitdb2: OrbitDB, orbitdb3: OrbitDB
 
     let localDatabases: EventStore<string>[] = []
@@ -49,7 +50,7 @@ Object.keys(testAPIs).forEach(API => {
       ipfs3 = ipfsd3.api
 
       // Connect the peers manually to speed up test times
-      const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
+      const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
       await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
       await connectPeers(ipfs2, ipfs3, { filter: isLocalhostAddress })
 

@@ -5,14 +5,17 @@ import { EventStore } from "./utils/stores/event-store"
 
 import assert from 'assert'
 import rmrf from 'rimraf'
+import { jest } from '@jest/globals';
+import { Controller } from "ipfsd-ctl";
+import { IPFS } from "ipfs-core-types";
 
 // Include test utilities
-const {
-  config,
+import {
+  nodeConfig as config,
   startIpfs,
   stopIpfs,
   testAPIs,
-} = require('@dao-xyz/orbit-db-test-utils')
+} from '@dao-xyz/orbit-db-test-utils'
 
 const dbPath1 = './orbitdb/tests/create-open/1'
 const dbPath2 = './orbitdb/tests/create-open/2'
@@ -66,7 +69,7 @@ Object.keys(testAPIs).forEach(API => {
       await db.load()
       await db.add('hello2')
 
-      const db2 = await orbitdb2.open(await EventStore.load(orbitdb2._ipfs, db.address))
+      const db2 = await orbitdb2.open(await EventStore.load<string>(orbitdb2._ipfs, db.address))
       await db2.sync(db._oplog.heads)
 
       return new Promise((resolve, reject) => {

@@ -1,9 +1,11 @@
 import pMap from 'p-map'
 import pDoWhilst from 'p-do-whilst'
-import { Entry, IOOptions } from './entry';
+import { Entry } from './entry';
 import { IPFS } from 'ipfs-core-types'
-import { PublicKeyEncryption, PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
+import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { max, min } from './utils';
+import { Encoding } from './encoding';
+
 //@ts-ignore
 import Logger from 'logplease'
 const logger = Logger.create('entry-io', { color: Logger.Colors.Yellow })
@@ -11,8 +13,8 @@ Logger.setLogLevel('ERROR')
 const hasItems = (arr: any[]) => arr && arr.length > 0
 
 
-export interface EntryFetchOptions<T> { length?: number, timeout?: number, exclude?: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency?: number, encryption?: PublicKeyEncryptionResolver, encoding?: IOOptions<T> }
-interface EntryFetchStrictOptions<T> { length: number, timeout?: number, exclude: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency: number, encryption?: PublicKeyEncryptionResolver, encoding: IOOptions<T> }
+export interface EntryFetchOptions<T> { length?: number, timeout?: number, exclude?: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency?: number, encryption?: PublicKeyEncryptionResolver }
+interface EntryFetchStrictOptions<T> { length: number, timeout?: number, exclude: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency: number, encryption?: PublicKeyEncryptionResolver }
 
 export interface EntryFetchAllOptions<T> extends EntryFetchOptions<T> { shouldExclude?: (string: string) => boolean, onStartProgressCallback?: any, delay?: number }
 interface EntryFetchAllStrictOptions<T> extends EntryFetchStrictOptions<T> { shouldExclude?: (string: string) => boolean, onStartProgressCallback?: any, delay: number }
@@ -151,7 +153,7 @@ export class EntryIO {
 
         const addToResults = async (entry: Entry<T>) => {
           if (!cache[entry.hash] && !shouldExclude(entry.hash)) {
-            entry.init({ encryption: options.encryption, encoding: options.encoding });
+            entry.init({ encryption: options.encryption });
 
 
             // Todo check bigint conversions

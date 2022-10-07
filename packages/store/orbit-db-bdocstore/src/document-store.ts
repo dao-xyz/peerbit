@@ -7,7 +7,7 @@ import { BinaryPayload } from '@dao-xyz/bpayload';
 import { arraysEqual } from '@dao-xyz/borsh-utils';
 import { AccessController, Store, IInitializationOptions, Address, load } from '@dao-xyz/orbit-db-store';
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
-import { IOOptions, Payload } from '@dao-xyz/ipfs-log-entry';
+import { Encoding, Payload } from '@dao-xyz/ipfs-log';
 const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement)
 /* 
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
@@ -114,7 +114,7 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
     return await super.init(ipfs, key, sign, { ...options, encoding: this.encoding, onUpdate: this._index.updateIndex.bind(this._index) })
   }
 
-  get encoding(): IOOptions<any> {
+  get encoding(): Encoding<any> {
     return _encoding;
   }
 

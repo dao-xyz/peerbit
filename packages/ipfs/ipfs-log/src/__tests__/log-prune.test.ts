@@ -67,7 +67,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await log.append('hello2')
       await log.append('hello3')
       expect(log.length).toEqual(1);
-      expect(log.values[0].payload.value).toEqual('hello3');
+      expect(log.values[0].payload.getValue()).toEqual('hello3');
     })
 
     it('cut back to cut length', async () => {
@@ -81,7 +81,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       expect(log.length).toEqual(3);
       await log.append('hello4')
       expect(log.length).toEqual(1); // We exceed 'maxLength' and cut back to 'cutToLength'
-      expect(log.values[0].payload.value).toEqual('hello4');
+      expect(log.values[0].payload.getValue()).toEqual('hello4');
     })
   })
 })

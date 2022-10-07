@@ -1,12 +1,14 @@
 import { variant, field, vec, option, serialize } from '@dao-xyz/borsh';
 import { delay } from '@dao-xyz/time';
-import { Message } from './message.js';
+import { ProtocolMessage } from './message.js';
+// @ts-ignore
 import isNode from 'is-node';
-import { MaybeSigned, PublicKey } from '@dao-xyz/peerbit-crypto';
+import { MaybeSigned, PublicSignKey } from '@dao-xyz/peerbit-crypto';
 import { DecryptedThing, PublicKeyEncryption } from "@dao-xyz/peerbit-crypto";
 import { Address, Store, StoreLike } from '@dao-xyz/orbit-db-store';
 import { OrbitDB } from './orbit-db.js';
 import { StringSetSerializer } from '@dao-xyz/borsh-utils';
+// @ts-ignore
 import { v4 as uuid } from 'uuid';
 let v8 = undefined;
 if (isNode) {
@@ -17,7 +19,7 @@ export const WAIT_FOR_PEERS_TIME = 5000;
 
 
 @variant([2, 0])
-export class ReplicatorInfo extends Message {
+export class ReplicatorInfo extends ProtocolMessage {
 
     @field({ type: option('string') })
     fromId?: string;
@@ -58,7 +60,7 @@ export class ReplicatorInfo extends Message {
 }
 
 @variant([2, 1])
-export class RequestReplicatorInfo extends Message {
+export class RequestReplicatorInfo extends ProtocolMessage {
 
     @field({ type: 'string' })
     id: string;
@@ -91,7 +93,7 @@ export class RequestReplicatorInfo extends Message {
 
 export interface PeerInfoWithMeta {
     peerInfo: ReplicatorInfo
-    publicKey: PublicKey
+    publicKey: PublicSignKey
 }
 /* return new PeerInfo({
     key: this._shard.peer.orbitDB.identity,
@@ -146,7 +148,7 @@ export interface PeerInfoWithMeta {
 }
  */
 
-export const requestPeerInfo = async (serializedRequest: Uint8Array, replicationTopic: string, publish: (topic: string, message: Uint8Array) => Promise<void>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
+export const requestPeerInfo = async (serializedRequest: Uint8Array, replicationTopic: string, publish: (topic: string, message: Uint8Array) => Promise<void>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicSignKey }>) => {
 
     const signedMessage = await new MaybeSigned({
         data: serializedRequest
@@ -158,7 +160,7 @@ export const requestPeerInfo = async (serializedRequest: Uint8Array, replication
     return publish(replicationTopic, serialize(decryptedMessage))
 }
 
-export const exchangePeerInfo = async (fromId: string, replicationTopic: string, store: StoreLike<any>, heads: string[] | undefined, publish: (message: Uint8Array) => Promise<void>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
+export const exchangePeerInfo = async (fromId: string, replicationTopic: string, store: StoreLike<any>, heads: string[] | undefined, publish: (message: Uint8Array) => Promise<void>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicSignKey }>) => {
 
     const signedMessage = await new MaybeSigned({
         data: serialize(new ReplicatorInfo({
@@ -188,7 +190,7 @@ export class ResourceRequirement {
 @variant(0)
 export class NoResourceRequirement extends ResourceRequirement { }
 
-@variant(1)
+/* @variant(1)
 export class HeapSizeRequirement extends ResourceRequirement {
 
     @field({ type: 'u64' })
@@ -210,39 +212,5 @@ export class HeapSizeRequirement extends ResourceRequirement {
     }
 
 
-}
+} */
 
-/* 
-@variant([2, 2])
-export class RequestReplication extends Message {
-
-    @field({ type: 'string' })
-    replicationTopic: string
-
-    @field({ type: Store })
-    store: Store<any> // address
-
-
-    @field({ type: vec(Entry) })
-    heads: Entry<any>[] // address
-
-
-    @field({ type: vec(ResourceRequirement) })
-    resourceRequirements: ResourceRequirement[];
-
-    constructor(props?: {
-        resourceRequirements: ResourceRequirement[],
-        replicationTopic: string,
-        store: Store<any>,
-        heads?: Entry<any>[]
-    }) {
-        super();
-        if (props) {
-            this.replicationTopic = props.replicationTopic;
-            this.store = props.store;
-            this.resourceRequirements = props.resourceRequirements;
-            this.heads = props.heads || [];
-        }
-    }
-}
- */

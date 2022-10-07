@@ -95,7 +95,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       expect(index._index.length).toEqual(10)
 
       for (let i = 0; i < writes; i++) {
-        assert.strictEqual((index._index[i] as Entry<any>).payload.value.step, i)
+        assert.strictEqual((index._index[i] as Entry<any>).payload.getValue().step, i)
       }
     })
 

@@ -33,7 +33,6 @@
   "homepage": "https://github.com/orbitdb/orbit-db-access-controllers#readme",
   "dependencies": {
     "p-map-series": "^3.0.0",
-    "@dao-xyz/ipfs-log-entry": "^5.5.15",
     "@dao-xyz/ipfs-log": "^5.5.15",
     "@dao-xyz/orbit-db-store": "^0.0.20",
     "@dao-xyz/orbit-db": "^0.29.17",

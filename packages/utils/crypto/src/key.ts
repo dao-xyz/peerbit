@@ -34,6 +34,8 @@ class Key extends Crypto {
 @variant(1)
 export class Keypair extends Crypto {
 
+    publicKey: PublicSignKey | PublicKeyEncryptionKey
+
     static async create(): Promise<Keypair> {
         throw new Error("Not implemented")
     }

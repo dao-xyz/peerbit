@@ -1,19 +1,19 @@
 
-import assert from 'assert'
-const mapSeries = require('p-each-series')
 import rmrf from 'rimraf'
 import { OrbitDB } from '../orbit-db'
 import { EventStore } from './utils/stores/event-store'
-
+import { jest } from '@jest/globals';
+import { Controller } from "ipfsd-ctl";
+import { IPFS } from "ipfs-core-types";
 // Include test utilities
-const {
-    config,
+import {
+    nodeConfig as config,
     startIpfs,
     stopIpfs,
     testAPIs,
     connectPeers,
     waitForPeers,
-} = require('@dao-xyz/orbit-db-test-utils')
+} from '@dao-xyz/orbit-db-test-utils'
 
 const orbitdbPath1 = './orbitdb/tests/resiliance/1'
 const orbitdbPath2 = './orbitdb/tests/resiliance/2'
@@ -24,7 +24,7 @@ const API = 'js-ipfs';
 describe(`orbit-db - Resiliance (ipfs-js)`, function () {
     jest.setTimeout(config.timeout * 2)
 
-    let ipfsd1, ipfsd2, ipfs1, ipfs2
+    let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS
     let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore<string>, db2: EventStore<string>
 
 
@@ -34,7 +34,7 @@ describe(`orbit-db - Resiliance (ipfs-js)`, function () {
         ipfs1 = ipfsd1.api
         ipfs2 = ipfsd2.api
         // Connect the peers manually to speed up test times
-        const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
+        const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
         await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
         console.log("Peers connected")
     })

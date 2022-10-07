@@ -1,7 +1,6 @@
 import { AccessController, Store } from '@dao-xyz/orbit-db-store'
 import { FeedIndex } from './feed-index.js'
 import { field, serialize } from '@dao-xyz/borsh';
-import bs58 from 'bs58';
 export const BINARY_FEED_STORE_TYPE = 'bfeed_store';
 
 export interface Operation<T> {

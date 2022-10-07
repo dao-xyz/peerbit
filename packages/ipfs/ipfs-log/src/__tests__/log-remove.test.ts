@@ -61,9 +61,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 const h3 = await log.append('hello3')
                 expect(log.values instanceof Array).toEqual(true)
                 expect(log.length).toEqual(3)
-                expect(log.values[0].payload.value).toEqual('hello1')
-                expect(log.values[1].payload.value).toEqual('hello2')
-                expect(log.values[2].payload.value).toEqual('hello3')
+                expect(log.values[0].payload.getValue()).toEqual('hello1')
+                expect(log.values[1].payload.getValue()).toEqual('hello2')
+                expect(log.values[2].payload.getValue()).toEqual('hello3')
                 log.removeAll([h3]);
                 expect(log.length).toEqual(0)
                 expect(log.values.length).toEqual(0)

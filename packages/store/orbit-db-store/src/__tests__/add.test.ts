@@ -3,7 +3,7 @@ import assert, { rejects } from 'assert'
 import { Store, DefaultOptions, HeadsCache } from '../store.js'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
 import { Keystore, KeyWithMeta } from "@dao-xyz/orbit-db-keystore"
-import { Entry, JSON_ENCODING_OPTIONS } from '@dao-xyz/ipfs-log'
+import { Entry, JSON_ENCODING } from '@dao-xyz/ipfs-log'
 import { createStore } from './storage.js'
 import { SimpleAccessController, SimpleIndex } from './utils.js'
 import { Address } from '../io.js'
@@ -70,7 +70,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const heads = await store.oplog.heads;
         expect(heads.length).toEqual(1)
         assert(Address.isValid(store.address))
-        assert.deepStrictEqual(entry.payload.value, data)
+        assert.deepStrictEqual(entry.payload.getValue(), data)
         expect(store.replicationStatus.progress).toEqual(1n)
         expect(store.replicationStatus.max).toEqual(1n)
         assert.deepStrictEqual(index._index, heads)
@@ -78,10 +78,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           if (!localHeads) {
             fail();
           }
-          localHeads.heads[0].init({
-            encoding: JSON_ENCODING_OPTIONS
-          });
-          assert.deepStrictEqual(localHeads.heads[0].payload.value, data)
+          assert.deepStrictEqual(localHeads.heads[0].payload.getValue(), data)
           assert(localHeads.heads[0].equals(heads[0]))
           expect(heads.length).toEqual(1)
           expect(localHeads.heads.length).toEqual(1)
@@ -128,10 +125,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             if (!localHeads) {
               fail();
             }
-            localHeads.heads[0].init({
-              encoding: JSON_ENCODING_OPTIONS
-            });
-            assert.deepStrictEqual(localHeads.heads[0].payload.value, index._index[2].payload.value)
+            assert.deepStrictEqual(localHeads.heads[0].payload.getValue(), index._index[2].payload.getValue())
             done = true;
           })
         }

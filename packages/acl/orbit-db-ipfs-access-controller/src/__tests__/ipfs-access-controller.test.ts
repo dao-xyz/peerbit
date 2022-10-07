@@ -8,7 +8,7 @@ import { Ed25519PublicKey } from '@dao-xyz/peerbit-crypto';
 
 // Include test utilities
 import {
-  config,
+  nodeConfig as config,
   startIpfs,
   stopIpfs,
   testAPIs
@@ -20,7 +20,7 @@ const dbPath2 = './orbitdb/tests/ipfs-access-controller/2'
 describe(`orbit-db - IPFSAccessController`, function () {
   jest.setTimeout(config.timeout)
 
-  let ipfsd1, ipfsd2, ipfs1, ipfs2, signKey1: KeyWithMeta<Ed25519Keypair>, signKey2: KeyWithMeta<Ed25519Keypair>
+  let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS, signKey1: KeyWithMeta<Ed25519Keypair>, signKey2: KeyWithMeta<Ed25519Keypair>
   let orbitdb1: OrbitDB, orbitdb2: OrbitDB
 
   beforeAll(async () => {
@@ -35,8 +35,8 @@ describe(`orbit-db - IPFSAccessController`, function () {
     const keystore1 = new Keystore(dbPath1 + '/keys')
     const keystore2 = new Keystore(dbPath2 + '/keys')
 
-    signKey1 = await keystore1.createKey(new Uint8Array([0]), KeyWithMeta<Ed25519Keypair>)
-    signKey2 = await keystore2.createKey(new Uint8Array([1]), KeyWithMeta<Ed25519Keypair>)
+    signKey1 = await keystore1.createEd25519Key({ id: new Uint8Array([0]) })
+    signKey2 = await keystore2.createEd25519Key({ id: new Uint8Array([1]) })
 
     orbitdb1 = await OrbitDB.createInstance(ipfs1, {
       directory: dbPath1,

@@ -1,4 +1,4 @@
-import { Payload } from '@dao-xyz/ipfs-log-entry';
+import { Payload } from '@dao-xyz/ipfs-log';
 import io from '@dao-xyz/io-utils'
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
 import { variant, field, vec } from '@dao-xyz/borsh';

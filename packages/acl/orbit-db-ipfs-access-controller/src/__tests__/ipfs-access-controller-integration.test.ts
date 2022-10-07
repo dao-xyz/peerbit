@@ -20,7 +20,7 @@ const API = 'js-ipfs'
 describe(`orbit-db - IPFSAccessController Integration`, function () {
   jest.setTimeout(config.timeout)
 
-  let ipfsd1, ipfsd2, ipfs1, ipfs2, signKey1: KeyWithMeta<Ed25519Keypair>, signKey2: KeyWithMeta<Ed25519Keypair>
+  let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS, signKey1: KeyWithMeta<Ed25519Keypair>, signKey2: KeyWithMeta<Ed25519Keypair>
   let orbitdb1: OrbitDB, orbitdb2: OrbitDB
 
   beforeAll(async () => {
@@ -32,14 +32,14 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
     ipfs2 = ipfsd2.api
 
     // Connect the peers manually to speed up test times
-    const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
+    const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
     await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
 
     const keystore1 = new Keystore(dbPath1 + '/keys')
     const keystore2 = new Keystore(dbPath2 + '/keys')
 
-    signKey1 = await keystore1.createKey(new Uint8Array([0]), KeyWithMeta<Ed25519Keypair>)
-    signKey2 = await keystore2.createKey(new Uint8Array([1]), KeyWithMeta<Ed25519Keypair>)
+    signKey1 = await keystore1.createEd25519Key({ id: new Uint8Array([0]) })
+    signKey2 = await keystore2.createEd25519Key({ id: new Uint8Array([1]) })
 
     orbitdb1 = await OrbitDB.createInstance(ipfs1, {
       directory: dbPath1,
@@ -129,7 +129,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
           err = e.toString()
         }
 
-        const res = await db.iterator().collect().map(e => e.payload.value.value)
+        const res = await db.iterator().collect().map(e => e.payload.getValue().value)
         expect(err).toEqual(undefined)
         expect(res).toEqual(['hello?'])
       })
@@ -143,7 +143,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
           err = e
         }
 
-        const res = await db2.iterator().collect().map(e => e.payload.value.value)
+        const res = await db2.iterator().collect().map(e => e.payload.getValue().value)
         expect(err.message).toEqual(`Could not append Entry<T>, key "${db2.publicKey}" is not allowed to write to the log`)
         expect(res.includes('hello!!')).toEqual(false)
       })

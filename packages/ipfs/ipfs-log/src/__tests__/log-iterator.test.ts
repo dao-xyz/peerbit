@@ -106,7 +106,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          expect(entry.payload.value).toEqual('entry' + (67 - i++))
+          expect(entry.payload.getValue()).toEqual('entry' + (67 - i++))
         }
         expect(i).toEqual(amount)
 
@@ -123,7 +123,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          expect(entry.payload.value).toEqual('entry' + (72 - i++))
+          expect(entry.payload.getValue()).toEqual('entry' + (72 - i++))
         }
         expect(i).toEqual(amount)
       })
@@ -140,7 +140,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          expect(entry.payload.value).toEqual('entry' + (79 - i++))
+          expect(entry.payload.getValue()).toEqual('entry' + (79 - i++))
         }
         expect(i).toEqual(amount);
       })
@@ -213,7 +213,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          expect(entry.payload.value).toEqual('entry' + (100 - i++))
+          expect(entry.payload.getValue()).toEqual('entry' + (100 - i++))
         }
       })
 
@@ -232,7 +232,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          expect(entry.payload.value).toEqual('entry' + (100 - i++))
+          expect(entry.payload.getValue()).toEqual('entry' + (100 - i++))
         }
       })
 
@@ -251,7 +251,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          expect(entry.payload.value).toEqual('entry' + (66 - i++))
+          expect(entry.payload.getValue()).toEqual('entry' + (66 - i++))
         }
       })
 
@@ -270,7 +270,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         let i = 0
         for (const entry of it) {
-          expect(entry.payload.value).toEqual('entry' + (67 - i++))
+          expect(entry.payload.getValue()).toEqual('entry' + (67 - i++))
         }
       })
     })
@@ -301,7 +301,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           amount: 6
         })
 
-        assert.deepStrictEqual([...it].map(e => e.payload.value),
+        assert.deepStrictEqual([...it].map(e => e.payload.getValue()),
           ['entryA10', 'entryA9', 'entryA8', 'entryA7', 'entryC0', 'entryA6'])
       })
 

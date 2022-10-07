@@ -5,7 +5,7 @@ import { AccessError } from "@dao-xyz/peerbit-crypto";
 import { DocumentQueryRequest, QueryRequestV0, QueryResponseV0, ResultWithSource } from '@dao-xyz/query-protocol';
 import { query } from '@dao-xyz/orbit-db-query-store';
 import { Ed25519PublicKey, Secp256k1PublicKey } from '@dao-xyz/peerbit-crypto';
-import { SodiumPlus } from 'sodium-plus';
+import sodium from 'libsodium-wrappers';
 import { Wallet } from '@ethersproject/wallet'
 
 

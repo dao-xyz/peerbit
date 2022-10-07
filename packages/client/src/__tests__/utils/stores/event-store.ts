@@ -1,28 +1,29 @@
-import { Log } from "@dao-xyz/ipfs-log";
-import { Entry } from "@dao-xyz/ipfs-log-entry";
-import { Address, JSON_ENCODER, load } from "@dao-xyz/orbit-db-store";
+import { Identity, JSON_ENCODING, Log } from "@dao-xyz/ipfs-log";
+import { Entry } from "@dao-xyz/ipfs-log";
+import { Address, IInitializationOptions, load } from "@dao-xyz/orbit-db-store";
 import { Store } from "@dao-xyz/orbit-db-store"
-import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry';
+import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log';
 import { AccessController } from "@dao-xyz/orbit-db-store";
 import { variant } from '@dao-xyz/borsh';
+import { EncodingType } from "@dao-xyz/orbit-db-store/lib/esm/encoding";
 
 // TODO: generalize the Iterator functions and spin to its own module
 export interface Operation<T> {
     op: string
-    key: string
-    value: T
+    key?: string
+    value?: T
 }
 export class EventIndex<T> {
-    _index: Log<T>;
+    _index: Log<Operation<T>>;
     constructor() {
-        this._index = null
+        this._index = null as any;
     }
 
     get() {
         return this._index ? this._index.values : []
     }
 
-    async updateIndex(oplog, entries?: []) {
+    async updateIndex(oplog: Log<Operation<T>>, entries?: Entry<Operation<T>>[] | undefined) {
         this._index = oplog
     }
 }
@@ -30,22 +31,21 @@ export class EventIndex<T> {
 @variant(0)
 export class EventStore<T> extends Store<Operation<T>> {
 
-    _index: EventIndex<Operation<T>>;
+    _index: EventIndex<T>;
 
     constructor(properties: {
         name?: string;
         accessController?: AccessController<Operation<T>>;
     }) {
-        super(properties)
+        super({ ...properties, encoding: EncodingType.JSON })
         this._index = new EventIndex();
     }
 
-    async init(ipfs: any, key, sign, options: any) {
-        if (options.encoding === undefined) Object.assign(options, { encoding: JSON_ENCODER })
-        return super.init(ipfs, key, sign, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
+    async init(ipfs: any, identity: Identity, options: IInitializationOptions<Operation<T>>) {
+        return super.init(ipfs, identity, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
     }
 
-    add(data, options?: {
+    add(data: any, options?: {
         onProgressCallback?: (any: any) => void;
         pin?: boolean;
         reciever?: EncryptionTemplateMaybeEncrypted,
@@ -53,16 +53,15 @@ export class EventStore<T> extends Store<Operation<T>> {
     }) {
         return this._addOperation({
             op: 'ADD',
-            key: null,
             value: data
         }, options)
     }
 
-    get(hash) {
+    get(hash: string) {
         return this.iterator({ gte: hash, limit: 1 }).collect()[0]
     }
 
-    iterator(options?) {
+    iterator(options?: any) {
         const messages = this._query(options)
         let currentIndex = 0
         let iterator = {
@@ -70,7 +69,7 @@ export class EventStore<T> extends Store<Operation<T>> {
                 return this
             },
             next() {
-                let item: { value?: Entry<Operation<T>>, done: boolean } = { value: null, done: true }
+                let item: { value?: Entry<Operation<T>>, done: boolean } = { value: undefined, done: true }
                 if (currentIndex < messages.length) {
                     item = { value: messages[currentIndex], done: false }
                     currentIndex++
@@ -83,7 +82,7 @@ export class EventStore<T> extends Store<Operation<T>> {
         return iterator
     }
 
-    _query(opts) {
+    _query(opts: any) {
         if (!opts) opts = {}
 
         const amount = opts.limit ? (opts.limit > -1 ? opts.limit : this._index.get().length) : 1 // Return 1 if no limit is provided
@@ -105,7 +104,7 @@ export class EventStore<T> extends Store<Operation<T>> {
         return result
     }
 
-    _read(ops: Entry<Operation<T>>[], hash, amount, inclusive) {
+    _read(ops: Entry<Operation<T>>[], hash: string, amount: number, inclusive: boolean) {
         // Find the index of the gt/lt hash, or start from the beginning of the array if not found
         const index = ops.map((e) => e.hash).indexOf(hash)
         let startIndex = Math.max(index, 0)
@@ -123,7 +122,7 @@ export class EventStore<T> extends Store<Operation<T>> {
         if (instance instanceof EventStore === false) {
             throw new Error("Unexpected")
         };
-        return instance as EventStore<T>;
+        return instance as EventStore<T>
     }
 
 }

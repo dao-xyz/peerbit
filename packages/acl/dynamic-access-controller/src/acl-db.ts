@@ -2,10 +2,11 @@ import { field, variant } from '@dao-xyz/borsh';
 import { BinaryDocumentStore, Operation } from '@dao-xyz/orbit-db-bdocstore';
 import { getFromByToGenerator, RegionAccessController, RelationAccessController } from '@dao-xyz/orbit-db-trust-web';
 import { Access, AccessData, AccessType } from './access';
-import { Entry } from '@dao-xyz/ipfs-log-entry'
+import { Entry } from '@dao-xyz/ipfs-log'
 import { PublicKey } from '@dao-xyz/peerbit-crypto';
 import { Address, IInitializationOptions, StoreLike } from '@dao-xyz/orbit-db-store';
 import { Log } from '@dao-xyz/ipfs-log';
+// @ts-ignore
 import { v4 as uuid } from 'uuid';
 import Cache from '@dao-xyz/orbit-db-cache';
 

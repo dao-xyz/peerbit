@@ -129,9 +129,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         },
           { logId: 'A', entries: [one, two, three] })
         expect(log.length).toEqual(3)
-        expect(log.values[0].payload.value).toEqual('entryA')
-        expect(log.values[1].payload.value).toEqual('entryB')
-        expect(log.values[2].payload.value).toEqual('entryC')
+        expect(log.values[0].payload.getValue()).toEqual('entryA')
+        expect(log.values[1].payload.getValue()).toEqual('entryB')
+        expect(log.values[2].payload.getValue()).toEqual('entryC')
       })
 
       it('sets heads if given as params', async () => {
@@ -295,7 +295,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             data: new Uint8Array(Buffer.from('one'))
           }))
         });
-        const gid = new Uint8Array([1, 2, 3]);
+        const gid = 'gid';
 
         expectedData = new Entry<string>({
           payload,
@@ -494,7 +494,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           }, hash, { length: -1 })
           expect(JSON.stringify(res.toJSON())).toEqual(JSON.stringify(expectedData))
           expect(res.length).toEqual(1)
-          expect(res.values[0].payload.value).toEqual('one')
+          expect(res.values[0].payload.getValue()).toEqual('one')
           assert.deepStrictEqual(res.values[0].clock.id, signKey.keypair.publicKey)
           expect(res.values[0].clock.time).toEqual(1)
         })
@@ -506,11 +506,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
           }, hash, { length: -1 })
           expect(res.length).toEqual(3)
-          expect(res.values[0].payload.value).toEqual('one')
+          expect(res.values[0].payload.getValue()).toEqual('one')
           expect(res.values[0].clock.time).toEqual(0n)
-          expect(res.values[1].payload.value).toEqual('two')
+          expect(res.values[1].payload.getValue()).toEqual('two')
           expect(res.values[1].clock.time).toEqual(1n)
-          expect(res.values[2].payload.value).toEqual('three')
+          expect(res.values[2].payload.getValue()).toEqual('three')
           expect(res.values[2].clock.time).toEqual(2n)
         })
 
@@ -531,7 +531,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           }, multihash, { length: -1 })
           expect(JSON.stringify(res.toJSON())).toEqual(JSON.stringify(expectedData))
           expect(res.length).toEqual(1)
-          expect(res.values[0].payload.value).toEqual('one')
+          expect(res.values[0].payload.getValue()).toEqual('one')
           expect(res.values[0].clock.id).toEqual(signKey.keypair.publicKey)
           expect(res.values[0].clock.time).toEqual(1)
         })
@@ -545,7 +545,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           expect(res.length).toEqual(3)
           await res.append('four')
           expect(res.length).toEqual(4)
-          expect(res.values[3].payload.value).toEqual('four')
+          expect(res.values[3].payload.getValue()).toEqual('four')
           expect(res.values[3].clock.time).toEqual(3n)
         })
 
@@ -574,9 +574,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
           }, hash, { length: -1 })
           expect(res.length).toEqual(3)
           expect(res.heads.length).toEqual(3)
-          expect(res.heads[2].payload.value).toEqual('three')
-          expect(res.heads[1].payload.value).toEqual('two') // order is determined by the identity's publicKey
-          expect(res.heads[0].payload.value).toEqual('one')
+          expect(res.heads[2].payload.getValue()).toEqual('three')
+          expect(res.heads[1].payload.getValue()).toEqual('two') // order is determined by the identity's publicKey
+          expect(res.heads[0].payload.getValue()).toEqual('one')
         })
 
         it('creates a log from ipfs CID that has three heads w/ custom tiebreaker', async () => {
@@ -605,9 +605,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
             { sortFn: FirstWriteWins })
           expect(res.length).toEqual(3)
           expect(res.heads.length).toEqual(3)
-          expect(res.heads[0].payload.value).toEqual('one') // order is determined by the identity's publicKey
-          expect(res.heads[1].payload.value).toEqual('two')
-          expect(res.heads[2].payload.value).toEqual('three')
+          expect(res.heads[0].payload.getValue()).toEqual('one') // order is determined by the identity's publicKey
+          expect(res.heads[1].payload.getValue()).toEqual('two')
+          expect(res.heads[2].payload.getValue()).toEqual('three')
         })
 
         it('creates a log from ipfs CID up to a size limit', async () => {
@@ -691,7 +691,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const loadProgressCallback = (entry: Entry<string>) => {
             assert.notStrictEqual(entry, null)
             expect(entry.hash).toEqual(items[items.length - i - 1].hash)
-            expect(entry.payload.value).toEqual(items[items.length - i - 1].payload.value)
+            expect(entry.payload.getValue()).toEqual(items[items.length - i - 1].payload.getValue())
             i++
           }
 
@@ -706,9 +706,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
           expect(i).toEqual(amount)
           // Make sure the log entries are correct ones
           expect(result.values[0].clock.time).toEqual(1)
-          expect(result.values[0].payload.value).toEqual('0')
+          expect(result.values[0].payload.getValue()).toEqual('0')
           expect(result.values[result.length - 1].clock.time).toEqual(100)
-          expect(result.values[result.length - 1].payload.value).toEqual('99')
+          expect(result.values[result.length - 1].payload.getValue()).toEqual('99')
         })
       })
 
@@ -794,9 +794,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log.append('hello3')
         expect(log.values instanceof Array).toEqual(true)
         expect(log.length).toEqual(3)
-        expect(log.values[0].payload.value).toEqual('hello1')
-        expect(log.values[1].payload.value).toEqual('hello2')
-        expect(log.values[2].payload.value).toEqual('hello3')
+        expect(log.values[0].payload.getValue()).toEqual('hello1')
+        expect(log.values[1].payload.getValue()).toEqual('hello2')
+        expect(log.values[2].payload.getValue()).toEqual('hello3')
       })
     })
   })

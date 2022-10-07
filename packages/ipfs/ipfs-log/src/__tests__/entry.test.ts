@@ -10,7 +10,6 @@ import sodium from 'libsodium-wrappers';
 import { jest } from '@jest/globals';
 import {
   nodeConfig as config,
-  testAPIs,
   Session
 } from '@dao-xyz/orbit-db-test-utils'
 import { IPFS } from 'ipfs-core-types';
@@ -87,7 +86,7 @@ describe('Entry', function () {
         publicKey: signKey.keypair.publicKey.publicKey
       }).bytes);
       expect(entry.clock.time).toEqual(0n)
-      expect(entry.payload.value).toEqual('hello')
+      expect(entry.payload.getValue()).toEqual('hello')
       expect(entry.next.length).toEqual(0)
     })
 
@@ -98,7 +97,7 @@ describe('Entry', function () {
         ipfs, identity: identityFromSignKey(signKey), gidSeed: 'A', data: payload, next: []
       })
       expect(entry.hash).toEqual(expectedHash)
-      expect(entry.payload.value).toEqual(payload)
+      expect(entry.payload.getValue()).toEqual(payload)
       expect(entry.gid).toEqual(await sodium.crypto_generichash(32, 'A'))
       assert.deepStrictEqual(entry.clock.id, new Ed25519PublicKey({
         publicKey: signKey.keypair.publicKey.publicKey
@@ -142,7 +141,7 @@ describe('Entry', function () {
         }
       })
       assert(entry.payload instanceof Payload)
-      expect(entry.payload.value).toEqual(payload);
+      expect(entry.payload.getValue()).toEqual(payload);
 
       // We can not have a hash check because nonce of encryption will always change
       expect(entry.gid).toEqual(await sodium.crypto_generichash(32, 'A'))
@@ -169,7 +168,7 @@ describe('Entry', function () {
       const entry2 = await Entry.create({
         ipfs, identity: identityFromSignKey(signKey), gidSeed: 'A', data: payload2, next: [entry1]
       })
-      expect(entry2.payload.value).toEqual(payload2)
+      expect(entry2.payload.getValue()).toEqual(payload2)
       expect(entry2.next.length).toEqual(1)
       expect(entry2.maxChainLength).toEqual(2n); // because 1 next
       expect(entry2.hash).toEqual(expectedHash)
@@ -359,7 +358,7 @@ describe('Entry', function () {
       final.init(entry2);
       assert(final.equals(entry2));
       expect(final.gid).toEqual((await sodium.crypto_generichash(32, 'A')))
-      expect(final.payload.value).toEqual(payload2)
+      expect(final.payload.getValue()).toEqual(payload2)
       expect(final.next.length).toEqual(1)
       expect(final.next[0]).toEqual(entry1.hash)
       expect(final.hash).toEqual(expectedHash)

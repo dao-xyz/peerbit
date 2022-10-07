@@ -72,7 +72,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('added the correct values', async () => {
         log.values.forEach((entry) => {
-          expect(entry.payload.value).toEqual('hello1')
+          expect(entry.payload.getValue()).toEqual('hello1')
         })
       })
 
@@ -121,7 +121,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('added the correct values', async () => {
         log.values.forEach((entry, index) => {
-          expect(entry.payload.value).toEqual('hello' + index)
+          expect(entry.payload.getValue()).toEqual('hello' + index)
         })
       })
 

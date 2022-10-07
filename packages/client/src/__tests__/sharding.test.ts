@@ -1,22 +1,21 @@
 
-import { Entry } from "@dao-xyz/ipfs-log-entry"
-import { delay, waitFor } from "@dao-xyz/time"
 import { OrbitDB } from "../orbit-db"
 import { SimpleAccessController } from "./utils/access"
-import { EventStore, Operation } from "./utils/stores/event-store"
-import { KeyValueStore } from "./utils/stores/key-value-store"
-import assert from 'assert'
-const mapSeries = require('p-each-series')
+import { EventStore } from "./utils/stores/event-store"
+
 import rmrf from 'rimraf'
+import { jest } from '@jest/globals';
+import { Controller } from "ipfsd-ctl";
+import { IPFS } from "ipfs-core-types";
 
 // Include test utilities
-const {
-    config,
+import {
+    nodeConfig as config,
     startIpfs,
     stopIpfs,
     testAPIs,
     connectPeers,
-} = require('@dao-xyz/orbit-db-test-utils')
+} from '@dao-xyz/orbit-db-test-utils'
 
 const dbPath1 = './orbitdb/tests/sharding/1'
 const dbPath2 = './orbitdb/tests/sharding/2'
@@ -26,7 +25,7 @@ Object.keys(testAPIs).forEach(API => {
     describe(`orbit-db - Automatic Replication (${API})`, function () {
         jest.setTimeout(config.timeout * 3)
 
-        let ipfsd1, ipfsd2, ipfsd3, ipfs1, ipfs2, ipfs3
+        let ipfsd1: Controller, ipfsd2: Controller, ipfsd3: Controller, ipfs1: IPFS, ipfs2: IPFS, ipfs3: IPFS
         let orbitdb1: OrbitDB, orbitdb2: OrbitDB, orbitdb3: OrbitDB, db1: EventStore<string>, db2: EventStore<string>
 
         beforeEach(async () => {
@@ -70,7 +69,7 @@ Object.keys(testAPIs).forEach(API => {
                 await stopIpfs(ipfsd2)
             }
             if (ipfs3) {
-                await stopIpfs(ipfs3)
+                await stopIpfs(ipfsd3)
             }
             rmrf.sync(dbPath1)
             rmrf.sync(dbPath2)
@@ -80,7 +79,7 @@ Object.keys(testAPIs).forEach(API => {
 
         /*     it('can control forking behaviour with `allowForks`', async () => {
     
-                const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
+                const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
                 await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
                 console.log('Peers connected')
                 const entryCount = 2
@@ -106,7 +105,7 @@ Object.keys(testAPIs).forEach(API => {
             }) */
 
         /*   it('will reject forks when reaching memory limit', async () => {
-              const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
+              const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
               await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
               console.log('Peers connected')
   

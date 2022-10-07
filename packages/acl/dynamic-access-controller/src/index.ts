@@ -12,6 +12,7 @@ import { OrbitDB } from '@dao-xyz/orbit-db';
 import { AccessStore } from './acl-db';
 import { Access } from './access';
 export * from './access';
+// @ts-ignore
 import isNode from 'is-node';
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
@@ -20,6 +21,7 @@ import { Log } from "@dao-xyz/ipfs-log";
 import Cache from '@dao-xyz/orbit-db-cache';
 import { Operation } from "@dao-xyz/orbit-db-bdocstore";
 import { ReadWriteAccessController } from "@dao-xyz/orbit-db-query-store";
+// @ts-ignore
 import { v4 as uuid } from 'uuid';
 
 let v8 = undefined;

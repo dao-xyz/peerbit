@@ -1,14 +1,14 @@
-import EventEmitter from 'events'
 import { getPeerID } from './get-peer-id.js';
 import { waitForPeers } from './wait-for-peers.js';
 import { v1 as PROTOCOL } from './protocol.js';
-import Logger from 'logplease';
 import { IPFS } from 'ipfs-core-types'
 import { IpfsPubsubPeerMonitor } from '@dao-xyz/ipfs-pubsub-peer-monitor';
 import type { Message, SignedMessage } from '@libp2p/interface-pubsub';
 import type { EventHandler } from '@libp2p/interfaces/events';
 import type { PeerId } from '@libp2p/interface-peer-id';
 
+// @ts-ignore
+import Logger from 'logplease';
 const logger = Logger.create("direct-channel", { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
@@ -16,7 +16,7 @@ Logger.setLogLevel('ERROR')
 /**
  * Communication channel over Pubsub between two IPFS nodes
  */
-export class DirectChannel extends EventEmitter {
+export class DirectChannel {
   _id: string;
   _ipfs: IPFS;
   _closed: boolean;
@@ -28,7 +28,6 @@ export class DirectChannel extends EventEmitter {
   _monitor: IpfsPubsubPeerMonitor;
 
   constructor(ipfs: IPFS, receiverID: PeerId) {
-    super()
 
     // IPFS instance to use internally
     this._ipfs = ipfs
@@ -157,10 +156,9 @@ export class DirectChannel extends EventEmitter {
       this._monitor = topicMonitor;
     }
   }
-  _messageHandler(messageCallback: (topic: string, data: Uint8Array, from: PeerId) => void): EventHandler<Message> {
+  _messageHandler(messageCallback: (message: Message) => void): EventHandler<Message> {
     return (message: Message) => {
       if (message.type === 'signed') {
-        const signedMessage = message as SignedMessage
         if (message.from.equals(this._receiverID)) { // is valid
           const topicId = message.topic;
           let data: Uint8Array = message.data;
@@ -172,14 +170,14 @@ export class DirectChannel extends EventEmitter {
               throw new Error("Unexpected data format")
             }
           }
-          messageCallback(topicId, data, message.from)
+          messageCallback(message)
         }
 
       }
     }
   }
 
-  static async open(ipfs, receiverID: PeerId, onMessageCallback: (topic: string, content: Uint8Array, from: PeerId) => void, monitor?: {
+  static async open(ipfs: IPFS, receiverID: PeerId, onMessageCallback: (message: Message) => void, monitor?: {
     onNewPeerCallback?: (channel: DirectChannel) => void,
     onPeerLeaveCallback?: (channel: DirectChannel) => void,
   }): Promise<DirectChannel> {

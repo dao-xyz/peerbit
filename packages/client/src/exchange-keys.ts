@@ -1,20 +1,24 @@
 import { variant, field, serialize, vec } from '@dao-xyz/borsh';
-import { Message } from './message.js';
+import { ProtocolMessage } from './message.js';
 import { bufferSerializer, U8IntArraySerializer } from '@dao-xyz/borsh-utils';
-import { X25519PublicKey } from 'sodium-plus'
-import Logger from 'logplease'
-import { BoxKeyWithMeta, Keystore, KeyWithMeta, KeyWithMeta<Ed25519Keypair>, WithType } from '@dao-xyz/orbit-db-keystore';
+import { Ed25519Keypair, PublicKeyEncryptionResolver, X25519Keypair, X25519PublicKey } from '@dao-xyz/peerbit-crypto'
+import { Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore';
 import { PublicKeyEncryption } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned, SignatureWithKey } from '@dao-xyz/peerbit-crypto';
 
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { TimeoutError, waitForAsync } from '@dao-xyz/time';
-import { PublicKey } from '@dao-xyz/peerbit-crypto';
 
+import { PublicSignKey } from '@dao-xyz/peerbit-crypto';
+
+// @ts-ignore
+import Logger from 'logplease'
+import { Constructor } from '@dao-xyz/orbit-db-store';
+import { Identity } from '@dao-xyz/ipfs-log';
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
-
 Logger.setLogLevel('ERROR')
-export type KeyAccessCondition = (requester: PublicKey, keyToAccess: KeyWithMeta) => Promise<boolean>;
+
+export type KeyAccessCondition = (requester: PublicSignKey, keyToAccess: KeyWithMeta<Ed25519Keypair | X25519Keypair>) => Promise<boolean>;
 export type KeyType = 'ethereum' | 'solana' | 'orbitdb';
 
 
@@ -59,28 +63,28 @@ export class PublicKeyMessage {
 }
 
 @variant(0)
-export class RequestKeyCondition<T extends KeyWithMeta> {
+export class RequestKeyCondition<T extends Ed25519Keypair | X25519Keypair> {
 
     @field({ type: 'u8' })
     _type: number;
 
-    constructor(props?: { type: WithType<T> }) {
+    constructor(props?: { type: Constructor<T> }) {
         if (props) {
-            if (props.type === KeyWithMeta<Ed25519Keypair> as any) { // TODO fix types
+            if (props.type === Ed25519Keypair as any) { // TODO fix types
                 this._type = 0;
             }
-            else if (props.type === BoxKeyWithMeta as any) { // TODO fix types
+            else if (props.type === X25519Keypair as any) { // TODO fix types
                 this._type = 1
             }
         }
     }
 
-    get type(): WithType<T> {
+    get type(): Constructor<T> {
         if (this._type === 0) {
-            return KeyWithMeta<Ed25519Keypair> as any as WithType<T>
+            return KeyWithMeta<Ed25519Keypair> as any as Constructor<T>
         }
         else if (this._type === 1) {
-            return BoxKeyWithMeta as any as WithType<T>
+            return KeyWithMeta<X25519Keypair> as any as Constructor<T>
         }
         else {
             throw new Error("Unsupported")
@@ -94,16 +98,16 @@ export class RequestKeyCondition<T extends KeyWithMeta> {
 }
 
 @variant(0)
-export class RequestKeysByReplicationTopic<T extends KeyWithMeta> extends RequestKeyCondition<T> {
+export class RequestKeysByReplicationTopic<T extends (Ed25519Keypair | X25519Keypair)> extends RequestKeyCondition<T> {
 
     @field({ type: 'string' })
     replicationTopic: string;
 
     constructor(props?: {
-        type: WithType<T>,
+        type: Constructor<T>,
         replicationTopic: string
     }) {
-        super({ type: props?.type });
+        super({ type: props?.type as Constructor<T> });
         if (props) {
             this.replicationTopic = props.replicationTopic;
         }
@@ -116,16 +120,16 @@ export class RequestKeysByReplicationTopic<T extends KeyWithMeta> extends Reques
 }
 
 @variant(1)
-export class RequestKeysByKey<T extends KeyWithMeta> extends RequestKeyCondition<T> {
+export class RequestKeysByKey<T extends (Ed25519Keypair | X25519Keypair)> extends RequestKeyCondition<T> {
 
     @field(U8IntArraySerializer)
     key: Uint8Array;
 
     constructor(props?: {
-        type: WithType<T>,
+        type: Constructor<T>,
         key: Uint8Array
     }) {
-        super({ type: props?.type });
+        super({ type: props?.type as Constructor<T> });
         if (props) {
             this.key = props.key;
         }
@@ -138,9 +142,9 @@ export class RequestKeysByKey<T extends KeyWithMeta> extends RequestKeyCondition
 }
 
 @variant([1, 0])
-export class RequestKeyMessage<T extends KeyWithMeta> extends Message {
+export class RequestKeyMessage<T extends (Ed25519Keypair | X25519Keypair)> extends ProtocolMessage {
 
-    @field(bufferSerializer(X25519PublicKey))
+    @field({ type: X25519PublicKey })
     encryptionKey: X25519PublicKey
 
     @field({ type: RequestKeyCondition })
@@ -161,13 +165,13 @@ export class RequestKeyMessage<T extends KeyWithMeta> extends Message {
 
 
 @variant([1, 1])
-export class KeyResponseMessage extends Message {
+export class KeyResponseMessage extends ProtocolMessage {
 
     @field({ type: vec(KeyWithMeta) })
-    keys: KeyWithMeta[]
+    keys: KeyWithMeta<Ed25519Keypair | X25519Keypair>[]
 
     constructor(props?: {
-        keys: KeyWithMeta[]
+        keys: KeyWithMeta<Ed25519Keypair | X25519Keypair>[]
     }) {
         super();
         if (props) {
@@ -176,14 +180,14 @@ export class KeyResponseMessage extends Message {
     }
 }
 
-export const requestAndWaitForKeys = async<T extends KeyWithMeta>(condition: RequestKeyCondition<T>, send: (message: Uint8Array) => void | Promise<void>, keystore: Keystore, signPublicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, timeout = 10000): Promise<T[]> => {
-    await requestKeys(condition, send, keystore, signPublicKey, sign);
+export const requestAndWaitForKeys = async<T extends (Ed25519Keypair | X25519Keypair)>(condition: RequestKeyCondition<T>, send: (message: Uint8Array) => void | Promise<void>, keystore: Keystore, identity: Identity, timeout = 10000): Promise<KeyWithMeta<T>[] | undefined> => {
+    await requestKeys(condition, send, keystore, identity);
     if (condition instanceof RequestKeysByReplicationTopic) {
         try {
             // timeout
             return await waitForAsync(async () => {
                 const keys = await keystore.getKeys<T>(condition.replicationTopic)
-                if (keys.length > 0) {
+                if (keys && keys.length > 0) {
                     return keys;
                 }
                 return undefined
@@ -201,10 +205,11 @@ export const requestAndWaitForKeys = async<T extends KeyWithMeta>(condition: Req
     }
     else if (condition instanceof RequestKeysByKey) {
         try {
-            return [await waitForAsync(() => keystore.getKeyById(condition.key), {
+            const key = await waitForAsync(() => keystore.getKey<T>(condition.key), {
                 timeout,
                 delayInterval: 50
-            })]
+            });
+            return key ? [key] : undefined;
 
         } catch (error) {
             if (error instanceof TimeoutError) {
@@ -217,25 +222,27 @@ export const requestAndWaitForKeys = async<T extends KeyWithMeta>(condition: Req
 
 
 
-export const requestKeys = async <T extends KeyWithMeta>(condition: RequestKeyCondition<T>, send: (message: Uint8Array) => void | Promise<void>, keystore: Keystore, signPublicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>) => {
+export const requestKeys = async <T extends (X25519Keypair | Ed25519Keypair)>(condition: RequestKeyCondition<T>, send: (message: Uint8Array) => void | Promise<void>, keystore: Keystore, identity: Identity) => {
 
     // TODO key rotation?
-    const keyId = serialize(signPublicKey);
-    let key = await keystore.getKeyByPath(keyId, BoxKeyWithMeta);
+    let key = await keystore.getKey(identity.publicKey);
     if (!key) {
-        key = await keystore.createKey(keyId, BoxKeyWithMeta);
+        key = await keystore.createKey(await Ed25519Keypair.create(), { id: identity.publicKey }); // TODO what if id is .hashcode? 
     }
 
-    const encryptionKey = key.publicKey;
+    if (key.keypair instanceof Ed25519Keypair === false && key.keypair instanceof X25519Keypair === false) {
+        logger.error("Invalid key type for identity, got: " + key.keypair.constructor.name)
+        return;
+    }
     const signedMessage = await new MaybeSigned<RequestKeyMessage<T>>({
         data: serialize(new RequestKeyMessage<T>({
             condition,
-            encryptionKey
+            encryptionKey: (key.keypair as (Ed25519Keypair | X25519Keypair)).publicKey
         }))
     }).sign(async (bytes) => {
         return {
-            signature: await sign(bytes),
-            publicKey: await signPublicKey
+            signature: await identity.sign(bytes),
+            publicKey: identity.publicKey
         }
     })
     const unencryptedMessage = new DecryptedThing(
@@ -246,13 +253,25 @@ export const requestKeys = async <T extends KeyWithMeta>(condition: RequestKeyCo
     await send(serialize(unencryptedMessage))
 }
 
-export const exchangeKeys = async <T extends KeyWithMeta>(send: (Uint8Array) => Promise<void>, request: RequestKeyMessage<T>, requester: PublicKey, canAccessKey: KeyAccessCondition, getKeyByPublicKey: (key: Uint8Array) => Promise<T>, getKeysByGroup: (group: string, type: WithType<T>) => Promise<T[]>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>, encryption: PublicKeyEncryption) => { //  encrypt: (data: Uint8Array, recieverPublicKey: X25519PublicKey) => Promise<{ publicKey: X25519PublicKey, bytes: Uint8Array }>
+export const exchangeKeys = async <T extends Ed25519Keypair | X25519Keypair>(
+    send: (data: Uint8Array) => Promise<void>,
+    request: RequestKeyMessage<T>,
+    requester: PublicSignKey,
+    canAccessKey: KeyAccessCondition,
+    getKeyByPublicKey: (key: Uint8Array) => Promise<KeyWithMeta<T> | undefined>,
+    getKeysByGroup: (group: string, type: Constructor<T>) => Promise<KeyWithMeta<T>[] | undefined>,
+    identity: Identity,
+    encryption: PublicKeyEncryptionResolver) => { //  encrypt: (data: Uint8Array, recieverPublicKey: X25519PublicKey) => Promise<{ publicKey: X25519PublicKey, bytes: Uint8Array }>
 
     // Validate signature
-    let secretKeys: KeyWithMeta[] = []
-    let group: string = undefined;
+    let secretKeys: KeyWithMeta<T>[] = []
+    let group: string;
     if (request.condition instanceof RequestKeysByReplicationTopic) {
-        secretKeys = await getKeysByGroup(request.condition.replicationTopic, request.condition.type);
+        const keys = await getKeysByGroup(request.condition.replicationTopic, request.condition.type);
+        if (!keys) {
+            return;
+        }
+        secretKeys = keys;
     }
     else if (request.condition instanceof RequestKeysByKey) {
         const key = await getKeyByPublicKey(request.condition.key)
@@ -277,12 +296,12 @@ export const exchangeKeys = async <T extends KeyWithMeta>(send: (Uint8Array) => 
         keys: mappedKeys
     }));
 
-    const signatureResult = await sign(secretKeyResponseMessage);
+    const signatureResult = await identity.sign(secretKeyResponseMessage);
     await send(serialize(await new DecryptedThing<KeyResponseMessage>({
         data: serialize(new MaybeSigned({
             signature: new SignatureWithKey({
-                signature: signatureResult.signature,
-                publicKey: signatureResult.publicKey
+                signature: signatureResult,
+                publicKey: identity.publicKey
             }),
             data: secretKeyResponseMessage
         }))
@@ -290,6 +309,6 @@ export const exchangeKeys = async <T extends KeyWithMeta>(send: (Uint8Array) => 
 
 }
 
-export const recieveKeys = async (msg: KeyResponseMessage, setKeys: (keys: KeyWithMeta[]) => Promise<any[]>) => { // 
+export const recieveKeys = async (msg: KeyResponseMessage, setKeys: (keys: KeyWithMeta<any>[]) => Promise<any[]>) => { // 
     await setKeys(msg.keys);
 }

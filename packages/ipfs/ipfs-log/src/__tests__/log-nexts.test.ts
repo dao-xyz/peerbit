@@ -1,4 +1,3 @@
-import assert from 'assert'
 import rmrf from 'rimraf'
 import fs from 'fs-extra'
 import { jest } from '@jest/globals';

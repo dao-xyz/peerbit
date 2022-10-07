@@ -1,5 +1,4 @@
 import { Constructor, deserialize } from "@dao-xyz/borsh";
-import bs58 from 'bs58';
 
 
 interface Payload<T> {

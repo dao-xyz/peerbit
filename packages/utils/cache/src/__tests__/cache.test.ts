@@ -5,18 +5,25 @@ import assert from 'assert'
 const timeout = 50000
 import fs from 'fs';
 import { Level } from 'level';
-const prefixPath = 'packages/utils/orbit-db-cache/src/__tests__/tmp/'
+import { fileURLToPath } from 'url';
+import path, { dirname } from 'path';
+import { jest } from '@jest/globals';
+
+const __filename = fileURLToPath(import.meta.url);
+const __filenameBase = path.parse(__filename).base;
+const __dirname = dirname(__filename);
+const prefixPath = path.resolve(__dirname, "tmp");
 export const createStore = (name = 'keystore'): Level => {
   if (fs && fs.mkdirSync) {
-    fs.mkdirSync(prefixPath + name, { recursive: true })
+    fs.mkdirSync(path.resolve(prefixPath, name), { recursive: true })
   }
-  return new Level(prefixPath + name, { valueEncoding: 'view' })
+  return new Level(path.resolve(prefixPath, name), { valueEncoding: 'view' })
 }
 
 describe(`Cache - level`, function () {
   jest.setTimeout(timeout)
 
-  let cache: Cache, storage: {}, store: Level
+  let cache: Cache<any>, storage: {}, store: Level
 
   const data = [
     { type: (typeof true), key: 'boolean', value: true },

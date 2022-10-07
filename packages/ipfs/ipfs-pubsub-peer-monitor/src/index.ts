@@ -1,15 +1,15 @@
 import { difference } from "./utils.js";
-import { IPFS } from 'ipfs-core-types'
 import type { PeerId } from '@libp2p/interface-peer-id';
+
 const DEFAULT_OPTIONS = {
   start: true,
   pollInterval: 1000,
 }
 interface PubSub {
-  peers: (topic?: string) => Promise<PeerId[]>
+  peers: (topic: string) => Promise<PeerId[]>
 }
 
-interface Callbacks { onJoin?: (peer: PeerId) => void, onLeave?: (peer: PeerId) => void, onError?: (err) => void };
+interface Callbacks { onJoin?: (peer: PeerId) => void, onLeave?: (peer: PeerId) => void, onError?: (err: any) => void };
 export class IpfsPubsubPeerMonitor {
   _pubsub: PubSub;
   _topic: string;
@@ -56,8 +56,8 @@ export class IpfsPubsubPeerMonitor {
     return this._peers.slice()
   }
 
-  hasPeer(peer) {
-    return this._peers.includes(peer)
+  hasPeer(peer: PeerId) {
+    return this._peers.map(p => p.equals(peer))
   }
 
   async _pollPeers() {

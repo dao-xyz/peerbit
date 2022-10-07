@@ -2,9 +2,10 @@ import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { BinaryDocumentStore, Operation, PutOperation } from "@dao-xyz/orbit-db-bdocstore";
 import { OrbitDB } from "@dao-xyz/orbit-db";
 import { Address, IInitializationOptions, load, save, StoreLike } from "@dao-xyz/orbit-db-store";
-import { Entry, Payload } from "@dao-xyz/ipfs-log-entry";
+import { Entry, Payload } from "@dao-xyz/ipfs-log";
 import { createHash } from "crypto";
 import { PublicKey } from "@dao-xyz/peerbit-crypto";
+// @ts-ignore
 import isNode from 'is-node';
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from 'ipfs-core-types';
@@ -12,7 +13,6 @@ import { DeleteOperation } from "@dao-xyz/orbit-db-bdocstore";
 import { ReadWriteAccessController } from "@dao-xyz/orbit-db-query-store";
 import { Log } from "@dao-xyz/ipfs-log";
 import Cache from '@dao-xyz/orbit-db-cache';
-import EventEmitter from "events";
 import { AnyRelation, createIdentityGraphStore, getPath, Relation } from "./identity-graph";
 import { BinaryPayload } from "@dao-xyz/bpayload";
 

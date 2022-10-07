@@ -2,19 +2,20 @@ import { OrbitDB } from "../orbit-db"
 import { SimpleAccessController } from "./utils/access"
 import { EventStore } from "./utils/stores/event-store"
 
-import assert from 'assert'
-const mapSeries = require('p-each-series')
+import mapSeries from 'p-each-series'
 import rmrf from 'rimraf'
-
+import { jest } from '@jest/globals';
+import { Controller } from "ipfsd-ctl";
+import { IPFS } from "ipfs-core-types";
 // Include test utilities
-const {
-  config,
+import {
+  nodeConfig as config,
   startIpfs,
   stopIpfs,
   testAPIs,
   connectPeers,
   waitForPeers,
-} = require('@dao-xyz/orbit-db-test-utils')
+} from '@dao-xyz/orbit-db-test-utils'
 
 const orbitdbPath1 = './orbitdb/tests/replicate-and-load/1'
 const orbitdbPath2 = './orbitdb/tests/replicate-and-load/2'
@@ -25,7 +26,7 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Replicate and Load (${API})`, function () {
     jest.setTimeout(config.timeout)
 
-    let ipfsd1, ipfsd2, ipfs1, ipfs2
+    let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS
     let orbitdb1: OrbitDB, orbitdb2: OrbitDB
 
     beforeAll(async () => {
@@ -40,7 +41,7 @@ Object.keys(testAPIs).forEach(API => {
       orbitdb1 = await OrbitDB.createInstance(ipfs1, { directory: orbitdbPath1 })
       orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2 })
       // Connect the peers manually to speed up test times
-      const isLocalhostAddress = (addr) => addr.toString().includes('127.0.0.1')
+      const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
       await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
       console.log("Peers connected")
     })
@@ -99,7 +100,7 @@ Object.keys(testAPIs).forEach(API => {
       it('replicates database of 100 entries and loads it from the disk', async () => {
         const entryCount = 100
         const entryArr = []
-        let timer
+        let timer: any;
 
         for (let i = 0; i < entryCount; i++)
           entryArr.push(i)
@@ -115,8 +116,8 @@ Object.keys(testAPIs).forEach(API => {
 
               const items = db2.iterator({ limit: -1 }).collect()
               expect(items.length).toEqual(entryCount)
-              expect(items[0].payload.value.value).toEqual('hello0')
-              expect(items[items.length - 1].payload.value.value).toEqual('hello' + (items.length - 1));
+              expect(items[0].payload.getValue().value).toEqual('hello0')
+              expect(items[items.length - 1].payload.getValue().value).toEqual('hello' + (items.length - 1));
 
               try {
 

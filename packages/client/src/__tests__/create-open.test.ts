@@ -1,24 +1,31 @@
 
-import assert from 'assert'
+import assert, { equal } from 'assert'
 import fs from 'fs-extra'
 import path from 'path'
 import rmrf from 'rimraf'
-const Zip = require('adm-zip')
+// @ts-ignore
+import Zip from 'adm-zip'
 import { OrbitDB } from '../orbit-db'
 import { KeyValueStore } from './utils/stores/key-value-store'
 import io from '@dao-xyz/io-utils'
 import { SimpleAccessController } from './utils/access'
 import { Address, Store } from '@dao-xyz/orbit-db-store'
 import { EventStore } from './utils/stores'
-import { BoxKeyWithMeta, Keystore, KeyWithMeta<Ed25519Keypair> } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { Ed25519PublicKey } from '@dao-xyz/peerbit-crypto'
+
+import { jest } from '@jest/globals';
+import { Controller } from "ipfsd-ctl";
+import { IPFS } from "ipfs-core-types";
+
+
 // Include test utilities
-const {
-  config,
+import {
+  nodeConfig as config,
   startIpfs,
   stopIpfs,
   testAPIs,
-} = require('@dao-xyz/orbit-db-test-utils')
+} from '@dao-xyz/orbit-db-test-utils'
 
 const dbPath = path.join('./orbitdb', 'tests', 'create-open')
 const migrationFixturePath = path.join('./packages/orbit-db/src/__tests__', 'fixtures', 'migration', 'cache-schema-test')
@@ -32,9 +39,9 @@ Object.keys(testAPIs).forEach(API => {
     jest.setTimeout(config.timeout)
 
     let ipfsd: Controller, ipfs: IPFS, orbitdb: OrbitDB, address
-    let localDataPath
+    let localDataPath: string
 
-    const filterFunc = (src, dest) => {
+    const filterFunc = (src: string, dest: string) => {
       // windows has problems copying these files...
       return !(src.includes('LOG') || src.includes('LOCK'))
     }
@@ -67,7 +74,7 @@ Object.keys(testAPIs).forEach(API => {
 
 
         it('throws an error if database already exists', async () => {
-          let err, db
+          let err, db: any
           try {
             db = await orbitdb.open(new EventStore({ name: 'first', accessController: new SimpleAccessController() })
               , { replicate: false })
@@ -88,7 +95,7 @@ Object.keys(testAPIs).forEach(API => {
         beforeAll(async () => {
           db = await orbitdb.open(new KeyValueStore<string>({ name: 'second', accessController: new SimpleAccessController() })
             , { replicate: false })
-          localDataPath = path.join(dbPath, orbitdb.id, 'cache')
+          localDataPath = path.join(dbPath, orbitdb.id.toString(), 'cache')
           await db.close()
         })
 
@@ -146,18 +153,18 @@ Object.keys(testAPIs).forEach(API => {
       })
 
       it('opens a database - with a different identity', async () => {
-        const signKey = await orbitdb.keystore.createKey(new Uint8Array([0]), KeyWithMeta<Ed25519Keypair>);
-        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { publicKey: signKey.keypair.publicKey, sign: (data) => Keystore.sign(data, signKey) })
+        const signKey = await orbitdb.keystore.createEd25519Key({ id: new Uint8Array([0]) });
+        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { identity: { publicKey: signKey.keypair.publicKey, sign: (data) => signKey.keypair.sign(data) } })
         assert.equal(db.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db.address.toString().indexOf('zd'), 9)
         assert.equal(db.address.toString().indexOf('abc'), 59)
-        assert(Buffer.compare((db.publicKey as Ed25519PublicKey).publicKey.getBuffer(), signKey.publicKey.getBuffer()) === 0)
+        expect(db.identity.publicKey.equals(signKey.keypair.publicKey));
         await db.drop()
       })
 
       it('opens the same database - from an address', async () => {
-        const signKey = await orbitdb.keystore.createKey(new Uint8Array([0]), KeyWithMeta<Ed25519Keypair>);
-        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { publicKey: signKey.keypair.publicKey, sign: (data) => Keystore.sign(data, signKey) })
+        const signKey = await orbitdb.keystore.createEd25519Key({ id: new Uint8Array([0]) });
+        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { identity: { publicKey: signKey.keypair.publicKey, sign: (data) => signKey.keypair.sign(data) } })
         const db2 = await orbitdb.open(await Store.load(orbitdb._ipfs, db.address))
         assert.equal(db2.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db2.address.toString().indexOf('zd'), 9)
@@ -201,8 +208,8 @@ Object.keys(testAPIs).forEach(API => {
         const res = db.iterator({ limit: -1 }).collect()
 
         expect(res.length).toEqual(2)
-        expect(res[0].payload.value.value).toEqual('hello1')
-        expect(res[1].payload.value.value).toEqual('hello2')
+        expect(res[0].payload.getValue().value).toEqual('hello1')
+        expect(res[1].payload.getValue().value).toEqual('hello2')
         await db.drop()
         await db2.drop()
       })
@@ -244,7 +251,7 @@ Object.keys(testAPIs).forEach(API => {
         await db2.close()
         await db4.close()
 
-        expect(orbitdb.cache._store._db.status).toEqual('open')
+        expect(orbitdb.cache._store.status).toEqual('open')
         expect(db2._cache._store.status).toEqual('open')
         expect(db3._cache._store.status).toEqual('open')
         expect(db4._cache._store.status).toEqual('closed')
@@ -252,7 +259,7 @@ Object.keys(testAPIs).forEach(API => {
         await db3.close()
         await db5.close()
 
-        expect(orbitdb.cache._store._db.status).toEqual('closed')
+        expect(orbitdb.cache._store.status).toEqual('closed')
         expect(db2._cache._store.status).toEqual('closed')
         expect(db3._cache._store.status).toEqual('closed')
         expect(db4._cache._store.status).toEqual('closed')

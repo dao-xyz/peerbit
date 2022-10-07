@@ -1,8 +1,8 @@
 import { Log } from "@dao-xyz/ipfs-log";
-import { Entry } from "@dao-xyz/ipfs-log-entry";
-import { Address, JSON_ENCODER, load } from "@dao-xyz/orbit-db-store";
+import { Entry } from "@dao-xyz/ipfs-log";
+import { Address, load } from "@dao-xyz/orbit-db-store";
 import { Store } from "@dao-xyz/orbit-db-store"
-import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log-entry';
+import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log';
 import { AccessController } from "@dao-xyz/orbit-db-store";
 import { variant } from '@dao-xyz/borsh';
 

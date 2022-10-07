@@ -1,6 +1,7 @@
 import { field, serialize, variant } from "@dao-xyz/borsh";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
 import { PublicKey } from "@dao-xyz/peerbit-crypto";
+// @ts-ignore
 import isNode from 'is-node';
 import { SystemBinaryPayload } from "@dao-xyz/bpayload";
 import { DocumentQueryRequest, MemoryCompare, MemoryCompareQuery, QueryRequestV0, Result, ResultWithSource } from "@dao-xyz/query-protocol";

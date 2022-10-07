@@ -259,8 +259,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await log4.join(log2)
       await log4.join(log3)
 
-      const values3 = log3.values.map((e) => e.payload.value)
-      const values4 = log4.values.map((e) => e.payload.value)
+      const values3 = log3.values.map((e) => e.payload.getValue())
+      const values4 = log4.values.map((e) => e.payload.getValue())
 
       assert.deepStrictEqual(values3, values4)
     })

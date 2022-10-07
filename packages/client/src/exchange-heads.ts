@@ -1,17 +1,18 @@
 import { variant, field, vec, serialize } from '@dao-xyz/borsh';
-import { Entry } from '@dao-xyz/ipfs-log-entry'
-import { Message } from './message.js';
+import { Entry, Identity } from '@dao-xyz/ipfs-log'
+import { ProtocolMessage } from './message.js';
 import { StoreLike } from '@dao-xyz/orbit-db-store';
-import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
+import { DecryptedThing, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned } from '@dao-xyz/peerbit-crypto';
 import { ResourceRequirement } from './exchange-replication.js';
 // @ts-ignore
 import Logger from 'logplease'
+import { SignerWithKey } from '@dao-xyz/peerbit-crypto/lib/esm/signer.js';
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
 @variant([0, 0])
-export class ExchangeHeadsMessage<T> extends Message {
+export class ExchangeHeadsMessage<T> extends ProtocolMessage {
 
   @field({ type: 'string' })
   replicationTopic: string;
@@ -42,7 +43,7 @@ export class ExchangeHeadsMessage<T> extends Message {
 }
 
 @variant([0, 1])
-export class RequestHeadsMessage extends Message {
+export class RequestHeadsMessage extends ProtocolMessage {
 
   @field({ type: 'string' })
   replicationTopic: string;
@@ -81,8 +82,8 @@ export class RequestHeadsMessage extends Message {
 }
  */
 
-export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>, store: StoreLike<any>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>, headsToShare?: Entry<any>[]) => {
-  const heads = headsToShare || await store.getHeads();
+export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>, store: StoreLike<any>, identity: Identity, headsToShare?: Entry<any>[]) => {
+  const heads = headsToShare || store.oplog.heads;
   logger.debug(`Send latest heads of '${store.replicationTopic}'`)
   if (heads && heads.length > 0) {
 
@@ -129,7 +130,13 @@ export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>
     await Promise.all(promises); */
 
     const message = new ExchangeHeadsMessage({ replicationTopic: store.replicationTopic, address: store.address.toString(), heads });
-    const signedMessage = await new MaybeSigned({ data: serialize(message) }).sign(sign)
+    const signer: SignerWithKey = async (data: Uint8Array) => {
+      return {
+        signature: await identity.sign(data),
+        publicKey: identity.publicKey
+      }
+    };
+    const signedMessage = await new MaybeSigned({ data: serialize(message) }).sign(signer)
     const decryptedMessage = new DecryptedThing({
       data: serialize(signedMessage)
     }) // TODO encryption?

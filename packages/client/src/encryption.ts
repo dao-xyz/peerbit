@@ -1,56 +1,58 @@
-import { AccessError, PublicKeyEncryption } from "@dao-xyz/peerbit-crypto";
-import { BoxKeyWithMeta, Keystore, KeyWithMeta<Ed25519Keypair> } from '@dao-xyz/orbit-db-keystore';
+import { AccessError, Ed25519Keypair, PublicKeyEncryptionResolver, X25519Keypair } from "@dao-xyz/peerbit-crypto";
+import { Keystore } from '@dao-xyz/orbit-db-keystore';
 import { StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store';
-import { X25519PublicKey, Ed25519PublicKey } from 'sodium-plus';
-import { PublicKey } from "@dao-xyz/peerbit-crypto";
+import { X25519PublicKey } from "@dao-xyz/peerbit-crypto";
 import { serialize } from '@dao-xyz/borsh'
-export const replicationTopicEncryptionWithRequestKey = (identity: PublicKey, keystore: Keystore, requestKey?: (key: X25519PublicKey, replicationTopic) => Promise<BoxKeyWithMeta[] | undefined>): StorePublicKeyEncryption => {
+import { Identity } from "@dao-xyz/ipfs-log";
+
+export const replicationTopicEncryptionWithRequestKey = (identity: Identity, keystore: Keystore, requestKey: (key: X25519PublicKey, replicationTopic: string) => Promise<(Ed25519Keypair | X25519Keypair)[] | undefined>): StorePublicKeyEncryption => {
     return (replicationTopic: string) => {
         return encryptionWithRequestKey(identity, keystore, (key) => requestKey(key, replicationTopic))
     }
 }
 
 
-export const encryptionWithRequestKey = (identity: PublicKey, keystore: Keystore, requestKey?: (key: X25519PublicKey) => Promise<BoxKeyWithMeta[] | undefined>): PublicKeyEncryption => {
+export const encryptionWithRequestKey = (identity: Identity, keystore: Keystore, requestKey?: (key: X25519PublicKey) => Promise<(Ed25519Keypair | X25519Keypair)[] | undefined>): PublicKeyEncryptionResolver => {
 
     return {
-        getAnySecret: async (publicKeys) => {
+        getAnyKeypair: async (publicKeys) => {
             for (let i = 0; i < publicKeys.length; i++) {
-                const key = await keystore.getKeyById(publicKeys[i]);
-                if (key instanceof BoxKeyWithMeta && key.secretKey) {
+                const key = await keystore.getKey(publicKeys[i]);
+                if (key && (key.keypair instanceof Ed25519Keypair || key.keypair instanceof X25519Keypair)) {
                     return {
                         index: i,
-                        secretKey: key.secretKey
+                        keypair: key.keypair
                     }
                 }
             }
             if (requestKey) {
                 for (let i = 0; i < publicKeys.length; i++) {
                     const newKeys = await requestKey(publicKeys[i]);
-                    if (!newKeys || newKeys.length === 0 || !newKeys[0].secretKey) {
+                    if (!newKeys || newKeys.length === 0) {
                         continue;
                     }
-                    return {
-                        index: i,
-                        secretKey: newKeys[0].secretKey
+                    for (const key of newKeys) {
+                        if (key instanceof Ed25519Keypair || key instanceof X25519Keypair) {
+                            return {
+                                index: i,
+                                keypair: newKeys[0]
+                            }
+                        }
                     }
+
                 }
             }
             throw new AccessError("Failed to access key")
         },
-        getEncryptionKey: async () => {
+
+        getEncryptionKeypair: async () => {
             // TODO key rotation
             const keyId = serialize(identity);
-            let key = await keystore.getKeyByPath(keyId, BoxKeyWithMeta); // TODO add key rotation, potentially generate new key every call
-            if (!key) {
-                key = await keystore.createKey(keyId, BoxKeyWithMeta);
+            let key = await keystore.getKey(keyId); // TODO add key rotation, potentially generate new key every call
+            if (!key || key instanceof Ed25519Keypair === false && key instanceof X25519Keypair === false) {
+                key = await keystore.createEd25519Key();
             }
-
-            // TODO can secretKey be missing?
-            if (!key.secretKey) {
-                throw new Error("Missing secret key using the sign key for retrieval")
-            }
-            return key.secretKey;
+            return key.keypair as (Ed25519Keypair | X25519Keypair);
         }
     }
 }

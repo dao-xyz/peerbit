@@ -2,7 +2,7 @@ import { IStoreOptions, Store, Address, IInitializationOptions } from '@dao-xyz/
 import { field, option } from '@dao-xyz/borsh';
 import type { Message } from '@libp2p/interface-pubsub'
 import { QueryRequestV0, QueryResponseV0, Result, MultipleQueriesType, StoreAddressMatchQuery } from '@dao-xyz/query-protocol';
-import { X25519PublicKey } from 'sodium-plus';
+import { X25519PublicKey } from '@dao-xyz/peerbit-crypto';
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
 import { AccessController } from '@dao-xyz/orbit-db-store';
 import { ReadWriteAccessController } from './read-write-access-controller';
