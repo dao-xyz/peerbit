@@ -24,12 +24,14 @@ import { MaybeSigned } from '@dao-xyz/peerbit-crypto';
 import { WAIT_FOR_PEERS_TIME, exchangePeerInfo, ReplicatorInfo, PeerInfoWithMeta, RequestReplicatorInfo, requestPeerInfo } from './exchange-replication.js'
 import { createHash } from 'crypto'
 
+
 // @ts-ignore
 import isNode from 'is-node';
 import { delay, waitFor } from '@dao-xyz/time'
 import { LRUCounter } from './lru-counter.js'
 import { IpfsPubsubPeerMonitor } from '@dao-xyz/ipfs-pubsub-peer-monitor';
 import type { PeerId } from '@libp2p/interface-peer-id';
+import { EntryWithRefs } from '@dao-xyz/orbit-db-store';
 /* let v8 = undefined;
 if (isNode) {
   v8 = require('v8');
@@ -51,13 +53,15 @@ export type OptionalCreateOptions = { minReplicas?: number, waitForKeysTimout?: 
 export type CreateOptions = { keystore: Keystore, identity: Identity, directory: string, peerId: PeerId, storage: Storage, cache: Cache<any> } & OptionalCreateOptions;
 export type CreateInstanceOptions = { storage?: Storage, directory?: string, keystore?: Keystore, peerId?: PeerId, identity?: Identity, cache?: Cache<any> } & OptionalCreateOptions;
 
-const groupByGid = (entries: Entry<any>[]) => {
-  const groupByGid: Map<string, Entry<any>[]> = new Map()
+
+const groupByGid = <T extends (Entry<any> | EntryWithRefs<any>)>(entries: T[]) => {
+  const groupByGid: Map<string, T[]> = new Map()
   for (const head of entries) {
-    let value = groupByGid.get(head.gid);
+    const gid = head instanceof Entry ? head.gid : head.entry.gid;
+    let value = groupByGid.get(gid);
     if (!value) {
       value = []
-      groupByGid.set(head.gid, value)
+      groupByGid.set(gid, value)
     }
     value.push(head);
   }
@@ -183,20 +187,18 @@ export class OrbitDB {
 
   replicationTopicEncryption(): StorePublicKeyEncryption {
     return replicationTopicEncryptionWithRequestKey(this.identity, this.keystore, (key, replicationTopic) => this.requestAndWaitForKeys(replicationTopic, new RequestKeysByKey<(Ed25519Keypair | X25519Keypair)>({
-      key: new Uint8Array(key.getBuffer()),
-      type: BoxKeyWithMeta
+      key
     })))
   }
 
 
-  async getEncryptionKey(replicationTopic: string): Promise<BoxKeyWithMeta | undefined> {
+  async getEncryptionKey(replicationTopic: string): Promise<KeyWithMeta<Ed25519Keypair | X25519Keypair> | undefined> {
     // v0 take some recent
-    const keys = (await this.keystore.getKeys(replicationTopic));
+    const keys = (await this.keystore.getKeys<Ed25519Keypair | X25519Keypair>(replicationTopic));
     let key = keys?.[0];
     if (!key) {
       const keys = await this.requestAndWaitForKeys(replicationTopic, new RequestKeysByReplicationTopic({
-        replicationTopic,
-        type: BoxKeyWithMeta
+        replicationTopic
       }))
       key = keys ? keys[0] : undefined;
     }
@@ -221,7 +223,7 @@ export class OrbitDB {
     /* if (options.identity && options.identity.provider.keystore) {
       options.keystore = options.identity.provider.keystore
     } */
-    const keystore = options.keystore || new (Keystore as any)(await storage.createStore(path.join(directory, id.toString(), '/keystore')))
+    const keystore: Keystore = options.keystore || new Keystore(await storage.createStore(path.join(directory, id.toString(), '/keystore')))
     let identity: Identity;
     if (options.identity) {
       identity = options.identity;
@@ -230,7 +232,7 @@ export class OrbitDB {
       const signKey = await keystore.createEd25519Key({ id: id.toString() });
 
       identity = {
-        publicKey: signKey.keystore.publicKey,
+        publicKey: signKey.keypair.publicKey,
         sign: (data) => signKey.keypair.sign(data)
 
       }
@@ -259,7 +261,7 @@ export class OrbitDB {
 
 
     await this._ipfs.pubsub.unsubscribe(DirectChannel.getTopic([this.id]));
-    const removeDirectConnect = (e: string) => {
+    const removeDirectConnect = (value: any, e: string) => {
       this._directConnections.get(e)?.close()
       this._directConnections.delete(e);
     }
@@ -314,10 +316,14 @@ export class OrbitDB {
     if (this._ipfs.pubsub && heads.length > 0) {
       this.decryptedSignedThing(serialize(new ExchangeHeadsMessage({
         address: store.address.toString(),
-        heads,
+        heads: heads.map(head => new EntryWithRefs({ entry: head, references: [] })),
         replicationTopic: store.replicationTopic
       }))).then((thing) => {
-        this._ipfs.pubsub.publish(store.replicationTopic, serialize(thing))
+        const ser = serialize(thing);
+        const der1 = deserialize(ser, DecryptedThing);
+        const der2 = deserialize(ser, MaybeEncrypted);
+
+        this._ipfs.pubsub.publish(store.replicationTopic, ser)
       })
     }
   }
@@ -402,14 +408,14 @@ export class OrbitDB {
           /*    const mergeable = [];
              const newItems: Map<string, Entry<any>> = new Map(); */
 
-          const toMerge: Entry<any>[] = [];
-          for (const [_key, value] of groupByGid(heads)) {
-            const leaders = leaderCache.get(value.gid) || this.findLeaders(replicationTopic, isReplicating, value.gid, this.minReplicas);
+          const toMerge: EntryWithRefs<any>[] = [];
+          for (const [gid, value] of groupByGid(heads)) {
+            const leaders = leaderCache.get(gid) || this.findLeaders(replicationTopic, isReplicating, gid, this.minReplicas);
             const isLeader = leaders.find((l) => l === this.id.toString());
             if (!isLeader) {
               continue;
             }
-            value.entries.forEach((head) => {
+            value.forEach((head) => {
               toMerge.push(head);
             })
 
@@ -479,7 +485,7 @@ export class OrbitDB {
            } */
         }
 
-        logger.debug(`Received ${heads.length} heads for '${address}':\n`, JSON.stringify(heads.map(e => e.hash), null, 2))
+        logger.debug(`Received ${heads.length} heads for '${address}':\n`, JSON.stringify(heads.map(e => e.entry.hash), null, 2))
       }
       /*  else if (msg instanceof RequestHeadsMessage) {
           // I have recieved a message urging me to share my heads
@@ -504,14 +510,13 @@ export class OrbitDB {
            }
          }
          logger.debug(`Received exchange heades request for topic: ${replicationTopic}, address: ${address}`)
-       }
-       else if (msg instanceof KeyResponseMessage) {
-         await recieveKeys(msg, (keys) => {
-           const keysToSave = keys.filter(key => key instanceof KeyWithMeta<Ed25519Keypair> || key instanceof BoxKeyWithMeta);
-           return Promise.all(keysToSave.map((key) => this.keystore.saveKey(key)))
-         })
-         
-       } */
+       }*/
+      else if (msg instanceof KeyResponseMessage) {
+        await recieveKeys(msg, (keys) => {
+          return Promise.all(keys.map((key) => this.keystore.saveKey(key)))
+        })
+
+      }
       else if (msg instanceof RequestKeyMessage) {
 
         if (!peer) {
@@ -530,10 +535,7 @@ export class OrbitDB {
          */
 
         const send = (data: Uint8Array) => this._ipfs.pubsub.publish(DirectChannel.getTopic([peer]), data);
-        const getKeysByGroup = (group: string) => this.keystore.getKeys(group);
-        const getKeysByPublicKey = (key: Uint8Array) => this.keystore.getKey(key);
-
-        await exchangeKeys(send, msg, sender, this.canAccessKeys, getKeysByPublicKey, getKeysByGroup, await this.getSigner(), this.encryption)
+        await exchangeKeys(send, msg, sender, this.canAccessKeys, this.keystore, this.identity, this.encryption)
         logger.debug(`Exchanged keys`)
       }
       else if (msg instanceof RequestReplicatorInfo) {
@@ -713,7 +715,7 @@ export class OrbitDB {
           const newPeers = this.findReplicators(store.replicationTopic, store.replicate, gid);
           /* const index = oldPeers.findIndex(p => p === channel.recieverId); */
           for (const newPeer of newPeers) {
-            if (!oldPeersSet?.has(newPeer) && newPeer === this.id.toString()) { // second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
+            if (!oldPeersSet?.has(newPeer) && newPeer !== this.id.toString()) { // second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
 
               // send heads to the new peer
               const channel = this._directConnections.get(newPeer)?.channel;
@@ -725,7 +727,7 @@ export class OrbitDB {
 
               await exchangeHeads(async (message) => {
                 await channel.send(message);
-              }, store, await this.getSigner(), entries)
+              }, store, this.identity, entries)
             }
           }
 
@@ -752,6 +754,8 @@ export class OrbitDB {
     }
 
   }
+
+
 
   async getSigner() {
     return async (bytes: Uint8Array) => {
@@ -1001,7 +1005,7 @@ export class OrbitDB {
     }
 
     // Add self
-    if (!replicating) {
+    if (replicating) {
       peers.push(this.id.toString())
     }
 
@@ -1028,7 +1032,7 @@ export class OrbitDB {
     for (let i = 0; i < numberOfLeaders; i++) {
       let nextIndex = (slotIndex + 1 + i + offset) % peerHashed.length;
       if (nextIndex === slotIndex) {
-        offset = 1;
+        offset += 1;
         nextIndex = (nextIndex + 1) % peerHashed.length;
       }
       leaders.push(hashToPeer.get(peerHashed[nextIndex]) as string);
@@ -1312,6 +1316,21 @@ export class OrbitDB {
             }
             return;
           },
+          onReplicationComplete: async (store) => {
+            if (options.onReplicationComplete) {
+              options.onReplicationComplete(store);
+            }
+          },
+          onReplicationProgress: async (store, entry) => {
+            if (options.onReplicationProgress) {
+              options.onReplicationProgress(store, entry);
+            }
+          },
+          onReplicationQueued: async (store, entry) => {
+            if (options.onReplicationQueued) {
+              options.onReplicationQueued(store, entry);
+            }
+          },
           onOpen: async (store) => {
 
             // ID of the store is the address as a string
@@ -1329,7 +1348,7 @@ export class OrbitDB {
                 replicationTopic: store.replicationTopic
               });
               await this._ipfs.pubsub.publish(store.replicationTopic, serialize(await this.decryptedSignedThing(serialize(msg))));
-
+  
             } */
             /*  } */
             if (options.onOpen) {

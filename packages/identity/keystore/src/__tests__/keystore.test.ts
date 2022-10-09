@@ -5,7 +5,7 @@ import LRU from 'lru-cache';
 import { createStore, Keystore, KeyWithMeta } from '../keystore';
 import rmrf from 'rimraf'
 import { Level } from 'level';
-import { Ed25519Keypair, X25519Keypair } from '@dao-xyz/peerbit-crypto';
+import { Ed25519Keypair, X25519Keypair, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
 import { jest } from '@jest/globals';
 import fs from 'fs-extra'
 import { StoreError } from '../errors.js';
@@ -13,6 +13,9 @@ import { delay } from '@dao-xyz/time';
 import { fixturePath } from './fixture.test.js';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
+// @ts-ignore
+import { v4 as uuid } from 'uuid';
+
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
@@ -31,7 +34,6 @@ describe('keystore', () => {
   beforeAll(async () => {
     await fs.copy(fixturePath, storagePath)
     rmrf.sync(tempKeyPath)
-    store = await createStore(tempKeyPath + '/1') // storagePath
 
   })
 
@@ -43,6 +45,9 @@ describe('keystore', () => {
 
   describe('constructor', () => {
 
+    beforeAll(async () => {
+      store = store || await createStore(tempKeyPath + '/1') // storagePath
+    })
 
     it('creates a new Keystore instance', async () => {
       const keystore = new Keystore(store)
@@ -93,22 +98,24 @@ describe('keystore', () => {
       keystore = new Keystore(store)
     })
 
-    it('creates a new key', async () => {
+    it('creates a new key ed25519 ', async () => {
       const id = new Uint8Array([1, 2, 4]);
-      await keystore.createEd25519Key({ id })
-      const hasKey = await keystore.hasKey(id)
-      const getKey = await keystore.getKey(id)
-      expect(getKey)
-      expect(hasKey).toEqual(true)
+      const key = await keystore.createEd25519Key({ id })
+      expect(await keystore.hasKey(id))
+      expect(await keystore.hasKey(key.keypair.publicKey))
+      expect(await keystore.getKey(id))
+
+      // Also its conversion
+      expect(await keystore.hasKey(await X25519PublicKey.from(key.keypair.publicKey)))
+      expect(await keystore.getKey(await X25519PublicKey.from(key.keypair.publicKey)))
+
     })
 
 
     it('creates id from key', async () => {
       const key = await keystore.createEd25519Key()
-      const hasKey = await keystore.hasKey(key.keypair.publicKey)
-      const getKey = await keystore.getKey(key.keypair.publicKey)
-      expect(getKey)
-      expect(hasKey).toEqual(true)
+      expect(await keystore.getKey(key.keypair.publicKey))
+      expect(await keystore.hasKey(key.keypair.publicKey));
     })
 
 
@@ -140,169 +147,142 @@ describe('keystore', () => {
     })
   })
 
-  describe('saveKey', () => {
-    let keystore: Keystore
 
-    beforeEach(async () => {
-      keystore = new Keystore(store)
-      await keystore.waitForOpen();
-    })
-
-    /* it('can overwrite if secret key is missing', async () => {
-      const id = 'overwrite key'
-      let keyWithMeta = new KeyWithMeta({
-        secretKey: undefined,
-        publicKey: new X25519PublicKey(Buffer.from(new Array(32).fill(0))),
-        timestamp: BigInt(+new Date),
-        group: '_'
-      });
-      let savedKey = await keystore.saveKey(keyWithMeta, id)
-      assert(!savedKey.secretKey);
-      keyWithMeta = new KeyWithMeta({
-        secretKey: new X25519SecretKey(Buffer.from(new Array(32).fill(0))),
-        publicKey: new X25519PublicKey(Buffer.from(new Array(32).fill(0))),
-        timestamp: keyWithMeta.timestamp,
-        group: '_'
-      });
-      savedKey = await keystore.saveKey(keyWithMeta, id)
-      assert(!!savedKey.secretKey)
-    }) */
-
-    /*  it('will return secret key if missing when saving', async () => {
-       const id = 'overwrite key 2'
-       let keyWithMeta = new KeyWithMeta({
-         secretKey: new X25519SecretKey(Buffer.from(new Array(32).fill(0))),
-         publicKey: new X25519PublicKey(Buffer.from(new Array(32).fill(0))),
-         timestamp: BigInt(+new Date),
-         group: '_'
-       });
-       let savedKey = await keystore.saveKey(keyWithMeta, id)
-       assert(!!savedKey.secretKey);
-       keyWithMeta = new KeyWithMeta({
-         secretKey: undefined,
-         publicKey: new X25519PublicKey(Buffer.from(new Array(32).fill(0))),
-         timestamp: keyWithMeta.timestamp,
-         group: '_'
-       });
-       savedKey = await keystore.saveKey(keyWithMeta, id)
-       assert(!!savedKey.secretKey)
-     })
-  */
-    it('throws an error if key already exist', async () => {
-      const id = 'already'
-      const keystore = new Keystore(await createStore(tempKeyPath + '/unique'))
+  it('throws an error if key already exist', async () => {
+    const id = 'already'
+    const keystore = new Keystore(await createStore(tempKeyPath + '/unique'))
+    await keystore.createEd25519Key({ id })
+    try {
       await keystore.createEd25519Key({ id })
-      try {
-        await keystore.createEd25519Key({ id })
-      } catch (e: any) {
-        assert(true)
-      }
-    })
-
-    afterEach(async () => {
-      // await keystore.close()
-    })
+    } catch (e: any) {
+      assert(true)
+    }
   })
 
-  describe('hasKey', () => {
-    let keystore: Keystore
+  afterEach(async () => {
+    // await keystore.close()
+  })
+})
 
-    beforeAll(async () => {
-
-      keystore = new Keystore(store)
-      await keystore.waitForOpen();
-      await keystore.createEd25519Key({ id: 'YYZ' })
-    })
-
-    it('returns true if key exists', async () => {
-      const hasKey = await keystore.hasKey('YYZ')
-      expect(hasKey).toEqual(true)
-    })
-
-    it('returns false if key does not exist', async () => {
-      let hasKey = await keystore.hasKey('XXX')
-      let getKey = await keystore.getKey('XXX')
-      expect(getKey).toBeUndefined();
-      expect(hasKey).toEqual(false)
-
-    })
+describe('hasKey', () => {
+  let keystore: Keystore
 
 
-    it('throws an error accessing a closed store', async () => {
-      const closedKeysStore = new Keystore({ status: 'closed' } as any);
-      try {
-        await closedKeysStore.hasKey('XXX')
-      } catch (e: any) {
-        expect(e).toBeInstanceOf(StoreError)
-        expect((e as StoreError).message).toEqual('Keystore not open')
-      }
-    })
+  beforeAll(async () => {
 
-    afterEach(async () => {
-      // await keystore.close()
-    })
+    store = store || await createStore(tempKeyPath + '/1') // storagePath
+
+    keystore = new Keystore(store)
+    await keystore.waitForOpen();
+    await keystore.createEd25519Key({ id: 'YYZ' })
   })
 
-  describe('getKey', () => {
-    let keystore: Keystore, createdKey: KeyWithMeta<Ed25519Keypair>
-    beforeAll(async () => {
-      if (store.status !== 'open') {
-        await store.open()
-      }
-      keystore = new Keystore(store)
-      createdKey = await keystore.createEd25519Key({ id: 'ZZZ' })
-    })
-
-    it('gets an existing key', async () => {
-      const key = await keystore.getKey('ZZZ')
-      expect(key?.keypair).toBeDefined();
-    })
-
-    it('throws an error upon accessing a non-existant key', async () => {
-      try {
-        await keystore.getKey('ZZZZ')
-      } catch (e: any) {
-        assert(true)
-      }
-    })
-
-
-
-    it('throws an error accessing a closed store', async () => {
-      const closedKeysStore = new Keystore({ status: 'closed' } as any);
-      try {
-        await closedKeysStore.getKey('ZZZ')
-      } catch (e: any) {
-        expect(e).toBeInstanceOf(StoreError)
-        expect((e as StoreError).message).toEqual('Keystore not open')
-      }
-    })
-
-    afterAll(async () => {
-      // keystore.close()
-    })
+  it('returns true if key exists', async () => {
+    const hasKey = await keystore.hasKey('YYZ')
+    expect(hasKey).toEqual(true)
   })
 
-  describe('getKeys', () => {
-    let keystore: Keystore, aSignKey: KeyWithMeta<Ed25519Keypair>, aBoxKey: KeyWithMeta<X25519Keypair>, aBox2Key: KeyWithMeta<X25519Keypair>, bSignKey: KeyWithMeta<Ed25519Keypair>
+  it('returns false if key does not exist', async () => {
+    let hasKey = await keystore.hasKey('XXX')
+    let getKey = await keystore.getKey('XXX')
+    expect(getKey).toBeUndefined();
+    expect(hasKey).toEqual(false)
 
-    it('gets keys by group', async () => {
-
-      keystore = new Keystore(store)
-      aSignKey = await keystore.createEd25519Key({ id: 'asign', group: 'group', overwrite: true })
-      aBoxKey = await keystore.createX25519Key({ id: 'abox', group: 'group', overwrite: true })
-      aBox2Key = await keystore.createX25519Key({ id: 'abox2', group: 'group', overwrite: true })
-      bSignKey = await keystore.createEd25519Key({ id: 'bsign', group: 'group2', overwrite: true })
-
-
-      const keysByGroup = await keystore.getKeys('group')
-      expect(keysByGroup).toHaveLength(3);
-      expect(keysByGroup?.map(k => (k.keypair as (X25519Keypair | Ed25519Keypair)).publicKey.hashCode())).toContainAllValues([aBoxKey, aBox2Key, aSignKey].map(k => (k.keypair as (X25519Keypair | Ed25519Keypair)).publicKey.hashCode()));
-      const keysByType = await keystore.getKeys('group2')
-      expect(keysByType?.map(k => (k.keypair as (X25519Keypair | Ed25519Keypair)).publicKey.hashCode())).toContainAllValues([bSignKey].map(k => (k.keypair as (X25519Keypair | Ed25519Keypair)).publicKey.hashCode()));
-
-    })
   })
+
+
+  it('throws an error accessing a closed store', async () => {
+    const closedKeysStore = new Keystore({ status: 'closed' } as any);
+    try {
+      await closedKeysStore.hasKey('XXX')
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(StoreError)
+      expect((e as StoreError).message).toEqual('Keystore not open')
+    }
+  })
+
+  afterEach(async () => {
+    // await keystore.close()
+  })
+})
+
+describe('getKey', () => {
+  let keystore: Keystore, createdKey: KeyWithMeta<Ed25519Keypair>, createdKeyInGroup: KeyWithMeta<Ed25519Keypair>
+  beforeAll(async () => {
+    store = store || await createStore(tempKeyPath + '/1') // storagePath
+    keystore = new Keystore(store)
+    createdKey = await keystore.createEd25519Key({ id: 'ZZZ', overwrite: true })
+    createdKeyInGroup = await keystore.createEd25519Key({ id: 'YYY', group: 'group', overwrite: true })
+
+  })
+
+  it('gets an existing key', async () => {
+    const key = await keystore.getKey('ZZZ')
+    expect(key?.keypair).toBeDefined();
+  })
+
+  it('gets an existing key in group', async () => {
+    const key = await keystore.getKey('YYY', 'group')
+    expect(key?.keypair).toBeDefined();
+  })
+
+  it('gets key in group by publickey', async () => {
+    const key = await keystore.getKey(createdKeyInGroup.keypair.publicKey)
+    expect(key?.keypair).toBeDefined();
+  })
+
+  it('throws an error upon accessing a non-existant key', async () => {
+    try {
+      await keystore.getKey('ZZZZ')
+    } catch (e: any) {
+      assert(true)
+    }
+  })
+
+
+
+  it('throws an error accessing a closed store', async () => {
+    const closedKeysStore = new Keystore({ status: 'closed' } as any);
+    try {
+      await closedKeysStore.getKey('ZZZ')
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(StoreError)
+      expect((e as StoreError).message).toEqual('Keystore not open')
+    }
+  })
+
+  afterAll(async () => {
+    // keystore.close()
+  })
+})
+
+describe('getKeys', () => {
+  let keystore: Keystore, aSignKey: KeyWithMeta<Ed25519Keypair>, aBoxKey: KeyWithMeta<X25519Keypair>, aBox2Key: KeyWithMeta<X25519Keypair>, bSignKey: KeyWithMeta<Ed25519Keypair>
+
+  beforeAll(async () => {
+
+    store = store || await createStore(tempKeyPath + '/1') // storagePath
+  })
+
+  it('gets keys by group', async () => {
+
+    keystore = new Keystore(store)
+    const group = uuid();
+    const group2 = uuid();
+    aSignKey = await keystore.createEd25519Key({ id: 'asign', group, overwrite: true })
+    aBoxKey = await keystore.createX25519Key({ id: 'abox', group, overwrite: true })
+    aBox2Key = await keystore.createX25519Key({ id: 'abox2', group, overwrite: true })
+    bSignKey = await keystore.createEd25519Key({ id: 'bsign', group: group2, overwrite: true })
+
+
+    const keysByGroup = await keystore.getKeys(group)
+    expect(keysByGroup).toHaveLength(4); // because aSignKey with be also saved as X25519key
+    expect(keysByGroup?.map(k => (k.keypair as (X25519Keypair | Ed25519Keypair)).publicKey.hashCode())).toContainAllValues([aBoxKey, aBox2Key, aSignKey, await KeyWithMeta.toX25519(aSignKey)].map(k => (k.keypair as (X25519Keypair | Ed25519Keypair)).publicKey.hashCode()));
+    const keysByType = await keystore.getKeys(group2)
+    expect(keysByType?.map(k => (k.keypair as (X25519Keypair | Ed25519Keypair)).publicKey.hashCode())).toContainAllValues([bSignKey, await KeyWithMeta.toX25519(bSignKey)].map(k => (k.keypair as (X25519Keypair | Ed25519Keypair)).publicKey.hashCode()));
+
+  })
+
 
   /*  await new Promise((resolve) => {
          setTimeout(() => {

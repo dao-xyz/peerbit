@@ -17,6 +17,7 @@ import { serialize } from '@dao-xyz/borsh';
 // @ts-ignore
 import Logger from 'logplease'
 import { fromBase64, toBase64 } from "./utils.js"
+import { Encoding } from "./encoding.js"
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
@@ -40,7 +41,7 @@ export interface PruneOptions {
   cutToLength: number, // When oplog shorter, cut to length
 }
 
-export type LogOptions<T> = { encryption?: PublicKeyEncryptionResolver, /* rootGid?: string, */ logId?: string, entries?: Entry<T>[], heads?: any, clock?: LamportClock, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction, concurrency?: number, prune?: PruneOptions };
+export type LogOptions<T> = { encryption?: PublicKeyEncryptionResolver, encoding?: Encoding<T>, /* rootGid?: string, */ logId?: string, entries?: Entry<T>[], heads?: any, clock?: LamportClock, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction, concurrency?: number, prune?: PruneOptions };
 /**
  * @description
  * Log implements a G-Set CRDT and adds ordering.
@@ -78,6 +79,7 @@ export class Log<T> extends GSet {
   /*  _clock: Clock; */
   _prune?: PruneOptions
   _encryption?: PublicKeyEncryptionResolver
+  _encoding?: Encoding<T>
 
   joinConcurrency: number;
   /**
@@ -115,7 +117,7 @@ export class Log<T> extends GSet {
       })
     }
  */
-    let { logId, access, entries, heads, clock, sortFn, concurrency, prune, encryption } = options;
+    let { logId, access, entries, heads, clock, sortFn, concurrency, prune, encryption, encoding } = options;
     if (!isDefined(access)) {
       access = new DefaultAccessController()
     }
@@ -150,6 +152,7 @@ export class Log<T> extends GSet {
 
     // encoder/decoder
     this._encryption = encryption;
+    this._encoding = encoding;
 
     // Add entries to the internal cache
     const uniqueEntries = (entries || []).reduce(uniqueEntriesReducer, {})
@@ -378,16 +381,16 @@ export class Log<T> extends GSet {
     return result
   }
 
-  /* getPow2Refs(pointerCount = 1) {
-
-    const all = Object.values(this.traverse(this.heads, Math.max(pointerCount, this.heads.length)))
+  getPow2Refs(pointerCount = 1, heads?: Entry<T>[]): Entry<T>[] {
+    const headsToUse = heads || this.heads;
+    const all = Object.values(this.traverse(headsToUse, Math.max(pointerCount, headsToUse.length)))
 
     // If pointer count is 4, returns 2
     // If pointer count is 8, returns 3 references
     // If pointer count is 512, returns 9 references
     // If pointer count is 2048, returns 11 references
-    const getEveryPow2 = (maxDistance) => {
-      const entries = new Set<Entry<T>>() // TODO set will not work since entry is not a string
+    const getEveryPow2 = (maxDistance: number) => {
+      const entries = new Set<Entry<T>>()
       for (let i = 1; i <= maxDistance; i *= 2) {
         const index = Math.min(i - 1, all.length - 1)
         entries.add(all[index])
@@ -400,9 +403,9 @@ export class Log<T> extends GSet {
     if (all.length < pointerCount && all[all.length - 1]) {
       references.add(all[all.length - 1])// TODO can this yield a publicate?
     }
-    return Array.from(references).map(getHash);
+    return [...references]
 
-  } */
+  }
 
   getHeadsFromHashes(refs: string[]): Entry<T>[] {
     let headsFromRefs = new Map<string, Entry<T>>();
@@ -473,7 +476,8 @@ export class Log<T> extends GSet {
           reciever: {
             ...options.reciever
           }
-        } : undefined
+        } : undefined,
+        encoding: this._encoding
       }
     )
 
@@ -897,11 +901,11 @@ export class Log<T> extends GSet {
    * @returns {Promise<Log>}
    */
   static async fromMultihash<T>(ipfs: IPFS, identity: Identity, hash: string,
-    options?: { encryption?: PublicKeyEncryption, access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction } & EntryFetchAllOptions<T>) {
+    options?: { access?: CanAppendAccessController<T>, sortFn?: Sorting.ISortFunction } & EntryFetchAllOptions<T>) {
     // TODO: need to verify the entries with 'key'
     // @ts-ignore
     const { logId, entries, heads } = await LogIO.fromMultihash(ipfs, hash, { length: options?.length, exclude: options?.exclude, shouldExclude: options?.shouldExclude, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback, concurrency: options?.concurrency, sortFn: options?.sortFn })
-    return new Log(ipfs, identity, { encryption: options?.encryption, logId, access: options?.access, entries, heads, sortFn: options?.sortFn })
+    return new Log(ipfs, identity, { encoding: options?.encoding, encryption: options?.encryption, logId, access: options?.access, entries, heads, sortFn: options?.sortFn })
   }
 
   /**
@@ -919,10 +923,10 @@ export class Log<T> extends GSet {
    * @return {Promise<Log>} New Log
    */
   static async fromEntryHash<T>(ipfs: IPFS, identity: Identity, hash: string | string[],
-    options: { encryption?: PublicKeyEncryptionResolver, logId?: string, access?: any, length?: number, exclude?: any[], shouldExclude?: (hash: string) => boolean, timeout?: number, concurrency?: number, sortFn?: any, onProgressCallback?: any } = { length: -1, exclude: [] }): Promise<Log<T>> {
+    options: { encoding?: Encoding<T>, encryption?: PublicKeyEncryptionResolver, logId?: string, access?: any, length?: number, exclude?: any[], shouldExclude?: (hash: string) => boolean, timeout?: number, concurrency?: number, sortFn?: any, onProgressCallback?: any } = { length: -1, exclude: [] }): Promise<Log<T>> {
     // TODO: need to verify the entries with 'key'
     const { entries } = await LogIO.fromEntryHash(ipfs, hash, { length: options.length, exclude: options.exclude, encryption: options?.encryption, shouldExclude: options.shouldExclude, timeout: options.timeout, concurrency: options.concurrency, onProgressCallback: options.onProgressCallback, sortFn: options.sortFn })
-    return new Log(ipfs, identity, { encryption: options?.encryption, logId: options.logId, access: options.access, entries, sortFn: options.sortFn })
+    return new Log(ipfs, identity, { encoding: options?.encoding, encryption: options?.encryption, logId: options.logId, access: options.access, entries, sortFn: options.sortFn })
   }
 
   /**
@@ -938,10 +942,10 @@ export class Log<T> extends GSet {
    * @return {Promise<Log>} New Log
    */
   static async fromJSON<T>(ipfs: IPFS, identity: Identity, json: { id: string, heads: string[] },
-    options: { encryption?: PublicKeyEncryptionResolver, access?: CanAppendAccessController<T>, length?: number, timeout?: number, sortFn?: Sorting.ISortFunction, onProgressCallback?: (entry: Entry<T>) => void } = {}) {
+    options: { encoding?: Encoding<T>, encryption?: PublicKeyEncryptionResolver, access?: CanAppendAccessController<T>, length?: number, timeout?: number, sortFn?: Sorting.ISortFunction, onProgressCallback?: (entry: Entry<T>) => void } = {}) {
     // TODO: need to verify the entries with 'key'
     const { logId, entries } = await LogIO.fromJSON(ipfs, json, { length: options?.length, encryption: options?.encryption, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback })
-    return new Log(ipfs, identity, { encryption: options?.encryption, logId, entries, access: options?.access, sortFn: options?.sortFn })
+    return new Log(ipfs, identity, { encoding: options?.encoding, encryption: options?.encryption, logId, entries, access: options?.access, sortFn: options?.sortFn })
   }
 
   /**
@@ -961,7 +965,7 @@ export class Log<T> extends GSet {
     // TODO: need to verify the entries with 'key'
     options = strictFetchOptions(options);
     const { entries } = await LogIO.fromEntry(ipfs, sourceEntries, { length: options.length, exclude: options.exclude, encryption: options?.encryption, timeout: options.timeout, concurrency: options.concurrency, shouldExclude: options.shouldExclude, onProgressCallback: options.onProgressCallback })
-    return new Log(ipfs, identity, { encryption: options?.encryption, access: options.access, entries, sortFn: options.sortFn })
+    return new Log(ipfs, identity, { encoding: options?.encoding, encryption: options?.encryption, access: options.access, entries, sortFn: options.sortFn })
 
   }
 

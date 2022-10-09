@@ -31,7 +31,7 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/orbit-db": "^0.29.17",
-    "@dao-xyz/borsh": "^3.2.5",
+    "@dao-xyz/borsh": "^3.3.0",
     "@dao-xyz/query-protocol": "^0.0.42",
     "@dao-xyz/peerbit-crypto": "^0.0.1",
     "@dao-xyz/orbit-db-bdocstore": "^0.0.74",

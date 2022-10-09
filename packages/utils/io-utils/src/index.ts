@@ -4,12 +4,13 @@ import * as dagPb from '@ipld/dag-pb'
 import * as dagCbor from '@ipld/dag-cbor'
 import { sha256 as hasher } from 'multiformats/hashes/sha2'
 import { base58btc } from 'multiformats/bases/base58'
+import { IPFS } from 'ipfs-core-types'
 
 const mhtype = 'sha2-256'
 const defaultBase = base58btc
 const unsupportedCodecError = () => new Error('unsupported codec')
 
-const cidifyString = (str) => {
+const cidifyString = (str: any): any => {
   if (!str) {
     return str
   }
@@ -21,7 +22,7 @@ const cidifyString = (str) => {
   return CID.parse(str)
 }
 
-const stringifyCid = (cid, options: any = {}): any => {
+const stringifyCid = (cid: any, options: any = {}): any => {
   if (!cid || typeof cid === 'string') {
     return cid
   }
@@ -50,10 +51,10 @@ const codecMap = {
   'dag-cbor': dagCbor
 }
 
-async function read(ipfs, cid, options: { timeout?: number, links?: string[] } = {}) {
+async function read(ipfs: IPFS, cid: any, options: { timeout?: number, links?: string[] } = {}) {
   cid = cidifyString(stringifyCid(cid))
 
-  const codec = codecCodes[cid.code]
+  const codec = (codecCodes as any)[cid.code]
   if (!codec) throw unsupportedCodecError()
 
   const bytes = await ipfs.block.get(cid, { timeout: options.timeout })
@@ -63,7 +64,7 @@ async function read(ipfs, cid, options: { timeout?: number, links?: string[] } =
     return JSON.parse(new TextDecoder().decode((block.value as any).Data))
   }
   if (block.cid.code === dagCbor.code) {
-    const value = block.value
+    const value = block.value as any
     const links = options.links || []
     links.forEach((prop) => {
       if (value[prop]) {
@@ -74,9 +75,9 @@ async function read(ipfs, cid, options: { timeout?: number, links?: string[] } =
   }
 }
 
-async function write(ipfs, format: string, value, options: { base?: any, pin?: boolean, timeout?: number, format?: string, links?: string[] } = {}) {
+async function write(ipfs: IPFS, format: string, value: any, options: { base?: any, pin?: boolean, timeout?: number, format?: string, links?: string[] } = {}) {
   if (options.format === 'dag-pb') format = options.format
-  const codec = codecMap[format]
+  const codec = (codecMap as any)[format]
   if (!codec) throw unsupportedCodecError()
 
   if (codec.code === dagPb.code) {
@@ -94,7 +95,7 @@ async function write(ipfs, format: string, value, options: { base?: any, pin?: b
 
   const block = await Block.encode({ value, codec, hasher })
   await ipfs.block.put(block.bytes, {
-    cid: block.cid.bytes,
+    /* cid: block.cid.bytes, */
     version: block.cid.version,
     format,
     mhtype,

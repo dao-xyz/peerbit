@@ -13,8 +13,8 @@ Logger.setLogLevel('ERROR')
 const hasItems = (arr: any[]) => arr && arr.length > 0
 
 
-export interface EntryFetchOptions<T> { length?: number, timeout?: number, exclude?: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency?: number, encryption?: PublicKeyEncryptionResolver }
-interface EntryFetchStrictOptions<T> { length: number, timeout?: number, exclude: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency: number, encryption?: PublicKeyEncryptionResolver }
+export interface EntryFetchOptions<T> { length?: number, timeout?: number, exclude?: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency?: number, encoding?: Encoding<T>, encryption?: PublicKeyEncryptionResolver }
+interface EntryFetchStrictOptions<T> { length: number, timeout?: number, exclude: any[], onProgressCallback?: (entry: Entry<T>) => void, concurrency: number, encoding?: Encoding<T>, encryption?: PublicKeyEncryptionResolver }
 
 export interface EntryFetchAllOptions<T> extends EntryFetchOptions<T> { shouldExclude?: (string: string) => boolean, onStartProgressCallback?: any, delay?: number }
 interface EntryFetchAllStrictOptions<T> extends EntryFetchStrictOptions<T> { shouldExclude?: (string: string) => boolean, onStartProgressCallback?: any, delay: number }

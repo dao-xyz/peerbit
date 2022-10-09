@@ -1,4 +1,4 @@
-import { Constructor, field, option, variant, vec } from "@dao-xyz/borsh";
+import { field, option, variant, vec } from "@dao-xyz/borsh";
 import { MultipleQueriesType, Query } from "./query-interface.js";
 
 export enum SortDirection {
@@ -175,9 +175,9 @@ export class DocumentQueryRequest extends MultipleQueriesType {
         sort?: FieldSort
 
     }) {
-        super({
-            queries: props?.queries
-        });
+        super(props ? {
+            queries: props.queries
+        } : undefined);
 
         if (props) {
             this.offset = props.offset;

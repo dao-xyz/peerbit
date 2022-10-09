@@ -2,11 +2,12 @@ import { Level } from 'level';
 import LRU from 'lru-cache';
 import { variant, field, serialize, deserialize, option, Constructor } from '@dao-xyz/borsh';
 import { U8IntArraySerializer, } from '@dao-xyz/borsh-utils';
-import { X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519PrivateKey, Keypair, X25519Keypair, Ed25519Keypair, PublicSignKey } from '@dao-xyz/peerbit-crypto';
+import { X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519PrivateKey, Keypair, X25519Keypair, Ed25519Keypair, PublicSignKey, PublicKeyEncryptionKey } from '@dao-xyz/peerbit-crypto';
 import { waitFor } from '@dao-xyz/time';
 import { createHash, Sign } from 'crypto';
 import sodium, { KeyPair } from 'libsodium-wrappers';
 import { StoreError } from './errors';
+import { format } from 'path';
 
 export interface Type<T> extends Function {
   new(...args: any[]): T;
@@ -15,7 +16,7 @@ const PATH_KEY = '.'
 const DEFAULT_KEY_GROUP = '_';
 const getGroupKey = (group: string) => group === DEFAULT_KEY_GROUP ? DEFAULT_KEY_GROUP : createHash('sha1').update(group).digest('base64')
 const getIdKey = (id: string | Buffer | Uint8Array | PublicSignKey): string => {
-  if (id instanceof PublicSignKey) {
+  if (id instanceof PublicSignKey || id instanceof PublicKeyEncryptionKey) {
     return id.hashCode()
   }
 
@@ -132,7 +133,12 @@ export class KeyWithMeta<T extends Keypair> {
       keypair: this.keypair
     })
   }
-
+  static async toX25519(from: KeyWithMeta<Ed25519Keypair>) {
+    return new KeyWithMeta({
+      ...from,
+      keypair: await X25519Keypair.from(from.keypair)
+    })
+  }
 }
 
 /* 
@@ -390,19 +396,7 @@ export class Keystore {
         throw new Error("Key already exist with this id, and is different")
       }
     }
-    /* if (!options.overwrite) {
-      const existingKey = await this.getKeyById(path);
-      if (existingKey && !existingKey.equals(key)) {
 
-        if (!existingKey.equals(key, true)) {
-          throw new Error("Key already exist with this id, and is different")
-        }
-        if (!key.secretKey) {
-          key.secretKey = existingKey.secretKey; // Assign key
-        }
-        return key as any as T; // Already save, TODO fix types
-      }
-    } */
 
     const ser = serialize(key);
     const publicKeyString = publicKeyFromKeyPair(key.keypair).hashCode();
@@ -410,6 +404,14 @@ export class Keystore {
     await this.keyStore.put(publicKeyString, Buffer.from(ser), { valueEncoding: 'view' }) // TODO fix types, are just wrong 
     this._cache.set(path, key)
     this._cache.set(publicKeyString, key)
+
+    if (key.keypair instanceof Ed25519Keypair) {
+      this.saveKey(new KeyWithMeta({
+        group: key.group,
+        keypair: await X25519Keypair.from(key.keypair),
+        timestamp: key.timestamp
+      }))
+    }
     return key
   }
 

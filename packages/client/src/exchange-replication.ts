@@ -10,9 +10,9 @@ import { OrbitDB } from './orbit-db.js';
 import { StringSetSerializer } from '@dao-xyz/borsh-utils';
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
-let v8 = undefined;
+let v8: Promise<any> | undefined = undefined;
 if (isNode) {
-    v8 = require('v8');
+    v8 = import('v8');
 }
 
 export const WAIT_FOR_PEERS_TIME = 5000;
@@ -169,7 +169,7 @@ export const exchangePeerInfo = async (fromId: string, replicationTopic: string,
             store: store.address.toString(),
             /*   allowForks: store.allowForks, */
             heads,
-            memoryLeft: v8.getHeapStatistics().total_available_size //v8
+            memoryLeft: (await v8).getHeapStatistics().total_available_size //v8
         }))
     }).sign(sign)
 

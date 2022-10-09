@@ -25,6 +25,7 @@ import { joinUint8Arrays } from '@dao-xyz/borsh-utils';
 // @ts-ignore
 import Logger from 'logplease'
 import { EncodingType } from './encoding.js'
+import { EntryWithRefs } from './entry-with-refs.js'
 
 /* let v8 = undefined;
 if (isNode) {
@@ -136,6 +137,7 @@ export interface IStoreOptions<T> {
   /*   nameResolver?: (name: string) => string */
 
   encryption?: StorePublicKeyEncryption,
+  encoding?: Encoding<T>,
 
   maxHistory?: number,
   fetchEntryTimeout?: number,
@@ -302,7 +304,7 @@ export class Store<T> implements StoreLike<T> {
     this.options = opts
 
 
-    const thisAlternative = await options.saveAndResolveStore(this);
+    const thisAlternative = await this.options.saveAndResolveStore(this);
     if (thisAlternative !== this) {
       return thisAlternative;
     }
@@ -310,7 +312,7 @@ export class Store<T> implements StoreLike<T> {
 
     const acl = this.accessController;
     if (acl) {
-      this.accessController = (await acl.init(ipfs, this.identity, options)) as (StoreLike<any> & AccessController<any>);
+      this.accessController = (await acl.init(ipfs, this.identity, this.options)) as (StoreLike<any> & AccessController<any>);
     }
 
     const address = this.address; // will exist since options.saveAndResolveStore will save
@@ -327,13 +329,13 @@ export class Store<T> implements StoreLike<T> {
     this.manifestPath = path.join(this.id, '_manifest')
     this.identity = identity;
 
-    this.fallbackAccessController = options.fallbackAccessController;
+    this.fallbackAccessController = this.options.fallbackAccessController;
     /* this.sharding.init(options.requestNewShard); */
 
 
 
     // External dependencies
-    this._cache = await options.resolveCache(this.address);
+    this._cache = await this.options.resolveCache(this.address);
 
     // Create the operations log
     this._oplog = new Log<T>(this._ipfs, identity, this.logOptions)
@@ -357,11 +359,21 @@ export class Store<T> implements StoreLike<T> {
 
 
     try {
-      const onReplicationQueued = async (entry: Entry<T>) => {
+      const onReplicationQueued = async (entry: Entry<T> | EntryWithRefs<T>) => {
         // Update the latest entry state (latest is the entry with largest clock time)
-        await entry.getClock();
-        this._recalculateReplicationMax(entry.clock.time)
-        this.options.onReplicationQueued && this.options.onReplicationQueued(this, entry)
+        const e = entry instanceof Entry ? entry : entry.entry;
+        try {
+          await e.getClock();
+          this._recalculateReplicationMax(e.clock.time + 1n)
+          this.options.onReplicationQueued && this.options.onReplicationQueued(this, e)
+        } catch (error) {
+          if (error instanceof AccessError) {
+            logger.info("Failed to access clock of entry: " + e.hash);
+            return; // Ignore, we cant access clock
+          }
+          throw error;
+        }
+
       }
 
       const onReplicationProgress = async (entry: Entry<T>) => {
@@ -370,7 +382,7 @@ export class Store<T> implements StoreLike<T> {
 
         // TODO below is not nice, do we really need replication status?
         try {
-          this._recalculateReplicationStatus((await entry.getClock()).time)
+          this._recalculateReplicationStatus((await entry.getClock()).time + 1n)
         } catch (error) {
           this._recalculateReplicationStatus(0)
         }
@@ -474,6 +486,7 @@ export class Store<T> implements StoreLike<T> {
   get logOptions(): LogOptions<T> {
     return {
       logId: this.id,
+      encoding: this.options.encoding,
       encryption: this.options.encryption ? {
         getAnyKeypair: this.options.encryption(this.replicationTopic).getAnyKeypair,
         getEncryptionKeypair: this.options.encryption(this.replicationTopic).getEncryptionKeypair
@@ -610,7 +623,7 @@ export class Store<T> implements StoreLike<T> {
     // Update the replication status from the heads
     for (const head of heads) {
       const time = (await head.clock).time
-      this._recalculateReplicationMax(time)
+      this._recalculateReplicationMax(time + 1n)
     }
 
     // Load the log
@@ -632,7 +645,7 @@ export class Store<T> implements StoreLike<T> {
     this.options.onReady && this.options.onReady(this)
   }
 
-  async sync(heads: Entry<T>[]) {
+  async sync(heads: (Entry<T> | EntryWithRefs<T>)[]) {
 
 
     /* const mem = await this.checkMemory();
@@ -680,33 +693,35 @@ export class Store<T> implements StoreLike<T> {
     } */
 
 
-    const handle = async (head: Entry<T>) => {
+    const handle = async (headToHandle: Entry<T> | EntryWithRefs<T>) => {
 
       // TODO Fix types
-      head.init({
-        encryption: this._oplog._encryption
-      })
+
       if (this.accessController) {
-        try {
-          // TODO add can append, because it referenses things I know, or is a new root. BTW new roots should only be accepted if the access controller allows it
-          const canAppend = await this.accessController.canAppend(head._payload, head._signature)
-          if (!canAppend) {
-            logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
-            return Promise.resolve(null)
+        const headsToCheck = headToHandle instanceof Entry ? [headToHandle] : [headToHandle.entry, ...headToHandle.references];
+        for (const h of headsToCheck) {
+          h.init({
+            encryption: this._oplog._encryption
+          })
+          try {
+            // TODO add can append, because it referenses things I know, or is a new root. BTW new roots should only be accepted if the access controller allows it
+            const canAppend = await this.accessController.canAppend(h._payload, h._signature)
+            if (!canAppend) {
+              logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
+              return Promise.resolve(null)
+            }
+          } catch (error) {
+            return Promise.resolve(null);
           }
-        } catch (error) {
-          return Promise.resolve(null);
         }
       }
 
-
-      /*       head.peers = new Set(leaderInfo.leaders);
-       */
+      const head = headToHandle instanceof Entry ? headToHandle : headToHandle.entry;
       const hash = await io.write(this._ipfs, 'dag-cbor', head.serialize(), { links: Entry.IPLD_LINKS })
       if (hash !== head.hash) {
         throw new Error("Head hash didn\'t match the contents")
       }
-      return head
+      return headToHandle
     }
 
     return mapSeries(heads, handle)
@@ -727,8 +742,8 @@ export class Store<T> implements StoreLike<T> {
 
   static load(ipfs: IPFS, address: Address, options?: {
     timeout?: number;
-  }) {
-    return load(ipfs, address, Store, options)
+  }): Promise<Store<any>> {
+    return load(ipfs, address, Store, options) as Promise<Store<any>>
   }
 
   loadMoreFrom(entries: (string | Entry<any>)[]) {
@@ -794,7 +809,7 @@ export class Store<T> implements StoreLike<T> {
 
       // Fetch the entries
       // Timeout 1 sec to only load entries that are already fetched (in order to not get stuck at loading)
-      this._recalculateReplicationMax(snapshotData.values.reduce(maxClock, 0n))
+      this._recalculateReplicationMax(snapshotData.values.reduce(maxClock, 0n) + 1n)
       if (snapshotData) {
         this._oplog = await Log.fromEntry(this._ipfs, this.identity, snapshotData.heads, {
           access: this.accessController,
@@ -847,7 +862,7 @@ export class Store<T> implements StoreLike<T> {
 
       // TODO below is not nice, do we really need replication status?
       try {
-        this._recalculateReplicationStatus((await entry.getClock()).time)
+        this._recalculateReplicationStatus((await entry.getClock()).time + 1n)
       } catch (error) {
         this._recalculateReplicationStatus(0)
       }
@@ -897,7 +912,7 @@ export class Store<T> implements StoreLike<T> {
 
   /* Loading progress callback */
   _onLoadProgress(entry: Entry<any>) {
-    this._recalculateReplicationStatus(entry.clock.time)
+    this._recalculateReplicationStatus(entry.clock.time + 1n)
     this.options.onLoadProgress && this.options.onLoadProgress(this, entry)
   }
 

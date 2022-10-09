@@ -3,8 +3,7 @@ import assert, { rejects } from 'assert'
 import { Store, DefaultOptions, HeadsCache } from '../store.js'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
 import { Keystore, KeyWithMeta } from "@dao-xyz/orbit-db-keystore"
-import { Entry, JSON_ENCODING } from '@dao-xyz/ipfs-log'
-import { createStore } from './storage.js'
+import { Entry } from '@dao-xyz/ipfs-log'
 import { SimpleAccessController, SimpleIndex } from './utils.js'
 import { Address } from '../io.js'
 import { Controller } from 'ipfsd-ctl'
@@ -13,8 +12,8 @@ import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { waitFor } from '@dao-xyz/time';
 import { fileURLToPath } from 'url';
 import { jest } from '@jest/globals';
-
 import path from 'path';
+
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 
@@ -23,7 +22,8 @@ import {
   nodeConfig as config,
   testAPIs,
   startIpfs,
-  stopIpfs
+  stopIpfs,
+  createStore
 } from '@dao-xyz/orbit-db-test-utils'
 import { Level } from 'level'
 
@@ -56,11 +56,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await cacheStore?.close()
     })
 
-    afterEach(async () => {
-      await store?.drop()
-      await cacheStore?.open()
-      await identityStore?.open()
-    })
 
     it('adds an operation and triggers the write event', async () => {
       index = new SimpleIndex();

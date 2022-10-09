@@ -16,7 +16,8 @@ import {
   stopIpfs,
   testAPIs,
   connectPeers,
-  waitForPeers
+  waitForPeers,
+  Session
 } from '@dao-xyz/orbit-db-test-utils'
 import { waitFor } from "@dao-xyz/time"
 
@@ -27,27 +28,27 @@ const dbPath4 = './orbitdb/tests/replicate-automatically/4'
 
 Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Automatic Replication (${API})`, function () {
-    jest.setTimeout(config.timeout * 3)
+    jest.setTimeout(config.timeout * 14)
 
-    let ipfsd1: Controller, ipfsd2: Controller, ipfsd3: Controller, ipfsd4: Controller, ipfs1: IPFS, ipfs2: IPFS, ipfs3: IPFS, ipfs4: IPFS
+    /*  let ipfsd1: Controller, ipfsd2: Controller, ipfsd3: Controller, ipfsd4: Controller, ipfs1: IPFS, ipfs2: IPFS, ipfs3: IPFS, ipfs4: IPFS */
     let orbitdb1: OrbitDB, orbitdb2: OrbitDB, orbitdb3: OrbitDB, orbitdb4: OrbitDB
-
+    let session: Session;
     beforeAll(async () => {
       rmrf.sync('./orbitdb')
       rmrf.sync(dbPath1)
       rmrf.sync(dbPath2)
       rmrf.sync(dbPath3)
       rmrf.sync(dbPath4)
-
-      ipfsd1 = await startIpfs(API, config.daemon1)
-      ipfsd2 = await startIpfs(API, config.daemon2)
-      ipfsd3 = await startIpfs(API, config.daemon2)
-      ipfsd4 = await startIpfs(API, config.daemon2)
-
-      ipfs1 = ipfsd1.api
-      ipfs2 = ipfsd2.api
-      ipfs3 = ipfsd3.api
-      ipfs4 = ipfsd4.api
+      session = await Session.connected(2);
+      /*    ipfsd1 = await startIpfs(API, config.daemon1)
+         ipfsd2 = await startIpfs(API, config.daemon2)
+         ipfsd3 = await startIpfs(API, config.daemon2)
+         ipfsd4 = await startIpfs(API, config.daemon2)
+   
+         ipfs1 = ipfsd1.api
+         ipfs2 = ipfsd2.api
+         ipfs3 = ipfsd3.api
+         ipfs4 = ipfsd4.api */
 
 
     })
@@ -67,18 +68,7 @@ Object.keys(testAPIs).forEach(API => {
         await orbitdb4.stop()
       }
 
-      if (ipfsd1) {
-        await stopIpfs(ipfsd1)
-      }
-      if (ipfs2) {
-        await stopIpfs(ipfsd2)
-      }
-      if (ipfs3) {
-        await stopIpfs(ipfsd3)
-      }
-      if (ipfs4) {
-        await stopIpfs(ipfsd4)
-      }
+      await session.stop();
       rmrf.sync(dbPath1)
       rmrf.sync(dbPath2)
       rmrf.sync(dbPath3)
@@ -87,11 +77,9 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     it('starts replicating the database when peers connect', async () => {
-      const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
-      await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
       console.log('Peers connected')
-      orbitdb1 = await OrbitDB.createInstance(ipfs1, { directory: dbPath1 })
-      orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: dbPath2 })
+      orbitdb1 = await OrbitDB.createInstance(session.peers[0].ipfs, { directory: dbPath1 })
+      orbitdb2 = await OrbitDB.createInstance(session.peers[1].ipfs, { directory: dbPath2 })
 
       const entryCount = 33
       const entryArr = []

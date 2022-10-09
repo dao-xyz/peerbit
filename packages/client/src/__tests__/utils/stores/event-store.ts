@@ -5,7 +5,7 @@ import { Store } from "@dao-xyz/orbit-db-store"
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log';
 import { AccessController } from "@dao-xyz/orbit-db-store";
 import { variant } from '@dao-xyz/borsh';
-import { EncodingType } from "@dao-xyz/orbit-db-store/lib/esm/encoding";
+import { EncodingType } from "@dao-xyz/orbit-db-store";
 
 // TODO: generalize the Iterator functions and spin to its own module
 export interface Operation<T> {
@@ -118,11 +118,11 @@ export class EventStore<T> extends Store<Operation<T>> {
     static async load<T>(ipfs: any, address: Address, options?: {
         timeout?: number;
     }): Promise<EventStore<T>> {
-        const instance = await load(ipfs, address, Store, options)
+        const instance = await load<EventStore<T>>(ipfs, address, EventStore, options)
         if (instance instanceof EventStore === false) {
             throw new Error("Unexpected")
         };
-        return instance as EventStore<T>
+        return instance as any as EventStore<T>
     }
 
 }

@@ -9,7 +9,6 @@
         "packages/identity/keystore",
         "packages/utils/crypto",
         "packages/store/orbit-db-bdocstore",
-        "packages/store/orbit-db-bfeedstore",
         "packages/store/orbit-db-query-store",
         "packages/store/orbit-db-string",
         "packages/store/query-protocol",

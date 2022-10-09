@@ -7,11 +7,10 @@ import {
   nodeConfig as config,
   testAPIs,
   startIpfs,
-  stopIpfs
-
+  stopIpfs,
+  createStore
 } from '@dao-xyz/orbit-db-test-utils'
 import { DefaultOptions, Store } from '../store.js'
-import { createStore } from './storage.js'
 import { SimpleAccessController, SimpleIndex } from './utils.js'
 import { Controller } from 'ipfsd-ctl'
 import { IPFS } from 'ipfs-core-types'
@@ -67,7 +66,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       expect(store._replicator._logs).toBeEmpty();
     })
 
-    describe('concurrency = 123', function () {
+    describe('replication progress', function () {
       let log2: Log<string>
 
       jest.setTimeout(timeout)

@@ -29,7 +29,7 @@
   "author": "Haad",
   "license": "MIT",
   "dependencies": {
-    "@dao-xyz/borsh": "^3.2.5",
+    "@dao-xyz/borsh": "^3.3.0",
     "@dao-xyz/borsh-utils": "^0.0.1",
     "@dao-xyz/peerbit-crypto": "^0.0.1",
     "elliptic": "^6.5.4",

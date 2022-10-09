@@ -4,7 +4,6 @@ import { default as Cache } from '@dao-xyz/orbit-db-cache'
 import { Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore';
 import { Store, DefaultOptions } from '../store.js'
 import { Entry } from '@dao-xyz/ipfs-log';
-import { createStore } from './storage.js';
 import { SimpleAccessController, SimpleIndex } from './utils.js';
 import { jest } from '@jest/globals';
 
@@ -13,7 +12,8 @@ import {
   nodeConfig as config,
   testAPIs,
   startIpfs,
-  stopIpfs
+  stopIpfs,
+  createStore
 } from '@dao-xyz/orbit-db-test-utils'
 import { Controller } from 'ipfsd-ctl';
 import { IPFS } from 'ipfs';
@@ -64,11 +64,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await cacheStore?.close()
     })
 
-    afterEach(async () => {
-      await store.drop()
-      await cacheStore.open()
-      await identityStore.open()
-    })
 
     it('Saves a local snapshot', async () => {
       const writes = 10

@@ -6,7 +6,7 @@ import { AccessController } from "@dao-xyz/orbit-db-store";
 import { Operation } from "./event-store";
 import { variant } from '@dao-xyz/borsh';
 import { IPFS } from "ipfs-core-types";
-import { EncodingType } from "@dao-xyz/orbit-db-store/lib/esm/encoding";
+import { EncodingType } from "@dao-xyz/orbit-db-store";
 
 
 export class KeyValueIndex {

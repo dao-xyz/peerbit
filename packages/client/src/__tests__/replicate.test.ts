@@ -3,7 +3,7 @@ import assert from 'assert'
 import mapSeries from 'p-each-series'
 import rmrf from 'rimraf'
 import { Entry } from '@dao-xyz/ipfs-log'
-import { waitFor } from '@dao-xyz/time'
+import { delay, waitFor } from '@dao-xyz/time'
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
@@ -13,14 +13,14 @@ import { EventStore, Operation } from './utils/stores/event-store'
 import { IInitializationOptions, IStoreOptions } from '@dao-xyz/orbit-db-store'
 
 // Include test utilities
-const {
-  config,
+import {
+  nodeConfig as config,
   startIpfs,
   stopIpfs,
   testAPIs,
   connectPeers,
   waitForPeers,
-} = require('@dao-xyz/orbit-db-test-utils')
+} from '@dao-xyz/orbit-db-test-utils'
 
 const orbitdbPath1 = './orbitdb/tests/replication/1'
 const orbitdbPath2 = './orbitdb/tests/replication/2'
@@ -34,7 +34,6 @@ Object.keys(testAPIs).forEach(API => {
     let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS
     let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore<string>, db2: EventStore<string>
 
-    let timer: any
     let options: IStoreOptions<any>;
 
     beforeAll(async () => {
@@ -57,7 +56,6 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     beforeEach(async () => {
-      clearInterval(timer)
 
       rmrf.sync(orbitdbPath1)
       rmrf.sync(orbitdbPath2)
@@ -74,7 +72,6 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     afterEach(async () => {
-      clearInterval(timer)
       options = {} as any
 
       if (db1)
@@ -93,23 +90,21 @@ Object.keys(testAPIs).forEach(API => {
     it('replicates database of 1 entry', async () => {
       console.log("Waiting for peers to connect")
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
-      // Set 'sync' flag on. It'll prevent creating a new local database and rather
-      // fetch the database from the network
+
       options = Object.assign({}, options, { directory: dbPath2 })
       let done = false;
       db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {
         ...options, onReplicationComplete: () => {
           expect(db2.iterator({ limit: -1 }).collect().length).toEqual(1)
 
-          clearInterval(timer)
           const db1Entries: Entry<Operation<string>>[] = db1.iterator({ limit: -1 }).collect()
           expect(db1Entries.length).toEqual(1)
-          expect(orbitdb1.findReplicators(db1.replicationTopic, true, db1Entries[0].gid)).toContainValues([orbitdb1.id, orbitdb2.id]);
+          expect(orbitdb1.findReplicators(db1.replicationTopic, true, db1Entries[0].gid)).toContainValues([orbitdb1.id, orbitdb2.id].map(p => p.toString()));
           expect(db1Entries[0].payload.getValue().value).toEqual(value)
 
           const db2Entries: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
           expect(db2Entries.length).toEqual(1)
-          expect(orbitdb2.findReplicators(db2.replicationTopic, true, db2Entries[0].gid)).toContainValues([orbitdb1.id, orbitdb2.id]);
+          expect(orbitdb2.findReplicators(db2.replicationTopic, true, db2Entries[0].gid)).toContainValues([orbitdb1.id, orbitdb2.id].map(p => p.toString()));
           expect(db2Entries[0].payload.getValue().value).toEqual(value)
           done = true;
         }
@@ -165,7 +160,7 @@ Object.keys(testAPIs).forEach(API => {
       console.log("Waiting for peers to connect")
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
 
-      options = Object.assign({}, options, { directory: dbPath2, sync: true })
+      options = Object.assign({}, options, { directory: dbPath2 })
 
       // Test that none of the entries gets into the replication queue twice
       const replicateSet = new Set()
@@ -216,11 +211,11 @@ Object.keys(testAPIs).forEach(API => {
       // progress events should increase monotonically
       expect(progressEvents.length).toEqual(entryCount)
       for (const [idx, e] of progressEvents.entries()) {
-        expect(e).toEqual(idx + 1)
+        expect(e).toEqual(BigInt(idx + 1))
       }
       // Verify replication status
-      expect(db2.replicationStatus.progress).toEqual(entryCount)
-      expect(db2.replicationStatus.max).toEqual(entryCount)
+      expect(db2.replicationStatus.progress).toEqual(BigInt(entryCount))
+      expect(db2.replicationStatus.max).toEqual(BigInt(entryCount))
       // Verify replicator state
       expect(db2._replicator.tasksRunning).toEqual(0)
       expect(db2._replicator.tasksQueued).toEqual(0)
@@ -234,7 +229,7 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     it('emits correct replication info on fresh replication', async () => {
-      const entryCount = 512
+      const entryCount = 15
 
       // Trigger replication
       const adds = []
@@ -286,19 +281,22 @@ Object.keys(testAPIs).forEach(API => {
         }
       })
 
+      await waitFor(() => done)
 
       // All entries should be in the database
       expect(db2.iterator({ limit: -1 }).collect().length).toEqual(entryCount)
       // 'replicated' event should've been received only once
       expect(replicatedEventCount).toEqual(1)
-      // progress events should increase monotonically
+
+      // progress events should (increase monotonically)
       expect(progressEvents.length).toEqual(entryCount)
+
       for (const [idx, e] of progressEvents.entries()) {
-        expect(e).toEqual(idx + 1)
+        expect(e).toEqual(BigInt(idx + 1))
       }
       // Verify replication status
-      expect(db2.replicationStatus.progress).toEqual(entryCount)
-      expect(db2.replicationStatus.max).toEqual(entryCount)
+      expect(db2.replicationStatus.progress).toEqual(BigInt(entryCount))
+      expect(db2.replicationStatus.max).toEqual(BigInt(entryCount))
       // Verify replicator state
       expect(db2._replicator.tasksRunning).toEqual(0)
       expect(db2._replicator.tasksQueued).toEqual(0)
@@ -313,7 +311,7 @@ Object.keys(testAPIs).forEach(API => {
       console.log("Waiting for peers to connect")
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
 
-      const entryCount = 100
+      const entryCount = 15
 
       // Trigger replication
       const adds = []

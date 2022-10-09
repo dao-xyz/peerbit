@@ -7,8 +7,9 @@ import { BinaryPayload } from '@dao-xyz/bpayload';
 import { arraysEqual } from '@dao-xyz/borsh-utils';
 import { AccessController, Store, IInitializationOptions, Address, load } from '@dao-xyz/orbit-db-store';
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
-import { Encoding, Payload } from '@dao-xyz/ipfs-log';
-const replaceAll = (str, search, replacement) => str.toString().split(search).join(replacement)
+import { BORSH_ENCODING, Encoding, Identity, Payload } from '@dao-xyz/ipfs-log';
+import { IPFS } from 'ipfs-core-types';
+const replaceAll = (str: string, search: any, replacement: any) => str.toString().split(search).join(replacement)
 /* 
 export const BINARY_DOCUMENT_STORE_TYPE = 'bdoc_store';
 
@@ -57,10 +58,10 @@ export class BinaryDocumentStoreOptions<T extends BinaryPayload> extends BStoreO
 }
  */
 
-const _encoding = {
-  decoder: (bytes) => deserialize(bytes, Operation),
-  encoder: (data) => serialize(data)
-}
+/* const _encoding = {
+  decoder: (bytes: Uint8Array) => deserialize(bytes, Operation),
+  encoder: (data: any) => serialize(data)
+} */
 
 export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Operation<T>>/*  implements Typed */ {
 
@@ -75,7 +76,6 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
   _index: DocumentIndex<T>;
 
 
-
   constructor(properties: {
     name?: string,
     indexBy: string,
@@ -88,7 +88,6 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
     if (properties) {
       this.indexBy = properties.indexBy;
       this.objectType = properties.objectType;
-      this._clazz = properties.clazz;
     }
     this._index = new DocumentIndex();
   }
@@ -97,7 +96,7 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
      throw new Error("Not implemented");
    } */
 
-  async init(ipfs, key, sign, options: IInitializationOptions<T>) {
+  async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<Operation<T>>) {
     if (!this._clazz) {
       if (!options.typeMap)
         throw new Error("Class not set, " + this.objectType)
@@ -111,31 +110,31 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
     }
 
     this._index.init(this._clazz);
-    return await super.init(ipfs, key, sign, { ...options, encoding: this.encoding, onUpdate: this._index.updateIndex.bind(this._index) })
+    return await super.init(ipfs, identity, { ...options, encoding: BORSH_ENCODING(Operation), onUpdate: this._index.updateIndex.bind(this._index) })
   }
 
-  get encoding(): Encoding<any> {
-    return _encoding;
-  }
+  /* get encoding(): Encoding<Operation<T>> {
+    return;
+  } */
 
   public get(key: any, caseSensitive = false): IndexedValue<T>[] {
     key = key.toString()
     const terms = key.split(' ')
     key = terms.length > 1 ? replaceAll(key, '.', ' ').toLowerCase() : key.toLowerCase()
 
-    const search = (e) => {
+    const search = (e: string) => {
       if (terms.length > 1) {
         return replaceAll(e, '.', ' ').toLowerCase().indexOf(key) !== -1
       }
       return e.toLowerCase().indexOf(key) !== -1
     }
-    const mapper = e => this._index.get(e)
-    const filter = e => caseSensitive
+    const mapper = (e: string) => this._index.get(e)
+    const filter = (e: string) => caseSensitive
       ? e.indexOf(key) !== -1
       : search(e)
 
-    return Object.keys(this._index._index)
-      .filter(filter)
+    const keys = Object.keys(this._index._index);
+    return keys.filter(filter)
       .map(mapper)
   }
 
@@ -191,10 +190,11 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
                     return false;
                 }
               }
+              return false
             }
             else if (f instanceof MemoryCompareQuery) {
               const payload = doc.entry._payload.decrypted.getValue(Payload);
-              const operation = payload.init(this.encoding).value;
+              const operation = payload.getValue(this.oplog._encoding);
               if (operation instanceof PutOperation) {
                 const bytes = operation.data;
                 for (const compare of f.compares) {
@@ -213,7 +213,6 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
               }
               return true;
             }
-
             else {
               throw new Error("Unsupported query type")
             }
@@ -225,7 +224,7 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
         const resolveField = (obj: T) => {
           let v = obj;
           for (let i = 0; i < sort.key.length; i++) {
-            v = v[sort.key[i]]
+            v = (v as any)[sort.key[i]]
           }
           return v
         }
@@ -259,34 +258,37 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
     }
 
 
+    // TODO diagnostics for other query types
+    return Promise.resolve([]);
+
   }
 
 
-  public batchPut(docs: T[], onProgressCallback) {
-    const mapper = (doc, idx) => {
-      return this._addOperationBatch(
-        {
-          op: 'PUT',
-          key: asString(doc[this.indexBy]),
-          value: doc
-        },
-        true,
-        idx === docs.length - 1,
-        onProgressCallback
-      )
-    }
-
-    return pMap(docs, mapper, { concurrency: 1 })
-      .then(() => this.saveSnapshot())
-  }
+  /* TODO  
+   public batchPut(docs: T[]) {
+      const mapper = (doc, idx) => {
+        return this._addOperationBatch(
+          {
+            op: 'PUT',
+            key: asString(doc[this.indexBy]),
+            value: doc
+          },
+          true,
+          idx === docs.length - 1
+        )
+      }
+  
+      return pMap(docs, mapper, { concurrency: 1 })
+        .then(() => this.saveSnapshot())
+    } */
 
   public put(doc: T, options = {}) {
-    if (!doc[this.indexBy]) { throw new Error(`The provided document doesn't contain field '${this.indexBy}'`) }
+    if (!(doc as any)[this.indexBy]) { throw new Error(`The provided document doesn't contain field '${this.indexBy}'`) }
     const ser = serialize(doc);
     return this._addOperation(
       new PutOperation(
         {
-          key: asString(doc[this.indexBy]),
+          key: asString((doc as any)[this.indexBy]),
           data: ser,
           value: doc
 
@@ -298,17 +300,17 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
     if (!(Array.isArray(docs))) {
       docs = [docs]
     }
-    if (!(docs.every(d => d[this.indexBy]))) { throw new Error(`The provided document doesn't contain field '${this.indexBy}'`) }
+    if (!(docs.every(d => (d as any)[this.indexBy]))) { throw new Error(`The provided document doesn't contain field '${this.indexBy}'`) }
     return this._addOperation(new PutAllOperation({
       docs: docs.map((value) => new PutOperation({
-        key: asString(value[this.indexBy]),
+        key: asString((value as any)[this.indexBy]),
         data: serialize(value),
         value
       }))
     }), options)
   }
 
-  del(key, options = {}) {
+  del(key: string, options = {}) {
     if (!this._index.get(key)) { throw new Error(`No entry with key '${key}' in the database`) }
 
     return this._addOperation(new DeleteOperation({
@@ -329,7 +331,7 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
       })
     }
    */
-  static async load<T>(ipfs: any, address: Address, options?: {
+  static async load<T extends BinaryPayload>(ipfs: IPFS, address: Address, options?: {
     timeout?: number;
   }): Promise<BinaryDocumentStore<T>> {
     const instance = await load(ipfs, address, Store, options)

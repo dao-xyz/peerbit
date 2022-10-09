@@ -27,7 +27,7 @@
     "crdt"
   ],
   "dependencies": {
-    "@dao-xyz/borsh": "^3.2.5",
+    "@dao-xyz/borsh": "^3.3.0",
     "@dao-xyz/borsh-utils": "^0.0.1",
     "@dao-xyz/ipfs-pubsub-peer-monitor": "^0.0.8",
     "@dao-xyz/orbit-db-test-utils": "^0.0.1"

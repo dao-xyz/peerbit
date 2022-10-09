@@ -1,5 +1,4 @@
 import { Identity, Signatures } from "../identity"
-import { Ed25519PublicKey } from 'sodium-plus'
 import assert from 'assert'
 
 describe('Identity', function () {

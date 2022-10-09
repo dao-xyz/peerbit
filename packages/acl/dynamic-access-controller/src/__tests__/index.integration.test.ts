@@ -71,7 +71,7 @@ const loadTrust = async (peer: Peer, cid: string) => {
 describe('index', () => {
 
     it('it can share region access controller across stores', async () => {
-        const [peer] = await getConnectedPeers(1)
+        const [peer] = await Session.connected(1)
         const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
             name: 'a',
             indexBy: 'id',
@@ -105,7 +105,7 @@ describe('index', () => {
     })
 
     it('can write from trust web', async () => {
-        const [peer, peer2] = await getConnectedPeers(2)
+        const [peer, peer2] = await Session.connected(2)
         const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
             name: 'test',
             indexBy: 'id',
@@ -142,7 +142,7 @@ describe('index', () => {
 
     describe('conditions', () => {
         it('publickey', async () => {
-            const [peer, peer2] = await getConnectedPeers(2)
+            const [peer, peer2] = await Session.connected(2)
             const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
                 name: 'test',
                 indexBy: 'id',
@@ -180,7 +180,7 @@ describe('index', () => {
 
 
         it('through trust chain', async () => {
-            const [peer, peer2, peer3] = await getConnectedPeers(3)
+            const [peer, peer2, peer3] = await Session.connected(3)
             const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
                 name: 'test',
                 indexBy: 'id',
@@ -229,7 +229,7 @@ describe('index', () => {
 
 
         it('any access', async () => {
-            const [peer, peer2] = await getConnectedPeers(2)
+            const [peer, peer2] = await Session.connected(2)
             const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
                 name: 'test',
                 indexBy: 'id',
@@ -267,7 +267,7 @@ describe('index', () => {
 
 
         it('read access', async () => {
-            const [peer, peer2] = await getConnectedPeers(2)
+            const [peer, peer2] = await Session.connected(2)
 
             const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
                 name: 'test',
@@ -323,7 +323,7 @@ describe('index', () => {
     })
 
     it('append all', async () => {
-        const [peer, peer2] = await getConnectedPeers(2)
+        const [peer, peer2] = await Session.connected(2)
         const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
             name: 'test',
             indexBy: 'id',
@@ -379,7 +379,7 @@ describe('index', () => {
 
     it('manifests are unique', async () => {
 
-        const [peer] = await getConnectedPeers(1)
+        const [peer] = await Session.connected(1)
         const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
             name: 'test',
             indexBy: 'id',
@@ -406,7 +406,7 @@ describe('index', () => {
 
     it('can query', async () => {
 
-        const [peer, peer2] = await getConnectedPeers(2)
+        const [peer, peer2] = await Session.connected(2)
         const l0a = await peer.orbitDB.open(new BinaryDocumentStore({
             name: 'test',
             indexBy: 'id',

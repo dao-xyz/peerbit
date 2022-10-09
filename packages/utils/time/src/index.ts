@@ -12,7 +12,7 @@ export const delay = (ms: number, options?: { stopperCallback?: (stopper: () => 
 };
 
 
-export const waitFor = async <T>(fn: () => T, options: { timeout: number, stopperCallback?: (stopper: () => void) => void, delayInterval } = { timeout: 10 * 1000, delayInterval: 50 }): Promise<T> => {
+export const waitFor = async <T>(fn: () => T, options: { timeout: number, stopperCallback?: (stopper: () => void) => void, delayInterval: number } = { timeout: 10 * 1000, delayInterval: 50 }): Promise<T | undefined> => {
 
     let startTime = +new Date;
     let stop = false
@@ -35,7 +35,7 @@ export const waitFor = async <T>(fn: () => T, options: { timeout: number, stoppe
 
 };
 
-export const waitForAsync = async<T>(fn: () => Promise<T>, options: { timeout: number, stopperCallback?: (stopper: () => void) => void, delayInterval } = { timeout: 10 * 1000, delayInterval: 50 }): Promise<T> => {
+export const waitForAsync = async<T>(fn: () => Promise<T>, options: { timeout: number, stopperCallback?: (stopper: () => void) => void, delayInterval: number } = { timeout: 10 * 1000, delayInterval: 50 }): Promise<T | undefined> => {
 
     let startTime = +new Date;
     let stop = false

@@ -9,12 +9,15 @@ import {
   startIpfs,
   stopIpfs
 } from '@dao-xyz/orbit-db-test-utils'
+import { IPFS } from 'ipfs-core-types'
+import { Controller } from 'ipfsd-ctl'
+import { jest } from '@jest/globals';
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`IO tests (${IPFS})`, function () {
     jest.setTimeout(10000)
 
-    let ipfs, ipfsd
+    let ipfs: IPFS, ipfsd: Controller
 
     beforeAll(async () => {
       ipfsd = await startIpfs(IPFS, config)
@@ -27,7 +30,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     describe('dag-cbor', () => {
       let cid1, cid2
-      const data = { test: 'object' }
+      const data: any = { test: 'object' }
 
       it('writes', async () => {
         cid1 = await io.write(ipfs, 'dag-cbor', data, { pin: true })

@@ -7,3 +7,4 @@ lib
 /keystore/
 keystore-test
 **/__tests__/**/tmp
+/tmp

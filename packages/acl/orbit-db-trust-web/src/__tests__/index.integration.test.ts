@@ -15,7 +15,7 @@ describe('identity-graph', () => {
 
     it('getFromByTo', async () => {
 
-        let [peer] = await getConnectedPeers(1);
+        let [peer] = await Session.connected(1);
         const crypto = await SodiumPlus.auto();
         const a = new Ed25519PublicKey({
             publicKey: await crypto.crypto_sign_publickey((await crypto.crypto_sign_keypair()))
@@ -79,7 +79,7 @@ describe('RegionAccessController', () => {
 
     it('trusted by chain', async () => {
 
-        let [peer, peer2, peer3, peer4] = await getConnectedPeers(4);
+        let [peer, peer2, peer3, peer4] = await Session.connected(4);
         const l0a = new RegionAccessController({
             rootTrust: peer.orbitDB.identity,
         });
@@ -150,7 +150,7 @@ describe('RegionAccessController', () => {
 
     it('can not append with wrong truster', async () => {
 
-        let [peer] = await getConnectedPeers(3);
+        let [peer] = await Session.connected(3);
 
         let l0a = new RegionAccessController({
             rootTrust: peer.orbitDB.identity
@@ -173,7 +173,7 @@ describe('RegionAccessController', () => {
 
     it('untrusteed by chain', async () => {
 
-        let [peer, peer2, peer3] = await getConnectedPeers(3);
+        let [peer, peer2, peer3] = await Session.connected(3);
 
         let l0a = new RegionAccessController({
             rootTrust: peer.orbitDB.identity

@@ -1,6 +1,6 @@
 import { Constructor, deserialize, field, variant, vec } from "@dao-xyz/borsh";
 import { asString, Hashable } from "./utils";
-import { Entry } from "@dao-xyz/ipfs-log";
+import { BORSH_ENCODING, Encoding, Entry } from "@dao-xyz/ipfs-log";
 import { Log } from "@dao-xyz/ipfs-log";
 import { U8IntArraySerializer } from "@dao-xyz/borsh-utils";
 
@@ -16,7 +16,7 @@ export class PutOperation<T> extends Operation<T> {
   @field(U8IntArraySerializer)
   data: Uint8Array
 
-  _value: T
+  _value?: T
 
   constructor(props?: {
     key: string,
@@ -84,6 +84,7 @@ export interface IndexedValue<T> {
 export class DocumentIndex<T> {
   _index: { [key: string]: IndexedValue<T> };
   clazz: Constructor<T>
+  _encoding: Encoding<Operation<T>>
 
   constructor() {
     this._index = {}
@@ -91,6 +92,7 @@ export class DocumentIndex<T> {
 
   init(clazz: Constructor<T>) {
     this.clazz = clazz;
+    this._encoding = BORSH_ENCODING(Operation)
   }
 
   get(key: Hashable): IndexedValue<T> {
@@ -98,12 +100,12 @@ export class DocumentIndex<T> {
     return this._index[stringKey]
   }
 
-  async updateIndex(oplog: Log<IndexedValue<T>>) {
+  async updateIndex(oplog: Log<Operation<T>>) {
     if (!this.clazz) {
       throw new Error("Not initialized");
     }
-    const reducer = (handled, item: Entry<Operation<T>>, idx) => {
-      let payload = item.payload.value;
+    const reducer = (handled: { [key: string]: boolean }, item: Entry<Operation<T>>) => {
+      let payload = item.payload.getValue(this._encoding);
       if (payload instanceof PutAllOperation) {
         for (const doc of payload.docs) {
           if (doc && handled[doc.key] !== true) {

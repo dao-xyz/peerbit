@@ -7,9 +7,12 @@ import { MaybeSigned } from '@dao-xyz/peerbit-crypto';
 import { ResourceRequirement } from './exchange-replication.js';
 // @ts-ignore
 import Logger from 'logplease'
-import { SignerWithKey } from '@dao-xyz/peerbit-crypto/lib/esm/signer.js';
+import { EntryWithRefs } from '@dao-xyz/orbit-db-store';
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
+
+
+
 
 @variant([0, 0])
 export class ExchangeHeadsMessage<T> extends ProtocolMessage {
@@ -20,8 +23,8 @@ export class ExchangeHeadsMessage<T> extends ProtocolMessage {
   @field({ type: 'string' })
   address: string;
 
-  @field({ type: vec(Entry) })
-  heads: Entry<T>[];
+  @field({ type: vec(EntryWithRefs) })
+  heads: EntryWithRefs<T>[];
 
   @field({ type: vec(ResourceRequirement) })
   resourceRequirements: ResourceRequirement[];
@@ -29,7 +32,7 @@ export class ExchangeHeadsMessage<T> extends ProtocolMessage {
   constructor(props?: {
     replicationTopic: string,
     address: string,
-    heads: Entry<T>[],
+    heads: EntryWithRefs<T>[],
     resourceRequirements?: ResourceRequirement[]
   }) {
     super();
@@ -82,8 +85,20 @@ export class RequestHeadsMessage extends ProtocolMessage {
 }
  */
 
-export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>, store: StoreLike<any>, identity: Identity, headsToShare?: Entry<any>[]) => {
-  const heads = headsToShare || store.oplog.heads;
+export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>, store: StoreLike<any>, identity: Identity, heads: Entry<any>[]) => {
+  const gids = new Set(heads.map(h => h.gid));
+  if (gids.size > 1) {
+    throw new Error("Expected to share heads only from 1 gid")
+  }
+
+  const headsSet = new Set(heads);
+  const headsWithRefs = heads.map(head => {
+    const refs = store.oplog.getPow2Refs(store.oplog.length, [head]).filter(r => !headsSet.has(r)); // pick a proportional amount of refs so we can efficiently load the log. TODO should be equidistant for good performance? 
+    return new EntryWithRefs({
+      entry: head,
+      references: refs
+    })
+  });
   logger.debug(`Send latest heads of '${store.replicationTopic}'`)
   if (heads && heads.length > 0) {
 
@@ -129,8 +144,8 @@ export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>
     }
     await Promise.all(promises); */
 
-    const message = new ExchangeHeadsMessage({ replicationTopic: store.replicationTopic, address: store.address.toString(), heads });
-    const signer: SignerWithKey = async (data: Uint8Array) => {
+    const message = new ExchangeHeadsMessage({ replicationTopic: store.replicationTopic, address: store.address.toString(), heads: headsWithRefs });
+    const signer = async (data: Uint8Array) => {
       return {
         signature: await identity.sign(data),
         publicKey: identity.publicKey

@@ -3,7 +3,6 @@ import assert from 'assert'
 import { Store, DefaultOptions, HeadsCache, StorePublicKeyEncryption, IInitializationOptions } from '../store.js'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
 import { Keystore, KeyWithMeta } from "@dao-xyz/orbit-db-keystore"
-import { createStore } from './storage.js'
 import { X25519PublicKey } from '@dao-xyz/peerbit-crypto'
 import { AccessError } from "@dao-xyz/peerbit-crypto"
 import { SimpleAccessController, SimpleIndex } from './utils.js'
@@ -22,7 +21,8 @@ import {
   nodeConfig as config,
   testAPIs,
   startIpfs,
-  stopIpfs
+  stopIpfs,
+  createStore
 } from '@dao-xyz/orbit-db-test-utils'
 import { Level } from 'level'
 import { Entry } from '@dao-xyz/ipfs-log'
@@ -82,11 +82,6 @@ describe(`addOperation`, function () {
     await cacheStore?.close()
   })
 
-  afterEach(async () => {
-    await store.drop()
-    await cacheStore.open()
-    await identityStore.open()
-  })
 
   it('encrypted entry is appended known key', async () => {
     const data = { data: 12345 }

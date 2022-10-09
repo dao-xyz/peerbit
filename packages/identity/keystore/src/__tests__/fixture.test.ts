@@ -10,13 +10,13 @@ export const fixturePath = path.join(__dirname, 'fixtures', 'signing-keys')
 
 describe('setup fixture', () => {
 
-    it('replace fixture 1->10 keys', async () => {
-        const store = await createStore(fixturePath) // storagePath
-
-        const keystore = new Keystore(store)
-        for (let i = 0; i < 10; i++) {
-            await keystore.createKey(await Ed25519Keypair.create(), { id: new Uint8Array([i]), overwrite: true })
-        }
-        await store.close();
-    })
+    /*  it('replace fixture 1->10 keys', async () => {
+         const store = await createStore(fixturePath) // storagePath
+ 
+         const keystore = new Keystore(store)
+         for (let i = 0; i < 10; i++) {
+             await keystore.createKey(await Ed25519Keypair.create(), { id: new Uint8Array([i]), overwrite: true })
+         }
+         await store.close();
+     }) */
 })

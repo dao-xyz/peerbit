@@ -8,7 +8,6 @@ import assert from 'assert'
 import path from 'path'
 import rmrf from 'rimraf'
 import { Ed25519Provider } from 'key-did-provider-ed25519'
-import { Ed25519PublicKey } from 'sodium-plus'
 const { default: KeyResolver } = require('key-did-resolver')
 import { Keystore } from '@dao-xyz/orbit-db-keystore'
 const keypath = path.resolve(__dirname, 'keys')

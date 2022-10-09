@@ -6,12 +6,12 @@ import { EventStore } from './event-store';
 import { IPFSAccessController } from '../ipfs-access-controller';
 import { Ed25519PublicKey } from '@dao-xyz/peerbit-crypto';
 // Include test utilities
-const {
-  config,
+import {
+  nodeConfig as config,
   startIpfs,
   stopIpfs,
   connectPeers
-} = require('@dao-xyz/orbit-db-test-utils')
+} from '@dao-xyz/orbit-db-test-utils'
 
 const dbPath1 = './orbitdb/tests/orbitdb-access-controller-integration/1'
 const dbPath2 = './orbitdb/tests/orbitdb-access-controller-integration/2'

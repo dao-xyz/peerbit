@@ -92,8 +92,7 @@ Object.keys(testAPIs).forEach(API => {
     it('replicates database of 1 entry', async () => {
 
       console.log("Waiting for peers to connect")
-      // Set 'sync' flag on. It'll prevent creating a new local database and rather
-      // fetch the database from the network
+
       let options = {
         // Set write access for both clients
         accessController: new SimpleAccessController()
@@ -104,7 +103,7 @@ Object.keys(testAPIs).forEach(API => {
         , { ...Object.assign({}, options, { directory: dbPath1 }), replicationTopic })
       await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
 
-      options = Object.assign({}, options, { directory: dbPath2, sync: true })
+      options = Object.assign({}, options, { directory: dbPath2 })
 
       let replicatedEventCount = 0
       let done = false
@@ -135,8 +134,7 @@ Object.keys(testAPIs).forEach(API => {
     it('multible databases shared replication topic', async () => {
 
       console.log("Waiting for peers to connect")
-      // Set 'sync' flag on. It'll prevent creating a new local database and rather
-      // fetch the database from the network
+
 
       const replicationTopicFn = () => 'x';
       const replicationTopic = replicationTopicFn();
@@ -152,7 +150,7 @@ Object.keys(testAPIs).forEach(API => {
         false
       let replicatedEventCount = 0
 
-      const options = { directory: dbPath2, sync: true }
+      const options = { directory: dbPath2 }
       db3 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {
         ...options, replicationTopic: replicationTopicFn, onReplicationComplete: (store) => {
           replicatedEventCount++

@@ -7,6 +7,7 @@ import waitForPeers from './wait-for-peers.js'
 import { browserConfig, factoryConfig, nodeConfig } from './config.js';
 import { startIpfs } from './start-ipfs.js'
 import { MemStore } from './mem-store.js'
+export { createStore } from './storage.js';
 export {
   MemStore,
   connectPeers,

@@ -39,10 +39,10 @@ export class StringIndex {
 
 export const applyOperations = async (string: string, operations: Entry<PayloadOperation>[]): Promise<string> => {
   await Promise.all(operations.map(operation => operation.getPayload()))
-  operations.reduce((handled, item, idx) => {
+  operations.reduce((handled: string[], item: Entry<PayloadOperation>, _) => {
     if (!handled.includes(item.hash)) {
       handled.push(item.hash)
-      string = applyOperation(string, item.payload.value);
+      string = applyOperation(string, item.payload.getValue());
     }
 
     return handled

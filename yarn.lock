@@ -1192,10 +1192,10 @@
     "@types/events" "^1.2.0"
     "@types/ipfs" "https://git@github.com/lukas2005/types-ipfs.git"
 
-"@dao-xyz/borsh@^3.2.5":
-  version "3.2.5"
-  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-3.2.5.tgz#242158271b23b7ca8043299edad0abb6e963cd24"
-  integrity sha512-+Prm3uWl5iSMcnVif/4ikOoWXAcxUgKl01qGjItzLmxlOWIeAkobwae0UNnxJvFozMe/1uDDuTq2Xgi09DUY6Q==
+"@dao-xyz/borsh@^3.3.0":
+  version "3.3.0"
+  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-3.3.0.tgz#1fea8c7b405765eeb073b83ba67054cf71c91a88"
+  integrity sha512-3d40ecwBnTP+Y7YP1lM6mkPT2oDAU5TDmLo/MIdSGEV3fW6BKbDKopBzDtW4gW6m/eoAz7psdvWfFJZbGELS/A==
   dependencies:
     text-encoding-utf-8 "^1.0.2"
 

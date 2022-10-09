@@ -3,6 +3,7 @@ import { Identity, Log } from '@dao-xyz/ipfs-log'
 import { IPFS } from 'ipfs-core-types'
 import { Entry } from '@dao-xyz/ipfs-log';
 import { AccessController } from './access-controller.js';
+import { EntryWithRefs } from './entry-with-refs.js';
 
 const flatMap = (res: any[], val: any) => res.concat(val)
 
@@ -15,6 +16,19 @@ interface Store<T> {
   id: string;
   access?: AccessController<T>
 }
+
+const entryHash = (e: Entry<any> | EntryWithRefs<any> | string) => {
+  let h: string;
+  if (e instanceof Entry) {
+    h = e.hash;
+  }
+  else if (e instanceof EntryWithRefs) {
+    h = e.entry.hash
+  }
+  else { h = e }
+  return h;
+}
+
 export class Replicator<T> {
   _store: Store<T>
   _concurrency: number;
@@ -22,9 +36,9 @@ export class Replicator<T> {
   _logs: Log<T>[];
   _fetching: any;
   _fetched: any;
-  onReplicationComplete?: (logs: any[]) => void
-  onReplicationQueued?: (entry: any) => void;
-  onReplicationProgress?: (entry: any) => void;
+  onReplicationComplete?: (logs: Log<any>[]) => void
+  onReplicationQueued?: (entry: Entry<T> | EntryWithRefs<T>) => void;
+  onReplicationProgress?: (entry: Entry<T>) => void;
 
   constructor(store: Store<any>, concurrency?: number) {
     this._store = store
@@ -94,7 +108,7 @@ export class Replicator<T> {
     Process new heads.
     Param 'entries' is an Array of Entry instances or strings (of CIDs).
    */
-  async load(entries: (Entry<T> | string)[]) {
+  async load(entries: (Entry<T> | EntryWithRefs<T> | string)[]) {
     try {
       // Add entries to the replication queue
       this._addToQueue(entries)
@@ -103,26 +117,29 @@ export class Replicator<T> {
     }
   }
 
-  async _addToQueue(entries: (Entry<T> | string)[]) {
+  async _addToQueue(entries: (Entry<T> | EntryWithRefs<T> | string)[]) {
     // Function to determine if an entry should be fetched (ie. do we have it somewhere already?)
-    const shouldExclude = (h: string) => h && this._store._oplog && (this._store._oplog.has(h) || this._fetching[h] !== undefined || this._fetched[h])
+    const shouldExclude = (e: Entry<T> | EntryWithRefs<T> | string) => {
+      let h = entryHash(e);
+      return h && this._store._oplog && (this._store._oplog.has(h) || this._fetching[h] !== undefined || this._fetched[h])
+    }
 
     // A task to process a given entries
-    const createReplicationTask = (e: Entry<T> | string) => {
+    const createReplicationTask = (e: Entry<T> | EntryWithRefs<T> | string) => {
       // Add to internal "currently fetching" cache
-      const hash = e instanceof Entry ? e.hash : e;
+      const hash = entryHash(e);
       this._fetching[hash] = true
       // The returned function is the processing function / task
       // to run concurrently
       return async () => {
         // Call onReplicationProgress only for entries that have .hash field,
         // if it is a string don't call it (added internally from .next)
-        if (hash && this.onReplicationQueued) {
+        if (typeof e !== 'string' && this.onReplicationQueued) {
           this.onReplicationQueued(e)
         }
         try {
           // Replicate the log starting from the entry's hash (CID)
-          const log = await this._replicateLog(hash)
+          const log = await this._replicateLog(e)
           // Add the fetched log to the internal cache to wait
           // for "onReplicationComplete"
           this._logs.push(log)
@@ -139,7 +156,7 @@ export class Replicator<T> {
       // Create a processing tasks from each entry/hash that we
       // should include based on the exclusion filter function
       const tasks = entries
-        .filter((e) => !shouldExclude(e instanceof Entry ? e.hash : e))
+        .filter((e) => !shouldExclude(e))
         .map((e) => createReplicationTask(e))
       // Add the tasks to the processing queue
       if (tasks.length > 0) {
@@ -159,7 +176,7 @@ export class Replicator<T> {
     this._fetched = {}
   }
 
-  async _replicateLog(entry: Entry<T> | string) {
+  async _replicateLog(entry: Entry<T> | EntryWithRefs<T> | string) {
 
 
     // Notify the Store that we made progress
@@ -171,16 +188,14 @@ export class Replicator<T> {
     }
 
     const shouldExclude = (h: string) => {
-
-      return h !== (entry instanceof Entry<any> ? entry.hash : entry) && !!h && this._store._oplog && (this._store._oplog.has(h) || this._fetching[h] !== undefined || this._fetched[h] !== undefined)
-
+      return h !== entryHash(entry) && !!h && this._store._oplog && (this._store._oplog.has(h) || this._fetching[h] !== undefined || this._fetched[h] !== undefined)
     }
 
     // Fetch and load a log from the entry hash
-    const log = entry instanceof Entry ? await Log.fromEntry(
+    const log = entry instanceof Entry || entry instanceof EntryWithRefs ? await Log.fromEntry(
       this._store._ipfs,
       this._store.identity,
-      entry,
+      entry instanceof Entry ? entry : [entry.entry, ...entry.references],
       {
         // TODO, load all store options?
         access: this._store.access,

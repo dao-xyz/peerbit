@@ -7,9 +7,9 @@ import {
   nodeConfig as config,
   testAPIs,
   startIpfs,
-  stopIpfs
+  stopIpfs,
+  createStore
 } from '@dao-xyz/orbit-db-test-utils'
-import { createStore } from './storage.js'
 import { SimpleAccessController } from './utils.js'
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { Controller } from 'ipfsd-ctl'

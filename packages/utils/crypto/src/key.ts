@@ -12,7 +12,7 @@ export class Crypto extends SystemBinaryPayload {
 
 
 @variant(0)
-class Key extends Crypto {
+export class Key extends Crypto {
 
     equals(other: Key): boolean {
         throw new Error("Not implemented");

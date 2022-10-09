@@ -79,7 +79,7 @@ describe('query', () => {
             }),
             coordinates: undefined //  because we are matching without any specific query
         }));
-        await disconnectPeers([creator, observer]);
+
 
     });
 
@@ -110,7 +110,7 @@ describe('query', () => {
             }),
             coordinates: undefined //  because we are matching without any specific query
         }));
-        await disconnectPeers([creator, observer]);
+
 
     });
 
@@ -152,7 +152,7 @@ describe('query', () => {
         expect((result.coordinates as RangeCoordinates).coordinates[0].length).toEqual(BigInt('w o'.length));
         expect((result.coordinates as RangeCoordinates).coordinates[1].offset).toEqual(BigInt('hello w'.length));
         expect((result.coordinates as RangeCoordinates).coordinates[1].length).toEqual(BigInt('orld'.length));
-        await disconnectPeers([creator, observer]);
+
 
     });
 

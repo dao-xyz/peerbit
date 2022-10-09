@@ -1,6 +1,6 @@
 import { IPFS } from "ipfs";
 import type { PeerId } from "@libp2p/interface-peer-id";
-import { connectPeers } from "./index.js";
+import { connectPeers, nodeConfig } from "./index.js";
 import { startIpfs } from "./start-ipfs.js";
 import getIpfsPeerId from "./get-ipfs-peer-id.js";
 // @ts-ignore
@@ -21,7 +21,7 @@ export class Session {
     static async connected(n: number, api: 'js-ipfs' | 'go-ipfs' | string = 'js-ipfs', config?: any, connectFilter?: { filter: (addrs: string) => boolean }) {
         const promises = [];
         for (let i = 0; i < n; i++) {
-            promises.push(startIpfs(api, { ...config, repo: 'repo-' + uuid() }))
+            promises.push(startIpfs(api, { ...(config || nodeConfig.defaultIpfsConfig), repo: './tmp/ipfs/repo-' + uuid() }))
         }
         const ipfsd = await Promise.all(promises);
         const connectPromises = []
