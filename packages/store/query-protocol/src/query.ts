@@ -14,21 +14,17 @@ export class QueryRequestV0 {
     type: QueryType
 
     @field({ type: vec(X25519PublicKey) })
-    recievers: X25519PublicKey[]
+    responseRecievers: X25519PublicKey[]
 
-    constructor(obj?: {
+    constructor(properties?: {
         id?: string
         type: QueryType
-        recievers?: X25519PublicKey[]
+        responseRecievers?: X25519PublicKey[]
     }) {
-        if (obj) {
-            Object.assign(this, obj);
-            if (!this.id) {
-                this.id = uuid();
-            }
-            if (!this.recievers) {
-                this.recievers = [];
-            }
+        if (properties) {
+            this.id = properties.id || uuid();
+            this.responseRecievers = properties.responseRecievers || [];
+            this.type = properties.type;
         }
     }
 
@@ -43,12 +39,13 @@ export class QueryResponseV0 {
 
     @field({ type: vec(Result) })
     results: Result[] // base58 encoded
-    constructor(obj?: {
+    constructor(properties?: {
         results: Result[]
 
     }) {
-        if (obj) {
-            Object.assign(this, obj);
+        if (properties) {
+            this.results = properties.results;
+
         }
     }
 }

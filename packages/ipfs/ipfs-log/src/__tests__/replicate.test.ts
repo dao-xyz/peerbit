@@ -83,7 +83,7 @@ describe('ipfs-log - Replication', function () {
       process.stdout.write('\r')
       process.stdout.write(`> Buffer1: ${buffer1.length} - Buffer2: ${buffer2.length}`)
       const log = await Log.fromMultihash<string>(session.peers[0].ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, hash, {})
       await log1.join(log)
@@ -100,7 +100,7 @@ describe('ipfs-log - Replication', function () {
       process.stdout.write('\r')
       process.stdout.write(`> Buffer1: ${buffer1.length} - Buffer2: ${buffer2.length}`)
       const log = await Log.fromMultihash<string>(session.peers[1].ipfs, {
-        publicKey: signKey2.keypair.publicKey,
+        ...signKey2.keypair,
         sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
       }, hash, {})
       await log2.join(log)
@@ -109,19 +109,19 @@ describe('ipfs-log - Replication', function () {
 
     beforeEach(async () => {
       log1 = new Log(session.peers[0].ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId })
       log2 = new Log(session.peers[1].ipfs, {
-        publicKey: signKey2.keypair.publicKey,
+        ...signKey2.keypair,
         sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
       }, { logId })
       input1 = new Log(session.peers[0].ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId })
       input2 = new Log(session.peers[1].ipfs, {
-        publicKey: signKey2.keypair.publicKey,
+        ...signKey2.keypair,
         sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
       }, { logId })
       await session.peers[0].ipfs.pubsub.subscribe(channel, handleMessage)
@@ -168,7 +168,7 @@ describe('ipfs-log - Replication', function () {
       await whileProcessingMessages(config.timeout * 2)
 
       const result = new Log<string>(session.peers[0].ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId })
       await result.join(log1)

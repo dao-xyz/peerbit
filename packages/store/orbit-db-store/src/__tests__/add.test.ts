@@ -83,7 +83,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       store = new Store({ name: 'name', accessController: new SimpleAccessController() })
       await store.init(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { ...DefaultOptions, resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index), onWrite: onWrite });
       assert(Address.isValid(store.address));
@@ -128,7 +128,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       store = new Store({ name: 'name', accessController: new SimpleAccessController() })
       await store.init(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { ...DefaultOptions, resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index), onWrite: onWrite });
       assert(Address.isValid(store.address));

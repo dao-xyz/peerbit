@@ -8,7 +8,7 @@ import { AccessController } from '@dao-xyz/orbit-db-store';
 import { ReadWriteAccessController } from './read-write-access-controller';
 import { IPFS } from 'ipfs-core-types';
 import { PublicSignKey } from '@dao-xyz/peerbit-crypto';
-import { query, respond } from './io.js';
+import { query, QueryOptions, respond } from './io.js';
 import { Identity } from '@dao-xyz/ipfs-log';
 
 export const getQueryTopic = (region: string): string => {
@@ -85,7 +85,7 @@ export class QueryStore<T> extends Store<T> {
                     throw new Error("ACL is expected to be defined to query store");
                 }
 
-                let query = await decryptVerifyInto(msg.data, QueryRequestV0, this._oplog._encryption, {
+                let { result: query, from } = await decryptVerifyInto(msg.data, QueryRequestV0, this._oplog._encryption?.getAnyKeypair || (() => Promise.resolve(undefined)), {
                     isTrusted: acl.allowAll ? undefined : async (key) => {
                         const accessController = acl as ReadWriteAccessController<any>;
                         return !!(accessController.canRead && await accessController.canRead(key))
@@ -141,13 +141,7 @@ export class QueryStore<T> extends Store<T> {
         }
     }
 
-    public query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, options: {
-        signer?: Identity,
-        waitForAmount?: number,
-        maxAggregationTime?: number,
-        recievers?: X25519PublicKey[]
-
-    }): Promise<void> {
+    public query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, options: QueryOptions): Promise<void> {
         return query(this._ipfs, this.queryTopic, queryRequest, responseHandler, options);
     }
 

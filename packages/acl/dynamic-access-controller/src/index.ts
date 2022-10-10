@@ -6,28 +6,28 @@
 
 // Relation with enc/dec?
 import { field, variant } from "@dao-xyz/borsh";
-import { Entry, Payload } from '@dao-xyz/ipfs-log';
+import { Entry, Identity, Payload } from '@dao-xyz/ipfs-log';
 import { Address, IInitializationOptions, StoreLike } from '@dao-xyz/orbit-db-store';
 import { OrbitDB } from '@dao-xyz/orbit-db';
 import { AccessStore } from './acl-db';
 import { Access } from './access';
 export * from './access';
 // @ts-ignore
-import isNode from 'is-node';
-import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
+
+import { MaybeEncrypted, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
-import { RegionAccessController } from "@dao-xyz/orbit-db-trust-web";
+import { RegionAccessController } from "@dao-xyz/peerbit-trust-web";
 import { Log } from "@dao-xyz/ipfs-log";
-import Cache from '@dao-xyz/orbit-db-cache';
 import { Operation } from "@dao-xyz/orbit-db-bdocstore";
 import { ReadWriteAccessController } from "@dao-xyz/orbit-db-query-store";
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
+import { IPFS } from "ipfs-core-types";
 
-let v8 = undefined;
+/* let v8 = undefined;
 if (isNode) {
     v8 = require('v8');
-}
+} */
 @variant(0)
 export class AccessRequest {
 
@@ -56,7 +56,7 @@ export type AccessVerifier = (identity: PublicSignKey) => Promise<boolean>
 
 
 @variant([0, 3])
-export class DynamicAccessController<T> extends ReadWriteAccessController<T> implements StoreLike<Operation<T>> {
+export class DynamicAccessController<T> extends ReadWriteAccessController<Operation<T>> implements StoreLike<Operation<T>> {
 
     /*  _storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>; */
 
@@ -93,10 +93,10 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<T> imp
 
         }
     }
-    set memoryOptions(options: { heapSizeLimit: () => number; onMemoryExceeded: OnMemoryExceededCallback<T> }) {
-        this._heapSizeLimit = options.heapSizeLimit;
-        this._onMemoryExceeded = options.onMemoryExceeded;
-    }
+    /*   set memoryOptions(options: { heapSizeLimit: () => number; onMemoryExceeded: OnMemoryExceededCallback<T> }) {
+          this._heapSizeLimit = options.heapSizeLimit;
+          this._onMemoryExceeded = options.onMemoryExceeded;
+      } */
 
     //{ heapSizeLimit: () => number, onMemoryExceeded: OnMemoryExceededCallback<T>, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>/* , trust: RegionAccessController */ }
     /* this._heapSizeLimit = options.heapSizeLimit;
@@ -175,8 +175,8 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<T> imp
         return false;
     }
 
-    async canAppend(payload: MaybeEncrypted<Payload<T>>, identityEncrypted: MaybeEncrypted<PublicSignKey>) {
-        const identity = (await identityEncrypted.decrypt()).getValue(PublicSignKey);
+    async canAppend(payload: MaybeEncrypted<Payload<Operation<T>>>, identityEncrypted: MaybeEncrypted<SignatureWithKey>) {
+        const identity = (await identityEncrypted.decrypt(this._db.oplog._encryption?.getAnyKeypair || (() => Promise.resolve(undefined)))).getValue(SignatureWithKey).publicKey;
 
         if (this.allowAll) {
             return true;
@@ -206,9 +206,9 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<T> imp
         await this._acldb.close();
     } */
 
-    async init(ipfs, PublicSignKey: PublicSignKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<Access>): Promise<DynamicAccessController<T>> {
+    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<Operation<Access>>): Promise<DynamicAccessController<T>> {
         /*  this._trust = options.trust; */
-        await this._db.init(ipfs, PublicSignKey, sign, options)
+        await this._db.init(ipfs, identity, options)
         return this;
     }
 
@@ -224,23 +224,17 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<T> imp
     save(ipfs: any, options?: { format?: string; pin?: boolean; timeout?: number; }) {
         return this._db.save(ipfs, options);
     }
-    sync(heads: Entry<Access>[]): Promise<void> {
+    sync(heads: Entry<Operation<Access>>[]): Promise<void> {
         return this._db.sync(heads);
     }
     get replicationTopic(): string {
         return this._db.replicationTopic;
     }
-    get events(): import("events") {
-        return this._db.events;
-    }
     get address(): Address {
         return this._db.address;
     }
-    get oplog(): Log<Access> {
+    get oplog(): Log<Operation<Access>> {
         return this._db.oplog;
-    }
-    get cache(): Cache {
-        return this._db.cache;
     }
     get id(): string {
         return this._db.id;
@@ -248,9 +242,7 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<T> imp
     get replicate(): boolean {
         return this._db.replicate;
     }
-    getHeads(): Promise<Entry<Operation<any>>[]> {
-        return this._db.getHeads();
-    }
+
     get name(): string {
         return this._db.name;
     }

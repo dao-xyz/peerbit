@@ -232,7 +232,7 @@ export class OrbitDB {
       const signKey = await keystore.createEd25519Key({ id: id.toString() });
 
       identity = {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: (data) => signKey.keypair.sign(data)
 
       }
@@ -333,7 +333,7 @@ export class OrbitDB {
     try {
       const peer = message.type === 'signed' ? (message as SignedPubSubMessage).from : undefined;
       const maybeEncryptedMessage = deserialize(message.data, MaybeEncrypted) as MaybeEncrypted<MaybeSigned<ProtocolMessage>>
-      const decrypted = await maybeEncryptedMessage.init(this.encryption).decrypt()
+      const decrypted = await maybeEncryptedMessage.decrypt(this.encryption.getAnyKeypair)
       const signedMessage = decrypted.getValue(MaybeSigned);
       await signedMessage.verify();
       const msg = signedMessage.getValue(ProtocolMessage);

@@ -31,12 +31,12 @@ export class AllowAllAccessController<T> extends ReadWriteAccessController<T>{
 const encoding = BORSH_ENCODING(Operation);
 const canAppendByRelation = async (mpayload: MaybeEncrypted<Payload<Operation<any>>>, keyEncrypted: MaybeEncrypted<SignatureWithKey>, db: BinaryDocumentStore<Relation>, isTrusted?: (key: PublicSignKey) => Promise<boolean>): Promise<boolean> => {
     // verify the payload 
-    const decrypted = (await mpayload.decrypt()).decrypted;
+    const decrypted = (await mpayload.decrypt(db.oplog._encryption?.getAnyKeypair || (() => Promise.resolve(undefined)))).decrypted;
     const payload = decrypted.getValue(Payload);
     const operation = payload.getValue(encoding);
     if (operation instanceof PutOperation || operation instanceof DeleteOperation) {
         /*  const relation: Relation = operation.value || deserialize(operation.data, Relation); */
-        await keyEncrypted.decrypt();
+        await keyEncrypted.decrypt(db.oplog._encryption?.getAnyKeypair || (() => Promise.resolve(undefined)));
         const key = keyEncrypted.decrypted.getValue(SignatureWithKey).publicKey;
 
         if (operation instanceof PutOperation) {
@@ -97,7 +97,7 @@ export class RelationAccessController extends ReadWriteAccessController<Operatio
     }
 
 
-    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<any>): Promise<RelationAccessController> {
+    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<Operation<Relation>>): Promise<RelationAccessController> {
         const typeMap = options.typeMap ? { ...options.typeMap } : {}
         typeMap[Relation.name] = Relation;
         const saveOrResolved = await options.saveAndResolveStore(ipfs, this);

@@ -67,7 +67,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('has the correct identity', () => {
       const log = new Log(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'A' })
       expect(log._identity.publicKey).toMatchSnapshot('publicKeyFromLog');
@@ -75,7 +75,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('has the correct public key', () => {
       const log = new Log(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'A' })
       expect(log._identity.publicKey).toEqual(signKey.keypair.publicKey)
@@ -83,7 +83,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('has the correct pkSignature', () => {
       const log = new Log(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'A' })
       expect(log._identity.publicKey).toEqual(signKey.keypair.publicKey)
@@ -91,7 +91,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('has the correct signature', () => {
       const log = new Log(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'A' })
       expect(log._identity.publicKey).toEqual(signKey.keypair.publicKey)
@@ -99,7 +99,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('entries contain an identity', async () => {
       const log = new Log(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'A' })
       await log.append('one')
@@ -109,11 +109,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('doesn\'t join logs with different IDs ', async () => {
       const log1 = new Log<string>(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'A' })
       const log2 = new Log<string>(ipfs, {
-        publicKey: signKey2.keypair.publicKey,
+        ...signKey2.keypair,
         sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
       }, { logId: 'B' })
 
@@ -138,11 +138,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('throws an error if log is signed but the signature doesn\'t verify', async () => {
       const log1 = new Log<string>(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'A' })
       const log2 = new Log<string>(ipfs, {
-        publicKey: signKey2.keypair.publicKey,
+        ...signKey2.keypair,
         sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
       }, { logId: 'A' })
       let err
@@ -166,11 +166,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
     it('throws an error if entry doesn\'t have append access', async () => {
       const denyAccess = { canAppend: (_, __) => Promise.resolve(false) } as CanAppendAccessController<string>
       const log1 = new Log<string>(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'A' })
       const log2 = new Log(ipfs, {
-        publicKey: signKey2.keypair.publicKey,
+        ...signKey2.keypair,
         sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
       }, { logId: 'A', access: denyAccess })
 
@@ -191,11 +191,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
         canAppend: async (_entry: any, signature: MaybeEncrypted<SignatureWithKey>) => signature.decrypted.getValue(SignatureWithKey).publicKey.equals(signKey.keypair.publicKey)
       } as CanAppendAccessController<string>;
       const log1 = new Log<string>(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'A', access: testACL })
       const log2 = new Log<string>(ipfs, {
-        publicKey: signKey2.keypair.publicKey,
+        ...signKey2.keypair,
         sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
       }, { logId: 'A' })
 

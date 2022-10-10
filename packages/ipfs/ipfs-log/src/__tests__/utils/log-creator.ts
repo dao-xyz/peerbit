@@ -14,10 +14,10 @@ export class LogCreator {
     ]
 
     const create = async (): Promise<Log<string>> => {
-      const logA = new Log<string>(ipfs, { publicKey: signKeys[0].keypair.publicKey, sign: (data) => signKeys[0].keypair.sign(data) }, { logId: 'X' })
-      const logB = new Log<string>(ipfs, { publicKey: signKeys[1].keypair.publicKey, sign: (data) => signKeys[1].keypair.sign(data) }, { logId: 'X' })
-      const log3 = new Log<string>(ipfs, { publicKey: signKeys[2].keypair.publicKey, sign: (data) => signKeys[2].keypair.sign(data) }, { logId: 'X' })
-      const log = new Log<string>(ipfs, { publicKey: signKeys[3].keypair.publicKey, sign: (data) => signKeys[3].keypair.sign(data) }, { logId: 'X' })
+      const logA = new Log<string>(ipfs, { ...signKeys[0].keypair, sign: (data) => signKeys[0].keypair.sign(data) }, { logId: 'X' })
+      const logB = new Log<string>(ipfs, { ...signKeys[1].keypair, sign: (data) => signKeys[1].keypair.sign(data) }, { logId: 'X' })
+      const log3 = new Log<string>(ipfs, { ...signKeys[2].keypair, sign: (data) => signKeys[2].keypair.sign(data) }, { logId: 'X' })
+      const log = new Log<string>(ipfs, { ...signKeys[3].keypair, sign: (data) => signKeys[3].keypair.sign(data) }, { logId: 'X' })
 
       for (let i = 1; i <= 5; i++) {
         await logA.append('entryA' + i)
@@ -47,8 +47,8 @@ export class LogCreator {
     const expectedData: string[] = []
 
     const create = async (): Promise<Log<string>> => {
-      const logA = new Log<string>(ipfs, { publicKey: signKeys[0].keypair.publicKey, sign: (data) => signKeys[0].keypair.sign(data) }, { logId: 'X' })
-      const logB = new Log<string>(ipfs, { publicKey: signKeys[1].keypair.publicKey, sign: (data) => signKeys[1].keypair.sign(data) }, { logId: 'X' })
+      const logA = new Log<string>(ipfs, { ...signKeys[0].keypair, sign: (data) => signKeys[0].keypair.sign(data) }, { logId: 'X' })
+      const logB = new Log<string>(ipfs, { ...signKeys[1].keypair, sign: (data) => signKeys[1].keypair.sign(data) }, { logId: 'X' })
       for (let i = 1; i <= amount; i++) {
         await logA.append('entryA' + i)
         await logB.join(logA)

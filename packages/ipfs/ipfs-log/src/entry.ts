@@ -8,10 +8,10 @@ import { DecryptedThing, MaybeEncrypted, MaybeX25519PublicKey, PublicSignKey, Si
 import { max, toBase64 } from './utils.js';
 import sodium from 'libsodium-wrappers';
 import { Encoding, JSON_ENCODING } from './encoding';
+import { Identity } from './identity.js';
 
 export const maxClockTimeReducer = <T>(res: bigint, acc: Entry<T>): bigint => max(res, acc.clock.time);
 
-export type Identity = { publicKey: PublicSignKey, sign: (data: Uint8Array) => Promise<Uint8Array> }
 export type EncryptionTemplateMaybeEncrypted = EntryEncryptionTemplate<MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey>;
 export interface EntryEncryption {
   reciever: EncryptionTemplateMaybeEncrypted,
@@ -193,11 +193,6 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
   init(props: { encryption?: PublicKeyEncryptionResolver } | Entry<T>): Entry<T> {
     const encryption = props instanceof Entry ? props._encryption : props.encryption;
     this._encryption = encryption;
-    this._payload.init(encryption);
-    /* this._id.init(encryption); */
-    this._clock.init(encryption);
-    this._signature.init(encryption);
-
     return this;
   }
 
@@ -229,7 +224,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
   }
 
   async getClock(): Promise<Clock> {
-    await this._clock.decrypt()
+    await this._clock.decrypt(this._encryption?.getAnyKeypair || (() => Promise.resolve(undefined)))
     return this.clock;
   }
 
@@ -241,7 +236,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
   }
 
   async getPayload(): Promise<Payload<T>> {
-    await this._payload.decrypt()
+    await this._payload.decrypt(this._encryption?.getAnyKeypair || (() => Promise.resolve(undefined)))
     return this.payload;
   }
 
@@ -260,7 +255,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
   }
 
   async getSignature(): Promise<SignatureWithKey> {
-    await this._signature.decrypt()
+    await this._signature.decrypt(this._encryption?.getAnyKeypair || (() => Promise.resolve(undefined)))
     return this.signature;
   }
 
@@ -331,7 +326,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
         if (!properties.encryption) {
           throw new Error("Encrpryption config not initialized")
         }
-        return await new DecryptedThing<Q>({ data: serialize(thing), value: thing }).init(properties.encryption.options).encrypt(...recievers);
+        return await new DecryptedThing<Q>({ data: serialize(thing), value: thing }).encrypt(properties.encryption.options.getEncryptionKeypair, ...recievers);
       }
       return new DecryptedThing<Q>({
         data: serialize(thing),

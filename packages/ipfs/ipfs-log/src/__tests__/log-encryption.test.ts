@@ -91,11 +91,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
           } as PublicKeyEncryptionResolver
         };
         log1 = new Log(ipfs, {
-          publicKey: signKey.keypair.publicKey,
+          ...signKey.keypair,
           sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
         }, logOptions)
         log2 = new Log(ipfs, {
-          publicKey: signKey2.keypair.publicKey,
+          ...signKey2.keypair,
           sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
         }, logOptions)
       })

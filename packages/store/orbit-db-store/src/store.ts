@@ -307,25 +307,26 @@ export class Store<T> implements StoreLike<T> {
       return thisAlternative;
     }
 
+    // Create IDs, names and paths
+    const address = this.address; // will exist since options.saveAndResolveStore will save
+    this.id = address.toString();
+    this.address = address as Address
+    this.dbname = (address as Address).path || ''
+    this.identity = identity;
 
     const acl = this.accessController;
+
     if (acl) {
       this.accessController = (await acl.init(ipfs, this.identity, this.options)) as (StoreLike<any> & AccessController<any>);
     }
 
-    const address = this.address; // will exist since options.saveAndResolveStore will save
 
-    // Create IDs, names and paths
-    this.id = address.toString();
-    this.address = address as Address
-    this.dbname = (address as Address).path || ''
     /* this.events = new EventEmitter() */
     this.remoteHeadsPath = path.join(this.id, '_remoteHeads')
     this.localHeadsPath = path.join(this.id, '_localHeads')
     this.snapshotPath = path.join(this.id, 'snapshot')
     this.queuePath = path.join(this.id, 'queue')
     this.manifestPath = path.join(this.id, '_manifest')
-    this.identity = identity;
 
     this.fallbackAccessController = this.options.fallbackAccessController;
     /* this.sharding.init(options.requestNewShard); */

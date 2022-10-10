@@ -6,9 +6,9 @@ import { field, variant } from "@dao-xyz/borsh";
 import { delay, waitFor } from "@dao-xyz/time";
 import { Session, waitForPeers } from '@dao-xyz/orbit-db-test-utils';
 import { CustomBinaryPayload } from '@dao-xyz/bpayload';
-import { decryptVerifyInto, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
+import { decryptVerifyInto, Ed25519Keypair, Ed25519PublicKey, X25519Keypair, X25519PublicKey, X25519SecretKey } from "@dao-xyz/peerbit-crypto";
 import { query, respond } from '../io.js';
-import { Identity } from "@dao-xyz/ipfs-log";
+import { Ed25519Identity } from "@dao-xyz/ipfs-log";
 
 @variant("number")//@variant([1, 1])
 class NumberResult extends CustomBinaryPayload {
@@ -27,8 +27,9 @@ const createIdentity = async () => {
   const ed = await Ed25519Keypair.create();
   return {
     publicKey: ed.publicKey,
+    privateKey: ed.privateKey,
     sign: (data) => ed.sign(data)
-  } as Identity
+  } as Ed25519Identity
 }
 
 describe('query', () => {
@@ -43,7 +44,7 @@ describe('query', () => {
   it('any', async () => {
     const topic = uuid();
     await session.peers[0].ipfs.pubsub.subscribe(topic, async (msg: Message) => {
-      let request = await decryptVerifyInto(msg.data, QueryRequestV0); // deserialize, so we now this works, even though we will not analyse the query
+      let { result: request } = await decryptVerifyInto(msg.data, QueryRequestV0, () => Promise.resolve(undefined)); // deserialize, so we now this works, even though we will not analyse the query
       await respond(session.peers[0].ipfs, topic, request, new QueryResponseV0({
         results: [new ResultWithSource({
           source: new NumberResult({ number: 123 })
@@ -79,7 +80,7 @@ describe('query', () => {
 
     const topic = uuid();
     await session.peers[0].ipfs.pubsub.subscribe(topic, async (msg: Message) => {
-      let request = await decryptVerifyInto(msg.data, QueryRequestV0);
+      let { result: request } = await decryptVerifyInto(msg.data, QueryRequestV0, () => Promise.resolve(undefined));
       await respond(session.peers[0].ipfs, topic, request, new QueryResponseV0({
         results: [new ResultWithSource({
           source: new NumberResult({ number: 123 })
@@ -122,7 +123,7 @@ describe('query', () => {
     const topic = uuid();
     for (let i = 1; i < 3; i++) {
       await session.peers[i].ipfs.pubsub.subscribe(topic, async (msg: Message) => {
-        let request = await decryptVerifyInto(msg.data, QueryRequestV0);
+        let { result: request } = await decryptVerifyInto(msg.data, QueryRequestV0, () => Promise.resolve(undefined));
         await respond(session.peers[i].ipfs, topic, request, new QueryResponseV0({
           results: [new ResultWithSource({
             source: new NumberResult({ number: 123 })
@@ -154,12 +155,20 @@ describe('query', () => {
 
   it('signed', async () => {
     let waitForAmount = 1;
+
     let maxAggregationTime = 3000;
 
+    const sender = await createIdentity();
     const responder = await createIdentity();
     const topic = uuid();
     await session.peers[1].ipfs.pubsub.subscribe(topic, async (msg: Message) => {
-      let request = await decryptVerifyInto(msg.data, QueryRequestV0);
+      let { result: request, from } = await decryptVerifyInto(msg.data, QueryRequestV0, () => Promise.resolve(undefined));
+
+      // Check that it was signed by the sender
+      expect(from).toBeInstanceOf(Ed25519PublicKey);
+      expect((from as Ed25519PublicKey).equals(sender.publicKey)).toBeTrue();
+
+
       await respond(session.peers[1].ipfs, topic, request, new QueryResponseV0({
         results: [new ResultWithSource({
           source: new NumberResult({ number: 123 })
@@ -174,14 +183,22 @@ describe('query', () => {
       type: new DocumentQueryRequest({
         queries: []
       }),
-    }), (resp) => {
+    }), (resp, from) => {
       expect(resp.results[0]).toBeInstanceOf(ResultWithSource);
       expect((resp.results[0] as ResultWithSource).source).toBeInstanceOf(NumberResult);
+
+      // Check that it was signed by the responder
+      expect(from).toBeInstanceOf(Ed25519PublicKey);
+      expect((from as Ed25519PublicKey).equals(responder.publicKey)).toBeTrue();
+
+
       results.push((((resp.results[0] as ResultWithSource).source) as NumberResult).number);
+
+
     }, {
       maxAggregationTime,
       waitForAmount,
-      identiy: await createIdentity()
+      signer: sender
     })
 
     await waitFor(() => results.length == waitForAmount);
@@ -189,7 +206,9 @@ describe('query', () => {
   })
 
 
-  /* it('encrypted', async () => {
+  it('encrypted', async () => {
+
+    // query encrypted and respond encrypted
     let waitForAmount = 1;
     let maxAggregationTime = 3000;
 
@@ -197,7 +216,7 @@ describe('query', () => {
     const requester = await createIdentity();
     const topic = uuid();
     await session.peers[1].ipfs.pubsub.subscribe(topic, async (msg: Message) => {
-      let request = await decryptVerifyInto(msg.data, QueryRequestV0);
+      let { result: request } = await decryptVerifyInto(msg.data, QueryRequestV0, async (keys) => { return { index: 0, keypair: await X25519Keypair.from(new Ed25519Keypair({ ...responder })) } });
       await respond(session.peers[1].ipfs, topic, request, new QueryResponseV0({
         results: [new ResultWithSource({
           source: new NumberResult({ number: 123 })
@@ -213,6 +232,7 @@ describe('query', () => {
       type: new DocumentQueryRequest({
         queries: []
       }),
+      responseRecievers: [await X25519PublicKey.from(requester.publicKey)]
     }), (resp) => {
       expect(resp.results[0]).toBeInstanceOf(ResultWithSource);
       expect((resp.results[0] as ResultWithSource).source).toBeInstanceOf(NumberResult);
@@ -220,12 +240,21 @@ describe('query', () => {
     }, {
       maxAggregationTime,
       waitForAmount,
-      identiy: requester,
-      encryption: ()
+      signer: requester,
+      keyResolver: async () => {
+        return {
+          index: 0,
+          keypair: await X25519Keypair.from(new Ed25519Keypair({ ...requester }))
+        }
+      },
+      encryption: {
+        key: () => new Ed25519Keypair({ ...requester }),
+        responders: [await X25519PublicKey.from(responder.publicKey)]
+      }
     })
 
     await waitFor(() => results.length == waitForAmount);
 
-  }) */
+  })
 
 }) 

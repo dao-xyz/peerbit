@@ -46,7 +46,7 @@ describe(`orbit-db - IPFSAccessController`, function () {
 
     orbitdb2 = await OrbitDB.createInstance(ipfs2, {
       directory: dbPath2,
-      publicKey: signKey2.keypair.publicKey,
+      ...signKey2.keypair,
       sign: (data) => Keystore.sign(data, signKey2)
     })
   })

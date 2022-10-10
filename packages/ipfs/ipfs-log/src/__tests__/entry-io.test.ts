@@ -65,7 +65,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('log with one entry', async () => {
       const log = new Log(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'X' })
       await log.append('one')
@@ -76,7 +76,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('log with 2 entries', async () => {
       const log = new Log(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'X' })
       await log.append('one')
@@ -88,7 +88,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('loads max 1 entry from a log of 2 entry', async () => {
       const log = new Log(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'X' })
       await log.append('one')
@@ -101,7 +101,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     it('log with 100 entries', async () => {
       const count = 100
       const log = new Log(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'X' })
       for (let i = 0; i < count; i++) {
@@ -109,7 +109,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       }
       const hash = await log.toMultihash()
       const result = await Log.fromMultihash(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, hash, {})
       expect(result.length).toEqual(count)
@@ -118,18 +118,18 @@ Object.keys(testAPIs).forEach((IPFS) => {
     it('load only 42 entries from a log with 100 entries', async () => {
       const count = 100
       const log = new Log(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'X' })
       let log2 = new Log(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'X' })
       for (let i = 1; i <= count; i++) {
         await log.append('hello' + i)
         if (i % 10 === 0) {
           log2 = new Log(ipfs, {
-            publicKey: signKey.keypair.publicKey,
+            ...signKey.keypair,
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
           },
             { logId: log2._id, entries: log2.values, heads: log2.heads.concat(log.heads) })
@@ -139,7 +139,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       const hash = await log.toMultihash()
       const result = await Log.fromMultihash(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, hash, { length: 42 })
       expect(result.length).toEqual(42)
@@ -148,18 +148,18 @@ Object.keys(testAPIs).forEach((IPFS) => {
     it('load only 99 entries from a log with 100 entries', async () => {
       const count = 100
       const log = new Log(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'X' })
       let log2 = new Log(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'X' })
       for (let i = 1; i <= count; i++) {
         await log.append('hello' + i)
         if (i % 10 === 0) {
           log2 = new Log(ipfs, {
-            publicKey: signKey.keypair.publicKey,
+            ...signKey.keypair,
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
           }, { logId: log2._id, entries: log2.values })
           await log2.append('hi' + i)
@@ -169,7 +169,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       const hash = await log2.toMultihash()
       const result = await Log.fromMultihash(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, hash, { length: 99 })
       expect(result.length).toEqual(99)
@@ -178,22 +178,22 @@ Object.keys(testAPIs).forEach((IPFS) => {
     it('load only 10 entries from a log with 100 entries', async () => {
       const count = 100
       const log = new Log(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'X' })
       let log2 = new Log(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'X' })
       let log3 = new Log(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'X' })
       for (let i = 1; i <= count; i++) {
         await log.append('hello' + i)
         if (i % 10 === 0) {
           log2 = new Log(ipfs, {
-            publicKey: signKey.keypair.publicKey,
+            ...signKey.keypair,
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
           },
             { logId: log2._id, entries: log2.values, heads: log2.heads })
@@ -202,7 +202,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         }
         if (i % 25 === 0) {
           log3 = new Log(ipfs, {
-            publicKey: signKey.keypair.publicKey,
+            ...signKey.keypair,
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
           },
             { logId: log3._id, entries: log3.values, heads: log3.heads.concat(log2.heads) })
@@ -213,7 +213,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await log3.join(log2)
       const hash = await log3.toMultihash()
       const result = await Log.fromMultihash(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, hash, { length: 10 })
       expect(result.length).toEqual(10)
@@ -223,15 +223,15 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const count = 30
 
       const log = new Log(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'X' })
       const log2 = new Log(ipfs, {
-        publicKey: signKey2.keypair.publicKey,
+        ...signKey2.keypair,
         sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
       }, { logId: 'X' })
       let log3 = new Log(ipfs, {
-        publicKey: signKey3.keypair.publicKey,
+        ...signKey3.keypair,
         sign: async (data: Uint8Array) => (await signKey3.keypair.sign(data))
       }, { logId: 'X' })
       for (let i = 1; i <= count; i++) {
@@ -242,7 +242,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         }
         if (i % 25 === 0) {
           log3 = new Log(ipfs, {
-            publicKey: signKey3.keypair.publicKey,
+            ...signKey3.keypair,
             sign: async (data: Uint8Array) => (await signKey3.keypair.sign(data))
           },
             { logId: log3._id, entries: log3.values, heads: log3.heads.concat(log2.heads) })
@@ -253,7 +253,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await log3.join(log2)
 
       const log4 = new Log(ipfs, {
-        publicKey: signKey4.keypair.publicKey,
+        ...signKey4.keypair,
         sign: async (data: Uint8Array) => (await signKey4.keypair.sign(data))
       }, { logId: 'X' })
       await log4.join(log2)

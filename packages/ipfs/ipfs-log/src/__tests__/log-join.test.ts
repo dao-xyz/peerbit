@@ -91,19 +91,19 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       beforeEach(async () => {
         log1 = new Log(ipfs, {
-          publicKey: signKey.keypair.publicKey,
+          ...signKey.keypair,
           sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
         }, { logId: 'X' })
         log2 = new Log(ipfs, {
-          publicKey: signKey2.keypair.publicKey,
+          ...signKey2.keypair,
           sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
         }, { logId: 'X' })
         log3 = new Log(ipfs2, {
-          publicKey: signKey3.keypair.publicKey,
+          ...signKey3.keypair,
           sign: async (data: Uint8Array) => (await signKey3.keypair.sign(data))
         }, { logId: 'X' })
         log4 = new Log(ipfs2, {
-          publicKey: signKey4.keypair.publicKey,
+          ...signKey4.keypair,
           sign: async (data: Uint8Array) => (await signKey4.keypair.sign(data))
         }, { logId: 'X' })
       })
@@ -121,19 +121,19 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const prev3 = last(items3)
           const n1 = await Entry.create({
             ipfs, identity: {
-              publicKey: signKey.keypair.publicKey,
+              ...signKey.keypair,
               sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
             }, gidSeed: 'X' + i, data: 'entryA' + i, next: prev1 ? [prev1] : undefined
           })
           const n2 = await Entry.create({
             ipfs, identity: {
-              publicKey: signKey2.keypair.publicKey,
+              ...signKey2.keypair,
               sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
             }, data: 'entryB' + i, next: prev2 ? [prev2, n1] : [n1]
           })
           const n3 = await Entry.create({
             ipfs: ipfs2, identity: {
-              publicKey: signKey3.keypair.publicKey,
+              ...signKey3.keypair,
               sign: async (data: Uint8Array) => (await signKey3.keypair.sign(data))
             }, data: 'entryC' + i, next: prev3 ? [prev3, n1, n2] : [n1, n2]
           })
@@ -145,7 +145,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         // Here we're creating a log from entries signed by A and B
         // but we accept entries from C too
         const logA = await Log.fromEntry(ipfs, {
-          publicKey: signKey3.keypair.publicKey,
+          ...signKey3.keypair,
           sign: async (data: Uint8Array) => (await signKey3.keypair.sign(data))
         }, last(items2), { length: -1 })
 
@@ -153,7 +153,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         // Here we're creating a log from entries signed by peer A, B and C
         // "logA" accepts entries from peer C so we can join logs A and B
         const logB = await Log.fromEntry(ipfs2, {
-          publicKey: signKey3.keypair.publicKey,
+          ...signKey3.keypair,
           sign: async (data: Uint8Array) => (await signKey3.keypair.sign(data))
         }, last(items3), { length: -1 })
         expect(logA.length).toEqual(items2.length + items1.length)

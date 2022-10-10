@@ -69,6 +69,14 @@ export class Ed25519Keypair extends Keypair implements Signer {
     @field({ type: Ed25519PrivateKey })
     privateKey: Ed25519PrivateKey;
 
+    constructor(properties?: { publicKey: Ed25519PublicKey; privateKey: Ed25519PrivateKey; }) {
+        super();
+        if (properties) {
+            this.privateKey = properties.privateKey;
+            this.publicKey = properties.publicKey
+        }
+    }
+
     static async create(): Promise<Ed25519Keypair> {
 
         await sodium.ready;

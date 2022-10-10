@@ -31,17 +31,16 @@ describe('x25519', function () {
             data
         })
 
-        const senderConfig = config(senderKey)
         const reciever1Config = config(recieverKey1)
         const reciever2Config = config(recieverKey2)
 
-        const encrypted = await decrypted.init(senderConfig).encrypt(recieverKey1.publicKey, recieverKey2.publicKey)
+        const encrypted = await decrypted.encrypt(senderKey, recieverKey1.publicKey, recieverKey2.publicKey)
         encrypted._decrypted = undefined;
 
-        const decryptedFromEncrypted1 = await encrypted.init(reciever1Config).decrypt();
+        const decryptedFromEncrypted1 = await encrypted.decrypt(reciever1Config.getAnyKeypair);
         expect(decryptedFromEncrypted1._data).toStrictEqual(data)
 
-        const decryptedFromEncrypted2 = await encrypted.init(reciever2Config).decrypt();
+        const decryptedFromEncrypted2 = await encrypted.decrypt(reciever2Config.getAnyKeypair);
         expect(decryptedFromEncrypted2._data).toStrictEqual(data)
     })
 
@@ -50,7 +49,6 @@ describe('x25519', function () {
         const recieverKey1 = await Ed25519Keypair.create();
         const recieverKey2 = await Ed25519Keypair.create();
 
-        const senderConfig = config(senderKey)
         const reciever1Config = config(recieverKey1)
         const reciever2Config = config(recieverKey2)
 
@@ -59,13 +57,13 @@ describe('x25519', function () {
             data
         })
 
-        const encrypted = await decrypted.init(senderConfig).encrypt(recieverKey1.publicKey, recieverKey2.publicKey)
+        const encrypted = await decrypted.encrypt(senderKey, recieverKey1.publicKey, recieverKey2.publicKey)
         encrypted._decrypted = undefined;
 
-        const decryptedFromEncrypted1 = await encrypted.init(reciever1Config).decrypt();
+        const decryptedFromEncrypted1 = await encrypted.decrypt(reciever1Config.getAnyKeypair);
         expect(decryptedFromEncrypted1._data).toStrictEqual(data)
 
-        const decryptedFromEncrypted2 = await encrypted.init(reciever2Config).decrypt();
+        const decryptedFromEncrypted2 = await encrypted.decrypt(reciever2Config.getAnyKeypair);
         expect(decryptedFromEncrypted2._data).toStrictEqual(data)
 
     })

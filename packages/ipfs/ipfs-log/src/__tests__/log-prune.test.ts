@@ -60,7 +60,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('cut back to max oplog length', async () => {
       const log = new Log<string>(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'A', prune: { maxLength: 1, cutToLength: 1 } })
       await log.append('hello1')
@@ -72,7 +72,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     it('cut back to cut length', async () => {
       const log = new Log<string>(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'A', prune: { maxLength: 3, cutToLength: 1 } })
       await log.append('hello1')

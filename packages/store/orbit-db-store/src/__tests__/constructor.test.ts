@@ -42,7 +42,7 @@ describe(`Constructor`, function () {
     const options = Object.assign({}, DefaultOptions, { resolveCache: () => Promise.resolve(cache) })
     store = new Store({ name: 'name', accessController: new SimpleAccessController() })
     await store.init(ipfs.api, {
-      publicKey: signKey.keypair.publicKey,
+      ...signKey.keypair,
       sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
     }, options);
 

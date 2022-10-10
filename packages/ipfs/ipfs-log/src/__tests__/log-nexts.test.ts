@@ -55,7 +55,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         describe('Custom next', () => {
             /*   it('will filter refs from next', async () => {
                   const log1 = new Log(ipfs, {
-    publicKey: signKey.keypair.publicKey,
+     ...signKey.keypair,
     sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
   }, { logId: 'A' })
                   const e0 = await log1.append("0", { refs: [] })
@@ -79,7 +79,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             /*   it('can get nexts by references', async () => {
          
                   const log1 = new Log(ipfs, {
-    publicKey: signKey.keypair.publicKey,
+     ...signKey.keypair,
     sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
   }, { logId: 'A' })
                   const e0 = await log1.append("0", { refs: [] })
@@ -114,7 +114,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             it('can fork explicitly', async () => {
 
                 const log1 = new Log(ipfs, {
-                    publicKey: signKey.keypair.publicKey,
+                    ...signKey.keypair,
                     sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
                 }, { logId: 'A' })
                 const e0 = await log1.append("0", { nexts: [] })

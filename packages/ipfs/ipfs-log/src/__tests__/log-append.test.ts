@@ -60,7 +60,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       beforeEach(async () => {
         log = new Log(ipfs, {
-          publicKey: signKey.keypair.publicKey,
+          ...signKey.keypair,
           sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
         }, { logId: 'A' })
         await log.append('hello1')
@@ -104,7 +104,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       beforeAll(async () => {
         // Do sign function really need to returnr publcikey
-        log = new Log(ipfs, { publicKey: signKey.keypair.publicKey, sign: (data) => signKey.keypair.sign(data) }, { logId: 'A' })
+        log = new Log(ipfs, { ...signKey.keypair, sign: (data) => signKey.keypair.sign(data) }, { logId: 'A' })
         let prev = undefined;
         for (let i = 0; i < amount; i++) {
           prev = await log.append('hello' + i, { pin: false, nexts: prev ? [prev] : undefined })//,  refs: log.getPow2Refs(nextPointerAmount) })

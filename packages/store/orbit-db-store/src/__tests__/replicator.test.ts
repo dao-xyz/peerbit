@@ -49,7 +49,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const options = Object.assign({}, DefaultOptions, { replicationConcurrency: 123, resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index) })
       store = new Store({ name: 'name', accessController: new SimpleAccessController() })
       await store.init(ipfs, {
-        publicKey: signKey.keypair.publicKey,
+        ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, options);
 
@@ -76,7 +76,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       beforeAll(async () => {
 
         log2 = new Log(ipfs, {
-          publicKey: signKey.keypair.publicKey,
+          ...signKey.keypair,
           sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
         }, { logId: store._oplog._id })
         console.log(`writing ${logLength} entries to the log`)

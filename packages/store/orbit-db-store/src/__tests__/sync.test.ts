@@ -51,7 +51,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             index = new SimpleIndex();
             store = new Store({ name: 'name', accessController: new SimpleAccessController() })
             await store.init(session.peers[0].ipfs, {
-                publicKey: signKey.keypair.publicKey,
+                ...signKey.keypair,
                 sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
             }, { ...DefaultOptions, replicationConcurrency: 123, resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index) });
 
@@ -69,7 +69,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             const index2 = new SimpleIndex();
             const store2 = new Store({ name: 'name2', accessController: new SimpleAccessController() })
             await store2.init(session.peers[1].ipfs, {
-                publicKey: signKey.keypair.publicKey,
+                ...signKey.keypair,
                 sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
             }, { ...DefaultOptions, replicationConcurrency: 123, resolveCache: () => Promise.resolve(cache), onUpdate: index2.updateIndex.bind(index2) });
 
@@ -93,7 +93,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
             const progressCallbackEntries: Entry<any>[] = [];
             await store2.init(session.peers[1].ipfs, {
-                publicKey: signKey.keypair.publicKey,
+                ...signKey.keypair,
                 sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
             }, {
                 ...DefaultOptions, replicationConcurrency: 123, resolveCache: () => Promise.resolve(cache), onUpdate: index2.updateIndex.bind(index2), onReplicationProgress: (store, entry) => {

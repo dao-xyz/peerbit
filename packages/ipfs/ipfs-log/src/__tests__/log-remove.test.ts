@@ -53,7 +53,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         })
         describe('remove', () => {
             it('removes by next', async () => {
-                const log = new Log<string>(ipfs, { publicKey: signKey.keypair.publicKey, sign: (data) => signKey.keypair.sign(data) });
+                const log = new Log<string>(ipfs, { ...signKey.keypair, sign: (data) => signKey.keypair.sign(data) });
                 expect(log.values instanceof Array).toEqual(true)
                 expect(log.length).toEqual(0)
                 await log.append('hello1')

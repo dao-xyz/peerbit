@@ -7,3 +7,4 @@ export * from './entry.js';
 export * from './utils.js';
 export * from './lamport-clock.js';
 export * from './encoding.js';
+export * from './identity.js';

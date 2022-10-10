@@ -67,7 +67,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       beforeEach(async () => {
         log1 = new Log(ipfs, {
-          publicKey: signKey.keypair.publicKey,
+          ...signKey.keypair,
           sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
         }, { logId: 'X' })
 

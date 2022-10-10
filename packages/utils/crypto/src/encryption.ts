@@ -12,10 +12,12 @@ const NONCE_LENGTH = 24;
 export type MaybeX25519PublicKey = (X25519PublicKey | X25519PublicKey[] | undefined);
 
 export interface PublicKeyEncryptionResolver {
-    getEncryptionKeypair: () => Promise<X25519Keypair | Ed25519Keypair>
-    getAnyKeypair: (publicKey: (X25519PublicKey | Ed25519PublicKey)[]) => Promise<{ index: number, keypair: (X25519Keypair | Ed25519Keypair) } | undefined>
+    getEncryptionKeypair: GetEncryptionKeypair,
+    getAnyKeypair: GetAnyKeypair
 
 }
+export type GetAnyKeypair = (publicKey: (X25519PublicKey | Ed25519PublicKey)[]) => Promise<{ index: number, keypair: (X25519Keypair | Ed25519Keypair) } | undefined>;
+export type GetEncryptionKeypair = (() => (Promise<X25519Keypair | Ed25519Keypair> | X25519Keypair | Ed25519Keypair)) | X25519Keypair | Ed25519Keypair;
 
 const getKeypairAsX25519Keypair = async (keypair: X25519Keypair | Ed25519Keypair): Promise<X25519Keypair> => {
     if (keypair instanceof X25519Keypair) {
@@ -28,11 +30,7 @@ const getKeypairAsX25519Keypair = async (keypair: X25519Keypair | Ed25519Keypair
 @variant(0)
 export class MaybeEncrypted<T>  {
 
-    _encryption?: PublicKeyEncryptionResolver
-    init(encryption?: PublicKeyEncryptionResolver) {
-        this._encryption = encryption;
-        return this;
-    }
+
     constructor() {
 
     }
@@ -44,7 +42,7 @@ export class MaybeEncrypted<T>  {
         throw new Error("Not implented")
     }
 
-    async decrypt(): Promise<DecryptedThing<T>> {
+    async decrypt(keyResolver: GetAnyKeypair): Promise<DecryptedThing<T>> {
         throw new Error("Not implemented")
     }
     equals(other: MaybeEncrypted<T>): boolean {
@@ -86,10 +84,7 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
         return deserialize(this._data, clazz)
     }
 
-    async encrypt(...recieverPublicKeys: (X25519PublicKey | Ed25519PublicKey)[]): Promise<EncryptedThing<T>> {
-        if (!this._encryption) {
-            throw new Error("Not initialized with encryption config")
-        }
+    async encrypt(keyResolver: GetEncryptionKeypair, ...recieverPublicKeys: (X25519PublicKey | Ed25519PublicKey)[]): Promise<EncryptedThing<T>> {
 
         const bytes = serialize(this)
         await sodium.ready;
@@ -97,7 +92,7 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
         const nonce = new Uint8Array(await sodium.randombytes_buf(NONCE_LENGTH));
         const cipher = await sodium.crypto_secretbox_easy(bytes, nonce, epheremalKey);
 
-        let encryptionKeypair = await this._encryption.getEncryptionKeypair();
+        let encryptionKeypair = typeof keyResolver === 'function' ? await keyResolver() : keyResolver;
         if (encryptionKeypair instanceof Ed25519Keypair) {
             encryptionKeypair = await X25519Keypair.from(encryptionKeypair);
         }
@@ -258,8 +253,6 @@ export class Envelope {
 @variant(1)
 export class EncryptedThing<T> extends MaybeEncrypted<T> {
 
-    _encryption: PublicKeyEncryptionResolver
-
 
     @field(U8IntArraySerializer)
     _encrypted: Uint8Array;
@@ -293,17 +286,19 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
     }
 
 
-    async decrypt(): Promise<DecryptedThing<T>> {
+    async decrypt(keyResolver?: GetAnyKeypair): Promise<DecryptedThing<T>> {
         if (this._decrypted) {
             return this._decrypted
         }
 
-        if (!this._encryption) {
-            throw new Error("Not initialized");
+        if (!keyResolver) {
+            throw new Error("Expecting key resolver")
         }
+
         await sodium.ready;
+
         // We only need to open with one of the keys
-        const key = await this._encryption.getAnyKeypair(this._envelope._ks.map(k => k._recieverPublicKey))
+        const key = await keyResolver(this._envelope._ks.map(k => k._recieverPublicKey))
         if (key) {
             const k = this._envelope._ks[key.index];
             let secretKey: X25519SecretKey = undefined as any;

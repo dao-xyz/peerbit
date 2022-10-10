@@ -119,7 +119,7 @@ describe(`addOperation`, function () {
     const options: IInitializationOptions<any> = { ...DefaultOptions, resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index), encryption, onWrite }
     store = new Store({ name: 'name', accessController: new SimpleAccessController() })
     await store.init(ipfs, {
-      publicKey: signKey.keypair.publicKey,
+      ...signKey.keypair,
       sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
     }, options);
 
@@ -172,7 +172,7 @@ describe(`addOperation`, function () {
     const options: IInitializationOptions<any> = { ...DefaultOptions, resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index), encryption, onWrite }
     store = new Store({ name: 'name', accessController: new SimpleAccessController() })
     await store.init(ipfs, {
-      publicKey: signKey.keypair.publicKey,
+      ...signKey.keypair,
       sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
     }, options);
 

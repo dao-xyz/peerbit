@@ -3,30 +3,34 @@
 import { serialize } from "@dao-xyz/borsh";
 import type { Message } from '@libp2p/interface-pubsub'
 import { delay, waitFor } from "@dao-xyz/time";
-import { DecryptedThing, MaybeEncrypted, PublicKeyEncryption, AccessError, PublicSignKey, X25519PublicKey, Ed25519PublicKey, PublicKeyEncryptionResolver, X25519Keypair } from "@dao-xyz/peerbit-crypto"
+import { DecryptedThing, MaybeEncrypted, PublicKeyEncryption, AccessError, PublicSignKey, X25519PublicKey, Ed25519PublicKey, PublicKeyEncryptionResolver, X25519Keypair, GetEncryptionKeypair, GetAnyKeypair, SignKey } from "@dao-xyz/peerbit-crypto"
 import { QueryRequestV0, QueryResponseV0 } from "@dao-xyz/query-protocol";
 import { MaybeSigned, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from "ipfs-core-types";
 import { Identity } from "@dao-xyz/ipfs-log";
 
-export const query = async (ipfs: IPFS, topic: string, query: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, options: {
-    identiy?: Identity,
-    encryption?: PublicKeyEncryptionResolver,
+export type QueryOptions = {
+    signer?: Identity,
+    keyResolver?: GetAnyKeypair,
+    encryption?: {
+        key: GetEncryptionKeypair,
+        responders?: (X25519PublicKey | Ed25519PublicKey)[],
+    },
     waitForAmount?: number,
     maxAggregationTime?: number,
-    recievers?: (X25519PublicKey | Ed25519PublicKey)[],
     isTrusted?: (publicKey: PublicSignKey) => Promise<boolean>
 
-} = {}) => {
+};
+export const query = async (ipfs: IPFS, topic: string, query: QueryRequestV0, responseHandler: (response: QueryResponseV0, from?: SignKey) => void, options: QueryOptions = {}) => {
     if (typeof options.maxAggregationTime !== 'number') {
         options.maxAggregationTime = 30 * 1000;
     }
-    if (!options.encryption) {
-        options.encryption = {
-            getEncryptionKeypair: () => X25519Keypair.create(),
-            getAnyKeypair: (keys) => Promise.resolve(undefined)
-        }
-    }
+    /*   if (!options.encryption) {
+          options.encryption = {
+              getEncryptionKeypair: () => X25519Keypair.create(),
+              getAnyKeypair: (keys) => Promise.resolve(undefined)
+          }
+      } */
 
     // send query and wait for replies in a generator like behaviour
     let responseTopic = query.getResponseTopic(topic);
@@ -34,10 +38,10 @@ export const query = async (ipfs: IPFS, topic: string, query: QueryRequestV0, re
     const _responseHandler = async (msg: Message) => {
 
         try {
-            const result = await decryptVerifyInto(msg.data, QueryResponseV0, options.encryption, {
+            const { result, from } = await decryptVerifyInto(msg.data, QueryResponseV0, options.keyResolver || (() => Promise.resolve(undefined)), {
                 isTrusted: options?.isTrusted
             })
-            responseHandler(result);
+            responseHandler(result, from);
             results += 1;
 
         } catch (error) {
@@ -63,11 +67,11 @@ export const query = async (ipfs: IPFS, topic: string, query: QueryRequestV0, re
     const serializedQuery = serialize(query);
     let maybeSignedMessage = new MaybeSigned({ data: serializedQuery });
 
-    if (options.identiy) {
+    if (options.signer) {
         maybeSignedMessage = await maybeSignedMessage.sign(async (data) => {
             return {
-                publicKey: (options.identiy as Identity).publicKey,
-                signature: await (options.identiy as Identity).sign(data)
+                publicKey: (options.signer as Identity).publicKey,
+                signature: await (options.signer as Identity).sign(data)
             }
         });
     }
@@ -76,8 +80,8 @@ export const query = async (ipfs: IPFS, topic: string, query: QueryRequestV0, re
         data: serialize(maybeSignedMessage)
     });
     let maybeEncryptedMessage: MaybeEncrypted<MaybeSigned<Uint8Array>> = decryptedMessage;
-    if (options.recievers && options.recievers.length > 0) {
-        maybeEncryptedMessage = await decryptedMessage.encrypt(...options.recievers)
+    if (options.encryption?.responders && options.encryption?.responders.length > 0) {
+        maybeEncryptedMessage = await decryptedMessage.encrypt(options.encryption.key, ...options.encryption.responders)
     }
 
     await ipfs.pubsub.publish(topic, serialize(maybeEncryptedMessage));
@@ -95,12 +99,13 @@ export const query = async (ipfs: IPFS, topic: string, query: QueryRequestV0, re
 
 export const respond = async (ipfs: IPFS, topic: string, request: QueryRequestV0, response: QueryResponseV0, options: {
     signer?: Identity,
-    encryption?: PublicKeyEncryptionResolver
+    encryption?: {
+        getEncryptionKeypair: GetEncryptionKeypair
+    }
 } = {}) => {
     if (!options.encryption) {
         options.encryption = {
-            getEncryptionKeypair: () => X25519Keypair.create(),
-            getAnyKeypair: (keys) => Promise.resolve(undefined)
+            getEncryptionKeypair: () => X25519Keypair.create()
         }
     }
 
@@ -121,8 +126,8 @@ export const respond = async (ipfs: IPFS, topic: string, request: QueryRequestV0
         data: serialize(maybeSignedMessage)
     });
     let maybeEncryptedMessage: MaybeEncrypted<MaybeSigned<Uint8Array>> = decryptedMessage;
-    if (request.recievers?.length > 0) {
-        maybeEncryptedMessage = await decryptedMessage.encrypt(...request.recievers)
+    if (request.responseRecievers?.length > 0) {
+        maybeEncryptedMessage = await decryptedMessage.encrypt(options.encryption.getEncryptionKeypair, ...request.responseRecievers)
     }
     await ipfs.pubsub.publish(request.getResponseTopic(topic), serialize(maybeEncryptedMessage));
 }

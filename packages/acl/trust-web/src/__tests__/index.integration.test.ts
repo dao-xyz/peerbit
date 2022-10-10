@@ -1,6 +1,6 @@
 import { Session, Peer } from '@dao-xyz/orbit-db-test-utils'
 import { AllowAllAccessController, AnyRelation, createIdentityGraphStore, getFromByTo, getFromByToGenerator, RegionAccessController } from '..';
-import { delay, waitFor } from '@dao-xyz/time';
+import { waitFor } from '@dao-xyz/time';
 import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { DocumentQueryRequest, QueryRequestV0, QueryResponseV0, ResultWithSource } from '@dao-xyz/query-protocol';
 import { query } from '@dao-xyz/orbit-db-query-store';
@@ -123,7 +123,6 @@ describe('index', () => {
 
             await waitFor(() => Object.keys(l0b.trustGraph._index._index).length == 2)
             await waitFor(() => Object.keys(l0a.trustGraph._index._index).length == 2)
-            await delay(20000);
 
             // Try query with trusted
             let responses: QueryResponseV0[] = [];
@@ -152,12 +151,7 @@ describe('index', () => {
                 untrustedResponse = response
             },
                 {
-                    signer: async (bytes) => {
-                        return {
-                            publicKey: identity(3).publicKey,
-                            signature: await identity(3).sign(bytes)
-                        }
-                    },
+                    signer: identity(3),
                     maxAggregationTime: 3000
                 })
 

@@ -9,8 +9,8 @@ import { IPFS } from "ipfs-core-types"
 import { CanAppendAccessController, DefaultAccessController } from "./default-access-controller.js"
 import { isDefined } from './is-defined.js'
 import { findUniques } from "./find-uniques.js"
-import { EncryptionTemplateMaybeEncrypted, Entry, Identity, maxClockTimeReducer, Payload } from './entry';
-import { LamportClock as Clock, LamportClock } from './lamport-clock'
+import { EncryptionTemplateMaybeEncrypted, Entry, maxClockTimeReducer, Payload } from './entry.js';
+import { LamportClock as Clock, LamportClock } from './lamport-clock.js'
 import { AccessError, PublicKeyEncryption, PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { serialize } from '@dao-xyz/borsh';
 
@@ -18,6 +18,7 @@ import { serialize } from '@dao-xyz/borsh';
 import Logger from 'logplease'
 import { fromBase64, toBase64 } from "./utils.js"
 import { Encoding } from "./encoding.js"
+import { Identity } from "./identity.js"
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 

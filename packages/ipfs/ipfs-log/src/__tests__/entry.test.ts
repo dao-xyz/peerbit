@@ -1,7 +1,7 @@
 import assert from 'assert';
 import rmrf from 'rimraf'
 import fs from 'fs-extra'
-import { Entry, Payload, Identity } from '../entry.js';
+import { Entry, Payload } from '../entry.js';
 import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { deserialize, serialize } from '@dao-xyz/borsh';
 import { Ed25519Keypair, Ed25519PublicKey, X25519Keypair, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
@@ -16,6 +16,7 @@ import { IPFS } from 'ipfs-core-types';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { Identity } from '../identity.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -26,7 +27,7 @@ const identityFromSignKey = (key: KeyWithMeta<Ed25519Keypair>): Identity => {
     throw new Error("Key not defined");
   }
   return {
-    publicKey: key.keypair.publicKey,
+    ...key.keypair,
     sign: async (data: Uint8Array) => (await key.keypair.sign(data))
   }
 }

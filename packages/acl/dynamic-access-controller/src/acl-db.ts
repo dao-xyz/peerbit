@@ -1,14 +1,14 @@
 import { field, variant } from '@dao-xyz/borsh';
 import { BinaryDocumentStore, Operation } from '@dao-xyz/orbit-db-bdocstore';
-import { getFromByToGenerator, RegionAccessController, RelationAccessController } from '@dao-xyz/orbit-db-trust-web';
+import { getFromByToGenerator, RegionAccessController, RelationAccessController } from '@dao-xyz/peerbit-trust-web';
 import { Access, AccessData, AccessType } from './access';
-import { Entry } from '@dao-xyz/ipfs-log'
-import { PublicKey } from '@dao-xyz/peerbit-crypto';
-import { Address, IInitializationOptions, StoreLike } from '@dao-xyz/orbit-db-store';
+import { Entry, Identity } from '@dao-xyz/ipfs-log'
+import { PublicSignKey } from '@dao-xyz/peerbit-crypto';
+import { Address, EntryWithRefs, IInitializationOptions, StoreLike } from '@dao-xyz/orbit-db-store';
 import { Log } from '@dao-xyz/ipfs-log';
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
-import Cache from '@dao-xyz/orbit-db-cache';
+import { IPFS } from 'ipfs-core-types';
 
 @variant(0)
 export class AccessStore implements StoreLike<Operation<any>> {
@@ -21,7 +21,7 @@ export class AccessStore implements StoreLike<Operation<any>> {
 
     constructor(opts?: {
         name?: string;
-        rootTrust?: PublicKey,
+        rootTrust?: PublicSignKey,
         regionAccessController?: RegionAccessController
     }) {
         if (opts) {
@@ -33,7 +33,7 @@ export class AccessStore implements StoreLike<Operation<any>> {
                 objectType: AccessData.name,
                 accessController: opts.regionAccessController ? opts.regionAccessController : new RegionAccessController({
                     name: (opts.name || uuid()) + "_region",
-                    rootTrust: opts.rootTrust
+                    rootTrust: opts.rootTrust as PublicSignKey
                 })
             })
 
@@ -52,11 +52,11 @@ export class AccessStore implements StoreLike<Operation<any>> {
 
     // custom can append
 
-    async canRead(fromKey: PublicKey): Promise<boolean> {
+    async canRead(fromKey: PublicSignKey): Promise<boolean> {
         // TODO, improve, caching etc
 
         // Else check whether its trusted by this access controller
-        const canReadCheck = async (key: PublicKey) => {
+        const canReadCheck = async (key: PublicSignKey) => {
             for (const value of Object.values(this.access._index._index)) {
                 const access = value.value;
                 if (access instanceof Access) {
@@ -82,11 +82,11 @@ export class AccessStore implements StoreLike<Operation<any>> {
         return false;
     }
 
-    async canWrite(fromKey: PublicKey): Promise<boolean> {
+    async canWrite(fromKey: PublicSignKey): Promise<boolean> {
         // TODO, improve, caching etc
 
         // Else check whether its trusted by this access controller
-        const canWriteCheck = async (key: PublicKey) => {
+        const canWriteCheck = async (key: PublicSignKey) => {
             for (const value of Object.values(this.access._index._index)) {
                 const access = value.value
                 if (access instanceof Access) {
@@ -113,17 +113,18 @@ export class AccessStore implements StoreLike<Operation<any>> {
     }
 
 
-    async init(ipfs, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<Access>) {
+    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<Operation<Access>>): Promise<AccessStore> {
         this.access._clazz = AccessData;
 
         const store = await options.saveAndResolveStore(ipfs, this);
         if (store !== this) {
-            return store;
+            return store as AccessStore;
         }
 
         /* await this.access.accessController.init(ipfs, publicKey, sign, options); */
-        await this.identityGraphController.init(ipfs, publicKey, sign, options);
-        return this.access.init(ipfs, publicKey, sign, options)
+        await this.identityGraphController.init(ipfs, identity, options);
+        await this.access.init(ipfs, identity, options)
+        return this;
     }
 
     close(): Promise<void> {
@@ -138,23 +139,18 @@ export class AccessStore implements StoreLike<Operation<any>> {
     save(ipfs: any, options?: { format?: string; pin?: boolean; timeout?: number; }) {
         return this.access.save(ipfs, options);
     }
-    sync(heads: Entry<Access>[]): Promise<void> {
+    sync(heads: (Entry<Operation<Access>> | EntryWithRefs<Operation<Access>>)[]): Promise<void> {
         return this.access.sync(heads);
     }
     get replicationTopic(): string {
         return this.access.replicationTopic;
     }
-    get events(): import("events") {
-        return this.access.events;
-    }
+
     get address(): Address {
         return this.access.address;
     }
-    get oplog(): Log<Access> {
+    get oplog(): Log<Operation<Access>> {
         return this.access.oplog;
-    }
-    get cache(): Cache {
-        return this.access.cache;
     }
     get id(): string {
         return this.access.id;
@@ -162,9 +158,7 @@ export class AccessStore implements StoreLike<Operation<any>> {
     get replicate(): boolean {
         return this.access.replicate;
     }
-    getHeads(): Promise<Entry<Operation<any>>[]> {
-        return this.access.getHeads();
-    }
+
     get name(): string {
         return this.access.name;
     }

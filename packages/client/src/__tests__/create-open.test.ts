@@ -154,7 +154,7 @@ Object.keys(testAPIs).forEach(API => {
 
       it('opens a database - with a different identity', async () => {
         const signKey = await orbitdb.keystore.createEd25519Key({ id: new Uint8Array([0]) });
-        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { identity: { publicKey: signKey.keypair.publicKey, sign: (data) => signKey.keypair.sign(data) } })
+        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { identity: { ...signKey.keypair, sign: (data) => signKey.keypair.sign(data) } })
         assert.equal(db.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db.address.toString().indexOf('zd'), 9)
         assert.equal(db.address.toString().indexOf('abc'), 59)
@@ -164,7 +164,7 @@ Object.keys(testAPIs).forEach(API => {
 
       it('opens the same database - from an address', async () => {
         const signKey = await orbitdb.keystore.createEd25519Key({ id: new Uint8Array([0]) });
-        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { identity: { publicKey: signKey.keypair.publicKey, sign: (data) => signKey.keypair.sign(data) } })
+        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), { identity: { ...signKey.keypair, sign: (data) => signKey.keypair.sign(data) } })
         const db2 = await orbitdb.open(await Store.load(orbitdb._ipfs, db.address))
         assert.equal(db2.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db2.address.toString().indexOf('zd'), 9)

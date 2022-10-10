@@ -12,7 +12,7 @@
             "packages/ipfs/ipfs-log",
             "packages/client",
             "packages/acl/dynamic-access-controller",
-            "packages/acl/orbit-db-trust-web",
+            "packages/acl/trust-web",
             "packages/identity/keystore",
             "packages/utils/crypto",
             "packages/store/orbit-db-bdocstore",
