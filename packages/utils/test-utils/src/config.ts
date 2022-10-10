@@ -5,6 +5,7 @@ import * as ipfsModule from 'ipfs'
 import * as ipfsHttpModule from 'ipfs-http-client'
 // @ts-ignore
 import * as ipfsBin from 'go-ipfs'
+import { IPFSOptions } from 'ipfsd-ctl/src/types';
 
 export const factoryConfig = {
     defaults: {
@@ -64,7 +65,7 @@ export const browserConfig = {
                 }
             }
         }
-    },
+    } as IPFSOptions,
     daemon1: {
         relay: { enabled: true, hop: { enabled: true, active: true } },
         EXPERIMENTAL: {
@@ -87,7 +88,7 @@ export const browserConfig = {
                 }
             }
         }
-    },
+    } as IPFSOptions,
     daemon2: {
         relay: { enabled: true, hop: { enabled: true, active: true } },
         EXPERIMENTAL: {
@@ -110,7 +111,7 @@ export const browserConfig = {
                 }
             }
         }
-    }
+    } as IPFSOptions
 }
 
 
@@ -136,8 +137,7 @@ export const nodeConfig = {
             Bootstrap: [],
             Discovery: {
                 MDNS: {
-                    Enabled: true,
-                    Interval: 0
+                    Enabled: false // we do this to make tests run faster
                 },
                 webRTCStar: {
                     Enabled: false
@@ -158,15 +158,14 @@ export const nodeConfig = {
             Bootstrap: [],
             Discovery: {
                 MDNS: {
-                    Enabled: true,
-                    Interval: 0
+                    Enabled: false // we do this to make tests run faster
                 },
                 webRTCStar: {
                     Enabled: false
                 }
             }
         }
-    },
+    } as IPFSOptions,
     daemon2: {
         EXPERIMENTAL: {
             pubsub: true
@@ -180,13 +179,12 @@ export const nodeConfig = {
             Bootstrap: [],
             Discovery: {
                 MDNS: {
-                    Enabled: true,
-                    Interval: 0
+                    Enabled: false // we do this to make tests run faster
                 },
                 webRTCStar: {
                     Enabled: false
                 }
             }
         }
-    }
+    } as IPFSOptions
 }
