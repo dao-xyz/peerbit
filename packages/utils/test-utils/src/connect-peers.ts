@@ -1,6 +1,6 @@
 
 import { IPFS } from 'ipfs-core-types';
-const defaultFilter = () => true
+const defaultFilter = (addr: { toString(): string }) => addr.toString().includes('127.0.0.1')
 
 const connectIpfsNodes = async (ipfs1: IPFS, ipfs2: IPFS, options: {
   filter: (address: string) => boolean

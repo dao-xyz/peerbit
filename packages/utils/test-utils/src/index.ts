@@ -1,5 +1,5 @@
 import connectPeers from './connect-peers.js'
-import { Session } from './session.js'
+export * from './session.js'
 import getIpfsPeerId from './get-ipfs-peer-id.js'
 import stopIpfs from './stop-ipfs.js'
 import testAPIs from './test-apis.js'
@@ -18,6 +18,5 @@ export {
   waitForPeers,
   browserConfig,
   factoryConfig,
-  nodeConfig,
-  Session
+  nodeConfig
 }

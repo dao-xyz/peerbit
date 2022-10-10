@@ -6,7 +6,7 @@ import getIpfsPeerId from "./get-ipfs-peer-id.js";
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 
-interface Peer {
+export interface Peer {
     ipfsd: any,
     id: PeerId,
     ipfs: IPFS
