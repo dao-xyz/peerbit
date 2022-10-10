@@ -1,5 +1,4 @@
-import { PayloadOperation, StringIndex } from './string-index.js'
-import { IPFS as IPFSInstance } from 'ipfs';
+import { PayloadOperation, StringIndex, encoding } from './string-index.js'
 import { QueryStore } from '@dao-xyz/orbit-db-query-store';
 import { QueryRequestV0, RangeCoordinate, RangeCoordinates, Result, ResultWithSource, StringMatchQuery } from '@dao-xyz/query-protocol';
 import { StringQueryRequest } from '@dao-xyz/query-protocol';
@@ -7,7 +6,9 @@ import { Range } from './range.js';
 import { deserialize, field, serialize, variant } from '@dao-xyz/borsh';
 
 import { BinaryPayload, CustomBinaryPayload } from '@dao-xyz/bpayload';
-import { AccessController, IStoreOptions } from '@dao-xyz/orbit-db-store';
+import { AccessController, Address, IInitializationOptions, IStoreOptions, load, Store } from '@dao-xyz/orbit-db-store';
+import { IPFS } from 'ipfs-core-types';
+import { BORSH_ENCODING, Identity } from '@dao-xyz/ipfs-log';
 
 export const STRING_STORE_TYPE = 'string_store';
 const findAllOccurrences = (str: string, substr: string): number[] => {
@@ -26,7 +27,6 @@ const findAllOccurrences = (str: string, substr: string): number[] => {
 
 
 
-
 const defaultOptions = (options: IStoreOptions<any>): any => {
   if (!options.encoding) {
     options.encoding = {
@@ -37,14 +37,18 @@ const defaultOptions = (options: IStoreOptions<any>): any => {
   return options;
 }
 
+@variant([0, 1])
 export class StringStore extends QueryStore<PayloadOperation> {
 
   _index: StringIndex;
-  constructor(properties: { name?: string, accessController: AccessController<PayloadOperation> }) {
+  constructor(properties: { name?: string, queryRegion?: string, accessController: AccessController<PayloadOperation> }) {
     super(properties)
     this._index = new StringIndex();
   }
 
+  init(ipfs: IPFS<{}>, identity: Identity, options: IInitializationOptions<PayloadOperation>): Promise<this> {
+    return super.init(ipfs, identity, { ...options, encoding, onUpdate: this._index.updateIndex.bind(this._index) })
+  }
   add(value: string, index: Range, options = {}) {
     return this._addOperation(new PayloadOperation({
       index,
@@ -59,20 +63,20 @@ export class StringStore extends QueryStore<PayloadOperation> {
     return this._addOperation(operation, options)
   }
 
-  queryHandler(query: QueryRequestV0): Promise<Result[]> {
+  async queryHandler(query: QueryRequestV0): Promise<Result[]> {
     if (query.type instanceof StringQueryRequest == false) {
-      return;
+      return [];
     }
     const stringQuery = query.type as StringQueryRequest;
 
     const content = this._index.string;
     const relaventQueries = stringQuery.queries.filter(x => x instanceof StringMatchQuery) as StringMatchQuery[]
     if (relaventQueries.length == 0) {
-      return Promise.resolve([new ResultWithSource({
+      return [new ResultWithSource({
         source: new StringResultSource({
           string: content
         })
-      })])
+      })]
     }
     let ranges = relaventQueries.map(query => {
       const occurances = findAllOccurrences(query.preprocess(content), query.preprocess(query.value));
@@ -86,17 +90,27 @@ export class StringStore extends QueryStore<PayloadOperation> {
     }).flat(1);
 
     if (ranges.length == 0) {
-      return;
+      return [];
     }
 
-    return Promise.resolve([new ResultWithSource({
+    return [new ResultWithSource({
       source: new StringResultSource({
         string: content,
       }),
       coordinates: new RangeCoordinates({
         coordinates: ranges
       })
-    })]);
+    })];
+  }
+
+  static async load(ipfs: IPFS, address: Address, options?: {
+    timeout?: number;
+  }): Promise<StringStore> {
+    const instance = await load(ipfs, address, Store, options)
+    if (instance instanceof StringStore === false) {
+      throw new Error("Unexpected")
+    };
+    return instance as StringStore;
   }
 }
 

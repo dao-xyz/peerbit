@@ -44,7 +44,7 @@ export class SimpleStoreAccessController extends AccessController<any> implement
 
         options.fallbackAccessController = this;
         this._options = options;
-        const store = await options.saveAndResolveStore(this);
+        const store = await options.saveAndResolveStore(ipfs, this);
         if (store !== this) {
             return store as SimpleStoreAccessController;
         }
@@ -74,9 +74,7 @@ export class SimpleStoreAccessController extends AccessController<any> implement
     get oplog(): Log<Operation<string>> {
         return this.store.oplog;
     }
-    get cache(): Cache<any> {
-        return this.store.cache
-    }
+
     get id(): string {
         return this.store.id;
     }

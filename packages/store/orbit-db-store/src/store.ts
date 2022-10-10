@@ -163,7 +163,7 @@ export interface IInitializationOptions<T> extends IStoreOptions<T>, IInitializa
     decrypt: (arr: Uint8Array, keyGroup: string, keyId: Uint8Array) => Promise<Uint8Array>
   }, */
 
-  saveAndResolveStore: (store: StoreLike<any>) => Promise<StoreLike<any>>,
+  saveAndResolveStore: (ipfs: IPFS, store: StoreLike<any>) => Promise<StoreLike<any>>,
   resolveCache: (address: Address) => Promise<Cache<CachedValue>> | Cache<CachedValue>
 
 }
@@ -196,7 +196,7 @@ interface IInitializationOptionsDefault<T> {
   referenceCount?: number,
   replicationConcurrency?: number,
   typeMap?: { [key: string]: Constructor<any> }
-  saveAndResolveStore: (store: Store<any> | StoreLike<any>) => Promise<StoreLike<any>>,
+  saveAndResolveStore: (ipfs: IPFS, store: Store<any> | StoreLike<any>) => Promise<StoreLike<any>>,
 
 }
 
@@ -208,10 +208,8 @@ export const DefaultOptions: IInitializationOptionsDefault<any> = {
   replicationConcurrency: 32,
   typeMap: {},
   /* nameResolver: (name: string) => name, */
-  saveAndResolveStore: async (store: Store<any> | StoreLike<any>) => {
-    if (store instanceof Store) {
-      await store.save(store._ipfs, { pin: true })
-    }
+  saveAndResolveStore: async (ipfs: IPFS, store: Store<any> | StoreLike<any>) => {
+    await store.save(ipfs, { pin: true })
     return store;
   }
 }
@@ -304,7 +302,7 @@ export class Store<T> implements StoreLike<T> {
     this.options = opts
 
 
-    const thisAlternative = await this.options.saveAndResolveStore(this);
+    const thisAlternative = await this.options.saveAndResolveStore(ipfs, this);
     if (thisAlternative !== this) {
       return thisAlternative;
     }
@@ -474,9 +472,6 @@ export class Store<T> implements StoreLike<T> {
 
   get oplog(): Log<any> {
     return this._oplog;
-  }
-  get cache(): Cache<CachedValue> {
-    return this._cache;
   }
 
   get key() {
@@ -757,11 +752,11 @@ export class Store<T> implements StoreLike<T> {
 
 
   async getCachedHeads(): Promise<Entry<T>[]> {
-    if (!(this.cache)) {
+    if (!(this._cache)) {
       return [];
     }
-    const localHeads = ((await this.cache.getBinary(this.localHeadsPath, HeadsCache))?.heads || []) as Entry<T>[]
-    const remoteHeads = ((await this.cache.getBinary(this.remoteHeadsPath, HeadsCache))?.heads || []) as Entry<T>[]
+    const localHeads = ((await this._cache.getBinary(this.localHeadsPath, HeadsCache))?.heads || []) as Entry<T>[]
+    const remoteHeads = ((await this._cache.getBinary(this.remoteHeadsPath, HeadsCache))?.heads || []) as Entry<T>[]
     return [...localHeads, ...remoteHeads]
   }
 

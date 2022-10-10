@@ -116,7 +116,7 @@ export class AccessStore implements StoreLike<Operation<any>> {
     async init(ipfs, publicKey: PublicKey, sign: (data: Uint8Array) => Promise<Uint8Array>, options: IInitializationOptions<Access>) {
         this.access._clazz = AccessData;
 
-        const store = await options.saveAndResolveStore(this);
+        const store = await options.saveAndResolveStore(ipfs, this);
         if (store !== this) {
             return store;
         }

@@ -63,6 +63,7 @@ export class BinaryDocumentStoreOptions<T extends BinaryPayload> extends BStoreO
   encoder: (data: any) => serialize(data)
 } */
 
+@variant([0, 0])
 export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Operation<T>>/*  implements Typed */ {
 
   @field({ type: 'string' })
@@ -71,7 +72,7 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
   @field({ type: 'string' })
   objectType: string;
 
-  _clazz: Constructor<T>;
+  _clazz?: Constructor<T>;
 
   _index: DocumentIndex<T>;
 
@@ -80,7 +81,7 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
     name?: string,
     indexBy: string,
     objectType: string,
-    accessController: AccessController<Operation<T>>,
+    accessController?: AccessController<Operation<T>>,
     queryRegion?: string,
     clazz?: Constructor<T>
   }) {
@@ -88,6 +89,7 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
     if (properties) {
       this.indexBy = properties.indexBy;
       this.objectType = properties.objectType;
+      this._clazz = properties.clazz;
     }
     this._index = new DocumentIndex();
   }

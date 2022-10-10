@@ -1275,7 +1275,7 @@ export class OrbitDB {
         store.init && await store.init(this._ipfs, options.identity || this.identity, {
           replicate: true, ...options, ...{
             resolveCache,
-            saveAndResolveStore: async (store: StoreLike<any>) => {
+            saveAndResolveStore: async (ipfs: IPFS, store: StoreLike<any>) => {
               const address = await store.save(this._ipfs);
               const r = Store.getReplicationTopic(address, options);
               const a = address.toString();

@@ -1,6 +1,6 @@
 import { field, serialize, variant } from "@dao-xyz/borsh";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
-import { PublicKey } from "@dao-xyz/peerbit-crypto";
+import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 // @ts-ignore
 import isNode from 'is-node';
 import { SystemBinaryPayload } from "@dao-xyz/bpayload";
@@ -8,12 +8,8 @@ import { DocumentQueryRequest, MemoryCompare, MemoryCompareQuery, QueryRequestV0
 import { AccessController } from "@dao-xyz/orbit-db-store";
 import { createHash } from "crypto";
 
-let v8 = undefined;
-if (isNode) {
-    v8 = require('v8');
-}
 
-export const getFromByTo = async (to: PublicKey, db: BinaryDocumentStore<Relation>) => {
+export const getFromByTo = async (to: PublicSignKey, db: BinaryDocumentStore<Relation>) => {
     const ser = serialize(to);
     return await db.queryHandler(new QueryRequestV0({
         type: new DocumentQueryRequest({
@@ -32,7 +28,7 @@ export const getFromByTo = async (to: PublicKey, db: BinaryDocumentStore<Relatio
 }
 
 
-export async function* getFromByToGenerator(from: PublicKey, db: BinaryDocumentStore<Relation>) {
+export async function* getFromByToGenerator(from: PublicSignKey, db: BinaryDocumentStore<Relation>) {
     let iter = [from];
     const visited = new Set();
     while (iter.length > 0) {
@@ -64,7 +60,7 @@ export async function* getFromByToGenerator(from: PublicKey, db: BinaryDocumentS
  * @param db 
  * @returns 
  */
-export const getTargetPath = async (start: PublicKey, target: (key: PublicKey) => boolean, db: BinaryDocumentStore<Relation>): Promise<Relation[]> => {
+export const getTargetPath = async (start: PublicSignKey, target: (key: PublicSignKey) => boolean, db: BinaryDocumentStore<Relation>): Promise<Relation[] | undefined> => {
 
     if (!db) {
         throw new Error("Not initalized")
@@ -98,15 +94,15 @@ export class Relation extends SystemBinaryPayload {
 @variant(0)
 export class AnyRelation extends Relation {
 
-    @field({ type: PublicKey })
-    to: PublicKey
+    @field({ type: PublicSignKey })
+    to: PublicSignKey
 
-    @field({ type: PublicKey })
-    from: PublicKey
+    @field({ type: PublicSignKey })
+    from: PublicSignKey
 
     constructor(properties?: {
-        to: PublicKey // signed by truster
-        from: PublicKey
+        to: PublicSignKey // signed by truster
+        from: PublicSignKey
     }) {
         super();
         if (properties) {
@@ -122,7 +118,7 @@ export class AnyRelation extends Relation {
         this.id = AnyRelation.id(this.to, this.from);
     }
 
-    static id(to: PublicKey, from: PublicKey) {
+    static id(to: PublicSignKey, from: PublicSignKey) {
         // we do sha1 to make sure id has fix length, this is important because we want the byte offest of the `trustee` and `truster` to be fixed
         return createHash('sha1').update(new Uint8Array(Buffer.concat([serialize(to), serialize(from)]))).digest('base64');
     }
@@ -130,7 +126,7 @@ export class AnyRelation extends Relation {
 }
 
 
-export const getPath = async (start: PublicKey, end: PublicKey, db: BinaryDocumentStore<Relation>): Promise<Relation[]> => {
+export const getPath = async (start: PublicSignKey, end: PublicSignKey, db: BinaryDocumentStore<Relation>): Promise<Relation[] | undefined> => {
     return getTargetPath(start, (key) => end.equals(key), db)
 }
 

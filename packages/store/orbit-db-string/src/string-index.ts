@@ -1,5 +1,5 @@
 import { field, option, variant } from '@dao-xyz/borsh';
-import { Log } from '@dao-xyz/ipfs-log';
+import { BORSH_ENCODING, Log } from '@dao-xyz/ipfs-log';
 import { Entry } from '@dao-xyz/ipfs-log';
 import { Range } from './range.js';
 
@@ -19,6 +19,7 @@ export class PayloadOperation {
     }
   }
 }
+export const encoding = BORSH_ENCODING(PayloadOperation);
 
 
 export class StringIndex {
@@ -42,7 +43,7 @@ export const applyOperations = async (string: string, operations: Entry<PayloadO
   operations.reduce((handled: string[], item: Entry<PayloadOperation>, _) => {
     if (!handled.includes(item.hash)) {
       handled.push(item.hash)
-      string = applyOperation(string, item.payload.getValue());
+      string = applyOperation(string, item.payload.getValue(encoding));
     }
 
     return handled
@@ -51,7 +52,7 @@ export const applyOperations = async (string: string, operations: Entry<PayloadO
 }
 export const applyOperation = (s: string, operation: PayloadOperation): string => {
   // TODO check bounds number
-  let to = Number(operation.index.offset) + (typeof operation.index.length === 'number' ? operation.index.length : operation.value.length);
+  let to = Number(operation.index.offset) + Number(operation.index.length);
   if (operation.value != undefined) {
     s = s.padEnd(to);
     s = s.slice(0, Number(operation.index.offset)) + operation.value + s.slice(to)

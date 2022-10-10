@@ -27,7 +27,7 @@ export class QueryStore<T> extends Store<T> {
     _initializationPromise?: Promise<void>;
     _onQueryMessageBinded: any = undefined;
 
-    constructor(properties: { queryRegion?: string, accessController: AccessController<T> }) {
+    constructor(properties: { queryRegion?: string, accessController?: AccessController<T> }) {
         super(properties)
         if (properties) {
             this.queryRegion = properties.queryRegion;
@@ -112,12 +112,7 @@ export class QueryStore<T> extends Store<T> {
                     });
 
                     await respond(this._ipfs, this.queryTopic, query, response, {
-                        encryption: this._oplog._encryption, signer: async (bytes) => {
-                            return {
-                                signature: await this._oplog._identity.sign(bytes),
-                                publicKey: this._oplog._identity.publicKey
-                            }
-                        }
+                        encryption: this._oplog._encryption, signer: this._oplog._identity
                     })
                 }
                 else {
@@ -147,10 +142,7 @@ export class QueryStore<T> extends Store<T> {
     }
 
     public query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, options: {
-        signer?: (bytes: Uint8Array) => Promise<{
-            signature: Uint8Array;
-            publicKey: PublicSignKey;
-        }>
+        signer?: Identity,
         waitForAmount?: number,
         maxAggregationTime?: number,
         recievers?: X25519PublicKey[]

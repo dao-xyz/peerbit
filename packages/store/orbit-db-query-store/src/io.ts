@@ -7,12 +7,10 @@ import { DecryptedThing, MaybeEncrypted, PublicKeyEncryption, AccessError, Publi
 import { QueryRequestV0, QueryResponseV0 } from "@dao-xyz/query-protocol";
 import { MaybeSigned, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from "ipfs-core-types";
+import { Identity } from "@dao-xyz/ipfs-log";
 
 export const query = async (ipfs: IPFS, topic: string, query: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, options: {
-    signer?: (bytes: Uint8Array) => Promise<{
-        signature: Uint8Array;
-        publicKey: PublicSignKey;
-    }>
+    identiy?: Identity,
     encryption?: PublicKeyEncryptionResolver,
     waitForAmount?: number,
     maxAggregationTime?: number,
@@ -65,8 +63,13 @@ export const query = async (ipfs: IPFS, topic: string, query: QueryRequestV0, re
     const serializedQuery = serialize(query);
     let maybeSignedMessage = new MaybeSigned({ data: serializedQuery });
 
-    if (options.signer) {
-        maybeSignedMessage = await maybeSignedMessage.sign(options.signer);
+    if (options.identiy) {
+        maybeSignedMessage = await maybeSignedMessage.sign(async (data) => {
+            return {
+                publicKey: (options.identiy as Identity).publicKey,
+                signature: await (options.identiy as Identity).sign(data)
+            }
+        });
     }
 
     let decryptedMessage = new DecryptedThing<MaybeSigned<Uint8Array>>({
@@ -80,7 +83,7 @@ export const query = async (ipfs: IPFS, topic: string, query: QueryRequestV0, re
     await ipfs.pubsub.publish(topic, serialize(maybeEncryptedMessage));
 
     if (options.waitForAmount != undefined) {
-        await waitFor(() => results >= (options.waitForAmount as number), { timeout: options.maxAggregationTime, delayInterval: 50 })
+        await waitFor(() => results >= (options.waitForAmount as number), { timeout: options.maxAggregationTime, delayInterval: 500 })
     }
     else {
         await delay(options.maxAggregationTime);
@@ -91,10 +94,7 @@ export const query = async (ipfs: IPFS, topic: string, query: QueryRequestV0, re
 
 
 export const respond = async (ipfs: IPFS, topic: string, request: QueryRequestV0, response: QueryResponseV0, options: {
-    signer?: (bytes: Uint8Array) => Promise<{
-        signature: Uint8Array;
-        publicKey: PublicSignKey;
-    }>
+    signer?: Identity,
     encryption?: PublicKeyEncryptionResolver
 } = {}) => {
     if (!options.encryption) {
@@ -109,7 +109,12 @@ export const respond = async (ipfs: IPFS, topic: string, request: QueryRequestV0
     let maybeSignedMessage = new MaybeSigned({ data: serializedResponse });
 
     if (options.signer) {
-        maybeSignedMessage = await maybeSignedMessage.sign(options.signer);
+        maybeSignedMessage = await maybeSignedMessage.sign(async (data) => {
+            return {
+                publicKey: (options.signer as Identity).publicKey,
+                signature: await (options.signer as Identity).sign(data)
+            }
+        });
     }
 
     let decryptedMessage = new DecryptedThing<MaybeSigned<Uint8Array>>({

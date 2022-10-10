@@ -42,8 +42,6 @@ class Document extends CustomBinaryPayload {
 
 const bigIntSort = <T extends (number | bigint)>(a: T, b: T): number => (a > b ? 1 : 0 || -(a < b))
 
-const typeMap: { [key: string]: Constructor<any> } = { [Document.name]: Document, };
-
 
 @variant([0, 253])
 export class SimpleRWAccessController<T> extends ReadWriteAccessController<T>
@@ -60,6 +58,7 @@ export class SimpleRWAccessController<T> extends ReadWriteAccessController<T>
 describe('query', () => {
 
   let session: Session, observer: IPFS, writer: IPFS, writeStore: BinaryDocumentStore<Document>, observerStore: BinaryDocumentStore<Document>, cacheStore1: Level, cacheStore2: Level
+
   beforeAll(async () => {
     session = await Session.connected(2)
     observer = session.peers[0].ipfs;

@@ -74,13 +74,14 @@ export class Payload<T>
   @field(U8IntArraySerializer)
   data: Uint8Array
 
+  _value?: T;
   constructor(props?: {
     data: Uint8Array
-    /*    value?: T */
+    value?: T
   }) {
     if (props) {
       this.data = props.data;
-      /*   this._value = props.value; */
+      this._value = props.value;
     }
   }
 
@@ -94,8 +95,12 @@ export class Payload<T>
   }
 
   getValue(encoding: Encoding<T> = JSON_ENCODING): T {
+    if (this._value != undefined) {
+      return this._value
+    }
     return encoding.decoder(this.data);
   }
+
   /* 
     _value?: T
     get value(): T {
@@ -312,7 +317,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
 
     let payloadToSave = new Payload<T>({
       data: properties.encoding.encoder(properties.data),
-      /* value: properties.data */
+      value: properties.data
     });
 
     if (properties.encryption?.reciever && !properties.encryption) {

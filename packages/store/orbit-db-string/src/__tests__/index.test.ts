@@ -2,79 +2,99 @@ import { Range } from "../range.js";
 import { PayloadOperation, applyOperations } from "../string-index.js";
 
 describe('operations', () => {
-    it('add', () => {
+    it('add', async () => {
         const operations: PayloadOperation[] = [
             {
                 index: new Range({
-                    offset: 0
+                    offset: 0,
+                    length: 'hello'.length
                 }),
                 value: 'hello'
             },
             {
                 index: new Range({
-                    offset: 'hello'.length
+                    offset: 'hello'.length,
+                    length: ' '.length
                 }),
                 value: ' '
             },
             {
                 index: new Range({
                     offset: 'hello '.length,
+                    length: 'world'.length
                 }),
                 value: 'world'
             }
         ]
 
-        let string = applyOperations('', operations.map((v, ix) => {
+        let string = await applyOperations('', operations.map((v, ix) => {
             {
                 return {
                     hash: ix.toString(),
-                    payload: v
+                    payload: {
+                        getValue: () => v
+                    },
+                    getPayload: async () => {
+                        return { getValue: () => v }
+                    }
                 } as any
             }
         }))
         expect(string).toEqual('hello world');
     })
 
-    it('replace', () => {
+    it('replace', async () => {
         const operations: PayloadOperation[] = [
             {
                 index: new Range({
-                    offset: 0
+                    offset: 0,
+                    length: 'hello'.length
+
                 }),
                 value: 'hello'
             },
             {
                 index: new Range({
-                    offset: 'hello'.length
+                    offset: 'hello'.length,
+                    length: 'w'.length
+
                 }),
                 value: 'w'
             },
             {
                 index: new Range({
-                    offset: 'hello '.length
+                    offset: 'hello '.length,
+                    length: 'world'.length
+
                 }),
                 value: 'world'
             },
             {
                 index: new Range({
-                    offset: 'hello'.length
+                    offset: 'hello'.length,
+                    length: ' '.length
                 }),
                 value: ' '
             }
         ]
 
-        let string = applyOperations('', operations.map((v, ix) => {
+        let string = await applyOperations('', operations.map((v, ix) => {
             {
                 return {
                     hash: ix.toString(),
-                    payload: v
+                    payload: {
+                        getValue: () => v
+                    },
+                    getPayload: async () => {
+                        return { getValue: () => v }
+                    }
                 } as any
             }
         }))
         expect(string).toEqual('hello world');
     })
 
-    it('delete', () => {
+    it('delete', async () => {
         const operations: PayloadOperation[] = [
             {
                 index: new Range({
@@ -91,11 +111,16 @@ describe('operations', () => {
             }
         ]
 
-        let string = applyOperations('', operations.map((v, ix) => {
+        let string = await applyOperations('', operations.map((v, ix) => {
             {
                 return {
                     hash: ix.toString(),
-                    payload: v
+                    payload: {
+                        getValue: () => v
+                    },
+                    getPayload: async () => {
+                        return { getValue: () => v }
+                    }
                 } as any
             }
         }))
