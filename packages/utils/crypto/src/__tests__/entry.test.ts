@@ -2,7 +2,7 @@
 import { DecryptedThing, X25519PublicKey, PublicKeyEncryptionResolver, Ed25519PrivateKey, verifySignatureEd25519, Ed25519Keypair, X25519Keypair } from '../index.js';
 import sodium from 'libsodium-wrappers';
 
-describe('x25519', function () {
+describe('encryption', function () {
 
     const config = (keypair: (Ed25519Keypair | X25519Keypair)) => {
         return {
