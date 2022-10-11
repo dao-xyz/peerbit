@@ -171,10 +171,10 @@ describe('index', () => {
         })) // Now trusted 
 
         await l0a.sync(l0b.oplog.heads);
+        await l0b.sync(l0a.oplog.heads);
 
         await waitFor(() => Object.keys(l0a._index._index).length === 2);
         await waitFor(() => Object.keys(l0b._index._index).length === 2);
-
 
     })
 
@@ -195,8 +195,9 @@ describe('index', () => {
                 id: '1'
             }));
 
-
             const l0b = await init(await BinaryDocumentStore.load(session.peers[1].ipfs, l0a.address), 1);
+
+            await l0b.sync(l0a.oplog.heads);
             await expect(l0b.put(new Document({
                 id: 'id'
             }))).rejects.toBeInstanceOf(AccessError); // Not trusted
@@ -209,6 +210,7 @@ describe('index', () => {
                 accessTypes: [AccessType.Any]
             }));
 
+            await (l0b.accessController as DynamicAccessController<Document>).acl.access.sync((l0a.accessController as DynamicAccessController<Document>).acl.access.oplog.heads);
             await waitFor(() => Object.keys((l0b.accessController as DynamicAccessController<Document>).acl.access._index._index).length === 1);
             await l0b.put(new Document({
                 id: '2'
@@ -229,6 +231,7 @@ describe('index', () => {
                     rootTrust: identity(0).publicKey
                 })
             }), 0);
+
             await l0a.put(new Document({
                 id: '1'
             }));
@@ -249,6 +252,8 @@ describe('index', () => {
                 accessTypes: [AccessType.Any]
             }));
 
+            await (l0b.accessController as DynamicAccessController<Document>).acl.access.sync((l0a.accessController as DynamicAccessController<Document>).acl.access.oplog.heads);
+            await (l0c.accessController as DynamicAccessController<Document>).acl.access.sync((l0a.accessController as DynamicAccessController<Document>).acl.access.oplog.heads);
 
             await expect(l0c.put(new Document({
                 id: 'id'
@@ -257,6 +262,8 @@ describe('index', () => {
 
             await waitFor(() => Object.keys((l0b.accessController as DynamicAccessController<Document>).acl.access._index._index).length == 1)
             await (((l0b.accessController as DynamicAccessController<Document>).acl.identityGraphController.addRelation(identity(2).publicKey)));
+            await (l0c.accessController as DynamicAccessController<Document>).acl.identityGraphController.sync((l0b.accessController as DynamicAccessController<Document>).acl.identityGraphController.oplog.heads);
+
             await waitFor(() => Object.keys((l0c.accessController as DynamicAccessController<Document>).acl.identityGraphController.relationGraph._index._index).length === 1);
             await l0c.put(new Document({
                 id: '2'
@@ -295,6 +302,7 @@ describe('index', () => {
             });
             expect(access.id).toBeDefined();
             await (l0a.accessController as DynamicAccessController<Document>).acl.access.put(access);
+            await (l0b.accessController as DynamicAccessController<Document>).acl.access.sync((l0a.accessController as DynamicAccessController<Document>).acl.access.oplog.heads);
 
             await waitFor(() => Object.keys((l0b.accessController as DynamicAccessController<Document>).acl.access._index._index).length === 1);
             await l0b.put(new Document({
@@ -460,7 +468,7 @@ describe('index', () => {
         // Allow all for easy query
         (l0a.accessController as DynamicAccessController<Document>).allowAll = true;
         (l0b.accessController as DynamicAccessController<Document>).allowAll = true;
-
+        (l0b.accessController as DynamicAccessController<Document>).acl.access.sync((l0a.accessController as DynamicAccessController<Document>).acl.access.oplog.heads)
         await waitFor(() => Object.keys((l0a.accessController as DynamicAccessController<Document>).acl.access._index._index).length === 1);
         await waitFor(() => Object.keys((l0b.accessController as DynamicAccessController<Document>).acl.access._index._index).length === 1);
 
