@@ -1,5 +1,5 @@
 
-import { Constructor, field, option, serialize, variant } from '@dao-xyz/borsh';
+import { field, option, serialize, variant } from '@dao-xyz/borsh';
 import { BinaryDocumentStore } from '../document-store';
 import { DocumentQueryRequest, Compare, FieldBigIntCompareQuery, QueryRequestV0, QueryResponseV0, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort, MemoryCompareQuery, MemoryCompare } from '@dao-xyz/query-protocol';
 import { CustomBinaryPayload } from '@dao-xyz/bpayload';
@@ -13,7 +13,6 @@ import Cache from '@dao-xyz/orbit-db-cache';
 import { Level } from 'level';
 import { fileURLToPath } from 'url';
 import path from 'path';
-import { delay } from '@dao-xyz/time'
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
