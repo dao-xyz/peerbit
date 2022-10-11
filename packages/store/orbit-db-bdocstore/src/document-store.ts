@@ -295,7 +295,7 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
           value: doc
 
         })
-      , options)
+      , { nexts: [], ...options })
   }
 
   public putAll(docs: T[], options = {}) {
@@ -309,15 +309,16 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
         data: serialize(value),
         value
       }))
-    }), options)
+    }), { nexts: [], ...options })
   }
 
   del(key: string, options = {}) {
-    if (!this._index.get(key)) { throw new Error(`No entry with key '${key}' in the database`) }
+    const existing = this._index.get(key);
+    if (!existing) { throw new Error(`No entry with key '${key}' in the database`) }
 
     return this._addOperation(new DeleteOperation({
       key: asString(key)
-    }), options)
+    }), { nexts: [existing.entry], ...options })
   }
 
   public get size(): number {
