@@ -2,12 +2,11 @@ import { field, serialize, variant } from "@dao-xyz/borsh";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 // @ts-ignore
-import isNode from 'is-node';
 import { SystemBinaryPayload } from "@dao-xyz/bpayload";
 import { DocumentQueryRequest, MemoryCompare, MemoryCompareQuery, QueryRequestV0, Result, ResultWithSource } from "@dao-xyz/query-protocol";
 import { AccessController } from "@dao-xyz/orbit-db-store";
 import { createHash } from "crypto";
-
+import { joinUint8Arrays } from '@dao-xyz/borsh-utils'
 
 export const getFromByTo = async (to: PublicSignKey, db: BinaryDocumentStore<Relation>) => {
     const ser = serialize(to);
@@ -16,9 +15,11 @@ export const getFromByTo = async (to: PublicSignKey, db: BinaryDocumentStore<Rel
             queries: [
                 new MemoryCompareQuery({
                     compares: [
+
+
                         new MemoryCompare({
                             bytes: ser,
-                            offset: 3n + 4n + 1n + 28n // SystemBinaryPayload discriminator + Relation discriminator + AnyRelation discriminator + id length u32 + utf8 encoding + id chars 
+                            offset: 3n + 4n + 1n + 28n  // SystemBinaryPayload discriminator + Relation discriminator + AnyRelation discriminator + id length u32 + utf8 encoding + id chars
                         })
                     ]
                 })
@@ -90,9 +91,11 @@ export class Relation extends SystemBinaryPayload {
 
 }
 
-// Any key provider -> Orbitdb
+
 @variant(0)
 export class AnyRelation extends Relation {
+
+
 
     @field({ type: PublicSignKey })
     to: PublicSignKey
@@ -106,10 +109,8 @@ export class AnyRelation extends Relation {
     }) {
         super();
         if (properties) {
-            this.to = properties.to;
             this.from = properties.from;
-            /*             this.signature = properties.signature;
-             */
+            this.to = properties.to;
             this.initializeId();
         }
     }
@@ -120,7 +121,7 @@ export class AnyRelation extends Relation {
 
     static id(to: PublicSignKey, from: PublicSignKey) {
         // we do sha1 to make sure id has fix length, this is important because we want the byte offest of the `trustee` and `truster` to be fixed
-        return createHash('sha1').update(new Uint8Array(Buffer.concat([serialize(to), serialize(from)]))).digest('base64');
+        return createHash('sha1').update(joinUint8Arrays([serialize(to), serialize(from)])).digest('base64');
     }
 
 }

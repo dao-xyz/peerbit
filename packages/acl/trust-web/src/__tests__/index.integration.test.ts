@@ -70,7 +70,6 @@ describe('index', () => {
             await store.put(bc);
 
             // Get relations one by one
-
             const trustingC = await getFromByTo(c, store);
             expect(trustingC).toHaveLength(1);
             expect(((trustingC[0] as ResultWithSource).source as AnyRelation).id).toEqual(bc.id);
@@ -91,9 +90,33 @@ describe('index', () => {
 
         })
 
-        // TODO add revoke test
+        it('can revoke', async () => {
+
+            const a = (await Ed25519Keypair.create()).publicKey;
+            const b = new Secp256k1PublicKey({
+                address: await Wallet.createRandom().getAddress()
+            })
+
+            const store = createIdentityGraphStore({ name: session.peers[0].id.toString(), accessController: new AllowAllAccessController() })
+            await init(store, 0);
+
+            const ab = new AnyRelation({
+                to: b,
+                from: a
+            });
+
+            await store.put(ab);
+
+            let trustingB = await getFromByTo(b, store);
+            expect(trustingB).toHaveLength(1);
+            expect(((trustingB[0] as ResultWithSource).source as AnyRelation).id).toEqual(ab.id);
 
 
+            await store.del(ab.id);
+            trustingB = await getFromByTo(b, store);
+            expect(trustingB).toHaveLength(0);
+
+        })
 
     })
 
