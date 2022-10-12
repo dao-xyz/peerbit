@@ -28,7 +28,7 @@ describe('peer monitor', () => {
   it('emits \'join\' event for each peer', async () => {
     let resolved = false;
     let count = 0
-    let res: PeerId[] = []
+    let res: string[] = []
     const m = new IpfsPubsubPeerMonitor(mockPubsub, topic, {
       onJoin: (peer) => {
         count++
@@ -48,7 +48,7 @@ describe('peer monitor', () => {
   it('emits joins', async () => {
     const ee = new EventEmitter()
     await new Promise((resolve, reject) => {
-      let res: PeerId[] = []
+      let res: string[] = []
 
       const done = () => {
         expect(res.length).toEqual(2)
@@ -56,7 +56,7 @@ describe('peer monitor', () => {
         expect(res[1].toString()).toEqual('D')
         resolve(true)
       }
-      IpfsPubsubPeerMonitor._emitJoinsAndLeaves(['A', 'B'].map(mockPeerId), ['A', 'B', 'C', 'D'].map(mockPeerId), {
+      IpfsPubsubPeerMonitor._emitJoinsAndLeaves(['A', 'B'], ['A', 'B', 'C', 'D'], {
         onJoin: (peer) => {
           res.push(peer)
           if (res.length === 2)
@@ -69,7 +69,7 @@ describe('peer monitor', () => {
   it('emits leaves', async () => {
     const ee = new EventEmitter()
     await new Promise((resolve, reject) => {
-      let res: PeerId[] = []
+      let res: string[] = []
 
       const done = () => {
         expect(res.length).toEqual(2)
@@ -84,7 +84,7 @@ describe('peer monitor', () => {
           done()
       })
 
-      IpfsPubsubPeerMonitor._emitJoinsAndLeaves(['A', 'B'].map(mockPeerId), [], {
+      IpfsPubsubPeerMonitor._emitJoinsAndLeaves(['A', 'B'], [], {
         onLeave: (peer) => {
           res.push(peer)
           if (res.length === 2)

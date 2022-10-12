@@ -21,13 +21,13 @@ export class DirectChannel {
   _ipfs: IPFS;
   _closed: boolean;
   _isClosed: () => boolean;
-  _receiverID: PeerId;
-  _senderID: PeerId;
-  _peers: PeerId[];
+  _receiverID: string;
+  _senderID: string;
+  _peers: string[];
   _handler: EventHandler<Message>;
   _monitor: IpfsPubsubPeerMonitor;
 
-  constructor(ipfs: IPFS, receiverID: PeerId) {
+  constructor(ipfs: IPFS, receiverID: string) {
 
     // IPFS instance to use internally
     this._ipfs = ipfs
@@ -132,7 +132,7 @@ export class DirectChannel {
     if (monitor?.onNewPeerCallback || monitor?.onPeerLeaveCallback) {
       const topicMonitor = new IpfsPubsubPeerMonitor(this._ipfs.pubsub, this._id, {
         onJoin: (peer) => {
-          if (peer.equals(this._receiverID)) {
+          if (peer === this._receiverID) {
             logger.debug(`Peer joined direct channel ${this.id}`)
             logger.debug(peer)
             if (monitor.onNewPeerCallback) {
@@ -142,7 +142,7 @@ export class DirectChannel {
 
         },
         onLeave: (peer) => {
-          if (peer.equals(this._receiverID)) {
+          if (peer === this._receiverID) {
             logger.debug(`Peer ${peer} left ${this.id}`)
             if (monitor.onPeerLeaveCallback) {
               monitor.onPeerLeaveCallback(this)
@@ -177,18 +177,18 @@ export class DirectChannel {
     }
   }
 
-  static async open(ipfs: IPFS, receiverID: PeerId, onMessageCallback: (message: Message) => void, monitor?: {
+  static async open(ipfs: IPFS, receiverID: string | PeerId, onMessageCallback: (message: Message) => void, monitor?: {
     onNewPeerCallback?: (channel: DirectChannel) => void,
     onPeerLeaveCallback?: (channel: DirectChannel) => void,
   }): Promise<DirectChannel> {
-    const channel = new DirectChannel(ipfs, receiverID)
+    const channel = new DirectChannel(ipfs, receiverID.toString())
     const handler = channel._messageHandler(onMessageCallback);
     await channel._openChannel(handler, monitor)
     return channel
   }
 
-  static getTopic(peers: PeerId[]): string {
-    return '/' + PROTOCOL + '/' + peers.map(p => p.toString()).sort().join('/')
+  static getTopic(peers: (string | PeerId)[]): string {
+    return '/' + PROTOCOL + '/' + peers.map(p => typeof p === 'string' ? p : p.toString()).sort().join('/')
   }
 }
 

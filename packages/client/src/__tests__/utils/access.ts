@@ -62,9 +62,6 @@ export class SimpleStoreAccessController extends AccessController<any> implement
     sync(heads: Entry<Operation<string>>[]): Promise<void> {
         return this.store.sync(heads)
     }
-    get replicationTopic(): string {
-        return Store.getReplicationTopic(this.address, this._options);
-    }
 
 
     /*   get allowForks(): boolean {

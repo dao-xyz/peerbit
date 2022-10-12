@@ -2,7 +2,23 @@ import { PUBLIC_KEY_WIDTH, Ed25519Keypair, verifySignatureSecp256k1, verifySigna
 import sodium from 'libsodium-wrappers';
 import { deserialize, serialize } from '@dao-xyz/borsh';
 import { Wallet } from '@ethersproject/wallet';
+import { Session } from '@dao-xyz/orbit-db-test-utils';
+import { IPFSAddress } from '../ipfs.js';
+
 describe('Ed25519PublicKey', () => {
+
+    it('ser/der', async () => {
+
+        const keypair = await Ed25519Keypair.create();
+        const derser = deserialize(serialize(keypair.publicKey), Ed25519PublicKey);
+        expect(derser.publicKey).toEqual(keypair.publicKey.publicKey);
+    })
+
+    it('size', async () => {
+        const kp = await Ed25519Keypair.create();
+        expect(serialize(kp.publicKey)).toHaveLength(PUBLIC_KEY_WIDTH);
+    })
+
     it('verify native', async () => {
         await sodium.ready
         const keypair = sodium.crypto_sign_keypair();
@@ -10,13 +26,6 @@ describe('Ed25519PublicKey', () => {
         const signature = sodium.crypto_sign_detached(data, keypair.privateKey);
         const isVerified = await verifySignatureEd25519(signature, keypair.publicKey, data);
         expect(isVerified).toBeTrue()
-    })
-
-    it('ser/der', async () => {
-
-        const keypair = await Ed25519Keypair.create();
-        const derser = deserialize(serialize(keypair.publicKey), Ed25519PublicKey);
-        expect(derser.publicKey).toEqual(keypair.publicKey.publicKey);
     })
 
 
@@ -30,10 +39,6 @@ describe('Ed25519PublicKey', () => {
     })
 
 
-    it('size', async () => {
-        const kp = await Ed25519Keypair.create();
-        expect(serialize(kp.publicKey)).toHaveLength(PUBLIC_KEY_WIDTH);
-    })
 })
 describe('Sepck2561k1', () => {
     it('verify', async () => {
@@ -62,5 +67,31 @@ describe('Sepck2561k1', () => {
             address: await Wallet.createRandom().getAddress()
         })
         )).toHaveLength(PUBLIC_KEY_WIDTH);
+    })
+})
+
+describe('IPFS', () => {
+    let session: Session
+    beforeAll(async () => {
+        session = await Session.connected(1);
+    })
+
+    afterAll(async () => {
+        await session.stop();
+    })
+
+    it('ser/der', async () => {
+        const pk = new IPFSAddress({
+            address: session.peers[0].id.toString()
+        });
+        const derser = deserialize(serialize(pk), IPFSAddress);
+        expect(derser.address).toEqual(pk.address);
+    })
+
+    it('size', async () => {
+        const pk = new IPFSAddress({
+            address: session.peers[0].id.toString()
+        });
+        expect(serialize(pk)).toHaveLength(PUBLIC_KEY_WIDTH);
     })
 })

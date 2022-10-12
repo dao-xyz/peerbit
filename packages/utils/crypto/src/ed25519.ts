@@ -1,14 +1,8 @@
-import { field, fixedArray, variant } from "@dao-xyz/borsh";
+import { field, variant } from "@dao-xyz/borsh";
 import { PrivateSignKey, PublicSignKey, SignKey, Keypair } from './key.js';
 import { arraysCompare, fixedUint8Array } from '@dao-xyz/borsh-utils';
 import sodium from 'libsodium-wrappers';
-import { U8IntArraySerializer } from '@dao-xyz/borsh-utils';
 import { Signer } from "./signer.js";
-import { K } from "./encryption.js";
-
-const NONCE_LENGTH = 24;
-
-
 
 @variant(0)
 export class Ed25519PublicKey extends PublicSignKey {

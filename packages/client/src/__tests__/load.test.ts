@@ -10,6 +10,8 @@ import { EventStore } from './utils/stores/event-store.js'
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
+// @ts-ignore
+import { v4 as uuid } from 'uuid';
 
 // Include test utilities
 import {
@@ -67,7 +69,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       for (let i = 0; i < entryCount; i++)
         entryArr.push(i)
 
-      db = await orbitdb1.open(new EventStore<string>({ name: dbName, accessController: new SimpleAccessController() }))
+      db = await orbitdb1.open(new EventStore<string>({ name: dbName, accessController: new SimpleAccessController() }), uuid())
       address = db.address.toString()
       await mapSeries(entryArr, (i) => db.add('hello' + i))
       await db.close()
@@ -79,7 +81,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
     })
 
     it('loads database from local cache', async () => {
-      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)), uuid())
       await db.load()
       const items = db.iterator({ limit: -1 }).collect()
       expect(items.length).toEqual(entryCount)
@@ -89,7 +91,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
     it('loads database partially', async () => {
       const amount = 33
-      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)), uuid())
       await db.load(amount)
       const items = db.iterator({ limit: -1 }).collect()
       expect(items.length).toEqual(amount)
@@ -101,7 +103,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
     it('load and close several times', async () => {
       const amount = 8
       for (let i = 0; i < amount; i++) {
-        db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
+        db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)), uuid())
         await db.load()
         const items = db.iterator({ limit: -1 }).collect()
         expect(items.length).toEqual(entryCount)
@@ -133,7 +135,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
     it('load, add one, close - several times', async () => {
       const amount = 8
       for (let i = 0; i < amount; i++) {
-        db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
+        db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)), uuid())
         await db.load()
         await db.add('hello' + (entryCount + i))
         const items = db.iterator({ limit: -1 }).collect()
@@ -145,7 +147,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
     it('loading a database emits \'ready\' event', async () => {
       let done = false;
-      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)), {
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)), uuid(), {
         onReady: (store) => {
           const items = db.iterator({ limit: -1 }).collect()
           expect(items.length).toEqual(entryCount)
@@ -161,7 +163,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
     it('loading a database emits \'load.progress\' event', async () => {
       let count = 0
       let done = false;
-      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)), {
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)), uuid(), {
         onLoadProgress: (store, entry) => {
           count++
           expect(address).toEqual(db.address.toString())
@@ -187,12 +189,12 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
   describe('load from empty snapshot', function () {
     it('loads database from an empty snapshot', async () => {
-      db = await orbitdb1.open(new EventStore<string>({ name: 'empty-snapshot', accessController: new SimpleAccessController() }))
+      db = await orbitdb1.open(new EventStore<string>({ name: 'empty-snapshot', accessController: new SimpleAccessController() }), uuid())
       address = db.address.toString()
       await db.saveSnapshot()
       await db.close()
 
-      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)), uuid())
       await db.loadFromSnapshot()
       const items = db.iterator({ limit: -1 }).collect()
       expect(items.length).toEqual(0)
@@ -207,7 +209,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       for (let i = 0; i < entryCount; i++)
         entryArr.push(i)
 
-      db = await orbitdb1.open(new EventStore<string>({ name: dbName, accessController: new SimpleAccessController() }))
+      db = await orbitdb1.open(new EventStore<string>({ name: dbName, accessController: new SimpleAccessController() }), uuid())
       address = db.address.toString()
       await mapSeries(entryArr, (i) => db.add('hello' + i))
       await db.saveSnapshot()
@@ -220,7 +222,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
     })
 
     it('loads database from snapshot', async () => {
-      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)), uuid())
       await db.loadFromSnapshot()
       const items = db.iterator({ limit: -1 }).collect()
       expect(items.length).toEqual(entryCount)
@@ -231,7 +233,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
     it('load, add one and save snapshot several times', async () => {
       const amount = 4
       for (let i = 0; i < amount; i++) {
-        db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
+        db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)), uuid())
         await db.loadFromSnapshot()
         await db.add('hello' + (entryCount + i))
         const items = db.iterator({ limit: -1 }).collect()
@@ -244,10 +246,10 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
     })
 
     it('throws an error when trying to load a missing snapshot', async () => {
-      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)), uuid())
       await db.drop()
       db = null as any
-      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)))
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)), uuid())
 
       let err
       try {
@@ -260,7 +262,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
     it('loading a database emits \'ready\' event', async () => {
       let done = false;
-      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)), {
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)), uuid(), {
         onReady: (store) => {
           const items = db.iterator({ limit: -1 }).collect()
           expect(items.length).toEqual(entryCount)
@@ -276,7 +278,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
     it('loading a database emits \'load.progress\' event', async () => {
       let done = false;
       let count = 0;
-      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)), {
+      db = await orbitdb1.open(await EventStore.load(orbitdb1._ipfs, Address.parse(address)), uuid(), {
         onLoadProgress: (store, entry) => {
           count++
           expect(address).toEqual(db.address.toString())

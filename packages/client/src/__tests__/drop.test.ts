@@ -8,7 +8,8 @@ import { EventStore } from './utils/stores'
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
-
+// @ts-ignore 
+import { v4 as uuid } from 'uuid';
 // Include test utilities
 import {
   nodeConfig as config,
@@ -44,7 +45,7 @@ describe(`orbit-db - Drop Database (${API})`, function () {
 
   describe('Drop', function () {
     beforeAll(async () => {
-      db = await orbitdb.open(new EventStore({ name: 'first', accessController: new SimpleAccessController() }))
+      db = await orbitdb.open(new EventStore({ name: 'first', accessController: new SimpleAccessController() }), uuid())
       localDataPath = path.join(dbPath)
       expect(fs.existsSync(localDataPath)).toEqual(true)
     })

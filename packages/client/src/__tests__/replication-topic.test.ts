@@ -9,6 +9,8 @@ import { IPFS } from "ipfs-core-types";
 import { OrbitDB } from '../orbit-db'
 import { SimpleAccessController } from './utils/access'
 import { EventStore, Operation } from './utils/stores/event-store'
+// @ts-ignore
+import { v4 as uuid } from 'uuid';
 
 // Include test utilities
 import {
@@ -93,22 +95,18 @@ Object.keys(testAPIs).forEach(API => {
 
       console.log("Waiting for peers to connect")
 
-      let options = {
-        // Set write access for both clients
-        accessController: new SimpleAccessController()
-      }
-      const replicationTopicFn = () => 'x';
-      const replicationTopic = replicationTopicFn();
-      db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() })
-        , { ...Object.assign({}, options, { directory: dbPath1 }), replicationTopic })
+      let options = { directory: dbPath2 }
+
+      const replicationTopic = uuid();
+      db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() }), replicationTopic
+        , { ...Object.assign({}, options, { directory: dbPath1 }) })
       await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
 
-      options = Object.assign({}, options, { directory: dbPath2 })
-
+      options = { ...options, directory: dbPath2 }
       let replicatedEventCount = 0
       let done = false
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {
-        ...options, replicationTopic: replicationTopicFn, onReplicationComplete: (store) => {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
+        ...options, onReplicationComplete: (store) => {
           replicatedEventCount++
           // Once db2 has finished replication, make sure it has all elements
           // and process to the asserts below
@@ -116,7 +114,7 @@ Object.keys(testAPIs).forEach(API => {
           done = (all === 1)
         }
       })
-      db3 = await orbitdb2.open(new EventStore<string>({ name: 'replication-tests-same-topic', accessController: new SimpleAccessController() }), { ...options, replicationTopic: replicationTopicFn })
+      db3 = await orbitdb2.open(new EventStore<string>({ name: 'replication-tests-same-topic', accessController: new SimpleAccessController() }), replicationTopic, { ...options })
 
       await waitFor(() => orbitdb1._directConnections.size === 1);
       await waitFor(() => orbitdb2._directConnections.size === 1);
@@ -139,9 +137,9 @@ Object.keys(testAPIs).forEach(API => {
       const replicationTopicFn = () => 'x';
       const replicationTopic = replicationTopicFn();
       db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() })
-        , { directory: dbPath1, replicationTopic })
+        , replicationTopic, { directory: dbPath1 })
       db2 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests-2', accessController: new SimpleAccessController() })
-        , { directory: dbPath1, replicationTopic })
+        , replicationTopic, { directory: dbPath1 })
       const hello = db1.add('hello')
       db2.add('world')
 
@@ -151,15 +149,15 @@ Object.keys(testAPIs).forEach(API => {
       let replicatedEventCount = 0
 
       const options = { directory: dbPath2 }
-      db3 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {
-        ...options, replicationTopic: replicationTopicFn, onReplicationComplete: (store) => {
+      db3 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
+        ...options, onReplicationComplete: (store) => {
           replicatedEventCount++
           const all = db3.iterator({ limit: -1 }).collect().length + db4.iterator({ limit: -1 }).collect().length
           done = (all === 2)
         }
       })
-      db4 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db2.address), {
-        ...options, replicationTopic: replicationTopicFn, onReplicationComplete: (store) => {
+      db4 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db2.address), replicationTopic, {
+        ...options, onReplicationComplete: (store) => {
           replicatedEventCount++
           const all = db3.iterator({ limit: -1 }).collect().length + db4.iterator({ limit: -1 }).collect().length
           done = (all === 2)

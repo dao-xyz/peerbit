@@ -1,4 +1,4 @@
-import { field, serialize, variant } from "@dao-xyz/borsh";
+import { serialize, variant } from "@dao-xyz/borsh";
 import { SystemBinaryPayload } from "@dao-xyz/bpayload";
 
 export type IdentityProviderType = 'orbitdb' | 'ethereum' | 'solana';
@@ -64,6 +64,7 @@ export class PrivateSignKey extends SignKey {
 
 }
 
+
 // ---- PUBLIC KEY ENCRYPTION -----
 @variant(1)
 export class PublicKeyEncryption extends Key {
@@ -78,6 +79,14 @@ export class PublicKeyEncryptionKey extends PublicKeyEncryption {
 export class PrivateEncryptionKey extends PublicKeyEncryption {
 
 }
+
+// ---- OTHER KEYS ----
+@variant(2)
+export class OtherKey extends Key { }
+
+@variant(0)
+export class PlainKey extends OtherKey { }
+
 
 /* 
 @variant(1)

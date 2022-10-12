@@ -5,7 +5,7 @@ import sodium from 'libsodium-wrappers';
 import { fixedUint8Array } from "@dao-xyz/borsh-utils";
 
 
-@variant(1)
+@variant(2)
 export class Secp256k1PublicKey extends PublicSignKey {
 
     @field({ type: fixedUint8Array(20) })

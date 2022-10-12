@@ -1,6 +1,6 @@
 {
-  "name": "@dao-xyz/peerbit-trust-web",
-  "version": "0.0.26",
+  "name": "@dao-xyz/peerbit-trusted-network",
+  "version": "0.0.28",
   "description": "Access controller that operates on a DB",
   "type": "module",
   "sideEffects": false,
@@ -30,7 +30,6 @@
   "author": "dao.xyz",
   "license": "MIT",
   "dependencies": {
-    "@dao-xyz/orbit-db": "^0.29.17",
     "@dao-xyz/borsh": "^3.3.0",
     "@dao-xyz/query-protocol": "^0.0.42",
     "@dao-xyz/peerbit-crypto": "^0.0.1",

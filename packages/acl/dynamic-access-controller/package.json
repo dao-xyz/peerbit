@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/orbit-db-dynamic-access-controller",
-  "version": "0.0.27",
+  "version": "0.0.28",
   "description": "Access controller that operates on a DB",
   "type": "module",
   "sideEffects": false,
@@ -33,7 +33,7 @@
     "@dao-xyz/borsh": "^3.3.0",
     "@dao-xyz/query-protocol": "^0.0.42",
     "@dao-xyz/orbit-db-bdocstore": "^0.0.74",
-    "@dao-xyz/peerbit-trust-web": "^0.0.26",
+    "@dao-xyz/peerbit-trusted-network": "^0.0.28",
     "p-map": "~1.1.1",
     "uuid": "^8.3.2"
   },

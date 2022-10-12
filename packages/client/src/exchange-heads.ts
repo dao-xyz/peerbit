@@ -85,7 +85,7 @@ export class RequestHeadsMessage extends ProtocolMessage {
 }
  */
 
-export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>, store: StoreLike<any>, identity: Identity, heads: Entry<any>[]) => {
+export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>, store: StoreLike<any>, identity: Identity, heads: Entry<any>[], replicationTopic: string) => {
   const gids = new Set(heads.map(h => h.gid));
   if (gids.size > 1) {
     throw new Error("Expected to share heads only from 1 gid")
@@ -99,7 +99,7 @@ export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>
       references: refs
     })
   });
-  logger.debug(`Send latest heads of '${store.replicationTopic}'`)
+  logger.debug(`Send latest heads of '${store.address.toString()}'`)
   if (heads && heads.length > 0) {
 
     /*  const mapFromPeerToHead: Map<string, Entry<any>[]> = new Map();
@@ -144,7 +144,7 @@ export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>
     }
     await Promise.all(promises); */
 
-    const message = new ExchangeHeadsMessage({ replicationTopic: store.replicationTopic, address: store.address.toString(), heads: headsWithRefs });
+    const message = new ExchangeHeadsMessage({ replicationTopic, address: store.address.toString(), heads: headsWithRefs });
     const signer = async (data: Uint8Array) => {
       return {
         signature: await identity.sign(data),

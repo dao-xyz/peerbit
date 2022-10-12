@@ -10,8 +10,9 @@ import { IPFS } from "ipfs-core-types";
 import { OrbitDB } from '../orbit-db'
 import { SimpleAccessController } from './utils/access'
 import { EventStore, Operation } from './utils/stores/event-store'
-import { IInitializationOptions, IStoreOptions } from '@dao-xyz/orbit-db-store'
-
+import { IStoreOptions } from '@dao-xyz/orbit-db-store'
+// @ts-ignore
+import { v4 as uuid } from 'uuid';
 // Include test utilities
 import {
   nodeConfig as config,
@@ -33,7 +34,7 @@ Object.keys(testAPIs).forEach(API => {
 
     let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS
     let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore<string>, db2: EventStore<string>
-
+    let replicationTopic: string;
     let options: IStoreOptions<any>;
 
     beforeAll(async () => {
@@ -67,8 +68,9 @@ Object.keys(testAPIs).forEach(API => {
 
 
       options = Object.assign({}, options, { accessControler: new SimpleAccessController(), directory: dbPath1 })
+      replicationTopic = uuid();
       db1 = await orbitdb1.open(new EventStore<string>({ name: 'a', accessController: new SimpleAccessController() })
-        , options)
+        , replicationTopic, options)
     })
 
     afterEach(async () => {
@@ -89,22 +91,22 @@ Object.keys(testAPIs).forEach(API => {
 
     it('replicates database of 1 entry', async () => {
       console.log("Waiting for peers to connect")
-      await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
+      await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
 
       options = Object.assign({}, options, { directory: dbPath2 })
       let done = false;
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {
-        ...options, onReplicationComplete: () => {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
+        ...options, onReplicationComplete: async () => {
           expect(db2.iterator({ limit: -1 }).collect().length).toEqual(1)
 
           const db1Entries: Entry<Operation<string>>[] = db1.iterator({ limit: -1 }).collect()
           expect(db1Entries.length).toEqual(1)
-          expect(orbitdb1.findReplicators(db1.replicationTopic, true, db1Entries[0].gid)).toContainValues([orbitdb1.id, orbitdb2.id].map(p => p.toString()));
+          expect(await orbitdb1.findReplicators(replicationTopic, true, db1Entries[0].gid)).toContainValues([orbitdb1.id, orbitdb2.id].map(p => p.toString()));
           expect(db1Entries[0].payload.getValue().value).toEqual(value)
 
           const db2Entries: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
           expect(db2Entries.length).toEqual(1)
-          expect(orbitdb2.findReplicators(db2.replicationTopic, true, db2Entries[0].gid)).toContainValues([orbitdb1.id, orbitdb2.id].map(p => p.toString()));
+          expect(await (orbitdb2.findReplicators(replicationTopic, true, db2Entries[0].gid))).toContainValues([orbitdb1.id, orbitdb2.id].map(p => p.toString()));
           expect(db2Entries[0].payload.getValue().value).toEqual(value)
           done = true;
         }
@@ -121,12 +123,12 @@ Object.keys(testAPIs).forEach(API => {
 
     it('replicates database of 100 entries', async () => {
       console.log("Waiting for peers to connect")
-      await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
+      await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
 
       options = Object.assign({}, options, { directory: dbPath2 })
 
       let done = false
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
         ...options, onReplicationComplete: () => {
           // Once db2 has finished replication, make sure it has all elements
           // and process to the asserts below
@@ -158,7 +160,7 @@ Object.keys(testAPIs).forEach(API => {
 
     it('emits correct replication info', async () => {
       console.log("Waiting for peers to connect")
-      await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
+      await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
 
       options = Object.assign({}, options, { directory: dbPath2 })
 
@@ -171,7 +173,7 @@ Object.keys(testAPIs).forEach(API => {
 
       let done = false
 
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
         ...options,
         onReplicationQueued: (store, entry) => {
           if (!replicateSet.has(entry.hash)) {
@@ -260,7 +262,7 @@ Object.keys(testAPIs).forEach(API => {
       let replicatedEventCount = 0
       let done = false
 
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
         ...options, onReplicationQueued: (store, entry) => {
           if (!replicateSet.has(entry.hash)) {
             replicateSet.add(entry.hash)
@@ -335,7 +337,7 @@ Object.keys(testAPIs).forEach(API => {
       const replicateSet = new Set()
       let done = false
 
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
         ...options, onReplicationComplete: (store) => {
           // Once db2 has finished replication, make sure it has all elements
           // and process to the asserts below

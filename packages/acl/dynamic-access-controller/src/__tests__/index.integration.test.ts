@@ -9,7 +9,7 @@ import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { CustomBinaryPayload } from "@dao-xyz/bpayload";
 import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
 import { query } from "@dao-xyz/orbit-db-query-store";
-import { RegionAccessController } from "@dao-xyz/peerbit-trust-web";
+import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { Identity } from "@dao-xyz/ipfs-log";
 import { Level } from 'level';
 import { CachedValue, DefaultOptions, Store, StoreLike } from '@dao-xyz/orbit-db-store';
@@ -115,7 +115,7 @@ describe('index', () => {
              objectType: Document.name,
              accessController: new DynamicAccessController({
                  name: 'test-acl-a',
-                 regionAccessController: new RegionAccessController({
+                 TrustedNetwork: new TrustedNetwork({
                      rootTrust: identity(0).publicKey,
                      name: 'region',
                  })
@@ -128,7 +128,7 @@ describe('index', () => {
              objectType: Document.name,
              accessController: new DynamicAccessController({
                  name: 'test-acl-b',
-                 regionAccessController: new RegionAccessController({
+                 TrustedNetwork: new TrustedNetwork({
                      rootTrust: identity(0).publicKey,
                      name: 'region',
                  })

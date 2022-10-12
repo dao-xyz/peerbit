@@ -1,9 +1,9 @@
 
 import assert from 'assert'
-import { Store, DefaultOptions, HeadsCache, StorePublicKeyEncryption, IInitializationOptions } from '../store.js'
+import { Store, DefaultOptions, HeadsCache, IInitializationOptions } from '../store.js'
 import { default as Cache } from '@dao-xyz/orbit-db-cache'
 import { Keystore, KeyWithMeta } from "@dao-xyz/orbit-db-keystore"
-import { X25519PublicKey } from '@dao-xyz/peerbit-crypto'
+import { PublicKeyEncryptionResolver, X25519PublicKey } from '@dao-xyz/peerbit-crypto'
 import { AccessError } from "@dao-xyz/peerbit-crypto"
 import { SimpleAccessController, SimpleIndex } from './utils.js'
 import { Address } from '../io.js'
@@ -29,7 +29,7 @@ import { Entry } from '@dao-xyz/ipfs-log'
 import { waitFor } from '@dao-xyz/time'
 const API = 'js-ipfs'
 describe(`addOperation`, function () {
-  let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, keystore: Keystore, identityStore: Level, store: Store<any>, cacheStore: Level, senderKey: KeyWithMeta<Ed25519Keypair>, recieverKey: KeyWithMeta<Ed25519Keypair>, encryption: StorePublicKeyEncryption
+  let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, keystore: Keystore, identityStore: Level, store: Store<any>, cacheStore: Level, senderKey: KeyWithMeta<Ed25519Keypair>, recieverKey: KeyWithMeta<Ed25519Keypair>, encryption: PublicKeyEncryptionResolver
   let index: SimpleIndex<string>
 
   jest.setTimeout(config.timeout);
@@ -50,27 +50,25 @@ describe(`addOperation`, function () {
     index = new SimpleIndex();
     senderKey = await keystore.createEd25519Key()
     recieverKey = await keystore.createEd25519Key()
-    encryption = (_) => {
-      return {
-        getEncryptionKeypair: () => Promise.resolve(senderKey.keypair),
-        getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
-          for (let i = 0; i < publicKeys.length; i++) {
-            if (publicKeys[i].equals(await X25519PublicKey.from(senderKey.keypair.publicKey))) {
-              return {
-                index: i,
-                keypair: senderKey.keypair
-              }
+    encryption = {
+      getEncryptionKeypair: () => Promise.resolve(senderKey.keypair),
+      getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
+        for (let i = 0; i < publicKeys.length; i++) {
+          if (publicKeys[i].equals(await X25519PublicKey.from(senderKey.keypair.publicKey))) {
+            return {
+              index: i,
+              keypair: senderKey.keypair
             }
-            if (publicKeys[i].equals(await X25519PublicKey.from(recieverKey.keypair.publicKey))) {
-              return {
-                index: i,
-                keypair: recieverKey.keypair
-              }
+          }
+          if (publicKeys[i].equals(await X25519PublicKey.from(recieverKey.keypair.publicKey))) {
+            return {
+              index: i,
+              keypair: recieverKey.keypair
             }
           }
         }
       }
-    };
+    }
 
 
   })

@@ -8,6 +8,8 @@ import { EventStore } from './utils/stores/event-store'
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
+// @ts-ignore 
+import { v4 as uuid } from 'uuid';
 
 // Include test utilities
 import {
@@ -100,6 +102,43 @@ Object.keys(testAPIs).forEach(API => {
         })
 
 
+        it('will use trusted network for filtering', async () => {
+
+            // TODO fix test timeout, isLeader is too slow as we need to wait for peers
+            // perhaps do an event based get peers using the pubsub peers api
+            console.log("Waiting for peers to connect")
+
+            const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
+            await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
+
+            const replicationTopic = uuid();
+            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() }), replicationTopic
+                , { directory: dbPath1 })
+
+            const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, 123, 1));
+            expect(isLeaderAOneLeader);
+            const isLeaderATwoLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, 123, 2));
+            expect(isLeaderATwoLeader);
+
+            db2 = await orbitdb2.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath2 })
+
+            await waitForPeers(ipfs1, [orbitdb2.id], DirectChannel.getTopic([orbitdb1.id, orbitdb2.id]))
+            await waitForPeers(ipfs2, [orbitdb1.id], DirectChannel.getTopic([orbitdb1.id, orbitdb2.id]))
+
+            // leader rotation is kind of random, so we do a sequence of tests
+            for (let slot = 0; slot < 3; slot++) {
+                // One leader
+                const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 1));
+                const isLeaderBOneLeader = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 1));
+                expect([isLeaderAOneLeader, isLeaderBOneLeader]).toContainAllValues([false, true])
+
+                // Two leaders
+                const isLeaderATwoLeaders = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 2));
+                const isLeaderBTwoLeaders = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 2));
+                expect([isLeaderATwoLeaders, isLeaderBTwoLeaders]).toContainAllValues([true, true])
+            }
+        })
+
         it('select leaders for one or two peers', async () => {
 
             // TODO fix test timeout, isLeader is too slow as we need to wait for peers
@@ -109,18 +148,16 @@ Object.keys(testAPIs).forEach(API => {
             const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
             await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
 
-            const replicationTopicFn = () => 'x';
-            const replicationTopic = replicationTopicFn();
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() })
-                , { directory: dbPath1, replicationTopic })
+            const replicationTopic = uuid();
+            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() }), replicationTopic
+                , { directory: dbPath1 })
 
-            const waitForPeersTime = 3000;
-            const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(db1.replicationTopic, true, 123, 1));
+            const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, 123, 1));
             expect(isLeaderAOneLeader);
-            const isLeaderATwoLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(db1.replicationTopic, true, 123, 2));
+            const isLeaderATwoLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, 123, 2));
             expect(isLeaderATwoLeader);
 
-            db2 = await orbitdb2.open<EventStore<string>>(db1.address, { directory: dbPath2, replicationTopic: replicationTopicFn })
+            db2 = await orbitdb2.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath2 })
 
             await waitForPeers(ipfs1, [orbitdb2.id], DirectChannel.getTopic([orbitdb1.id, orbitdb2.id]))
             await waitForPeers(ipfs2, [orbitdb1.id], DirectChannel.getTopic([orbitdb1.id, orbitdb2.id]))
@@ -128,13 +165,13 @@ Object.keys(testAPIs).forEach(API => {
             // leader rotation is kind of random, so we do a sequence of tests
             for (let slot = 0; slot < 3; slot++) {
                 // One leader
-                const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(db1.replicationTopic, true, slot, 1));
-                const isLeaderBOneLeader = orbitdb2.isLeader(await orbitdb2.findLeaders(db1.replicationTopic, true, slot, 1));
+                const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 1));
+                const isLeaderBOneLeader = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 1));
                 expect([isLeaderAOneLeader, isLeaderBOneLeader]).toContainAllValues([false, true])
 
                 // Two leaders
-                const isLeaderATwoLeaders = orbitdb1.isLeader(await orbitdb1.findLeaders(db1.replicationTopic, true, slot, 2));
-                const isLeaderBTwoLeaders = orbitdb2.isLeader(await orbitdb2.findLeaders(db1.replicationTopic, true, slot, 2));
+                const isLeaderATwoLeaders = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 2));
+                const isLeaderBTwoLeaders = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 2));
                 expect([isLeaderATwoLeaders, isLeaderBTwoLeaders]).toContainAllValues([true, true])
             }
         })
@@ -149,19 +186,18 @@ Object.keys(testAPIs).forEach(API => {
             console.log("Waiting for peers to connect")
 
 
-            const replicationTopicFn = () => 'x';
-            const replicationTopic = replicationTopicFn();
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() })
-                , { replicate: false, directory: dbPath1, replicationTopic })
-            db2 = await orbitdb2.open<EventStore<string>>(db1.address, { directory: dbPath2, replicationTopic: replicationTopicFn })
+            const replicationTopic = uuid()
+            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() }), replicationTopic
+                , { replicate: false, directory: dbPath1 })
+            db2 = await orbitdb2.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath2 })
 
             // One leader
             const slot = 0;
 
 
             // Two leaders, but only one will be leader since only one is replicating
-            const isLeaderA = orbitdb1.isLeader(await orbitdb1.findLeaders(db1.replicationTopic, true, slot, 2));
-            const isLeaderB = orbitdb2.isLeader(await orbitdb2.findLeaders(db1.replicationTopic, true, slot, 2));
+            const isLeaderA = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 2));
+            const isLeaderB = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 2));
             expect(!isLeaderA) // because replicate is false
             expect(isLeaderB)
 
@@ -180,12 +216,11 @@ Object.keys(testAPIs).forEach(API => {
             console.log("Waiting for peers to connect")
 
 
-            const replicationTopicFn = () => 'x';
-            const replicationTopic = replicationTopicFn();
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() })
-                , { replicate: false, directory: dbPath1, replicationTopic })
-            db2 = await orbitdb2.open<EventStore<string>>(db1.address, { directory: dbPath2, replicationTopic: replicationTopicFn })
-            db3 = await orbitdb3.open<EventStore<string>>(db1.address, { directory: dbPath3, replicationTopic: replicationTopicFn })
+            const replicationTopic = uuid();
+            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() }), replicationTopic
+                , { replicate: false, directory: dbPath1 })
+            db2 = await orbitdb2.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath2 })
+            db3 = await orbitdb3.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath3 })
 
             await waitForPeers(ipfs2, [orbitdb3.id], DirectChannel.getTopic([orbitdb2.id, orbitdb3.id]))
             await waitForPeers(ipfs3, [orbitdb2.id], DirectChannel.getTopic([orbitdb2.id, orbitdb3.id]))
@@ -196,9 +231,9 @@ Object.keys(testAPIs).forEach(API => {
 
 
             // Two leaders, but only one will be leader since only one is replicating
-            const isLeaderA = orbitdb1.isLeader(await orbitdb1.findLeaders(db1.replicationTopic, true, slot, 3));
-            const isLeaderB = orbitdb2.isLeader(await orbitdb2.findLeaders(db1.replicationTopic, true, slot, 3));
-            const isLeaderC = orbitdb3.isLeader(await orbitdb3.findLeaders(db1.replicationTopic, true, slot, 3));
+            const isLeaderA = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 3));
+            const isLeaderB = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 3));
+            const isLeaderC = orbitdb3.isLeader(await orbitdb3.findLeaders(replicationTopic, true, slot, 3));
 
             expect(!isLeaderA) // because replicate is false
             expect(isLeaderB)
@@ -220,12 +255,11 @@ Object.keys(testAPIs).forEach(API => {
             console.log("Waiting for peers to connect")
 
 
-            const replicationTopicFn = () => 'x';
-            const replicationTopic = replicationTopicFn();
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() })
-                , { directory: dbPath1, replicationTopic })
-            db2 = await orbitdb2.open<EventStore<string>>(db1.address, { directory: dbPath2, replicationTopic: replicationTopicFn })
-            db3 = await orbitdb3.open<EventStore<string>>(db1.address, { directory: dbPath3, replicationTopic: replicationTopicFn })
+            const replicationTopic = uuid();
+            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() }), replicationTopic
+                , { directory: dbPath1 })
+            db2 = await orbitdb2.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath2 })
+            db3 = await orbitdb3.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath3 })
 
             await waitForPeers(ipfs1, [orbitdb2.id], DirectChannel.getTopic([orbitdb1.id, orbitdb2.id]))
             await waitForPeers(ipfs3, [orbitdb1.id], DirectChannel.getTopic([orbitdb1.id, orbitdb3.id]))
@@ -234,21 +268,21 @@ Object.keys(testAPIs).forEach(API => {
             // One leader
             const slot = 0;
 
-            const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(db1.replicationTopic, true, slot, 1));
-            const isLeaderBOneLeader = orbitdb2.isLeader(await orbitdb2.findLeaders(db1.replicationTopic, true, slot, 1));
-            const isLeaderCOneLeader = orbitdb3.isLeader(await orbitdb3.findLeaders(db1.replicationTopic, true, slot, 1));
+            const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 1));
+            const isLeaderBOneLeader = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 1));
+            const isLeaderCOneLeader = orbitdb3.isLeader(await orbitdb3.findLeaders(replicationTopic, true, slot, 1));
             expect([isLeaderAOneLeader, isLeaderBOneLeader, isLeaderCOneLeader]).toContainValues([false, false, true])
 
             // Two leaders
-            const isLeaderATwoLeaders = orbitdb1.isLeader(await orbitdb1.findLeaders(db1.replicationTopic, true, slot, 2));
-            const isLeaderBTwoLeaders = orbitdb2.isLeader(await orbitdb2.findLeaders(db1.replicationTopic, true, slot, 2));
-            const isLeaderCTwoLeaders = orbitdb3.isLeader(await orbitdb3.findLeaders(db1.replicationTopic, true, slot, 2));
+            const isLeaderATwoLeaders = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 2));
+            const isLeaderBTwoLeaders = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 2));
+            const isLeaderCTwoLeaders = orbitdb3.isLeader(await orbitdb3.findLeaders(replicationTopic, true, slot, 2));
             expect([isLeaderATwoLeaders, isLeaderBTwoLeaders, isLeaderCTwoLeaders]).toContainValues([false, true, true])
 
             // Three leders
-            const isLeaderAThreeLeaders = orbitdb1.isLeader(await orbitdb1.findLeaders(db1.replicationTopic, true, slot, 3));
-            const isLeaderBThreeLeaders = orbitdb2.isLeader(await orbitdb2.findLeaders(db1.replicationTopic, true, slot, 3));
-            const isLeaderCThreeLeaders = orbitdb3.isLeader(await orbitdb3.findLeaders(db1.replicationTopic, true, slot, 3));
+            const isLeaderAThreeLeaders = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 3));
+            const isLeaderBThreeLeaders = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 3));
+            const isLeaderCThreeLeaders = orbitdb3.isLeader(await orbitdb3.findLeaders(replicationTopic, true, slot, 3));
             expect([isLeaderAThreeLeaders, isLeaderBThreeLeaders, isLeaderCThreeLeaders]).toContainValues([true, true, true])
         })
 

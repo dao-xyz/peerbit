@@ -80,32 +80,54 @@ Object.keys(testAPIs).forEach(API => {
 
         it('open same store twice will share instance', async () => {
 
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'some db', accessController: new SimpleAccessController() }))
-            const sameDb = await orbitdb1.open(new EventStore<string>({ name: 'some db', accessController: new SimpleAccessController() }))
+            const replicationTopic = 'topic';
+            db1 = await orbitdb1.open(new EventStore<string>({ name: 'some db', accessController: new SimpleAccessController() }), replicationTopic)
+            const sameDb = await orbitdb1.open(new EventStore<string>({ name: 'some db', accessController: new SimpleAccessController() }), replicationTopic)
             expect(db1 === sameDb);
 
         })
 
-        it('it can share nested stores', async () => {
-
+        it('can share nested stores', async () => {
+            const replicationTopic = 'topic';
             db1 = await orbitdb1.open(new EventStore<string>({
                 name: 'some db', accessController: new SimpleStoreAccessController({
                     store: new EventStore<string>({
                         name: 'event store'
                     })
                 })
-            }))
+            }), replicationTopic)
             db2 = await orbitdb1.open(new EventStore<string>({
                 name: 'another db', accessController: new SimpleStoreAccessController({
                     store: new EventStore<string>({
                         name: 'event store'
                     })
                 })
-            }))
+            }), replicationTopic)
             expect(db1 !== db2);
             expect(db1.accessController === db2.accessController);
 
         })
+
+        it('share nested stores if not same replication topic', async () => {
+            db1 = await orbitdb1.open(new EventStore<string>({
+                name: 'same db', accessController: new SimpleStoreAccessController({
+                    store: new EventStore<string>({
+                        name: 'event store'
+                    })
+                })
+            }), 'a')
+            db2 = await orbitdb1.open(new EventStore<string>({
+                name: 'same db', accessController: new SimpleStoreAccessController({
+                    store: new EventStore<string>({
+                        name: 'event store'
+                    })
+                })
+            }), 'b')
+            expect(db1 !== db2);
+            expect(db1.accessController !== db2.accessController);
+
+        })
+
 
     })
 })

@@ -7,6 +7,8 @@ import { EventStore } from './utils/stores'
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
+// @ts-ignore 
+import { v4 as uuid } from 'uuid';
 // Include test utilities
 import {
   nodeConfig as config,
@@ -92,16 +94,16 @@ Object.keys(testAPIs).forEach(API => {
 
       // Open the databases on the first node
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb1.open(new EventStore<string>({ name: 'local-' + i, accessController: new SimpleAccessController() }), options)
+        const db = await orbitdb1.open(new EventStore<string>({ name: 'local-' + i, accessController: new SimpleAccessController() }), uuid(), options)
         localDatabases.push(db)
       }
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, localDatabases[i].address), { directory: dbPath2, ...options })
+        const db = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, localDatabases[i].address), uuid(), { directory: dbPath2, ...options })
         remoteDatabasesA.push(db)
       }
 
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb3.open<EventStore<string>>(await EventStore.load(orbitdb3._ipfs, localDatabases[i].address), { directory: dbPath3, ...options })
+        const db = await orbitdb3.open<EventStore<string>>(await EventStore.load(orbitdb3._ipfs, localDatabases[i].address), uuid(), { directory: dbPath3, ...options })
         remoteDatabasesB.push(db)
       }
 

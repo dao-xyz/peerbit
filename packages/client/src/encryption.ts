@@ -1,19 +1,17 @@
 import { AccessError, Ed25519Keypair, PublicKeyEncryptionResolver, X25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore';
-import { StorePublicKeyEncryption } from '@dao-xyz/orbit-db-store';
 import { X25519PublicKey } from "@dao-xyz/peerbit-crypto";
-import { serialize } from '@dao-xyz/borsh'
 import { Identity } from "@dao-xyz/ipfs-log";
 
-export const replicationTopicEncryptionWithRequestKey = (identity: Identity, keystore: Keystore, requestKey: (key: X25519PublicKey, replicationTopic: string) => Promise<KeyWithMeta<(Ed25519Keypair | X25519Keypair)>[] | undefined>): StorePublicKeyEncryption => {
-    return (replicationTopic: string) => {
-        return encryptionWithRequestKey(identity, keystore, (key) => requestKey(key, replicationTopic))
-    }
-}
+export type StorePublicKeyEncryption = (replicationTopic: string) => PublicKeyEncryptionResolver
 
+/* export const replicationTopicEncryptionWithRequestKey = (identity: Identity, keystore: Keystore, requestKey: (key: X25519PublicKey) => Promise<KeyWithMeta<(Ed25519Keypair | X25519Keypair)>[] | undefined>): PublicKeyEncryptionResolver => {
+    return encryptionWithRequestKey(identity, keystore, async (key) => requestKey(key))
+
+}
+ */
 
 export const encryptionWithRequestKey = (identity: Identity, keystore: Keystore, requestKey?: (key: X25519PublicKey) => Promise<KeyWithMeta<(Ed25519Keypair | X25519Keypair)>[] | undefined>): PublicKeyEncryptionResolver => {
-
     return {
         getAnyKeypair: async (publicKeys) => {
             for (let i = 0; i < publicKeys.length; i++) {

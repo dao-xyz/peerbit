@@ -8,7 +8,8 @@ import rmrf from 'rimraf'
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
-
+// @ts-ignore
+import { v4 as uuid } from 'uuid';
 // Include test utilities
 import {
   nodeConfig as config,
@@ -24,7 +25,7 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Replication Status (${API})`, function () {
     jest.setTimeout(config.timeout)
 
-    let ipfsd: Controller, ipfs: IPFS, orbitdb1: OrbitDB, orbitdb2: OrbitDB, db: EventStore<string>
+    let ipfsd: Controller, ipfs: IPFS, orbitdb1: OrbitDB, orbitdb2: OrbitDB, db: EventStore<string>, replicationTopic: string
 
     beforeAll(async () => {
       rmrf.sync(dbPath1)
@@ -33,7 +34,8 @@ Object.keys(testAPIs).forEach(API => {
       ipfs = ipfsd.api
       orbitdb1 = await OrbitDB.createInstance(ipfs, { directory: dbPath1 })
       orbitdb2 = await OrbitDB.createInstance(ipfs, { directory: dbPath2 })
-      db = await orbitdb1.open(new EventStore<string>({ name: 'replication status tests', accessController: new SimpleAccessController() })
+      replicationTopic = uuid();
+      db = await orbitdb1.open(new EventStore<string>({ name: 'replication status tests', accessController: new SimpleAccessController() }), replicationTopic
       )
     })
 
@@ -69,7 +71,7 @@ Object.keys(testAPIs).forEach(API => {
       await db.load()
       await db.add('hello2')
 
-      const db2 = await orbitdb2.open(await EventStore.load<string>(orbitdb2._ipfs, db.address))
+      const db2 = await orbitdb2.open(await EventStore.load<string>(orbitdb2._ipfs, db.address), replicationTopic)
       await db2.sync(db._oplog.heads)
 
       return new Promise((resolve, reject) => {

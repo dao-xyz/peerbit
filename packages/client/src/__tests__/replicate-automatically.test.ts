@@ -7,8 +7,8 @@ import assert from 'assert'
 import mapSeries from 'p-each-series'
 import rmrf from 'rimraf'
 import { jest } from '@jest/globals';
-import { Controller } from "ipfsd-ctl";
-import { IPFS } from "ipfs-core-types";
+// @ts-ignore
+import { v4 as uuid } from 'uuid';
 // Include test utilities
 import {
   nodeConfig as config,
@@ -84,9 +84,11 @@ Object.keys(testAPIs).forEach(API => {
       const entryCount = 33
       const entryArr = []
 
-      const db1 = await orbitdb1.open(new EventStore<string>({ name: 'replicate-automatically-tests', accessController: new SimpleAccessController() }), {})
+      const replicationTopic = uuid();
 
-      const db3 = await orbitdb1.open(new KeyValueStore<string>({ name: 'replicate-automatically-tests-kv', accessController: new SimpleAccessController() }), {
+      const db1 = await orbitdb1.open(new EventStore<string>({ name: 'replicate-automatically-tests', accessController: new SimpleAccessController() }), replicationTopic, {})
+
+      const db3 = await orbitdb1.open(new KeyValueStore<string>({ name: 'replicate-automatically-tests-kv', accessController: new SimpleAccessController() }), replicationTopic, {
         onReplicationComplete: (_) => {
           fail();
         }
@@ -101,7 +103,7 @@ Object.keys(testAPIs).forEach(API => {
 
       // Open the second database
       let done = false
-      const db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {
+      const db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
         onReplicationComplete: (_) => {
           // Listen for the 'replicated' events and check that all the entries
           // were replicated to the second database
@@ -116,7 +118,7 @@ Object.keys(testAPIs).forEach(API => {
         }
       })
 
-      const db4 = await orbitdb2.open<KeyValueStore<string>>(await KeyValueStore.load(orbitdb2._ipfs, db3.address), {
+      const db4 = await orbitdb2.open<KeyValueStore<string>>(await KeyValueStore.load(orbitdb2._ipfs, db3.address), replicationTopic, {
         onReplicationComplete: (_) => {
           fail();
         }

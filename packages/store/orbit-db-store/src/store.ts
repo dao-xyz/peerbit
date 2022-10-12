@@ -89,7 +89,7 @@ export class HeadsCache<T> extends CachedValue {
 }
 
 
-export type StorePublicKeyEncryption = (replicationTopic: string) => PublicKeyEncryptionResolver/* {
+/* {
   encrypt: (bytes: Uint8Array, reciever: X25519PublicKey) => Promise<{
     data: Uint8Array
     senderPublicKey: X25519PublicKey
@@ -114,9 +114,6 @@ export interface IStoreOptions<T> {
    */
   replicate?: boolean;
 
-
-  replicationTopic?: string | (() => string),
-
   onClose?: (store: Store<T>) => void,
   onDrop?: (store: Store<T>) => void,
   onLoad?: (store: Store<T>) => void,
@@ -136,7 +133,7 @@ export interface IStoreOptions<T> {
    */
   /*   nameResolver?: (name: string) => string */
 
-  encryption?: StorePublicKeyEncryption,
+  encryption?: PublicKeyEncryptionResolver,
   encoding?: Encoding<T>,
 
   maxHistory?: number,
@@ -483,10 +480,10 @@ export class Store<T> implements StoreLike<T> {
     return {
       logId: this.id,
       encoding: this.options.encoding,
-      encryption: this.options.encryption ? {
+      encryption: this.options.encryption/*  this.options.encryption ? {
         getAnyKeypair: this.options.encryption(this.replicationTopic).getAnyKeypair,
         getEncryptionKeypair: this.options.encryption(this.replicationTopic).getEncryptionKeypair
-      } : undefined, //this.options.encryption
+      } : undefined */, //this.options.encryption
       access: this.accessController || this.fallbackAccessController,
       sortFn: this.options.sortFn,
       prune: this.options.prune,
@@ -500,14 +497,14 @@ export class Store<T> implements StoreLike<T> {
   get replicationStatus() {
     return this._replicationStatus
   }
+  /* 
+    get replicationTopic() {
+      return Store.getReplicationTopic(this.address, this.options)
+    } */
 
-  get replicationTopic() {
-    return Store.getReplicationTopic(this.address, this.options)
-  }
-
-  static getReplicationTopic(address: Address | string, options: IStoreOptions<any>) {
+  /* static getReplicationTopic(address: Address | string, options: IStoreOptions<any>) {
     return options.replicationTopic ? (typeof options.replicationTopic === 'string' ? options.replicationTopic : options.replicationTopic()) : (typeof address === 'string' ? address : address.toString());
-  }
+  } */
 
   setIdentity(identity: Identity) {
     this.identity = identity

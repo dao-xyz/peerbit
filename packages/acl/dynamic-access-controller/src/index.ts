@@ -16,7 +16,7 @@ export * from './access';
 
 import { MaybeEncrypted, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
-import { RegionAccessController } from "@dao-xyz/peerbit-trust-web";
+import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { Log } from "@dao-xyz/ipfs-log";
 import { Operation } from "@dao-xyz/orbit-db-bdocstore";
 import { ReadWriteAccessController } from "@dao-xyz/orbit-db-query-store";
@@ -28,6 +28,8 @@ import { IPFS } from "ipfs-core-types";
 if (isNode) {
     v8 = require('v8');
 } */
+
+
 @variant(0)
 export class AccessRequest {
 
@@ -73,14 +75,14 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<Operat
     constructor(properties?: {
         name?: string,
         rootTrust?: PublicSignKey,
-        regionAccessController?: RegionAccessController
+        trustedNetwork?: TrustedNetwork
     }) {
         super();
         if (properties) {
             this._db = new AccessStore({
                 name: (uuid() || properties.name) + "_acl",
                 rootTrust: properties.rootTrust,
-                regionAccessController: properties.regionAccessController
+                trustedNetwork: properties.trustedNetwork
 
             })
             /*  this._acldb = ); */
@@ -98,13 +100,13 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<Operat
           this._onMemoryExceeded = options.onMemoryExceeded;
       } */
 
-    //{ heapSizeLimit: () => number, onMemoryExceeded: OnMemoryExceededCallback<T>, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>/* , trust: RegionAccessController */ }
+    //{ heapSizeLimit: () => number, onMemoryExceeded: OnMemoryExceededCallback<T>, storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>/* , trust: TrustedNetwork */ }
     /* this._heapSizeLimit = options.heapSizeLimit;
     this._onMemoryExceeded = options.onMemoryExceeded;
     this._storeAccessCondition = options.storeAccessCondition; */
 
-    get trust(): RegionAccessController {
-        return (this._db.access.accessController as RegionAccessController);
+    get trust(): TrustedNetwork {
+        return (this._db.access.accessController as TrustedNetwork);
     }
 
 
@@ -227,9 +229,7 @@ export class DynamicAccessController<T> extends ReadWriteAccessController<Operat
     sync(heads: Entry<Operation<Access>>[]): Promise<void> {
         return this._db.sync(heads);
     }
-    get replicationTopic(): string {
-        return this._db.replicationTopic;
-    }
+
     get address(): Address {
         return this._db.address;
     }

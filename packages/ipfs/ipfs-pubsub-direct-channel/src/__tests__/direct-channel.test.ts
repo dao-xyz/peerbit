@@ -16,14 +16,14 @@ const API = 'js-ipfs'
 describe(`DirectChannel js-ipfs`, function () {
 
 
-    let expectedPeerIDs: PeerId[] = []
+    let expectedPeerIDs: string[] = []
     let session: Session;
     beforeEach(async () => {
         session = await Session.connected(3, API)
 
         // Note, we only create channels between peer1 and peer2 in these test,
         // peer3 is used for "external actor" tests
-        expectedPeerIDs = Array.from([session.peers[0].id, session.peers[1].id]).sort()
+        expectedPeerIDs = Array.from([session.peers[0].id, session.peers[1].id].map(x => x.toString())).sort()
     })
 
     afterEach(async () => {

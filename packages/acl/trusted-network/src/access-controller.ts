@@ -4,7 +4,7 @@ import { OrbitDB } from "@dao-xyz/orbit-db";
 import { Address, IInitializationOptions, load, save, StoreLike } from "@dao-xyz/orbit-db-store";
 import { BORSH_ENCODING, Entry, Identity, Payload } from "@dao-xyz/ipfs-log";
 import { createHash } from "crypto";
-import { PublicSignKey, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
+import { OtherKey, PublicSignKey, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 
 
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
@@ -12,7 +12,7 @@ import { IPFS } from 'ipfs-core-types';
 import { DeleteOperation } from "@dao-xyz/orbit-db-bdocstore";
 import { ReadWriteAccessController } from "@dao-xyz/orbit-db-query-store";
 import { Log } from "@dao-xyz/ipfs-log";
-import { AnyRelation, createIdentityGraphStore, getPath, Relation } from "./identity-graph";
+import { AnyRelation, createIdentityGraphStore, getPathGenerator, getPath, Relation, getFromByTo, getToByFrom } from "./identity-graph";
 import { BinaryPayload } from "@dao-xyz/bpayload";
 
 
@@ -125,10 +125,6 @@ export class RelationAccessController extends ReadWriteAccessController<Operatio
         return this.relationGraph.replicate;
     }
 
-    get replicationTopic(): string {
-        return this.relationGraph.replicationTopic;
-    }
-
     drop?(): Promise<void> {
         return this.relationGraph.drop();
     }
@@ -166,7 +162,7 @@ export class RelationAccessController extends ReadWriteAccessController<Operatio
 
 
 @variant([0, 2])
-export class RegionAccessController extends ReadWriteAccessController<Operation<Relation>> implements StoreLike<Relation> {
+export class TrustedNetwork extends ReadWriteAccessController<Operation<Relation>> implements StoreLike<Relation> {
 
     @field({ type: PublicSignKey })
     rootTrust: PublicSignKey
@@ -188,12 +184,12 @@ export class RegionAccessController extends ReadWriteAccessController<Operation<
         }
     }
 
-    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<any>): Promise<RegionAccessController> {
+    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<any>): Promise<TrustedNetwork> {
         const typeMap = options.typeMap ? { ...options.typeMap } : {}
         typeMap[Relation.name] = Relation;
         const saveOrResolved = await options.saveAndResolveStore(ipfs, this);
         if (saveOrResolved !== this) {
-            return saveOrResolved as RegionAccessController;
+            return saveOrResolved as TrustedNetwork;
         }
         await this.trustGraph.init(ipfs, identity, { ...options, typeMap, fallbackAccessController: this }) // self referencing access controller
         this.address = saveOrResolved.address;
@@ -237,15 +233,28 @@ export class RegionAccessController extends ReadWriteAccessController<Operation<
      * @param truster, the truster "root", if undefined defaults to the root trust
      * @returns true, if trusted
      */
-    async isTrusted(trustee: PublicSignKey, truster: PublicSignKey = this.rootTrust): Promise<boolean> {
+    async isTrusted(trustee: PublicSignKey | OtherKey, truster: PublicSignKey = this.rootTrust): Promise<boolean> {
 
         /*  trustee = PublicKey.from(trustee); */
         /**
          * TODO: Currently very inefficient
          */
-        const trustPath = await getPath(trustee, truster, this.trustGraph);
+        const trustPath = await getPath(trustee, truster, this.trustGraph, getFromByTo);
         return !!trustPath
     }
+
+
+    async getTrusted(): Promise<PublicSignKey[]> {
+        let current = this.rootTrust;
+        const participants: PublicSignKey[] = [current];
+        let generator = getPathGenerator(current, this.trustGraph, getToByFrom);
+        for await (const next of generator) {
+            participants.push(next.to);
+        }
+        return participants;
+
+    }
+
 
     hashCode(): string {
         return createHash('sha1').update(serialize(this)).digest('hex')
@@ -258,10 +267,6 @@ export class RegionAccessController extends ReadWriteAccessController<Operation<
 
     get replicate(): boolean {
         return this.trustGraph.replicate;
-    }
-
-    get replicationTopic(): string {
-        return this.trustGraph.replicationTopic;
     }
 
     drop?(): Promise<void> {
@@ -287,7 +292,7 @@ export class RegionAccessController extends ReadWriteAccessController<Operation<
     static load(ipfs: any, address: Address, options?: {
         timeout?: number;
     }) {
-        return load(ipfs, address, RegionAccessController, options)
+        return load(ipfs, address, TrustedNetwork, options)
     }
 
     get id(): string {

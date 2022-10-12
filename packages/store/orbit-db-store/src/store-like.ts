@@ -23,8 +23,9 @@ export interface StoreLike<T> extends Addressable, Initiable<T> {
     }): Promise<Address>
     sync(heads: (Entry<T> | EntryWithRefs<T>)[]): Promise<void>
 
-    get replicationTopic(): string;
-    /*     get events(): EventEmitter;
+    /*
+        get replicationTopic(): string;    
+     get events(): EventEmitter;
      */
     get address(): Address
     get oplog(): Log<T>

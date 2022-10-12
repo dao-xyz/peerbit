@@ -1,6 +1,6 @@
 import { field, variant } from '@dao-xyz/borsh';
 import { BinaryDocumentStore, Operation } from '@dao-xyz/orbit-db-bdocstore';
-import { getFromByToGenerator, RegionAccessController, RelationAccessController } from '@dao-xyz/peerbit-trust-web';
+import { getPathGenerator, TrustedNetwork, RelationAccessController, getFromByTo } from '@dao-xyz/peerbit-trusted-network';
 import { Access, AccessData, AccessType } from './access';
 import { Entry, Identity } from '@dao-xyz/ipfs-log'
 import { PublicSignKey } from '@dao-xyz/peerbit-crypto';
@@ -22,16 +22,16 @@ export class AccessStore implements StoreLike<Operation<any>> {
     constructor(opts?: {
         name?: string;
         rootTrust?: PublicSignKey,
-        regionAccessController?: RegionAccessController
+        trustedNetwork?: TrustedNetwork
     }) {
         if (opts) {
-            if (!opts.regionAccessController && !opts.rootTrust) {
-                throw new Error("Expecting either regionAccessController or rootTrust")
+            if (!opts.trustedNetwork && !opts.rootTrust) {
+                throw new Error("Expecting either TrustedNetwork or rootTrust")
             }
             this.access = new BinaryDocumentStore({
                 indexBy: 'id',
                 objectType: AccessData.name,
-                accessController: opts.regionAccessController ? opts.regionAccessController : new RegionAccessController({
+                accessController: opts.trustedNetwork ? opts.trustedNetwork : new TrustedNetwork({
                     name: (opts.name || uuid()) + "_region",
                     rootTrust: opts.rootTrust as PublicSignKey
                 })
@@ -41,8 +41,8 @@ export class AccessStore implements StoreLike<Operation<any>> {
         }
     }
 
-    get trust(): RegionAccessController {
-        return this.access.accessController as RegionAccessController;
+    get trust(): TrustedNetwork {
+        return this.access.accessController as TrustedNetwork;
     }
 
     // allow anyone write to the ACL db, but assume entry is invalid until a verifier verifies
@@ -74,7 +74,7 @@ export class AccessStore implements StoreLike<Operation<any>> {
         if (await canReadCheck(fromKey)) {
             return true;
         }
-        for await (const trustedByKey of getFromByToGenerator(fromKey, this.identityGraphController.relationGraph)) {
+        for await (const trustedByKey of getPathGenerator(fromKey, this.identityGraphController.relationGraph, getFromByTo)) {
             if (await canReadCheck(trustedByKey.from)) {
                 return true;
             }
@@ -104,7 +104,7 @@ export class AccessStore implements StoreLike<Operation<any>> {
         if (await canWriteCheck(fromKey)) {
             return true;
         }
-        for await (const trustedByKey of getFromByToGenerator(fromKey, this.identityGraphController.relationGraph)) {
+        for await (const trustedByKey of getPathGenerator(fromKey, this.identityGraphController.relationGraph, getFromByTo)) {
             if (await canWriteCheck(trustedByKey.from)) {
                 return true;
             }
@@ -142,9 +142,7 @@ export class AccessStore implements StoreLike<Operation<any>> {
     sync(heads: (Entry<Operation<Access>> | EntryWithRefs<Operation<Access>>)[]): Promise<void> {
         return this.access.sync(heads);
     }
-    get replicationTopic(): string {
-        return this.access.replicationTopic;
-    }
+
 
     get address(): Address {
         return this.access.address;

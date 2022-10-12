@@ -11,6 +11,9 @@ import { EventStore, Operation } from './utils/stores/event-store'
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
+// @ts-ignore 
+import { v4 as uuid } from 'uuid';
+
 // Include test utilities
 import {
     nodeConfig as config,
@@ -33,7 +36,7 @@ Object.keys(testAPIs).forEach(API => {
 
         let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS
         let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore<string>, db2: EventStore<string>
-
+        let replicationTopic: string;
         let timer: any
 
         beforeAll(async () => {
@@ -41,6 +44,7 @@ Object.keys(testAPIs).forEach(API => {
             ipfsd2 = await startIpfs(API, config.daemon2)
             ipfs1 = ipfsd1.api
             ipfs2 = ipfsd2.api
+            replicationTopic = uuid();
             // Connect the peers manually to speed up test times
             const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
             await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
@@ -72,7 +76,7 @@ Object.keys(testAPIs).forEach(API => {
             db1 = await orbitdb1.open(new EventStore<string>({
                 name: 'abc',
                 accessController: new SimpleAccessController()
-            }), { directory: dbPath1, encryption: orbitdb1.replicationTopicEncryption() })
+            }), replicationTopic, { directory: dbPath1 })
         })
 
         afterEach(async () => {
@@ -94,7 +98,7 @@ Object.keys(testAPIs).forEach(API => {
         it('write 1 entry replicate false', async () => {
             console.log("Waiting for peers to connect")
             await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
-            db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), { directory: dbPath2, replicate: false, encryption: undefined })
+            db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, { directory: dbPath2, replicate: false })
 
             await db1.add('hello');
             /*   await waitFor(() => db2._oplog.clock.time > 0); */
@@ -109,8 +113,8 @@ Object.keys(testAPIs).forEach(API => {
         it('encrypted clock sync write 1 entry replicate false', async () => {
             console.log("Waiting for peers to connect")
             await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
-            const encryptionKey = await orbitdb1.keystore.createEd25519Key({ id: 'encryption key', group: db1.replicationTopic });
-            db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), { directory: dbPath2, replicate: false, encryption: orbitdb2.replicationTopicEncryption() })
+            const encryptionKey = await orbitdb1.keystore.createEd25519Key({ id: 'encryption key', group: replicationTopic });
+            db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, { directory: dbPath2, replicate: false })
 
             await db1.add('hello', {
                 reciever: {
@@ -135,7 +139,7 @@ Object.keys(testAPIs).forEach(API => {
             const replicationTopic = 'x';
             const store = new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() });
             await orbitdb2.subscribeForReplicationStart(replicationTopic);
-            await orbitdb1.open(store, { replicate: false, replicationTopic }); // this would be a "light" client, write -only
+            await orbitdb1.open(store, replicationTopic, { replicate: false }); // this would be a "light" client, write -only
 
             const hello = await store.add('hello', { nexts: [] });
             const world = await store.add('world', { nexts: [hello] });

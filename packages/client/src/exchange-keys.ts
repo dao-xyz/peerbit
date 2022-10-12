@@ -1,15 +1,13 @@
 import { variant, field, option, serialize, vec } from '@dao-xyz/borsh';
 import { ProtocolMessage } from './message.js';
-import { bufferSerializer, U8IntArraySerializer } from '@dao-xyz/borsh-utils';
+import { U8IntArraySerializer } from '@dao-xyz/borsh-utils';
 import { Ed25519Keypair, Ed25519PublicKey, K, PublicKeyEncryptionResolver, X25519Keypair, X25519PublicKey } from '@dao-xyz/peerbit-crypto'
 import { Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore';
-import { PublicKeyEncryption } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned, SignatureWithKey } from '@dao-xyz/peerbit-crypto';
-
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { TimeoutError, waitForAsync } from '@dao-xyz/time';
-
 import { Key, PublicSignKey } from '@dao-xyz/peerbit-crypto';
+
 // @ts-ignore
 import Logger from 'logplease'
 import { Constructor } from '@dao-xyz/orbit-db-store';
@@ -18,7 +16,7 @@ const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
 export type KeyAccessCondition = (requester: PublicSignKey, keyToAccess: KeyWithMeta<Ed25519Keypair | X25519Keypair>) => Promise<boolean>;
-export type KeyType = 'ethereum' | 'solana' | 'orbitdb';
+//export type KeyType = 'ethereum' | 'solana' | 'orbitdb';
 
 
 
@@ -330,7 +328,7 @@ export const exchangeKeys = async <T extends Ed25519Keypair | X25519Keypair>(
             }),
             data: secretKeyResponseMessage
         }))
-    }).init(encryption).encrypt(request.encryptionKey)));
+    }).encrypt(encryption.getEncryptionKeypair, request.encryptionKey)));
 
 }
 

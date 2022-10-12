@@ -71,6 +71,7 @@ Object.keys(testAPIs).forEach(API => {
       expect(db.identity.publicKey.equals(orbitdb.identity.publicKey))
       db.setIdentity({
         publicKey: signKey1.keypair.publicKey,
+        privateKey: signKey1.keypair.privateKey,
         sign: (data) => signKey1.keypair.sign(data)
       })
       expect(db.identity.publicKey.equals(signKey1.keypair.publicKey))

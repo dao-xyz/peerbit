@@ -1,4 +1,3 @@
-import { difference } from "./utils.js";
 import type { PeerId } from '@libp2p/interface-peer-id';
 
 const DEFAULT_OPTIONS = {
@@ -6,15 +5,19 @@ const DEFAULT_OPTIONS = {
   pollInterval: 1000,
 }
 interface PubSub {
-  peers: (topic: string) => Promise<PeerId[]>
+  peers: (topic: string) => Promise<(PeerId | string)[]>
+}
+const difference = (set1: string[], set2: string[]): string[] => {
+  // assume size of set1 and set2 are small
+  return set1.filter(p => !set2.find(p2 => p2 === p))
 }
 
-interface Callbacks { onJoin?: (peer: PeerId) => void, onLeave?: (peer: PeerId) => void, onError?: (err: any) => void };
+interface Callbacks { onJoin?: (peer: string) => void, onLeave?: (peer: string) => void, onError?: (err: any) => void };
 export class IpfsPubsubPeerMonitor {
   _pubsub: PubSub;
   _topic: string;
   _options: any;
-  _peers: PeerId[];
+  _peers: string[];
   _interval: any;
   _callbacks: Callbacks;
   constructor(pubsub: PubSub, topic: string, callbacks: Callbacks, options?: { start?: boolean, pollInterval?: number }) {
@@ -52,17 +55,17 @@ export class IpfsPubsubPeerMonitor {
   }
 
   async getPeers() {
-    this._peers = await this._pubsub.peers(this._topic)
+    this._peers = (await this._pubsub.peers(this._topic)).map(x => x.toString())
     return this._peers.slice()
   }
 
-  hasPeer(peer: PeerId) {
-    return this._peers.map(p => p.equals(peer))
+  hasPeer(peer: string) {
+    return this._peers.map(p => p === peer)
   }
 
   async _pollPeers() {
     try {
-      const peers = await this._pubsub.peers(this._topic)
+      const peers = (await this._pubsub.peers(this._topic)).map(x => x.toString())
       IpfsPubsubPeerMonitor._emitJoinsAndLeaves(this._peers, peers, this._callbacks)
       this._peers = peers
     } catch (err) {
@@ -71,9 +74,9 @@ export class IpfsPubsubPeerMonitor {
     }
   }
 
-  static _emitJoinsAndLeaves(oldValues: PeerId[], newValues: PeerId[], callbacks: Callbacks) {
-    const emitJoin = (addedPeer: PeerId) => callbacks.onJoin && callbacks.onJoin(addedPeer)
-    const emitLeave = (removedPeer: PeerId) => callbacks.onLeave && callbacks.onLeave(removedPeer)
+  static _emitJoinsAndLeaves(oldValues: string[], newValues: string[], callbacks: Callbacks) {
+    const emitJoin = (addedPeer: string) => callbacks.onJoin && callbacks.onJoin(addedPeer)
+    const emitLeave = (removedPeer: string) => callbacks.onLeave && callbacks.onLeave(removedPeer)
     difference(newValues, oldValues).forEach(emitJoin)
     difference(oldValues, newValues).forEach(emitLeave)
   }

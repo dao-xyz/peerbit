@@ -16,6 +16,8 @@ import {
   connectPeers,
   waitForPeers,
 } from '@dao-xyz/orbit-db-test-utils'
+// @ts-ignore
+import { v4 as uuid } from 'uuid';
 
 const orbitdbPath1 = './orbitdb/tests/replicate-and-load/1'
 const orbitdbPath2 = './orbitdb/tests/replicate-and-load/2'
@@ -64,17 +66,17 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     describe('two peers', function () {
-      let db1: EventStore<string>, db2: EventStore<string>
+      let db1: EventStore<string>, db2: EventStore<string>, replicationTopic: string
 
       const openDatabases = async () => {
         // Set write access for both clients
-
+        replicationTopic = uuid();
         db1 = await orbitdb1.open(new EventStore<string>({
           name: 'events',
           accessController: new SimpleAccessController()
-        }), { directory: dbPath1, })
+        }), replicationTopic, { directory: dbPath1, })
         // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
-        db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), { directory: dbPath2, })
+        db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, { directory: dbPath2, })
       }
 
       beforeAll(async () => {
@@ -122,18 +124,16 @@ Object.keys(testAPIs).forEach(API => {
               try {
 
                 // Set write access for both clients
-                let options = {
-                  accessController: new SimpleAccessController()
-                }
+                let options = {}
 
                 // Get the previous address to make sure nothing mutates it
 
                 // Open the database again (this time from the disk)
                 options = Object.assign({}, options, { directory: dbPath1, create: false })
-                const db3 = await orbitdb1.open<EventStore<string>>(await EventStore.load(orbitdb1._ipfs, db1.address), { ...options, replicationTopic: '_' }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
+                const db3 = await orbitdb1.open<EventStore<string>>(await EventStore.load(orbitdb1._ipfs, db1.address), replicationTopic, { ...options }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
                 // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
                 options = Object.assign({}, options, { directory: dbPath2, localOnly: true })
-                const db4 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), { ...options, replicationTopic: '_' }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
+                const db4 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, { ...options }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
 
                 await db3.load()
                 await db4.load()
