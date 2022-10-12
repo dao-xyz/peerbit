@@ -1,6 +1,6 @@
 import { field, serialize, variant } from "@dao-xyz/borsh";
-import { BinaryDocumentStore } from "@dao-xyz/orbit-db-bdocstore";
-import { Key, PublicSignKey, PUBLIC_KEY_WIDTH } from "@dao-xyz/peerbit-crypto";
+import { BinaryDocumentStore, IndexedValue } from "@dao-xyz/orbit-db-bdocstore";
+import { Key, PlainKey, PublicSignKey, PUBLIC_KEY_WIDTH } from "@dao-xyz/peerbit-crypto";
 // @ts-ignore
 import { SystemBinaryPayload } from "@dao-xyz/bpayload";
 import { DocumentQueryRequest, MemoryCompare, MemoryCompareQuery, QueryRequestV0, Result, ResultWithSource } from "@dao-xyz/query-protocol";
@@ -10,6 +10,7 @@ import { joinUint8Arrays } from '@dao-xyz/borsh-utils'
 
 export type RelationResolver = { resolve: (key: PublicSignKey, db: BinaryDocumentStore<Relation>) => Promise<Result[]>, next: (relation: AnyRelation) => PublicSignKey }
 
+const KEY_OFFSET = 3n + 4n + 1n + 28n; // SystemBinaryPayload discriminator + Relation discriminator + AnyRelation discriminator + id length u32 + utf8 encoding + id chars +
 export const getFromByTo: RelationResolver = {
     resolve: async (to: PublicSignKey, db: BinaryDocumentStore<Relation>) => {
         const ser = serialize(to);
@@ -20,7 +21,7 @@ export const getFromByTo: RelationResolver = {
                         compares: [
                             new MemoryCompare({
                                 bytes: ser,
-                                offset: 3n + 4n + 1n + 28n + BigInt(PUBLIC_KEY_WIDTH) // SystemBinaryPayload discriminator + Relation discriminator + AnyRelation discriminator + id length u32 + utf8 encoding + id chars + from key
+                                offset: KEY_OFFSET + BigInt(PUBLIC_KEY_WIDTH)
                             })
                         ]
                     })
@@ -41,7 +42,7 @@ export const getToByFrom: RelationResolver = {
                         compares: [
                             new MemoryCompare({
                                 bytes: ser,
-                                offset: 3n + 4n + 1n + 28n // SystemBinaryPayload discriminator + Relation discriminator + AnyRelation discriminator + id length u32 + utf8 encoding + id chars
+                                offset: KEY_OFFSET
                             })
                         ]
                     })
@@ -51,6 +52,7 @@ export const getToByFrom: RelationResolver = {
     },
     next: (relation) => relation.to
 }
+
 
 
 
@@ -125,14 +127,14 @@ export class Relation extends SystemBinaryPayload {
 @variant(0)
 export class AnyRelation extends Relation {
 
-    @field({ type: PublicSignKey })
-    from: PublicSignKey
+    @field({ type: Key })
+    from: Key
 
-    @field({ type: PublicSignKey })
-    to: PublicSignKey
+    @field({ type: Key })
+    to: Key
 
     constructor(properties?: {
-        to: PublicSignKey // signed by truster
+        to: PublicSignKey | PlainKey // signed by truster
         from: PublicSignKey
     }) {
         super();
@@ -157,6 +159,10 @@ export class AnyRelation extends Relation {
 
 export const getPath = async (start: Key, end: Key, db: BinaryDocumentStore<Relation>, resolver: RelationResolver): Promise<Relation[] | undefined> => {
     return getTargetPath(start, (key) => end.equals(key), db, resolver)
+}
+
+export const hasRelation = (from: Key, to: Key, db: BinaryDocumentStore<Relation>): IndexedValue<Relation>[] => {
+    return db.get(new AnyRelation({ from, to }).id);
 }
 
 

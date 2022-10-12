@@ -85,7 +85,7 @@ export class RequestHeadsMessage extends ProtocolMessage {
 }
  */
 
-export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>, store: StoreLike<any>, identity: Identity, heads: Entry<any>[], replicationTopic: string) => {
+export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>, store: StoreLike<any>, identity: Identity, heads: Entry<any>[], replicationTopic: string, includeReferences: boolean) => {
   const gids = new Set(heads.map(h => h.gid));
   if (gids.size > 1) {
     throw new Error("Expected to share heads only from 1 gid")
@@ -93,7 +93,7 @@ export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>
 
   const headsSet = new Set(heads);
   const headsWithRefs = heads.map(head => {
-    const refs = store.oplog.getPow2Refs(store.oplog.length, [head]).filter(r => !headsSet.has(r)); // pick a proportional amount of refs so we can efficiently load the log. TODO should be equidistant for good performance? 
+    const refs = !includeReferences ? [] : store.oplog.getPow2Refs(store.oplog.length, [head]).filter(r => !headsSet.has(r)); // pick a proportional amount of refs so we can efficiently load the log. TODO should be equidistant for good performance? 
     return new EntryWithRefs({
       entry: head,
       references: refs

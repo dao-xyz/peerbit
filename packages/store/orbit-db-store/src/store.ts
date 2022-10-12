@@ -682,7 +682,7 @@ export class Store<T> implements StoreLike<T> {
       if (!leaderInfo.isLeader) {
         logger.info("Is not leader so I am rejecting the fork")
         return Promise.resolve(null);
-      }
+      }f
     } */
 
 

@@ -4,15 +4,15 @@ import { OrbitDB } from "@dao-xyz/orbit-db";
 import { Address, IInitializationOptions, load, save, StoreLike } from "@dao-xyz/orbit-db-store";
 import { BORSH_ENCODING, Entry, Identity, Payload } from "@dao-xyz/ipfs-log";
 import { createHash } from "crypto";
-import { OtherKey, PublicSignKey, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
+import { IPFSAddress, Key, OtherKey, PublicSignKey, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 
-
+import type { PeerId } from '@libp2p/interface-peer-id';
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from 'ipfs-core-types';
 import { DeleteOperation } from "@dao-xyz/orbit-db-bdocstore";
 import { ReadWriteAccessController } from "@dao-xyz/orbit-db-query-store";
 import { Log } from "@dao-xyz/ipfs-log";
-import { AnyRelation, createIdentityGraphStore, getPathGenerator, getPath, Relation, getFromByTo, getToByFrom } from "./identity-graph";
+import { AnyRelation, createIdentityGraphStore, getPathGenerator, getPath, Relation, getFromByTo, getToByFrom, hasRelation } from "./identity-graph";
 import { BinaryPayload } from "@dao-xyz/bpayload";
 
 
@@ -213,13 +213,20 @@ export class TrustedNetwork extends ReadWriteAccessController<Operation<Relation
         return isTrusted;
     }
 
-    async addTrust(trustee: PublicSignKey/*  | Identity | IdentitySerializable */) {
+    async add(trustee: PublicSignKey | PeerId/*  | Identity | IdentitySerializable */) {
         /*  trustee = PublicKey.from(trustee); */
-        await this.trustGraph.put(new AnyRelation({
-            to: trustee,
-            from: this.trustGraph.identity.publicKey
-        }));
+        if (!this.hasRelation(trustee, this.trustGraph.identity.publicKey)) {
+            await this.trustGraph.put(new AnyRelation({
+                to: trustee instanceof Key ? trustee : new IPFSAddress({ address: trustee.toString() }),
+                from: this.trustGraph.identity.publicKey
+            }));
+        }
     }
+
+    hasRelation(trustee: PublicSignKey | PeerId, truster = this.rootTrust) {
+        return !!hasRelation(truster, trustee instanceof Key ? trustee : new IPFSAddress({ address: trustee.toString() }), this.trustGraph)[0]?.value;
+    }
+
 
 
 

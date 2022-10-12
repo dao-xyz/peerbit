@@ -20,6 +20,8 @@ import {
     connectPeers,
     waitForPeers,
 } from '@dao-xyz/orbit-db-test-utils'
+import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
+import { waitFor } from '@dao-xyz/time'
 
 const orbitdbPath1 = './orbitdb/tests/leader/1'
 const orbitdbPath2 = './orbitdb/tests/leader/2'
@@ -103,40 +105,12 @@ Object.keys(testAPIs).forEach(API => {
 
 
         it('will use trusted network for filtering', async () => {
-
-            // TODO fix test timeout, isLeader is too slow as we need to wait for peers
-            // perhaps do an event based get peers using the pubsub peers api
-            console.log("Waiting for peers to connect")
-
-            const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
-            await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
-
-            const replicationTopic = uuid();
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() }), replicationTopic
-                , { directory: dbPath1 })
-
-            const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, 123, 1));
-            expect(isLeaderAOneLeader);
-            const isLeaderATwoLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, 123, 2));
-            expect(isLeaderATwoLeader);
-
-            db2 = await orbitdb2.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath2 })
-
-            await waitForPeers(ipfs1, [orbitdb2.id], DirectChannel.getTopic([orbitdb1.id, orbitdb2.id]))
-            await waitForPeers(ipfs2, [orbitdb1.id], DirectChannel.getTopic([orbitdb1.id, orbitdb2.id]))
-
-            // leader rotation is kind of random, so we do a sequence of tests
-            for (let slot = 0; slot < 3; slot++) {
-                // One leader
-                const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 1));
-                const isLeaderBOneLeader = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 1));
-                expect([isLeaderAOneLeader, isLeaderBOneLeader]).toContainAllValues([false, true])
-
-                // Two leaders
-                const isLeaderATwoLeaders = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 2));
-                const isLeaderBTwoLeaders = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 2));
-                expect([isLeaderATwoLeaders, isLeaderBTwoLeaders]).toContainAllValues([true, true])
-            }
+            const network = await orbitdb1.openNetwork(new TrustedNetwork({ name: 'replication-tests', rootTrust: orbitdb1.identity.publicKey }), { directory: dbPath1 })
+            orbitdb1.joinNetwork(network);
+            network.add(orbitdb1.id);
+            network.add(orbitdb2.identity.publicKey);
+            await orbitdb2.joinNetwork(network)
+            await waitFor(() => Object.keys((orbitdb2.getNetwork(network.address) as TrustedNetwork).trustGraph._index._index).length === 2)
         })
 
         it('select leaders for one or two peers', async () => {

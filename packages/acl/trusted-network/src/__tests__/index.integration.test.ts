@@ -149,7 +149,7 @@ describe('index', () => {
 
             await init(l0a, 0);
 
-            await l0a.addTrust(identity(1).publicKey);
+            await l0a.add(identity(1).publicKey);
 
             let l0b: TrustedNetwork = await TrustedNetwork.load(session.peers[1].ipfs, l0a.address) as any
             await init(l0b, 1);
@@ -158,7 +158,7 @@ describe('index', () => {
 
             await waitFor(() => Object.keys(l0b.trustGraph._index._index).length == 1)
 
-            await l0b.addTrust(identity(2).publicKey); // Will only work if peer2 is trusted
+            await l0b.add(identity(2).publicKey); // Will only work if peer2 is trusted
 
             await l0a.sync(l0b.oplog.heads);
 
@@ -208,6 +208,19 @@ describe('index', () => {
 
         })
 
+        it('has relation', async () => {
+
+            const l0a = new TrustedNetwork({
+                rootTrust: identity(0).publicKey
+            });
+
+            await init(l0a, 0);
+
+            await l0a.add(identity(1).publicKey);
+            expect(l0a.hasRelation(identity(0).publicKey, identity(1).publicKey)).toBeFalse()
+            expect(l0a.hasRelation(identity(1).publicKey, identity(0).publicKey)).toBeTrue()
+
+        })
 
         it('can not append with wrong truster', async () => {
 
@@ -244,7 +257,7 @@ describe('index', () => {
 
 
             // Can not append peer3Key since its not trusted by the root
-            await expect(l0b.addTrust(identity(2).publicKey)).rejects.toBeInstanceOf(AccessError);
+            await expect(l0b.add(identity(2).publicKey)).rejects.toBeInstanceOf(AccessError);
 
         })
     })

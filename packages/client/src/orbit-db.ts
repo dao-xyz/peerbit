@@ -52,7 +52,12 @@ export type Storage = { createStore: (string: string) => Level }
 export type OptionalCreateOptions = { minReplicas?: number, waitForKeysTimout?: number, canAccessKeys?: KeyAccessCondition, isTrusted?: (key: PublicSignKey, replicationTopic: string) => Promise<boolean> }
 export type CreateOptions = { keystore: Keystore, identity: Identity, directory: string, peerId: PeerId, storage: Storage, cache: Cache<any> } & OptionalCreateOptions;
 export type CreateInstanceOptions = { storage?: Storage, directory?: string, keystore?: Keystore, peerId?: PeerId, identity?: Identity, cache?: Cache<any> } & OptionalCreateOptions;
-
+export type OpenStoreOptions = {
+  identity?: Identity,
+  directory?: string,
+  timeout?: number,
+  rejectIfAlreadyOpen?: boolean
+} & IStoreOptions<any>;
 const groupByGid = <T extends (Entry<any> | EntryWithRefs<any>)>(entries: T[]) => {
   const groupByGid: Map<string, T[]> = new Map()
   for (const head of entries) {
@@ -309,24 +314,31 @@ export class OrbitDB {
 
 
   // Callback for local writes to the database. We the update to pubsub.
-  _onWrite<T>(store: Store<any>, _entry: Entry<T>, replicationTopic: string) {
-    const heads = store.oplog.heads;
-    if (!heads) {
-      throw new Error("'heads' not defined")
+  _onWrite<T>(store: Store<any>, entry: Entry<T>, replicationTopic: string) {
+    const sendAll = (data: Uint8Array): Promise<void> => this._ipfs.pubsub.publish(replicationTopic, data);
+    let send = sendAll;
+    if (store.replicate) {
+      // send to peers directly
+      send = async (data: Uint8Array) => {
+        const replicators = await this.findReplicators(replicationTopic, store.replicate, entry.gid);
+        const channels: SharedChannel<DirectChannel>[] = [];
+        for (const replicator of replicators) {
+          if (replicator === this.id.toString()) {
+            continue;
+          }
+          let channel = this._directConnections.get(replicator);
+          if (!channel) { // we are missing a channel, send to all instead as fallback
+            return sendAll(data);
+          }
+          else {
+            channels.push(channel);
+          }
+        }
+        await Promise.all(channels.map(channel => channel.channel.send(data)));
+        return;
+      }
     }
-    if (this._ipfs.pubsub && heads.length > 0) {
-      this.decryptedSignedThing(serialize(new ExchangeHeadsMessage({
-        address: store.address.toString(),
-        heads: heads.map(head => new EntryWithRefs({ entry: head, references: [] })),
-        replicationTopic
-      }))).then((thing) => {
-        const ser = serialize(thing);
-        const der1 = deserialize(ser, DecryptedThing);
-        const der2 = deserialize(ser, MaybeEncrypted);
-
-        this._ipfs.pubsub.publish(replicationTopic, ser)
-      })
-    }
+    exchangeHeads(send, store, this.identity, [entry], replicationTopic, true)
   }
 
   // Callback for receiving a message from the network
@@ -632,7 +644,9 @@ export class OrbitDB {
   async _onPeerConnected(replicationTopic: string, peer: string) {
     logger.debug(`New peer '${peer}' connected to '${replicationTopic}'`)
 
-    const stores = this.stores[replicationTopic];  // Send the heads if we have any
+
+    // determine if we should open a channel (we are replicating a store on the topic + a weak check the peer is trusted)
+    const stores = this.stores[replicationTopic];
     if (stores) {
       for (const [_storeAddress, store] of Object.entries(stores)) {
         if (store.replicate) {
@@ -644,9 +658,21 @@ export class OrbitDB {
                return channel.send(Buffer.from(msg));
              }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner()); */
 
+          /*  let openChannel: boolean;
+           const network = this.getNetwork(replicationTopic);
+           if (network) { // network could be undefined because we are just to create it, in that case we will allow all connections and assume they are limited
+             openChannel = await network.isTrusted(new IPFSAddress({ address: peer })) // this could be false if even if it should be true because network info is not update (yet)
+           }
+           else {
+             openChannel = true;
+           }
+           if (openChannel) {
+             await this.getChannel(peer, replicationTopic);
+           } */
+          await this.getChannel(peer, replicationTopic); // always open a channel, and drop channels if necessary (not trusted) (TODO)
+          return; // we return because we have know opened a channel to this peer
 
           // Creation of this channel here, will make sure it is created even though a head might not be exchanged
-          await this.getChannel(peer, replicationTopic);
 
           /*       await exchangeHeads(this.id, async (peer, msg) => {
                   const channel = await this.getChannel(peer, replicationTopic);
@@ -730,7 +756,7 @@ export class OrbitDB {
 
               await exchangeHeads(async (message) => {
                 await channel.send(message);
-              }, store, this.identity, entries, replicationTopic)
+              }, store, this.identity, entries, replicationTopic, true)
             }
           }
 
@@ -1118,20 +1144,16 @@ export class OrbitDB {
   hasSubscribedToReplicationTopic(topic: string): boolean {
     return !!this.stores[topic]
   }
-  unsubscribeToReplicationTopic(topic: string, id: string = '_'): Promise<boolean> | undefined {
+  unsubscribeToReplicationTopic(topic: string | TrustedNetwork, id: string = '_'): Promise<boolean> | undefined {
+    if (typeof topic !== 'string') {
+      topic = topic.address.toString();
+    }
+
     /* if (this._ipfs.pubsub._subscriptions[topic]) { */
     return this._replicationTopicSubscriptions.get(topic)?.close(id);
     /* } */
   }
 
-  subscribeForReplicationStart(topic: string): Promise<any> {
-    return this.subscribeToReplicationTopic(topic);
-  }
-
-  subscribeForReplicationStop(topic: string): Promise<boolean> | undefined {
-    return this.unsubscribeToReplicationTopic(topic);
-
-  }
 
 
   /* Create and Open databases */
@@ -1215,24 +1237,7 @@ export class OrbitDB {
    * @param options 
    * @returns 
    */
-  async open<S extends StoreLike<any>>(storeOrAddress: /* string | Address |  */S | Address | string, replicationTopic: string, options: {
-    identity?: Identity,
-    directory?: string,
-    timeout?: number,
-    rejectIfAlreadyOpen?: boolean
-
-    /* cache?: Cache,
-    directory?: string,
-    accessController?: any,
-    onlyHash?: boolean,
-    create?: boolean,
-    type?: string,
-    localOnly?: boolean,
-    replicationConcurrency?: number,
-    replicate?: boolean,
-    replicationTopic?: string | (() => string),
-    encryption?: (keystore: Keystore) => StorePublicKeyEncryption; */
-  } & IStoreOptions<any> = {}): Promise<S> {
+  async open<S extends StoreLike<any>>(storeOrAddress: /* string | Address |  */S | Address | string, replicationTopic: string, options: OpenStoreOptions = {}): Promise<S> {
 
 
     // TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?
@@ -1368,44 +1373,49 @@ export class OrbitDB {
         reject(error);
       }
     })
-    return this._openStorePromise as Promise<S>;
+    const openStore = await this._openStorePromise;
+    if (openStore instanceof TrustedNetwork && !this._trustedNetwork.has(openStore.address.toString())) {
+      this._trustedNetwork.set(openStore.address.toString(), openStore)
+    }
+    return openStore as S
     /*  } */
 
   }
 
-  getNetwork(address: string): TrustedNetwork | undefined {
-    return this._trustedNetwork.get(address)
+  getNetwork(address: string | Address): TrustedNetwork | undefined {
+    return this._trustedNetwork.get(typeof address === 'string' ? address : address.toString())
   }
 
-  async openNetwork(network: TrustedNetwork | string) {
-    if (typeof network === 'string') {
-      const loaded = await TrustedNetwork.load(this._ipfs, Address.parse(network))
+  async openNetwork(addressOrNetwork: string | Address | TrustedNetwork, options?: OpenStoreOptions) {
+    let network: TrustedNetwork
+
+    if (addressOrNetwork instanceof TrustedNetwork) {
+      network = addressOrNetwork;
+    }
+    else {
+      const loaded = await TrustedNetwork.load(this._ipfs, Address.parse(addressOrNetwork.toString()))
       if (loaded instanceof TrustedNetwork === false) {
         throw new Error("Address does not point to a TrustedNetwork")
       }
       network = loaded;
     }
-
-    let address = network.address
-    if (!network.address) {
+    let address: Address = network.address;
+    if (!address) {
       address = await network.save(this._ipfs);
     }
 
-    const openNetwork = await this.open(network, address.toString())
-
-    if (!this._trustedNetwork.has(openNetwork.address.toString())) {
-      this._trustedNetwork.set(openNetwork.address.toString(), openNetwork)
-    }
+    const openNetwork = await this.open(network, address.toString(), options)
+    return openNetwork;
   }
 
-  async joinNetwork(address: Address | string) {
-    const trustedNetwork = this._trustedNetwork.get(address.toString());
+  async joinNetwork(address: Address | string | TrustedNetwork) {
+    const trustedNetwork = this._trustedNetwork.get(address instanceof TrustedNetwork ? address.address.toString() : address.toString());
     if (!trustedNetwork) {
       throw new Error("TrustedNetwork is not open, please call `openNetwork` prior")
     }
     // Will be rejected by peers if my identity is not trusted
     // (this will sign our IPFS ID with our client Ed25519 key identity, if peers do not trust our identity, we will be rejected)
-    await trustedNetwork.addTrust(new IPFSAddress({ address: this.id.toString() }))
+    await trustedNetwork.add(new IPFSAddress({ address: this.id.toString() }))
   }
 
   // Save the database locally

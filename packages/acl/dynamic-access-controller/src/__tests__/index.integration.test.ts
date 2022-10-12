@@ -161,7 +161,7 @@ describe('index', () => {
         await expect(l0b.put(new Document({
             id: 'id'
         }))).rejects.toBeInstanceOf(AccessError); // Not trusted
-        await (l0a.accessController as DynamicAccessController<Document>).trust.addTrust(identity(1).publicKey);
+        await (l0a.accessController as DynamicAccessController<Document>).trust.add(identity(1).publicKey);
 
         await (l0b.accessController as DynamicAccessController<Document>).trust.sync((l0a.accessController as DynamicAccessController<Document>).trust.oplog.heads);
         await waitFor(() => Object.keys((l0b.accessController as DynamicAccessController<Document>).trust.trustGraph._index._index).length === 1);
