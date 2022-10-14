@@ -6,7 +6,6 @@ import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 // Test utils
 import {
   nodeConfig as config,
-  testAPIs,
   waitForPeers
 } from '@dao-xyz/orbit-db-test-utils'
 

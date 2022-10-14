@@ -1,7 +1,7 @@
 import assert from 'assert'
 import rmrf from 'rimraf'
 import fs from 'fs-extra'
-import { CanAppendAccessController } from '../default-access-controller.js'
+import { CanAppend } from '../access.js'
 import { Log } from '../log.js'
 import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
 import { Entry } from '../entry.js'
@@ -164,15 +164,15 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     it('throws an error if entry doesn\'t have append access', async () => {
-      const denyAccess = { canAppend: (_, __) => Promise.resolve(false) } as CanAppendAccessController<string>
+      const canAppend: CanAppend<string> = () => Promise.resolve(false)
       const log1 = new Log<string>(ipfs, {
         ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'A' })
-      const log2 = new Log(ipfs, {
+      const log2 = new Log<string>(ipfs, {
         ...signKey2.keypair,
         sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
-      }, { logId: 'A', access: denyAccess })
+      }, { logId: 'A', canAppend })
 
       let err
       try {
@@ -187,13 +187,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     it('throws an error upon join if entry doesn\'t have append access', async () => {
-      const testACL = {
-        canAppend: async (_entry: any, signature: MaybeEncrypted<SignatureWithKey>) => signature.decrypted.getValue(SignatureWithKey).publicKey.equals(signKey.keypair.publicKey)
-      } as CanAppendAccessController<string>;
+      const canAppend: CanAppend<any> = async (_entry: any, signature: MaybeEncrypted<SignatureWithKey>) => signature.decrypted.getValue(SignatureWithKey).publicKey.equals(signKey.keypair.publicKey);
       const log1 = new Log<string>(ipfs, {
         ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
-      }, { logId: 'A', access: testACL })
+      }, { logId: 'A', canAppend })
       const log2 = new Log<string>(ipfs, {
         ...signKey2.keypair,
         sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))

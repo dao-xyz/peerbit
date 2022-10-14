@@ -32,7 +32,6 @@ import {
 import { Controller } from 'ipfsd-ctl'
 import { IPFS } from 'ipfs-core-types'
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
-import { JSON_ENCODING } from '../encoding.js';
 
 let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, signKey2: KeyWithMeta<Ed25519Keypair>, signKey3: KeyWithMeta<Ed25519Keypair>, signKey4: KeyWithMeta<Ed25519Keypair>
 

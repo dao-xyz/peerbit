@@ -1,4 +1,4 @@
-import { Ed25519PrivateKey, Ed25519PublicKey, PublicSignKey, Secp256k1PublicKey } from "@dao-xyz/peerbit-crypto";
+import { Ed25519PrivateKey, Ed25519PublicKey, Secp256k1PublicKey } from "@dao-xyz/peerbit-crypto";
 
 /**
  * Can sign

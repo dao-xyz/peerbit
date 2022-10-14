@@ -207,10 +207,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
           ...signKey.keypair,
           sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
         },)
-        const anyoneCanAppend = await log._access.canAppend('any' as any, new DecryptedThing({
+        const anyoneCanAppend = await log._canAppend('any' as any, new DecryptedThing({
           data: serialize(signKey)
         }))
-        assert.notStrictEqual(log._access, undefined)
+        assert.notStrictEqual(log._canAppend, undefined)
         expect(anyoneCanAppend).toEqual(true)
       })
 
