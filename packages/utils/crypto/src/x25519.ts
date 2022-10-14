@@ -1,8 +1,6 @@
 export * from './errors.js';
-import { Constructor, deserialize, field, serialize, variant, vec } from '@dao-xyz/borsh';
-import { arraysCompare, bufferSerializer, U8IntArraySerializer } from '@dao-xyz/borsh-utils';
-import { arraysEqual } from '@dao-xyz/borsh-utils'
-import { AccessError } from './errors.js';
+import { field, variant } from '@dao-xyz/borsh';
+import { arraysCompare, fixedUint8Array } from '@dao-xyz/borsh-utils';
 import sodium from 'libsodium-wrappers';
 import { Keypair, PrivateEncryptionKey, PublicKeyEncryptionKey } from './key.js';
 import { Ed25519Keypair, Ed25519PublicKey, Ed25519PrivateKey } from './ed25519.js';
@@ -12,7 +10,7 @@ import { Ed25519Keypair, Ed25519PublicKey, Ed25519PrivateKey } from './ed25519.j
 @variant(0)
 export class X25519PublicKey extends PublicKeyEncryptionKey {
 
-    @field(U8IntArraySerializer)
+    @field({ type: fixedUint8Array(32) })
     publicKey: Uint8Array;
 
     constructor(properties?: { publicKey: Uint8Array }) {
@@ -51,7 +49,7 @@ export class X25519PublicKey extends PublicKeyEncryptionKey {
 @variant(0)
 export class X25519SecretKey extends PrivateEncryptionKey {
 
-    @field(U8IntArraySerializer)
+    @field({ type: fixedUint8Array(32) })
     secretKey: Uint8Array;
 
     constructor(properties?: { secretKey: Uint8Array }) {

@@ -10,11 +10,12 @@ import { jest } from '@jest/globals';
 import fs from 'fs-extra'
 import { StoreError } from '../errors.js';
 import { delay } from '@dao-xyz/time';
-import { fixturePath } from './fixture.test.js';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
+import { deserialize, serialize } from '@dao-xyz/borsh';
+import { fixturePath } from './fixture.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -24,7 +25,6 @@ const tempKeyPath = path.join(__dirname, "keystore-test");
 
 jest.setTimeout(600000)
 
-let store: Level;
 
 /* jest.useRealTimers();
 ; */
@@ -44,6 +44,7 @@ describe('keystore', () => {
   })
 
   describe('constructor', () => {
+    let store: Level;
 
     beforeAll(async () => {
       store = store || await createStore(tempKeyPath + '/1') // storagePath
@@ -93,14 +94,19 @@ describe('keystore', () => {
 
   describe('createKey', () => {
     let keystore: Keystore
+    let store: Level;
 
     beforeAll(async () => {
+      store = store || await createStore(tempKeyPath + '/2') // storagePath
       keystore = new Keystore(store)
     })
 
     it('creates a new key ed25519 ', async () => {
       const id = new Uint8Array([1, 2, 4]);
       const key = await keystore.createEd25519Key({ id })
+      const kwm = serialize(key);
+      const dkwm = deserialize(kwm, KeyWithMeta);
+
       expect(await keystore.hasKey(id))
       expect(await keystore.hasKey(key.keypair.publicKey))
       expect(await keystore.getKey(id))
@@ -166,11 +172,12 @@ describe('keystore', () => {
 
 describe('hasKey', () => {
   let keystore: Keystore
+  let store: Level;
 
 
   beforeAll(async () => {
 
-    store = store || await createStore(tempKeyPath + '/1') // storagePath
+    store = store || await createStore(tempKeyPath + '/3') // storagePath
 
     keystore = new Keystore(store)
     await keystore.waitForOpen();
@@ -207,9 +214,10 @@ describe('hasKey', () => {
 })
 
 describe('getKey', () => {
+  let store: Level;
   let keystore: Keystore, createdKey: KeyWithMeta<Ed25519Keypair>, createdKeyInGroup: KeyWithMeta<Ed25519Keypair>
   beforeAll(async () => {
-    store = store || await createStore(tempKeyPath + '/1') // storagePath
+    store = store || await createStore(tempKeyPath + '/4') // storagePath
     keystore = new Keystore(store)
     createdKey = await keystore.createEd25519Key({ id: 'ZZZ', overwrite: true })
     createdKeyInGroup = await keystore.createEd25519Key({ id: 'YYY', group: 'group', overwrite: true })
@@ -258,10 +266,11 @@ describe('getKey', () => {
 
 describe('getKeys', () => {
   let keystore: Keystore, aSignKey: KeyWithMeta<Ed25519Keypair>, aBoxKey: KeyWithMeta<X25519Keypair>, aBox2Key: KeyWithMeta<X25519Keypair>, bSignKey: KeyWithMeta<Ed25519Keypair>
+  let store: Level;
 
   beforeAll(async () => {
 
-    store = store || await createStore(tempKeyPath + '/1') // storagePath
+    store = store || await createStore(tempKeyPath + '/5') // storagePath
   })
 
   it('gets keys by group', async () => {

@@ -6,6 +6,7 @@ import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log';
 import { AccessController } from "@dao-xyz/orbit-db-store";
 import { variant } from '@dao-xyz/borsh';
 import { EncodingType } from "@dao-xyz/orbit-db-store";
+import { TestStore } from "./test-store";
 
 // TODO: generalize the Iterator functions and spin to its own module
 export interface Operation<T> {
@@ -29,7 +30,7 @@ export class EventIndex<T> {
 }
 
 @variant(0)
-export class EventStore<T> extends Store<Operation<T>> {
+export class EventStore<T> extends TestStore<Operation<T>> {
 
     _index: EventIndex<T>;
 

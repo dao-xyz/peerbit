@@ -1,16 +1,17 @@
-import { field, serialize, variant } from "@dao-xyz/borsh";
+import { field, serialize, serializeField, variant } from "@dao-xyz/borsh";
 import { BinaryDocumentStore, IndexedValue } from "@dao-xyz/orbit-db-bdocstore";
-import { Key, PlainKey, PublicSignKey, PUBLIC_KEY_WIDTH } from "@dao-xyz/peerbit-crypto";
+import { Key, PlainKey, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 // @ts-ignore
 import { SystemBinaryPayload } from "@dao-xyz/bpayload";
 import { DocumentQueryRequest, MemoryCompare, MemoryCompareQuery, QueryRequestV0, Result, ResultWithSource } from "@dao-xyz/query-protocol";
 import { AccessController } from "@dao-xyz/orbit-db-store";
 import { createHash } from "crypto";
-import { joinUint8Arrays } from '@dao-xyz/borsh-utils'
+import { joinUint8Arrays, U8IntArraySerializer } from '@dao-xyz/borsh-utils'
 
 export type RelationResolver = { resolve: (key: PublicSignKey, db: BinaryDocumentStore<Relation>) => Promise<Result[]>, next: (relation: AnyRelation) => PublicSignKey }
+export const PUBLIC_KEY_WIDTH = 72 // bytes reserved
 
-const KEY_OFFSET = 3n + 4n + 1n + 28n; // SystemBinaryPayload discriminator + Relation discriminator + AnyRelation discriminator + id length u32 + utf8 encoding + id chars +
+export const KEY_OFFSET = 3 + 4 + 1 + 28; // SystemBinaryPayload discriminator + Relation discriminator + AnyRelation discriminator + id length u32 + utf8 encoding + id chars
 export const getFromByTo: RelationResolver = {
     resolve: async (to: PublicSignKey, db: BinaryDocumentStore<Relation>) => {
         const ser = serialize(to);
@@ -21,7 +22,7 @@ export const getFromByTo: RelationResolver = {
                         compares: [
                             new MemoryCompare({
                                 bytes: ser,
-                                offset: KEY_OFFSET + BigInt(PUBLIC_KEY_WIDTH)
+                                offset: BigInt(KEY_OFFSET + PUBLIC_KEY_WIDTH)
                             })
                         ]
                     })
@@ -42,7 +43,7 @@ export const getToByFrom: RelationResolver = {
                         compares: [
                             new MemoryCompare({
                                 bytes: ser,
-                                offset: KEY_OFFSET
+                                offset: BigInt(KEY_OFFSET)
                             })
                         ]
                     })
@@ -130,6 +131,9 @@ export class AnyRelation extends Relation {
     @field({ type: Key })
     from: Key
 
+    @field(U8IntArraySerializer)
+    padding: Uint8Array;
+
     @field({ type: Key })
     to: Key
 
@@ -141,6 +145,8 @@ export class AnyRelation extends Relation {
         if (properties) {
             this.from = properties.from;
             this.to = properties.to;
+            const serFrom = serialize(this.from);
+            this.padding = new Uint8Array(PUBLIC_KEY_WIDTH - serFrom.length - 4); // -4 comes from u32 describing length the padding array
             this.initializeId();
         }
     }

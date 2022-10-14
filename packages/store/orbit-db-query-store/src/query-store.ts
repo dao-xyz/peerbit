@@ -1,5 +1,5 @@
 import { Store, IInitializationOptions } from '@dao-xyz/orbit-db-store'
-import { field, option } from '@dao-xyz/borsh';
+import { field, option, variant } from '@dao-xyz/borsh';
 import type { Message } from '@libp2p/interface-pubsub'
 import { QueryRequestV0, QueryResponseV0, Result, MultipleQueriesType, StoreAddressMatchQuery } from '@dao-xyz/query-protocol';
 import { X25519PublicKey } from '@dao-xyz/peerbit-crypto';
@@ -16,11 +16,13 @@ export const getQueryTopic = (region: string): string => {
 }
 /* export type IQueryStoreOptions<T> = IStoreOptions<T> & { queryRegion?: string, subscribeToQueries: boolean };
  */
+
+@variant(0)
 export class QueryStore<T> extends Store<T> {
 
     @field({ type: option('string') })
-
     queryRegion?: string;
+
     subscribeToQueries: boolean = true;
 
     _subscribed: boolean = false;

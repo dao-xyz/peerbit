@@ -35,7 +35,10 @@ export const StringSetSerializer = {
 export const fixedUint8Array = (length: number) => {
     return {
         serialize: (obj: Uint8Array, writer: BinaryWriter) => {
-            for (let i = 0; i < obj.length; i++) {
+            if (length !== obj.length) {
+                throw new Error("Unexpected length")
+            }
+            for (let i = 0; i < length; i++) {
                 writer.writeU8(obj[i])
             }
         },
@@ -49,6 +52,25 @@ export const fixedUint8Array = (length: number) => {
     }
 }
 
+export const fixedString = (length: number) => {
+    return {
+        serialize: (obj: string, writer: BinaryWriter) => {
+            if (length !== obj.length) {
+                throw new Error("Unexpected length")
+            }
+            for (let i = 0; i < length; i++) {
+                writer.writeString(obj[i])
+            }
+        },
+        deserialize: (reader: BinaryReader) => {
+            const arr = new Uint8Array(length);
+            for (let i = 0; i < length; i++) {
+                arr[i] = reader.readU8();
+            }
+            return arr;
+        }
+    }
+}
 export const arraysEqual = (array1?: any[] | Uint8Array, array2?: any[] | Uint8Array) => {
     if (!!array1 != !!array2)
         return false;

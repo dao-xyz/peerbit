@@ -11,9 +11,6 @@ export class Ed25519PublicKey extends PublicSignKey {
     publicKey: Uint8Array;
 
 
-    @field({ type: fixedUint8Array(32) })
-    padding: Uint8Array = new Uint8Array((new Array(32)).fill(0)) // we do padding because we want all publicsignkeys to have same size (64 bytes) excluding descriminators. This allows us to efficiently index keys and use byte search to find them we predetermined offsets
-
     constructor(properties?: { publicKey: Uint8Array }) {
         super();
         if (properties) {
@@ -36,7 +33,7 @@ export class Ed25519PublicKey extends PublicSignKey {
 @variant(0)
 export class Ed25519PrivateKey extends PrivateSignKey {
 
-    @field({ type: fixedUint8Array(32) })
+    @field({ type: fixedUint8Array(64) })
     privateKey: Uint8Array;
 
     constructor(properties?: { privateKey: Uint8Array }) {

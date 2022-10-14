@@ -68,9 +68,9 @@ Object.keys(testAPIs).forEach(API => {
             rmrf.sync(dbPath2)
 
             orbitdb1 = await OrbitDB.createInstance(ipfs1, {
-                directory: orbitdbPath1, canAccessKeys: async (requester, _keyToAccess) => {
+                directory: orbitdbPath1,/*  canAccessKeys: async (requester, _keyToAccess) => {
                     return requester.equals(orbitdb2.identity.publicKey); // allow orbitdb1 to share keys with orbitdb2
-                }, waitForKeysTimout: 1000
+                },  */waitForKeysTimout: 1000
             })
             orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2 })
             db1 = await orbitdb1.open(new EventStore<string>({
@@ -96,7 +96,7 @@ Object.keys(testAPIs).forEach(API => {
         })
 
         it('write 1 entry replicate false', async () => {
-            console.log("Waiting for peers to connect")
+
             await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
             db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, { directory: dbPath2, replicate: false })
 
@@ -111,7 +111,7 @@ Object.keys(testAPIs).forEach(API => {
         })
 
         it('encrypted clock sync write 1 entry replicate false', async () => {
-            console.log("Waiting for peers to connect")
+
             await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
             const encryptionKey = await orbitdb1.keystore.createEd25519Key({ id: 'encryption key', group: replicationTopic });
             db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, { directory: dbPath2, replicate: false })
@@ -138,7 +138,7 @@ Object.keys(testAPIs).forEach(API => {
 
             const replicationTopic = 'x';
             const store = new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() });
-            await orbitdb2.subscribeForReplicationStart(replicationTopic);
+            await orbitdb2.subscribeToReplicationTopic(replicationTopic);
             await orbitdb1.open(store, replicationTopic, { replicate: false }); // this would be a "light" client, write -only
 
             const hello = await store.add('hello', { nexts: [] });

@@ -26,7 +26,6 @@ export class AccessController<T> implements CanAppendAccessController<T>, Initia
   clone(newName: string): AccessController<T> {
     throw new Error("Not implemented")
   }
-  async canAccessKeys?(identity: { type: string, key: Uint8Array }): Promise<boolean>;
   async close?(): Promise<void>;
 
 }

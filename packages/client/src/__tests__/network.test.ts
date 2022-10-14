@@ -14,10 +14,7 @@ import { v4 as uuid } from 'uuid';
 // Include test utilities
 import {
     nodeConfig as config,
-    startIpfs,
-    stopIpfs,
     testAPIs,
-    connectPeers,
     Session
 } from '@dao-xyz/orbit-db-test-utils'
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
@@ -122,6 +119,11 @@ Object.keys(testAPIs).forEach(API => {
 
             await delay(2000); // arb. delay
             expect(Object.keys((orbitdb2.getNetwork(network.address) as TrustedNetwork).trustGraph._index._index)).toHaveLength(0); // because peer id is not trusted so it will not recieve heads
+
+        })
+
+        it('it will try to connect to new peers', async () => {
+            const network = await orbitdb1.openNetwork(new TrustedNetwork({ name: 'connect', rootTrust: orbitdb1.identity.publicKey }), { directory: dbPath1 })
 
         })
     })

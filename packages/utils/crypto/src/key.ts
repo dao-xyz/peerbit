@@ -3,7 +3,6 @@ import { SystemBinaryPayload } from "@dao-xyz/bpayload";
 
 export type IdentityProviderType = 'orbitdb' | 'ethereum' | 'solana';
 
-export const PUBLIC_KEY_WIDTH = 7 + 64; // discriminators + key
 
 @variant(0)
 export class Crypto extends SystemBinaryPayload {

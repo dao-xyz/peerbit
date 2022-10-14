@@ -92,11 +92,7 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     it('replicates database of 1 entry', async () => {
-
-      console.log("Waiting for peers to connect")
-
       let options = { directory: dbPath2 }
-
       const replicationTopic = uuid();
       db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() }), replicationTopic
         , { ...Object.assign({}, options, { directory: dbPath1 }) })
@@ -131,7 +127,7 @@ Object.keys(testAPIs).forEach(API => {
 
     it('multible databases shared replication topic', async () => {
 
-      console.log("Waiting for peers to connect")
+
 
 
       const replicationTopicFn = () => 'x';

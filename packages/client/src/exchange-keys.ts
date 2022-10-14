@@ -15,7 +15,7 @@ import { Identity } from '@dao-xyz/ipfs-log';
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
-export type KeyAccessCondition = (requester: PublicSignKey, keyToAccess: KeyWithMeta<Ed25519Keypair | X25519Keypair>) => Promise<boolean>;
+export type KeyAccessCondition = (keyToAccess: KeyWithMeta<Ed25519Keypair | X25519Keypair>) => boolean;
 //export type KeyType = 'ethereum' | 'solana' | 'orbitdb';
 
 
@@ -162,6 +162,7 @@ export class RequestKeysByKey<T extends (Ed25519Keypair | X25519Keypair)> extend
 @variant([1, 0])
 export class RequestKeyMessage<T extends (Ed25519Keypair | X25519Keypair)> extends ProtocolMessage {
 
+
     @field({ type: Key })
     _encryptionKey: Key
 
@@ -278,7 +279,6 @@ export const requestKeys = async <T extends (X25519Keypair | Ed25519Keypair)>(co
 export const exchangeKeys = async <T extends Ed25519Keypair | X25519Keypair>(
     send: (data: Uint8Array) => Promise<void>,
     request: RequestKeyMessage<T>,
-    requester: PublicSignKey,
     canAccessKey: KeyAccessCondition,
     keystore: Keystore,
     identity: Identity,
@@ -308,7 +308,7 @@ export const exchangeKeys = async <T extends Ed25519Keypair | X25519Keypair>(
     }
 
     const mappedKeys = (await Promise.all(secretKeys.map(async (key) => {
-        return (await canAccessKey(requester, key)) ? key : key.clone()
+        return (await canAccessKey(key)) ? key : key.clone()
     }))).filter(x => !!x);
 
     if (mappedKeys.length === 0) {

@@ -1,5 +1,5 @@
 import { Session, Peer, waitForPeers } from '@dao-xyz/orbit-db-test-utils'
-import { AllowAllAccessController, AnyRelation, createIdentityGraphStore, getFromByTo, getPathGenerator, getToByFrom, TrustedNetwork } from '..';
+import { AllowAllAccessController, AnyRelation, createIdentityGraphStore, getFromByTo, getPathGenerator, getToByFrom, TrustedNetwork, KEY_OFFSET, PUBLIC_KEY_WIDTH } from '..';
 import { waitFor } from '@dao-xyz/time';
 import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { DocumentQueryRequest, QueryRequestV0, QueryResponseV0, ResultWithSource } from '@dao-xyz/query-protocol';
@@ -14,6 +14,7 @@ import path from 'path';
 import { jest } from '@jest/globals';
 import { CachedValue, DefaultOptions, Store, StoreLike } from '@dao-xyz/orbit-db-store';
 import Cache from '@dao-xyz/orbit-db-cache';
+import { serialize } from '@dao-xyz/borsh';
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 
@@ -46,8 +47,35 @@ describe('index', () => {
     })
     describe('identity-graph', () => {
 
+        it('serializes relation with right padding ed25519', async () => {
+            const from = (await Ed25519Keypair.create()).publicKey;
+            const to = (await Ed25519Keypair.create()).publicKey;
+            const relation = new AnyRelation({ from, to })
+            const serRelation = serialize(relation);
+            const serFrom = serialize(from);
+            const serTo = serialize(to);
 
-        it('getFromByTo', async () => {
+            expect(serRelation.slice(KEY_OFFSET, KEY_OFFSET + serFrom.length)).toEqual(serFrom) // From key has a fixed offset from 0
+            expect(serRelation.slice(KEY_OFFSET + PUBLIC_KEY_WIDTH)).toEqual(serTo) // To key has a fixed offset from 0
+        })
+
+        it('serializes relation with right padding sepc256k1', async () => {
+            const from = new Secp256k1PublicKey({
+                address: await Wallet.createRandom().getAddress()
+            })
+            const to = (await Ed25519Keypair.create()).publicKey;
+            const relation = new AnyRelation({ from, to })
+            const serRelation = serialize(relation);
+            const serFrom = serialize(from);
+            const serTo = serialize(to);
+
+            expect(serRelation.slice(KEY_OFFSET, KEY_OFFSET + serFrom.length)).toEqual(serFrom) // From key has a fixed offset from 0
+            expect(serRelation.slice(KEY_OFFSET + PUBLIC_KEY_WIDTH)).toEqual(serTo) // To key has a fixed offset from 0
+        })
+
+
+
+        it('path', async () => {
 
             const a = (await Ed25519Keypair.create()).publicKey;
             const b = new Secp256k1PublicKey({
@@ -131,11 +159,7 @@ describe('index', () => {
             await store.del(ab.id);
             trustingB = await getFromByTo.resolve(b, store);
             expect(trustingB).toHaveLength(0);
-
         })
-
-
-
     })
 
 

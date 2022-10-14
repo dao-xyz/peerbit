@@ -7,6 +7,7 @@ import { Operation } from "./event-store";
 import { variant } from '@dao-xyz/borsh';
 import { IPFS } from "ipfs-core-types";
 import { EncodingType } from "@dao-xyz/orbit-db-store";
+import { TestStore } from "./test-store";
 
 
 export class KeyValueIndex {
@@ -42,7 +43,7 @@ export class KeyValueIndex {
 
 
 @variant(2)
-export class KeyValueStore<T> extends Store<Operation<T>> {
+export class KeyValueStore<T> extends TestStore<Operation<T>> {
     _type: string;
     _index: KeyValueIndex;
     constructor(properties: {

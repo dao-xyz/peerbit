@@ -6,6 +6,7 @@
         "packages/client",
         "packages/acl/dynamic-access-controller",
         "packages/acl/trusted-network",
+        "packages/acl/discovery",
         "packages/identity/keystore",
         "packages/utils/crypto",
         "packages/store/orbit-db-bdocstore",

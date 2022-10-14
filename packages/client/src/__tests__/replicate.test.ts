@@ -90,7 +90,7 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     it('replicates database of 1 entry', async () => {
-      console.log("Waiting for peers to connect")
+
       await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
 
       options = Object.assign({}, options, { directory: dbPath2 })
@@ -122,7 +122,7 @@ Object.keys(testAPIs).forEach(API => {
     });
 
     it('replicates database of 100 entries', async () => {
-      console.log("Waiting for peers to connect")
+
       await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
 
       options = Object.assign({}, options, { directory: dbPath2 })
@@ -159,7 +159,7 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     it('emits correct replication info', async () => {
-      console.log("Waiting for peers to connect")
+
       await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
 
       options = Object.assign({}, options, { directory: dbPath2 })
@@ -310,7 +310,7 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     it('emits correct replication info in two-way replication', async () => {
-      console.log("Waiting for peers to connect")
+
       await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
 
       const entryCount = 15

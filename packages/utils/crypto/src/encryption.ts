@@ -5,7 +5,7 @@ import { arraysEqual } from '@dao-xyz/borsh-utils'
 import { AccessError } from './errors.js';
 import sodium from 'libsodium-wrappers';
 import { X25519Keypair, X25519PublicKey, X25519SecretKey } from './x25519.js';
-import { Ed25519Keypair, Ed25519PublicKey, Ed25519PrivateKey } from './ed25519.js';
+import { Ed25519Keypair, Ed25519PublicKey } from './ed25519.js';
 
 const NONCE_LENGTH = 24;
 

@@ -28,6 +28,7 @@ import {
   waitForPeers,
   Session,
 } from '@dao-xyz/orbit-db-test-utils'
+import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
 
 const orbitdbPath1 = './orbitdb/tests/replication/1'
 const orbitdbPath2 = './orbitdb/tests/replication/2'
@@ -79,16 +80,26 @@ Object.keys(testAPIs).forEach(API => {
       rmrf.sync(dbPath3)
 
       orbitdb1 = await OrbitDB.createInstance(session.peers[0].ipfs, {
-        directory: orbitdbPath1, canAccessKeys: (requester, _keyToAccess) => {
-          return Promise.resolve(requester.equals(orbitdb2.identity.publicKey)) // allow orbitdb1 to share keys with orbitdb2
-        }, waitForKeysTimout: 1000
-      })
+        directory: orbitdbPath1, waitForKeysTimout: 1000
+      },)
+
+      const network = await orbitdb1.openNetwork(new TrustedNetwork({ name: 'network-tests', rootTrust: orbitdb1.identity.publicKey }), { directory: dbPath1 })
+      await orbitdb1.joinNetwork(network);
+
+      // Trusted client 2
       orbitdb2 = await OrbitDB.createInstance(session.peers[1].ipfs, { directory: orbitdbPath2, waitForKeysTimout: 1000 })
+      await network.add(orbitdb2.id)
+      await network.add(orbitdb2.identity.publicKey)
+      replicationTopic = network.address.toString();
+      await orbitdb2.openNetwork(network.address)
+      await waitFor(() => Object.keys(orbitdb2.getNetwork(replicationTopic)?.trustGraph._index._index as any).length === 3);
+      await orbitdb2.joinNetwork(network)
+
+      // Untrusted client 3
       orbitdb3 = await OrbitDB.createInstance(session.peers[2].ipfs, { directory: orbitdbPath3, waitForKeysTimout: 1000 })
 
       recieverKey = await orbitdb2.keystore.createEd25519Key();
 
-      replicationTopic = uuid();
       options = Object.assign({}, options, { directory: dbPath1 })
       db1 = await orbitdb1.open(new EventStore<string>({
         accessController: new SimpleAccessController()
@@ -122,9 +133,6 @@ Object.keys(testAPIs).forEach(API => {
 
     it('replicates database of 1 entry known keys', async () => {
 
-      await waitForPeers(session.peers[1].ipfs, [orbitdb1.id], db1.address.toString())
-
-
       options = Object.assign({}, options, { directory: dbPath2 })
       let done = false;
 
@@ -136,20 +144,18 @@ Object.keys(testAPIs).forEach(API => {
         }
       })
       await orbitdb2.keystore.saveKey(recieverKey);
-      expect(await orbitdb2.keystore.getKey(recieverKey.keypair.publicKey))
+      expect(await orbitdb2.keystore.getKey(recieverKey.keypair.publicKey)).toBeDefined()
       await addHello(db1, recieverKey.keypair.publicKey);
       await waitFor(() => done);
     })
 
 
     it('replicates database of 1 entry unknown keys', async () => {
-      await waitForPeers(session.peers[1].ipfs, [orbitdb1.id], db1.address.toString())
+
 
       options = Object.assign({}, options, { directory: dbPath2 })
 
       const unknownKey = await orbitdb1.keystore.createEd25519Key({ id: 'unknown', group: replicationTopic });
-
-
 
       // We expect during opening that keys are exchange
       let done = false;
@@ -162,28 +168,17 @@ Object.keys(testAPIs).forEach(API => {
 
       expect(await orbitdb1.keystore.hasKey(unknownKey.keypair.publicKey));
       const xKey = await X25519PublicKey.from(unknownKey.keypair.publicKey);
-      const getXKEy = await orbitdb1.keystore.getKey(xKey);
+      const getXKEy = await orbitdb1.keystore.getKey(xKey, replicationTopic);
       expect(getXKEy).toBeDefined();
-      (orbitdb1.keystore as any)["abc"] = 123;
       expect(!(await orbitdb2.keystore.hasKey(unknownKey.keypair.publicKey)));
 
       // ... so that append with reciever key, it the reciever will be able to decrypt
-      try {
-        await addHello(db1, unknownKey.keypair.publicKey);
-
-        await waitFor(() => done);
-
-      } catch (error) {
-
-      }
-
-      const x = await orbitdb1.keystore.getKey(xKey);
-      const t = 123;
-
+      await addHello(db1, unknownKey.keypair.publicKey);
+      await waitFor(() => done);
     })
 
     it('can ask for public keys even if not trusted', async () => {
-      await waitForPeers(session.peers[2].ipfs, [orbitdb1.id], db1.address.toString())
+      await waitForPeers(session.peers[2].ipfs, [orbitdb1.id], replicationTopic)
       options = Object.assign({}, options, { directory: dbPath3 })
 
       const db3Key = await orbitdb3.keystore.createEd25519Key({ id: 'unknown', group: replicationTopic });
@@ -199,7 +194,7 @@ Object.keys(testAPIs).forEach(API => {
 
       const reciever = await orbitdb1.getEncryptionKey(replicationTopic) as KeyWithMeta<Ed25519Keypair>
 
-      assert.deepStrictEqual(reciever.keypair.privateKey, undefined); // because client 1 is not trusted by 3
+      expect(reciever).toBeUndefined(); // because client 1 is not trusted by 3
       expect(db3Key.keypair.publicKey.equals(reciever.keypair.publicKey));
 
       // ... so that append with reciever key, it the reciever will be able to decrypt
@@ -210,28 +205,23 @@ Object.keys(testAPIs).forEach(API => {
 
     it('can retrieve secret keys if trusted', async () => {
 
-      await waitForPeers(session.peers[2].ipfs, [orbitdb1.id], db1.address.toString())
+      await waitForPeers(session.peers[2].ipfs, [orbitdb1.id], replicationTopic)
 
       const db1Key = await orbitdb1.keystore.createEd25519Key({ id: 'unknown', group: replicationTopic });
 
       // Open store from orbitdb3 so that both client 1 and 2 is listening to the replication topic
       options = Object.assign({}, options, { directory: dbPath2 })
-      let done = false;
       await orbitdb2.open(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
         ...options
       })
       const reciever = await orbitdb2.getEncryptionKey(replicationTopic) as KeyWithMeta<Ed25519Keypair>;
-
-      assert(!!reciever.keypair.privateKey); // because client 1 is not trusted by 3
+      expect(reciever).toBeDefined();
       expect(db1Key.keypair.publicKey.equals(reciever.keypair.publicKey));
     })
 
     it('can relay with end to end encryption with public id and clock (E2EE-weak)', async () => {
 
-      console.log("Waiting for peers to connect")
-
-      await waitForPeers(session.peers[1].ipfs, [orbitdb1.id], db1.address.toString())
-      await waitForPeers(session.peers[2].ipfs, [orbitdb1.id], db1.address.toString())
+      await waitForPeers(session.peers[2].ipfs, [orbitdb1.id], replicationTopic)
 
       options = Object.assign({}, options, { directory: dbPath2 })
       db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, { ...options })
@@ -268,8 +258,6 @@ Object.keys(testAPIs).forEach(API => {
           await entriesRelay[0].getPayload(); // should pass since orbitdb3 got encryption key
         }
       })
-
-
     })
   })
 })

@@ -8,7 +8,7 @@ import { Replicator } from './replicator.js'
 import { ReplicationInfo } from './replication-info.js'
 import io from '@dao-xyz/io-utils'
 import Cache from '@dao-xyz/orbit-db-cache';
-import { variant, field, vec, option } from '@dao-xyz/borsh';
+import { variant, field, vec, option, Constructor } from '@dao-xyz/borsh';
 import { IPFS } from 'ipfs-core-types'
 
 // @ts-ignore
@@ -27,11 +27,6 @@ import Logger from 'logplease'
 import { EncodingType } from './encoding.js'
 import { EntryWithRefs } from './entry-with-refs.js'
 
-/* let v8 = undefined;
-if (isNode) {
-  v8 = require('v8');
-} */
-export type Constructor<T> = new (...args: any[]) => T;
 
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
 Logger.setLogLevel('ERROR')
@@ -271,20 +266,8 @@ export class Store<T> implements StoreLike<T> {
       this._encoding = properties.encoding || EncodingType.JSON
       /* this.sharding = properties.sharding || new NoSharding() */
     }
-
-
-    // Access mapping
-    /*   this.access = options.accessController || {
-        canAppend: async (payload: MaybeEncrypted<Payload<T>>, entryIdentity: MaybeEncrypted<IdentitySerializable>, _identityProvider: Identities) => true,
-        type: undefined,
-        address: undefined,
-        close: undefined,
-        load: undefined,
-        save: undefined
-      } as any as AccessController<T> */ // TODO fix types
-
-
   }
+
   async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<T>): Promise<StoreLike<T>> {
 
     if (this.initialized) {

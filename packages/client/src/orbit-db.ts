@@ -18,12 +18,12 @@ import { DecryptedThing, Ed25519Keypair, EncryptedThing, MaybeEncrypted, PublicK
 import { X25519PublicKey, IPFSAddress } from '@dao-xyz/peerbit-crypto'
 import LRU from 'lru-cache';
 import { DirectChannel } from '@dao-xyz/ipfs-pubsub-direct-channel'
-import { encryptionWithRequestKey, StorePublicKeyEncryption } from './encryption.js'
-import { PublicSignKey } from '@dao-xyz/peerbit-crypto';
+import { encryptionWithRequestKey } from './encryption.js'
 import { MaybeSigned } from '@dao-xyz/peerbit-crypto';
 import { WAIT_FOR_PEERS_TIME, exchangePeerInfo, ReplicatorInfo, PeerInfoWithMeta, RequestReplicatorInfo, requestPeerInfo } from './exchange-replication.js'
 import { createHash } from 'crypto'
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
+import { multiaddr } from '@multiformats/multiaddr'
 
 // @ts-ignore
 import { delay, waitFor } from '@dao-xyz/time'
@@ -31,7 +31,7 @@ import { LRUCounter } from './lru-counter.js'
 import { IpfsPubsubPeerMonitor } from '@dao-xyz/ipfs-pubsub-peer-monitor';
 import type { PeerId } from '@libp2p/interface-peer-id';
 import { EntryWithRefs } from '@dao-xyz/orbit-db-store';
-import sodium from 'libsodium-wrappers';
+import { exchangeSwarmAddresses, ExchangeSwarmMessage } from './exchange-network.js';
 /* let v8 = undefined;
 if (isNode) {
   v8 = require('v8');
@@ -49,9 +49,9 @@ const MIN_REPLICAS = 2;
 
 export type StoreOperations = 'write' | 'all'
 export type Storage = { createStore: (string: string) => Level }
-export type OptionalCreateOptions = { minReplicas?: number, waitForKeysTimout?: number, canAccessKeys?: KeyAccessCondition, isTrusted?: (key: PublicSignKey, replicationTopic: string) => Promise<boolean> }
-export type CreateOptions = { keystore: Keystore, identity: Identity, directory: string, peerId: PeerId, storage: Storage, cache: Cache<any> } & OptionalCreateOptions;
-export type CreateInstanceOptions = { storage?: Storage, directory?: string, keystore?: Keystore, peerId?: PeerId, identity?: Identity, cache?: Cache<any> } & OptionalCreateOptions;
+export type OptionalCreateOptions = { minReplicas?: number, waitForKeysTimout?: number }
+export type CreateOptions = { keystore: Keystore, identity: Identity, directory: string, peerId: PeerId, storage: Storage, cache: Cache<any>, localNetwork: boolean } & OptionalCreateOptions;
+export type CreateInstanceOptions = { storage?: Storage, directory?: string, keystore?: Keystore, peerId?: PeerId, identity?: Identity, cache?: Cache<any>, localNetwork?: boolean } & OptionalCreateOptions;
 export type OpenStoreOptions = {
   identity?: Identity,
   directory?: string,
@@ -88,6 +88,7 @@ export class OrbitDB {
   keystore: Keystore;
   minReplicas: number;
   stores: { [topic: string]: { [address: string]: StoreLike<any> } };
+  localNetwork: boolean;
   _trustedNetwork: Map<string, TrustedNetwork>
   /*  heapsizeLimitForForks: number = 1000 * 1000 * 1000; */
 
@@ -103,9 +104,8 @@ export class OrbitDB {
   /*   _replicationTopicJobs: Map<string, { controller: AbortController }> = new Map(); */
 
 
-  isTrusted: (key: PublicSignKey, replicationTopic: string) => Promise<boolean>
-  canAccessKeys: KeyAccessCondition
-
+  /*   canAccessKeys: KeyAccessCondition
+   */
 
   constructor(ipfs: IPFSInstance, identity: Identity, options: CreateOptions) {
     if (!isDefined(ipfs)) { throw new Error('IPFS required') }
@@ -122,10 +122,9 @@ export class OrbitDB {
     this.stores = {}
     this.caches = {}
     this.minReplicas = options.minReplicas || MIN_REPLICAS;
+    this.localNetwork = options.localNetwork;
     this.caches[this.directory] = { cache: options.cache, handlers: new Set() }
     this.keystore = options.keystore
-    this.canAccessKeys = options.canAccessKeys || (() => Promise.resolve(false));
-    this.isTrusted = options.isTrusted || (() => Promise.resolve(true))
     if (options.waitForKeysTimout) {
       this._waitForKeysTimeout = options.waitForKeysTimout;
     }
@@ -213,10 +212,7 @@ export class OrbitDB {
 
 
   static async createInstance(ipfs: IPFS, options: CreateInstanceOptions = {}) {
-    if (!isDefined(ipfs)) { throw new Error('IPFS is a required argument. See https://github.com/orbitdb/orbit-db/blob/master/API.md#createinstance') }
-
     let id: PeerId = (await ipfs.id()).id;
-
     const directory = options.directory || './orbitdb'
 
     const storage = options.storage || {
@@ -253,7 +249,8 @@ export class OrbitDB {
     } */
 
     const cache = options.cache || new Cache(await storage.createStore(path.join(directory, id.toString(), '/cache')));
-    const finalOptions = Object.assign({}, options, { peerId: id, keystore, identity, directory, storage, cache })
+    const localNetwork = options.localNetwork || false;
+    const finalOptions = Object.assign({}, options, { peerId: id, keystore, identity, directory, storage, cache, localNetwork })
     return new OrbitDB(ipfs, identity, finalOptions)
   }
 
@@ -354,7 +351,7 @@ export class OrbitDB {
       const checkTrustedSender = async (replicationTopic: string): Promise<boolean> => {
         let isTrusted = false;
         if (sender) {
-          isTrusted = await this.isTrusted(sender, replicationTopic);
+          isTrusted = !!(await this.getNetwork(replicationTopic)?.isTrusted(sender))
         }
         if (!isTrusted) {
           logger.info("Recieved message from untrusted peer")
@@ -370,13 +367,15 @@ export class OrbitDB {
          */
 
         const { replicationTopic, address, heads } = msg
-        if (!(await checkTrustedSender(replicationTopic))) {
-          return;
-        }
+        const senderIsTrusted = await checkTrustedSender(replicationTopic);
         // replication topic === trustedNetwork address
 
         let stores = this.stores[replicationTopic]
         if (!stores) {
+          if (!senderIsTrusted) {
+            return; // dont allow untrusted senders to open stores
+          }
+
           stores = {};
           this.stores[replicationTopic] = stores
         }
@@ -403,7 +402,11 @@ export class OrbitDB {
 
           const leaderCache: Map<string, string[]> = new Map();
           if (!stores[address]) {
-            // open store if is leader
+            // open store if is leader and sender is trusted
+
+            if (!senderIsTrusted) {
+              return;
+            }
 
             for (const [gid, value] of groupByGid(heads)) {
               // Check if root, if so, we check if we should open the store
@@ -532,6 +535,30 @@ export class OrbitDB {
         })
 
       }
+      else if (msg instanceof ExchangeSwarmMessage) {
+        let hasAll = true;
+        for (const i of msg.info) {
+          if (!this._directConnections.has(i.id)) {
+            hasAll = false;
+            break;
+          }
+        }
+        if (hasAll) {
+          return;
+        }
+
+        if (!await checkTrustedSender(message.topic)) {
+          return;
+        }
+
+        msg.info.forEach(async (info) => {
+          if (info.id === this.id.toString()) {
+            return;
+          }
+          const suffix = '/p2p/' + info.id;
+          this._ipfs.swarm.connect(multiaddr(info.address.toString() + (info.address.indexOf(suffix) === -1 ? suffix : '')));
+        })
+      }
       else if (msg instanceof RequestKeyMessage) {
 
         if (!peer) {
@@ -544,14 +571,22 @@ export class OrbitDB {
           return;
         }
 
-        /**
-         * Someone is requesting X25519 Secret keys for me so that they can open encrypted messages (and encrypt)
-         * 
-         */
+        if (msg.condition instanceof RequestKeysByReplicationTopic) {
+          if (!await checkTrustedSender(msg.condition.replicationTopic)) {
+            return;
+          }
+          const canExchangeKey: KeyAccessCondition = (key) => key.group === (msg.condition as RequestKeysByReplicationTopic<any>).replicationTopic;
 
-        const send = (data: Uint8Array) => this._ipfs.pubsub.publish(DirectChannel.getTopic([peer.toString()]), data);
-        await exchangeKeys(send, msg, sender, this.canAccessKeys, this.keystore, this.identity, this.encryption)
-        logger.debug(`Exchanged keys`)
+          /**
+           * Someone is requesting X25519 Secret keys for me so that they can open encrypted messages (and encrypt)
+           * 
+           */
+
+          const send = (data: Uint8Array) => this._ipfs.pubsub.publish(DirectChannel.getTopic([peer.toString()]), data);
+          await exchangeKeys(send, msg, canExchangeKey, this.keystore, this.identity, this.encryption)
+          logger.debug(`Exchanged keys`)
+        }
+
       }
       else if (msg instanceof RequestReplicatorInfo) {
 
@@ -669,6 +704,7 @@ export class OrbitDB {
            if (openChannel) {
              await this.getChannel(peer, replicationTopic);
            } */
+          await exchangeSwarmAddresses((data) => this._ipfs.pubsub.publish(replicationTopic, data), this.identity, peer, await this._ipfs.swarm.peers(), this.getNetwork(replicationTopic), this.localNetwork)
           await this.getChannel(peer, replicationTopic); // always open a channel, and drop channels if necessary (not trusted) (TODO)
           return; // we return because we have know opened a channel to this peer
 
@@ -731,55 +767,59 @@ export class OrbitDB {
     }
 
     for (const replicationTopic of connections.dependencies) {
-      for (const store of Object.values(this.stores[replicationTopic])) {
-        const heads = store.oplog.heads;
-        const groupedByGid = groupByGid(heads);
-        for (const [gid, entries] of groupedByGid) {
-          if (entries.length === 0) {
-            continue; // TODO maybe close store?
-          }
-          /*     const oldPeers = this.findReplicators(store, gid, [channel.recieverId]);
-              const oldPeersSet = new Set(this.findReplicators(store, gid, [channel.recieverId])); */
-          const oldPeersSet = this._gidPeersHistory.get(gid);
-          const newPeers = await this.findReplicators(replicationTopic, store.replicate, gid);
-          /* const index = oldPeers.findIndex(p => p === channel.recieverId); */
-          for (const newPeer of newPeers) {
-            if (!oldPeersSet?.has(newPeer) && newPeer !== this.id.toString()) { // second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
-
-              // send heads to the new peer
-              const channel = this._directConnections.get(newPeer)?.channel;
-              if (!channel) {
-
-                logger.error("Missing channel when reorg to peer: " + newPeer.toString())
-                continue
-              }
-
-              await exchangeHeads(async (message) => {
-                await channel.send(message);
-              }, store, this.identity, entries, replicationTopic, true)
+      const stores = this.stores[replicationTopic];
+      if (stores) {
+        for (const store of Object.values(stores)) {
+          const heads = store.oplog.heads;
+          const groupedByGid = groupByGid(heads);
+          for (const [gid, entries] of groupedByGid) {
+            if (entries.length === 0) {
+              continue; // TODO maybe close store?
             }
-          }
+            /*     const oldPeers = this.findReplicators(store, gid, [channel.recieverId]);
+                const oldPeersSet = new Set(this.findReplicators(store, gid, [channel.recieverId])); */
+            const oldPeersSet = this._gidPeersHistory.get(gid);
+            const newPeers = await this.findReplicators(replicationTopic, store.replicate, gid);
+            /* const index = oldPeers.findIndex(p => p === channel.recieverId); */
+            for (const newPeer of newPeers) {
+              if (!oldPeersSet?.has(newPeer) && newPeer !== this.id.toString()) { // second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
 
-          if (!newPeers.find(x => x === this.id.toString())) {
-            // delete entries since we are not suppose to replicate this anymore
-            // TODO add delay? freeze time? (to ensure resiliance for bad io)
-            store.oplog.removeAll(entries);
+                // send heads to the new peer
+                const channel = this._directConnections.get(newPeer)?.channel;
+                if (!channel) {
 
-            // TODO if length === 0 maybe close store? 
-          }
-          this._gidPeersHistory.set(gid, new Set(newPeers))
-          /* if (index !== -1)  */{ //
-            // We lost an replicating peer,
-            // find diff
+                  logger.error("Missing channel when reorg to peer: " + newPeer.toString())
+                  continue
+                }
 
-            /* if (peers[(index + 1) & peers.length] === this.id) { */
+                await exchangeHeads(async (message) => {
+                  await channel.send(message);
+                }, store, this.identity, entries, replicationTopic, true)
+              }
+            }
 
-            // is should tell the others that we need one more replicator
-            //const
-            /* } */
+            if (!newPeers.find(x => x === this.id.toString())) {
+              // delete entries since we are not suppose to replicate this anymore
+              // TODO add delay? freeze time? (to ensure resiliance for bad io)
+              store.oplog.removeAll(entries);
+
+              // TODO if length === 0 maybe close store? 
+            }
+            this._gidPeersHistory.set(gid, new Set(newPeers))
+            /* if (index !== -1)  */{ //
+              // We lost an replicating peer,
+              // find diff
+
+              /* if (peers[(index + 1) & peers.length] === this.id) { */
+
+              // is should tell the others that we need one more replicator
+              //const
+              /* } */
+            }
           }
         }
       }
+
     }
 
   }
@@ -977,11 +1017,6 @@ export class OrbitDB {
         try {
           await waitFor(() => this._peerInfoResponseCounter.get(request.id) as number >= directConnectionsOnTopic, { timeout, delayInterval: 400 })
         } catch (error) {
-          // failed to resolve all peers
-          // it is "ok" since we are going to pick a leader from the peers that we got
-          // (though this assumes that all other peers also reaches the same conclusion)
-          // TODO make more deterministic
-          const x = 123;
         }
       }
       else {
@@ -1409,7 +1444,7 @@ export class OrbitDB {
   }
 
   async joinNetwork(address: Address | string | TrustedNetwork) {
-    const trustedNetwork = this._trustedNetwork.get(address instanceof TrustedNetwork ? address.address.toString() : address.toString());
+    let trustedNetwork = this._trustedNetwork.get(address instanceof TrustedNetwork ? address.address.toString() : address.toString());
     if (!trustedNetwork) {
       throw new Error("TrustedNetwork is not open, please call `openNetwork` prior")
     }
