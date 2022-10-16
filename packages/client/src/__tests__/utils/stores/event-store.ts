@@ -1,11 +1,10 @@
 import { Identity, JSON_ENCODING, Log } from "@dao-xyz/ipfs-log";
 import { Entry } from "@dao-xyz/ipfs-log";
-import { Address, IInitializationOptions, load } from "@dao-xyz/orbit-db-store";
-import { Store } from "@dao-xyz/orbit-db-store"
+import { Address, IInitializationOptions, load } from "@dao-xyz/peerbit-dstore";
+import { Store } from "@dao-xyz/peerbit-dstore"
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log';
-import { AccessController } from "@dao-xyz/orbit-db-store";
 import { variant } from '@dao-xyz/borsh';
-import { EncodingType } from "@dao-xyz/orbit-db-store";
+import { EncodingType } from "@dao-xyz/peerbit-dstore";
 import { TestStore } from "./test-store";
 
 // TODO: generalize the Iterator functions and spin to its own module
@@ -35,8 +34,7 @@ export class EventStore<T> extends TestStore<Operation<T>> {
     _index: EventIndex<T>;
 
     constructor(properties: {
-        name?: string;
-        accessController?: AccessController<Operation<T>>;
+        name?: string
     }) {
         super({ ...properties, encoding: EncodingType.JSON })
         this._index = new EventIndex();

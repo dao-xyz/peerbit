@@ -8,8 +8,8 @@ import Zip from 'adm-zip'
 import { OrbitDB } from '../orbit-db'
 import { KeyValueStore } from './utils/stores/key-value-store'
 import io from '@dao-xyz/io-utils'
-import { SimpleAccessController } from './utils/access'
-import { Address, Store } from '@dao-xyz/orbit-db-store'
+
+import { Address, Store } from '@dao-xyz/peerbit-dstore'
 import { EventStore } from './utils/stores'
 
 // @ts-ignore 
@@ -80,9 +80,9 @@ Object.keys(testAPIs).forEach(API => {
           let err, db: any
           const replicationTopic = uuid();
           try {
-            db = await orbitdb.open(new EventStore({ name: 'first', accessController: new SimpleAccessController() }), replicationTopic
+            db = await orbitdb.open(new EventStore({ name: 'first' }), replicationTopic
               , { replicate: false })
-            await orbitdb.open(new EventStore({ name: 'first', accessController: new SimpleAccessController() })
+            await orbitdb.open(new EventStore({ name: 'first' })
               , replicationTopic, { replicate: false })
           } catch (e: any) {
             err = e.toString()
@@ -97,7 +97,7 @@ Object.keys(testAPIs).forEach(API => {
         let db: KeyValueStore<string>;
 
         beforeAll(async () => {
-          db = await orbitdb.open(new KeyValueStore<string>({ name: 'second', accessController: new SimpleAccessController() }), uuid()
+          db = await orbitdb.open(new KeyValueStore<string>({ name: 'second' }), uuid()
             , { replicate: false })
           localDataPath = path.join(dbPath, orbitdb.id.toString(), 'cache')
           await db.close()
@@ -136,7 +136,7 @@ Object.keys(testAPIs).forEach(API => {
 
         it('can pass local database directory as an option', async () => {
           const dir = './orbitdb/tests/another-feed'
-          const db2 = await orbitdb.open(new EventStore({ name: 'third', accessController: new SimpleAccessController() }), uuid()
+          const db2 = await orbitdb.open(new EventStore({ name: 'third' }), uuid()
             , { directory: dir })
           expect(fs.existsSync(dir)).toEqual(true)
           await db2.close()
@@ -148,7 +148,7 @@ Object.keys(testAPIs).forEach(API => {
     describe('Open', function () {
 
       it('opens a database - name only', async () => {
-        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), replicationTopic, {})
+        const db = await orbitdb.open(new EventStore({ name: 'abc' }), replicationTopic, {})
         assert.equal(db.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db.address.toString().indexOf('zd'), 9)
         assert.equal(db.address.toString().indexOf('abc'), 59)
@@ -157,7 +157,7 @@ Object.keys(testAPIs).forEach(API => {
 
       it('opens a database - with a different identity', async () => {
         const signKey = await orbitdb.keystore.createEd25519Key({ id: new Uint8Array([0]) });
-        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), replicationTopic, { identity: { ...signKey.keypair, sign: (data) => signKey.keypair.sign(data) } })
+        const db = await orbitdb.open(new EventStore({ name: 'abc' }), replicationTopic, { identity: { ...signKey.keypair, sign: (data) => signKey.keypair.sign(data) } })
         assert.equal(db.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db.address.toString().indexOf('zd'), 9)
         assert.equal(db.address.toString().indexOf('abc'), 59)
@@ -167,7 +167,7 @@ Object.keys(testAPIs).forEach(API => {
 
       it('opens the same database - from an address', async () => {
         const signKey = await orbitdb.keystore.createEd25519Key({ id: new Uint8Array([0]) });
-        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), replicationTopic, { identity: { ...signKey.keypair, sign: (data) => signKey.keypair.sign(data) } })
+        const db = await orbitdb.open(new EventStore({ name: 'abc' }), replicationTopic, { identity: { ...signKey.keypair, sign: (data) => signKey.keypair.sign(data) } })
         const db2 = await orbitdb.open(await Store.load(orbitdb._ipfs, db.address), replicationTopic,)
         assert.equal(db2.address.toString().indexOf('/orbitdb'), 0)
         assert.equal(db2.address.toString().indexOf('zd'), 9)
@@ -177,7 +177,7 @@ Object.keys(testAPIs).forEach(API => {
       })
 
       it('doesn\'t open a database if we don\'t have it locally', async () => {
-        const db = await orbitdb.open(new EventStore({ name: 'abcabc', accessController: new SimpleAccessController() }), replicationTopic, {})
+        const db = await orbitdb.open(new EventStore({ name: 'abcabc' }), replicationTopic, {})
         const address = new Address(db.address.root.slice(0, -1) + 'A', 'non-existent')
         await db.drop()
         return new Promise(async (resolve, reject) => {
@@ -189,7 +189,7 @@ Object.keys(testAPIs).forEach(API => {
       })
 
       it('throws an error if trying to open a database locally and we don\'t have it', async () => {
-        const db = await orbitdb.open(new EventStore({ name: 'abc', accessController: new SimpleAccessController() }), replicationTopic, {})
+        const db = await orbitdb.open(new EventStore({ name: 'abc' }), replicationTopic, {})
         const address = new Address(db.address.root.slice(0, -1) + 'A', 'second')
         await db.drop()
         return orbitdb.open(await Store.load(orbitdb._ipfs, address), replicationTopic, { localOnly: true })
@@ -200,7 +200,7 @@ Object.keys(testAPIs).forEach(API => {
       })
 
       it('open the database and it has the added entries', async () => {
-        const db = await orbitdb.open(new EventStore({ name: 'ZZZ', accessController: new SimpleAccessController() }), replicationTopic, {})
+        const db = await orbitdb.open(new EventStore({ name: 'ZZZ' }), replicationTopic, {})
         await db.add('hello1')
         await db.add('hello2')
         await db.close()
@@ -225,14 +225,14 @@ Object.keys(testAPIs).forEach(API => {
       })
       it('closes a custom store', async () => {
         const directory = path.join(dbPath, "custom-store")
-        const db = await orbitdb.open(new EventStore({ name: 'xyz', accessController: new SimpleAccessController() }), replicationTopic, { directory })
+        const db = await orbitdb.open(new EventStore({ name: 'xyz' }), replicationTopic, { directory })
         await db.close()
         expect(db._cache._store.status).toEqual('closed')
       })
 
       it("close load close sets status to 'closed'", async () => {
         const directory = path.join(dbPath, "custom-store")
-        const db = await orbitdb.open(new EventStore({ name: 'xyz', accessController: new SimpleAccessController() }), replicationTopic, { directory })
+        const db = await orbitdb.open(new EventStore({ name: 'xyz' }), replicationTopic, { directory })
         await db.close()
         await db.load()
         await db.close()
@@ -244,11 +244,11 @@ Object.keys(testAPIs).forEach(API => {
         const directory = path.join(dbPath, "custom-store")
         const directory2 = path.join(dbPath, "custom-store2")
 
-        const db1 = await orbitdb.open(new EventStore({ name: 'xyz1', accessController: new SimpleAccessController() }), replicationTopic, {})
-        const db2 = await orbitdb.open(new EventStore({ name: 'xyz2', accessController: new SimpleAccessController() }), replicationTopic, { directory })
-        const db3 = await orbitdb.open(new EventStore({ name: 'xyz3', accessController: new SimpleAccessController() }), replicationTopic, { directory })
-        const db4 = await orbitdb.open(new EventStore({ name: 'xyz4', accessController: new SimpleAccessController() }), replicationTopic, { directory: directory2 })
-        const db5 = await orbitdb.open(new EventStore({ name: 'xyz5', accessController: new SimpleAccessController() }), replicationTopic, {})
+        const db1 = await orbitdb.open(new EventStore({ name: 'xyz1' }), replicationTopic, {})
+        const db2 = await orbitdb.open(new EventStore({ name: 'xyz2' }), replicationTopic, { directory })
+        const db3 = await orbitdb.open(new EventStore({ name: 'xyz3' }), replicationTopic, { directory })
+        const db4 = await orbitdb.open(new EventStore({ name: 'xyz4' }), replicationTopic, { directory: directory2 })
+        const db5 = await orbitdb.open(new EventStore({ name: 'xyz5' }), replicationTopic, {})
 
         await db1.close()
         await db2.close()

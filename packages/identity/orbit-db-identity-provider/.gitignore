@@ -1,6 +1,0 @@
-node_modules/
-test/keys/
-orbitdb/
-coverage/
-dist/index-browser.min.js.map
-test/browser/bundle.*

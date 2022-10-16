@@ -3,7 +3,7 @@ import rmrf from 'rimraf'
 import fs from 'fs-extra'
 import { Log } from '../log.js'
 import { SortByEntryHash } from '../log-sorting.js'
-import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import { jest } from '@jest/globals';
 
 // Test utils

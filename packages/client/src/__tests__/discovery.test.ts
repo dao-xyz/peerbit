@@ -3,7 +3,7 @@ import rmrf from 'rimraf'
 
 import { DirectChannel } from '@dao-xyz/ipfs-pubsub-direct-channel'
 import { OrbitDB } from '../orbit-db'
-import { SimpleAccessController } from './utils/access'
+
 import { EventStore } from './utils/stores/event-store'
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";

@@ -31,6 +31,7 @@
   ],
   "dependencies": {
     "@dao-xyz/borsh": "^3.3.0",
+    "@dao-xyz/peerbit-crypto": "^0.0.1",
     "json-stringify-deterministic": "^1.0.7",
     "multihashing-async": "^2.0.1",
     "@dao-xyz/io-utils": "^1.1.0",
@@ -40,6 +41,7 @@
     "p-whilst": "^3.0.0"
   },
   "devDependencies": {
+    "@dao-xyz/peerbit-keystore": "^0.0.2",
     "@babel/cli": "^7.14.3",
     "@babel/core": "^7.14.3",
     "@babel/plugin-syntax-object-rest-spread": "~7.8.3",

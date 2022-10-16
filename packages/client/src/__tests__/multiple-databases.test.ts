@@ -2,7 +2,7 @@
 import mapSeries from 'p-each-series'
 import rmrf from 'rimraf'
 import { OrbitDB } from '../orbit-db'
-import { SimpleAccessController } from './utils/access'
+
 import { EventStore } from './utils/stores'
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
@@ -94,7 +94,7 @@ Object.keys(testAPIs).forEach(API => {
 
       // Open the databases on the first node
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb1.open(new EventStore<string>({ name: 'local-' + i, accessController: new SimpleAccessController() }), uuid(), options)
+        const db = await orbitdb1.open(new EventStore<string>({ name: 'local-' + i }), uuid(), options)
         localDatabases.push(db)
       }
       for (let i = 0; i < dbCount; i++) {

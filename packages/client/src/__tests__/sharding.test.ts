@@ -1,6 +1,6 @@
 
 import { OrbitDB } from "../orbit-db"
-import { SimpleAccessController } from "./utils/access"
+
 import { EventStore } from "./utils/stores/event-store"
 
 import rmrf from 'rimraf'
@@ -48,7 +48,7 @@ Object.keys(testAPIs).forEach(API => {
 
             replicationTopic = network.address.toString();
 
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'sharding-tests', accessController: new SimpleAccessController() })
+            db1 = await orbitdb1.open(new EventStore<string>({ name: 'sharding-tests' })
                 , replicationTopic)
 
             db2 = await orbitdb2.open(db1.address, replicationTopic) as EventStore<string>

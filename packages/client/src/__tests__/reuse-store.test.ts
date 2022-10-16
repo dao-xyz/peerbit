@@ -81,8 +81,8 @@ Object.keys(testAPIs).forEach(API => {
         it('open same store twice will share instance', async () => {
 
             const replicationTopic = 'topic';
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'some db', accessController: new SimpleAccessController() }), replicationTopic)
-            const sameDb = await orbitdb1.open(new EventStore<string>({ name: 'some db', accessController: new SimpleAccessController() }), replicationTopic)
+            db1 = await orbitdb1.open(new EventStore<string>({ name: 'some db' }), replicationTopic)
+            const sameDb = await orbitdb1.open(new EventStore<string>({ name: 'some db' }), replicationTopic)
             expect(db1 === sameDb);
 
         })

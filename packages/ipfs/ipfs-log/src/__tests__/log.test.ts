@@ -6,7 +6,7 @@ import { base58btc } from 'multiformats/bases/base58'
 import { Entry, Payload } from '../entry.js';
 import { LamportClock as Clock } from '../lamport-clock.js'
 import { Log } from '../log.js'
-import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import fs from 'fs-extra'
 import io from '@dao-xyz/io-utils'
 

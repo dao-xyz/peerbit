@@ -1,6 +1,6 @@
 
 import { OrbitDB } from "../orbit-db"
-import { SimpleAccessController } from "./utils/access"
+
 import { EventStore, Operation } from "./utils/stores/event-store"
 import { KeyValueStore } from "./utils/stores/key-value-store"
 import assert from 'assert'
@@ -86,9 +86,9 @@ Object.keys(testAPIs).forEach(API => {
 
       const replicationTopic = uuid();
 
-      const db1 = await orbitdb1.open(new EventStore<string>({ name: 'replicate-automatically-tests', accessController: new SimpleAccessController() }), replicationTopic, {})
+      const db1 = await orbitdb1.open(new EventStore<string>({ name: 'replicate-automatically-tests' }), replicationTopic, {})
 
-      const db3 = await orbitdb1.open(new KeyValueStore<string>({ name: 'replicate-automatically-tests-kv', accessController: new SimpleAccessController() }), replicationTopic, {
+      const db3 = await orbitdb1.open(new KeyValueStore<string>({ name: 'replicate-automatically-tests-kv' }), replicationTopic, {
         onReplicationComplete: (_) => {
           fail();
         }
@@ -142,7 +142,7 @@ Object.keys(testAPIs).forEach(API => {
    
          // Create a write only peer and write two messsages and make sure another peer is replicating them
          const replicationTopic = 'x';
-         const store = new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() });
+         const store = new EventStore<string>({ name: 'replication-tests' });
          const db1 = await orbitdb1.open(store, { replicate: false, replicationTopic }); // this would be a "light" client, write -only
          const db2 = await orbitdb2.open(store.clone(), { replicationTopic });
          const db3 = await orbitdb3.open(store.clone(), { replicationTopic });
@@ -180,7 +180,7 @@ Object.keys(testAPIs).forEach(API => {
   
         // Create a write only peer and write two messsages and make sure another peer is replicating them
         const replicationTopic = 'x';
-        const store = new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() });
+        const store = new EventStore<string>({ name: 'replication-tests' });
         const db1 = await orbitdb1.open(store, { replicate: false, replicationTopic }); // this would be a "light" client, write -only
         const db2 = await orbitdb2.open(store.clone(), { replicationTopic });
         const db3 = await orbitdb3.open(store.clone(), { replicationTopic });

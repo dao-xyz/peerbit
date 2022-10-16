@@ -1,4 +1,4 @@
-import { KeyWithMeta } from "@dao-xyz/orbit-db-keystore"
+import { KeyWithMeta } from "@dao-xyz/peerbit-keystore"
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto"
 import { IPFS } from "ipfs-core-types"
 import { Log } from "../../log.js"

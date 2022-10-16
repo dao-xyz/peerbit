@@ -3,7 +3,7 @@ import rmrf from 'rimraf'
 import fs from 'fs-extra'
 import { CanAppend } from '../access.js'
 import { Log } from '../log.js'
-import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import { Entry } from '../entry.js'
 import { SignatureWithKey } from '@dao-xyz/peerbit-crypto'
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto"

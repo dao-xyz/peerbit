@@ -1,11 +1,9 @@
-import { Store, IInitializationOptions } from '@dao-xyz/orbit-db-store'
+import { Store, IInitializationOptions } from '@dao-xyz/peerbit-dstore'
 import { field, option, variant } from '@dao-xyz/borsh';
 import type { Message } from '@libp2p/interface-pubsub'
 import { QueryRequestV0, QueryResponseV0, Result, MultipleQueriesType, StoreAddressMatchQuery } from '@dao-xyz/query-protocol';
-import { X25519PublicKey } from '@dao-xyz/peerbit-crypto';
+import { SignatureWithKey, SignKey, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
-import { AccessController } from '@dao-xyz/orbit-db-store';
-import { ReadWriteAccessController } from './read-write-access-controller';
 import { IPFS } from 'ipfs-core-types';
 import { PublicSignKey } from '@dao-xyz/peerbit-crypto';
 import { query, QueryOptions, respond } from './io.js';
@@ -16,9 +14,10 @@ export const getQueryTopic = (region: string): string => {
 }
 /* export type IQueryStoreOptions<T> = IStoreOptions<T> & { queryRegion?: string, subscribeToQueries: boolean };
  */
+export type QueryStoreInitializationOptions<T> = IInitializationOptions<T> & { canRead?(key: SignatureWithKey | undefined): Promise<boolean> };
 
 @variant(0)
-export class QueryStore<T> extends Store<T> {
+export class QueryStore<T> extends Store<T>  {
 
     @field({ type: option('string') })
     queryRegion?: string;
@@ -29,20 +28,23 @@ export class QueryStore<T> extends Store<T> {
     _initializationPromise?: Promise<void>;
     _onQueryMessageBinded: any = undefined;
 
-    constructor(properties: { queryRegion?: string, accessController?: AccessController<T> }) {
+    canRead: (key: SignatureWithKey | undefined) => Promise<boolean>
+
+    constructor(properties: { name?: string, queryRegion?: string }) {
         super(properties)
         if (properties) {
             this.queryRegion = properties.queryRegion;
             // is this props ser or not??? 
-
-            if (properties.accessController && properties.accessController instanceof ReadWriteAccessController === false) {
-                throw new Error("Expected ReadWriteAccessController for a store that accepts queries");
-            }
+            /* 
+                        if (properties.accessController && properties.accessController instanceof ReadWriteAccessController === false) {
+                            throw new Error("Expected ReadWriteAccessController for a store that accepts queries");
+                        } */
         }
     }
 
-    public async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<T>) {
+    public async init(ipfs: IPFS, identity: Identity, options: QueryStoreInitializationOptions<T>) {
         await super.init(ipfs, identity, options)
+        this.canRead = options.canRead || (() => Promise.resolve(true));
         if (this.subscribeToQueries) {
             this._subscribeToQueries();
         }
@@ -82,16 +84,19 @@ export class QueryStore<T> extends Store<T> {
         try {
             // TODO try catch deserialize parse to properly handle migrations (prevent old clients to break)
             try {
-                const acl = (this.accessController || this.fallbackAccessController);
-                if (!acl) {
-                    throw new Error("ACL is expected to be defined to query store");
-                }
+                /*  const acl = (this.accessController || this.fallbackAccessController);
+                 if (!acl) {
+                     throw new Error("ACL is expected to be defined to query store");
+                 } */
 
                 let { result: query, from } = await decryptVerifyInto(msg.data, QueryRequestV0, this._oplog._encryption?.getAnyKeypair || (() => Promise.resolve(undefined)), {
-                    isTrusted: acl.allowAll ? undefined : async (key) => {
+                    isTrusted: (key) => this.canRead(key.signature)
+
+                    /* acl.allowAll ? undefined : async (key) => {
                         const accessController = acl as ReadWriteAccessController<any>;
                         return !!(accessController.canRead && await accessController.canRead(key))
-                    }
+                    } */
+
                 })
                 if (query.type instanceof MultipleQueriesType) {
                     // Handle context queries
@@ -146,6 +151,7 @@ export class QueryStore<T> extends Store<T> {
     public query(queryRequest: QueryRequestV0, responseHandler: (response: QueryResponseV0) => void, options: QueryOptions): Promise<void> {
         return query(this._ipfs, this.queryTopic, queryRequest, responseHandler, options);
     }
+
 
     public get queryTopic(): string {
         if (!this.address) {

@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import rmrf from 'rimraf'
 import { OrbitDB } from '../orbit-db'
-import { SimpleAccessController } from './utils/access'
+
 import { EventStore } from './utils/stores'
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
@@ -45,7 +45,7 @@ describe(`orbit-db - Drop Database (${API})`, function () {
 
   describe('Drop', function () {
     beforeAll(async () => {
-      db = await orbitdb.open(new EventStore({ name: 'first', accessController: new SimpleAccessController() }), uuid())
+      db = await orbitdb.open(new EventStore({ name: 'first' }), uuid())
       localDataPath = path.join(dbPath)
       expect(fs.existsSync(localDataPath)).toEqual(true)
     })

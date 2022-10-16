@@ -2,9 +2,9 @@ import { OrbitDB } from "../orbit-db"
 
 import fs from 'fs'
 import rmrf from 'rimraf'
-import { Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import { EventStore } from "./utils/stores"
-import { SimpleAccessController } from "./utils/access"
+
 import { Level } from "level"
 import { Ed25519Keypair, Ed25519PublicKey } from "@dao-xyz/peerbit-crypto"
 import { jest } from '@jest/globals';
@@ -66,7 +66,7 @@ Object.keys(testAPIs).forEach(API => {
     it('sets identity', async () => {
       const db = await orbitdb.open(new EventStore<string>({
         name: 'abc',
-        accessController: new SimpleAccessController()
+
       }), options)
       expect(db.identity.publicKey.equals(orbitdb.identity.publicKey))
       db.setIdentity({

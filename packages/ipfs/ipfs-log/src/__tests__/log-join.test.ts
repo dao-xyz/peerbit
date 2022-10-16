@@ -3,7 +3,7 @@ import rmrf from 'rimraf'
 import fs from 'fs-extra'
 import { Entry } from '../entry.js';
 import { Log } from '../log.js'
-import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import { Ed25519PublicKey } from '@dao-xyz/peerbit-crypto';
 import { arraysCompare, arraysEqual } from '@dao-xyz/borsh-utils';
 import { LamportClock as Clock } from '../lamport-clock.js';

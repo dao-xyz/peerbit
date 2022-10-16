@@ -1,27 +1,19 @@
 import { MaybeEncrypted, SignatureWithKey } from "@dao-xyz/peerbit-crypto"
 import { Entry, Identity, Payload } from "@dao-xyz/ipfs-log"
-import { AccessController, Address, IInitializationOptions, save, Store, StoreLike } from "@dao-xyz/orbit-db-store"
+import { Address, IInitializationOptions, save, Store, StoreLike } from "@dao-xyz/peerbit-dstore"
 import { variant, field } from '@dao-xyz/borsh';
 import { Log } from "@dao-xyz/ipfs-log";
 import Cache from '@dao-xyz/orbit-db-cache';
 import { EventStore, Operation } from "./stores";
 import { IPFS } from "ipfs-core-types";
-@variant([0, 253])
-export class SimpleAccessController extends AccessController<any>
-{
-    async canAppend(payload: MaybeEncrypted<Payload<any>>, signKey: MaybeEncrypted<SignatureWithKey>) {
-        return true;
-    }
-}
+import { Contract } from "@dao-xyz/peerbit-contract";
+
 
 @variant([0, 252])
-export class SimpleStoreAccessController extends AccessController<any> implements StoreLike<Operation<string>>
-{
+export class SimpleStoreContract extends Contract {
     @field({ type: EventStore })
     store: EventStore<string>;
 
-    address: Address;
-    _options: IInitializationOptions<any>
     constructor(properties?: { store: EventStore<string> }) {
         super();
         if (properties) {
@@ -29,27 +21,14 @@ export class SimpleStoreAccessController extends AccessController<any> implement
         }
     }
 
-    async canAppend(payload: MaybeEncrypted<Payload<any>>, signKey: MaybeEncrypted<SignatureWithKey>) {
-        return true;
-    }
-
-    drop(): Promise<void> {
-        return this.store.drop()
-    }
-
-    load(): Promise<void> {
-        return this.store.load()
-    }
-    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<any>): Promise<SimpleStoreAccessController> {
-
-        options.fallbackAccessController = this;
-        this._options = options;
-        const store = await options.saveAndResolveStore(ipfs, this);
+    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<any>): Promise<this> {
+        const store = await options.saveOrResolve(ipfs, this);
         if (store !== this) {
-            return store as SimpleStoreAccessController;
+            return store as this;
         }
 
         this.store = await this.store.init(ipfs, identity, options) as EventStore<string>
+        await super.init(ipfs, identity, options)
         return this;
     }
 
@@ -58,29 +37,4 @@ export class SimpleStoreAccessController extends AccessController<any> implement
         this.address = address;
         return address;
     }
-
-    sync(heads: Entry<Operation<string>>[]): Promise<void> {
-        return this.store.sync(heads)
-    }
-
-
-    /*   get allowForks(): boolean {
-          return this.store.allowForks;
-      } */
-
-    get oplog(): Log<Operation<string>> {
-        return this.store.oplog;
-    }
-
-    get id(): string {
-        return this.store.id;
-    }
-    get replicate(): boolean {
-        return this.store.replicate;
-    }
-
-    get name(): string {
-        return this.store.name;
-    }
-
 }

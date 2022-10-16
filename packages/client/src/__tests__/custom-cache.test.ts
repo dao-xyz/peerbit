@@ -17,7 +17,7 @@ import {
   testAPIs,
 } from '@dao-xyz/orbit-db-test-utils'
 import { EventStore } from './utils/stores'
-import { SimpleAccessController } from './utils/access'
+
 
 const {
   databases

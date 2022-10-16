@@ -2,7 +2,7 @@ import { variant, field, option, serialize, vec } from '@dao-xyz/borsh';
 import { ProtocolMessage } from './message.js';
 import { U8IntArraySerializer } from '@dao-xyz/borsh-utils';
 import { Ed25519Keypair, Ed25519PublicKey, IPFSAddress, K, PublicKeyEncryptionResolver, X25519Keypair, X25519PublicKey } from '@dao-xyz/peerbit-crypto'
-import { Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore';
+import { Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore';
 import { MaybeSigned, SignatureWithKey } from '@dao-xyz/peerbit-crypto';
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { TimeoutError, waitForAsync } from '@dao-xyz/time';

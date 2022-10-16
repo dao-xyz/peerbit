@@ -1,13 +1,13 @@
 import { variant, field, vec, serialize } from '@dao-xyz/borsh';
 import { Entry, Identity } from '@dao-xyz/ipfs-log'
 import { ProtocolMessage } from './message.js';
-import { StoreLike } from '@dao-xyz/orbit-db-store';
+import { StoreLike } from '@dao-xyz/peerbit-dstore';
 import { DecryptedThing, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned } from '@dao-xyz/peerbit-crypto';
 import { ResourceRequirement } from './exchange-replication.js';
 // @ts-ignore
 import Logger from 'logplease'
-import { EntryWithRefs } from '@dao-xyz/orbit-db-store';
+import { EntryWithRefs } from '@dao-xyz/peerbit-dstore';
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 

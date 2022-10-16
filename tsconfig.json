@@ -36,8 +36,7 @@
         "emitDecoratorMetadata": true,
         "experimentalDecorators": true,
         "typeRoots": [
-            "node_modules/@types",
-            "node_modules/@dao-xyz-types"
+            "node_modules/@types"
         ],
         "skipLibCheck": true,
     },

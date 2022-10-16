@@ -18,7 +18,7 @@ export type QueryOptions = {
     },
     waitForAmount?: number,
     maxAggregationTime?: number,
-    isTrusted?: (publicKey: PublicSignKey) => Promise<boolean>
+    isTrusted?: (publicKey: MaybeSigned<any>) => Promise<boolean>
 
 };
 export const query = async (ipfs: IPFS, topic: string, query: QueryRequestV0, responseHandler: (response: QueryResponseV0, from?: SignKey) => void, options: QueryOptions = {}) => {

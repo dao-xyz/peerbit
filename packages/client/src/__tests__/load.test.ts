@@ -3,7 +3,7 @@ import assert from 'assert'
 import mapSeries from 'p-map-series'
 import rmrf from 'rimraf'
 import path from 'path'
-import { Address } from '@dao-xyz/orbit-db-store'
+import { Address } from '@dao-xyz/peerbit-dstore'
 import { OrbitDB } from '../orbit-db.js'
 import { SimpleAccessController } from './utils/access.js'
 import { EventStore } from './utils/stores/event-store.js'
@@ -69,7 +69,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       for (let i = 0; i < entryCount; i++)
         entryArr.push(i)
 
-      db = await orbitdb1.open(new EventStore<string>({ name: dbName, accessController: new SimpleAccessController() }), uuid())
+      db = await orbitdb1.open(new EventStore<string>({ name: dbName }), uuid())
       address = db.address.toString()
       await mapSeries(entryArr, (i) => db.add('hello' + i))
       await db.close()
@@ -189,7 +189,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
   describe('load from empty snapshot', function () {
     it('loads database from an empty snapshot', async () => {
-      db = await orbitdb1.open(new EventStore<string>({ name: 'empty-snapshot', accessController: new SimpleAccessController() }), uuid())
+      db = await orbitdb1.open(new EventStore<string>({ name: 'empty-snapshot' }), uuid())
       address = db.address.toString()
       await db.saveSnapshot()
       await db.close()
@@ -209,7 +209,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       for (let i = 0; i < entryCount; i++)
         entryArr.push(i)
 
-      db = await orbitdb1.open(new EventStore<string>({ name: dbName, accessController: new SimpleAccessController() }), uuid())
+      db = await orbitdb1.open(new EventStore<string>({ name: dbName }), uuid())
       address = db.address.toString()
       await mapSeries(entryArr, (i) => db.add('hello' + i))
       await db.saveSnapshot()

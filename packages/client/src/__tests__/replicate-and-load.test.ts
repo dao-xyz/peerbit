@@ -1,5 +1,5 @@
 import { OrbitDB } from "../orbit-db"
-import { SimpleAccessController } from "./utils/access"
+
 import { EventStore } from "./utils/stores/event-store"
 
 import mapSeries from 'p-each-series'
@@ -73,7 +73,7 @@ Object.keys(testAPIs).forEach(API => {
         replicationTopic = uuid();
         db1 = await orbitdb1.open(new EventStore<string>({
           name: 'events',
-          accessController: new SimpleAccessController()
+
         }), replicationTopic, { directory: dbPath1, })
         // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
         db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, { directory: dbPath2, })

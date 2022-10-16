@@ -5,7 +5,7 @@ import { LastWriteWins } from '../log-sorting.js'
 import { jest } from '@jest/globals';
 import { Entry } from '../entry.js';
 import { Log } from '../log.js'
-import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import { LogCreator } from './utils/log-creator.js'
 import { arraysCompare } from '@dao-xyz/borsh-utils';
 import { dirname } from 'path';

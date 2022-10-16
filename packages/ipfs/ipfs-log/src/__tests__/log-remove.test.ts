@@ -1,7 +1,7 @@
 
 import rmrf from 'rimraf'
 import { Log } from '../log.js'
-import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import fs from 'fs-extra'
 import { jest } from '@jest/globals';
 

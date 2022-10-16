@@ -7,7 +7,7 @@ import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
 import { OrbitDB } from '../orbit-db'
-import { SimpleAccessController } from './utils/access'
+
 import { EventStore, Operation } from './utils/stores/event-store'
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
@@ -94,7 +94,7 @@ Object.keys(testAPIs).forEach(API => {
     it('replicates database of 1 entry', async () => {
       let options = { directory: dbPath2 }
       const replicationTopic = uuid();
-      db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() }), replicationTopic
+      db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), replicationTopic
         , { ...Object.assign({}, options, { directory: dbPath1 }) })
       await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
 
@@ -110,7 +110,7 @@ Object.keys(testAPIs).forEach(API => {
           done = (all === 1)
         }
       })
-      db3 = await orbitdb2.open(new EventStore<string>({ name: 'replication-tests-same-topic', accessController: new SimpleAccessController() }), replicationTopic, { ...options })
+      db3 = await orbitdb2.open(new EventStore<string>({ name: 'replication-tests-same-topic' }), replicationTopic, { ...options })
 
       await waitFor(() => orbitdb1._directConnections.size === 1);
       await waitFor(() => orbitdb2._directConnections.size === 1);
@@ -132,9 +132,9 @@ Object.keys(testAPIs).forEach(API => {
 
       const replicationTopicFn = () => 'x';
       const replicationTopic = replicationTopicFn();
-      db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() })
+      db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' })
         , replicationTopic, { directory: dbPath1 })
-      db2 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests-2', accessController: new SimpleAccessController() })
+      db2 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests-2' })
         , replicationTopic, { directory: dbPath1 })
       const hello = db1.add('hello')
       db2.add('world')

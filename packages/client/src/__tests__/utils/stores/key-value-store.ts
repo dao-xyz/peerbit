@@ -1,12 +1,11 @@
 import { Identity, Log } from "@dao-xyz/ipfs-log";
-import { Address, IInitializationOptions, load, StoreLike } from "@dao-xyz/orbit-db-store";
-import { Store } from "@dao-xyz/orbit-db-store"
+import { Address, IInitializationOptions, load, StoreLike } from "@dao-xyz/peerbit-dstore";
+import { Store } from "@dao-xyz/peerbit-dstore"
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log';
-import { AccessController } from "@dao-xyz/orbit-db-store";
 import { Operation } from "./event-store";
 import { variant } from '@dao-xyz/borsh';
 import { IPFS } from "ipfs-core-types";
-import { EncodingType } from "@dao-xyz/orbit-db-store";
+import { EncodingType } from "@dao-xyz/peerbit-dstore";
 import { TestStore } from "./test-store";
 
 
@@ -47,13 +46,12 @@ export class KeyValueStore<T> extends TestStore<Operation<T>> {
     _type: string;
     _index: KeyValueIndex;
     constructor(properties: {
-        name: string;
-        accessController: AccessController<Operation<T>>;
+        name: string
     }) {
         super({ ...properties, encoding: EncodingType.JSON })
         this._index = new KeyValueIndex();
     }
-    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<Operation<T>>): Promise<StoreLike<Operation<T>>> {
+    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<Operation<T>>): Promise<this> {
         let opts = Object.assign({}, { Index: KeyValueIndex })
         Object.assign(opts, options)
         return super.init(ipfs, identity, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })

@@ -78,7 +78,7 @@ Object.keys(testAPIs).forEach(API => {
  
              const waitForPeersTime = 1000;
              const replicationTopic = 'x';
-             const store = new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() });
+             const store = new EventStore<string>({ name: 'replication-tests' });
              await orbitdb2.subscribeForReplicationStart(replicationTopic);
  
              await orbitdb1.requestReplication(store, { replicationTopic, waitForPeersTime });

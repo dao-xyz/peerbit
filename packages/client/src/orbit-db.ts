@@ -1,10 +1,10 @@
 import path from 'path'
-import { Address, IStoreOptions, Store, StoreLike } from '@dao-xyz/orbit-db-store'
+import { Address, IStoreOptions, Saveable, Store, StoreLike } from '@dao-xyz/peerbit-dstore'
 // @ts-ignore
 import Logger from 'logplease'
 import { IPFS, IPFS as IPFSInstance } from 'ipfs-core-types';
 import Cache from '@dao-xyz/orbit-db-cache'
-import { Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import { isDefined } from './is-defined.js'
 import { Level } from 'level';
 import { exchangeHeads, ExchangeHeadsMessage } from './exchange-heads.js'
@@ -24,13 +24,14 @@ import { WAIT_FOR_PEERS_TIME, exchangePeerInfo, ReplicatorInfo, PeerInfoWithMeta
 import { createHash } from 'crypto'
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
 import { multiaddr } from '@multiformats/multiaddr'
+import { Contract } from '@dao-xyz/peerbit-contract';
 
 // @ts-ignore
 import { delay, waitFor } from '@dao-xyz/time'
 import { LRUCounter } from './lru-counter.js'
 import { IpfsPubsubPeerMonitor } from '@dao-xyz/ipfs-pubsub-peer-monitor';
 import type { PeerId } from '@libp2p/interface-peer-id';
-import { EntryWithRefs } from '@dao-xyz/orbit-db-store';
+import { EntryWithRefs } from '@dao-xyz/peerbit-dstore';
 import { exchangeSwarmAddresses, ExchangeSwarmMessage } from './exchange-network.js';
 /* let v8 = undefined;
 if (isNode) {
@@ -1263,7 +1264,7 @@ export class OrbitDB {
   }
 
 
-  _openStorePromise: Promise<StoreLike<any> | undefined>
+  _openStorePromise: Promise<Contract | StoreLike<any> | undefined>
 
   /**
    * Default behaviour of a store is only to accept heads that are forks (new roots) with some probability
@@ -1272,7 +1273,7 @@ export class OrbitDB {
    * @param options 
    * @returns 
    */
-  async open<S extends StoreLike<any>>(storeOrAddress: /* string | Address |  */S | Address | string, replicationTopic: string, options: OpenStoreOptions = {}): Promise<S> {
+  async open<S extends Contract | StoreLike<any>>(storeOrAddress: /* string | Address |  */S | Address | string, replicationTopic: string, options: OpenStoreOptions = {}): Promise<S> {
 
 
     // TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?
@@ -1284,7 +1285,7 @@ export class OrbitDB {
       }
       if (storeOrAddress instanceof Address) {
         try {
-          store = await Store.load(this._ipfs, storeOrAddress as any as Address) as any as S // TODO fix typings
+          store = await Contract.load(this._ipfs, storeOrAddress as any as Address) as any as S // TODO fix typings
         } catch (error) {
           logger.error("Failed to load store with address: " + storeOrAddress.toString());
           reject(error);
@@ -1322,7 +1323,7 @@ export class OrbitDB {
         store.init && await store.init(this._ipfs, options.identity || this.identity, {
           replicate: true, ...options, ...{
             resolveCache,
-            saveAndResolveStore: async (ipfs: IPFS, store: StoreLike<any>) => {
+            saveOrResolve: async (ipfs: IPFS, store: Saveable) => {
               const address = await store.save(this._ipfs);
               const a = address.toString();
               const alreadyHaveStore = this.stores[replicationTopic]?.[a];
@@ -1379,24 +1380,9 @@ export class OrbitDB {
           },
           onOpen: async (store) => {
 
-            // ID of the store is the address as a string
-
-            // Subscribe to pubsub to get updates from peers,
-            // this is what hooks us into the message propagation layer
-            // and the p2p network
-            /*   if (this._ipfs.pubsub.ls()) { */
             await this.addStore(store, replicationTopic)
             await this.subscribeToReplicationTopic(replicationTopic);
 
-            /* else {
-              const msg = new RequestHeadsMessage({
-                address: store.address.toString(),
-                replicationTopic: store.replicationTopic
-              });
-              await this._ipfs.pubsub.publish(store.replicationTopic, serialize(await this.decryptedSignedThing(serialize(msg))));
-  
-            } */
-            /*  } */
             if (options.onOpen) {
               return options.onOpen(store);
             }
@@ -1428,7 +1414,7 @@ export class OrbitDB {
       network = addressOrNetwork;
     }
     else {
-      const loaded = await TrustedNetwork.load(this._ipfs, Address.parse(addressOrNetwork.toString()))
+      const loaded = await TrustedNetwork.load<TrustedNetwork>(this._ipfs, Address.parse(addressOrNetwork.toString()))
       if (loaded instanceof TrustedNetwork === false) {
         throw new Error("Address does not point to a TrustedNetwork")
       }

@@ -1,4 +1,4 @@
-import { Store } from "@dao-xyz/orbit-db-store";
+import { Store } from "@dao-xyz/peerbit-dstore";
 import { variant } from '@dao-xyz/borsh';
 
 @variant(254)

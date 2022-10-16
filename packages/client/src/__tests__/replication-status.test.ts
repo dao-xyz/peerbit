@@ -1,6 +1,6 @@
 
 import { OrbitDB } from "../orbit-db"
-import { SimpleAccessController } from "./utils/access"
+
 import { EventStore } from "./utils/stores/event-store"
 
 import assert from 'assert'
@@ -35,7 +35,7 @@ Object.keys(testAPIs).forEach(API => {
       orbitdb1 = await OrbitDB.createInstance(ipfs, { directory: dbPath1 })
       orbitdb2 = await OrbitDB.createInstance(ipfs, { directory: dbPath2 })
       replicationTopic = uuid();
-      db = await orbitdb1.open(new EventStore<string>({ name: 'replication status tests', accessController: new SimpleAccessController() }), replicationTopic
+      db = await orbitdb1.open(new EventStore<string>({ name: 'replication status tests' }), replicationTopic
       )
     })
 

@@ -5,14 +5,14 @@ import rmrf from 'rimraf'
 import { Entry } from '@dao-xyz/ipfs-log'
 import { OrbitDB } from '../orbit-db'
 import { EventStore, Operation } from './utils/stores/event-store'
-import { IStoreOptions } from '@dao-xyz/orbit-db-store';
+import { IStoreOptions } from '@dao-xyz/peerbit-dstore';
 import { Ed25519Keypair, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
 import { AccessError } from "@dao-xyz/peerbit-crypto"
-import { SimpleAccessController } from './utils/access'
+
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
-import { KeyWithMeta } from '@dao-xyz/orbit-db-keystore'
+import { KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import { waitFor } from '@dao-xyz/time'
 
 // @ts-ignore 
@@ -101,9 +101,7 @@ Object.keys(testAPIs).forEach(API => {
       recieverKey = await orbitdb2.keystore.createEd25519Key();
 
       options = Object.assign({}, options, { directory: dbPath1 })
-      db1 = await orbitdb1.open(new EventStore<string>({
-        accessController: new SimpleAccessController()
-      }), replicationTopic, {
+      db1 = await orbitdb1.open(new EventStore<string>({}), replicationTopic, {
         ...options
       })
     })

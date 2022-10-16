@@ -2,11 +2,11 @@
 import assert from 'assert'
 import rmrf from 'rimraf'
 import { Entry, LamportClock } from '@dao-xyz/ipfs-log'
-import { Store } from '@dao-xyz/orbit-db-store'
+import { Store } from '@dao-xyz/peerbit-dstore'
 import { delay, waitFor } from '@dao-xyz/time'
 
 import { OrbitDB } from '../orbit-db'
-import { SimpleAccessController } from './utils/access'
+
 import { EventStore, Operation } from './utils/stores/event-store'
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
@@ -75,7 +75,7 @@ Object.keys(testAPIs).forEach(API => {
             orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2 })
             db1 = await orbitdb1.open(new EventStore<string>({
                 name: 'abc',
-                accessController: new SimpleAccessController()
+
             }), replicationTopic, { directory: dbPath1 })
         })
 
@@ -137,7 +137,7 @@ Object.keys(testAPIs).forEach(API => {
         it('will open store on exchange heads message', async () => {
 
             const replicationTopic = 'x';
-            const store = new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() });
+            const store = new EventStore<string>({ name: 'replication-tests' });
             await orbitdb2.subscribeToReplicationTopic(replicationTopic);
             await orbitdb1.open(store, replicationTopic, { replicate: false }); // this would be a "light" client, write -only
 

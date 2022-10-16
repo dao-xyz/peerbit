@@ -223,9 +223,7 @@ describe('query', () => {
         })]
       }));
     })
-    console.log('c');
     await waitForPeers(session.peers[0].ipfs, [session.peers[1].id], topic);
-    console.log('d');
 
     let results: number[] = [];
     await query(session.peers[0].ipfs, topic, new QueryRequestV0({

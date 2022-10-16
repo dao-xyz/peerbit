@@ -1,0 +1,80 @@
+{
+  "name": "@dao-xyz/peerbit-keystore",
+  "version": "0.0.2",
+  "description": "A local key manager for OrbitDB",
+  "sideEffects": false,
+  "main": "lib/cjs/index.js",
+  "module": "lib/esm/index.mjs",
+  "types": "lib/esm/index.d.ts",
+  "exports": {
+    "import": "./lib/esm/index.mjs",
+    "require": "./lib/cjs/index.js"
+  },
+  "files": [
+    "lib",
+    "src",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "shx rm -rf lib/*",
+    "build": "yarn clean && tsc -p tsconfig.json; tsc-esm -p tsconfig.json",
+    "postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
+    "test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
+    "test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
+    "test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
+  },
+  "author": "Haad",
+  "license": "MIT",
+  "dependencies": {
+    "@dao-xyz/borsh": "^3.3.0",
+    "@dao-xyz/borsh-utils": "^0.0.1",
+    "@dao-xyz/peerbit-crypto": "^0.0.1",
+    "elliptic": "^6.5.4",
+    "level": "^8.0.0",
+    "libp2p-crypto": "^0.19.4",
+    "lru-cache": "^7.14.0",
+    "mkdirp": "^0.5.5",
+    "reachdown": "^1.1.0",
+    "safe-buffer": "^5.2.1",
+    "tweetnacl": "^1.0.3",
+    "@dao-xyz/time": "^0.0.11"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.10.5",
+    "@babel/plugin-syntax-object-rest-spread": "^7.8.3",
+    "@babel/plugin-transform-modules-commonjs": "^7.10.4",
+    "@babel/plugin-transform-runtime": "^7.10.5",
+    "@babel/preset-env": "^7.10.4",
+    "@babel/runtime": "^7.10.5",
+    "@types/libsodium-wrappers": "^0.7.9",
+    "babel-loader": "~8.0.4",
+    "cross-env": "^7.0.2",
+    "fruitdown": "^1.0.2",
+    "is-node": "^1.0.2",
+    "json-loader": "~0.5.7",
+    "jsondown": "^1.0.0",
+    "localstorage-down": "^0.6.7",
+    "memdown": "^6.0.0",
+    "@dao-xyz/orbit-db-test-utils": "^0.0.1",
+    "webpack": "^4.43.0",
+    "webpack-cli": "^3.3.12"
+  },
+  "bugs": "https://github.com/orbitdb/peerbit-keystore/issues",
+  "homepage": "https://github.com/orbitdb/peerbit-keystore",
+  "contributors": [
+    "adam-palazzo",
+    "haadcode",
+    "RichardLitt",
+    "shamb0t",
+    "thiagodelgado111",
+    "willemneal"
+  ],
+  "localMaintainers": [
+    "haad <haad@haja.io>",
+    "shamb0t <shams@haja.io>",
+    "hajamark <mark@haja.io>"
+  ]
+}

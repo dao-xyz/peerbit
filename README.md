@@ -48,10 +48,10 @@ The peer client
 ## [pbayload](./packages/utils/bpayload)
 - A generic payload class which you can extend and build binary serialization routines to and from with (@dao-xyz/borsh-ts). For example; Documents that are stored in the [bdocstore](./packages/orbit-db-bdocstore) could/should extend this class so when you are writing or querying data, you can be sure that results with be succesfully be deserialized with BinaryPayload class.
 
-## [bdocstore](./packages/store/orbit-db-bdocstore)
+## [bdocstore](./packages/store/ddoc)
 - Document store, but different from the "default" orbit-db implementation in the way serialization/deserialization is performed. In addition, this store supports querying. 
 
-## [dac](./packages/acl/dynamic-access-controller)
+## [dac](./packages/contract/dynamic-access-controller)
 - "Chain agnostic" Access Controller
 
 

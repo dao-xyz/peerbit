@@ -8,9 +8,9 @@ import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
 import { OrbitDB } from '../orbit-db'
-import { SimpleAccessController } from './utils/access'
+
 import { EventStore, Operation } from './utils/stores/event-store'
-import { IStoreOptions } from '@dao-xyz/orbit-db-store'
+import { IStoreOptions } from '@dao-xyz/peerbit-dstore'
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 // Include test utilities
@@ -67,9 +67,9 @@ Object.keys(testAPIs).forEach(API => {
       orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2 })
 
 
-      options = Object.assign({}, options, { accessControler: new SimpleAccessController(), directory: dbPath1 })
+      options = Object.assign({}, options, { directory: dbPath1 })
       replicationTopic = uuid();
-      db1 = await orbitdb1.open(new EventStore<string>({ name: 'a', accessController: new SimpleAccessController() })
+      db1 = await orbitdb1.open(new EventStore<string>({ name: 'a' })
         , replicationTopic, options)
     })
 

@@ -1,5 +1,5 @@
 import { AccessError, Ed25519Keypair, PublicKeyEncryptionResolver, X25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { Keystore, KeyWithMeta } from '@dao-xyz/orbit-db-keystore';
+import { Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore';
 import { X25519PublicKey } from "@dao-xyz/peerbit-crypto";
 import { Identity } from "@dao-xyz/ipfs-log";
 

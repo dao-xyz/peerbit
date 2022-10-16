@@ -3,7 +3,7 @@ import rmrf from 'rimraf'
 
 import { DirectChannel } from '@dao-xyz/ipfs-pubsub-direct-channel'
 import { OrbitDB } from '../orbit-db'
-import { SimpleAccessController } from './utils/access'
+
 import { EventStore } from './utils/stores/event-store'
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
@@ -123,7 +123,7 @@ Object.keys(testAPIs).forEach(API => {
 
 
             const replicationTopic = uuid();
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() }), replicationTopic
+            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), replicationTopic
                 , { directory: dbPath1 })
 
             const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, 123, 1));
@@ -159,7 +159,7 @@ Object.keys(testAPIs).forEach(API => {
 
 
             const replicationTopic = uuid()
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() }), replicationTopic
+            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), replicationTopic
                 , { replicate: false, directory: dbPath1 })
             db2 = await orbitdb2.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath2 })
 
@@ -184,7 +184,7 @@ Object.keys(testAPIs).forEach(API => {
 
 
             const replicationTopic = uuid();
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() }), replicationTopic
+            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), replicationTopic
                 , { replicate: false, directory: dbPath1 })
             db2 = await orbitdb2.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath2 })
             db3 = await orbitdb3.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath3 })
@@ -220,7 +220,7 @@ Object.keys(testAPIs).forEach(API => {
 
 
             const replicationTopic = uuid();
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests', accessController: new SimpleAccessController() }), replicationTopic
+            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), replicationTopic
                 , { directory: dbPath1 })
             db2 = await orbitdb2.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath2 })
             db3 = await orbitdb3.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath3 })
