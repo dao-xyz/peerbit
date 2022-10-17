@@ -1,7 +1,7 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { SystemBinaryPayload } from "@dao-xyz/bpayload";
 import { Identity } from "@dao-xyz/ipfs-log";
-import { Address, Addressable, IInitializationOptions, Initiable, load, save, StoreLike } from "@dao-xyz/peerbit-dstore";
+import { Address, Addressable, IInitializationOptions, Initiable, load, save, Store } from "@dao-xyz/peerbit-dstore";
 import { IPFS } from "ipfs-core-types";
 
 // @ts-ignore
@@ -29,7 +29,7 @@ export class Program extends SystemBinaryPayload implements Initiable<any>, Addr
         return this;
     }
 
-    get stores(): StoreLike<any>[] {
+    get stores(): Store<any>[] {
         throw new Error("Not implemented")
     }
 

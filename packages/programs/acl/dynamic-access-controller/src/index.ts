@@ -7,7 +7,7 @@
 // Relation with enc/dec?
 import { field, variant } from "@dao-xyz/borsh";
 import { Entry, Identity, Payload } from '@dao-xyz/ipfs-log';
-import { Address, IInitializationOptions, StoreLike } from '@dao-xyz/peerbit-dstore';
+import { Address, IInitializationOptions } from '@dao-xyz/peerbit-dstore';
 import { AccessStore } from './acl-db';
 import { Access } from './access';
 export * from './access';

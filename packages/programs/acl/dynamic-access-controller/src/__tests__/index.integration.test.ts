@@ -10,7 +10,7 @@ import { BinaryPayload, CustomBinaryPayload } from "@dao-xyz/bpayload";
 import { DDocs } from "@dao-xyz/peerbit-ddoc";
 import type { Identity, Payload } from "@dao-xyz/ipfs-log";
 import { Level } from 'level';
-import { CachedValue, DefaultOptions, IInitializationOptions, Store, StoreLike } from '@dao-xyz/peerbit-dstore';
+import { CachedValue, DefaultOptions, IInitializationOptions } from '@dao-xyz/peerbit-dstore';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import Cache from '@dao-xyz/orbit-db-cache';

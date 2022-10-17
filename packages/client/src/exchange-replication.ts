@@ -5,7 +5,7 @@ import { ProtocolMessage } from './message.js';
 import isNode from 'is-node';
 import { MaybeSigned, PublicSignKey } from '@dao-xyz/peerbit-crypto';
 import { DecryptedThing, PublicKeyEncryption } from "@dao-xyz/peerbit-crypto";
-import { Address, Store, StoreLike } from '@dao-xyz/peerbit-dstore';
+import { Address, Store } from '@dao-xyz/peerbit-dstore';
 import { OrbitDB } from './orbit-db.js';
 import { StringSetSerializer } from '@dao-xyz/borsh-utils';
 // @ts-ignore
@@ -160,7 +160,7 @@ export const requestPeerInfo = async (serializedRequest: Uint8Array, replication
     return publish(replicationTopic, serialize(decryptedMessage))
 }
 
-export const exchangePeerInfo = async (fromId: string, replicationTopic: string, store: StoreLike<any>, heads: string[] | undefined, publish: (message: Uint8Array) => Promise<void>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicSignKey }>) => {
+export const exchangePeerInfo = async (fromId: string, replicationTopic: string, store: Store<any>, heads: string[] | undefined, publish: (message: Uint8Array) => Promise<void>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicSignKey }>) => {
 
     const signedMessage = await new MaybeSigned({
         data: serialize(new ReplicatorInfo({

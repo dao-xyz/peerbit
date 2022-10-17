@@ -1,7 +1,7 @@
 import { variant, field, vec, serialize } from '@dao-xyz/borsh';
 import { Entry, Identity } from '@dao-xyz/ipfs-log'
 import { ProtocolMessage } from './message.js';
-import { StoreLike } from '@dao-xyz/peerbit-dstore';
+import { Store } from '@dao-xyz/peerbit-dstore';
 import { DecryptedThing, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned } from '@dao-xyz/peerbit-crypto';
 import { ResourceRequirement } from './exchange-replication.js';
@@ -66,26 +66,8 @@ export class RequestHeadsMessage extends ProtocolMessage {
   }
 }
 
-/* export const exchangeHeads = async (send: (peer, message: Uint8Array) => Promise<void>, store: StoreLike<any>, isSupported: (hash: string) => boolean, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicKey }>) => {
-  const heads = await store.getHeads();
-  logger.debug(`Send latest heads of '${store.replicationTopic}'`)
-  if (heads && heads.length > 0) {
 
-    const headsToSend = heads.filter(head => !isSupported(head.hash));
-
-    // Calculate leaders and send directly ? Batch by channel instead
-    const message = new ExchangeHeadsMessage({ replicationTopic: store.replicationTopic, address: store.address.toString(), heads: headsToSend });
-    const signedMessage = await new MaybeSigned({ data: serialize(message) }).sign(sign)
-    const decryptedMessage = new DecryptedThing({
-      data: serialize(signedMessage)
-    }) // TODO encryption?
-    const serializedMessage = serialize(decryptedMessage);
-    await send(serializedMessage)
-  }
-}
- */
-
-export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>, store: StoreLike<any>, identity: Identity, heads: Entry<any>[], replicationTopic: string, includeReferences: boolean) => {
+export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>, store: Store<any>, identity: Identity, heads: Entry<any>[], replicationTopic: string, includeReferences: boolean) => {
   const gids = new Set(heads.map(h => h.gid));
   if (gids.size > 1) {
     throw new Error("Expected to share heads only from 1 gid")

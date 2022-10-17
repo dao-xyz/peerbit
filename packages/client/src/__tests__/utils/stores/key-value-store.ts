@@ -1,5 +1,5 @@
 import { Identity, Log } from "@dao-xyz/ipfs-log";
-import { Address, IInitializationOptions, load, StoreLike } from "@dao-xyz/peerbit-dstore";
+import { Address, IInitializationOptions, load } from "@dao-xyz/peerbit-dstore";
 import { Store } from "@dao-xyz/peerbit-dstore"
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log';
 import { Operation } from "./event-store";

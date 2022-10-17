@@ -12,11 +12,7 @@ import { v4 as uuid } from 'uuid';
 // Include test utilities
 import {
   nodeConfig as config,
-  startIpfs,
-  stopIpfs,
   testAPIs,
-  connectPeers,
-  waitForPeers,
   Session
 } from '@dao-xyz/orbit-db-test-utils'
 import { waitFor } from "@dao-xyz/time"

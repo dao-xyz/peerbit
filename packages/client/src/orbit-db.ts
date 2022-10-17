@@ -1,5 +1,5 @@
 import path from 'path'
-import { Address, IStoreOptions, Saveable, Store, StoreLike } from '@dao-xyz/peerbit-dstore'
+import { Address, IStoreOptions, Saveable, Store } from '@dao-xyz/peerbit-dstore'
 // @ts-ignore
 import Logger from 'logplease'
 import { IPFS, IPFS as IPFSInstance } from 'ipfs-core-types';
@@ -88,7 +88,7 @@ export class OrbitDB {
   caches: { [key: string]: { cache: Cache<any>, handlers: Set<string> } };
   keystore: Keystore;
   minReplicas: number;
-  stores: { [topic: string]: { [address: string]: StoreLike<any> } };
+  stores: { [topic: string]: { [address: string]: Store<any> } };
   localNetwork: boolean;
   _trustedNetwork: Map<string, TrustedNetwork>
   /*  heapsizeLimitForForks: number = 1000 * 1000 * 1000; */
@@ -956,7 +956,7 @@ export class OrbitDB {
     this.stores[storeAddress] = store;
   }
   */
-  async addStore(store: StoreLike<any>, replicationTopic: string) {
+  async addStore(store: Store<any>, replicationTopic: string) {
     if (!this.stores[replicationTopic]) {
       this.stores[replicationTopic] = {};
     }
@@ -1192,62 +1192,6 @@ export class OrbitDB {
 
 
 
-  /* Create and Open databases */
-
-  /*
-    options = {
-      accessController: { write: [] } // array of keys that can write to this database
-      overwrite: false, // whether we should overwrite the existing database if it exists
-    }
-  */
-
-
-  /*  directory?: string,
-   onlyHash?: boolean,
-   overwrite?: boolean,
-   accessController?: any,
-   create?: boolean,
-   type?: string,
-   localOnly?: boolean,
-   replicationConcurrency?: number,
-   replicate?: boolean,
-   replicationTopic?: string | (() => string),
- 
-   encoding?: Encoding<any>;
-   encryption?: (keystore: Keystore) => StorePublicKeyEncryption; */
-  /* async create<S extends StoreLike<any>>(store: S, options: {
-    timeout?: number,
-    identity?: Identity,
-    cache?: Cache,
-
-
-
-  } & IStoreOptions<any> = {}): Promise<S> {
-
-    logger.debug('create()')
-    logger.debug(`Creating database '${store.name}' as ${store.constructor.name}`)
-
-    // Create the database address
-
-    // TODO prevent double save (store is also saved on init)
-    const dbAddress = await store.save(this._ipfs, { pin: true });
-
-    if (!options.cache)
-      options.cache = await this._requestCache(dbAddress.toString(), options.directory)
-
-    // Check if we have the database locally
-    const haveDB = await this._haveLocalData(options.cache, dbAddress)
-    if (haveDB) { throw new Error(`Database '${dbAddress}' already exists!`) }
-
-    // Save the database locally
-    await this._addManifestToCache(options.cache, dbAddress)
-
-    logger.debug(`Created database '${dbAddress}'`)
-
-    // Open the database
-    return this.open<S>(store, options)
-  } */
-
   async _requestCache(address: string, directory: string, existingCache?: Cache<any>) {
     const dir = directory || this.directory
     if (!this.caches[dir]) {
@@ -1264,7 +1208,7 @@ export class OrbitDB {
   }
 
 
-  _openStorePromise: Promise<Program | StoreLike<any> | undefined>
+  _openStorePromise: Promise<Program | Store<any> | undefined>
 
   /**
    * Default behaviour of a store is only to accept heads that are forks (new roots) with some probability
@@ -1273,7 +1217,7 @@ export class OrbitDB {
    * @param options 
    * @returns 
    */
-  async open<S extends Program | StoreLike<any>>(storeOrAddress: /* string | Address |  */S | Address | string, replicationTopic: string, options: OpenStoreOptions = {}): Promise<S> {
+  async open<S extends Program | Store<any>>(storeOrAddress: /* string | Address |  */S | Address | string, replicationTopic: string, options: OpenStoreOptions = {}): Promise<S> {
 
 
     // TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?

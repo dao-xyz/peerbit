@@ -19,7 +19,7 @@ import { Address, load, save } from './io.js'
 
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
-import { Saveable, StoreLike } from './store-like.js'
+import { Saveable } from './store-like.js'
 import { joinUint8Arrays } from '@dao-xyz/borsh-utils';
 // @ts-ignore
 import Logger from 'logplease'
@@ -114,9 +114,9 @@ export interface IStoreOptions<T> {
   onLoadProgress?: (store: Store<T>, entry: Entry<T>) => void,
   onWrite?: (store: Store<T>, _entry: Entry<T>) => void
   onOpen?: (store: Store<any>) => Promise<void>,
-  onReplicationQueued?: (store: StoreLike<any>, entry: Entry<T>) => void,
-  onReplicationProgress?: (store: StoreLike<any>, entry: Entry<T>) => void,
-  onReplicationComplete?: (store: StoreLike<any>) => void
+  onReplicationQueued?: (store: Store<any>, entry: Entry<T>) => void,
+  onReplicationProgress?: (store: Store<any>, entry: Entry<T>) => void,
+  onReplicationComplete?: (store: Store<any>) => void
   onReady?: (store: Store<T>) => void,
 
 
@@ -135,7 +135,6 @@ export interface IStoreOptions<T> {
   fetchEntryTimeout?: number,
   referenceCount?: number,
   replicationConcurrency?: number,
-  fallbackAccessController?: StoreLike<T>,
   syncLocal?: boolean,
   sortFn?: ISortFunction,
   prune?: PruneOptions,
@@ -202,7 +201,7 @@ export const DefaultOptions: IInitializationOptionsDefault<any> = {
   /* nameResolver: (name: string) => name, */
   saveOrResolve: async (ipfs: IPFS, store: Saveable) => {
     await store.save(ipfs, { pin: true })
-    return store as Store<any> | StoreLike<any>;
+    return store as Store<any>;
   }
 }
 
@@ -216,23 +215,16 @@ export const checkStoreName = (name: string) => {
 
 
 @variant(0)
-export class Store<T> implements StoreLike<T> {
+export class Store<T> {
 
   @field({ type: 'string' })
   name: string;
-
-  /* @field({ type: Sharding })
-  sharding: Sharding */
-
-  /*   @field({ type: option(AccessController) })
-    accessController?: AccessController<T> | (StoreLike<any> & AccessController<T>) */
 
   @field({ type: 'u8' })
   _encoding: EncodingType
 
   canAppend?: (payload: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<SignatureWithKey>) => Promise<boolean>;
   // An access controller that is note part of the store manifest, usefull for circular store -> access controller -> store structures
-  fallbackAccessController?: StoreLike<T>
 
   id: string;
   options: IInitializationOptions<T>;
@@ -297,13 +289,6 @@ export class Store<T> implements StoreLike<T> {
     this.identity = identity;
     this.canAppend = options.canAppend;
 
-    /*  const acl = this.accessController;
- 
-     if (acl) {
-       this.accessController = (await acl.init(ipfs, this.identity, this.options)) as (StoreLike<any> & AccessController<any>);
-     }
- 
-  */
     /* this.events = new EventEmitter() */
     this.remoteHeadsPath = path.join(this.id, '_remoteHeads')
     this.localHeadsPath = path.join(this.id, '_localHeads')
@@ -311,7 +296,6 @@ export class Store<T> implements StoreLike<T> {
     this.queuePath = path.join(this.id, 'queue')
     this.manifestPath = path.join(this.id, '_manifest')
 
-    this.fallbackAccessController = this.options.fallbackAccessController;
     /* this.sharding.init(options.requestNewShard); */
 
 
@@ -468,7 +452,7 @@ export class Store<T> implements StoreLike<T> {
       logId: this.id,
       encoding: this.options.encoding,
       encryption: this.options.encryption,
-      canAppend: (payload, key) => (this.canAppend || this.fallbackAccessController?.canAppend || ((_, __) => true))(payload, key),
+      canAppend: (payload: any, key: any) => (this.canAppend || ((_, __) => true))(payload, key),
       sortFn: this.options.sortFn,
       prune: this.options.prune,
     };
@@ -539,17 +523,6 @@ export class Store<T> implements StoreLike<T> {
     if (this.options.onClose) {
       await this.options.onClose(this)
     }
-
-    // Close store access controller
-    /*    const acl = this.accessController || this.fallbackAccessController;
-       if (acl?.close) {
-         await acl.close()
-       }
-    */
-    // Remove all event listeners
-    /*   for (const event in this.events["_events"]) {
-        this.events.removeAllListeners(event)
-      } */
 
     this._oplog = null as any
 
@@ -673,7 +646,7 @@ export class Store<T> implements StoreLike<T> {
     const handle = async (headToHandle: Entry<T> | EntryWithRefs<T>) => {
 
       // TODO Fix types
-      if ((this as StoreLike<any>).canAppend) {
+      if (this.canAppend) {
         const headsToCheck = headToHandle instanceof Entry ? [headToHandle] : [headToHandle.entry, ...headToHandle.references];
         for (const h of headsToCheck) {
           h.init({
@@ -681,7 +654,7 @@ export class Store<T> implements StoreLike<T> {
           })
           try {
             // TODO add can append, because it referenses things I know, or is a new root. BTW new roots should only be accepted if the access controller allows it
-            const canAppend = (await (this as StoreLike<any>).canAppend as CanAppend<T>)(h._payload, h._signature)
+            const canAppend = (await this.canAppend as CanAppend<T>)(h._payload, h._signature)
             if (!canAppend) {
               logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
               return Promise.resolve(null)
@@ -788,7 +761,7 @@ export class Store<T> implements StoreLike<T> {
       this._recalculateReplicationMax(snapshotData.values.reduce(maxClock, 0n) + 1n)
       if (snapshotData) {
         this._oplog = await Log.fromEntry(this._ipfs, this.identity, snapshotData.heads, {
-          canAppend: (this as StoreLike<any>).canAppend,
+          canAppend: this.canAppend,
           sortFn: this.options.sortFn,
           length: -1,
           timeout: 1000,
