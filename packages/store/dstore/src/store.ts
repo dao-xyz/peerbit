@@ -238,7 +238,6 @@ export class Store<T> implements StoreLike<T> {
   options: IInitializationOptions<T>;
   identity: Identity;
   address: Address;
-  dbname: string;
 
   /*   events: EventEmitter;
    */
@@ -295,7 +294,6 @@ export class Store<T> implements StoreLike<T> {
     const address = this.address; // will exist since options.saveOrResolve will save
     this.id = address.toString();
     this.address = address as Address
-    this.dbname = (address as Address).path || ''
     this.identity = identity;
     this.canAppend = options.canAppend;
 
@@ -378,42 +376,6 @@ export class Store<T> implements StoreLike<T> {
         }
       }
 
-      const onReplicationComplete = async (logs: Log<T>[]) => {
-        const updateState = async () => {
-          try {
-            if (this._oplog && logs.length > 0) {
-              try {
-                for (const log of logs) {
-                  await this._oplog.join(log)
-                }
-              } catch (error) {
-                if (error instanceof AccessError) {
-                  logger.info(error.message);
-                  return;
-                }
-              }
-
-              // only store heads that has been verified and merges
-              const heads = this._oplog.heads
-              await this._cache.setBinary(this.remoteHeadsPath, new HeadsCache({ heads }))
-              logger.debug(`Saved heads ${heads.length} [${heads.map(e => e.hash).join(', ')}]`)
-
-              // update the store's index after joining the logs
-              // and persisting the latest heads
-              await this._updateIndex()
-
-              if (this._oplog.length > this.replicationStatus.progress) {
-                this._recalculateReplicationStatus(this._oplog.length)
-              }
-              this.options.onReplicationComplete && this.options.onReplicationComplete(this)
-
-            }
-          } catch (e) {
-            throw e;
-          }
-        }
-        await this._queue.add(updateState.bind(this))
-      }
       // Create the replicator
       this._replicator = new Replicator(this, this.options.replicationConcurrency)
       // For internal backwards compatibility,
@@ -422,7 +384,9 @@ export class Store<T> implements StoreLike<T> {
       // Hook up the callbacks to the Replicator
       this._replicator.onReplicationQueued = onReplicationQueued
       this._replicator.onReplicationProgress = onReplicationProgress
-      this._replicator.onReplicationComplete = onReplicationComplete
+      this._replicator.onReplicationComplete = (logs: Log<T>[]) => {
+        this._queue.add((() => this.updateStateFromLogs(logs)).bind(this))
+      }
     } catch (e) {
       console.error('Store Error:', e)
     }
@@ -439,6 +403,41 @@ export class Store<T> implements StoreLike<T> {
     }
     this.initialized = true;
     return this;
+  }
+
+
+  updateStateFromLogs = async (logs: Log<T>[]) => {
+    try {
+      if (this._oplog && logs.length > 0) {
+        try {
+          for (const log of logs) {
+            await this._oplog.join(log, undefined, false) // checkPermitted = false, because we have alreay checked this when arriving here
+          }
+        } catch (error) {
+          if (error instanceof AccessError) {
+            logger.info(error.message);
+            return;
+          }
+        }
+
+        // only store heads that has been verified and merges
+        const heads = this._oplog.heads
+        await this._cache.setBinary(this.remoteHeadsPath, new HeadsCache({ heads }))
+        logger.debug(`Saved heads ${heads.length} [${heads.map(e => e.hash).join(', ')}]`)
+
+        // update the store's index after joining the logs
+        // and persisting the latest heads
+        await this._updateIndex()
+
+        if (this._oplog.length > this.replicationStatus.progress) {
+          this._recalculateReplicationStatus(this._oplog.length)
+        }
+        this.options.onReplicationComplete && this.options.onReplicationComplete(this)
+
+      }
+    } catch (e) {
+      throw e;
+    }
   }
 
   getEncoding(clazz?: Constructor<T>): Encoding<T> {

@@ -610,7 +610,7 @@ export class Log<T> extends GSet {
    * @example
    * await log1.join(log2)
    */
-  async join(log: Log<T>, size = -1) {
+  async join(log: Log<T>, size = -1, checkPermitted = true) {
     /*  await this.initRootGid(); */
 
     /* if (this.id !== log.id) return this is wierd */
@@ -624,9 +624,6 @@ export class Log<T> extends GSet {
     // assume sorted 
 
     const permitted = async (entry: Entry<T>) => {
-      entry.init({
-        encryption: this._encryption
-      })
       const canAppend = await this._canAppend(entry._payload, entry._signature)
       if (!canAppend) {
         throw new AccessError(`Could not append Entry<T>, key "${(await entry.publicKey)}" is not allowed to write to the log`)
@@ -646,7 +643,9 @@ export class Log<T> extends GSet {
 
     await pMap(entriesToJoin, async (e: Entry<T>) => {
       e.init({ encryption: this._encryption })
-      await permitted(e)
+      if (checkPermitted) {
+        await permitted(e)
+      }
       /*  await verify(e)  */ // Assumes the access controller is verifying signatures
     }, { concurrency: this.joinConcurrency })
 

@@ -1,23 +1,29 @@
 import { DeleteOperation, DocumentIndex, IndexedValue, Operation, PutAllOperation, PutOperation } from './document-index'
 import { Constructor, deserialize, field, serialize, variant } from '@dao-xyz/borsh';
 import { asString } from './utils.js';
-import { DocumentQueryRequest, FieldQuery, FieldStringMatchQuery, QueryRequestV0, Result, ResultWithSource, SortDirection, FieldByteMatchQuery, FieldBigIntCompareQuery, Compare, Query, MemoryCompareQuery } from '@dao-xyz/query-protocol';
+import { DocumentQueryRequest, FieldQuery, FieldStringMatchQuery, Result, ResultWithSource, SortDirection, FieldByteMatchQuery, FieldBigIntCompareQuery, Compare, Query, MemoryCompareQuery, DSearchInitializationOptions, QueryType } from '@dao-xyz/peerbit-dsearch';
 import { BinaryPayload } from '@dao-xyz/bpayload';
 import { arraysEqual } from '@dao-xyz/borsh-utils';
 import { Store, IInitializationOptions, Address, load } from '@dao-xyz/peerbit-dstore';
-import { QueryStore, QueryStoreInitializationOptions } from '@dao-xyz/orbit-db-query-store';
+import { DSearch } from '@dao-xyz/peerbit-dsearch';
 import { BORSH_ENCODING, Encoding, Identity, Payload } from '@dao-xyz/ipfs-log';
 import { IPFS } from 'ipfs-core-types';
+import { SignatureWithKey, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
+import { QueryOptions, QueryRequestV0 } from '@dao-xyz/peerbit-dquery';
 const replaceAll = (str: string, search: any, replacement: any) => str.toString().split(search).join(replacement)
 
 @variant([0, 0])
-export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Operation<T>>/*  implements Typed */ {
+export class BinaryDocumentStore<T extends BinaryPayload> extends Store<Operation<T>>/*  implements Typed */ {
 
   @field({ type: 'string' })
   indexBy: string;
 
   @field({ type: 'string' })
   objectType: string;
+
+  @field({ type: DSearch })
+  search: DSearch<Operation<T>>
+
 
   _clazz?: Constructor<T>;
 
@@ -28,13 +34,14 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
     name?: string,
     indexBy: string,
     objectType: string,
-    queryRegion?: string,
+    search: DSearch<Operation<T>>,
     clazz?: Constructor<T>
   }) {
     super(properties)
     if (properties) {
       this.indexBy = properties.indexBy;
       this.objectType = properties.objectType;
+      this.search = properties.search;
       this._clazz = properties.clazz;
     }
     this._index = new DocumentIndex();
@@ -44,21 +51,25 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
      throw new Error("Not implemented");
    } */
 
-  async init(ipfs: IPFS, identity: Identity, options: QueryStoreInitializationOptions<Operation<T>>) {
+  async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<Operation<T>> & { canRead?(key: SignatureWithKey): Promise<boolean> }) {
+
     if (!this._clazz) {
       if (!options.typeMap)
         throw new Error("Class not set, " + this.objectType)
       else {
         const clazz = options.typeMap[this.objectType];
         if (!clazz) {
-          throw new Error("Class not set in typemap, " + this.objectType)
+          throw new Error("Class not present in typemap, " + this.objectType)
         }
         this._clazz = clazz;
       }
     }
 
     this._index.init(this._clazz);
-    return await super.init(ipfs, identity, { ...options, encoding: BORSH_ENCODING(Operation), onUpdate: this._index.updateIndex.bind(this._index) })
+    await super.init(ipfs, identity, { ...options, encoding: BORSH_ENCODING(Operation), onUpdate: this._index.updateIndex.bind(this._index) })
+    await this.search.init(ipfs, identity, { ...options, context: { address: this.address }, canRead: options.canRead, queryHandler: this.queryHandler.bind(this) });
+    return this;
+
   }
 
   /* get encoding(): Encoding<Operation<T>> {
@@ -93,9 +104,9 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
       .filter((doc) => filter(doc))
   }
 
-  queryHandler(query: QueryRequestV0): Promise<Result[]> {
-    if (query.type instanceof DocumentQueryRequest) {
-      let queries: Query[] = query.type.queries
+  queryHandler(query: QueryType): Promise<Result[]> {
+    if (query instanceof DocumentQueryRequest) {
+      let queries: Query[] = query.queries
       let results = this._queryDocuments(
         doc =>
           queries?.length > 0 ? queries.map(f => {
@@ -167,8 +178,8 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
           }).reduce((prev, current) => prev && current) : true
       ).map(x => x.value);
 
-      if (query.type.sort) {
-        const sort = query.type.sort;
+      if (query.sort) {
+        const sort = query.sort;
         const resolveField = (obj: T) => {
           let v = obj;
           for (let i = 0; i < sort.key.length; i++) {
@@ -177,7 +188,7 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
           return v
         }
         let direction = 1;
-        if (query.type.sort.direction == SortDirection.Descending) {
+        if (query.sort.direction == SortDirection.Descending) {
           direction = -1;
         }
         results.sort((a, b) => {
@@ -193,12 +204,12 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
         })
       }
       // TODO check conversions
-      if (query.type.offset) {
-        results = results.slice(Number(query.type.offset));
+      if (query.offset) {
+        results = results.slice(Number(query.offset));
       }
 
-      if (query.type.size) {
-        results = results.slice(0, Number(query.type.size));
+      if (query.size) {
+        results = results.slice(0, Number(query.size));
       }
       return Promise.resolve(results.map(r => new ResultWithSource({
         source: r
@@ -267,6 +278,8 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
     }), { nexts: [existing.entry], ...options })
   }
 
+
+
   public get size(): number {
     return Object.keys(this._index).length
   }
@@ -280,15 +293,6 @@ export class BinaryDocumentStore<T extends BinaryPayload> extends QueryStore<Ope
       })
     }
    */
-  static async load<T extends BinaryPayload>(ipfs: IPFS, address: Address, options?: {
-    timeout?: number;
-  }): Promise<BinaryDocumentStore<T>> {
-    const instance = await load(ipfs, address, Store, options)
-    if (instance instanceof BinaryDocumentStore === false) {
-      throw new Error("Unexpected")
-    };
-    return instance as BinaryDocumentStore<T>;
-  }
 }
 
 

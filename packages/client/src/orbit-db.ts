@@ -1441,8 +1441,8 @@ export class OrbitDB {
 
   // Save the database locally
   async _addManifestToCache(cache: Cache<any>, dbAddress: Address) {
-    await cache.set(path.join(dbAddress.toString(), '_manifest'), dbAddress.root)
-    logger.debug(`Saved manifest to IPFS as '${dbAddress.root}'`)
+    await cache.set(path.join(dbAddress.toString(), '_manifest'), dbAddress.cid)
+    logger.debug(`Saved manifest to IPFS as '${dbAddress.cid}'`)
   }
 
   /**

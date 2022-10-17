@@ -1,14 +1,15 @@
-import { QueryRequestV0, QueryResponseV0, DocumentQueryRequest, FieldStringMatchQuery, StoreAddressMatchQuery, ResultWithSource } from "@dao-xyz/query-protocol"
+import { DocumentQueryRequest, FieldStringMatchQuery, StoreAddressMatchQuery, ResultWithSource } from "../"
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 import type { Message } from '@libp2p/interface-pubsub'
-import { field, variant } from "@dao-xyz/borsh";
+import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { delay, waitFor } from "@dao-xyz/time";
 import { Session, waitForPeers } from '@dao-xyz/orbit-db-test-utils';
 import { CustomBinaryPayload } from '@dao-xyz/bpayload';
 import { decryptVerifyInto, Ed25519Keypair, Ed25519PublicKey, X25519Keypair, X25519PublicKey, X25519SecretKey } from "@dao-xyz/peerbit-crypto";
-import { query, respond } from '../io.js';
+import { QueryRequestV0, QueryResponseV0, query, respond } from '@dao-xyz/peerbit-dquery';
 import { Ed25519Identity } from "@dao-xyz/ipfs-log";
+import { Results } from "../result";
 
 @variant("number")//@variant([1, 1])
 class NumberResult extends CustomBinaryPayload {
@@ -46,16 +47,18 @@ describe('query', () => {
     await session.peers[0].ipfs.pubsub.subscribe(topic, async (msg: Message) => {
       let { result: request } = await decryptVerifyInto(msg.data, QueryRequestV0, () => Promise.resolve(undefined)); // deserialize, so we now this works, even though we will not analyse the query
       await respond(session.peers[0].ipfs, topic, request, new QueryResponseV0({
-        results: [new ResultWithSource({
-          source: new NumberResult({ number: 123 })
-        })]
+        response: serialize(new Results({
+          results: [new ResultWithSource({
+            source: new NumberResult({ number: 123 })
+          })]
+        }))
       }))
     })
 
     await waitForPeers(session.peers[1].ipfs, [session.peers[0].id], topic);
     let results = [];
     await query(session.peers[1].ipfs, topic, new QueryRequestV0({
-      type: new DocumentQueryRequest({
+      query: serialize(new DocumentQueryRequest({
         queries: [new FieldStringMatchQuery({
           key: 'a',
           value: 'b'
@@ -63,11 +66,12 @@ describe('query', () => {
           address: 'a'
         })
         ]
-      })
+      }))
     }), (resp) => {
-      expect(resp.results[0]).toBeInstanceOf(ResultWithSource);
-      expect((resp.results[0] as ResultWithSource).source).toBeInstanceOf(NumberResult);
-      results.push((((resp.results[0] as ResultWithSource).source) as NumberResult).number);
+      const r = deserialize(resp.response, Results);
+      expect(r.results[0]).toBeInstanceOf(ResultWithSource);
+      expect((r.results[0] as ResultWithSource).source).toBeInstanceOf(NumberResult);
+      results.push((((r.results[0] as ResultWithSource).source) as NumberResult).number);
     }, { waitForAmount: 1 })
 
     await waitFor(() => results.length === 1);
@@ -82,16 +86,20 @@ describe('query', () => {
     await session.peers[0].ipfs.pubsub.subscribe(topic, async (msg: Message) => {
       let { result: request } = await decryptVerifyInto(msg.data, QueryRequestV0, () => Promise.resolve(undefined));
       await respond(session.peers[0].ipfs, topic, request, new QueryResponseV0({
-        results: [new ResultWithSource({
-          source: new NumberResult({ number: 123 })
-        })]
+        response: serialize(new Results({
+          results: [new ResultWithSource({
+            source: new NumberResult({ number: 123 })
+          })]
+        }))
       }));
 
       setTimeout(() => {
         respond(session.peers[0].ipfs, topic, request, new QueryResponseV0({
-          results: [new ResultWithSource({
-            source: new NumberResult({ number: 234 })
-          })]
+          response: serialize(new Results({
+            results: [new ResultWithSource({
+              source: new NumberResult({ number: 234 })
+            })]
+          }))
         }));
       }, maxAggregationTime + 500) // more than aggregation time
     })
@@ -99,13 +107,15 @@ describe('query', () => {
 
     let results: number[] = [];
     await query(session.peers[1].ipfs, topic, new QueryRequestV0({
-      type: new DocumentQueryRequest({
+      query: serialize(new DocumentQueryRequest({
         queries: []
-      })
+      }))
     }), (resp) => {
-      expect(resp.results[0]).toBeInstanceOf(ResultWithSource);
-      expect((resp.results[0] as ResultWithSource).source).toBeInstanceOf(NumberResult);
-      results.push((((resp.results[0] as ResultWithSource).source) as NumberResult).number);
+      const r = deserialize(resp.response, Results);
+
+      expect(r.results[0]).toBeInstanceOf(ResultWithSource);
+      expect((r.results[0] as ResultWithSource).source).toBeInstanceOf(NumberResult);
+      results.push((((r.results[0] as ResultWithSource).source) as NumberResult).number);
     }, {
       maxAggregationTime
     })
@@ -125,9 +135,11 @@ describe('query', () => {
       await session.peers[i].ipfs.pubsub.subscribe(topic, async (msg: Message) => {
         let { result: request } = await decryptVerifyInto(msg.data, QueryRequestV0, () => Promise.resolve(undefined));
         await respond(session.peers[i].ipfs, topic, request, new QueryResponseV0({
-          results: [new ResultWithSource({
-            source: new NumberResult({ number: 123 })
-          })]
+          response: serialize(new Results({
+            results: [new ResultWithSource({
+              source: new NumberResult({ number: 123 })
+            })]
+          }))
         }));
       })
     }
@@ -136,13 +148,15 @@ describe('query', () => {
 
     let results: number[] = [];
     await query(session.peers[0].ipfs, topic, new QueryRequestV0({
-      type: new DocumentQueryRequest({
+      query: serialize(new DocumentQueryRequest({
         queries: []
-      })
+      }))
     }), (resp) => {
-      expect(resp.results[0]).toBeInstanceOf(ResultWithSource);
-      expect((resp.results[0] as ResultWithSource).source).toBeInstanceOf(NumberResult);
-      results.push((((resp.results[0] as ResultWithSource).source) as NumberResult).number);
+      const r = deserialize(resp.response, Results);
+
+      expect(r.results[0]).toBeInstanceOf(ResultWithSource);
+      expect((r.results[0] as ResultWithSource).source).toBeInstanceOf(NumberResult);
+      results.push((((r.results[0] as ResultWithSource).source) as NumberResult).number);
     }, {
       maxAggregationTime,
       waitForAmount
@@ -170,9 +184,11 @@ describe('query', () => {
 
 
       await respond(session.peers[1].ipfs, topic, request, new QueryResponseV0({
-        results: [new ResultWithSource({
-          source: new NumberResult({ number: 123 })
-        })]
+        response: serialize(new Results({
+          results: [new ResultWithSource({
+            source: new NumberResult({ number: 123 })
+          })]
+        }))
       }), { signer: responder });
     })
 
@@ -180,19 +196,20 @@ describe('query', () => {
 
     let results: number[] = [];
     await query(session.peers[0].ipfs, topic, new QueryRequestV0({
-      type: new DocumentQueryRequest({
+      query: serialize(new DocumentQueryRequest({
         queries: []
-      }),
+      })),
     }), (resp, from) => {
-      expect(resp.results[0]).toBeInstanceOf(ResultWithSource);
-      expect((resp.results[0] as ResultWithSource).source).toBeInstanceOf(NumberResult);
+
+      const r = deserialize(resp.response, Results);
+      expect(r.results[0]).toBeInstanceOf(ResultWithSource);
+      expect((r.results[0] as ResultWithSource).source).toBeInstanceOf(NumberResult);
 
       // Check that it was signed by the responder
       expect(from).toBeInstanceOf(Ed25519PublicKey);
       expect((from as Ed25519PublicKey).equals(responder.publicKey)).toBeTrue();
 
-
-      results.push((((resp.results[0] as ResultWithSource).source) as NumberResult).number);
+      results.push((((r.results[0] as ResultWithSource).source) as NumberResult).number);
 
 
     }, {
@@ -218,23 +235,26 @@ describe('query', () => {
     await session.peers[1].ipfs.pubsub.subscribe(topic, async (msg: Message) => {
       let { result: request } = await decryptVerifyInto(msg.data, QueryRequestV0, async (keys) => { return { index: 0, keypair: await X25519Keypair.from(new Ed25519Keypair({ ...responder })) } });
       await respond(session.peers[1].ipfs, topic, request, new QueryResponseV0({
-        results: [new ResultWithSource({
-          source: new NumberResult({ number: 123 })
-        })]
+        response: serialize(new Results({
+          results: [new ResultWithSource({
+            source: new NumberResult({ number: 123 })
+          })]
+        }))
       }));
     })
     await waitForPeers(session.peers[0].ipfs, [session.peers[1].id], topic);
 
     let results: number[] = [];
     await query(session.peers[0].ipfs, topic, new QueryRequestV0({
-      type: new DocumentQueryRequest({
+      query: serialize(new DocumentQueryRequest({
         queries: []
-      }),
+      })),
       responseRecievers: [await X25519PublicKey.from(requester.publicKey)]
     }), (resp) => {
-      expect(resp.results[0]).toBeInstanceOf(ResultWithSource);
-      expect((resp.results[0] as ResultWithSource).source).toBeInstanceOf(NumberResult);
-      results.push((((resp.results[0] as ResultWithSource).source) as NumberResult).number);
+      const r = deserialize(resp.response, Results);
+      expect(r.results[0]).toBeInstanceOf(ResultWithSource);
+      expect((r.results[0] as ResultWithSource).source).toBeInstanceOf(NumberResult);
+      results.push((((r.results[0] as ResultWithSource).source) as NumberResult).number);
     }, {
       maxAggregationTime,
       waitForAmount,

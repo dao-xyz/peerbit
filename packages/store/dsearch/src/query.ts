@@ -4,6 +4,8 @@ import { v4 as uuid } from 'uuid';
 import { QueryType } from './query-interface.js';
 import { Result } from './result.js';
 import { X25519PublicKey } from '@dao-xyz/peerbit-crypto'
+
+/* 
 @variant(0)
 export class QueryRequestV0 {
 
@@ -38,7 +40,7 @@ export class QueryRequestV0 {
 export class QueryResponseV0 {
 
     @field({ type: vec(Result) })
-    results: Result[] // base58 encoded
+    results: Result[]
     constructor(properties?: {
         results: Result[]
 
@@ -50,5 +52,5 @@ export class QueryResponseV0 {
     }
 }
 
-
+ */
 

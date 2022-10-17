@@ -17,9 +17,8 @@ export class Contract extends SystemBinaryPayload implements Initiable<any>, Add
 
     constructor(properties?: { name?: string }) {
         super();
-        if (properties) {
-            this.name = properties.name || uuid();
-        }
+        this.name = properties?.name || uuid();
+
     }
 
     async init(ipfs: IPFS, _identity: Identity, options: IInitializationOptions<any>): Promise<this> {

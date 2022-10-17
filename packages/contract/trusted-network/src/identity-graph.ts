@@ -3,9 +3,10 @@ import { BinaryDocumentStore, IndexedValue } from "@dao-xyz/peerbit-ddoc";
 import { Key, PlainKey, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 // @ts-ignore
 import { SystemBinaryPayload } from "@dao-xyz/bpayload";
-import { DocumentQueryRequest, MemoryCompare, MemoryCompareQuery, QueryRequestV0, Result, ResultWithSource } from "@dao-xyz/query-protocol";
+import { DocumentQueryRequest, DSearch, MemoryCompare, MemoryCompareQuery, Result, ResultWithSource } from "@dao-xyz/peerbit-dsearch";
 import { createHash } from "crypto";
 import { joinUint8Arrays, U8IntArraySerializer } from '@dao-xyz/borsh-utils'
+import { DQuery } from "@dao-xyz/peerbit-dquery";
 
 export type RelationResolver = { resolve: (key: PublicSignKey, db: BinaryDocumentStore<Relation>) => Promise<Result[]>, next: (relation: AnyRelation) => PublicSignKey }
 export const PUBLIC_KEY_WIDTH = 72 // bytes reserved
@@ -14,19 +15,17 @@ export const KEY_OFFSET = 3 + 4 + 1 + 28; // SystemBinaryPayload discriminator +
 export const getFromByTo: RelationResolver = {
     resolve: async (to: PublicSignKey, db: BinaryDocumentStore<Relation>) => {
         const ser = serialize(to);
-        return await db.queryHandler(new QueryRequestV0({
-            type: new DocumentQueryRequest({
-                queries: [
-                    new MemoryCompareQuery({
-                        compares: [
-                            new MemoryCompare({
-                                bytes: ser,
-                                offset: BigInt(KEY_OFFSET + PUBLIC_KEY_WIDTH)
-                            })
-                        ]
-                    })
-                ]
-            })
+        return await db.queryHandler(new DocumentQueryRequest({
+            queries: [
+                new MemoryCompareQuery({
+                    compares: [
+                        new MemoryCompare({
+                            bytes: ser,
+                            offset: BigInt(KEY_OFFSET + PUBLIC_KEY_WIDTH)
+                        })
+                    ]
+                })
+            ]
         }));
     },
     next: (relation) => relation.from
@@ -35,19 +34,17 @@ export const getFromByTo: RelationResolver = {
 export const getToByFrom: RelationResolver = {
     resolve: async (from: PublicSignKey, db: BinaryDocumentStore<Relation>) => {
         const ser = serialize(from);
-        return await db.queryHandler(new QueryRequestV0({
-            type: new DocumentQueryRequest({
-                queries: [
-                    new MemoryCompareQuery({
-                        compares: [
-                            new MemoryCompare({
-                                bytes: ser,
-                                offset: BigInt(KEY_OFFSET)
-                            })
-                        ]
-                    })
-                ]
-            })
+        return await db.queryHandler(new DocumentQueryRequest({
+            queries: [
+                new MemoryCompareQuery({
+                    compares: [
+                        new MemoryCompare({
+                            bytes: ser,
+                            offset: BigInt(KEY_OFFSET)
+                        })
+                    ]
+                })
+            ]
         }));
     },
     next: (relation) => relation.to
@@ -93,25 +90,24 @@ export async function* getPathGenerator(from: Key, db: BinaryDocumentStore<Relat
  * @param db 
  * @returns 
  */
-export const getTargetPath = async (start: Key, target: (key: Key) => boolean, db: BinaryDocumentStore<Relation>, resolver: RelationResolver): Promise<Relation[] | undefined> => {
+export const hasPathToTarget = async (start: Key, target: (key: Key) => boolean, db: BinaryDocumentStore<Relation>, resolver: RelationResolver): Promise<boolean> => {
 
     if (!db) {
         throw new Error("Not initalized")
     }
 
-    let path: Relation[] = [];
     let current = start;
     if (target(current)) {
-        return path;
+        return true;
     }
 
     const iterator = getPathGenerator(current, db, resolver);
     for await (const relation of iterator) {
         if (target(relation.from)) {
-            return path;
+            return true;
         }
     }
-    return undefined;
+    return false;
 }
 
 
@@ -162,8 +158,8 @@ export class AnyRelation extends Relation {
 }
 
 
-export const getPath = async (start: Key, end: Key, db: BinaryDocumentStore<Relation>, resolver: RelationResolver): Promise<Relation[] | undefined> => {
-    return getTargetPath(start, (key) => end.equals(key), db, resolver)
+export const hasPath = async (start: Key, end: Key, db: BinaryDocumentStore<Relation>, resolver: RelationResolver): Promise<boolean> => {
+    return hasPathToTarget(start, (key) => end.equals(key), db, resolver)
 }
 
 export const hasRelation = (from: Key, to: Key, db: BinaryDocumentStore<Relation>): IndexedValue<Relation>[] => {
@@ -176,6 +172,10 @@ export const createIdentityGraphStore = (props: { name?: string, queryRegion?: s
     indexBy: 'id',
     name: props?.name ? props?.name : '' + '_relation',
     objectType: Relation.name,
-    queryRegion: props.queryRegion,
+    search: new DSearch({
+        query: new DQuery({
+            queryRegion: props.queryRegion
+        })
+    }),
     clazz: Relation
 })

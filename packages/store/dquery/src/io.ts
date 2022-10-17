@@ -3,11 +3,10 @@
 import { serialize } from "@dao-xyz/borsh";
 import type { Message } from '@libp2p/interface-pubsub'
 import { delay, waitFor } from "@dao-xyz/time";
-import { DecryptedThing, MaybeEncrypted, PublicKeyEncryption, AccessError, PublicSignKey, X25519PublicKey, Ed25519PublicKey, PublicKeyEncryptionResolver, X25519Keypair, GetEncryptionKeypair, GetAnyKeypair, SignKey } from "@dao-xyz/peerbit-crypto"
-import { QueryRequestV0, QueryResponseV0 } from "@dao-xyz/query-protocol";
-import { MaybeSigned, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
+import { MaybeSigned, decryptVerifyInto, DecryptedThing, MaybeEncrypted, AccessError, X25519PublicKey, Ed25519PublicKey, X25519Keypair, GetEncryptionKeypair, GetAnyKeypair, SignKey } from "@dao-xyz/peerbit-crypto"
 import { IPFS } from "ipfs-core-types";
 import { Identity } from "@dao-xyz/ipfs-log";
+import { QueryRequestV0, QueryResponseV0 } from "./query";
 
 export type QueryOptions = {
     signer?: Identity,
@@ -18,19 +17,16 @@ export type QueryOptions = {
     },
     waitForAmount?: number,
     maxAggregationTime?: number,
-    isTrusted?: (publicKey: MaybeSigned<any>) => Promise<boolean>
+    isTrusted?: (publicKey: MaybeSigned<any>) => Promise<boolean>,
+    responseRecievers?: X25519PublicKey[]
 
 };
+
 export const query = async (ipfs: IPFS, topic: string, query: QueryRequestV0, responseHandler: (response: QueryResponseV0, from?: SignKey) => void, options: QueryOptions = {}) => {
     if (typeof options.maxAggregationTime !== 'number') {
         options.maxAggregationTime = 30 * 1000;
     }
-    /*   if (!options.encryption) {
-          options.encryption = {
-              getEncryptionKeypair: () => X25519Keypair.create(),
-              getAnyKeypair: (keys) => Promise.resolve(undefined)
-          }
-      } */
+
 
     // send query and wait for replies in a generator like behaviour
     let responseTopic = query.getResponseTopic(topic);

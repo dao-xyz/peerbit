@@ -1,7 +1,6 @@
 
 import { StringResultSource, StringStore, STRING_STORE_TYPE } from '../string-store.js';
-import { QueryRequestV0, QueryResponseV0, ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates, StoreAddressMatchQuery } from '@dao-xyz/query-protocol';
-import { query, ReadWriteAccessController } from '@dao-xyz/orbit-db-query-store';
+import { ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates, StoreAddressMatchQuery, DSearch, Results } from '@dao-xyz/peerbit-dsearch';
 import { Range } from '../range.js';
 import { createStore, Session } from '@dao-xyz/orbit-db-test-utils';
 import { IPFS } from 'ipfs-core-types';
@@ -13,7 +12,8 @@ import { delay } from '@dao-xyz/time'
 import { Identity } from '@dao-xyz/ipfs-log';
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto';
 import { DefaultOptions } from '@dao-xyz/peerbit-dstore';
-import { variant } from '@dao-xyz/borsh';
+import { deserialize, serialize, variant } from '@dao-xyz/borsh';
+import { QueryRequestV0, QueryResponseV0, DQuery, QueryOptions, query } from '@dao-xyz/peerbit-dquery';
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -56,6 +56,14 @@ const __filenameBase = path.parse(__filename).base;
  */
 
 
+const mquery = (ipfs: IPFS, topic: string, request: StringQueryRequest, responseHandler: (results: Results) => void, options: QueryOptions | undefined) => (
+    query(ipfs, topic, new QueryRequestV0({
+        query: serialize(request)
+    }), (response) => {
+        const results = deserialize(response.response, Results);
+        responseHandler(results);
+    }, options)
+)
 
 describe('query', () => {
 
@@ -83,12 +91,16 @@ describe('query', () => {
 
         // Create store
         writeStore = new StringStore({
-            queryRegion: 'world'
+            search: new DSearch({
+                query: new DQuery({
+                    queryRegion: 'world'
+                })
+            })
         });
         await writeStore.init(writer, await createIdentity(), { ...DefaultOptions, resolveCache: () => new Cache(cacheStore1) });
 
-        const observerStore = await StringStore.load(session.peers[1].ipfs, writeStore.address);
-        observerStore.subscribeToQueries = false;
+        const observerStore = await StringStore.load(session.peers[1].ipfs, writeStore.address) as StringStore;
+        observerStore.search._query.subscribeToQueries = false;
         await observerStore.init(observer, await createIdentity(), { ...DefaultOptions, resolveCache: () => new Cache(cacheStore2) })
 
     })
@@ -106,17 +118,15 @@ describe('query', () => {
         await writeStore.add('hello', new Range({ offset: 0n, length: 'hello'.length }));
         await writeStore.add('world', new Range({ offset: BigInt('hello '.length), length: 'world'.length }));
 
-        let response: QueryResponseV0 = undefined as any;
+        let response: Results = undefined as any;
 
-        await query(observer, writeStore.queryTopic, new QueryRequestV0({
-            type: new StringQueryRequest({
-                queries: [
-                    new StoreAddressMatchQuery({
-                        address: writeStore.address.toString()
-                    })
-                ]
-            })
-        }), (r: QueryResponseV0) => {
+        await mquery(observer, writeStore.search._query.queryTopic, new StringQueryRequest({
+            queries: [
+                new StoreAddressMatchQuery({
+                    address: writeStore.address.toString()
+                })
+            ]
+        }), (r: Results) => {
             response = r;
         }, { waitForAmount: 1 })
 
@@ -138,13 +148,11 @@ describe('query', () => {
         await writeStore.add('hello', new Range({ offset: 0n, length: 'hello'.length }));
         await writeStore.add('world', new Range({ offset: BigInt('hello '.length), length: 'world'.length }));
 
-        let response: QueryResponseV0 = undefined as any;
+        let response: Results = undefined as any;
 
-        await query(observer, writeStore.queryTopic, new QueryRequestV0({
-            type: new StringQueryRequest({
-                queries: []
-            })
-        }), (r: QueryResponseV0) => {
+        await mquery(observer, writeStore.search._query.queryTopic, new StringQueryRequest({
+            queries: []
+        }), (r: Results) => {
             response = r;
         }, { waitForAmount: 1 })
         expect(response.results).toHaveLength(1);
@@ -165,21 +173,19 @@ describe('query', () => {
         await writeStore.add('hello', new Range({ offset: 0n, length: 'hello'.length }));
         await writeStore.add('world', new Range({ offset: BigInt('hello '.length), length: 'world'.length }));
 
-        let response: QueryResponseV0 = undefined as any;
+        let response: Results = undefined as any;
 
-        await query(observer, writeStore.queryTopic, new QueryRequestV0({
-            type: new StringQueryRequest({
-                queries: [new StringMatchQuery({
-                    exactMatch: true,
-                    value: 'o w'
-                }),
-                new StringMatchQuery({
-                    exactMatch: true,
-                    value: 'orld'
-                }),
-                ]
-            })
-        }), (r: QueryResponseV0) => {
+        await mquery(observer, writeStore.search._query.queryTopic, new StringQueryRequest({
+            queries: [new StringMatchQuery({
+                exactMatch: true,
+                value: 'o w'
+            }),
+            new StringMatchQuery({
+                exactMatch: true,
+                value: 'orld'
+            }),
+            ]
+        }), (r: Results) => {
             response = r;
         }, { waitForAmount: 1 })
         expect(response.results).toHaveLength(1);

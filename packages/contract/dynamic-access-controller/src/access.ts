@@ -10,7 +10,6 @@ export enum AccessType {
 }
 
 
-
 @variant(4)
 export class AccessData extends SystemBinaryPayload {
 

@@ -79,7 +79,7 @@ describe(`orbit-db - IPFSAccessController Integration`, function () {
       db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db.address))
       await db2.load()
 
-      dbManifest = await io.read(ipfs1, db.address.root)
+      dbManifest = await io.read(ipfs1, db.address.cid)
       const hash = dbManifest.accessController.split('/').pop()
       acManifest = await io.read(ipfs1, hash)
     })

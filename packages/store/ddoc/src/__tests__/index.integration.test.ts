@@ -1,9 +1,9 @@
 
-import { field, option, serialize, variant } from '@dao-xyz/borsh';
+import { deserialize, field, option, serialize, variant } from '@dao-xyz/borsh';
 import { BinaryDocumentStore } from '../document-store';
-import { DocumentQueryRequest, Compare, FieldBigIntCompareQuery, QueryRequestV0, QueryResponseV0, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort, MemoryCompareQuery, MemoryCompare } from '@dao-xyz/query-protocol';
+import { DocumentQueryRequest, Compare, FieldBigIntCompareQuery, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort, MemoryCompareQuery, MemoryCompare, Results, DSearch } from '@dao-xyz/peerbit-dsearch';
 import { CustomBinaryPayload } from '@dao-xyz/bpayload';
-import { query } from '@dao-xyz/orbit-db-query-store';
+import { QueryRequestV0, QueryResponseV0, query, QueryOptions, DQuery } from '@dao-xyz/peerbit-dquery';
 import { Session, createStore } from '@dao-xyz/orbit-db-test-utils';
 import { DefaultOptions } from '@dao-xyz/peerbit-dstore';
 import { Identity } from '@dao-xyz/ipfs-log';
@@ -41,6 +41,14 @@ class Document extends CustomBinaryPayload {
 
 const bigIntSort = <T extends (number | bigint)>(a: T, b: T): number => (a > b ? 1 : 0 || -(a < b))
 
+const mquery = (ipfs: IPFS, topic: string, request: DocumentQueryRequest, responseHandler: (results: Results) => void, options: QueryOptions | undefined) => (
+  query(ipfs, topic, new QueryRequestV0({
+    query: serialize(request)
+  }), (response) => {
+    const results = deserialize(response.response, Results);
+    responseHandler(results);
+  }, options)
+)
 
 
 describe('index', () => {
@@ -67,16 +75,19 @@ describe('index', () => {
 
     // Create store
     writeStore = new BinaryDocumentStore<Document>({
-      queryRegion: 'world',
+      search: new DSearch({
+        query: new DQuery({
+          queryRegion: 'world'
+        })
+      }),
       indexBy: 'id',
       objectType: Document.name
     });
     await writeStore.init(writer, await createIdentity(), { ...DefaultOptions, resolveCache: () => new Cache(cacheStore1), typeMap: { [Document.name]: Document } });
 
-    const observerStore = await BinaryDocumentStore.load(session.peers[1].ipfs, writeStore.address);
-    observerStore.subscribeToQueries = false;
+    observerStore = await BinaryDocumentStore.load(session.peers[1].ipfs, writeStore.address) as BinaryDocumentStore<any>;
+    observerStore.search._query.subscribeToQueries = false;
     await observerStore.init(observer, await createIdentity(), { ...DefaultOptions, resolveCache: () => new Cache(cacheStore2), typeMap: { [Document.name]: Document } })
-
   })
 
   afterAll(async () => {
@@ -127,14 +138,12 @@ describe('index', () => {
       await writeStore.put(doc);
       await writeStore.put(doc2);
 
-      let response: QueryResponseV0 = undefined as any;
+      let response: Results = undefined as any;
 
       //await otherPeer.node.swarm.connect((await creatorPeer.node.id()).addresses[0].toString());
-      await query(observer, writeStore.queryTopic, new QueryRequestV0({
-        type: new DocumentQueryRequest({
-          queries: []
-        })
-      }), (r: QueryResponseV0) => {
+      await observerStore.search.query(new DocumentQueryRequest({
+        queries: []
+      }), (r: Results) => {
         response = r;
       }, { waitForAmount: 1 })
       expect(response.results).toHaveLength(2);
@@ -157,17 +166,16 @@ describe('index', () => {
       await writeStore.put(doc);
       await writeStore.put(doc2);
 
-      let response: QueryResponseV0 = undefined as any;
+      let response: Results = undefined as any;
 
       //await otherPeer.node.swarm.connect((await creatorPeer.node.id()).addresses[0].toString());
-      await query(observer, writeStore.queryTopic, new QueryRequestV0({
-        type: new DocumentQueryRequest({
-          queries: [new FieldStringMatchQuery({
-            key: 'name',
-            value: 'ello'
-          })]
-        })
-      }), (r: QueryResponseV0) => {
+      await observerStore.search.query(new DocumentQueryRequest({
+        queries: [new FieldStringMatchQuery({
+          key: 'name',
+          value: 'ello'
+        })]
+
+      }), (r: Results) => {
         response = r;
       }, { waitForAmount: 1 })
       expect(response.results).toHaveLength(1);
@@ -194,20 +202,19 @@ describe('index', () => {
       await writeStore.put(doc2);
       await writeStore.put(doc3);
 
-      let response: QueryResponseV0 = undefined as any;
+      let response: Results = undefined as any;
 
       //await otherPeer.node.swarm.connect((await creatorPeer.node.id()).addresses[0].toString());
-      await query(observer, writeStore.queryTopic, new QueryRequestV0({
-        type: new DocumentQueryRequest({
-          queries: [new FieldStringMatchQuery({
-            key: 'name',
-            value: 'hey'
-          })],
-          size: 1n,
-          offset: 1n
-        })
-      }),
-        (r: QueryResponseV0) => {
+      await observerStore.search.query(new DocumentQueryRequest({
+        queries: [new FieldStringMatchQuery({
+          key: 'name',
+          value: 'hey'
+        })],
+        size: 1n,
+        offset: 1n
+      })
+        ,
+        (r: Results) => {
           response = r;
         }, { waitForAmount: 1 })
       expect(response.results).toHaveLength(1);
@@ -239,22 +246,20 @@ describe('index', () => {
         await writeStore.put(doc2);
         await writeStore.put(doc3);
 
-        let response: QueryResponseV0 = undefined as any;
+        let response: Results = undefined as any;
 
         //await otherPeer.node.swarm.connect((await creatorPeer.node.id()).addresses[0].toString());
-        await query(observer, writeStore.queryTopic, new QueryRequestV0({
-          type: new DocumentQueryRequest({
-            queries: [new FieldStringMatchQuery({
-              key: 'name',
-              value: 'hey'
-            })],
-            offset: 1n,
-            sort: new FieldSort({
-              key: ['number'],
-              direction: SortDirection.Ascending
-            })
+        await observerStore.search.query(new DocumentQueryRequest({
+          queries: [new FieldStringMatchQuery({
+            key: 'name',
+            value: 'hey'
+          })],
+          offset: 1n,
+          sort: new FieldSort({
+            key: ['number'],
+            direction: SortDirection.Ascending
           })
-        }), (r: QueryResponseV0) => {
+        }), (r: Results) => {
           response = r;
         }, { waitForAmount: 1 })
         expect(response.results).toHaveLength(2);
@@ -290,22 +295,20 @@ describe('index', () => {
         await writeStore.put(doc2);
         await writeStore.put(doc3);
 
-        let response: QueryResponseV0 = undefined as any;
+        let response: Results = undefined as any;
 
         //await otherPeer.node.swarm.connect((await creatorPeer.node.id()).addresses[0].toString());
-        await query(observer, writeStore.queryTopic, new QueryRequestV0({
-          type: new DocumentQueryRequest({
-            queries: [new FieldStringMatchQuery({
-              key: 'name',
-              value: 'hey'
-            })],
-            offset: 1n,
-            sort: new FieldSort({
-              key: ['number'],
-              direction: SortDirection.Descending
-            })
+        await observerStore.search.query(new DocumentQueryRequest({
+          queries: [new FieldStringMatchQuery({
+            key: 'name',
+            value: 'hey'
+          })],
+          offset: 1n,
+          sort: new FieldSort({
+            key: ['number'],
+            direction: SortDirection.Descending
           })
-        }), (r: QueryResponseV0) => {
+        }), (r: Results) => {
           response = r;
         }, { waitForAmount: 1 })
         expect(response.results).toHaveLength(2);
@@ -338,16 +341,14 @@ describe('index', () => {
         await writeStore.put(doc2);
         await writeStore.put(doc3);
 
-        let response: QueryResponseV0 = undefined as any;
-        await query(observer, writeStore.queryTopic, new QueryRequestV0({
-          type: new DocumentQueryRequest({
-            queries: [new FieldBigIntCompareQuery({
-              key: 'number',
-              compare: Compare.Equal,
-              value: 2n
-            })]
-          })
-        }), (r: QueryResponseV0) => {
+        let response: Results = undefined as any;
+        await observerStore.search.query(new DocumentQueryRequest({
+          queries: [new FieldBigIntCompareQuery({
+            key: 'number',
+            compare: Compare.Equal,
+            value: 2n
+          })]
+        }), (r: Results) => {
           response = r;
         }, { waitForAmount: 1 })
         expect(response.results).toHaveLength(1);
@@ -378,16 +379,14 @@ describe('index', () => {
         await writeStore.put(doc2);
         await writeStore.put(doc3);
 
-        let response: QueryResponseV0 = undefined as any;
-        await query(observer, writeStore.queryTopic, new QueryRequestV0({
-          type: new DocumentQueryRequest({
-            queries: [new FieldBigIntCompareQuery({
-              key: 'number',
-              compare: Compare.Greater,
-              value: 2n
-            })]
-          })
-        }), (r: QueryResponseV0) => {
+        let response: Results = undefined as any;
+        await observerStore.search.query(new DocumentQueryRequest({
+          queries: [new FieldBigIntCompareQuery({
+            key: 'number',
+            compare: Compare.Greater,
+            value: 2n
+          })]
+        }), (r: Results) => {
           response = r;
         }, { waitForAmount: 1 })
         expect(response.results).toHaveLength(1);
@@ -417,16 +416,14 @@ describe('index', () => {
         await writeStore.put(doc2);
         await writeStore.put(doc3);
 
-        let response: QueryResponseV0 = undefined as any;
-        await query(observer, writeStore.queryTopic, new QueryRequestV0({
-          type: new DocumentQueryRequest({
-            queries: [new FieldBigIntCompareQuery({
-              key: 'number',
-              compare: Compare.GreaterOrEqual,
-              value: 2n
-            })]
-          })
-        }), (r: QueryResponseV0) => {
+        let response: Results = undefined as any;
+        await observerStore.search.query(new DocumentQueryRequest({
+          queries: [new FieldBigIntCompareQuery({
+            key: 'number',
+            compare: Compare.GreaterOrEqual,
+            value: 2n
+          })]
+        }), (r: Results) => {
           response = r;
         }, { waitForAmount: 1 })
         response.results.sort((a, b) => bigIntSort(((a as ResultWithSource).source as Document).number as bigint, ((b as ResultWithSource).source as Document).number as bigint));
@@ -458,16 +455,14 @@ describe('index', () => {
         await writeStore.put(doc2);
         await writeStore.put(doc3);
 
-        let response: QueryResponseV0 = undefined as any;
-        await query(observer, writeStore.queryTopic, new QueryRequestV0({
-          type: new DocumentQueryRequest({
-            queries: [new FieldBigIntCompareQuery({
-              key: 'number',
-              compare: Compare.Less,
-              value: 2n
-            })]
-          })
-        }), (r: QueryResponseV0) => {
+        let response: Results = undefined as any;
+        await observerStore.search.query(new DocumentQueryRequest({
+          queries: [new FieldBigIntCompareQuery({
+            key: 'number',
+            compare: Compare.Less,
+            value: 2n
+          })]
+        }), (r: Results) => {
           response = r;
         }, { waitForAmount: 1 })
         expect(response.results).toHaveLength(1);
@@ -496,16 +491,14 @@ describe('index', () => {
         await writeStore.put(doc2);
         await writeStore.put(doc3);
 
-        let response: QueryResponseV0 = undefined as any;
-        await query(observer, writeStore.queryTopic, new QueryRequestV0({
-          type: new DocumentQueryRequest({
-            queries: [new FieldBigIntCompareQuery({
-              key: 'number',
-              compare: Compare.LessOrEqual,
-              value: 2n
-            })]
-          })
-        }), (r: QueryResponseV0) => {
+        let response: Results = undefined as any;
+        await observerStore.search.query(new DocumentQueryRequest({
+          queries: [new FieldBigIntCompareQuery({
+            key: 'number',
+            compare: Compare.LessOrEqual,
+            value: 2n
+          })]
+        }), (r: Results) => {
           response = r;
         }, { waitForAmount: 1 })
         response.results.sort((a, b) => bigIntSort(((a as ResultWithSource).source as Document).number as bigint, ((b as ResultWithSource).source as Document).number as bigint));
@@ -545,19 +538,17 @@ describe('index', () => {
         await writeStore.put(doc2);
         await writeStore.put(doc3);
 
-        let response: QueryResponseV0 = undefined as any;
+        let response: Results = undefined as any;
 
         //await otherPeer.node.swarm.connect((await creatorPeer.node.id()).addresses[0].toString());
-        await query(observer, writeStore.queryTopic, new QueryRequestV0({
-          type: new DocumentQueryRequest({
-            queries: [new MemoryCompareQuery({
-              compares: [new MemoryCompare({
-                bytes: new Uint8Array([123, 0, 0]), // add some 0  trailing so we now we can match more than the exact value
-                offset: BigInt(numberOffset)
-              })]
+        await observerStore.search.query(new DocumentQueryRequest({
+          queries: [new MemoryCompareQuery({
+            compares: [new MemoryCompare({
+              bytes: new Uint8Array([123, 0, 0]), // add some 0  trailing so we now we can match more than the exact value
+              offset: BigInt(numberOffset)
             })]
-          })
-        }), (r: QueryResponseV0) => {
+          })]
+        }), (r: Results) => {
           response = r;
         }, { waitForAmount: 1 })
         expect(response.results).toHaveLength(2);

@@ -1,18 +1,18 @@
-import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
+import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import { BinaryDocumentStore, Operation, PutOperation } from "@dao-xyz/peerbit-ddoc";
-import { OrbitDB } from "@dao-xyz/orbit-db";
 import { Address, IInitializationOptions, save } from "@dao-xyz/peerbit-dstore";
-import { BORSH_ENCODING, Identity, Payload } from "@dao-xyz/ipfs-log";
+import { BORSH_ENCODING, Entry, Identity, Payload } from "@dao-xyz/ipfs-log";
 import { createHash } from "crypto";
 import { IPFSAddress, Key, OtherKey, PublicSignKey, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import type { PeerId } from '@libp2p/interface-peer-id';
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from 'ipfs-core-types';
 import { DeleteOperation } from "@dao-xyz/peerbit-ddoc";
-import { AnyRelation, createIdentityGraphStore, getPathGenerator, getPath, Relation, getFromByTo, getToByFrom, hasRelation } from "./identity-graph";
+import { AnyRelation, createIdentityGraphStore, getPathGenerator, hasPath, Relation, getFromByTo, getToByFrom, hasRelation } from "./identity-graph";
 import { BinaryPayload } from "@dao-xyz/bpayload";
-import { QueryStoreInitializationOptions } from "@dao-xyz/orbit-db-query-store";
 import { Contract } from '@dao-xyz/peerbit-contract';
+import { DQuery } from "@dao-xyz/peerbit-dquery";
+import { waitFor } from "@dao-xyz/time";
 
 const encoding = BORSH_ENCODING(Operation);
 
@@ -57,7 +57,7 @@ const canAppendByRelation = async (mpayload: MaybeEncrypted<Payload<Operation<an
     }
 }
 
-@variant([0, 1])
+@variant([0, 10])
 export class RelationContract extends Contract {
 
     @field({ type: BinaryDocumentStore })
@@ -73,24 +73,19 @@ export class RelationContract extends Contract {
         }
     }
 
-
-    async canRead(_: any): Promise<boolean> {
-        return true;
-    }
-
     async canAppend(payload: MaybeEncrypted<Payload<Operation<Relation>>>, keyEncrypted: MaybeEncrypted<SignatureWithKey>): Promise<boolean> {
         return canAppendByRelation(payload, keyEncrypted, this.relationGraph)
     }
 
 
-    async init(ipfs: IPFS, identity: Identity, options: QueryStoreInitializationOptions<Operation<Relation>>): Promise<this> {
+    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<Operation<Relation>> & { canRead?(key: SignatureWithKey): Promise<boolean> }): Promise<this> {
         const typeMap = options.typeMap ? { ...options.typeMap } : {}
         typeMap[Relation.name] = Relation;
         const saveOrResolved = await options.saveOrResolve(ipfs, this);
         if (saveOrResolved !== this) {
             return saveOrResolved as this;
         }
-        await this.relationGraph.init(ipfs, identity, { ...options, typeMap, canRead: this.canRead.bind(this), canAppend: this.canAppend.bind(this) }) // self referencing access controller
+        await this.relationGraph.init(ipfs, identity, { ...options, typeMap, canRead: options.canRead ? options.canRead.bind(this) : () => Promise.resolve(true), canAppend: this.canAppend.bind(this) }) // self referencing access controller
         await super.init(ipfs, identity, options);
         return this;
     }
@@ -105,8 +100,32 @@ export class RelationContract extends Contract {
     }
 }
 
+export class Message {
 
-@variant([0, 2])
+}
+@variant(0)
+export class RequestHeadsMessage extends Message { }
+
+@variant(1)
+export class HeadsMessages extends Message {
+
+    @field({ type: vec(Entry) })
+    heads: Entry<any>[]
+
+    constructor(properties?: { heads: Entry<any>[] }) {
+        super();
+        if (properties) {
+            this.heads = properties.heads;
+        }
+    }
+}
+
+
+/**
+ * Not shardeable since we can not query trusted relations, because this would lead to a recursive problem where we then need to determine whether the responder is trusted or not
+ */
+
+@variant([0, 11])
 export class TrustedNetwork extends Contract {
 
     @field({ type: PublicSignKey })
@@ -115,17 +134,19 @@ export class TrustedNetwork extends Contract {
     @field({ type: BinaryDocumentStore })
     trustGraph: BinaryDocumentStore<Relation>
 
-    _orbitDB: OrbitDB;
-    address: Address;
+    @field({ type: DQuery })
+    query: DQuery<RequestHeadsMessage, HeadsMessages>;
 
     constructor(props?: {
         name?: string,
-        rootTrust: PublicSignKey
+        rootTrust: PublicSignKey,
+        query?: DQuery<RequestHeadsMessage, HeadsMessages>
     }) {
         super(props);
         if (props) {
             this.trustGraph = createIdentityGraphStore(props);
             this.rootTrust = props.rootTrust;
+            this.query = props.query || new DQuery({});
         }
     }
 
@@ -137,8 +158,18 @@ export class TrustedNetwork extends Contract {
             return saveOrResolved as this;
         }
         await this.trustGraph.init(ipfs, identity, { ...options, typeMap, canRead: this.canRead.bind(this), canAppend: this.canAppend.bind(this) }) // self referencing access controller
+        await this.query.init(ipfs, identity, { ...options, queryType: RequestHeadsMessage, responseType: HeadsMessages, responseHandler: this.exchangeHeads.bind(this) })
         await super.init(ipfs, identity, options);
         return this;
+    }
+
+    exchangeHeads(_query: RequestHeadsMessage): HeadsMessages | undefined {
+        if (!this.trustGraph.replicate) {
+            return undefined // we do this because we might not have all the heads
+        }
+        return new HeadsMessages({
+            heads: this.trustGraph.oplog.heads
+        });
     }
 
 
@@ -183,11 +214,47 @@ export class TrustedNetwork extends Contract {
      */
     async isTrusted(trustee: PublicSignKey | OtherKey, truster: PublicSignKey = this.rootTrust): Promise<boolean> {
 
-        /*  trustee = PublicKey.from(trustee); */
-        /**
-         * TODO: Currently very inefficient
-         */
-        const trustPath = await getPath(trustee, truster, this.trustGraph, getFromByTo);
+        if (trustee.equals(this.rootTrust)) {
+            return true;
+        }
+        if (this.trustGraph.replicate) {
+            return this._isTrustedLocal(trustee, truster)
+        }
+        else {
+            let trusted = false;
+            this.query.query(new RequestHeadsMessage(), async (heads, from) => {
+                if (!from) {
+                    return;
+                }
+
+                const logs = await Promise.all(heads.heads.map(h => this.trustGraph._replicator._replicateLog(h)));
+                await this.trustGraph.updateStateFromLogs(logs);
+
+                const isTrustedSender = await this._isTrustedLocal(from, truster);
+                if (!isTrustedSender) {
+                    return;
+                }
+
+
+                const isTrustedTrustee = await this._isTrustedLocal(trustee, truster);
+                if (isTrustedTrustee) {
+                    trusted = true;
+                }
+            })
+
+            try {
+                await waitFor(() => trusted)
+                return trusted;
+            } catch (error) {
+                return false;
+            }
+
+        }
+
+    }
+
+    async _isTrustedLocal(trustee: PublicSignKey | OtherKey, truster: PublicSignKey = this.rootTrust): Promise<boolean> {
+        const trustPath = await hasPath(trustee, truster, this.trustGraph, getFromByTo);
         return !!trustPath
     }
 

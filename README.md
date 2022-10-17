@@ -42,7 +42,7 @@ The peer client
 - Exchange replication info. Healthcheck/Redundancy diagnostics. 
 - Leader and leader rotation routines for building functionality around leaders
 
-## [query-protocol](./packages/store/query-protocol)
+## [query-protocol](./packages/store/dsearch)
 - Generalized query models/protocol for distributed queries
 
 ## [pbayload](./packages/utils/bpayload)

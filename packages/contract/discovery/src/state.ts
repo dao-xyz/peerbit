@@ -1,6 +1,9 @@
 import { field, BinaryWriter, vec, variant } from "@dao-xyz/borsh";
 import { BinaryDocumentStore } from "@dao-xyz/peerbit-ddoc";
 import { SystemBinaryPayload } from "@dao-xyz/bpayload";
+import { Address } from "@dao-xyz/peerbit-dstore";
+import { DSearch } from "@dao-xyz/peerbit-dsearch";
+import { DQuery } from "@dao-xyz/peerbit-dquery";
 
 
 // bootstrap info 
@@ -14,13 +17,13 @@ import { SystemBinaryPayload } from "@dao-xyz/bpayload";
 export class DiscoveryData extends SystemBinaryPayload { }
 
 @variant(0)
-export class NetworInfo extends DiscoveryData {
+export class NetworkInfo extends DiscoveryData {
 
     @field({ type: 'string' })
     id: string
 
-    @field({ type: 'string' })
-    network: string
+    @field({ type: Address })
+    network: Address
 
     @field({ type: 'string' })
     peerId: string;
@@ -29,13 +32,13 @@ export class NetworInfo extends DiscoveryData {
     addresses: string[]
 
     constructor(options?: {
-        networkCID: string,
+        network: Address,
         peerId: string,
         addresses: string[]
     }) {
         super();
         if (options) {
-            this.network = options.networkCID;
+            this.network = options.network;
             this.peerId = options.peerId;
             this.addresses = options.addresses;
             this.initialize();
@@ -47,12 +50,12 @@ export class NetworInfo extends DiscoveryData {
             throw new Error("Not initialized");
         }
         const writer = new BinaryWriter();
-        writer.writeString(this.network)
+        writer.writeString(this.network.toString())
         writer.writeString(this.peerId)
         return Buffer.from(writer.toArray()).toString('base64')
     }
 
-    initialize(): NetworInfo {
+    initialize(): NetworkInfo {
         this.id = this.calculateId();
         return this;
     }
@@ -67,10 +70,14 @@ export class NetworInfo extends DiscoveryData {
 
 
 
-export const createDiscoveryStore = (props: { name?: string, queryRegion?: string }) => new BinaryDocumentStore<NetworInfo>({
+export const createDiscoveryStore = (props?: { name?: string, queryRegion?: string }) => new BinaryDocumentStore<NetworkInfo>({
     indexBy: 'id',
-    name: props?.name ? props?.name : '' + '_relation',
-    objectType: NetworInfo.name,
-    queryRegion: props.queryRegion,
-    clazz: NetworInfo
+    name: props?.name ? props?.name : '' + '_discovery',
+    objectType: NetworkInfo.name,
+    search: new DSearch({
+        query: new DQuery({
+            queryRegion: props?.queryRegion
+        })
+    }),
+    clazz: NetworkInfo
 })

@@ -178,7 +178,7 @@ Object.keys(testAPIs).forEach(API => {
 
       it('doesn\'t open a database if we don\'t have it locally', async () => {
         const db = await orbitdb.open(new EventStore({ name: 'abcabc' }), replicationTopic, {})
-        const address = new Address(db.address.root.slice(0, -1) + 'A', 'non-existent')
+        const address = new Address(db.address.cid.slice(0, -1) + 'A')
         await db.drop()
         return new Promise(async (resolve, reject) => {
           setTimeout(resolve, 900)
@@ -190,7 +190,7 @@ Object.keys(testAPIs).forEach(API => {
 
       it('throws an error if trying to open a database locally and we don\'t have it', async () => {
         const db = await orbitdb.open(new EventStore({ name: 'abc' }), replicationTopic, {})
-        const address = new Address(db.address.root.slice(0, -1) + 'A', 'second')
+        const address = new Address(db.address.cid.slice(0, -1) + 'A')
         await db.drop()
         return orbitdb.open(await Store.load(orbitdb._ipfs, address), replicationTopic, { localOnly: true })
           .then(() => new Error('Shouldn\'t open the database'))

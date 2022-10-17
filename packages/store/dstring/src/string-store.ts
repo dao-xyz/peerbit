@@ -1,13 +1,14 @@
 import { PayloadOperation, StringIndex, encoding } from './string-index.js'
-import { QueryStore, QueryStoreInitializationOptions } from '@dao-xyz/orbit-db-query-store';
-import { QueryRequestV0, RangeCoordinate, RangeCoordinates, Result, ResultWithSource, StringMatchQuery } from '@dao-xyz/query-protocol';
-import { StringQueryRequest } from '@dao-xyz/query-protocol';
+import { DSearch, DSearchInitializationOptions, QueryType } from '@dao-xyz/peerbit-dsearch';
+import { RangeCoordinate, RangeCoordinates, Result, ResultWithSource, StringMatchQuery } from '@dao-xyz/peerbit-dsearch';
+import { StringQueryRequest } from '@dao-xyz/peerbit-dsearch';
 import { Range } from './range.js';
 import { deserialize, field, serialize, variant } from '@dao-xyz/borsh';
 import { CustomBinaryPayload } from '@dao-xyz/bpayload';
 import { Address, IInitializationOptions, IStoreOptions, load, Store } from '@dao-xyz/peerbit-dstore';
 import { IPFS } from 'ipfs-core-types';
 import { Identity } from '@dao-xyz/ipfs-log';
+import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';
 
 export const STRING_STORE_TYPE = 'string_store';
 const findAllOccurrences = (str: string, substr: string): number[] => {
@@ -26,16 +27,25 @@ const findAllOccurrences = (str: string, substr: string): number[] => {
 
 
 @variant([0, 1])
-export class StringStore extends QueryStore<PayloadOperation> {
+export class StringStore extends Store<PayloadOperation> {
+
+  @field({ type: DSearch })
+  search: DSearch<PayloadOperation>;
 
   _index: StringIndex;
-  constructor(properties: { name?: string, queryRegion?: string }) {
+  constructor(properties: { name?: string, search: DSearch<PayloadOperation> }) {
     super(properties)
+    if (properties) {
+      this.search = properties.search
+    }
     this._index = new StringIndex();
   }
 
-  init(ipfs: IPFS<{}>, identity: Identity, options: QueryStoreInitializationOptions<PayloadOperation>): Promise<this> {
-    return super.init(ipfs, identity, { ...options, encoding, onUpdate: this._index.updateIndex.bind(this._index) })
+  async init(ipfs: IPFS<{}>, identity: Identity, options: IInitializationOptions<PayloadOperation> & { canRead?(key: SignatureWithKey): Promise<boolean> }): Promise<this> {
+    await super.init(ipfs, identity, { ...options, encoding, onUpdate: this._index.updateIndex.bind(this._index) })
+    await this.search.init(ipfs, identity, { ...options, context: { address: this.address }, canRead: options.canRead, queryHandler: this.queryHandler.bind(this) })
+    return this;
+
   }
   add(value: string, index: Range, options = {}) {
     return this._addOperation(new PayloadOperation({
@@ -51,11 +61,11 @@ export class StringStore extends QueryStore<PayloadOperation> {
     return this._addOperation(operation, options)
   }
 
-  async queryHandler(query: QueryRequestV0): Promise<Result[]> {
-    if (query.type instanceof StringQueryRequest == false) {
+  async queryHandler(query: QueryType): Promise<Result[]> {
+    if (query instanceof StringQueryRequest == false) {
       return [];
     }
-    const stringQuery = query.type as StringQueryRequest;
+    const stringQuery = query as StringQueryRequest;
 
     const content = this._index.string;
     const relaventQueries = stringQuery.queries.filter(x => x instanceof StringMatchQuery) as StringMatchQuery[]
@@ -91,15 +101,7 @@ export class StringStore extends QueryStore<PayloadOperation> {
     })];
   }
 
-  static async load(ipfs: IPFS, address: Address, options?: {
-    timeout?: number;
-  }): Promise<StringStore> {
-    const instance = await load(ipfs, address, Store, options)
-    if (instance instanceof StringStore === false) {
-      throw new Error("Unexpected")
-    };
-    return instance as StringStore;
-  }
+
 }
 
 @variant("string")

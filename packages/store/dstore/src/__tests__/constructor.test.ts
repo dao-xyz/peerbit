@@ -57,7 +57,6 @@ describe(`Constructor`, function () {
     expect(typeof store.options).toEqual('object')
     expect(typeof store.id).toEqual('string')
     expect(typeof store.address).toEqual('object')
-    expect(typeof store.dbname).toEqual('string')
     expect(typeof store._ipfs).toEqual('object')
     expect(typeof store._cache).toEqual('object')
     expect(typeof store._oplog).toEqual('object')

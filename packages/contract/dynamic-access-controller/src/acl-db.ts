@@ -2,17 +2,18 @@ import { field, variant } from '@dao-xyz/borsh';
 import { BinaryDocumentStore, Operation } from '@dao-xyz/peerbit-ddoc';
 import { getPathGenerator, TrustedNetwork, getFromByTo, RelationContract } from '@dao-xyz/peerbit-trusted-network';
 import { Access, AccessData, AccessType } from './access';
-import { Entry, Identity, Payload } from '@dao-xyz/ipfs-log'
+import { Identity, Payload } from '@dao-xyz/ipfs-log'
 import { MaybeEncrypted, PublicSignKey, SignatureWithKey } from '@dao-xyz/peerbit-crypto';
-import { Address, EntryWithRefs, StoreLike } from '@dao-xyz/peerbit-dstore';
-import { Log } from '@dao-xyz/ipfs-log';
+
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 import { IPFS } from 'ipfs-core-types';
-import { QueryStoreInitializationOptions } from '@dao-xyz/orbit-db-query-store';
+import { DSearch, DSearchInitializationOptions } from '@dao-xyz/peerbit-dsearch';
 import { Contract } from '@dao-xyz/peerbit-contract';
+import { DQuery } from '@dao-xyz/peerbit-dquery';
+import { IInitializationOptions } from '@dao-xyz/peerbit-dstore';
 
-@variant(0)
+@variant([0, 12])
 export class AccessStore extends Contract {
 
     @field({ type: BinaryDocumentStore })
@@ -37,9 +38,12 @@ export class AccessStore extends Contract {
             this.access = new BinaryDocumentStore({
                 indexBy: 'id',
                 objectType: AccessData.name,
+                search: new DSearch({
+                    query: new DQuery({})
+                })
             })
 
-            this.trustedNetwork ? opts.trustedNetwork : new TrustedNetwork({
+            this.trustedNetwork = opts.trustedNetwork ? opts.trustedNetwork : new TrustedNetwork({
                 name: (opts.name || uuid()) + "_region",
                 rootTrust: opts.rootTrust as PublicSignKey
             })
@@ -61,6 +65,12 @@ export class AccessStore extends Contract {
 
         if (!s) {
             return false;
+        }
+
+
+        // Check whether it is trusted by trust web
+        if (await this.trustedNetwork.isTrusted(s.publicKey)) {
+            return true;
         }
 
         // Else check whether its trusted by this access controller
@@ -87,12 +97,22 @@ export class AccessStore extends Contract {
                 return true;
             }
         }
+
+
+
         return false;
     }
 
     async canAppend(payload: MaybeEncrypted<Payload<any>>, key: MaybeEncrypted<SignatureWithKey>): Promise<boolean> {
         // TODO, improve, caching etc
 
+
+        // Check whether it is trusted by trust web
+        const signature = key.decrypted.getValue(SignatureWithKey)
+
+        if (await this.trustedNetwork.isTrusted(signature.publicKey)) {
+            return true;
+        }
         // Else check whether its trusted by this access controller
         const canWriteCheck = async (key: PublicSignKey) => {
             for (const value of Object.values(this.access._index._index)) {
@@ -109,7 +129,6 @@ export class AccessStore extends Contract {
 
             }
         }
-        const signature = key.decrypted.getValue(SignatureWithKey)
         if (await canWriteCheck(signature.publicKey)) {
             return true;
         }
@@ -118,11 +137,12 @@ export class AccessStore extends Contract {
                 return true;
             }
         }
+
         return false;
     }
 
 
-    async init(ipfs: IPFS, identity: Identity, options: QueryStoreInitializationOptions<Operation<Access>>): Promise<this> {
+    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<Operation<Access>>): Promise<this> {
         this.access._clazz = AccessData;
 
         const store = await options.saveOrResolve(ipfs, this);
@@ -133,6 +153,7 @@ export class AccessStore extends Contract {
         /* await this.access.accessController.init(ipfs, publicKey, sign, options); */
         await this.identityGraphController.init(ipfs, identity, { ...options, canRead: this.canRead.bind(this), canAppend: this.canAppend.bind(this) });
         await this.access.init(ipfs, identity, { ...options, canRead: this.canRead.bind(this), canAppend: this.canAppend.bind(this) })
+        await this.trustedNetwork.init(ipfs, identity, { ...options })
         await super.init(ipfs, identity, options);
         return this;
     }

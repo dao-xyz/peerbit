@@ -1,7 +1,7 @@
 {
-  "name": "@dao-xyz/query-protocol",
-  "version": "0.0.42",
-  "description": "Document Store for orbit-db with binary ser/der",
+  "name": "@dao-xyz/peerbit-dquery",
+  "version": "0.0.1",
+  "description": "Cross peer com. primitives",
   "type": "module",
   "sideEffects": false,
   "main": "lib/cjs/index.js",
@@ -21,8 +21,8 @@
   },
   "scripts": {
     "clean": "shx rm -rf lib/*",
-    "build": "yarn clean && tsc -p tsconfig.json; tsc-esm -p tsconfig.json && tsc -p tsconfig.cjs.json",
-    "postbuild": "echo '{\"type\":\"commonjs\"}' | node ../../../node_modules/.bin/json > lib/cjs/package.json && echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
+    "build": "yarn clean && tsc -p tsconfig.json; tsc-esm -p tsconfig.json",
+    "postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
     "test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
     "test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
     "test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
@@ -30,6 +30,8 @@
   "author": "dao.xyz",
   "license": "MIT",
   "dependencies": {
+    "@dao-xyz/peerbit-dstore": "^0.0.21",
+    "@dao-xyz/peerbit-contract": "^0.0.1",
     "@dao-xyz/borsh": "^3.3.0",
     "@dao-xyz/bpayload": "^0.0.11",
     "@dao-xyz/time": "^0.0.11",

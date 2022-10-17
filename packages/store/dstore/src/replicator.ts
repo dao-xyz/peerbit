@@ -175,7 +175,7 @@ export class Replicator<T> {
     this._fetched = {}
   }
 
-  async _replicateLog(entry: Entry<T> | EntryWithRefs<T> | string) {
+  async _replicateLog(entry: Entry<T> | EntryWithRefs<T> | string): Promise<Log<T>> {
 
 
     // Notify the Store that we made progress

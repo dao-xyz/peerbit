@@ -2,8 +2,8 @@ import { Session, Peer, waitForPeers } from '@dao-xyz/orbit-db-test-utils'
 import { AnyRelation, createIdentityGraphStore, getFromByTo, getPathGenerator, getToByFrom, TrustedNetwork, KEY_OFFSET, PUBLIC_KEY_WIDTH } from '..';
 import { waitFor } from '@dao-xyz/time';
 import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { DocumentQueryRequest, QueryRequestV0, QueryResponseV0, ResultWithSource } from '@dao-xyz/query-protocol';
-import { query } from '@dao-xyz/orbit-db-query-store';
+import { DocumentQueryRequest, Results, ResultWithSource } from '@dao-xyz/peerbit-dsearch';
+import { QueryRequestV0, QueryResponseV0, query } from '@dao-xyz/peerbit-dquery';
 import { Secp256k1PublicKey } from '@dao-xyz/peerbit-crypto';
 import { Wallet } from '@ethersproject/wallet'
 import { Identity } from '@dao-xyz/ipfs-log';
@@ -11,8 +11,7 @@ import { createStore } from '@dao-xyz/orbit-db-test-utils';
 import { Level } from 'level';
 import { fileURLToPath } from 'url';
 import path from 'path';
-import { jest } from '@jest/globals';
-import { CachedValue, DefaultOptions, Store, StoreLike } from '@dao-xyz/peerbit-dstore';
+import { CachedValue, DefaultOptions, IInitializationOptions, IStoreOptions, Store } from '@dao-xyz/peerbit-dstore';
 import Cache from '@dao-xyz/orbit-db-cache';
 import { serialize } from '@dao-xyz/borsh';
 import { Contract } from '@dao-xyz/peerbit-contract';
@@ -30,7 +29,7 @@ describe('index', () => {
     let session: Session, identites: Identity[], cacheStore: Level[]
 
     const identity = (i: number) => identites[i];
-    const init = (store: Contract | Store<any>, i: number) => store.init && store.init(session.peers[i].ipfs, identites[i], { ...DefaultOptions, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]) })
+    const init = (store: Contract | Store<any>, i: number, options: IStoreOptions<any> = {}) => store.init && store.init(session.peers[i].ipfs, identites[i], { ...DefaultOptions, replicate: true, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]), ...options })
     beforeAll(async () => {
         session = await Session.connected(4);
         identites = [];
@@ -190,13 +189,11 @@ describe('index', () => {
             await waitFor(() => Object.keys(l0b.trustGraph._index._index).length == 2)
             await waitFor(() => Object.keys(l0a.trustGraph._index._index).length == 2)
 
-            await waitForPeers(session.peers[2].ipfs, [session.peers[0].id, session.peers[1].id], l0b.trustGraph.queryTopic)
+            await waitForPeers(session.peers[2].ipfs, [session.peers[0].id, session.peers[1].id], l0b.trustGraph.search._query.queryTopic)
             // Try query with trusted
-            let responses: QueryResponseV0[] = [];
-            await query(session.peers[2].ipfs, l0b.trustGraph.queryTopic, new QueryRequestV0({
-                type: new DocumentQueryRequest({
-                    queries: []
-                })
+            let responses: Results[] = [];
+            await l0b.trustGraph.search.query(new DocumentQueryRequest({
+                queries: []
             }), (response) => {
                 responses.push(response);
             },
@@ -210,10 +207,8 @@ describe('index', () => {
 
             // Try query with untrusted
             let untrustedResponse = undefined;
-            await query(session.peers[3].ipfs, l0b.trustGraph.queryTopic, new QueryRequestV0({
-                type: new DocumentQueryRequest({
-                    queries: []
-                })
+            await l0b.trustGraph.search.query(new DocumentQueryRequest({
+                queries: []
             }), (response) => {
                 untrustedResponse = response
             },
@@ -225,7 +220,14 @@ describe('index', () => {
             expect(untrustedResponse).toBeUndefined();
 
             // now check if peer3 is trusted from peer perspective
-            expect(await l0a.isTrusted(identity(2).publicKey));
+            expect(await l0a.isTrusted(identity(2).publicKey)).toBeTrue();
+
+            // check if peer3 is trusted from a peer that is not rpelicating
+            let l0observer: TrustedNetwork = await TrustedNetwork.load(session.peers[1].ipfs, l0a.address) as any
+            await init(l0observer, 1, { replicate: false });
+            expect(await l0observer.isTrusted(identity(2).publicKey)).toBeTrue();
+            expect(await l0observer.isTrusted(identity(3).publicKey)).toBeFalse();
+
 
             const trusted = await l0a.getTrusted();
             expect(trusted.map(k => k.bytes)).toContainAllValues([identity(0).publicKey.bytes, identity(1).publicKey.bytes, identity(2).publicKey.bytes])
