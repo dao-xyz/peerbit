@@ -10,7 +10,7 @@ Peerbit started as a fork of OrbitDB in order to support some key features that 
 - Tests are now written in `jest` rather than `mocha`
 - Type safety. Messages are encoded with [Borsh](https://github.com/near/borsh) serialization format. This format allows one to have a strict type checks during serialization/deserialization and enables message polymorphism which JSON does not (in a easy way) support and provides a much more compact data representation.
 - Performance critical modules are written with the mindset that they might be ported to Rust/WASM at some point.
- 
+- In OrbitDB it was assumes that a store always have an access controller, here, we don't make that assumption. In fact every "program" that is allowed to update a state needs to define checks ```canAppend```, ```canRead``` or delagate these checks to some "access controller", there are a few predefined [here](../packages/programs/acl). This allows you to have more freedom when creating "programs" as you can pick, choose and combine programs to build the functionality you want to achieve. 
  
 ## Features
  
@@ -24,8 +24,7 @@ Peerbit started as a fork of OrbitDB in order to support some key features that 
  
  
 ### Discoverability
-- Storing data is half the purpose of a database. If data is hard to discover, the storage is meaningless. In a distributed setting we need to make sure different participants can get involved based on their capabilities, some peers might be able to answer very complicated queries, some peers might just support some basic filtering. A generalized query protocol has been developed that allows any participant to read queries that are transmitted through the network and respond to the queries that are relevant.
+- Storing data is half the purpose of a database. If data is hard to discover, the storage is meaningless. In a distributed setting we need to make sure different participants can get involved based on their capabilities, some peers might be able to answer very complicated queries, some peers might just support some basic filtering. Peerbit supports composability for queryable programs. For example, there is a generic search program [DSearch](../packages/programs/discovery/dsearch/) that allows you to search, generically, across the network for content and there is a [trusted-network](../packages/programs/acl/trusted-network/) program that asks peers for data that allows you to verify whether a identity is trusted locally and remotely seamlessly. Both of these modules uses the  [DQuery](../packages/programs/discovery/dquery/) program for creating a two way commmunication between peers (request -> respond)
  
- 
-###
+
  

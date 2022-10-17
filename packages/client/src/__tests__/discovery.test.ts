@@ -1,15 +1,11 @@
 //
 import rmrf from 'rimraf'
 
-import { DirectChannel } from '@dao-xyz/ipfs-pubsub-direct-channel'
 import { OrbitDB } from '../orbit-db'
 
 import { EventStore } from './utils/stores/event-store'
 import { jest } from '@jest/globals';
-import { Controller } from "ipfsd-ctl";
-import { IPFS } from "ipfs-core-types";
-// @ts-ignore 
-import { v4 as uuid } from 'uuid';
+
 
 // Include test utilities
 import {
@@ -19,8 +15,7 @@ import {
     connectPeers
 } from '@dao-xyz/orbit-db-test-utils'
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
-import { delay, waitFor } from '@dao-xyz/time'
-import { AccessError, Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
+import { waitFor } from '@dao-xyz/time'
 
 const orbitdbPath1 = './orbitdb/tests/leader/1'
 const orbitdbPath2 = './orbitdb/tests/leader/2'

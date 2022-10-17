@@ -5,7 +5,6 @@ import rmrf from 'rimraf'
 import path from 'path'
 import { Address } from '@dao-xyz/peerbit-dstore'
 import { OrbitDB } from '../orbit-db.js'
-import { SimpleAccessController } from './utils/access.js'
 import { EventStore } from './utils/stores/event-store.js'
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";

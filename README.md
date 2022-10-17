@@ -42,16 +42,8 @@ The peer client
 - Exchange replication info. Healthcheck/Redundancy diagnostics. 
 - Leader and leader rotation routines for building functionality around leaders
 
-## [query-protocol](./packages/store/dsearch)
-- Generalized query models/protocol for distributed queries
+## [Programs](./packages/programs)
+Contains composable programs you can build your program with. For example distributed [document store](./packages/programs/data/ddoc), [search](./packages/programs/discovery/dsearch), [chain agnostic access controller](./packages/programs/acl/dynamic-access-controller) 
 
-## [pbayload](./packages/utils/bpayload)
-- A generic payload class which you can extend and build binary serialization routines to and from with (@dao-xyz/borsh-ts). For example; Documents that are stored in the [bdocstore](./packages/orbit-db-bdocstore) could/should extend this class so when you are writing or querying data, you can be sure that results with be succesfully be deserialized with BinaryPayload class.
-
-## [bdocstore](./packages/store/ddoc)
-- Document store, but different from the "default" orbit-db implementation in the way serialization/deserialization is performed. In addition, this store supports querying. 
-
-## [dac](./packages/contract/dynamic-access-controller)
-- "Chain agnostic" Access Controller
-
-
+## [Utils](./packages/utils/)
+Utilities libraries that do not have their own category yet

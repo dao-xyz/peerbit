@@ -24,7 +24,7 @@ import { WAIT_FOR_PEERS_TIME, exchangePeerInfo, ReplicatorInfo, PeerInfoWithMeta
 import { createHash } from 'crypto'
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
 import { multiaddr } from '@multiformats/multiaddr'
-import { Contract } from '@dao-xyz/peerbit-contract';
+import { Program } from '@dao-xyz/peerbit-program';
 
 // @ts-ignore
 import { delay, waitFor } from '@dao-xyz/time'
@@ -1264,7 +1264,7 @@ export class OrbitDB {
   }
 
 
-  _openStorePromise: Promise<Contract | StoreLike<any> | undefined>
+  _openStorePromise: Promise<Program | StoreLike<any> | undefined>
 
   /**
    * Default behaviour of a store is only to accept heads that are forks (new roots) with some probability
@@ -1273,7 +1273,7 @@ export class OrbitDB {
    * @param options 
    * @returns 
    */
-  async open<S extends Contract | StoreLike<any>>(storeOrAddress: /* string | Address |  */S | Address | string, replicationTopic: string, options: OpenStoreOptions = {}): Promise<S> {
+  async open<S extends Program | StoreLike<any>>(storeOrAddress: /* string | Address |  */S | Address | string, replicationTopic: string, options: OpenStoreOptions = {}): Promise<S> {
 
 
     // TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?
@@ -1285,7 +1285,7 @@ export class OrbitDB {
       }
       if (storeOrAddress instanceof Address) {
         try {
-          store = await Contract.load(this._ipfs, storeOrAddress as any as Address) as any as S // TODO fix typings
+          store = await Program.load(this._ipfs, storeOrAddress as any as Address) as any as S // TODO fix typings
         } catch (error) {
           logger.error("Failed to load store with address: " + storeOrAddress.toString());
           reject(error);

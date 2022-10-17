@@ -3,12 +3,12 @@
 
 import rmrf from 'rimraf'
 import { OrbitDB } from '../orbit-db'
-import { SimpleAccessController, SimpleStoreAccessController } from './utils/access'
-import { EventStore, Operation } from './utils/stores/event-store'
+import { EventStore } from './utils/stores/event-store'
 
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
+
 // Include test utilities
 import {
     nodeConfig as config,
@@ -17,6 +17,7 @@ import {
     testAPIs,
     connectPeers
 } from '@dao-xyz/orbit-db-test-utils'
+import { SimpleStoreContract } from './utils/access';
 
 const orbitdbPath1 = './orbitdb/tests/replication/1'
 const orbitdbPath2 = './orbitdb/tests/replication/2'
@@ -28,7 +29,7 @@ Object.keys(testAPIs).forEach(API => {
         jest.setTimeout(config.timeout * 2)
 
         let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS
-        let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore<string>, db2: EventStore<string>
+        let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: SimpleStoreContract, db2: SimpleStoreContract
 
 
         beforeAll(async () => {
@@ -66,10 +67,10 @@ Object.keys(testAPIs).forEach(API => {
         afterEach(async () => {
 
             if (db1)
-                await db1.drop()
+                await db1.store.drop()
 
             if (db2)
-                await db2.drop()
+                await db2.store.drop()
 
             if (orbitdb1)
                 await orbitdb1.stop()
@@ -81,50 +82,44 @@ Object.keys(testAPIs).forEach(API => {
         it('open same store twice will share instance', async () => {
 
             const replicationTopic = 'topic';
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'some db' }), replicationTopic)
-            const sameDb = await orbitdb1.open(new EventStore<string>({ name: 'some db' }), replicationTopic)
+            db1 = await orbitdb1.open(new SimpleStoreContract({ store: new EventStore({ name: 'some db' }) }), replicationTopic)
+            const sameDb = await orbitdb1.open(new SimpleStoreContract({ store: new EventStore({ name: 'some db' }) }), replicationTopic)
             expect(db1 === sameDb);
 
         })
 
         it('can share nested stores', async () => {
             const replicationTopic = 'topic';
-            db1 = await orbitdb1.open(new EventStore<string>({
-                name: 'some db', accessController: new SimpleStoreAccessController({
-                    store: new EventStore<string>({
-                        name: 'event store'
-                    })
+            db1 = await orbitdb1.open(new SimpleStoreContract({
+                store: new EventStore<string>({
+                    name: 'event store'
                 })
             }), replicationTopic)
-            db2 = await orbitdb1.open(new EventStore<string>({
-                name: 'another db', accessController: new SimpleStoreAccessController({
-                    store: new EventStore<string>({
-                        name: 'event store'
-                    })
+            db2 = await orbitdb1.open(new SimpleStoreContract({
+                store: new EventStore<string>({
+                    name: 'event store'
                 })
             }), replicationTopic)
             expect(db1 !== db2);
-            expect(db1.accessController === db2.accessController);
+            expect(db1.store === db2.store);
 
         })
 
         it('share nested stores if not same replication topic', async () => {
-            db1 = await orbitdb1.open(new EventStore<string>({
-                name: 'same db', accessController: new SimpleStoreAccessController({
-                    store: new EventStore<string>({
-                        name: 'event store'
-                    })
+
+            // TODO is this expected behaviour?
+            db1 = await orbitdb1.open(new SimpleStoreContract({
+                store: new EventStore<string>({
+                    name: 'event store'
                 })
             }), 'a')
-            db2 = await orbitdb1.open(new EventStore<string>({
-                name: 'same db', accessController: new SimpleStoreAccessController({
-                    store: new EventStore<string>({
-                        name: 'event store'
-                    })
+            db2 = await orbitdb1.open(new SimpleStoreContract({
+                store: new EventStore<string>({
+                    name: 'event store'
                 })
             }), 'b')
             expect(db1 !== db2);
-            expect(db1.accessController !== db2.accessController);
+            expect(db1.store !== db2.store);
 
         })
 

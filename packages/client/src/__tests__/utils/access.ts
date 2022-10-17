@@ -6,11 +6,12 @@ import { Log } from "@dao-xyz/ipfs-log";
 import Cache from '@dao-xyz/orbit-db-cache';
 import { EventStore, Operation } from "./stores";
 import { IPFS } from "ipfs-core-types";
-import { Contract } from "@dao-xyz/peerbit-contract";
+import { Program } from "@dao-xyz/peerbit-program";
 
 
 @variant([0, 252])
-export class SimpleStoreContract extends Contract {
+export class SimpleStoreContract extends Program {
+
     @field({ type: EventStore })
     store: EventStore<string>;
 

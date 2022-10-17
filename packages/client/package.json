@@ -32,7 +32,7 @@
     "@dao-xyz/peerbit-crypto": "^0.0.1",
     "@dao-xyz/peerbit-dstore": "^0.0.21",
     "@dao-xyz/ipfs-pubsub-direct-channel": "^0.0.8",
-    "@dao-xyz/peerbit-contract": "^0.0.1",
+    "@dao-xyz/peerbit-program": "^0.0.1",
     "is-node": "^1.0.2",
     "localstorage-down": "^0.6.7",
     "logplease": "^1.2.14",
