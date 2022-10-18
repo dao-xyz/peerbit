@@ -63,10 +63,10 @@ describe(`orbit-db - Resiliance (ipfs-js)`, function () {
     afterEach(async () => {
 
         if (db1)
-            await db1.drop()
+            await db1.store.drop()
 
         if (db2)
-            await db2.drop()
+            await db2.store.drop()
 
         if (orbitdb1)
             await orbitdb1.stop()

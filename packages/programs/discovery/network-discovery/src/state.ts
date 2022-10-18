@@ -4,6 +4,7 @@ import { SystemBinaryPayload } from "@dao-xyz/bpayload";
 import { Address } from "@dao-xyz/peerbit-dstore";
 import { DSearch } from "@dao-xyz/peerbit-dsearch";
 import { DQuery } from "@dao-xyz/peerbit-dquery";
+import { createHash } from "crypto";
 
 
 // bootstrap info 
@@ -52,7 +53,7 @@ export class NetworkInfo extends DiscoveryData {
         const writer = new BinaryWriter();
         writer.writeString(this.network.toString())
         writer.writeString(this.peerId)
-        return Buffer.from(writer.toArray()).toString('base64')
+        return createHash('sha1').update(writer.toArray()).digest('base64')
     }
 
     initialize(): NetworkInfo {

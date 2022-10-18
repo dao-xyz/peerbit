@@ -111,13 +111,13 @@ Object.keys(testAPIs).forEach(API => {
       options = {}
 
       if (db1)
-        await db1.drop()
+        await db1.store.drop()
 
       if (db2)
-        await db2.drop()
+        await db2.store.drop()
 
       if (db3)
-        await db3.drop()
+        await db3.store.drop()
 
       if (orbitdb1)
         await orbitdb1.stop()
@@ -135,7 +135,7 @@ Object.keys(testAPIs).forEach(API => {
       let done = false;
 
 
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, {
         ...options, onReplicationComplete: async (_store) => {
           await checkHello(db1);
           done = true;
@@ -157,7 +157,7 @@ Object.keys(testAPIs).forEach(API => {
 
       // We expect during opening that keys are exchange
       let done = false;
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, {
         ...options, onReplicationComplete: async (_store) => {
           await checkHello(db1);
           done = true;
@@ -183,7 +183,7 @@ Object.keys(testAPIs).forEach(API => {
 
       // We expect during opening that keys are exchange
       let done = false;
-      db3 = await orbitdb3.open<EventStore<string>>(await EventStore.load(orbitdb3._ipfs, db1.address), replicationTopic, {
+      db3 = await orbitdb3.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb3._ipfs, db1.address), replicationTopic, {
         ...options, onReplicationComplete: async (_store) => {
           await checkHello(db1);
           done = true;
@@ -209,7 +209,7 @@ Object.keys(testAPIs).forEach(API => {
 
       // Open store from orbitdb3 so that both client 1 and 2 is listening to the replication topic
       options = Object.assign({}, options, { directory: dbPath2 })
-      await orbitdb2.open(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
+      await orbitdb2.open(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, {
         ...options
       })
       const reciever = await orbitdb2.getEncryptionKey(replicationTopic) as KeyWithMeta<Ed25519Keypair>;
@@ -222,14 +222,14 @@ Object.keys(testAPIs).forEach(API => {
       await waitForPeers(session.peers[2].ipfs, [orbitdb1.id], replicationTopic)
 
       options = Object.assign({}, options, { directory: dbPath2 })
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, { ...options })
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, { ...options })
 
       const client3Key = await orbitdb3.keystore.createEd25519Key({ id: 'unknown' });
 
       await db2.add('hello', { reciever: { clock: undefined, payload: client3Key.keypair.publicKey, signature: client3Key.keypair.publicKey } })
 
       // Wait for db1 (the relay) to get entry
-      await waitFor(() => db1.oplog.values.length === 1)
+      await waitFor(() => db1.store.oplog.values.length === 1)
       const entriesRelay: Entry<Operation<string>>[] = db1.iterator({ limit: -1 }).collect()
       expect(entriesRelay.length).toEqual(1)
       try {
@@ -247,9 +247,9 @@ Object.keys(testAPIs).forEach(API => {
 
 
       // Now close db2 and open db3 and make sure message are available
-      await db2.drop();
+      await db2.store.drop();
       options = Object.assign({}, options, { directory: dbPath3 })
-      db3 = await orbitdb3.open<EventStore<string>>(await EventStore.load(orbitdb3._ipfs, db1.address), replicationTopic, {
+      db3 = await orbitdb3.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb3._ipfs, db1.address), replicationTopic, {
         ...options, onReplicationComplete: async (store) => {
           const entriesRelay: Entry<Operation<string>>[] = db3.iterator({ limit: -1 }).collect()
           expect(entriesRelay.length).toEqual(1)

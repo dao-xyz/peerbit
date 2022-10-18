@@ -86,17 +86,17 @@ Object.keys(testAPIs).forEach(API => {
             }
 
             await Promise.all(promises);
-            await waitFor(() => db1.oplog.values.length === entryCount)
+            await waitFor(() => db1.store.oplog.values.length === entryCount)
 
             // this could failed, if we are unlucky probability wise
-            await waitFor(() => db2.oplog.values.length > entryCount * 0.5 && db2.oplog.values.length < entryCount * 0.75)
-            await waitFor(() => db3.oplog.values.length > entryCount * 0.5 && db3.oplog.values.length < entryCount * 0.75)
+            await waitFor(() => db2.store.oplog.values.length > entryCount * 0.5 && db2.store.oplog.values.length < entryCount * 0.75)
+            await waitFor(() => db3.store.oplog.values.length > entryCount * 0.5 && db3.store.oplog.values.length < entryCount * 0.75)
 
 
             const checkConverged = async (db: EventStore<any>) => {
-                const a = db.oplog.values.length;
+                const a = db.store.oplog.values.length;
                 await delay(5000); // arb delay
-                return a === db.oplog.values.length
+                return a === db.store.oplog.values.length
             }
 
             await waitForAsync(() => checkConverged(db2), { timeout: 20000, delayInterval: 5000 })
@@ -119,7 +119,7 @@ Object.keys(testAPIs).forEach(API => {
                 }
      
                 // Open the second database
-                db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), {})
+                db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), {})
                 await waitFor(() => db2.oplog.values.length === entryCount);
      
                 db2.allowForks = false; // Only allow "changes"
@@ -147,7 +147,7 @@ Object.keys(testAPIs).forEach(API => {
               // Now check whether this heap size limit makes `allowForks` false when we start to write alot of data
               const heapsizeLimitForForks = 30000 + v8.getHeapStatistics().used_heap_size;
               orbitdb3 = await OrbitDB.createInstance(ipfs2, { directory: dbPath3, heapsizeLimitForForks })
-              db2 = await orbitdb3.open<EventStore<string>>(await EventStore.load(orbitdb3._ipfs, db1.address), {})
+              db2 = await orbitdb3.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb3._ipfs, db1.address), {})
               expect(db2.options.resourceOptions.heapSizeLimit()).toEqual(heapsizeLimitForForks);
               let i = 0;
               expect(db2.allowForks);

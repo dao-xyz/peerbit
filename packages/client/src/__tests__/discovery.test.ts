@@ -37,7 +37,6 @@ Object.keys(testAPIs).forEach(API => {
         beforeAll(async () => {
             session1 = await Session.connected(2);
             session2 = await Session.connected(1);
-
         })
 
         afterAll(async () => {
@@ -65,13 +64,13 @@ Object.keys(testAPIs).forEach(API => {
         afterEach(async () => {
 
             if (db1)
-                await db1.drop()
+                await db1.store.drop()
 
             if (db2)
-                await db2.drop()
+                await db2.store.drop()
 
             if (db3)
-                await db3.drop()
+                await db3.store.drop()
 
             if (orbitdb1)
                 await orbitdb1.stop()

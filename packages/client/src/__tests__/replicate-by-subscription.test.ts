@@ -63,7 +63,7 @@ Object.keys(testAPIs).forEach(API => {
         afterEach(async () => {
 
             if (db)
-                await db.drop()
+                await db.store.drop()
 
             if (orbitdb1)
                 await orbitdb1.stop()

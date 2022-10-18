@@ -16,12 +16,10 @@ import {
   stopIpfs,
   testAPIs,
 } from '@dao-xyz/orbit-db-test-utils'
-import { EventStore } from './utils/stores'
 
-
-const {
+import {
   databases
-} = require('./utils')
+} from './utils';
 
 const dbPath = './orbitdb/tests/customKeystore'
 
@@ -56,7 +54,7 @@ Object.keys(testAPIs).forEach(API => {
           await database.tryInsert(db1)
 
           assert.deepEqual(database.getTestValue(db1), database.expectedValue)
-          await db1.close()
+          await db1.store.close()
         })
       }
     })

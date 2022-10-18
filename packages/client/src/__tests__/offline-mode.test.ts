@@ -9,9 +9,6 @@ import {
   stopIpfs,
   testAPIs,
 } from '@dao-xyz/orbit-db-test-utils'
-import { jest } from '@jest/globals';
-import { Controller } from "ipfsd-ctl";
-import { IPFS } from "ipfs-core-types";
 const dbPath1 = './orbitdb/tests/offline/db1'
 const dbPath2 = './orbitdb/tests/offline/db2'
 

@@ -77,10 +77,10 @@ Object.keys(testAPIs).forEach(API => {
       options = {} as any
 
       if (db1)
-        await db1.drop()
+        await db1.store.drop()
 
       if (db2)
-        await db2.drop()
+        await db2.store.drop()
 
       if (orbitdb1)
         await orbitdb1.stop()
@@ -95,7 +95,7 @@ Object.keys(testAPIs).forEach(API => {
 
       options = Object.assign({}, options, { directory: dbPath2 })
       let done = false;
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, {
         ...options, onReplicationComplete: async () => {
           expect(db2.iterator({ limit: -1 }).collect().length).toEqual(1)
 
@@ -128,7 +128,7 @@ Object.keys(testAPIs).forEach(API => {
       options = Object.assign({}, options, { directory: dbPath2 })
 
       let done = false
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, {
         ...options, onReplicationComplete: () => {
           // Once db2 has finished replication, make sure it has all elements
           // and process to the asserts below
@@ -173,7 +173,7 @@ Object.keys(testAPIs).forEach(API => {
 
       let done = false
 
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, {
         ...options,
         onReplicationQueued: (store, entry) => {
           if (!replicateSet.has(entry.hash)) {
@@ -183,7 +183,7 @@ Object.keys(testAPIs).forEach(API => {
           }
         },
         onReplicationProgress: (store) => {
-          progressEvents.push(db2.replicationStatus.progress)
+          progressEvents.push(db2.store.replicationStatus.progress)
 
         },
 
@@ -216,15 +216,15 @@ Object.keys(testAPIs).forEach(API => {
         expect(e).toEqual(BigInt(idx + 1))
       }
       // Verify replication status
-      expect(db2.replicationStatus.progress).toEqual(BigInt(entryCount))
-      expect(db2.replicationStatus.max).toEqual(BigInt(entryCount))
+      expect(db2.store.replicationStatus.progress).toEqual(BigInt(entryCount))
+      expect(db2.store.replicationStatus.max).toEqual(BigInt(entryCount))
       // Verify replicator state
-      expect(db2._replicator.tasksRunning).toEqual(0)
-      expect(db2._replicator.tasksQueued).toEqual(0)
-      expect(db2._replicator.unfinished.length).toEqual(0)
+      expect(db2.store._replicator.tasksRunning).toEqual(0)
+      expect(db2.store._replicator.tasksQueued).toEqual(0)
+      expect(db2.store._replicator.unfinished.length).toEqual(0)
       // Replicator's internal caches should be empty
-      expect(db2._replicator._logs.length).toEqual(0)
-      expect(Object.keys(db2._replicator._fetching).length).toEqual(0)
+      expect(db2.store._replicator._logs.length).toEqual(0)
+      expect(Object.keys(db2.store._replicator._fetching).length).toEqual(0)
 
 
 
@@ -262,7 +262,7 @@ Object.keys(testAPIs).forEach(API => {
       let replicatedEventCount = 0
       let done = false
 
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, {
         ...options, onReplicationQueued: (store, entry) => {
           if (!replicateSet.has(entry.hash)) {
             replicateSet.add(entry.hash)
@@ -271,7 +271,7 @@ Object.keys(testAPIs).forEach(API => {
           }
         },
         onReplicationProgress: (store, entry) => {
-          progressEvents.push(db2.replicationStatus.progress)
+          progressEvents.push(db2.store.replicationStatus.progress)
 
         },
         onReplicationComplete: (store) => {
@@ -297,15 +297,15 @@ Object.keys(testAPIs).forEach(API => {
         expect(e).toEqual(BigInt(idx + 1))
       }
       // Verify replication status
-      expect(db2.replicationStatus.progress).toEqual(BigInt(entryCount))
-      expect(db2.replicationStatus.max).toEqual(BigInt(entryCount))
+      expect(db2.store.replicationStatus.progress).toEqual(BigInt(entryCount))
+      expect(db2.store.replicationStatus.max).toEqual(BigInt(entryCount))
       // Verify replicator state
-      expect(db2._replicator.tasksRunning).toEqual(0)
-      expect(db2._replicator.tasksQueued).toEqual(0)
-      expect(db2._replicator.unfinished.length).toEqual(0)
+      expect(db2.store._replicator.tasksRunning).toEqual(0)
+      expect(db2.store._replicator.tasksQueued).toEqual(0)
+      expect(db2.store._replicator.unfinished.length).toEqual(0)
       // Replicator's internal caches should be empty
-      expect(db2._replicator._logs.length).toEqual(0)
-      expect(Object.keys(db2._replicator._fetching).length).toEqual(0)
+      expect(db2.store._replicator._logs.length).toEqual(0)
+      expect(Object.keys(db2.store._replicator._fetching).length).toEqual(0)
 
     })
 
@@ -337,7 +337,7 @@ Object.keys(testAPIs).forEach(API => {
       const replicateSet = new Set()
       let done = false
 
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, {
         ...options, onReplicationComplete: (store) => {
           // Once db2 has finished replication, make sure it has all elements
           // and process to the asserts below
@@ -368,15 +368,15 @@ Object.keys(testAPIs).forEach(API => {
       expect(values1.length).toEqual(entryCount * 2)
       expect(values2.length).toEqual(entryCount * 2)
       // Verify replication status
-      expect(db2.replicationStatus.progress).toEqual(BigInt(entryCount * 2))
-      expect(db2.replicationStatus.max).toEqual(BigInt(entryCount * 2))
+      expect(db2.store.replicationStatus.progress).toEqual(BigInt(entryCount * 2))
+      expect(db2.store.replicationStatus.max).toEqual(BigInt(entryCount * 2))
       // Verify replicator state
-      expect(db2._replicator.tasksRunning).toEqual(0)
-      expect(db2._replicator.tasksQueued).toEqual(0)
-      expect(db2._replicator.unfinished.length).toEqual(0)
+      expect(db2.store._replicator.tasksRunning).toEqual(0)
+      expect(db2.store._replicator.tasksQueued).toEqual(0)
+      expect(db2.store._replicator.unfinished.length).toEqual(0)
       // Replicator's internal caches should be empty
-      expect(db2._replicator._logs.length).toEqual(0)
-      expect(Object.keys(db2._replicator._fetching).length).toEqual(0)
+      expect(db2.store._replicator._logs.length).toEqual(0)
+      expect(Object.keys(db2.store._replicator._fetching).length).toEqual(0)
 
 
     })

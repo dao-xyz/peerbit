@@ -10,7 +10,7 @@ import { Identity } from '@dao-xyz/ipfs-log';
 import { createStore } from '@dao-xyz/orbit-db-test-utils';
 import { Level } from 'level';
 import { fileURLToPath } from 'url';
-import path from 'path';
+import path, { dirname } from 'path';
 import { CachedValue, DefaultOptions, IInitializationOptions, IStoreOptions, Store } from '@dao-xyz/peerbit-dstore';
 import Cache from '@dao-xyz/orbit-db-cache';
 import { serialize } from '@dao-xyz/borsh';
@@ -36,7 +36,7 @@ describe('index', () => {
         cacheStore = [];
         for (let i = 0; i < session.peers.length; i++) {
             identites.push(await createIdentity());
-            cacheStore.push(await createStore(__filenameBase + '/cache/' + i))
+            cacheStore.push(await createStore(path.join(__filename, '/cache/', i.toString())))
         }
 
     })

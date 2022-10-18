@@ -98,7 +98,7 @@ Object.keys(testAPIs).forEach(API => {
         it('write 1 entry replicate false', async () => {
 
             await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
-            db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, { directory: dbPath2, replicate: false })
+            db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, { directory: dbPath2, replicate: false })
 
             await db1.add('hello');
             /*   await waitFor(() => db2._oplog.clock.time > 0); */
@@ -114,7 +114,7 @@ Object.keys(testAPIs).forEach(API => {
 
             await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
             const encryptionKey = await orbitdb1.keystore.createEd25519Key({ id: 'encryption key', group: replicationTopic });
-            db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, { directory: dbPath2, replicate: false })
+            db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, { directory: dbPath2, replicate: false })
 
             await db1.add('hello', {
                 reciever: {

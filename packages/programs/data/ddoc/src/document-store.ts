@@ -13,7 +13,7 @@ import { Program } from '@dao-xyz/peerbit-program';
 
 const replaceAll = (str: string, search: any, replacement: any) => str.toString().split(search).join(replacement)
 
-@variant([0, 0])
+@variant([0, 6])
 export class DDocs<T extends BinaryPayload> extends Program/*  implements Typed */ {
 
   @field({ type: Store })

@@ -1,6 +1,5 @@
 
 import path from 'path'
-import * as ipfs from 'ipfs';
 import * as ipfsModule from 'ipfs'
 import * as ipfsHttpModule from 'ipfs-http-client'
 // @ts-ignore

@@ -9,10 +9,10 @@ import { Address } from '../io.js'
 import { Controller } from 'ipfsd-ctl'
 import { IPFS } from 'ipfs-core-types'
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
-import { waitFor } from '@dao-xyz/time';
+import { delay, waitFor } from '@dao-xyz/time';
 import { fileURLToPath } from 'url';
 import { jest } from '@jest/globals';
-import path from 'path';
+import path, { dirname } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -35,18 +35,20 @@ Object.keys(testAPIs).forEach((IPFS) => {
     jest.setTimeout(config.timeout);
 
     const ipfsConfig = Object.assign({}, config, {
-      repo: 'repo-entry' + __filenameBase + new Date().getTime()
+      repo: 'repo-add' + __filenameBase + new Date().getTime()
     })
 
     beforeAll(async () => {
-      identityStore = await createStore(__filenameBase + '/identity')
-      const keystore = new Keystore(identityStore)
+      identityStore = await createStore(path.join(__filename, 'identity'))
 
-      cacheStore = await createStore(__filenameBase + '/cache')
+      const keystore = new Keystore(identityStore)
 
       signKey = await keystore.createEd25519Key()
       ipfsd = await startIpfs(IPFS, ipfsConfig.daemon1)
       ipfs = ipfsd.api
+
+      cacheStore = await createStore(path.join(__filename, 'cache'))
+
     })
 
     afterAll(async () => {
@@ -56,6 +58,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
       await cacheStore?.close()
     })
 
+    beforeEach(async () => {
+      await cacheStore.clear();
+    })
 
     it('adds an operation and triggers the write event', async () => {
       index = new SimpleIndex();
@@ -69,6 +74,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         expect(store.replicationStatus.progress).toEqual(1n)
         expect(store.replicationStatus.max).toEqual(1n)
         assert.deepStrictEqual(index._index, heads)
+        await delay(5000); // seems because write is async?
         store._cache.getBinary(store.localHeadsPath, HeadsCache).then((localHeads) => {
           if (!localHeads) {
             fail();

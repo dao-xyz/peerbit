@@ -18,7 +18,7 @@ import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { jest } from '@jest/globals';
 
 import { fileURLToPath } from 'url';
-import path from 'path';
+import path, { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 
@@ -35,14 +35,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
     const { signingKeysPath } = config
 
     beforeAll(async () => {
-      keystore = new Keystore(await createStore(signingKeysPath(__filenameBase)))
+      keystore = new Keystore(await createStore(path.join(__filename, 'identity')))
 
       ipfsd = await startIpfs(IPFS, config.daemon1)
       ipfs = ipfsd.api
       /*       const id = (await ipfsd.api.id()).id
        */
       signKey = await keystore.createEd25519Key();
-      cacheStore = await createStore(__filenameBase + '/cache')
+      cacheStore = await createStore(path.join(__filename, 'cache'))
       const cache = new Cache(cacheStore)
       index = new SimpleIndex();
 

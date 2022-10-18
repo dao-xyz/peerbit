@@ -3,7 +3,7 @@ import { deserialize, field, option, serialize, variant } from '@dao-xyz/borsh';
 import { DDocs } from '../document-store';
 import { DocumentQueryRequest, Compare, FieldBigIntCompareQuery, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort, MemoryCompareQuery, MemoryCompare, Results, DSearch } from '@dao-xyz/peerbit-dsearch';
 import { CustomBinaryPayload } from '@dao-xyz/bpayload';
-import { QueryRequestV0, QueryResponseV0, query, QueryOptions, DQuery } from '@dao-xyz/peerbit-dquery';
+import { QueryRequestV0, query, QueryOptions, DQuery } from '@dao-xyz/peerbit-dquery';
 import { Session, createStore } from '@dao-xyz/orbit-db-test-utils';
 import { DefaultOptions } from '@dao-xyz/peerbit-dstore';
 import { Identity } from '@dao-xyz/ipfs-log';
@@ -12,7 +12,7 @@ import { IPFS } from 'ipfs-core-types';
 import Cache from '@dao-xyz/orbit-db-cache';
 import { Level } from 'level';
 import { fileURLToPath } from 'url';
-import path from 'path';
+import path, { dirname } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -58,8 +58,8 @@ describe('index', () => {
     session = await Session.connected(2)
     observer = session.peers[0].ipfs;
     writer = session.peers[1].ipfs;
-    cacheStore1 = await createStore(__filenameBase + '/cache1')
-    cacheStore2 = await createStore(__filenameBase + '/cache2')
+    cacheStore1 = await createStore(path.join(__filename, 'cache1'));
+    cacheStore2 = await createStore(path.join(__filename, 'cache2'));
 
   })
 

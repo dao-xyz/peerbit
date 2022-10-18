@@ -26,7 +26,7 @@ const findAllOccurrences = (str: string, substr: string): number[] => {
 }
 
 
-@variant([0, 1])
+@variant([0, 5])
 export class DString extends Program {
 
   @field({ type: Store })

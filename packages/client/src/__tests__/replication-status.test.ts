@@ -51,33 +51,33 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     it('has correct initial state', async () => {
-      assert.deepEqual(db.replicationStatus, { progress: 0, max: 0 })
+      assert.deepEqual(db.store.replicationStatus, { progress: 0, max: 0 })
     })
 
     it('has correct replication info after load', async () => {
       await db.add('hello')
-      await db.close()
-      await db.load()
-      assert.deepEqual(db.replicationStatus, { progress: 1, max: 1 })
-      await db.close()
+      await db.store.close()
+      await db.store.load()
+      assert.deepEqual(db.store.replicationStatus, { progress: 1, max: 1 })
+      await db.store.close()
     })
 
     it('has correct replication info after close', async () => {
-      await db.close()
-      assert.deepEqual(db.replicationStatus, { progress: 0, max: 0 })
+      await db.store.close()
+      assert.deepEqual(db.store.replicationStatus, { progress: 0, max: 0 })
     })
 
     it('has correct replication info after sync', async () => {
-      await db.load()
+      await db.store.load()
       await db.add('hello2')
 
-      const db2 = await orbitdb2.open(await EventStore.load<string>(orbitdb2._ipfs, db.address), replicationTopic)
-      await db2.sync(db._oplog.heads)
+      const db2 = await orbitdb2.open(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db.address), replicationTopic)
+      await db2.store.sync(db.store._oplog.heads)
 
       return new Promise((resolve, reject) => {
         setTimeout(() => {
           try {
-            assert.deepEqual(db2.replicationStatus, { progress: 2, max: 2 })
+            assert.deepEqual(db2.store.replicationStatus, { progress: 2, max: 2 })
             resolve(true)
           } catch (e: any) {
             reject(e)
@@ -87,11 +87,11 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     it('has correct replication info after loading from snapshot', async () => {
-      await db._cache._store.open()
-      await db.saveSnapshot()
-      await db.close()
-      await db.loadFromSnapshot()
-      assert.deepEqual(db.replicationStatus, { progress: 2, max: 2 })
+      await db.store._cache._store.open()
+      await db.store.saveSnapshot()
+      await db.store.close()
+      await db.store.loadFromSnapshot()
+      assert.deepEqual(db.store.replicationStatus, { progress: 2, max: 2 })
     })
   })
 })

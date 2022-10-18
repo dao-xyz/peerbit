@@ -73,16 +73,16 @@ Object.keys(testAPIs).forEach(API => {
       clearInterval(timer)
 
       if (db1)
-        await db1.drop()
+        await db1.store.drop()
 
       if (db2)
-        await db2.drop()
+        await db2.store.drop()
 
       if (db3)
-        await db3.drop()
+        await db3.store.drop()
 
       if (db4)
-        await db4.drop()
+        await db4.store.drop()
 
       if (orbitdb1)
         await orbitdb1.stop()
@@ -101,7 +101,7 @@ Object.keys(testAPIs).forEach(API => {
       options = { ...options, directory: dbPath2 }
       let replicatedEventCount = 0
       let done = false
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, {
         ...options, onReplicationComplete: (store) => {
           replicatedEventCount++
           // Once db2 has finished replication, make sure it has all elements
@@ -145,14 +145,14 @@ Object.keys(testAPIs).forEach(API => {
       let replicatedEventCount = 0
 
       const options = { directory: dbPath2 }
-      db3 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, {
+      db3 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, {
         ...options, onReplicationComplete: (store) => {
           replicatedEventCount++
           const all = db3.iterator({ limit: -1 }).collect().length + db4.iterator({ limit: -1 }).collect().length
           done = (all === 2)
         }
       })
-      db4 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db2.address), replicationTopic, {
+      db4 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db2.address), replicationTopic, {
         ...options, onReplicationComplete: (store) => {
           replicatedEventCount++
           const all = db3.iterator({ limit: -1 }).collect().length + db4.iterator({ limit: -1 }).collect().length

@@ -98,12 +98,12 @@ Object.keys(testAPIs).forEach(API => {
         localDatabases.push(db)
       }
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, localDatabases[i].address), uuid(), { directory: dbPath2, ...options })
+        const db = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, localDatabases[i].address), uuid(), { directory: dbPath2, ...options })
         remoteDatabasesA.push(db)
       }
 
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb3.open<EventStore<string>>(await EventStore.load(orbitdb3._ipfs, localDatabases[i].address), uuid(), { directory: dbPath3, ...options })
+        const db = await orbitdb3.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb3._ipfs, localDatabases[i].address), uuid(), { directory: dbPath3, ...options })
         remoteDatabasesB.push(db)
       }
 
@@ -117,13 +117,13 @@ Object.keys(testAPIs).forEach(API => {
 
     afterEach(async () => {
       for (let db of remoteDatabasesA)
-        await db.drop()
+        await db.store.drop()
 
       for (let db of remoteDatabasesB)
-        await db.drop()
+        await db.store.drop()
 
       for (let db of localDatabases)
-        await db.drop()
+        await db.store.drop()
     })
 
     it('replicates multiple open databases', async () => {
@@ -143,7 +143,7 @@ Object.keys(testAPIs).forEach(API => {
 
       // Function to check if all databases have been replicated
       const allReplicated = () => {
-        return remoteDatabasesA.every(db => db._oplog.length === entryCount) && remoteDatabasesB.every(db => db._oplog.length === entryCount)
+        return remoteDatabasesA.every(db => db.store._oplog.length === entryCount) && remoteDatabasesB.every(db => db.store._oplog.length === entryCount)
       }
 
       console.log("Waiting for replication to finish")
@@ -158,7 +158,7 @@ Object.keys(testAPIs).forEach(API => {
               try {
                 const result = db.iterator({ limit: -1 }).collect().length;
                 expect(result).toEqual(entryCount)
-                expect(db._oplog.length).toEqual(entryCount)
+                expect(db.store._oplog.length).toEqual(entryCount)
               } catch (error) {
                 reject(error)
               }
@@ -168,7 +168,7 @@ Object.keys(testAPIs).forEach(API => {
               try {
                 const result = db.iterator({ limit: -1 }).collect().length;
                 expect(result).toEqual(entryCount)
-                expect(db._oplog.length).toEqual(entryCount)
+                expect(db.store._oplog.length).toEqual(entryCount)
               } catch (error) {
                 reject(error)
               }
@@ -182,7 +182,7 @@ Object.keys(testAPIs).forEach(API => {
       let directConnections = 2;
       expect((await orbitdb3._ipfs.pubsub.ls()).length).toEqual(directConnections + dbCount);
       for (let i = 0; i < dbCount; i++) {
-        await remoteDatabasesB[i].drop();
+        await remoteDatabasesB[i].store.drop();
         const connections = (await orbitdb3._ipfs.pubsub.ls()).length;
         if (i < dbCount - 1) {
           expect(connections).toEqual(dbCount - (i + 1) + directConnections)

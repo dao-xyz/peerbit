@@ -7,8 +7,7 @@ import { IPFS } from 'ipfs-core-types';
 import { Level } from 'level';;
 import Cache from '@dao-xyz/orbit-db-cache';
 import { fileURLToPath } from 'url';
-import path from 'path';
-import { delay } from '@dao-xyz/time'
+import path, { dirname } from 'path';
 import { Identity } from '@dao-xyz/ipfs-log';
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto';
 import { DefaultOptions } from '@dao-xyz/peerbit-dstore';
@@ -74,8 +73,8 @@ describe('query', () => {
         session = await Session.connected(2)
         observer = session.peers[0].ipfs;
         writer = session.peers[1].ipfs;
-        cacheStore1 = await createStore(__filenameBase + '/cache1')
-        cacheStore2 = await createStore(__filenameBase + '/cache2')
+        cacheStore1 = await createStore(path.join(__filename, 'cache1'));
+        cacheStore2 = await createStore(path.join(__filename, 'cache2'));
 
     })
 
@@ -112,8 +111,6 @@ describe('query', () => {
     })
 
     it('only context', async () => {
-
-
 
         await writeStore.add('hello', new Range({ offset: 0n, length: 'hello'.length }));
         await writeStore.add('world', new Range({ offset: BigInt('hello '.length), length: 'world'.length }));
@@ -167,8 +164,6 @@ describe('query', () => {
     });
 
     it('match part', async () => {
-
-
 
         await writeStore.add('hello', new Range({ offset: 0n, length: 'hello'.length }));
         await writeStore.add('world', new Range({ offset: BigInt('hello '.length), length: 'world'.length }));

@@ -57,18 +57,18 @@ export class NetworkDiscovery extends Program {
             const existingAddresses = await this.info.store._ipfs.swarm.peers();
             const existingAddressesSet = new Set(existingAddresses.map(x => x.addr.toString()));
 
-            const suffix = '/p2p/' + info.id;
+            const suffix = '/p2p/' + info.peerId;
             const getMAddress = (a: string) => multiaddr(a.toString() + (a.indexOf(suffix) === -1 ? suffix : ''))
 
-            const isNotMe = info.id !== this._peerId;
+            const isNotMe = info.peerId !== this._peerId;
             if (isNotMe) {
                 await Promise.all(info.addresses.filter((a) => !existingAddressesSet.has(a)).map((a) => this._ipfs.swarm.connect(getMAddress(a))))
             }
             const network: TrustedNetwork = await Program.load(this.info.store._ipfs, Address.parse(info.network))
+
             await network.init(this._ipfs, this._identity, { ...this._options, replicate: false })
+            let isTrusted: boolean = await network.isTrusted((await keyEncrypted.decrypt(kr)).getValue(SignatureWithKey).publicKey)
 
-
-            const isTrusted = await network.isTrusted((await keyEncrypted.decrypt(kr)).getValue(SignatureWithKey).publicKey)
 
             // Close open connections
             if (isNotMe) {

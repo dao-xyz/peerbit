@@ -9,16 +9,16 @@ import { Identity } from '@dao-xyz/ipfs-log';
 import { createStore } from '@dao-xyz/orbit-db-test-utils';
 import { Level } from 'level';
 import { fileURLToPath } from 'url';
-import path from 'path';
+import path, { dirname } from 'path';
 import { CachedValue, DefaultOptions, IInitializationOptions, IStoreOptions, Store } from '@dao-xyz/peerbit-dstore';
 import Cache from '@dao-xyz/orbit-db-cache';
 import { serialize } from '@dao-xyz/borsh';
 import { Program } from '@dao-xyz/peerbit-program';
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
 import { NetworkDiscovery } from '../controller';
-import { NetworkInfo } from '../state';
+import { jest } from '@jest/globals';
+
 const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
 
 const createIdentity = async () => {
     const ed = await Ed25519Keypair.create();
@@ -28,6 +28,7 @@ const createIdentity = async () => {
     } as Identity
 }
 describe('index', () => {
+    jest.setTimeout(360000);
     let session: Session, identites: Identity[], cacheStore: Level[]
 
     const identity = (i: number) => identites[i];
@@ -38,7 +39,7 @@ describe('index', () => {
         cacheStore = [];
         for (let i = 0; i < session.peers.length; i++) {
             identites.push(await createIdentity());
-            cacheStore.push(await createStore(__filenameBase + '/cache/' + i))
+            cacheStore.push(await createStore(path.join(__filename, 'cache', i.toString())))
         }
 
     })
@@ -62,6 +63,7 @@ describe('index', () => {
             await l0a.add(identity(1).publicKey);
             let l0b: TrustedNetwork = await TrustedNetwork.load(session.peers[1].ipfs, l0a.address) as any
             await init(l0b, 1);
+
             await l0b.trustGraph.store.sync(l0a.trustGraph.store.oplog.heads);
 
             await waitFor(() => Object.keys(l0b.trustGraph._index._index).length == 1)
@@ -73,25 +75,27 @@ describe('index', () => {
             await waitFor(() => Object.keys(l0a.trustGraph._index._index).length == 2)
 
             const discovery = new NetworkDiscovery()
-            await init(discovery, 3);
+            await init(discovery, 3, { replicate: true });
 
             // now identity 2 should be able to append to discovery because it is trusted by the network
             const discovery2 = (await NetworkDiscovery.load(session.peers[2].ipfs, discovery.address)) as NetworkDiscovery;
-            await init(discovery2, 2);
+            await init(discovery2, 2, { replicate: true });
 
             // should not be ok because peer 4 is not trusted
             try {
                 await discovery.addInfo(l0a)
                 fail();
             } catch (error) {
+                if (error instanceof AccessError === false) {
+                    throw error;
+                }
                 expect(error).toBeInstanceOf(AccessError);
             }
 
             // should be ok since peer 2 is trusted
             await discovery2.addInfo(l0a);
-
-            // TODO add tests to check swarm connections (cleanup etc)
-
+            await discovery.info.store.sync(discovery2.info.store.oplog.heads)
+            await waitFor(() => discovery.info.store.oplog.length === 1)
 
         })
     })

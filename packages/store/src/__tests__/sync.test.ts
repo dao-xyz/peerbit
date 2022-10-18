@@ -14,7 +14,7 @@ import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { jest } from '@jest/globals';
 
 import { fileURLToPath } from 'url';
-import path from 'path';
+import path, { dirname } from 'path';
 import { EntryWithRefs } from '../entry-with-refs.js'
 import { waitFor } from '@dao-xyz/time'
 import { Level } from 'level'
@@ -34,16 +34,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
         let session: Session, signKey: KeyWithMeta<Ed25519Keypair>, store: Store<any>, keystore: Keystore, cacheStore: Level
         let index: SimpleIndex<string>
 
-        const { signingKeysPath } = config
-
         beforeAll(async () => {
-            keystore = new Keystore(await createStore(signingKeysPath(__filenameBase)))
+            cacheStore = await createStore(path.join(__filename, 'cache'))
+            keystore = new Keystore(await createStore(path.join(__filename, 'identity')))
 
             session = await Session.connected(2);
             /*       const id = (await ipfsd.api.id()).id
              */
             signKey = await keystore.createEd25519Key();
-            cacheStore = await createStore(__filenameBase + '/cache')
         })
 
         beforeEach(async () => {

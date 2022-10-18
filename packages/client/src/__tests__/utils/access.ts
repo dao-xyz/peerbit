@@ -2,8 +2,6 @@ import { MaybeEncrypted, SignatureWithKey } from "@dao-xyz/peerbit-crypto"
 import { Entry, Identity, Payload } from "@dao-xyz/ipfs-log"
 import { IInitializationOptions, save } from "@dao-xyz/peerbit-dstore"
 import { variant, field } from '@dao-xyz/borsh';
-import { Log } from "@dao-xyz/ipfs-log";
-import Cache from '@dao-xyz/orbit-db-cache';
 import { EventStore, Operation } from "./stores";
 import { IPFS } from "ipfs-core-types";
 import { Program } from "@dao-xyz/peerbit-program";

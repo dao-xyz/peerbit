@@ -11,7 +11,7 @@ import { Controller } from 'ipfsd-ctl'
 import { IPFS } from 'ipfs-core-types'
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { fileURLToPath } from 'url';
-import path from 'path';
+import path, { dirname } from 'path';
 import { jest } from '@jest/globals';
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -26,7 +26,7 @@ import {
 } from '@dao-xyz/orbit-db-test-utils'
 import { Level } from 'level'
 import { Entry } from '@dao-xyz/ipfs-log'
-import { waitFor } from '@dao-xyz/time'
+import { delay, waitFor } from '@dao-xyz/time'
 const API = 'js-ipfs'
 describe(`addOperation`, function () {
   let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, keystore: Keystore, identityStore: Level, store: Store<any>, cacheStore: Level, senderKey: KeyWithMeta<Ed25519Keypair>, recieverKey: KeyWithMeta<Ed25519Keypair>, encryption: PublicKeyEncryptionResolver
@@ -35,14 +35,13 @@ describe(`addOperation`, function () {
   jest.setTimeout(config.timeout);
 
   const ipfsConfig = Object.assign({}, config, {
-    repo: 'repo-entry' + __filenameBase + new Date().getTime()
+    repo: 'repo-encryption' + __filenameBase + new Date().getTime()
   })
 
   beforeAll(async () => {
-    identityStore = await createStore(__filenameBase + '/identity')
+    identityStore = await createStore(path.join(__filename, 'identity'))
+    cacheStore = await createStore(path.join(__filename, 'cache'))
     keystore = new Keystore(identityStore)
-
-    cacheStore = await createStore(__filenameBase + '/cache')
 
     signKey = await keystore.createEd25519Key()
     ipfsd = await startIpfs(API, ipfsConfig.daemon1)
@@ -85,7 +84,7 @@ describe(`addOperation`, function () {
     const data = { data: 12345 }
 
     let done = false;
-    const onWrite = (store: Store<any>, entry: Entry<any>) => {
+    const onWrite = async (store: Store<any>, entry: Entry<any>) => {
       try {
         const heads = store.oplog.heads;
         expect(heads.length).toEqual(1)
@@ -94,6 +93,7 @@ describe(`addOperation`, function () {
         expect(store.replicationStatus.progress).toEqual(1n)
         expect(store.replicationStatus.max).toEqual(1n)
         assert.deepStrictEqual(index._index, heads)
+        await delay(5000); // seems because write is async?
         store._cache.getBinary(store.localHeadsPath, HeadsCache).then(async (localHeads) => {
           if (!localHeads) {
             fail()

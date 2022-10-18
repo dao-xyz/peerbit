@@ -654,7 +654,7 @@ export class Store<T> {
           })
           try {
             // TODO add can append, because it referenses things I know, or is a new root. BTW new roots should only be accepted if the access controller allows it
-            const canAppend = (await this.canAppend as CanAppend<T>)(h._payload, h._signature)
+            const canAppend = await ((this.canAppend as CanAppend<T>)(h._payload, h._signature))
             if (!canAppend) {
               logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
               return Promise.resolve(null)

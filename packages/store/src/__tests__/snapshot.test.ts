@@ -20,7 +20,7 @@ import { IPFS } from 'ipfs';
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto';
 import { Level } from 'level';
 import { fileURLToPath } from 'url';
-import path from 'path';
+import path, { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 
@@ -35,10 +35,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     beforeAll(async () => {
-      identityStore = await createStore(__filenameBase + '/identity')
-      const keystore = new Keystore(identityStore)
+      identityStore = await createStore(path.join(__filename, 'identity'))
+      cacheStore = await createStore(path.join(__filename, 'cache'))
 
-      cacheStore = await createStore(__filenameBase + '/cache')
+      const keystore = new Keystore(identityStore)
 
       signKey = await keystore.createEd25519Key();
       ipfsd = await startIpfs(IPFS, ipfsConfig.daemon1)

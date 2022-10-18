@@ -76,7 +76,7 @@ Object.keys(testAPIs).forEach(API => {
 
         }), replicationTopic, { directory: dbPath1, })
         // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
-        db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, { directory: dbPath2, })
+        db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, { directory: dbPath2, })
       }
 
       beforeAll(async () => {
@@ -91,11 +91,11 @@ Object.keys(testAPIs).forEach(API => {
 
       afterAll(async () => {
         if (db1) {
-          await db1.drop()
+          await db1.store.drop()
         }
 
         if (db2) {
-          await db2.drop()
+          await db2.store.drop()
         }
       })
 
@@ -113,7 +113,7 @@ Object.keys(testAPIs).forEach(API => {
 
         return new Promise((resolve, reject) => {
           timer = setInterval(async () => {
-            if (db2._oplog.length === entryCount) {
+            if (db2.store._oplog.length === entryCount) {
               clearInterval(timer)
 
               const items = db2.iterator({ limit: -1 }).collect()
@@ -130,13 +130,13 @@ Object.keys(testAPIs).forEach(API => {
 
                 // Open the database again (this time from the disk)
                 options = Object.assign({}, options, { directory: dbPath1, create: false })
-                const db3 = await orbitdb1.open<EventStore<string>>(await EventStore.load(orbitdb1._ipfs, db1.address), replicationTopic, { ...options }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
+                const db3 = await orbitdb1.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, db1.address), replicationTopic, { ...options }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
                 // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
                 options = Object.assign({}, options, { directory: dbPath2, localOnly: true })
-                const db4 = await orbitdb2.open<EventStore<string>>(await EventStore.load(orbitdb2._ipfs, db1.address), replicationTopic, { ...options }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
+                const db4 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, { ...options }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
 
-                await db3.load()
-                await db4.load()
+                await db3.store.load()
+                await db4.store.load()
 
                 // Make sure we have all the entries in the databases
                 const result1 = db3.iterator({ limit: -1 }).collect()
@@ -144,8 +144,8 @@ Object.keys(testAPIs).forEach(API => {
                 expect(result1.length).toEqual(entryCount)
                 expect(result2.length).toEqual(entryCount)
 
-                await db3.drop()
-                await db4.drop()
+                await db3.store.drop()
+                await db4.store.drop()
               } catch (e: any) {
                 reject(e)
               }

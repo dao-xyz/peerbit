@@ -12,7 +12,7 @@ import type { Identity, Payload } from "@dao-xyz/ipfs-log";
 import { Level } from 'level';
 import { CachedValue, DefaultOptions, IInitializationOptions } from '@dao-xyz/peerbit-dstore';
 import { fileURLToPath } from 'url';
-import path from 'path';
+import path, { dirname } from 'path';
 import Cache from '@dao-xyz/orbit-db-cache';
 import { DQuery } from "@dao-xyz/peerbit-dquery";
 import { Program } from "@dao-xyz/peerbit-program";
@@ -92,7 +92,7 @@ describe('index', () => {
         cacheStore = [];
         for (let i = 0; i < session.peers.length; i++) {
             identites.push(await createIdentity());
-            cacheStore.push(await createStore(__filenameBase + '/cache/' + i))
+            cacheStore.push(await createStore(path.join(__filename, 'cache', i.toString())))
         }
 
     })

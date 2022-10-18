@@ -2,11 +2,11 @@ import { Identity, Log } from "@dao-xyz/ipfs-log";
 import { Address, IInitializationOptions, load } from "@dao-xyz/peerbit-dstore";
 import { Store } from "@dao-xyz/peerbit-dstore"
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log';
-import { Operation } from "./event-store";
-import { variant } from '@dao-xyz/borsh';
+import { variant, field } from '@dao-xyz/borsh';
 import { IPFS } from "ipfs-core-types";
 import { EncodingType } from "@dao-xyz/peerbit-dstore";
-import { TestStore } from "./test-store";
+import { Program } from "@dao-xyz/peerbit-program";
+import { Operation } from "@dao-xyz/peerbit-ddoc";
 
 
 export class KeyValueIndex {
@@ -41,15 +41,22 @@ export class KeyValueIndex {
 }
 
 
-@variant(2)
-export class KeyValueStore<T> extends TestStore<Operation<T>> {
+@variant([0, 253])
+export class KeyValueStore<T> extends Program {
     _type: string;
     _index: KeyValueIndex;
+
+    @field({ type: Store })
+    store: Store<Operation<T>>
+
     constructor(properties: {
         name: string
     }) {
-        super({ ...properties, encoding: EncodingType.JSON })
-        this._index = new KeyValueIndex();
+        super(properties);
+        if (properties) {
+            this.store = new Store({ ...properties, encoding: EncodingType.JSON })
+            this._index = new KeyValueIndex();
+        }
     }
     async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<Operation<T>>): Promise<this> {
         let opts = Object.assign({}, { Index: KeyValueIndex })
@@ -78,7 +85,7 @@ export class KeyValueStore<T> extends TestStore<Operation<T>> {
         pin?: boolean;
         reciever?: EncryptionTemplateMaybeEncrypted;
     }) {
-        return this._addOperation({
+        return this.store._addOperation({
             op: 'PUT',
             key: key,
             value: data
@@ -90,21 +97,11 @@ export class KeyValueStore<T> extends TestStore<Operation<T>> {
         pin?: boolean;
         reciever?: EncryptionTemplateMaybeEncrypted;
     }) {
-        return this._addOperation({
+        return this.store._addOperation({
             op: 'DEL',
             key: key,
             value: undefined
         }, options)
-    }
-
-    static async load<T>(ipfs: any, address: Address, options?: {
-        timeout?: number;
-    }): Promise<KeyValueStore<T>> {
-        const instance = await load(ipfs, address, Store, options)
-        if (instance instanceof KeyValueStore === false) {
-            throw new Error("Unexpected")
-        };
-        return instance as KeyValueStore<T>;
     }
 }
 
