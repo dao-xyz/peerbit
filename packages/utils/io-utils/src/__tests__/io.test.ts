@@ -8,7 +8,7 @@ import {
   testAPIs,
   startIpfs,
   stopIpfs
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { IPFS } from 'ipfs-core-types'
 import { Controller } from 'ipfsd-ctl'
 import { jest } from '@jest/globals';
