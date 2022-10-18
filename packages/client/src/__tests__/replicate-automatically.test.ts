@@ -14,7 +14,7 @@ import {
   nodeConfig as config,
   testAPIs,
   Session
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { waitFor } from "@dao-xyz/time"
 
 const dbPath1 = './orbitdb/tests/replicate-automatically/1'

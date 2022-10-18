@@ -2,11 +2,10 @@
 import {
   nodeConfig as config,
   testAPIs,
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 
 
-Object.keys(testAPIs).forEach(API => {
-  describe(`orbit-db - Use a Custom Keystore (${API})`, function () {
-    /// TODO
-  })
+describe(`orbit-db - Use a Custom Keystore `, function () {
+  /// TODO
 })
+

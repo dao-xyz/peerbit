@@ -2,10 +2,10 @@
 import { StringResultSource, DString, STRING_STORE_TYPE } from '../string-store.js';
 import { ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates, StoreAddressMatchQuery, DSearch, Results } from '@dao-xyz/peerbit-dsearch';
 import { Range } from '../range.js';
-import { createStore, Session } from '@dao-xyz/orbit-db-test-utils';
+import { createStore, Session } from '@dao-xyz/peerbit-test-utils';
 import { IPFS } from 'ipfs-core-types';
 import { Level } from 'level';;
-import Cache from '@dao-xyz/orbit-db-cache';
+import Cache from '@dao-xyz/peerbit-cache';
 import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
 import { Identity } from '@dao-xyz/ipfs-log';

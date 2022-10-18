@@ -17,7 +17,8 @@ import {
   connectPeers,
   waitForPeers,
   testAPIs,
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
+import { waitFor } from '@dao-xyz/time';
 
 const dbPath1 = './orbitdb/tests/multiple-databases/1'
 const dbPath2 = './orbitdb/tests/multiple-databases/2'
@@ -26,7 +27,7 @@ const dbPath3 = './orbitdb/tests/multiple-databases/3'
 
 Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Multiple Databases`, function () {
-    jest.setTimeout(config.timeout)
+    jest.setTimeout(60000)
 
     let ipfsd1: Controller, ipfsd2: Controller, ipfsd3: Controller, ipfs1: IPFS, ipfs2: IPFS, ipfs3: IPFS
     let orbitdb1: OrbitDB, orbitdb2: OrbitDB, orbitdb3: OrbitDB
@@ -60,6 +61,9 @@ Object.keys(testAPIs).forEach(API => {
       orbitdb1 = await OrbitDB.createInstance(ipfs1, { directory: dbPath1 })
       orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: dbPath2 })
       orbitdb3 = await OrbitDB.createInstance(ipfs3, { directory: dbPath3 })
+      orbitdb2.minReplicas = 3;
+      orbitdb3.minReplicas = 3;
+      orbitdb1.minReplicas = 3;
 
     })
 
@@ -93,24 +97,30 @@ Object.keys(testAPIs).forEach(API => {
       const options = {}
 
       // Open the databases on the first node
+      const replicationTopic = uuid();
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb1.open(new EventStore<string>({ name: 'local-' + i }), uuid(), options)
+        const db = await orbitdb1.open(new EventStore<string>({ name: 'local-' + i }), replicationTopic, options)
         localDatabases.push(db)
       }
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, localDatabases[i].address), uuid(), { directory: dbPath2, ...options })
+        const db = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, localDatabases[i].address), replicationTopic, { directory: dbPath2, ...options })
         remoteDatabasesA.push(db)
       }
 
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb3.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb3._ipfs, localDatabases[i].address), uuid(), { directory: dbPath3, ...options })
+        const db = await orbitdb3.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb3._ipfs, localDatabases[i].address), replicationTopic, { directory: dbPath3, ...options })
         remoteDatabasesB.push(db)
       }
 
       // Wait for the peers to connect
-      await waitForPeers(ipfs1, [orbitdb2.id], localDatabases[0].address.toString())
-      await waitForPeers(ipfs2, [orbitdb1.id], localDatabases[0].address.toString())
-      await waitForPeers(ipfs3, [orbitdb1.id], localDatabases[0].address.toString())
+      await waitForPeers(ipfs1, [orbitdb2.id], replicationTopic)
+      await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
+      await waitForPeers(ipfs3, [orbitdb1.id], replicationTopic)
+
+      await waitFor(() => orbitdb1._directConnections.size === 2)
+      await waitFor(() => orbitdb2._directConnections.size === 2)
+      await waitFor(() => orbitdb3._directConnections.size === 2)
+
       console.log("Peers connected")
 
     })
@@ -130,6 +140,8 @@ Object.keys(testAPIs).forEach(API => {
       const entryCount = 32
       const entryArr = []
 
+
+
       // Create an array that we use to create the db entries
       for (let i = 1; i < entryCount + 1; i++)
         entryArr.push(i)
@@ -138,13 +150,15 @@ Object.keys(testAPIs).forEach(API => {
       console.log("Writing to databases")
       for (let index = 0; index < dbCount; index++) {
         const db = localDatabases[index]
-        await mapSeries(entryArr, val => db.add('hello-' + val))
+        entryArr.forEach((val) => db.add('hello-' + val))
       }
 
       // Function to check if all databases have been replicated
       const allReplicated = () => {
         return remoteDatabasesA.every(db => db.store._oplog.length === entryCount) && remoteDatabasesB.every(db => db.store._oplog.length === entryCount)
       }
+
+
 
       console.log("Waiting for replication to finish")
 
@@ -180,16 +194,17 @@ Object.keys(testAPIs).forEach(API => {
 
       // check gracefully shut down (with no leak)
       let directConnections = 2;
-      expect((await orbitdb3._ipfs.pubsub.ls()).length).toEqual(directConnections + dbCount);
+      const subscriptions = (await orbitdb3._ipfs.pubsub.ls());
+      expect(subscriptions.length).toEqual(directConnections + 1 + 1); //+ 1 for 1 replication topic + 1 for subcribing to "self" topic
       for (let i = 0; i < dbCount; i++) {
         await remoteDatabasesB[i].store.drop();
         const connections = (await orbitdb3._ipfs.pubsub.ls()).length;
         if (i < dbCount - 1) {
-          expect(connections).toEqual(dbCount - (i + 1) + directConnections)
+          expect(connections).toEqual(directConnections + 1 - (i + 1 - 1)) //  + 1 for replication topic, -  1 for subcribing to "self" topic
         }
         else {
           // Direct connection should close because no databases "in common" are open
-          expect(connections).toEqual(0)
+          expect(connections).toEqual(0 + 1) // + 1 for subcribing to "self" topic
         }
       }
     })

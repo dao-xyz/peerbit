@@ -58,7 +58,7 @@
     "jsondown": "^1.0.0",
     "localstorage-down": "^0.6.7",
     "memdown": "^6.0.0",
-    "@dao-xyz/orbit-db-test-utils": "^0.0.1",
+    "@dao-xyz/peerbit-test-utils": "^0.0.1",
     "webpack": "^4.43.0",
     "webpack-cli": "^3.3.12"
   },

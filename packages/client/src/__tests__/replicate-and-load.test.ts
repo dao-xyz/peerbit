@@ -15,7 +15,7 @@ import {
   testAPIs,
   connectPeers,
   waitForPeers,
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 
@@ -85,8 +85,8 @@ Object.keys(testAPIs).forEach(API => {
         expect(db1.address.toString()).toEqual(db2.address.toString())
 
         console.log("Waiting for peers...")
-        await waitForPeers(ipfs1, [orbitdb2.id], db1.address.toString())
-        await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
+        await waitForPeers(ipfs1, [orbitdb2.id], replicationTopic)
+        await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
       })
 
       afterAll(async () => {
@@ -100,7 +100,7 @@ Object.keys(testAPIs).forEach(API => {
       })
 
       it('replicates database of 100 entries and loads it from the disk', async () => {
-        const entryCount = 100
+        const entryCount = 1
         const entryArr = []
         let timer: any;
 

@@ -9,7 +9,7 @@ import {
   testAPIs,
   startIpfs,
   stopIpfs
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { Controller } from 'ipfsd-ctl'
 import { IPFS } from 'ipfs'
 import { dirname } from 'path';

@@ -1,4 +1,4 @@
-const { startIpfs, stopIpfs, config } = require('@dao-xyz/orbit-db-test-utils')
+const { startIpfs, stopIpfs, config } = require('@dao-xyz/peerbit-test-utils')
 import { createLog } from './utils/create-log'
 const Log = require('../src/log')
 

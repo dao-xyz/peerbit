@@ -1,7 +1,7 @@
 {
-  "name": "@dao-xyz/orbit-db-test-utils",
+  "name": "@dao-xyz/peerbit-test-utils",
   "version": "0.0.1",
-  "description": "Test utils for orbit-db",
+  "description": "Test utils for Peerbit",
   "type": "module",
   "sideEffects": false,
   "module": "./lib/esm/index.mjs",
@@ -24,7 +24,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/orbitdb/orbit-db-test-utils"
+    "url": "https://github.com/dao-xyz/peerbit"
   },
   "author": "shamb0t <shams@haja.io>",
   "license": "MIT",

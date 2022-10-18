@@ -2,7 +2,7 @@ import { Ed25519Keypair, X25519Keypair, verifySignatureSecp256k1, verifySignatur
 import sodium from 'libsodium-wrappers';
 import { deserialize, serialize } from '@dao-xyz/borsh';
 import { Wallet } from '@ethersproject/wallet';
-import { Session } from '@dao-xyz/orbit-db-test-utils';
+import { Session } from '@dao-xyz/peerbit-test-utils';
 import { IPFSAddress } from '../ipfs.js';
 
 describe('Ed25519', () => {

@@ -7,7 +7,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/orbitdb/orbit-db"
+    "url": "https://github.com/dao-xyz/peerbit"
   },
   "engines": {
     "node": ">=16.0"
@@ -37,7 +37,7 @@
     "localstorage-down": "^0.6.7",
     "logplease": "^1.2.14",
     "multihashes": "~3.0.1",
-    "@dao-xyz/orbit-db-cache": "^0.4.0",
+    "@dao-xyz/peerbit-cache": "^0.4.0",
     "@dao-xyz/io-utils": "^1.1.0",
     "@dao-xyz/peerbit-keystore": "^0.0.2",
     "wherearewe": "^1.0.2",
@@ -65,7 +65,7 @@
     "mkdirp": "^1.0.4",
     "node-pre-gyp": "^0.13.0",
     "open-cli": "^7.0.1",
-    "@dao-xyz/orbit-db-test-utils": "^0.0.1",
+    "@dao-xyz/peerbit-test-utils": "^0.0.1",
     "p-each-series": "^3.0.0",
     "p-map": "^5.5.0",
     "p-map-series": "^3.0.0",

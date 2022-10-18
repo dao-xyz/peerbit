@@ -1,6 +1,5 @@
 
 import assert from 'assert'
-import mapSeries from 'p-each-series'
 import rmrf from 'rimraf'
 import { Entry } from '@dao-xyz/ipfs-log'
 import { OrbitDB } from '../orbit-db'
@@ -10,24 +9,16 @@ import { Ed25519Keypair, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
 import { AccessError } from "@dao-xyz/peerbit-crypto"
 
 import { jest } from '@jest/globals';
-import { Controller } from "ipfsd-ctl";
-import { IPFS } from "ipfs-core-types";
 import { KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import { waitFor } from '@dao-xyz/time'
-
-// @ts-ignore 
-import { v4 as uuid } from 'uuid';
 
 // Include test utilities
 import {
   nodeConfig as config,
-  startIpfs,
-  stopIpfs,
   testAPIs,
-  connectPeers,
   waitForPeers,
   Session,
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
 
 const orbitdbPath1 = './orbitdb/tests/replication/1'
@@ -175,31 +166,7 @@ Object.keys(testAPIs).forEach(API => {
       await waitFor(() => done);
     })
 
-    it('can ask for public keys even if not trusted', async () => {
-      await waitForPeers(session.peers[2].ipfs, [orbitdb1.id], replicationTopic)
-      options = Object.assign({}, options, { directory: dbPath3 })
 
-      const db3Key = await orbitdb3.keystore.createEd25519Key({ id: 'unknown', group: replicationTopic });
-
-      // We expect during opening that keys are exchange
-      let done = false;
-      db3 = await orbitdb3.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb3._ipfs, db1.address), replicationTopic, {
-        ...options, onReplicationComplete: async (_store) => {
-          await checkHello(db1);
-          done = true;
-        }
-      })
-
-      const reciever = await orbitdb1.getEncryptionKey(replicationTopic) as KeyWithMeta<Ed25519Keypair>
-
-      expect(reciever).toBeUndefined(); // because client 1 is not trusted by 3
-      expect(db3Key.keypair.publicKey.equals(reciever.keypair.publicKey));
-
-      // ... so that append with reciever key, it the reciever will be able to decrypt
-      await addHello(db1, recieverKey.keypair.publicKey);
-      await waitFor(() => done);
-
-    })
 
     it('can retrieve secret keys if trusted', async () => {
 

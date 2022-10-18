@@ -6,7 +6,7 @@ import { Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore';
 import { MaybeSigned, SignatureWithKey } from '@dao-xyz/peerbit-crypto';
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { TimeoutError, waitForAsync } from '@dao-xyz/time';
-import { Key, PublicSignKey } from '@dao-xyz/peerbit-crypto';
+import { Key } from '@dao-xyz/peerbit-crypto';
 import { Constructor } from '@dao-xyz/borsh';
 // @ts-ignore
 import Logger from 'logplease'

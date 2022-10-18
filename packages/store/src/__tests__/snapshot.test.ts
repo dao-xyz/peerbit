@@ -1,6 +1,6 @@
 import assert from 'assert'
 
-import { default as Cache } from '@dao-xyz/orbit-db-cache'
+import { default as Cache } from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore';
 import { Store, DefaultOptions } from '../store.js'
 import { Entry } from '@dao-xyz/ipfs-log';
@@ -14,7 +14,7 @@ import {
   startIpfs,
   stopIpfs,
   createStore
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { Controller } from 'ipfsd-ctl';
 import { IPFS } from 'ipfs';
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto';

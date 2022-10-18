@@ -11,7 +11,7 @@ import {
   testAPIs,
   startIpfs,
   stopIpfs
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { IPFS } from 'ipfs-core-types'
 import { Controller } from 'ipfsd-ctl'

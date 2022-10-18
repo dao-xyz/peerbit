@@ -1,5 +1,5 @@
 import { Constructor, field, variant } from "@dao-xyz/borsh";
-import { createStore, Session } from '@dao-xyz/orbit-db-test-utils';
+import { createStore, Session } from '@dao-xyz/peerbit-test-utils';
 import { DynamicAccessController } from "..";
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
@@ -13,7 +13,7 @@ import { Level } from 'level';
 import { CachedValue, DefaultOptions, IInitializationOptions } from '@dao-xyz/peerbit-dstore';
 import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
-import Cache from '@dao-xyz/orbit-db-cache';
+import Cache from '@dao-xyz/peerbit-cache';
 import { DQuery } from "@dao-xyz/peerbit-dquery";
 import { Program } from "@dao-xyz/peerbit-program";
 import { IPFS } from "ipfs-core-types";

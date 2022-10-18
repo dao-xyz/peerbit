@@ -1,7 +1,7 @@
 
 import assert, { rejects } from 'assert'
 import { Store, DefaultOptions, HeadsCache } from '../store.js'
-import { default as Cache } from '@dao-xyz/orbit-db-cache'
+import { default as Cache } from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore"
 import { Entry } from '@dao-xyz/ipfs-log'
 import { SimpleIndex } from './utils.js'
@@ -24,7 +24,7 @@ import {
   startIpfs,
   stopIpfs,
   createStore
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { Level } from 'level'
 
 Object.keys(testAPIs).forEach((IPFS) => {

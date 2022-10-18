@@ -20,7 +20,7 @@ import {
     testAPIs,
     startIpfs,
     stopIpfs
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 
 let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>
 

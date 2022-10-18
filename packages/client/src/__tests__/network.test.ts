@@ -16,7 +16,7 @@ import {
     nodeConfig as config,
     testAPIs,
     Session
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
 import { delay, waitFor } from '@dao-xyz/time'
 import { AccessError, Ed25519Keypair } from '@dao-xyz/peerbit-crypto'

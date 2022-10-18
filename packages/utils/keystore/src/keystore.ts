@@ -297,7 +297,13 @@ export class Keystore {
 
   async close(): Promise<void> {
     if (!this._store) return
-    await this._store.close()
+    if (this._store.status === 'closed') {
+      return;
+    }
+    if (this._store.status !== 'closing') {
+      await this._store.close()
+    }
+    await waitFor(() => this._store.status === 'closed');
   }
 
   get groupStore() {

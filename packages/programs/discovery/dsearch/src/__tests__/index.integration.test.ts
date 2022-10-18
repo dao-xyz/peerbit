@@ -4,7 +4,7 @@ import { v4 as uuid } from 'uuid';
 import type { Message } from '@libp2p/interface-pubsub'
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { delay, waitFor } from "@dao-xyz/time";
-import { Session, waitForPeers } from '@dao-xyz/orbit-db-test-utils';
+import { Session, waitForPeers } from '@dao-xyz/peerbit-test-utils';
 import { CustomBinaryPayload } from '@dao-xyz/bpayload';
 import { decryptVerifyInto, Ed25519Keypair, Ed25519PublicKey, X25519Keypair, X25519PublicKey, X25519SecretKey } from "@dao-xyz/peerbit-crypto";
 import { QueryRequestV0, QueryResponseV0, query, respond } from '@dao-xyz/peerbit-dquery';

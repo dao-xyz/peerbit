@@ -2,7 +2,7 @@ import { variant, field, vec, serialize } from '@dao-xyz/borsh';
 import { Entry, Identity } from '@dao-xyz/ipfs-log'
 import { ProtocolMessage } from './message.js';
 import { Store } from '@dao-xyz/peerbit-dstore';
-import { DecryptedThing, PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned } from '@dao-xyz/peerbit-crypto';
 import { ResourceRequirement } from './exchange-replication.js';
 // @ts-ignore

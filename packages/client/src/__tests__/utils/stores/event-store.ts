@@ -40,14 +40,13 @@ export class EventStore<T> extends Program {
         name?: string
     }) {
         super(properties);
-        if (properties) {
-            this.store = new Store({ ...properties, encoding: EncodingType.JSON })
-            this._index = new EventIndex();
-        }
+        this.store = new Store({ ...properties, encoding: EncodingType.JSON })
+        this._index = new EventIndex();
     }
 
     async init(ipfs: any, identity: Identity, options: IInitializationOptions<Operation<T>>) {
-        return super.init(ipfs, identity, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
+        await this.store.init(ipfs, identity, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
+        return super.init(ipfs, identity, options)
     }
 
     add(data: any, options?: {

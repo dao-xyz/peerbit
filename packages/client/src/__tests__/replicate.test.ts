@@ -21,7 +21,7 @@ import {
   testAPIs,
   connectPeers,
   waitForPeers,
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 
 const orbitdbPath1 = './orbitdb/tests/replication/1'
 const orbitdbPath2 = './orbitdb/tests/replication/2'

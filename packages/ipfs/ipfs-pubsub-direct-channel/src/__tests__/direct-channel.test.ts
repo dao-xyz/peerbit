@@ -4,7 +4,7 @@ import path from 'path';
 import assert from 'assert'
 import {
     Session
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { DirectChannel as Channel } from '../direct-channel.js';
 import { v1 as PROTOCOL } from '../protocol.js';
 import { delay, waitFor } from '@dao-xyz/time';

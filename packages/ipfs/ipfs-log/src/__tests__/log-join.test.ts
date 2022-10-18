@@ -4,8 +4,7 @@ import fs from 'fs-extra'
 import { Entry } from '../entry.js';
 import { Log } from '../log.js'
 import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
-import { Ed25519PublicKey } from '@dao-xyz/peerbit-crypto';
-import { arraysCompare, arraysEqual } from '@dao-xyz/borsh-utils';
+import { arraysCompare } from '@dao-xyz/borsh-utils';
 import { LamportClock as Clock } from '../lamport-clock.js';
 import { jest } from '@jest/globals';
 
@@ -16,7 +15,7 @@ import {
   startIpfs,
   stopIpfs,
   connectPeers
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 
 import { Controller } from 'ipfsd-ctl'
 import { IPFS } from 'ipfs-core-types'

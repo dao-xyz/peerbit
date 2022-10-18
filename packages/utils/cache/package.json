@@ -1,7 +1,7 @@
 {
-  "name": "@dao-xyz/orbit-db-cache",
+  "name": "@dao-xyz/peerbit-cache",
   "version": "0.4.0",
-  "description": "Local cache for orbit-db",
+  "description": "Local cache for Peerbit",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -15,10 +15,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/orbitdb/orbit-db-cache.git"
+    "url": "https://github.com/dao-xyz/peerbit"
   },
-  "homepage": "https://github.com/orbitdb/orbit-db-cache",
-  "bugs": "https://github.com/orbitdb/orbit-db-cache/issues",
+  "homepage": "https://github.com/dao-xyz/peerbit",
+  "bugs": "https://github.com/dao-xyz/peerbit/issues",
   "scripts": {
     "clean": "shx rm -rf lib/*",
     "build": "yarn clean && tsc -p tsconfig.json; tsc-esm -p tsconfig.json",
@@ -52,7 +52,7 @@
     "jsondown": "^1.0.0",
     "localstorage-down": "^0.6.7",
     "memdown": "^6.0.0",
-    "@dao-xyz/orbit-db-test-utils": "^0.0.1",
+    "@dao-xyz/peerbit-test-utils": "^0.0.1",
     "sqlite3": "^5.0.2",
     "webpack": "^4.39.0",
     "webpack-cli": "^3.3.6"

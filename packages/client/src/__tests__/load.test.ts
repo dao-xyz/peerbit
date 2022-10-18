@@ -17,7 +17,7 @@ import {
   nodeConfig as config,
   startIpfs,
   stopIpfs
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { waitFor } from '@dao-xyz/time'
 
 const dbPath = './orbitdb/tests/persistency'
@@ -168,8 +168,8 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
           expect(address).toEqual(db.address.toString())
 
           const { progress, max } = db.store.replicationStatus
-          expect(max).toEqual(entryCount)
-          expect(progress).toEqual(count)
+          expect(max).toEqual(BigInt(entryCount))
+          expect(progress).toEqual(BigInt(count))
 
           assert.notEqual(entry.hash, null)
           assert.notEqual(entry, null)
@@ -256,7 +256,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       } catch (e: any) {
         err = e.toString()
       }
-      expect(err).toEqual(`Error: Snapshot for ${address} not found!`)
+      expect(err).toEqual(`Error: Snapshot for ${db.store.address} not found!`)
     })
 
     it('loading a database emits \'ready\' event', async () => {
@@ -282,8 +282,8 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
           count++
           expect(address).toEqual(db.address.toString())
           const { progress, max } = db.store.replicationStatus
-          expect(max).toEqual(entryCount)
-          expect(progress).toEqual(count)
+          expect(max).toEqual(BigInt(entryCount))
+          expect(progress).toEqual(BigInt(count))
 
           assert.notEqual(entry.hash, null)
           assert.notEqual(entry, null)

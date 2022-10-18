@@ -1,4 +1,4 @@
-import { Session, Peer, waitForPeers } from '@dao-xyz/orbit-db-test-utils'
+import { Session, Peer, waitForPeers } from '@dao-xyz/peerbit-test-utils'
 import { waitFor } from '@dao-xyz/time';
 import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { DocumentQueryRequest, Results, ResultWithSource } from '@dao-xyz/peerbit-dsearch';
@@ -6,12 +6,12 @@ import { QueryRequestV0, QueryResponseV0, query } from '@dao-xyz/peerbit-dquery'
 import { Secp256k1PublicKey } from '@dao-xyz/peerbit-crypto';
 import { Wallet } from '@ethersproject/wallet'
 import { Identity } from '@dao-xyz/ipfs-log';
-import { createStore } from '@dao-xyz/orbit-db-test-utils';
+import { createStore } from '@dao-xyz/peerbit-test-utils';
 import { Level } from 'level';
 import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
 import { CachedValue, DefaultOptions, IInitializationOptions, IStoreOptions, Store } from '@dao-xyz/peerbit-dstore';
-import Cache from '@dao-xyz/orbit-db-cache';
+import Cache from '@dao-xyz/peerbit-cache';
 import { serialize } from '@dao-xyz/borsh';
 import { Program } from '@dao-xyz/peerbit-program';
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';

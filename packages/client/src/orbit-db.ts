@@ -3,7 +3,7 @@ import { Address, IStoreOptions, Saveable, Store } from '@dao-xyz/peerbit-dstore
 // @ts-ignore
 import Logger from 'logplease'
 import { IPFS, IPFS as IPFSInstance } from 'ipfs-core-types';
-import Cache from '@dao-xyz/orbit-db-cache'
+import Cache from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import { isDefined } from './is-defined.js'
 import { Level } from 'level';
@@ -232,7 +232,22 @@ export class OrbitDB {
       identity = options.identity;
     }
     else {
-      const signKey = await keystore.createEd25519Key({ id: id.toString() });
+
+      let signKey: KeyWithMeta<Ed25519Keypair>;
+
+      const existingKey = (await keystore.getKey(id.toString()));
+      if (existingKey) {
+        if (existingKey.keypair instanceof Ed25519Keypair === false) {
+          // TODO add better behaviour for this 
+          throw new Error("Failed to create keypair from ipfs id because it already exist with a different type: " + existingKey.keypair.constructor.name);
+
+        }
+        signKey = existingKey as KeyWithMeta<Ed25519Keypair>;
+      }
+      else {
+        signKey = await keystore.createEd25519Key({ id: id.toString() });
+      }
+
 
       identity = {
         ...signKey.keypair,
@@ -440,7 +455,12 @@ export class OrbitDB {
 
           }
           if (toMerge.length > 0) {
-            await store.sync(toMerge);
+            try {
+              await store.sync(toMerge);
+              const x = 123;
+            } catch (error) {
+              const y = 345;
+            }
           }
           /*   for (const head of heads) {
               if (store.oplog._peersByGid.has(head.gid) || head.next.find(n => store.oplog.has(n))) {
@@ -1229,7 +1249,7 @@ export class OrbitDB {
       }
       if (storeOrAddress instanceof Address) {
         try {
-          store = await Program.load(this._ipfs, storeOrAddress as any as Address) as any as S // TODO fix typings
+          store = await Program.load(this._ipfs, storeOrAddress as any as Address, options) as any as S // TODO fix typings
         } catch (error) {
           logger.error("Failed to load store with address: " + storeOrAddress.toString());
           reject(error);

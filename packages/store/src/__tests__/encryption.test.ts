@@ -1,7 +1,7 @@
 
 import assert from 'assert'
 import { Store, DefaultOptions, HeadsCache, IInitializationOptions } from '../store.js'
-import { default as Cache } from '@dao-xyz/orbit-db-cache'
+import { default as Cache } from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore"
 import { PublicKeyEncryptionResolver, X25519PublicKey } from '@dao-xyz/peerbit-crypto'
 import { AccessError } from "@dao-xyz/peerbit-crypto"
@@ -23,7 +23,7 @@ import {
   startIpfs,
   stopIpfs,
   createStore
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { Level } from 'level'
 import { Entry } from '@dao-xyz/ipfs-log'
 import { delay, waitFor } from '@dao-xyz/time'

@@ -6,7 +6,7 @@ import { Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import { EventStore } from "./utils/stores"
 
 import { Level } from "level"
-import { Ed25519Keypair, Ed25519PublicKey } from "@dao-xyz/peerbit-crypto"
+import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto"
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
@@ -17,7 +17,7 @@ import {
   startIpfs,
   stopIpfs,
   testAPIs,
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 
 const keysPath = './orbitdb/identity/identitykeys'
 const dbPath = './orbitdb/tests/change-identity'

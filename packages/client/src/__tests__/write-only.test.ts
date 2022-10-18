@@ -22,7 +22,7 @@ import {
     testAPIs,
     connectPeers,
     waitForPeers,
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 
 const orbitdbPath1 = './orbitdb/tests/replication/1'
 const orbitdbPath2 = './orbitdb/tests/replication/2'
@@ -83,10 +83,10 @@ Object.keys(testAPIs).forEach(API => {
             clearInterval(timer)
 
             if (db1)
-                await db1.drop()
+                await db1.store.drop()
 
             if (db2)
-                await db2.drop()
+                await db2.store.drop()
 
             if (orbitdb1)
                 await orbitdb1.stop()
@@ -104,9 +104,9 @@ Object.keys(testAPIs).forEach(API => {
             /*   await waitFor(() => db2._oplog.clock.time > 0); */
             await db2.add('world');
 
-            await waitFor(() => db1.oplog.values.length === 2);
-            expect(db1.oplog.values.map(x => x.payload.getValue().value)).toContainAllValues(['hello', 'world'])
-            expect(db2.oplog.values.length).toEqual(1);
+            await waitFor(() => db1.store.oplog.values.length === 2);
+            expect(db1.store.oplog.values.map(x => x.payload.getValue().value)).toContainAllValues(['hello', 'world'])
+            expect(db2.store.oplog.values.length).toEqual(1);
 
         })
 
@@ -129,9 +129,9 @@ Object.keys(testAPIs).forEach(API => {
             // Now the db2 will request sync clocks even though it does not replicate any content
             await db2.add('world');
 
-            await waitFor(() => db1.oplog.values.length === 2);
-            expect(db1.oplog.values.map(x => x.payload.getValue().value)).toContainAllValues(['hello', 'world'])
-            expect(db2.oplog.values.length).toEqual(1);
+            await waitFor(() => db1.store.oplog.values.length === 2);
+            expect(db1.store.oplog.values.map(x => x.payload.getValue().value)).toContainAllValues(['hello', 'world'])
+            expect(db2.store.oplog.values.length).toEqual(1);
         })
 
         it('will open store on exchange heads message', async () => {
@@ -144,7 +144,7 @@ Object.keys(testAPIs).forEach(API => {
             const hello = await store.add('hello', { nexts: [] });
             const world = await store.add('world', { nexts: [hello] });
 
-            expect(store.oplog.heads).toHaveLength(1);
+            expect(store.store.oplog.heads).toHaveLength(1);
 
             await waitFor(() => Object.values(orbitdb2.stores[replicationTopic]).length > 0, { timeout: 20 * 1000, delayInterval: 50 });
 

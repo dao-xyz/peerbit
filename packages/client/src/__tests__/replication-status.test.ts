@@ -16,7 +16,7 @@ import {
   startIpfs,
   stopIpfs,
   testAPIs,
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 
 const dbPath1 = './orbitdb/tests/create-open/1'
 const dbPath2 = './orbitdb/tests/create-open/2'

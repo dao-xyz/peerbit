@@ -7,7 +7,7 @@ import { Entry } from '@dao-xyz/ipfs-log'
 import { Replicator } from './replicator.js'
 import { ReplicationInfo } from './replication-info.js'
 import io from '@dao-xyz/io-utils'
-import Cache from '@dao-xyz/orbit-db-cache';
+import Cache from '@dao-xyz/peerbit-cache';
 import { variant, field, vec, option, Constructor } from '@dao-xyz/borsh';
 import { IPFS } from 'ipfs-core-types'
 
@@ -740,7 +740,7 @@ export class Store<T> {
     }
 
     const maxClock = (res: bigint, val: Entry<any>): bigint => max(res, val.clock.time)
-    this.sync([])
+    await this.sync([])
 
     const queue = (await this._cache.getBinary(this.queuePath, UnsfinishedReplication))?.hashes as string[]
     if (queue?.length > 0) {

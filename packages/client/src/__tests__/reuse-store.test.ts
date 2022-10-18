@@ -16,7 +16,7 @@ import {
     stopIpfs,
     testAPIs,
     connectPeers
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { SimpleStoreContract } from './utils/access';
 
 const orbitdbPath1 = './orbitdb/tests/replication/1'

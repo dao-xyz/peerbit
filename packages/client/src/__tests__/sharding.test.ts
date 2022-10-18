@@ -11,7 +11,7 @@ import {
     nodeConfig as config,
     testAPIs,
     Session,
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { delay, waitFor, waitForAsync } from "@dao-xyz/time";
 

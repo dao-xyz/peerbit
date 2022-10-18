@@ -1,5 +1,5 @@
 import { Store, DefaultOptions, CachedValue } from '../store.js'
-import { default as Cache } from '@dao-xyz/orbit-db-cache'
+import { default as Cache } from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore"
 
 // Test utils
@@ -8,7 +8,7 @@ import {
   startIpfs,
   stopIpfs,
   createStore
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { Controller } from 'ipfsd-ctl'
 import { Level } from 'level'

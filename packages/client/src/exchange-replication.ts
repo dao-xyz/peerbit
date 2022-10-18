@@ -1,10 +1,9 @@
 import { variant, field, vec, option, serialize } from '@dao-xyz/borsh';
-import { delay } from '@dao-xyz/time';
 import { ProtocolMessage } from './message.js';
 // @ts-ignore
 import isNode from 'is-node';
 import { MaybeSigned, PublicSignKey } from '@dao-xyz/peerbit-crypto';
-import { DecryptedThing, PublicKeyEncryption } from "@dao-xyz/peerbit-crypto";
+import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { Address, Store } from '@dao-xyz/peerbit-dstore';
 import { OrbitDB } from './orbit-db.js';
 import { StringSetSerializer } from '@dao-xyz/borsh-utils';

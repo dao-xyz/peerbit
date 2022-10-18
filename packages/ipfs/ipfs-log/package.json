@@ -64,7 +64,7 @@
     "node-pre-gyp": "^0.13.0",
     "nyc": "^15.0.1",
     "orbit-db-benchmark-runner": "^1.0.3",
-    "@dao-xyz/orbit-db-test-utils": "^0.0.1",
+    "@dao-xyz/peerbit-test-utils": "^0.0.1",
     "path-browserify": "^1.0.1",
     "stream-browserify": "^3.0.0",
     "webpack": "^5.37.1",

@@ -11,7 +11,7 @@ import { jest } from '@jest/globals';
 import {
   nodeConfig as config,
   Session
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { IPFS } from 'ipfs-core-types';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';

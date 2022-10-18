@@ -13,7 +13,7 @@ import {
     testAPIs,
     Session,
     connectPeers
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
 import { waitFor } from '@dao-xyz/time'
 

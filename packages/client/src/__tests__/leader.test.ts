@@ -6,21 +6,16 @@ import { OrbitDB } from '../orbit-db'
 
 import { EventStore } from './utils/stores/event-store'
 import { jest } from '@jest/globals';
-import { Controller } from "ipfsd-ctl";
-import { IPFS } from "ipfs-core-types";
 // @ts-ignore 
 import { v4 as uuid } from 'uuid';
 
 // Include test utilities
 import {
     nodeConfig as config,
-    startIpfs,
-    stopIpfs,
     testAPIs,
-    connectPeers,
     waitForPeers,
     Session,
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
 import { delay, waitFor } from '@dao-xyz/time'
 
@@ -133,8 +128,8 @@ Object.keys(testAPIs).forEach(API => {
 
             db2 = await orbitdb2.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath2 })
 
-            await waitForPeers(session.peers[0].ipfs, [orbitdb2.id], DirectChannel.getTopic([orbitdb1.id, orbitdb2.id]))
-            await waitForPeers(session.peers[1].ipfs, [orbitdb1.id], DirectChannel.getTopic([orbitdb1.id, orbitdb2.id]))
+            await waitFor(() => (orbitdb1._directConnections.size === 1))
+            await waitFor(() => (orbitdb2._directConnections.size === 1))
 
             // leader rotation is kind of random, so we do a sequence of tests
             for (let slot = 0; slot < 3; slot++) {
@@ -191,6 +186,8 @@ Object.keys(testAPIs).forEach(API => {
 
             await waitForPeers(session.peers[1].ipfs, [orbitdb3.id], DirectChannel.getTopic([orbitdb2.id, orbitdb3.id]))
             await waitForPeers(session.peers[2].ipfs, [orbitdb2.id], DirectChannel.getTopic([orbitdb2.id, orbitdb3.id]))
+            await waitFor(() => (orbitdb2._directConnections.size === 1))
+            await waitFor(() => (orbitdb3._directConnections.size === 1))
 
             expect(orbitdb1._directConnections.size).toEqual(0);
             // One leader
@@ -225,9 +222,9 @@ Object.keys(testAPIs).forEach(API => {
             db2 = await orbitdb2.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath2 })
             db3 = await orbitdb3.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath3 })
 
-            await waitForPeers(session.peers[0].ipfs, [orbitdb2.id], DirectChannel.getTopic([orbitdb1.id, orbitdb2.id]))
-            await waitForPeers(session.peers[2].ipfs, [orbitdb1.id], DirectChannel.getTopic([orbitdb1.id, orbitdb3.id]))
-            await waitForPeers(session.peers[1].ipfs, [orbitdb3.id], DirectChannel.getTopic([orbitdb2.id, orbitdb3.id]))
+            await waitFor(() => (orbitdb1._directConnections.size === 2))
+            await waitFor(() => (orbitdb2._directConnections.size === 2))
+            await waitFor(() => (orbitdb3._directConnections.size === 2))
 
             // One leader
             const slot = 0;

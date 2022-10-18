@@ -1,4 +1,4 @@
-import { default as Cache } from '@dao-xyz/orbit-db-cache'
+import { default as Cache } from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore"
 
 import {
@@ -6,7 +6,7 @@ import {
     testAPIs,
     Session,
     createStore
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 import { DefaultOptions, Store } from '../store.js'
 import { SimpleIndex } from './utils.js'
 

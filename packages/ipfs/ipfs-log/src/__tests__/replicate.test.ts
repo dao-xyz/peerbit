@@ -7,10 +7,10 @@ import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import {
   nodeConfig as config,
   waitForPeers
-} from '@dao-xyz/orbit-db-test-utils'
+} from '@dao-xyz/peerbit-test-utils'
 
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
-import { Session } from '@dao-xyz/orbit-db-test-utils'
+import { Session } from '@dao-xyz/peerbit-test-utils'
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { jest } from '@jest/globals';
