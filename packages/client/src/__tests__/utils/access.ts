@@ -7,7 +7,7 @@ import { IPFS } from "ipfs-core-types";
 import { Program } from "@dao-xyz/peerbit-program";
 
 
-@variant([0, 252])
+@variant([0, 251])
 export class SimpleStoreContract extends Program {
 
     @field({ type: EventStore })

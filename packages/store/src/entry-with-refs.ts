@@ -13,7 +13,7 @@ export class EntryWithRefs<T> {
     entry: Entry<T>
 
     @field({ type: vec(Entry) })
-    references: Entry<T>[] // are parents to entry. 
+    references: Entry<T>[] // are some parents to the entry
 
 
     constructor(properties?: { entry: Entry<T>, references: Entry<T>[] }) {

@@ -174,6 +174,9 @@ export class Replicator<T> {
     this._fetching = {}
     this._fetched = {}
   }
+  async start() {
+    this._q.start()
+  }
 
   async _replicateLog(entry: Entry<T> | EntryWithRefs<T> | string): Promise<Log<T>> {
 
@@ -187,14 +190,14 @@ export class Replicator<T> {
     }
 
     const shouldExclude = (h: string) => {
-      return h !== entryHash(entry) && !!h && this._store._oplog && (this._store._oplog.has(h) || this._fetching[h] !== undefined || this._fetched[h] !== undefined)
+      return /* h !== entryHash(entry) && */ !!h && this._store._oplog && (this._store._oplog.has(h) || this._fetching[h] !== undefined || this._fetched[h] !== undefined)
     }
 
     // Fetch and load a log from the entry hash
     const log = entry instanceof Entry || entry instanceof EntryWithRefs ? await Log.fromEntry(
       this._store._ipfs,
       this._store.identity,
-      entry instanceof Entry ? entry : [entry.entry, ...entry.references],
+      entry instanceof Entry ? entry : [entry.entry, ...(entry.references).filter(x => !shouldExclude(x.hash))],
       {
         // TODO, load all store options?
         canAppend: this._store.canAppend,

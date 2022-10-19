@@ -3,6 +3,7 @@ orbitdb
 /orbit-db
 orbit-db-stores
 lib
+peerbit/
 .vscode
 /keystore/
 keystore-test

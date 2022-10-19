@@ -19,10 +19,10 @@ import {
 } from '@dao-xyz/peerbit-test-utils'
 import { SimpleStoreContract } from './utils/access';
 
-const orbitdbPath1 = './orbitdb/tests/replication/1'
-const orbitdbPath2 = './orbitdb/tests/replication/2'
-const dbPath1 = './orbitdb/tests/replication/1/db1'
-const dbPath2 = './orbitdb/tests/replication/2/db2'
+const orbitdbPath1 = './orbitdb/tests/reuse-store/1'
+const orbitdbPath2 = './orbitdb/tests/reuse-store/2'
+const dbPath1 = './orbitdb/tests/reuse-store/1/db1'
+const dbPath2 = './orbitdb/tests/reuse-store/2/db2'
 
 Object.keys(testAPIs).forEach(API => {
     describe(`orbit-db - Replication (${API})`, function () {

@@ -170,6 +170,7 @@ Object.keys(testAPIs).forEach(API => {
       // Verify that progress count increases monotonically by saving
       // each event's current progress into an array
       const progressEvents: bigint[] = []
+      const progressEventsEntries: any[] = []
 
       let done = false
 
@@ -182,8 +183,9 @@ Object.keys(testAPIs).forEach(API => {
             fail(new Error('Shouldn\'t have started replication twice for entry ' + entry.hash + '\n' + entry.payload.getValue().value))
           }
         },
-        onReplicationProgress: (store) => {
+        onReplicationProgress: (store, entry) => {
           progressEvents.push(db2.store.replicationStatus.progress)
+          progressEventsEntries.push(entry);
 
         },
 
@@ -311,7 +313,7 @@ Object.keys(testAPIs).forEach(API => {
 
     it('emits correct replication info in two-way replication', async () => {
 
-      await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
+      await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
 
       const entryCount = 15
 
@@ -329,8 +331,7 @@ Object.keys(testAPIs).forEach(API => {
       // Open second instance again
       let options = {
         directory: dbPath2 + '2',
-        overwrite: true,
-        sync: true,
+        overwrite: true
 
       }
       // Test that none of the entries gets into the replication queue twice
@@ -358,6 +359,8 @@ Object.keys(testAPIs).forEach(API => {
       await waitFor(() => done);
 
       // Database values should match
+
+      await waitFor(() => db1.store.oplog.values.length === db2.store.oplog.values.length);
       const values1 = db1.iterator({ limit: -1 }).collect()
       const values2 = db2.iterator({ limit: -1 }).collect()
       expect(values1.length).toEqual(values2.length)

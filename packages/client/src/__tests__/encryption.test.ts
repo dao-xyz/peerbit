@@ -21,13 +21,13 @@ import {
 } from '@dao-xyz/peerbit-test-utils'
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
 
-const orbitdbPath1 = './orbitdb/tests/replication/1'
-const orbitdbPath2 = './orbitdb/tests/replication/2'
-const orbitdbPath3 = './orbitdb/tests/replication/3'
+const orbitdbPath1 = './orbitdb/tests/encryption/1'
+const orbitdbPath2 = './orbitdb/tests/encryption/2'
+const orbitdbPath3 = './orbitdb/tests/encryption/3'
 
-const dbPath1 = './orbitdb/tests/replication/1/db1'
-const dbPath2 = './orbitdb/tests/replication/2/db2'
-const dbPath3 = './orbitdb/tests/replication/3/db3'
+const dbPath1 = './orbitdb/tests/encryption/1/db1'
+const dbPath2 = './orbitdb/tests/encryption/2/db2'
+const dbPath3 = './orbitdb/tests/encryption/3/db3'
 
 
 const addHello = async (db: EventStore<string>, receiver: X25519PublicKey) => {

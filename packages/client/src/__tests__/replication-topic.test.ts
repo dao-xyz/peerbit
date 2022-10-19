@@ -22,13 +22,13 @@ import {
   waitForPeers,
 } from '@dao-xyz/peerbit-test-utils'
 
-const orbitdbPath1 = './orbitdb/tests/replication/1'
-const orbitdbPath2 = './orbitdb/tests/replication/2'
-const dbPath1 = './orbitdb/tests/replication/1/db1'
-const dbPath2 = './orbitdb/tests/replication/2/db2'
+const orbitdbPath1 = './orbitdb/tests/replication-topic/1'
+const orbitdbPath2 = './orbitdb/tests/replication-topic/2'
+const dbPath1 = './orbitdb/tests/replication-topic/1/db1'
+const dbPath2 = './orbitdb/tests/replication-topic/2/db2'
 
 Object.keys(testAPIs).forEach(API => {
-  describe(`orbit-db - Replication (${API})`, function () {
+  describe(`orbit-db - Replication topic (${API})`, function () {
     jest.setTimeout(config.timeout * 2)
 
     let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS
@@ -124,75 +124,5 @@ Object.keys(testAPIs).forEach(API => {
       const allFromDB3 = db3.iterator({ limit: -1 }).collect().length
       expect(allFromDB3).toEqual(0) // Same replication topic but different DB (which means no entries should exist) 
     })
-
-    it('multible databases shared replication topic', async () => {
-
-
-
-
-      const replicationTopicFn = () => 'x';
-      const replicationTopic = replicationTopicFn();
-      db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' })
-        , replicationTopic, { directory: dbPath1 })
-      db2 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests-2' })
-        , replicationTopic, { directory: dbPath1 })
-      const hello = db1.add('hello')
-      db2.add('world')
-
-
-      let done =
-        false
-      let replicatedEventCount = 0
-
-      const options = { directory: dbPath2 }
-      db3 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, {
-        ...options, onReplicationComplete: (store) => {
-          replicatedEventCount++
-          const all = db3.iterator({ limit: -1 }).collect().length + db4.iterator({ limit: -1 }).collect().length
-          done = (all === 2)
-        }
-      })
-      db4 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db2.address), replicationTopic, {
-        ...options, onReplicationComplete: (store) => {
-          replicatedEventCount++
-          const all = db3.iterator({ limit: -1 }).collect().length + db4.iterator({ limit: -1 }).collect().length
-          done = (all === 2)
-        }
-      })
-
-      await waitFor(() => done);
-      const entries: Entry<Operation<string>>[] = db3.iterator({ limit: -1 }).collect()
-      expect(entries.length).toEqual(1)
-      expect(entries[0].payload.getValue().value).toEqual('hello')
-
-      const entries2: Entry<Operation<string>>[] = db4.iterator({ limit: -1 }).collect()
-      expect(entries2.length).toEqual(1)
-      expect(entries2[0].payload.getValue().value).toEqual('world')
-
-      expect(replicatedEventCount).toEqual(2)
-
-      await waitFor(() => orbitdb1._directConnections.size === 1);
-      await waitFor(() => orbitdb2._directConnections.size === 1);
-
-      const peersFrom1 = await orbitdb1.getPeers(new RequestReplicatorInfo({
-        address: db1.address,
-        replicationTopic,
-        heads: [(await hello).hash]
-      }));
-      expect(peersFrom1).toHaveLength(1);
-      expect(peersFrom1[0].peerInfo.memoryLeft).toBeDefined();
-
-
-      const peersFrom2 = await orbitdb2.getPeers(new RequestReplicatorInfo({
-        address: db1.address,
-        replicationTopic,
-        heads: [(await hello).hash]
-      }));
-      expect(peersFrom2).toHaveLength(1);
-      expect(peersFrom2[0].peerInfo.memoryLeft).toBeDefined();
-
-    })
-
-
   })
 })

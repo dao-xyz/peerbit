@@ -1,8 +1,6 @@
 
 import assert from 'assert'
 import rmrf from 'rimraf'
-import { Entry, LamportClock } from '@dao-xyz/ipfs-log'
-import { Store } from '@dao-xyz/peerbit-dstore'
 import { delay, waitFor } from '@dao-xyz/time'
 
 import { OrbitDB } from '../orbit-db'
@@ -24,14 +22,14 @@ import {
     waitForPeers,
 } from '@dao-xyz/peerbit-test-utils'
 
-const orbitdbPath1 = './orbitdb/tests/replication/1'
-const orbitdbPath2 = './orbitdb/tests/replication/2'
-const dbPath1 = './orbitdb/tests/replication/1/db1'
-const dbPath2 = './orbitdb/tests/replication/2/db2'
+const orbitdbPath1 = './orbitdb/tests/write-only/1'
+const orbitdbPath2 = './orbitdb/tests/write-only/2'
+const dbPath1 = './orbitdb/tests/write-only/1/db1'
+const dbPath2 = './orbitdb/tests/write-only/2/db2'
 
 
 Object.keys(testAPIs).forEach(API => {
-    describe(`orbit-db - Replication (${API})`, function () {
+    describe(`orbit-db - Write-only (${API})`, function () {
         jest.setTimeout(config.timeout * 2)
 
         let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS

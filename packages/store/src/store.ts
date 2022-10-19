@@ -528,7 +528,6 @@ export class Store<T> {
 
     // Database is now closed
 
-    this.initialized = false;
     return Promise.resolve()
   }
 
@@ -536,6 +535,8 @@ export class Store<T> {
    * Drops a database and removes local data
    */
   async drop() {
+    this.initialized = false;
+
     if (!this._oplog && !this._cache) {
       return; // already dropped
     }
@@ -556,9 +557,14 @@ export class Store<T> {
     // TODO fix types
     this._oplog = undefined as any;
     this._cache = undefined as any;
+
   }
 
   async load(amount?: number, opts: { fetchEntryTimeout?: number } = {}) {
+
+    if (!this.initialized) {
+      throw new Error("Store needs to be initialized before loaded")
+    }
 
     amount = amount || this.options.maxHistory
     const fetchEntryTimeout = opts.fetchEntryTimeout || this.options.fetchEntryTimeout
@@ -592,6 +598,7 @@ export class Store<T> {
       await this._updateIndex()
     }
 
+    this._replicator.start();
     this.options.onReady && this.options.onReady(this)
   }
 
