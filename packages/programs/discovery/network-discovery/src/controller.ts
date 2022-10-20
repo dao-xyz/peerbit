@@ -6,8 +6,8 @@ import { PublicSignKey, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from 'ipfs-core-types';
 import { createDiscoveryStore, NetworkInfo } from "./state";
-import { AnyRelation, RelationContract, TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
-import { Program } from "@dao-xyz/peerbit-program";
+import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
+import { Program, ProgramInitializationOptions } from "@dao-xyz/peerbit-program";
 import { multiaddr } from '@multiformats/multiaddr';
 
 const encoding = BORSH_ENCODING(Operation);
@@ -21,7 +21,7 @@ export class NetworkDiscovery extends Program {
     _peerId: string;
     _ipfs: IPFS;
     _identity: Identity;
-    _options: IInitializationOptions<any>;
+    _options: ProgramInitializationOptions;
 
     constructor(props?: {
         name?: string,
@@ -66,7 +66,7 @@ export class NetworkDiscovery extends Program {
             }
             const network: TrustedNetwork = await Program.load(this.info.store._ipfs, Address.parse(info.network))
 
-            await network.init(this._ipfs, this._identity, { ...this._options, replicate: false })
+            await network.init(this._ipfs, this._identity, { ...this._options, store: { ...this._options.store, replicate: false } })
             let isTrusted: boolean = await network.isTrusted((await keyEncrypted.decrypt(kr)).getValue(SignatureWithKey).publicKey)
 
 
@@ -81,16 +81,13 @@ export class NetworkDiscovery extends Program {
     }
 
 
-    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<any>): Promise<this> {
+    async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
         this._peerId = (await ipfs.id()).id.toString();
-        const saveOrResolved = await options.saveOrResolve(ipfs, this);
-        if (saveOrResolved !== this) {
-            return saveOrResolved as this;
-        }
         this._ipfs = ipfs;
         this._identity = identity;
         this._options = options;
-        await this.info.init(ipfs, identity, { ...options, typeMap: { [NetworkInfo.name]: NetworkInfo }, canAppend: this.canAppend.bind(this) }) // self referencing access controller
+        await this.info.init(ipfs, identity, { ...options, store: { ...options.store, typeMap: { [NetworkInfo.name]: NetworkInfo }, canAppend: this.canAppend.bind(this) } }) // self referencing access controller
+        await super.init(ipfs, identity, options);
         return this;
     }
 

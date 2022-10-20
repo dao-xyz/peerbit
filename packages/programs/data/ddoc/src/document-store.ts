@@ -9,7 +9,7 @@ import { DSearch } from '@dao-xyz/peerbit-dsearch';
 import { BORSH_ENCODING, Identity, Payload } from '@dao-xyz/ipfs-log';
 import { IPFS } from 'ipfs-core-types';
 import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';
-import { Program } from '@dao-xyz/peerbit-program';
+import { Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program';
 
 const replaceAll = (str: string, search: any, replacement: any) => str.toString().split(search).join(replacement)
 
@@ -56,24 +56,27 @@ export class DDocs<T extends BinaryPayload> extends Program/*  implements Typed 
      throw new Error("Not implemented");
    } */
 
-  async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<Operation<T>> & { canRead?(key: SignatureWithKey): Promise<boolean> }) {
+  async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions & { canRead?(key: SignatureWithKey): Promise<boolean> }) {
 
-    if (!this._clazz) {
-      if (!options.typeMap)
-        throw new Error("Class not set, " + this.objectType)
-      else {
-        const clazz = options.typeMap[this.objectType];
-        if (!clazz) {
-          throw new Error("Class not present in typemap, " + this.objectType)
-        }
-        this._clazz = clazz;
-      }
-    }
+    /*  if (!this._clazz) {
+       if (!options.store.typeMap)
+         throw new Error("Class not set, " + this.objectType)
+       else {
+         const clazz = options.store.typeMap[this.objectType];
+         if (!clazz) {
+           throw new Error("Class not present in typemap, " + this.objectType)
+         }
+         this._clazz = clazz;
+       }
+     }
+ 
+     this._index.init(this._clazz);
+     await super.init(ipfs, identity, options)
+     await this.store.init(ipfs, identity, { ...options, ...options.store, encoding: BORSH_ENCODING(Operation), onUpdate: this._index.updateIndex.bind(this._index) })
+     await this.search.init(ipfs, identity, { ...options, context: { address: this.address }, canRead: options.canRead, queryHandler: this.queryHandler.bind(this) });
+     return this; */
 
-    this._index.init(this._clazz);
-    await super.init(ipfs, identity, options)
-    await this.store.init(ipfs, identity, { ...options, encoding: BORSH_ENCODING(Operation), onUpdate: this._index.updateIndex.bind(this._index) })
-    await this.search.init(ipfs, identity, { ...options, context: { address: this.address }, canRead: options.canRead, queryHandler: this.queryHandler.bind(this) });
+
     return this;
 
   }

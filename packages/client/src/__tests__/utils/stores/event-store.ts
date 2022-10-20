@@ -5,7 +5,7 @@ import { Store } from "@dao-xyz/peerbit-dstore"
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log';
 import { variant, field } from '@dao-xyz/borsh';
 import { EncodingType } from "@dao-xyz/peerbit-dstore";
-import { Program } from "@dao-xyz/peerbit-program";
+import { Program, ProgramInitializationOptions } from "@dao-xyz/peerbit-program";
 
 // TODO: generalize the Iterator functions and spin to its own module
 export interface Operation<T> {
@@ -44,11 +44,8 @@ export class EventStore<T> extends Program {
         this._index = new EventIndex();
     }
 
-    async init(ipfs: any, identity: Identity, options: IInitializationOptions<Operation<T>>) {
-        const i = await super.init(ipfs, identity, options);
-        if (i !== this) {
-            return i as this;
-        }
+    async init(ipfs: any, identity: Identity, options: ProgramInitializationOptions) {
+        await super.init(ipfs, identity, options);
         await this.store.init(ipfs, identity, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
         return this;
     }

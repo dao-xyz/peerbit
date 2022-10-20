@@ -21,10 +21,7 @@ export class SimpleStoreContract extends Program {
     }
 
     async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<any>): Promise<this> {
-        const store = await options.saveOrResolve(ipfs, this);
-        if (store !== this) {
-            return store as this;
-        }
+
 
         this.store = await this.store.init(ipfs, identity, options) as EventStore<string>
         await super.init(ipfs, identity, options)

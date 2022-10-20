@@ -7,14 +7,14 @@ import { IPFS } from 'ipfs-core-types';
 import { QueryRequestV0, QueryResponseV0 } from './query.js';
 import { query, QueryOptions, respond } from './io.js'
 import { Identity } from '@dao-xyz/ipfs-log';
-import { Program } from '@dao-xyz/peerbit-program'
+import { Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program'
 
 export const getQueryTopic = (region: string): string => {
     return region + '/query';
 }
 
 
-export type DQueryInitializationOptions<Q, R> = IInitializationOptions<any> & { queryType: Constructor<Q>, responseType: Constructor<R>, canRead?(key: SignatureWithKey | undefined): Promise<boolean>, responseHandler: ResponseHandler<Q, R> };
+export type DQueryInitializationOptions<Q, R> = ProgramInitializationOptions & { queryType: Constructor<Q>, responseType: Constructor<R>, canRead?(key: SignatureWithKey | undefined): Promise<boolean>, responseHandler: ResponseHandler<Q, R> };
 export type ResponseHandler<Q, R> = (query: Q, from?: SignKey) => Promise<R | undefined> | R | undefined;
 
 @variant([0, 1])
@@ -47,7 +47,7 @@ export class DQuery<Q, R> extends Program {
     public async init(ipfs: IPFS, identity: Identity, options: DQueryInitializationOptions<Q, R>) {
         await super.init(ipfs, identity, options)
         this._responseHandler = options.responseHandler;
-        this._encryption = options.encryption;
+        this._encryption = options.store.encryption;
         this._identity = identity;
         this._ipfs = ipfs;
         this._queryType = options.queryType;

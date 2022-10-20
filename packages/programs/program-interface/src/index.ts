@@ -1,4 +1,4 @@
-import { field, variant } from "@dao-xyz/borsh";
+import { Constructor, field, getSchemasBottomUp, variant } from "@dao-xyz/borsh";
 import { SystemBinaryPayload } from "@dao-xyz/bpayload";
 import { Identity } from "@dao-xyz/ipfs-log";
 import { IPFS } from "ipfs-core-types";
@@ -13,16 +13,17 @@ export const checkStoreName = (name: string) => {
     }
 }
 
-export type ProgramInitializationOptions = { saveOrResolve: (ipfs: IPFS, store: Saveable) => Promise<Saveable> };
-
+export type ProgramInitializationOptions = { store: IInitializationOptions<any> };
 
 @variant(1)
-export class Program extends SystemBinaryPayload implements Initiable<any>, Addressable, Saveable {
+export class Program extends SystemBinaryPayload implements Addressable, Saveable {
 
     @field({ type: 'string' })
     name: string;
 
     address: Address;
+    _ipfs: IPFS;
+    _identity: Identity;
 
     constructor(properties?: { name?: string, parent?: Addressable }) {
         super();
@@ -36,12 +37,33 @@ export class Program extends SystemBinaryPayload implements Initiable<any>, Addr
         checkStoreName(this.name);
     }
 
-    async init(ipfs: IPFS, _identity: Identity, options: ProgramInitializationOptions | IInitializationOptions<any>): Promise<this> {
-        const saveOrResolved = await options.saveOrResolve(ipfs, this);
-        if (saveOrResolved !== this) {
-            return saveOrResolved as this;
-        }
+    async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
+        this._ipfs = ipfs;
+        this._identity = identity;
+        await this.save(ipfs)
         return this;
+    }
+
+
+    _getFieldsWithType<T>(type: Constructor<T>): T[] {
+        const schemas = getSchemasBottomUp(this.constructor);
+        const fields: string[] = [];
+        for (const schema of schemas) {
+            for (const field of schema.schema.fields) {
+                if (field.type === type) {
+                    fields.push(field.key);
+                }
+            }
+        }
+        const things = fields.map(field => this[field as keyof Program] as any as T) as T[]
+        return things;
+    }
+
+    get stores(): Store<any>[] {
+        return this._getFieldsWithType(Store)
+    }
+    get programs(): Program[] {
+        return this._getFieldsWithType(Program)
     }
 
     async save(ipfs: IPFS, options?: {

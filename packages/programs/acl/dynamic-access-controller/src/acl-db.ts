@@ -9,7 +9,7 @@ import { MaybeEncrypted, PublicSignKey, SignatureWithKey } from '@dao-xyz/peerbi
 import { v4 as uuid } from 'uuid';
 import { IPFS } from 'ipfs-core-types';
 import { DSearch } from '@dao-xyz/peerbit-dsearch';
-import { Program } from '@dao-xyz/peerbit-program';
+import { Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program';
 import { DQuery } from '@dao-xyz/peerbit-dquery';
 import { IInitializationOptions } from '@dao-xyz/peerbit-dstore';
 
@@ -142,17 +142,14 @@ export class AccessStore extends Program {
     }
 
 
-    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<Operation<Access>>): Promise<this> {
+    async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
         this.access._clazz = AccessData;
 
-        const store = await options.saveOrResolve(ipfs, this);
-        if (store !== this) {
-            return store as this;
-        }
+
 
         /* await this.access.accessController.init(ipfs, publicKey, sign, options); */
-        await this.identityGraphController.init(ipfs, identity, { ...options, canRead: this.canRead.bind(this), canAppend: this.canAppend.bind(this) });
-        await this.access.init(ipfs, identity, { ...options, canRead: this.canRead.bind(this), canAppend: this.canAppend.bind(this) })
+        await this.identityGraphController.init(ipfs, identity, { ...options, store: { ...options.store, canAppend: this.canAppend.bind(this) }, canRead: this.canRead.bind(this) });
+        await this.access.init(ipfs, identity, { ...options, store: { ...options.store, canAppend: this.canAppend.bind(this) }, canRead: this.canRead.bind(this) })
         await this.trustedNetwork.init(ipfs, identity, { ...options })
         await super.init(ipfs, identity, options);
         return this;

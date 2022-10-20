@@ -96,11 +96,11 @@ describe('query', () => {
                 })
             })
         });
-        await writeStore.init(writer, await createIdentity(), { ...DefaultOptions, resolveCache: () => new Cache(cacheStore1) });
+        await writeStore.init(writer, await createIdentity(), { store: { ...DefaultOptions, resolveCache: () => new Cache(cacheStore1) } });
 
         const observerStore = await DString.load(session.peers[1].ipfs, writeStore.address) as DString;
         observerStore.search._query.subscribeToQueries = false;
-        await observerStore.init(observer, await createIdentity(), { ...DefaultOptions, resolveCache: () => new Cache(cacheStore2) })
+        await observerStore.init(observer, await createIdentity(), { store: { ...DefaultOptions, resolveCache: () => new Cache(cacheStore2) } })
 
     })
 

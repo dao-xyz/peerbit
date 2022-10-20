@@ -83,11 +83,11 @@ describe('index', () => {
       indexBy: 'id',
       objectType: Document.name
     });
-    await writeStore.init(writer, await createIdentity(), { ...DefaultOptions, resolveCache: () => new Cache(cacheStore1), typeMap: { [Document.name]: Document } });
+    await writeStore.init(writer, await createIdentity(), { store: { ...DefaultOptions, resolveCache: () => new Cache(cacheStore1), typeMap: { [Document.name]: Document } } });
 
     observerStore = await DDocs.load(session.peers[1].ipfs, writeStore.address) as DDocs<any>;
     observerStore.search._query.subscribeToQueries = false;
-    await observerStore.init(observer, await createIdentity(), { ...DefaultOptions, resolveCache: () => new Cache(cacheStore2), typeMap: { [Document.name]: Document } })
+    await observerStore.init(observer, await createIdentity(), { store: { ...DefaultOptions, resolveCache: () => new Cache(cacheStore2), typeMap: { [Document.name]: Document } } })
   })
 
   afterAll(async () => {

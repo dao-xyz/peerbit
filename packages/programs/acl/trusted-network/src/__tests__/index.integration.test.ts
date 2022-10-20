@@ -29,7 +29,7 @@ describe('index', () => {
     let session: Session, identites: Identity[], cacheStore: Level[]
 
     const identity = (i: number) => identites[i];
-    const init = (store: Program | Store<any>, i: number, options: IStoreOptions<any> = {}) => store.init && store.init(session.peers[i].ipfs, identites[i], { ...DefaultOptions, replicate: true, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]), ...options })
+    const init = (store: Program, i: number, options: { store?: IStoreOptions<any> } = {}) => store.init && store.init(session.peers[i].ipfs, identites[i], { ...options, store: { ...DefaultOptions, replicate: true, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]), ...options.store } })
     beforeAll(async () => {
         session = await Session.connected(4);
         identites = [];
@@ -224,7 +224,7 @@ describe('index', () => {
 
             // check if peer3 is trusted from a peer that is not rpelicating
             let l0observer: TrustedNetwork = await TrustedNetwork.load(session.peers[1].ipfs, l0a.address) as any
-            await init(l0observer, 1, { replicate: false });
+            await init(l0observer, 1, { store: { replicate: false } });
             expect(await l0observer.isTrusted(identity(2).publicKey)).toBeTrue();
             expect(await l0observer.isTrusted(identity(3).publicKey)).toBeFalse();
 

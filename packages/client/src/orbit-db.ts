@@ -1345,75 +1345,66 @@ export class OrbitDB {
         }
 
         // Open the the database
-        const saveOrResolve = async (_ipfs: IPFS, store: Saveable) => {
-          const address = await store.save(this._ipfs);
-          const addressString = address.toString();
-          if (store instanceof Program) {
-            return this.programs[replicationTopic]?.[addressString]?.program || store; // TODO distinguish between composable programs and not
-          }
-          return store;
-        }
+
 
         await program.save(this._ipfs);
-
         await program.init(this._ipfs, options.identity || this.identity, {
           replicate: true, ...options, ...{
-            resolveCache,
-            saveOrResolve: saveOrResolve.bind(this),
-            /*           resourceOptions: options.resourceOptions || this.heapsizeLimitForForks ? { heapSizeLimit: () => this.heapsizeLimitForForks } : undefined,
-             */
-            onClose: async (store) => {
-              await this._onClose(program, store, replicationTopic)
-              if (options.onClose) {
-                return options.onClose(store);
-              }
-              return;
-            },
-            onDrop: async (store) => {
-              await this._onDrop(store)
-              if (options.onDrop) {
-                return options.onDrop(store);
-              }
-              return;
-            },
-            onLoad: async (store) => {
-              await this._onLoad(store)
-              if (options.onLoad) {
-                return options.onLoad(store);
-              }
-              return;
-            },
-            onWrite: async (store, entry) => {
-              await this.onWrite(program)(store, entry, replicationTopic)
-              if (options.onWrite) {
-                return options.onWrite(store, entry);
-              }
-              return;
-            },
-            onReplicationComplete: async (store) => {
-              if (options.onReplicationComplete) {
-                options.onReplicationComplete(store);
-              }
-            },
-            onReplicationProgress: async (store, entry) => {
-              if (options.onReplicationProgress) {
-                options.onReplicationProgress(store, entry);
-              }
-            },
-            onReplicationQueued: async (store, entry) => {
-              if (options.onReplicationQueued) {
-                options.onReplicationQueued(store, entry);
-              }
-            },
-            onOpen: async (store) => {
+            store: {
+              resolveCache,
+              onClose: async (store) => {
+                await this._onClose(program, store, replicationTopic)
+                if (options.onClose) {
+                  return options.onClose(store);
+                }
+                return;
+              },
+              onDrop: async (store) => {
+                await this._onDrop(store)
+                if (options.onDrop) {
+                  return options.onDrop(store);
+                }
+                return;
+              },
+              onLoad: async (store) => {
+                await this._onLoad(store)
+                if (options.onLoad) {
+                  return options.onLoad(store);
+                }
+                return;
+              },
+              onWrite: async (store, entry) => {
+                await this.onWrite(program)(store, entry, replicationTopic)
+                if (options.onWrite) {
+                  return options.onWrite(store, entry);
+                }
+                return;
+              },
+              onReplicationComplete: async (store) => {
+                if (options.onReplicationComplete) {
+                  options.onReplicationComplete(store);
+                }
+              },
+              onReplicationProgress: async (store, entry) => {
+                if (options.onReplicationProgress) {
+                  options.onReplicationProgress(store, entry);
+                }
+              },
+              onReplicationQueued: async (store, entry) => {
+                if (options.onReplicationQueued) {
+                  options.onReplicationQueued(store, entry);
+                }
+              },
+              onOpen: async (store) => {
 
-              await this.addStore(program, store, replicationTopic)
-              await this.subscribeToReplicationTopic(replicationTopic);
+                await this.addStore(program, store, replicationTopic)
+                await this.subscribeToReplicationTopic(replicationTopic);
 
-              if (options.onOpen) {
-                return options.onOpen(store);
+                if (options.onOpen) {
+                  return options.onOpen(store);
+                }
+                return;
               }
-              return;
             }
           }
         });

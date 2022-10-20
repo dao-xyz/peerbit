@@ -15,7 +15,7 @@ import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
 import Cache from '@dao-xyz/peerbit-cache';
 import { DQuery } from "@dao-xyz/peerbit-dquery";
-import { Program } from "@dao-xyz/peerbit-program";
+import { Program, ProgramInitializationOptions } from "@dao-xyz/peerbit-program";
 import { IPFS } from "ipfs-core-types";
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -70,11 +70,11 @@ class TestStore<T extends BinaryPayload> extends Program {
             })
         }
     }
-    async init(ipfs: IPFS<{}>, identity: Identity, options: IInitializationOptions<any>): Promise<this> {
-        options = { ...options, replicate: true };
+    async init(ipfs: IPFS<{}>, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
+        options = { ...options, store: { ...options.store, replicate: true } };
         await super.init(ipfs, identity, options);
         await this.accessController.init(ipfs, identity, { ...options });
-        await this.store.init(ipfs, identity, { ...options, canRead: this.accessController.canRead.bind(this.accessController), canAppend: this.accessController.canAppend.bind(this.accessController) });
+        await this.store.init(ipfs, identity, { ...options, canRead: this.accessController.canRead.bind(this.accessController), store: { ...options.store, canAppend: this.accessController.canAppend.bind(this.accessController) } });
 
         return this;
     }
@@ -84,7 +84,7 @@ describe('index', () => {
     let session: Session, identites: Identity[], cacheStore: Level[]
 
     const identity = (i: number) => identites[i];
-    const init = <T extends Program>(store: T, i: number, options: { canRead?: (key: SignatureWithKey) => Promise<boolean>, canAppend?: (payload: MaybeEncrypted<Payload<any>>, key: MaybeEncrypted<SignatureWithKey>) => Promise<boolean> } = {}) => (store.init && store.init(session.peers[i].ipfs, identites[i], { ...DefaultOptions, typeMap, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]), ...options })) as Promise<T>
+    const init = <T extends Program>(store: T, i: number, options: { canRead?: (key: SignatureWithKey) => Promise<boolean>, canAppend?: (payload: MaybeEncrypted<Payload<any>>, key: MaybeEncrypted<SignatureWithKey>) => Promise<boolean> } = {}) => (store.init && store.init(session.peers[i].ipfs, identites[i], { ...options, store: { ...DefaultOptions, typeMap, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]) } })) as Promise<T>
 
     beforeAll(async () => {
         session = await Session.connected(3);

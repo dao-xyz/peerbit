@@ -10,7 +10,7 @@ import { IPFS } from 'ipfs-core-types';
 import { DeleteOperation } from "@dao-xyz/peerbit-ddoc";
 import { AnyRelation, createIdentityGraphStore, getPathGenerator, hasPath, Relation, getFromByTo, getToByFrom, hasRelation } from "./identity-graph";
 import { BinaryPayload } from "@dao-xyz/bpayload";
-import { Program } from '@dao-xyz/peerbit-program';
+import { Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program';
 import { DQuery } from "@dao-xyz/peerbit-dquery";
 import { waitFor } from "@dao-xyz/time";
 
@@ -78,14 +78,11 @@ export class RelationContract extends Program {
     }
 
 
-    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<Operation<Relation>> & { canRead?(key: SignatureWithKey): Promise<boolean> }): Promise<this> {
-        const typeMap = options.typeMap ? { ...options.typeMap } : {}
+    async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions & { canRead?(key: SignatureWithKey): Promise<boolean> }): Promise<this> {
+        const typeMap = options.store.typeMap ? { ...options.store.typeMap } : {}
         typeMap[Relation.name] = Relation;
-        const saveOrResolved = await options.saveOrResolve(ipfs, this);
-        if (saveOrResolved !== this) {
-            return saveOrResolved as this;
-        }
-        await this.relationGraph.init(ipfs, identity, { ...options, typeMap, canRead: options.canRead ? options.canRead.bind(this) : () => Promise.resolve(true), canAppend: this.canAppend.bind(this) }) // self referencing access controller
+
+        await this.relationGraph.init(ipfs, identity, { ...options, ...{ store: { ...options.store, typeMap, canAppend: this.canAppend.bind(this) } }, canRead: options.canRead ? options.canRead.bind(this) : () => Promise.resolve(true) }) // self referencing access controller
         await super.init(ipfs, identity, options);
         return this;
     }
@@ -150,16 +147,12 @@ export class TrustedNetwork extends Program {
         }
     }
 
-    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<any>): Promise<this> {
-        const saveOrResolved = await options.saveOrResolve(ipfs, this);
-        if (saveOrResolved && saveOrResolved !== this) {
-            return saveOrResolved as this;
-        }
+    async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
 
-        const typeMap = options.typeMap ? { ...options.typeMap } : {}
+        const typeMap = options.store.typeMap ? { ...options.store.typeMap } : {}
         typeMap[Relation.name] = Relation;
 
-        await this.trustGraph.init(ipfs, identity, { ...options, typeMap, canRead: this.canRead.bind(this), canAppend: this.canAppend.bind(this) }) // self referencing access controller
+        await this.trustGraph.init(ipfs, identity, { ...options, ...{ store: { ...options.store, typeMap, canAppend: this.canAppend.bind(this) } }, canRead: this.canRead.bind(this) }) // self referencing access controller
         await this.query.init(ipfs, identity, { ...options, queryType: RequestHeadsMessage, responseType: HeadsMessages, responseHandler: this.exchangeHeads.bind(this) })
         await super.init(ipfs, identity, options);
         return this;

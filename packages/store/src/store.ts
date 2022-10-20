@@ -152,7 +152,6 @@ export interface IInitializationOptions<T> extends IStoreOptions<T>, IInitializa
     decrypt: (arr: Uint8Array, keyGroup: string, keyId: Uint8Array) => Promise<Uint8Array>
   }, */
 
-  saveOrResolve: (ipfs: IPFS, store: Saveable) => Promise<Saveable>,
   resolveCache: (address: Address) => Promise<Cache<CachedValue>> | Cache<CachedValue>
 
 }
@@ -173,10 +172,7 @@ export interface IInitializationOptions<T> extends IStoreOptions<T>, IInitializa
   onLoad: undefined,
   resolveCache: undefined,
   resourceOptions: undefined,
-  saveOrResolve: async (store: Store<any>) => {
-    await store.save(store._ipfs, { pin: true })
-    return store;
-  }
+
 }
  */
 interface IInitializationOptionsDefault<T> {
@@ -185,7 +181,6 @@ interface IInitializationOptionsDefault<T> {
   referenceCount?: number,
   replicationConcurrency?: number,
   typeMap?: { [key: string]: Constructor<any> }
-  saveOrResolve: (ipfs: IPFS, store: Saveable) => Promise<Saveable>,
 
 }
 
@@ -197,10 +192,7 @@ export const DefaultOptions: IInitializationOptionsDefault<any> = {
   replicationConcurrency: 32,
   typeMap: {},
   /* nameResolver: (name: string) => name, */
-  saveOrResolve: async (ipfs: IPFS, store: Saveable) => {
-    await store.save(ipfs, { pin: true })
-    return store as Store<any>;
-  }
+
 }
 
 
@@ -280,10 +272,8 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
 
 
     // Save manifest
-    const saveOrResolved = await options.saveOrResolve(ipfs, this);
-    if (saveOrResolved !== this) {
-      return saveOrResolved as this;
-    }
+    await this.save(this._ipfs)
+
     if (!this.address) {
       throw new Error("Expecting adddress")
     }
@@ -469,37 +459,12 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
   get replicationStatus() {
     return this._replicationStatus
   }
-  /* 
-    get replicationTopic() {
-      return Store.getReplicationTopic(this.address, this.options)
-    } */
-
-  /* static getReplicationTopic(address: Address | string, options: IStoreOptions<any>) {
-    return options.replicationTopic ? (typeof options.replicationTopic === 'string' ? options.replicationTopic : options.replicationTopic()) : (typeof address === 'string' ? address : address.toString());
-  } */
 
   setIdentity(identity: Identity) {
     this.identity = identity
     this._oplog.setIdentity(identity)
   }
 
-
-  /* 
-    checkMemory(): boolean {
-      if (!v8) {
-        return true; // Assume no memory checks
-      }
-      if (this.options.resourceOptions?.heapSizeLimit) {
-        const usedHeapSize = v8?.getHeapStatistics().used_heap_size;
-        if (usedHeapSize > this.options.resourceOptions.heapSizeLimit()) {
-      
-  
-          return false;
-        }
-      }
-      return true;
-    }
-     */
   async close() {
     if (!this.initialized) {
       return

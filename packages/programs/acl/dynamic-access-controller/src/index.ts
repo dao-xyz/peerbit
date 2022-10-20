@@ -22,7 +22,7 @@ import { Operation } from "@dao-xyz/peerbit-ddoc";
 import { v4 as uuid } from 'uuid';
 import { IPFS } from "ipfs-core-types";
 import { DSearchInitializationOptions } from "@dao-xyz/peerbit-dsearch";
-import { Program } from "@dao-xyz/peerbit-program";
+import { Program, ProgramInitializationOptions } from "@dao-xyz/peerbit-program";
 
 
 @variant(0)
@@ -87,7 +87,7 @@ export class DynamicAccessController<T> extends Program {
         return this._db;
     }
 
-    async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<Operation<Access>>): Promise<this> {
+    async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
         /*  this._trust = options.trust; */
         await this._db.init(ipfs, identity, { ...options })
         return this;

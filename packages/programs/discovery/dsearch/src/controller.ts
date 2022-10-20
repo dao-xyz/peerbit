@@ -1,10 +1,9 @@
-import { deserialize, field, serialize, variant } from '@dao-xyz/borsh';
-import type { Message } from '@libp2p/interface-pubsub'
-import { AccessError, decryptVerifyInto, SignatureWithKey, SignKey, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
+import { field, variant } from '@dao-xyz/borsh';
+import { SignatureWithKey, SignKey } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from 'ipfs-core-types';
-import { QueryRequestV0, QueryResponseV0, query, QueryOptions, DQueryInitializationOptions, DQuery } from '@dao-xyz/peerbit-dquery';
+import { QueryOptions, DQuery } from '@dao-xyz/peerbit-dquery';
 import { Identity } from '@dao-xyz/ipfs-log';
-import { Program } from '@dao-xyz/peerbit-program'
+import { Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program'
 import { Address, IInitializationOptions } from '@dao-xyz/peerbit-dstore';
 import { MultipleQueriesType, QueryType } from './query-interface';
 import { Result, Results } from './result';
@@ -17,7 +16,7 @@ export const getQueryTopic = (region: string): string => {
  */
 
 export type SearchContext = { address: Address };
-export type DSearchInitializationOptions<T> = IInitializationOptions<T> & { canRead?(signature: SignatureWithKey | undefined): Promise<boolean>, context: SearchContext, queryHandler: (query: QueryType) => Promise<Result[]> };
+export type DSearchInitializationOptions<T> = ProgramInitializationOptions & { canRead?(signature: SignatureWithKey | undefined): Promise<boolean>, context: SearchContext, queryHandler: (query: QueryType) => Promise<Result[]> };
 
 @variant([0, 2])
 export class DSearch<T> extends Program {
@@ -38,6 +37,7 @@ export class DSearch<T> extends Program {
         await super.init(ipfs, identity, options)
         this._queryHandler = options.queryHandler;
         this._context = options.context;
+        this._query.
         await this._query.init(ipfs, identity, { ...options, responseHandler: this._onQueryMessage.bind(this), queryType: QueryType, responseType: Results })
         return this;
     }

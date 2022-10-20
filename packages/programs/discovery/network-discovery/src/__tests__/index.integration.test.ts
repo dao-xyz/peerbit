@@ -1,18 +1,13 @@
 import { Session, Peer, waitForPeers } from '@dao-xyz/peerbit-test-utils'
 import { waitFor } from '@dao-xyz/time';
 import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { DocumentQueryRequest, Results, ResultWithSource } from '@dao-xyz/peerbit-dsearch';
-import { QueryRequestV0, QueryResponseV0, query } from '@dao-xyz/peerbit-dquery';
-import { Secp256k1PublicKey } from '@dao-xyz/peerbit-crypto';
-import { Wallet } from '@ethersproject/wallet'
 import { Identity } from '@dao-xyz/ipfs-log';
 import { createStore } from '@dao-xyz/peerbit-test-utils';
 import { Level } from 'level';
 import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
-import { CachedValue, DefaultOptions, IInitializationOptions, IStoreOptions, Store } from '@dao-xyz/peerbit-dstore';
+import { CachedValue, DefaultOptions, IStoreOptions, Store } from '@dao-xyz/peerbit-dstore';
 import Cache from '@dao-xyz/peerbit-cache';
-import { serialize } from '@dao-xyz/borsh';
 import { Program } from '@dao-xyz/peerbit-program';
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
 import { NetworkDiscovery } from '../controller';
@@ -32,7 +27,7 @@ describe('index', () => {
     let session: Session, identites: Identity[], cacheStore: Level[]
 
     const identity = (i: number) => identites[i];
-    const init = (store: Program | Store<any>, i: number, options: IStoreOptions<any> = {}) => store.init && store.init(session.peers[i].ipfs, identites[i], { ...DefaultOptions, replicate: true, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]), ...options })
+    const init = (store: Program, i: number, options: { store?: IStoreOptions<any> } = {}) => store.init && store.init(session.peers[i].ipfs, identites[i], { ...options, store: { ...options.store, ...DefaultOptions, replicate: true, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]) } })
     beforeAll(async () => {
         session = await Session.connected(4);
         identites = [];
@@ -75,11 +70,11 @@ describe('index', () => {
             await waitFor(() => Object.keys(l0a.trustGraph._index._index).length == 2)
 
             const discovery = new NetworkDiscovery()
-            await init(discovery, 3, { replicate: true });
+            await init(discovery, 3, { store: { replicate: true } });
 
             // now identity 2 should be able to append to discovery because it is trusted by the network
             const discovery2 = (await NetworkDiscovery.load(session.peers[2].ipfs, discovery.address)) as NetworkDiscovery;
-            await init(discovery2, 2, { replicate: true });
+            await init(discovery2, 2, { store: { replicate: true } });
 
             // should not be ok because peer 4 is not trusted
             try {

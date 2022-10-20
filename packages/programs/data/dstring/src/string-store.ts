@@ -9,7 +9,7 @@ import { Address, IInitializationOptions, IStoreOptions, load, Store } from '@da
 import { IPFS } from 'ipfs-core-types';
 import { Identity } from '@dao-xyz/ipfs-log';
 import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';
-import { Program } from '@dao-xyz/peerbit-program';
+import { Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program';
 export const STRING_STORE_TYPE = 'string_store';
 const findAllOccurrences = (str: string, substr: string): number[] => {
   str = str.toLowerCase();
@@ -45,9 +45,9 @@ export class DString extends Program {
     this._index = new StringIndex();
   }
 
-  async init(ipfs: IPFS<{}>, identity: Identity, options: IInitializationOptions<PayloadOperation> & { canRead?(key: SignatureWithKey): Promise<boolean> }): Promise<this> {
+  async init(ipfs: IPFS<{}>, identity: Identity, options: ProgramInitializationOptions & { canRead?(key: SignatureWithKey): Promise<boolean> }): Promise<this> {
     await super.init(ipfs, identity, options)
-    await this.store.init(ipfs, identity, { ...options, encoding, onUpdate: this._index.updateIndex.bind(this._index) })
+    await this.store.init(ipfs, identity, { ...options, ...options.store, encoding, onUpdate: this._index.updateIndex.bind(this._index) })
     await this.search.init(ipfs, identity, { ...options, context: { address: this.address }, canRead: options.canRead, queryHandler: this.queryHandler.bind(this) })
     return this;
 
