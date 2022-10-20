@@ -195,7 +195,6 @@ export class Replicator<T> {
       entry,
       {
         // TODO, load all store options?
-        canAppend: this._store.canAppend,
         encryption: this._store._oplog._encryption,
         sortFn: this._store._oplog._sortFn,
         length: -1,
@@ -210,7 +209,6 @@ export class Replicator<T> {
       entry,
       {
         // TODO, load all store options?
-        canAppend: this._store.canAppend,
         encryption: this._store._oplog._encryption,
         sortFn: this._store._oplog._sortFn,
         length: -1,

@@ -1,20 +1,17 @@
-import { Store, IInitializationOptions } from '@dao-xyz/peerbit-dstore'
-import { Constructor, deserialize, field, option, serialize, serializeField, variant } from '@dao-xyz/borsh';
+import { Constructor, deserialize, field, option, serialize, variant } from '@dao-xyz/borsh';
 import type { Message } from '@libp2p/interface-pubsub'
-import { PublicKeyEncryptionResolver, PublicSignKey, SignatureWithKey, SignKey, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
+import { SignatureWithKey, SignKey } from '@dao-xyz/peerbit-crypto';
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
-import { IPFS } from 'ipfs-core-types';
 import { QueryRequestV0, QueryResponseV0 } from './query.js';
 import { query, QueryOptions, respond } from './io.js'
-import { Identity } from '@dao-xyz/ipfs-log';
-import { Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program'
+import { Program } from '@dao-xyz/peerbit-program'
 
 export const getQueryTopic = (region: string): string => {
     return region + '/query';
 }
 
 
-export type DQueryInitializationOptions<Q, R> = ProgramInitializationOptions & { queryType: Constructor<Q>, responseType: Constructor<R>, canRead?(key: SignatureWithKey | undefined): Promise<boolean>, responseHandler: ResponseHandler<Q, R> };
+export type DQueryInitializationOptions<Q, R> = { queryType: Constructor<Q>, responseType: Constructor<R>, canRead?(key: SignatureWithKey | undefined): Promise<boolean>, responseHandler: ResponseHandler<Q, R> };
 export type ResponseHandler<Q, R> = (query: Q, from?: SignKey) => Promise<R | undefined> | R | undefined;
 
 @variant([0, 1])
@@ -28,10 +25,7 @@ export class DQuery<Q, R> extends Program {
     _subscribed: boolean = false;
     _initializationPromise?: Promise<void>;
     _onQueryMessageBinded: any = undefined;
-    _ipfs: IPFS;
     _responseHandler: ResponseHandler<Q, R>
-    _encryption?: PublicKeyEncryptionResolver;
-    _identity: Identity;
     _queryType: Constructor<Q>
     _responseType: Constructor<R>
     canRead: (key: SignatureWithKey | undefined) => Promise<boolean>
@@ -44,19 +38,14 @@ export class DQuery<Q, R> extends Program {
         }
     }
 
-    public async init(ipfs: IPFS, identity: Identity, options: DQueryInitializationOptions<Q, R>) {
-        await super.init(ipfs, identity, options)
+    public async setup(options: DQueryInitializationOptions<Q, R>) {
         this._responseHandler = options.responseHandler;
-        this._encryption = options.store.encryption;
-        this._identity = identity;
-        this._ipfs = ipfs;
         this._queryType = options.queryType;
         this._responseType = options.responseType;
         this.canRead = options.canRead || (() => Promise.resolve(true));
         if (this.subscribeToQueries) {
             this._subscribeToQueries();
         }
-        return this;
     }
 
 

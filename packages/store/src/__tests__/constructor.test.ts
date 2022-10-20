@@ -54,7 +54,7 @@ describe(`Constructor`, function () {
   })
 
   it('creates a new Store instance', async () => {
-    expect(typeof store.options).toEqual('object')
+    expect(typeof store._options).toEqual('object')
     expect(typeof store.address).toEqual('object')
     expect(typeof store._ipfs).toEqual('object')
     expect(typeof store._cache).toEqual('object')

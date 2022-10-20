@@ -6,24 +6,23 @@ import { BinaryPayload } from '@dao-xyz/bpayload';
 import { arraysEqual } from '@dao-xyz/borsh-utils';
 import { Store, IInitializationOptions } from '@dao-xyz/peerbit-dstore';
 import { DSearch } from '@dao-xyz/peerbit-dsearch';
-import { BORSH_ENCODING, Identity, Payload } from '@dao-xyz/ipfs-log';
+import { BORSH_ENCODING, CanAppend, Identity, Payload } from '@dao-xyz/ipfs-log';
 import { IPFS } from 'ipfs-core-types';
 import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';
-import { Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program';
+import { Program, ProgramInitializationOptions, RootProgram } from '@dao-xyz/peerbit-program';
 
 const replaceAll = (str: string, search: any, replacement: any) => str.toString().split(search).join(replacement)
 
+const encoding = BORSH_ENCODING(Operation);
+
 @variant([0, 6])
-export class DDocs<T extends BinaryPayload> extends Program/*  implements Typed */ {
+export class DDocs<T extends BinaryPayload> extends Program {
 
   @field({ type: Store })
   store: Store<Operation<T>>
 
   @field({ type: 'string' })
   indexBy: string;
-
-  @field({ type: 'string' })
-  objectType: string;
 
   @field({ type: DSearch })
   search: DSearch<Operation<T>>
@@ -37,48 +36,28 @@ export class DDocs<T extends BinaryPayload> extends Program/*  implements Typed 
   constructor(properties: {
     name?: string,
     indexBy: string,
-    objectType: string,
-    search: DSearch<Operation<T>>,
-    clazz?: Constructor<T>
+    search: DSearch<Operation<T>>
   }) {
     super(properties)
     if (properties) {
       this.store = new Store(properties);
       this.indexBy = properties.indexBy;
-      this.objectType = properties.objectType;
       this.search = properties.search;
-      this._clazz = properties.clazz;
     }
     this._index = new DocumentIndex();
   }
 
-  /*  addTypes(_typeMap: { [name: string]: Constructor<any>; }) {
-     throw new Error("Not implemented");
-   } */
 
-  async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions & { canRead?(key: SignatureWithKey): Promise<boolean> }) {
+  async setup(options: { type: Constructor<T>, canRead?(key: SignatureWithKey): Promise<boolean>, canAppend?: CanAppend<Operation<T>> }) {
 
-    /*  if (!this._clazz) {
-       if (!options.store.typeMap)
-         throw new Error("Class not set, " + this.objectType)
-       else {
-         const clazz = options.store.typeMap[this.objectType];
-         if (!clazz) {
-           throw new Error("Class not present in typemap, " + this.objectType)
-         }
-         this._clazz = clazz;
-       }
-     }
- 
-     this._index.init(this._clazz);
-     await super.init(ipfs, identity, options)
-     await this.store.init(ipfs, identity, { ...options, ...options.store, encoding: BORSH_ENCODING(Operation), onUpdate: this._index.updateIndex.bind(this._index) })
-     await this.search.init(ipfs, identity, { ...options, context: { address: this.address }, canRead: options.canRead, queryHandler: this.queryHandler.bind(this) });
-     return this; */
-
-
+    this._clazz = options.type;
+    this._index.init(this._clazz);
+    this.store.onUpdate = this._index.updateIndex.bind(this._index);
+    if (options.canAppend) {
+      this.store.canAppend = options.canAppend
+    }
+    await this.search.setup({ context: { address: this.address }, canRead: options.canRead, queryHandler: this.queryHandler.bind(this) });
     return this;
-
   }
 
   /* get encoding(): Encoding<Operation<T>> {
@@ -162,7 +141,7 @@ export class DDocs<T extends BinaryPayload> extends Program/*  implements Typed 
             }
             else if (f instanceof MemoryCompareQuery) {
               const payload = doc.entry._payload.decrypted.getValue(Payload);
-              const operation = payload.getValue(this.store.oplog._encoding);
+              const operation = payload.getValue(encoding);
               if (operation instanceof PutOperation) {
                 const bytes = operation.data;
                 for (const compare of f.compares) {
@@ -261,7 +240,7 @@ export class DDocs<T extends BinaryPayload> extends Program/*  implements Typed 
           value: doc
 
         })
-      , { nexts: [], ...options })
+      , { nexts: [], ...options, encoding })
   }
 
   public putAll(docs: T[], options = {}) {
@@ -275,7 +254,7 @@ export class DDocs<T extends BinaryPayload> extends Program/*  implements Typed 
         data: serialize(value),
         value
       }))
-    }), { nexts: [], ...options })
+    }), { nexts: [], ...options, encoding })
   }
 
   del(key: string, options = {}) {
@@ -284,7 +263,7 @@ export class DDocs<T extends BinaryPayload> extends Program/*  implements Typed 
 
     return this.store._addOperation(new DeleteOperation({
       key: asString(key)
-    }), { nexts: [existing.entry], ...options })
+    }), { nexts: [existing.entry], ...options, encoding })
   }
 
 

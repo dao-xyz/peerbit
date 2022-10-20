@@ -7,9 +7,9 @@ import { deserialize, field, serialize, variant } from '@dao-xyz/borsh';
 import { CustomBinaryPayload } from '@dao-xyz/bpayload';
 import { Address, IInitializationOptions, IStoreOptions, load, Store } from '@dao-xyz/peerbit-dstore';
 import { IPFS } from 'ipfs-core-types';
-import { Identity } from '@dao-xyz/ipfs-log';
+import { BORSH_ENCODING, CanAppend, Identity } from '@dao-xyz/ipfs-log';
 import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';
-import { Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program';
+import { RootProgram, Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program';
 export const STRING_STORE_TYPE = 'string_store';
 const findAllOccurrences = (str: string, substr: string): number[] => {
   str = str.toLowerCase();
@@ -25,9 +25,11 @@ const findAllOccurrences = (str: string, substr: string): number[] => {
   return result;
 }
 
+const encond = BORSH_ENCODING(PayloadOperation)
+export type StringStoreOptions = { canRead?: (key: SignatureWithKey) => Promise<boolean> };
 
 @variant([0, 5])
-export class DString extends Program {
+export class DString extends Program implements RootProgram {
 
   @field({ type: Store })
   store: Store<PayloadOperation>
@@ -36,6 +38,7 @@ export class DString extends Program {
   search: DSearch<PayloadOperation>;
 
   _index: StringIndex;
+  _setup = false;
   constructor(properties: { name?: string, search: DSearch<PayloadOperation> }) {
     super(properties)
     if (properties) {
@@ -45,28 +48,47 @@ export class DString extends Program {
     this._index = new StringIndex();
   }
 
-  async init(ipfs: IPFS<{}>, identity: Identity, options: ProgramInitializationOptions & { canRead?(key: SignatureWithKey): Promise<boolean> }): Promise<this> {
-    await super.init(ipfs, identity, options)
-    await this.store.init(ipfs, identity, { ...options, ...options.store, encoding, onUpdate: this._index.updateIndex.bind(this._index) })
-    await this.search.init(ipfs, identity, { ...options, context: { address: this.address }, canRead: options.canRead, queryHandler: this.queryHandler.bind(this) })
+  async start() {
+    await this.setup({})
+  }
+
+  async setup(options: { canRead?(key: SignatureWithKey): Promise<boolean>, canAppend?: CanAppend<PayloadOperation> }): Promise<this> {
+
+    this.store.onUpdate = this._index.updateIndex.bind(this._index)
+    if (options.canAppend) {
+      this.store.canAppend = options.canAppend;
+    }
+
+    await this.search.setup({ ...options, context: { address: this.address }, canRead: options.canRead, queryHandler: this.queryHandler.bind(this) })
+
+    this._setup = true;
     return this;
 
   }
+
+  checkSetup() {
+    if (!this._setup) {
+      throw new Error(".setup(...) needs to be invoked before use")
+    }
+  }
   add(value: string, index: Range, options = {}) {
+    this.checkSetup();
     return this.store._addOperation(new PayloadOperation({
       index,
       value,
-    }), options)
+    }), { ...options, encoding })
   }
 
   del(index: Range, options = {}) {
+    this.checkSetup();
     const operation = {
       index
     } as PayloadOperation
-    return this.store._addOperation(operation, options)
+    return this.store._addOperation(operation, { ...options, encoding })
   }
 
   async queryHandler(query: QueryType): Promise<Result[]> {
+    this.checkSetup();
     if (query instanceof StringQueryRequest == false) {
       return [];
     }

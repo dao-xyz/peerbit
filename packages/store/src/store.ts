@@ -1,14 +1,14 @@
 import path from 'path'
 import mapSeries from 'p-each-series'
 import PQueue from 'p-queue'
-import { Log, ISortFunction, PruneOptions, LogOptions, Identity, JSON_ENCODING, max, min, BORSH_ENCODING, CanAppend, Payload } from '@dao-xyz/ipfs-log'
+import { Log, ISortFunction, PruneOptions, LogOptions, Identity, max, min, CanAppend, Payload } from '@dao-xyz/ipfs-log'
 import { Encoding, EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log'
 import { Entry } from '@dao-xyz/ipfs-log'
 import { Replicator } from './replicator.js'
 import { ReplicationInfo } from './replication-info.js'
 import io from '@dao-xyz/io-utils'
 import Cache from '@dao-xyz/peerbit-cache';
-import { variant, field, vec, option, Constructor } from '@dao-xyz/borsh';
+import { variant, field, vec, Constructor } from '@dao-xyz/borsh';
 import { IPFS } from 'ipfs-core-types'
 
 // @ts-ignore
@@ -21,7 +21,6 @@ import { v4 as uuid } from 'uuid';
 import { joinUint8Arrays } from '@dao-xyz/borsh-utils';
 // @ts-ignore
 import Logger from 'logplease'
-import { EncodingType } from './encoding.js'
 import { Address, Addressable, load, save } from './io.js'
 import { SystemBinaryPayload } from '@dao-xyz/bpayload'
 
@@ -118,17 +117,12 @@ export interface IStoreOptions<T> {
   onReady?: (store: Store<T>) => void,
 
 
-
-  canAppend?: (payload: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<SignatureWithKey>) => Promise<boolean>;
-
   /**
    * Name to name conditioned some external property
    */
   /*   nameResolver?: (name: string) => string */
 
   encryption?: PublicKeyEncryptionResolver,
-  encoding?: Encoding<T>,
-
   maxHistory?: number,
   fetchEntryTimeout?: number,
   referenceCount?: number,
@@ -136,7 +130,6 @@ export interface IStoreOptions<T> {
   syncLocal?: boolean,
   sortFn?: ISortFunction,
   prune?: PruneOptions,
-  typeMap?: { [key: string]: Constructor<any> }
   onUpdate?: (oplog: Log<T>, entries?: Entry<T>[]) => void,
   /*   resourceOptions?: ResourceOptions<T>,
    */
@@ -216,13 +209,11 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
   @field({ type: 'string' })
   name: string;
 
-  @field({ type: 'u8' })
-  _encoding: EncodingType
-
-  canAppend?: (payload: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<SignatureWithKey>) => Promise<boolean>;
+  _canAppend?: CanAppend<T>;
+  _onUpdate?: (oplog: Log<T>, entries?: Entry<T>[]) => void
   // An access controller that is note part of the store manifest, usefull for circular store -> access controller -> store structures
 
-  options: IInitializationOptions<T>;
+  _options: IInitializationOptions<T>;
   identity: Identity;
 
   /*   events: EventEmitter;
@@ -249,11 +240,10 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
   _key: string;
 
 
-  constructor(properties?: { name?: string, parent?: { name: string }, encoding?: EncodingType }) {
+  constructor(properties?: { name?: string, parent?: { name: string } }) {
     super();
     if (properties) {
       this.name = (properties.parent?.name ? (properties.parent?.name + '/') : '') + (properties.name || uuid());
-      this._encoding = properties.encoding || EncodingType.JSON
     }
   }
 
@@ -268,7 +258,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
 
     // Set the options (we will use the replicationTopic property after thiis)
     const opts = { ...DefaultOptions, ...options }
-    this.options = opts
+    this._options = opts
 
 
     // Save manifest
@@ -280,7 +270,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
 
     // Create IDs, names and paths
     this.identity = identity;
-    this.canAppend = options.canAppend;
+    this._onUpdate = options.onUpdate;
 
     /* this.events = new EventEmitter() */
     this.remoteHeadsPath = path.join(this.address.toString(), '_remoteHeads')
@@ -294,7 +284,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
 
 
     // External dependencies
-    this._cache = await this.options.resolveCache(this.address);
+    this._cache = await this._options.resolveCache(this.address);
 
     // Create the operations log
     this._oplog = new Log<T>(this._ipfs, identity, this.logOptions)
@@ -324,7 +314,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
         try {
           await e.getClock();
           this._recalculateReplicationMax(e.clock.time + 1n)
-          this.options.onReplicationQueued && this.options.onReplicationQueued(this, e)
+          this._options.onReplicationQueued && this._options.onReplicationQueued(this, e)
         } catch (error) {
           if (error instanceof AccessError) {
             logger.info("Failed to access clock of entry: " + e.hash);
@@ -349,12 +339,12 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
         if (this._oplog.length + 1 > this.replicationStatus.progress ||
           this.replicationStatus.progress > previousProgress ||
           this.replicationStatus.max > previousMax) {
-          this.options.onReplicationProgress && this.options.onReplicationProgress(this, entry)
+          this._options.onReplicationProgress && this._options.onReplicationProgress(this, entry)
         }
       }
 
       // Create the replicator
-      this._replicator = new Replicator(this, this.options.replicationConcurrency)
+      this._replicator = new Replicator(this, this._options.replicationConcurrency)
       // For internal backwards compatibility,
       // to be removed in future releases
       this._loader = this._replicator
@@ -374,8 +364,8 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
       }
     }) */
 
-    if (this.options.onOpen) {
-      await this.options.onOpen(this);
+    if (this._options.onOpen) {
+      await this._options.onOpen(this);
 
     }
     this.initialized = true;
@@ -389,7 +379,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
       if (this._oplog && logs.length > 0) {
         try {
           for (const log of logs) {
-            await this._oplog.join(log, undefined, false) // checkPermitted = false, because we have alreay checked this when arriving here
+            await this._oplog.join(log)
           }
         } catch (error) {
           if (error instanceof AccessError) {
@@ -410,7 +400,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
         if (this._oplog.length > this.replicationStatus.progress) {
           this._recalculateReplicationStatus(this._oplog.length)
         }
-        this.options.onReplicationComplete && this.options.onReplicationComplete(this)
+        this._options.onReplicationComplete && this._options.onReplicationComplete(this)
 
       }
     } catch (e) {
@@ -418,20 +408,6 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     }
   }
 
-  getEncoding(clazz?: Constructor<T>): Encoding<T> {
-    if (this._encoding === EncodingType.JSON) {
-      return JSON_ENCODING
-    }
-    else if (this._encoding === EncodingType.BORSH) {
-      if (!clazz) {
-        throw new Error("Clazz expected");
-      }
-      return BORSH_ENCODING(clazz)
-    }
-    else {
-      throw new Error("Unexpected");
-    }
-  }
 
   get oplog(): Log<any> {
     return this._oplog;
@@ -444,11 +420,9 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
   get logOptions(): LogOptions<T> {
     return {
       logId: this.address.toString(),
-      encoding: this.options.encoding,
-      encryption: this.options.encryption,
-      canAppend: (payload: any, key: any) => (this.canAppend || ((_, __) => true))(payload, key),
-      sortFn: this.options.sortFn,
-      prune: this.options.prune,
+      encryption: this._options.encryption,
+      sortFn: this._options.sortFn,
+      prune: this._options.prune,
     };
   }
 
@@ -463,6 +437,21 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
   setIdentity(identity: Identity) {
     this.identity = identity
     this._oplog.setIdentity(identity)
+  }
+
+  set canAppend(canAppend: CanAppend<T> | undefined) {
+    this._canAppend = canAppend;
+  }
+
+  get canAppend(): (CanAppend<T> | undefined) {
+    return this._canAppend;
+  }
+
+  set onUpdate(onUpdate: (oplog: Log<T>, entries?: Entry<T>[]) => void) {
+    this._onUpdate = (oplog: Log<T>, entries?: Entry<T>[]) => {
+      onUpdate(oplog, entries)
+      this._options.onUpdate && this._options.onUpdate(oplog, entries)
+    };
   }
 
   async close() {
@@ -489,8 +478,8 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
       syncRequestsReceieved: 0
     }
 
-    if (this.options.onClose) {
-      await this.options.onClose(this)
+    if (this._options.onClose) {
+      await this._options.onClose(this)
     }
 
     this._oplog = null as any
@@ -509,8 +498,8 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
       return; // already dropped
     }
 
-    if (this.options.onDrop) {
-      await this.options.onDrop(this)
+    if (this._options.onDrop) {
+      await this._options.onDrop(this)
     }
 
     await this._cache.del(this.localHeadsPath)
@@ -537,11 +526,11 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
       throw new Error("Store needs to be initialized before loaded")
     }
 
-    amount = amount || this.options.maxHistory
-    const fetchEntryTimeout = opts.fetchEntryTimeout || this.options.fetchEntryTimeout
+    amount = amount || this._options.maxHistory
+    const fetchEntryTimeout = opts.fetchEntryTimeout || this._options.fetchEntryTimeout
 
-    if (this.options.onLoad) {
-      await this.options.onLoad(this)
+    if (this._options.onLoad) {
+      await this._options.onLoad(this)
     }
     const localHeads: Entry<any>[] = (await this._cache.getBinary(this.localHeadsPath, HeadsCache))?.heads || []
     const remoteHeads: Entry<any>[] = (await this._cache.getBinary(this.remoteHeadsPath, HeadsCache))?.heads || []
@@ -559,7 +548,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
       length: amount,
       timeout: fetchEntryTimeout,
       onProgressCallback: this._onLoadProgress.bind(this),
-      concurrency: this.options.replicationConcurrency,
+      concurrency: this._options.replicationConcurrency,
     })
 
     this._oplog = log
@@ -570,7 +559,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     }
 
     this._replicator.start();
-    this.options.onReady && this.options.onReady(this)
+    this._options.onReady && this._options.onReady(this)
   }
 
   async sync(heads: (Entry<T>)[]) {
@@ -624,21 +613,9 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     const handle = async (headToHandle: Entry<T>) => {
 
       // TODO Fix types
-      if (this.canAppend) {
-        const headsToCheck = headToHandle;
-        headsToCheck.init({
-          encryption: this._oplog._encryption
-        })
-        try {
-          // TODO add can append, because it referenses things I know, or is a new root. BTW new roots should only be accepted if the access controller allows it
-          const canAppend = await ((this.canAppend as CanAppend<T>)(headsToCheck._payload, headsToCheck._signature))
-          if (!canAppend) {
-            logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
-            return Promise.resolve(null)
-          }
-        } catch (error) {
-          return Promise.resolve(null);
-        }
+
+      if (this.canAppend && !(await this.canAppend(headToHandle._payload, headToHandle._signature))) {
+        return Promise.resolve(null)
       }
 
       const head = headToHandle;
@@ -660,8 +637,9 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
   }
 
   get replicate(): boolean {
-    return !!this.options.replicate;
+    return !!this._options.replicate;
   }
+
 
 
   async getCachedHeads(): Promise<Entry<T>[]> {
@@ -694,8 +672,8 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
   }
 
   async loadFromSnapshot() {
-    if (this.options.onLoad) {
-      await this.options.onLoad(this)
+    if (this._options.onLoad) {
+      await this._options.onLoad(this)
     }
 
     const maxClock = (res: bigint, val: Entry<any>): bigint => max(res, val.clock.time)
@@ -720,16 +698,15 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
       this._recalculateReplicationMax(snapshotData.values.reduce(maxClock, 0n) + 1n)
       if (snapshotData) {
         this._oplog = await Log.fromEntry(this._ipfs, this.identity, snapshotData.heads, {
-          canAppend: this.canAppend,
-          sortFn: this.options.sortFn,
+          sortFn: this._options.sortFn,
           length: -1,
           timeout: 1000,
           onProgressCallback: this._onLoadProgress.bind(this)
         })
         await this._updateIndex()
-        this.options.onReplicationComplete && this.options.onReplicationComplete(this)
+        this._options.onReplicationComplete && this._options.onReplicationComplete(this)
       }
-      this.options.onReady && this.options.onReady(this)
+      this._options.onReady && this._options.onReady(this)
     } else {
       throw new Error(`Snapshot for ${this.address} not found!`)
     }
@@ -738,8 +715,8 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
   }
 
   async _updateIndex(entries?: Entry<T>[]) {
-    if (this.options.onUpdate) {
-      this.options.onUpdate(this._oplog, entries);
+    if (this._onUpdate) {
+      this._onUpdate(this._oplog, entries);
     }
   }
 
@@ -757,15 +734,17 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     }
   }
 
-  async _addOperation(data: T, options: { nexts?: Entry<T>[], onProgressCallback?: (any: any) => void, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted } = {}): Promise<Entry<T>> {
+  async _addOperation(data: T, options: { encoding: Encoding<T>, skipCanAppendCheck?: boolean, nexts?: Entry<T>[], onProgressCallback?: (any: any) => void, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted }): Promise<Entry<T>> {
     const addOperation = async () => {
       // check local cache for latest heads
-      if (this.options.syncLocal) {
+      if (this._options.syncLocal) {
         await this.syncLocal()
       }
 
       const entry = await this._oplog.append(data, {
-        nexts: options.nexts, pin: options.pin, reciever: options.reciever
+        nexts: options.nexts, pin: options.pin, reciever: options.reciever,
+        encoding: options.encoding,
+        canAppend: options.skipCanAppendCheck ? undefined : this.canAppend
       })
 
       // TODO below is not nice, do we really need replication status?
@@ -782,7 +761,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
       // to all the connected peers to tell them that a new entry has been added
       // TODO: don't use events, or make it more transparent that there is a vital subscription in the background
       // that is handling replication
-      this.options.onWrite && this.options.onWrite(this, entry);
+      this._options.onWrite && this._options.onWrite(this, entry);
 
       /*      const headsFromWrite = await this.oplog.getHeads(entry.hash);
            this.events.emit('write', this.replicationTopic, this.address.toString(), entry, headsFromWrite) */
@@ -821,7 +800,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
   /* Loading progress callback */
   _onLoadProgress(entry: Entry<any>) {
     this._recalculateReplicationStatus(entry.clock.time + 1n)
-    this.options.onLoadProgress && this.options.onLoadProgress(this, entry)
+    this._options.onLoadProgress && this._options.onLoadProgress(this, entry)
   }
 
   clone(): Store<T> {

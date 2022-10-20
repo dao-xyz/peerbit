@@ -24,6 +24,7 @@ import {
   createStore
 } from '@dao-xyz/peerbit-test-utils'
 import { Level } from 'level'
+import { JSON_ENCODING } from '@dao-xyz/ipfs-log'
 
 
 Object.keys(testAPIs).forEach(API => {
@@ -87,7 +88,7 @@ Object.keys(testAPIs).forEach(API => {
       assert.deepEqual(store1.replicationStatus, { progress: 0, max: 0 })
 
       // load
-      await store1._addOperation('hello')
+      await store1._addOperation('hello', { encoding: JSON_ENCODING })
       await delay(3000); // <-- cache is async so we need a to wait a bit so the load actually catches the new entry
       await store1.close()
       await store1.load()
@@ -100,7 +101,7 @@ Object.keys(testAPIs).forEach(API => {
 
       // sync 
       await store1.load()
-      await store1._addOperation('hello2')
+      await store1._addOperation('hello2', { encoding: JSON_ENCODING })
       await store2.sync(store1._oplog.heads)
       await waitFor((() => store2.replicationStatus.progress === 2n && store2.replicationStatus.max === 2n));
 

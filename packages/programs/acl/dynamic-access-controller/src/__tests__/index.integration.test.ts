@@ -15,7 +15,7 @@ import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
 import Cache from '@dao-xyz/peerbit-cache';
 import { DQuery } from "@dao-xyz/peerbit-dquery";
-import { Program, ProgramInitializationOptions } from "@dao-xyz/peerbit-program";
+import { Program, ProgramInitializationOptions, RootProgram } from "@dao-xyz/peerbit-program";
 import { IPFS } from "ipfs-core-types";
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -33,7 +33,6 @@ class Document extends CustomBinaryPayload {
         }
     }
 }
-const typeMap: { [key: string]: Constructor<any> } = { [Document.name]: Document, };
 
 const createIdentity = async () => {
     const ed = await Ed25519Keypair.create();
@@ -45,13 +44,13 @@ const createIdentity = async () => {
 
 
 @variant([0, 251])
-class TestStore<T extends BinaryPayload> extends Program {
+class TestStore extends Program implements RootProgram {
 
     @field({ type: DDocs })
-    store: DDocs<T>
+    store: DDocs<Document>
 
     @field({ type: DynamicAccessController })
-    accessController: DynamicAccessController<T>
+    accessController: DynamicAccessController<Document>
 
     constructor(properties: { name?: string, identity: Identity, accessControllerName?: string }) {
         super(properties)
@@ -59,7 +58,6 @@ class TestStore<T extends BinaryPayload> extends Program {
             this.store = new DDocs({
                 name: 'test',
                 indexBy: 'id',
-                objectType: Document.name,
                 search: new DSearch({
                     query: new DQuery({})
                 })
@@ -70,13 +68,12 @@ class TestStore<T extends BinaryPayload> extends Program {
             })
         }
     }
-    async init(ipfs: IPFS<{}>, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
-        options = { ...options, store: { ...options.store, replicate: true } };
-        await super.init(ipfs, identity, options);
-        await this.accessController.init(ipfs, identity, { ...options });
-        await this.store.init(ipfs, identity, { ...options, canRead: this.accessController.canRead.bind(this.accessController), store: { ...options.store, canAppend: this.accessController.canAppend.bind(this.accessController) } });
-
-        return this;
+    async start(): Promise<void> {
+        return this.setup();
+    }
+    async setup() {
+        await this.accessController.setup();
+        await this.store.setup({ type: Document, canRead: this.accessController.canRead.bind(this.accessController), canAppend: this.accessController.canAppend.bind(this.accessController) });
     }
 }
 describe('index', () => {
@@ -84,7 +81,7 @@ describe('index', () => {
     let session: Session, identites: Identity[], cacheStore: Level[]
 
     const identity = (i: number) => identites[i];
-    const init = <T extends Program>(store: T, i: number, options: { canRead?: (key: SignatureWithKey) => Promise<boolean>, canAppend?: (payload: MaybeEncrypted<Payload<any>>, key: MaybeEncrypted<SignatureWithKey>) => Promise<boolean> } = {}) => (store.init && store.init(session.peers[i].ipfs, identites[i], { ...options, store: { ...DefaultOptions, typeMap, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]) } })) as Promise<T>
+    const init = <T extends Program>(store: T, i: number, options: { canRead?: (key: SignatureWithKey) => Promise<boolean>, canAppend?: (payload: MaybeEncrypted<Payload<any>>, key: MaybeEncrypted<SignatureWithKey>) => Promise<boolean> } = {}) => (store.init && store.init(session.peers[i].ipfs, identites[i], { ...options, store: { ...DefaultOptions, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]) } })) as Promise<T>
 
     beforeAll(async () => {
         session = await Session.connected(3);
@@ -112,7 +109,7 @@ describe('index', () => {
             id: '1'
         }));
 
-        const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1) as TestStore<Document>;
+        const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1) as TestStore;
 
         await expect(l0b.store.put(new Document({
             id: 'id'
@@ -144,7 +141,7 @@ describe('index', () => {
                 id: '1'
             }));
 
-            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1) as TestStore<Document>;
+            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1) as TestStore;
 
             await l0b.store.store.sync(l0a.store.store.oplog.heads);
             await waitFor(() => Object.keys(l0b.store._index._index).length === 1)
@@ -178,8 +175,8 @@ describe('index', () => {
                 id: '1'
             }));
 
-            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1) as TestStore<Document>;
-            const l0c = await init(await TestStore.load(session.peers[2].ipfs, l0a.address), 2) as TestStore<Document>;
+            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1) as TestStore;
+            const l0c = await init(await TestStore.load(session.peers[2].ipfs, l0a.address), 2) as TestStore;
 
             await expect(l0c.store.put(new Document({
                 id: 'id'
@@ -223,7 +220,7 @@ describe('index', () => {
             }));
 
 
-            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1) as TestStore<Document>;
+            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1) as TestStore;
             await expect(l0b.store.put(new Document({
                 id: 'id'
             }))).rejects.toBeInstanceOf(AccessError); // Not trusted
@@ -309,7 +306,7 @@ describe('index', () => {
             accessTypes: [AccessType.Any]
         }).initialize());
 
-        const dbb = await TestStore.load(session.peers[1].ipfs, l0a.address) as TestStore<Document>;
+        const dbb = await TestStore.load(session.peers[1].ipfs, l0a.address) as TestStore;
 
         const l0b = await init(dbb, 1, { canRead: () => Promise.resolve(true) });
 

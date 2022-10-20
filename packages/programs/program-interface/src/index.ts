@@ -6,6 +6,7 @@ import { IInitializationOptions, Store, Initiable, Address, Addressable, Saveabl
 
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
+import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 
 export const checkStoreName = (name: string) => {
     if (name.indexOf("/") !== -1) {
@@ -13,7 +14,15 @@ export const checkStoreName = (name: string) => {
     }
 }
 
-export type ProgramInitializationOptions = { store: IInitializationOptions<any> };
+export type ProgramInitializationOptions = { store: IInitializationOptions<any>, parent?: Program };
+
+const checkClazzesCompatible = (clazzA: Constructor<any>, clazzB: Constructor<any>) => {
+    return clazzA == clazzB || clazzA.isPrototypeOf(clazzB) || clazzB.isPrototypeOf(clazzA)
+}
+
+export interface RootProgram {
+    start(): Promise<void>;
+}
 
 @variant(1)
 export class Program extends SystemBinaryPayload implements Addressable, Saveable {
@@ -24,6 +33,7 @@ export class Program extends SystemBinaryPayload implements Addressable, Saveabl
     address: Address;
     _ipfs: IPFS;
     _identity: Identity;
+    _encryption?: PublicKeyEncryptionResolver
 
     constructor(properties?: { name?: string, parent?: Addressable }) {
         super();
@@ -40,17 +50,27 @@ export class Program extends SystemBinaryPayload implements Addressable, Saveabl
     async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
         this._ipfs = ipfs;
         this._identity = identity;
+        this._encryption = options.store.encryption;
         await this.save(ipfs)
+        await Promise.all(this.stores.map(store => store.init(ipfs, identity, options.store)));
+        const nexts = this.programs;
+        for (const next of nexts) {
+            await next.init(ipfs, identity, { ...options, parent: this });
+        }
+
+        if (!options.parent) {
+            await (this as any as RootProgram).start(); // call setup on the root program
+        }
         return this;
     }
-
 
     _getFieldsWithType<T>(type: Constructor<T>): T[] {
         const schemas = getSchemasBottomUp(this.constructor);
         const fields: string[] = [];
+
         for (const schema of schemas) {
             for (const field of schema.schema.fields) {
-                if (field.type === type) {
+                if (checkClazzesCompatible(field.type as Constructor<any>, type)) {
                     fields.push(field.key);
                 }
             }
@@ -59,6 +79,17 @@ export class Program extends SystemBinaryPayload implements Addressable, Saveabl
         return things;
     }
 
+    get ipfs(): IPFS {
+        return this._ipfs;
+    }
+
+    get identity(): Identity {
+        return this._identity;
+    }
+
+    get encryption(): PublicKeyEncryptionResolver | undefined {
+        return this._encryption;
+    }
     get stores(): Store<any>[] {
         return this._getFieldsWithType(Store)
     }

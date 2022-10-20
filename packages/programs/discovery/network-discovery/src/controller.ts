@@ -19,8 +19,6 @@ export class NetworkDiscovery extends Program {
     info: DDocs<NetworkInfo>
 
     _peerId: string;
-    _ipfs: IPFS;
-    _identity: Identity;
     _options: ProgramInitializationOptions;
 
     constructor(props?: {

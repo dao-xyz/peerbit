@@ -7,14 +7,12 @@ import { MaybeEncrypted, PublicSignKey, SignatureWithKey } from '@dao-xyz/peerbi
 
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
-import { IPFS } from 'ipfs-core-types';
 import { DSearch } from '@dao-xyz/peerbit-dsearch';
-import { Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program';
+import { Program, RootProgram } from '@dao-xyz/peerbit-program';
 import { DQuery } from '@dao-xyz/peerbit-dquery';
-import { IInitializationOptions } from '@dao-xyz/peerbit-dstore';
 
 @variant([0, 12])
-export class AccessStore extends Program {
+export class AccessStore extends Program implements RootProgram {
 
     @field({ type: DDocs })
     access: DDocs<AccessData>;
@@ -37,7 +35,6 @@ export class AccessStore extends Program {
             }
             this.access = new DDocs({
                 indexBy: 'id',
-                objectType: AccessData.name,
                 search: new DSearch({
                     query: new DQuery({})
                 })
@@ -141,17 +138,12 @@ export class AccessStore extends Program {
         return false;
     }
 
+    async start() {
+        await this.setup();
+    }
 
-    async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
-        this.access._clazz = AccessData;
-
-
-
-        /* await this.access.accessController.init(ipfs, publicKey, sign, options); */
-        await this.identityGraphController.init(ipfs, identity, { ...options, store: { ...options.store, canAppend: this.canAppend.bind(this) }, canRead: this.canRead.bind(this) });
-        await this.access.init(ipfs, identity, { ...options, store: { ...options.store, canAppend: this.canAppend.bind(this) }, canRead: this.canRead.bind(this) })
-        await this.trustedNetwork.init(ipfs, identity, { ...options })
-        await super.init(ipfs, identity, options);
-        return this;
+    async setup() {
+        this.identityGraphController.setup({ canRead: this.canRead.bind(this) })
+        this.access.setup({ type: AccessData, canAppend: this.canAppend.bind(this), canRead: this.canRead.bind(this) })
     }
 }

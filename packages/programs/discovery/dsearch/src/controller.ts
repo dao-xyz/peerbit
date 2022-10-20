@@ -16,7 +16,7 @@ export const getQueryTopic = (region: string): string => {
  */
 
 export type SearchContext = { address: Address };
-export type DSearchInitializationOptions<T> = ProgramInitializationOptions & { canRead?(signature: SignatureWithKey | undefined): Promise<boolean>, context: SearchContext, queryHandler: (query: QueryType) => Promise<Result[]> };
+export type DSearchInitializationOptions<T> = { canRead?(signature: SignatureWithKey | undefined): Promise<boolean>, context: SearchContext, queryHandler: (query: QueryType) => Promise<Result[]> };
 
 @variant([0, 2])
 export class DSearch<T> extends Program {
@@ -33,13 +33,11 @@ export class DSearch<T> extends Program {
         }
     }
 
-    public async init(ipfs: IPFS, identity: Identity, options: DSearchInitializationOptions<T>) {
-        await super.init(ipfs, identity, options)
+
+    public async setup(options: DSearchInitializationOptions<T>) {
         this._queryHandler = options.queryHandler;
         this._context = options.context;
-        this._query.
-        await this._query.init(ipfs, identity, { ...options, responseHandler: this._onQueryMessage.bind(this), queryType: QueryType, responseType: Results })
-        return this;
+        await this._query.setup({ canRead: options.canRead, responseHandler: this._onQueryMessage.bind(this), queryType: QueryType, responseType: Results })
     }
 
     async _onQueryMessage(query: QueryType, from?: SignKey): Promise<Results | undefined> {

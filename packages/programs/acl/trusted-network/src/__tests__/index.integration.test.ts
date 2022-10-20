@@ -1,9 +1,8 @@
 import { Session, Peer, waitForPeers } from '@dao-xyz/peerbit-test-utils'
-import { AnyRelation, createIdentityGraphStore, getFromByTo, getPathGenerator, getToByFrom, TrustedNetwork, KEY_OFFSET, PUBLIC_KEY_WIDTH } from '..';
+import { AnyRelation, createIdentityGraphStore, getFromByTo, getPathGenerator, getToByFrom, TrustedNetwork, KEY_OFFSET, PUBLIC_KEY_WIDTH, Relation } from '..';
 import { waitFor } from '@dao-xyz/time';
 import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { DocumentQueryRequest, Results, ResultWithSource } from '@dao-xyz/peerbit-dsearch';
-import { QueryRequestV0, QueryResponseV0, query } from '@dao-xyz/peerbit-dquery';
 import { Secp256k1PublicKey } from '@dao-xyz/peerbit-crypto';
 import { Wallet } from '@ethersproject/wallet'
 import { Identity } from '@dao-xyz/ipfs-log';
@@ -11,12 +10,12 @@ import { createStore } from '@dao-xyz/peerbit-test-utils';
 import { Level } from 'level';
 import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
-import { CachedValue, DefaultOptions, IInitializationOptions, IStoreOptions, Store } from '@dao-xyz/peerbit-dstore';
+import { CachedValue, DefaultOptions, IStoreOptions } from '@dao-xyz/peerbit-dstore';
 import Cache from '@dao-xyz/peerbit-cache';
-import { serialize } from '@dao-xyz/borsh';
-import { Program } from '@dao-xyz/peerbit-program';
+import { field, serialize, variant } from '@dao-xyz/borsh';
+import { Program, RootProgram } from '@dao-xyz/peerbit-program';
+import { DDocs } from '@dao-xyz/peerbit-ddoc';
 const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
 
 const createIdentity = async () => {
     const ed = await Ed25519Keypair.create();
@@ -24,6 +23,25 @@ const createIdentity = async () => {
         publicKey: ed.publicKey,
         sign: (data) => ed.sign(data)
     } as Identity
+}
+
+
+@variant([0, 242])
+class IdentityGraph extends Program implements RootProgram {
+
+    @field({ type: DDocs })
+    store: DDocs<Relation>
+
+    constructor(properties?: { store: DDocs<Relation> }) {
+        super();
+        if (properties) {
+            this.store = properties.store;
+        }
+    }
+    async start(): Promise<void> {
+        await this.store.setup({ type: Relation })
+    }
+
 }
 describe('index', () => {
     let session: Session, identites: Identity[], cacheStore: Level[]
@@ -83,7 +101,9 @@ describe('index', () => {
             })
             const c = (await Ed25519Keypair.create()).publicKey;
 
-            const store = createIdentityGraphStore({ name: session.peers[0].id.toString() })
+            const store = new IdentityGraph({
+                store: createIdentityGraphStore({ name: session.peers[0].id.toString() })
+            })
             await init(store, 0);
 
             const ab = new AnyRelation({
@@ -94,30 +114,30 @@ describe('index', () => {
                 to: c,
                 from: b
             })
-            await store.put(ab);
-            await store.put(bc);
+            await store.store.put(ab);
+            await store.store.put(bc);
 
             // Get relations one by one
-            const trustingC = await getFromByTo.resolve(c, store);
+            const trustingC = await getFromByTo.resolve(c, store.store);
             expect(trustingC).toHaveLength(1);
             expect(((trustingC[0] as ResultWithSource).source as AnyRelation).id).toEqual(bc.id);
 
-            const bIsTrusting = await getToByFrom.resolve(b, store);
+            const bIsTrusting = await getToByFrom.resolve(b, store.store);
             expect(bIsTrusting).toHaveLength(1);
             expect(((bIsTrusting[0] as ResultWithSource).source as AnyRelation).id).toEqual(bc.id);
 
 
-            const trustingB = await getFromByTo.resolve(b, store);
+            const trustingB = await getFromByTo.resolve(b, store.store);
             expect(trustingB).toHaveLength(1);
             expect(((trustingB[0] as ResultWithSource).source as AnyRelation).id).toEqual(ab.id);
 
-            const aIsTrusting = await getToByFrom.resolve(a, store);
+            const aIsTrusting = await getToByFrom.resolve(a, store.store);
             expect(aIsTrusting).toHaveLength(1);
             expect(((aIsTrusting[0] as ResultWithSource).source as AnyRelation).id).toEqual(ab.id);
 
             // Test generator
             const relationsFromGeneratorFromByTo = [];
-            for await (const relation of getPathGenerator(c, store, getFromByTo)) {
+            for await (const relation of getPathGenerator(c, store.store, getFromByTo)) {
                 relationsFromGeneratorFromByTo.push(relation);
             }
             expect(relationsFromGeneratorFromByTo).toHaveLength(2);
@@ -126,7 +146,7 @@ describe('index', () => {
 
 
             const relationsFromGeneratorToByFrom = [];
-            for await (const relation of getPathGenerator(a, store, getToByFrom)) {
+            for await (const relation of getPathGenerator(a, store.store, getToByFrom)) {
                 relationsFromGeneratorToByFrom.push(relation);
             }
             expect(relationsFromGeneratorToByFrom).toHaveLength(2);
@@ -142,7 +162,9 @@ describe('index', () => {
                 address: await Wallet.createRandom().getAddress()
             })
 
-            const store = createIdentityGraphStore({ name: session.peers[0].id.toString() })
+            const store = new IdentityGraph({
+                store: createIdentityGraphStore({ name: session.peers[0].id.toString() })
+            })
             await init(store, 0);
 
             const ab = new AnyRelation({
@@ -150,14 +172,14 @@ describe('index', () => {
                 from: a
             });
 
-            await store.put(ab);
+            await store.store.put(ab);
 
-            let trustingB = await getFromByTo.resolve(b, store);
+            let trustingB = await getFromByTo.resolve(b, store.store);
             expect(trustingB).toHaveLength(1);
             expect(((trustingB[0] as ResultWithSource).source as AnyRelation).id).toEqual(ab.id);
 
-            await store.del(ab.id);
-            trustingB = await getFromByTo.resolve(b, store);
+            await store.store.del(ab.id);
+            trustingB = await getFromByTo.resolve(b, store.store);
             expect(trustingB).toHaveLength(0);
         })
     })

@@ -1,6 +1,4 @@
-import { MaybeEncrypted, SignatureWithKey } from "@dao-xyz/peerbit-crypto"
-import { Entry, Payload } from "@dao-xyz/ipfs-log"
-import { variant } from '@dao-xyz/borsh';
+import { Entry } from "@dao-xyz/ipfs-log"
 import { Log } from "@dao-xyz/ipfs-log";
 
 

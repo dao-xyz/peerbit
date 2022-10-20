@@ -202,17 +202,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
         expect(err.message).toEqual('\'heads\' argument must be an array')
       })
 
-      it('creates default public AccessController if not defined', async () => {
-        const log = new Log(ipfs, {
-          ...signKey.keypair,
-          sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
-        },)
-        const anyoneCanAppend = await log._canAppend('any' as any, new DecryptedThing({
-          data: serialize(signKey)
-        }))
-        assert.notStrictEqual(log._canAppend, undefined)
-        expect(anyoneCanAppend).toEqual(true)
-      })
 
     })
 

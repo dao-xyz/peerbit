@@ -4,11 +4,12 @@ import { variant, field, vec, option, serialize, deserialize } from '@dao-xyz/bo
 import io from '@dao-xyz/io-utils';
 import { IPFS } from 'ipfs-core-types'
 import { arraysEqual, joinUint8Arrays, U8IntArraySerializer } from '@dao-xyz/borsh-utils';
-import { DecryptedThing, MaybeEncrypted, MaybeX25519PublicKey, PublicSignKey, SignKey, X25519PublicKey, PublicKeyEncryptionResolver, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
+import { DecryptedThing, MaybeEncrypted, MaybeX25519PublicKey, PublicSignKey, SignKey, X25519PublicKey, PublicKeyEncryptionResolver, SignatureWithKey, AccessError } from "@dao-xyz/peerbit-crypto";
 import { max, toBase64 } from './utils.js';
 import sodium from 'libsodium-wrappers';
 import { Encoding, JSON_ENCODING } from './encoding';
 import { Identity } from './identity.js';
+import { CanAppend } from './access';
 
 export const maxClockTimeReducer = <T>(res: bigint, acc: Entry<T>): bigint => max(res, acc.clock.time);
 
@@ -289,7 +290,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
     return toBase64((await sodium.crypto_generichash(32, seed || (await sodium.randombytes_buf(32)))));
   }
 
-  static async create<T>(properties: { ipfs: IPFS, gid?: string, gidSeed?: string, data: T, encoding?: Encoding<T>, next?: Entry<T>[], clock?: Clock, pin?: boolean, assertAllowed?: (entryData: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<SignatureWithKey>) => Promise<void>, encryption?: EntryEncryption, identity: Identity }): Promise<Entry<T>> {
+  static async create<T>(properties: { ipfs: IPFS, gid?: string, gidSeed?: string, data: T, encoding?: Encoding<T>, canAppend?: CanAppend<T>, next?: Entry<T>[], clock?: Clock, pin?: boolean, encryption?: EntryEncryption, identity: Identity }): Promise<Entry<T>> {
     if (!properties.encoding || !properties.next) {
       properties = {
         ...properties,
@@ -423,8 +424,11 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
       next, // Array of hashes
       /* refs: properties.refs, */
     })
-    if (properties.assertAllowed) {
-      await properties.assertAllowed(new DecryptedThing({ value: payloadToSave }), signatureEncrypted); // TODO fix types
+
+    if (properties.canAppend) {
+      if (! await properties.canAppend(new DecryptedThing({ value: payloadToSave }), signatureEncrypted)) {
+        throw new AccessError()
+      }
     }
     // Append hash and signature
     entry.hash = await Entry.toMultihash(properties.ipfs, entry, properties.pin)

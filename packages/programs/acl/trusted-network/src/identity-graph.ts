@@ -171,11 +171,9 @@ export const hasRelation = (from: Key, to: Key, db: DDocs<Relation>): IndexedVal
 export const createIdentityGraphStore = (props: { name?: string, queryRegion?: string }) => new DDocs<Relation>({
     indexBy: 'id',
     name: props?.name ? props?.name : '' + '_relation',
-    objectType: Relation.name,
     search: new DSearch({
         query: new DQuery({
             queryRegion: props.queryRegion
         })
-    }),
-    clazz: Relation
+    })
 })

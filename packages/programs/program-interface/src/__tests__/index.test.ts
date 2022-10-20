@@ -1,23 +1,26 @@
-import { field } from "@dao-xyz/borsh"
+import { field, variant } from "@dao-xyz/borsh"
 import { Store } from "@dao-xyz/peerbit-dstore";
 import { Program } from "..";
 
 describe('program', () => {
     it('can resolve stores and programs', () => {
-        class P extends Program {
+
+        @variant(0)
+        class P1 extends Program {
 
         }
-
-        class P2 extends P {
+        @variant(1)
+        class P2 extends Program {
             @field({ type: Store })
             store: Store<any>;
 
-            @field({ type: Program })
-            program: Program;
+            @field({ type: P1 })
+            program: P1;
 
             constructor() {
                 super();
                 this.store = new Store({});
+                this.program = new P1();
             }
         }
         const p = new P2();

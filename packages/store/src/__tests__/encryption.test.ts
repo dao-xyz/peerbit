@@ -24,7 +24,7 @@ import {
   createStore
 } from '@dao-xyz/peerbit-test-utils'
 import { Level } from 'level'
-import { Entry } from '@dao-xyz/ipfs-log'
+import { Entry, JSON_ENCODING } from '@dao-xyz/ipfs-log'
 import { delay, waitFor } from '@dao-xyz/time'
 import { Address } from '../io.js'
 const API = 'js-ipfs'
@@ -122,6 +122,7 @@ describe(`addOperation`, function () {
     }, options);
 
     await store._addOperation(data, {
+      encoding: JSON_ENCODING,
       reciever: {
         clock: recieverKey.keypair.publicKey,
         payload: recieverKey.keypair.publicKey,
@@ -176,6 +177,7 @@ describe(`addOperation`, function () {
 
     const reciever = await keystore.createEd25519Key();
     await store._addOperation(data, {
+      encoding: JSON_ENCODING,
       reciever: {
         clock: undefined,
         payload: reciever.keypair.publicKey,

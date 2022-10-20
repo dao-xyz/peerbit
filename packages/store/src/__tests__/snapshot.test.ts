@@ -3,7 +3,7 @@ import assert from 'assert'
 import { default as Cache } from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore';
 import { Store, DefaultOptions } from '../store.js'
-import { Entry } from '@dao-xyz/ipfs-log';
+import { Entry, JSON_ENCODING } from '@dao-xyz/ipfs-log';
 import { SimpleIndex } from './utils.js';
 import { jest } from '@jest/globals';
 
@@ -69,7 +69,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const writes = 10
 
       for (let i = 0; i < writes; i++) {
-        await store._addOperation({ step: i })
+        await store._addOperation({ step: i }, { encoding: JSON_ENCODING, })
       }
       const snapshot = await store.saveSnapshot()
       expect(snapshot[0].path.length).toEqual(46)
@@ -82,7 +82,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const writes = 10
 
       for (let i = 0; i < writes; i++) {
-        await store._addOperation({ step: i })
+        await store._addOperation({ step: i }, { encoding: JSON_ENCODING, })
       }
       await store.saveSnapshot()
       index._index = [];

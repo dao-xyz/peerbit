@@ -17,7 +17,7 @@ import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
 import { waitFor } from '@dao-xyz/time'
 import { Level } from 'level'
-import { Entry } from '@dao-xyz/ipfs-log'
+import { Entry, JSON_ENCODING } from '@dao-xyz/ipfs-log'
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -72,7 +72,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
             const entryCount = 10;
             for (let i = 0; i < entryCount; i++) {
-                await store._addOperation("i: " + i);
+                await store._addOperation("i: " + i, { encoding: JSON_ENCODING });
             }
 
             expect(store.oplog.heads.length).toEqual(1)
@@ -101,7 +101,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
             const entryCount = 10;
             for (let i = 0; i < entryCount; i++) {
-                await store._addOperation(i);
+                await store._addOperation(i, { encoding: JSON_ENCODING });
             }
 
             expect(store.oplog.heads.length).toEqual(1)

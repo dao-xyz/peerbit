@@ -22,7 +22,7 @@ import { Operation } from "@dao-xyz/peerbit-ddoc";
 import { v4 as uuid } from 'uuid';
 import { IPFS } from "ipfs-core-types";
 import { DSearchInitializationOptions } from "@dao-xyz/peerbit-dsearch";
-import { Program, ProgramInitializationOptions } from "@dao-xyz/peerbit-program";
+import { Program, ProgramInitializationOptions, RootProgram } from "@dao-xyz/peerbit-program";
 
 
 @variant(0)
@@ -53,7 +53,7 @@ export type AccessVerifier = (identity: PublicSignKey) => Promise<boolean>
 
 
 @variant([0, 3])
-export class DynamicAccessController<T> extends Program {
+export class DynamicAccessController<T> extends Program implements RootProgram {
 
     /*  _storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>; */
 
@@ -94,25 +94,17 @@ export class DynamicAccessController<T> extends Program {
     }
 
     async canRead(s: SignatureWithKey): Promise<boolean> {
-
-        if (await this._db.canRead(s)) {
-            return true; // Creator of entry does not own NFT or token, or PublicSignKey etc
-        }
-        return false;
+        return this._db.canRead(s)
     }
 
     async canAppend(payload: MaybeEncrypted<Payload<Operation<T>>>, identityEncrypted: MaybeEncrypted<SignatureWithKey>) {
-        //const identity = (await identityEncrypted.decrypt(this._db.access.oplog._encryption?.getAnyKeypair || (() => Promise.resolve(undefined)))).getValue(SignatureWithKey).publicKey;
-
-        if (await this._db.canAppend(payload, identityEncrypted)) {
-            return true; // Creator of entry does not own NFT or token, or PublicSignKey etc
-        }
-        return false;
+        return this._db.canAppend(payload, identityEncrypted)
     }
 
+    async start(): Promise<void> {
 
-
-
-
-
+    }
+    async setup() {
+        this._db.setup();
+    }
 }

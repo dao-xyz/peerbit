@@ -162,9 +162,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
       expect(log1.values.length).toEqual(1)
       expect(log1.values[0].payload.getValue()).toEqual('one')
     })
-
+    /* 
     it('throws an error if entry doesn\'t have append access', async () => {
-      const canAppend: CanAppend<string> = () => Promise.resolve(false)
       const log1 = new Log<string>(ipfs, {
         ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
@@ -172,7 +171,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const log2 = new Log<string>(ipfs, {
         ...signKey2.keypair,
         sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
-      }, { logId: 'A', canAppend })
+      }, { logId: 'A' })
 
       let err
       try {
@@ -186,27 +185,27 @@ Object.keys(testAPIs).forEach((IPFS) => {
       expect(err).toEqual(`Error: Could not append entry, key "${signKey2.keypair.publicKey}" is not allowed to write to the log`)
     })
 
-    it('throws an error upon join if entry doesn\'t have append access', async () => {
-      const canAppend: CanAppend<any> = async (_entry: any, signature: MaybeEncrypted<SignatureWithKey>) => signature.decrypted.getValue(SignatureWithKey).publicKey.equals(signKey.keypair.publicKey);
-      const log1 = new Log<string>(ipfs, {
-        ...signKey.keypair,
-        sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
-      }, { logId: 'A', canAppend })
-      const log2 = new Log<string>(ipfs, {
-        ...signKey2.keypair,
-        sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
-      }, { logId: 'A' })
-
-      let err
-      try {
-        await log1.append('one')
-        await log2.append('two')
-        await log1.join(log2)
-      } catch (e: any) {
-        err = e.toString()
-      }
-
-      expect(err).toEqual(`Error: Could not append Entry<T>, key "${signKey2.keypair.publicKey}" is not allowed to write to the log`)
-    })
+  it('throws an error upon join if entry doesn\'t have append access', async () => {
+        const canAppend: CanAppend<any> = async (_entry: any, signature: MaybeEncrypted<SignatureWithKey>) => signature.decrypted.getValue(SignatureWithKey).publicKey.equals(signKey.keypair.publicKey);
+        const log1 = new Log<string>(ipfs, {
+          ...signKey.keypair,
+          sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
+        }, { logId: 'A' })
+        const log2 = new Log<string>(ipfs, {
+          ...signKey2.keypair,
+          sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
+        }, { logId: 'A' })
+  
+        let err
+        try {
+          await log1.append('one')
+          await log2.append('two')
+          await log1.join(log2)
+        } catch (e: any) {
+          err = e.toString()
+        }
+  
+        expect(err).toEqual(`Error: Could not append Entry<T>, key "${signKey2.keypair.publicKey}" is not allowed to write to the log`)
+      }) */
   })
 })

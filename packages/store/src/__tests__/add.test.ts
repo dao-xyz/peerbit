@@ -3,7 +3,7 @@ import assert, { rejects } from 'assert'
 import { Store, DefaultOptions, HeadsCache } from '../store.js'
 import { default as Cache } from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore"
-import { Entry } from '@dao-xyz/ipfs-log'
+import { Entry, JSON_ENCODING } from '@dao-xyz/ipfs-log'
 import { SimpleIndex } from './utils.js'
 import { Controller } from 'ipfsd-ctl'
 import { IPFS } from 'ipfs-core-types'
@@ -11,7 +11,7 @@ import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { delay, waitFor } from '@dao-xyz/time';
 import { fileURLToPath } from 'url';
 import { jest } from '@jest/globals';
-import path, { dirname } from 'path';
+import path from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -97,7 +97,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const data = { data: 12345 }
 
 
-      await store._addOperation(data).then((entry) => {
+      await store._addOperation(data, { encoding: JSON_ENCODING }).then((entry) => {
         expect(entry).toBeInstanceOf(Entry)
       }).catch(error => {
         rejects(error);
@@ -140,7 +140,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert(Address.isValid(store.address));
 
       for (let i = 0; i < writes; i++) {
-        await store._addOperation({ step: i })
+        await store._addOperation({ step: i }, { encoding: JSON_ENCODING })
       }
 
       await waitFor(() => done);
