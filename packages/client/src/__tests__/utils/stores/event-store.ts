@@ -45,8 +45,12 @@ export class EventStore<T> extends Program {
     }
 
     async init(ipfs: any, identity: Identity, options: IInitializationOptions<Operation<T>>) {
+        const i = await super.init(ipfs, identity, options);
+        if (i !== this) {
+            return i as this;
+        }
         await this.store.init(ipfs, identity, { ...options, onUpdate: this._index.updateIndex.bind(this._index) })
-        return super.init(ipfs, identity, options)
+        return this;
     }
 
     add(data: any, options?: {

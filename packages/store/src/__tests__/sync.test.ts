@@ -15,7 +15,6 @@ import { jest } from '@jest/globals';
 
 import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
-import { EntryWithRefs } from '../entry-with-refs.js'
 import { waitFor } from '@dao-xyz/time'
 import { Level } from 'level'
 import { Entry } from '@dao-xyz/ipfs-log'
@@ -107,7 +106,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
             expect(store.oplog.heads.length).toEqual(1)
             expect(store.oplog.values.length).toEqual(entryCount);
-            await store2.sync([new EntryWithRefs({ entry: store.oplog.heads[0], references: [store.oplog.values[3], store.oplog.values[6]] })]);
+            await store2.sync([store.oplog.heads[0], store.oplog.values[3], store.oplog.values[6]]);
             await waitFor(() => store2.oplog.values.length == entryCount);
             expect(progressCallbackEntries).toHaveLength(10);
             expect(progressCallbackEntries[0].payload.getValue()).toEqual(9); // because head

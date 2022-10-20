@@ -40,7 +40,7 @@ const test = tests[0];
 describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
   jest.setTimeout(config.timeout)
 
-  const entryCount = 65
+  const entryCount = 10
 
   let ipfsd: Controller, ipfs: IPFS, orbitdb1: OrbitDB, db: EventStore<string>, address: string
 
@@ -89,7 +89,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
     })
 
     it('loads database partially', async () => {
-      const amount = 33
+      const amount = 3
       db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
       await db.store.load(amount)
       const items = db.iterator({ limit: -1 }).collect()

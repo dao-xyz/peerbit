@@ -2,7 +2,6 @@ import PQueue from 'p-queue'
 import { CanAppend, Identity, Log } from '@dao-xyz/ipfs-log'
 import { IPFS } from 'ipfs-core-types'
 import { Entry } from '@dao-xyz/ipfs-log';
-import { EntryWithRefs } from './entry-with-refs.js';
 
 const flatMap = (res: any[], val: any) => res.concat(val)
 
@@ -12,17 +11,13 @@ interface Store<T> {
   _oplog: Log<T>;
   _ipfs: IPFS;
   identity: Identity,
-  id: string;
   canAppend?: CanAppend<T>
 }
 
-const entryHash = (e: Entry<any> | EntryWithRefs<any> | string) => {
+const entryHash = (e: Entry<any> | string) => {
   let h: string;
   if (e instanceof Entry) {
     h = e.hash;
-  }
-  else if (e instanceof EntryWithRefs) {
-    h = e.entry.hash
   }
   else { h = e }
   return h;
@@ -36,7 +31,7 @@ export class Replicator<T> {
   _fetching: any;
   _fetched: any;
   onReplicationComplete?: (logs: Log<any>[]) => void
-  onReplicationQueued?: (entry: Entry<T> | EntryWithRefs<T>) => void;
+  onReplicationQueued?: (entry: Entry<T>) => void;
   onReplicationProgress?: (entry: Entry<T>) => void;
 
   constructor(store: Store<any>, concurrency?: number) {
@@ -107,7 +102,7 @@ export class Replicator<T> {
     Process new heads.
     Param 'entries' is an Array of Entry instances or strings (of CIDs).
    */
-  async load(entries: (Entry<T> | EntryWithRefs<T> | string)[]) {
+  async load(entries: (Entry<T> | string)[]) {
     try {
       // Add entries to the replication queue
       this._addToQueue(entries)
@@ -116,15 +111,15 @@ export class Replicator<T> {
     }
   }
 
-  async _addToQueue(entries: (Entry<T> | EntryWithRefs<T> | string)[]) {
+  async _addToQueue(entries: (Entry<T> | string)[]) {
     // Function to determine if an entry should be fetched (ie. do we have it somewhere already?)
-    const shouldExclude = (e: Entry<T> | EntryWithRefs<T> | string) => {
+    const shouldExclude = (e: Entry<T> | string) => {
       let h = entryHash(e);
       return h && this._store._oplog && (this._store._oplog.has(h) || this._fetching[h] !== undefined || this._fetched[h])
     }
 
     // A task to process a given entries
-    const createReplicationTask = (e: Entry<T> | EntryWithRefs<T> | string) => {
+    const createReplicationTask = (e: Entry<T> | string) => {
       // Add to internal "currently fetching" cache
       const hash = entryHash(e);
       this._fetching[hash] = true
@@ -178,7 +173,7 @@ export class Replicator<T> {
     this._q.start()
   }
 
-  async _replicateLog(entry: Entry<T> | EntryWithRefs<T> | string): Promise<Log<T>> {
+  async _replicateLog(entry: Entry<T> | string): Promise<Log<T>> {
 
 
     // Notify the Store that we made progress
@@ -194,10 +189,10 @@ export class Replicator<T> {
     }
 
     // Fetch and load a log from the entry hash
-    const log = entry instanceof Entry || entry instanceof EntryWithRefs ? await Log.fromEntry(
+    const log = entry instanceof Entry ? await Log.fromEntry(
       this._store._ipfs,
       this._store.identity,
-      entry instanceof Entry ? entry : [entry.entry, ...(entry.references).filter(x => !shouldExclude(x.hash))],
+      entry,
       {
         // TODO, load all store options?
         canAppend: this._store.canAppend,

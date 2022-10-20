@@ -121,10 +121,5 @@ Object.keys(testAPIs).forEach(API => {
             expect(Object.keys((orbitdb2.getNetwork(network.address) as TrustedNetwork).trustGraph._index._index)).toHaveLength(0); // because peer id is not trusted so it will not recieve heads
 
         })
-
-        it('it will try to connect to new peers', async () => {
-            const network = await orbitdb1.openNetwork(new TrustedNetwork({ name: 'connect', rootTrust: orbitdb1.identity.publicKey }), { directory: dbPath1 })
-
-        })
     })
 })

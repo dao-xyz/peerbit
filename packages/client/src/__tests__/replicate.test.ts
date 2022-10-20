@@ -91,7 +91,6 @@ Object.keys(testAPIs).forEach(API => {
 
     it('replicates database of 1 entry', async () => {
 
-      await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
 
       options = Object.assign({}, options, { directory: dbPath2 })
       let done = false;
@@ -101,16 +100,18 @@ Object.keys(testAPIs).forEach(API => {
 
           const db1Entries: Entry<Operation<string>>[] = db1.iterator({ limit: -1 }).collect()
           expect(db1Entries.length).toEqual(1)
-          expect(await orbitdb1.findReplicators(replicationTopic, true, db1Entries[0].gid)).toContainValues([orbitdb1.id, orbitdb2.id].map(p => p.toString()));
+          expect(await orbitdb1.findReplicators(replicationTopic, true, db1Entries[0].gid, orbitdb1._minReplicas)).toContainValues([orbitdb1.id, orbitdb2.id].map(p => p.toString()));
           expect(db1Entries[0].payload.getValue().value).toEqual(value)
 
           const db2Entries: Entry<Operation<string>>[] = db2.iterator({ limit: -1 }).collect()
           expect(db2Entries.length).toEqual(1)
-          expect(await (orbitdb2.findReplicators(replicationTopic, true, db2Entries[0].gid))).toContainValues([orbitdb1.id, orbitdb2.id].map(p => p.toString()));
+          expect(await (orbitdb2.findReplicators(replicationTopic, true, db2Entries[0].gid, orbitdb1._minReplicas))).toContainValues([orbitdb1.id, orbitdb2.id].map(p => p.toString()));
           expect(db2Entries[0].payload.getValue().value).toEqual(value)
           done = true;
         }
       })
+      await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
+
       await waitFor(() => orbitdb1._directConnections.size === 1);
       await waitFor(() => orbitdb2._directConnections.size === 1);
 

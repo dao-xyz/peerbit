@@ -15,17 +15,15 @@ import { IPFS } from 'ipfs-core-types'
 import { serialize, deserialize } from '@dao-xyz/borsh';
 import { Snapshot } from './snapshot.js'
 import { AccessError, MaybeEncrypted, PublicKeyEncryptionResolver, SignatureWithKey } from "@dao-xyz/peerbit-crypto"
-import { Address, load, save } from './io.js'
 
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
-import { Saveable } from './store-like.js'
 import { joinUint8Arrays } from '@dao-xyz/borsh-utils';
 // @ts-ignore
 import Logger from 'logplease'
 import { EncodingType } from './encoding.js'
-import { EntryWithRefs } from './entry-with-refs.js'
-
+import { Address, Addressable, load, save } from './io.js'
+import { SystemBinaryPayload } from '@dao-xyz/bpayload'
 
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
 Logger.setLogLevel('ERROR')
@@ -205,17 +203,23 @@ export const DefaultOptions: IInitializationOptionsDefault<any> = {
   }
 }
 
-export const checkStoreName = (name: string) => {
-  if (name.indexOf("/") !== -1) {
-    throw new Error("Name contain '/' which is not allowed since this character used for path separation")
-  }
+
+
+export interface Initiable<T> {
+  init?(ipfs: IPFS, identity: Identity, options: IInitializationOptions<T>): Promise<this>;
+}
+export interface Saveable {
+  save(ipfs: any, options?: {
+    format?: string;
+    pin?: boolean;
+    timeout?: number;
+  }): Promise<Address>
 }
 
 
 
-
 @variant(0)
-export class Store<T> {
+export class Store<T> extends SystemBinaryPayload implements Addressable, Initiable<T>, Saveable {
 
   @field({ type: 'string' })
   name: string;
@@ -226,10 +230,8 @@ export class Store<T> {
   canAppend?: (payload: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<SignatureWithKey>) => Promise<boolean>;
   // An access controller that is note part of the store manifest, usefull for circular store -> access controller -> store structures
 
-  id: string;
   options: IInitializationOptions<T>;
   identity: Identity;
-  address: Address;
 
   /*   events: EventEmitter;
    */
@@ -239,6 +241,8 @@ export class Store<T> {
   queuePath: string;
   manifestPath: string;
   initialized: boolean;
+  address: Address
+
   /*   allowForks: boolean = true;
    */
 
@@ -254,11 +258,9 @@ export class Store<T> {
 
 
   constructor(properties?: { name?: string, parent?: { name: string }, encoding?: EncodingType }) {
-
+    super();
     if (properties) {
-      const name = (properties.name || uuid());
-      checkStoreName(name)
-      this.name = (properties.parent?.name ? (properties.parent?.name + '/') : '') + name;
+      this.name = (properties.parent?.name ? (properties.parent?.name + '/') : '') + (properties.name || uuid());
       this._encoding = properties.encoding || EncodingType.JSON
     }
   }
@@ -277,24 +279,25 @@ export class Store<T> {
     this.options = opts
 
 
-    const thisAlternative = await this.options.saveOrResolve(ipfs, this);
-    if (thisAlternative !== this) {
-      return thisAlternative as this;
+    // Save manifest
+    const saveOrResolved = await options.saveOrResolve(ipfs, this);
+    if (saveOrResolved !== this) {
+      return saveOrResolved as this;
+    }
+    if (!this.address) {
+      throw new Error("Expecting adddress")
     }
 
     // Create IDs, names and paths
-    const address = this.address; // will exist since options.saveOrResolve will save
-    this.id = address.toString();
-    this.address = address as Address
     this.identity = identity;
     this.canAppend = options.canAppend;
 
     /* this.events = new EventEmitter() */
-    this.remoteHeadsPath = path.join(this.id, '_remoteHeads')
-    this.localHeadsPath = path.join(this.id, '_localHeads')
-    this.snapshotPath = path.join(this.id, 'snapshot')
-    this.queuePath = path.join(this.id, 'queue')
-    this.manifestPath = path.join(this.id, '_manifest')
+    this.remoteHeadsPath = path.join(this.address.toString(), '_remoteHeads')
+    this.localHeadsPath = path.join(this.address.toString(), '_localHeads')
+    this.snapshotPath = path.join(this.address.toString(), 'snapshot')
+    this.queuePath = path.join(this.address.toString(), 'queue')
+    this.manifestPath = path.join(this.address.toString(), '_manifest')
 
     /* this.sharding.init(options.requestNewShard); */
 
@@ -325,9 +328,9 @@ export class Store<T> {
 
 
     try {
-      const onReplicationQueued = async (entry: Entry<T> | EntryWithRefs<T>) => {
+      const onReplicationQueued = async (entry: Entry<T>) => {
         // Update the latest entry state (latest is the entry with largest clock time)
-        const e = entry instanceof Entry ? entry : entry.entry;
+        const e = entry
         try {
           await e.getClock();
           this._recalculateReplicationMax(e.clock.time + 1n)
@@ -386,6 +389,7 @@ export class Store<T> {
 
     }
     this.initialized = true;
+
     return this;
   }
 
@@ -449,7 +453,7 @@ export class Store<T> {
 
   get logOptions(): LogOptions<T> {
     return {
-      logId: this.id,
+      logId: this.address.toString(),
       encoding: this.options.encoding,
       encryption: this.options.encryption,
       canAppend: (payload: any, key: any) => (this.canAppend || ((_, __) => true))(payload, key),
@@ -535,7 +539,6 @@ export class Store<T> {
    * Drops a database and removes local data
    */
   async drop() {
-    this.initialized = false;
 
     if (!this._oplog && !this._cache) {
       return; // already dropped
@@ -557,6 +560,9 @@ export class Store<T> {
     // TODO fix types
     this._oplog = undefined as any;
     this._cache = undefined as any;
+
+    this.initialized = false; // call this last because (close() expect initialized to be able to function)
+
 
   }
 
@@ -602,7 +608,7 @@ export class Store<T> {
     this.options.onReady && this.options.onReady(this)
   }
 
-  async sync(heads: (Entry<T> | EntryWithRefs<T>)[]) {
+  async sync(heads: (Entry<T>)[]) {
 
 
     /* const mem = await this.checkMemory();
@@ -650,29 +656,27 @@ export class Store<T> {
     } */
 
 
-    const handle = async (headToHandle: Entry<T> | EntryWithRefs<T>) => {
+    const handle = async (headToHandle: Entry<T>) => {
 
       // TODO Fix types
       if (this.canAppend) {
-        const headsToCheck = headToHandle instanceof Entry ? [headToHandle] : [headToHandle.entry, ...headToHandle.references];
-        for (const h of headsToCheck) {
-          h.init({
-            encryption: this._oplog._encryption
-          })
-          try {
-            // TODO add can append, because it referenses things I know, or is a new root. BTW new roots should only be accepted if the access controller allows it
-            const canAppend = await ((this.canAppend as CanAppend<T>)(h._payload, h._signature))
-            if (!canAppend) {
-              logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
-              return Promise.resolve(null)
-            }
-          } catch (error) {
-            return Promise.resolve(null);
+        const headsToCheck = headToHandle;
+        headsToCheck.init({
+          encryption: this._oplog._encryption
+        })
+        try {
+          // TODO add can append, because it referenses things I know, or is a new root. BTW new roots should only be accepted if the access controller allows it
+          const canAppend = await ((this.canAppend as CanAppend<T>)(headsToCheck._payload, headsToCheck._signature))
+          if (!canAppend) {
+            logger.info('Warning: Given input entry is not allowed in this log and was discarded (no write access).')
+            return Promise.resolve(null)
           }
+        } catch (error) {
+          return Promise.resolve(null);
         }
       }
 
-      const head = headToHandle instanceof Entry ? headToHandle : headToHandle.entry;
+      const head = headToHandle;
       const hash = await io.write(this._ipfs, 'dag-cbor', head.serialize(), { links: Entry.IPLD_LINKS })
       if (hash !== head.hash) {
         throw new Error("Head hash didn\'t match the contents")
@@ -686,22 +690,6 @@ export class Store<T> {
       })
   }
 
-  async save(ipfs: any, options?: {
-    format?: string;
-    pin?: boolean;
-    timeout?: number;
-  }): Promise<Address> {
-    const address = await save(ipfs, this, options)
-    this.address = address;
-    return address;
-  }
-
-  static load(ipfs: IPFS, address: Address, options?: {
-    timeout?: number;
-  }): Promise<Store<any>> {
-    return load(ipfs, address, Store, options) as Promise<Store<any>>
-  }
-
   loadMoreFrom(entries: (string | Entry<any>)[]) {
     this._replicator.load(entries)
   }
@@ -709,7 +697,6 @@ export class Store<T> {
   get replicate(): boolean {
     return !!this.options.replicate;
   }
-
 
 
   async getCachedHeads(): Promise<Entry<T>[]> {
@@ -874,5 +861,21 @@ export class Store<T> {
 
   clone(): Store<T> {
     return deserialize(serialize(this), this.constructor as any as Constructor<any>);
+  }
+
+  async save(ipfs: IPFS, options?: {
+    format?: string;
+    pin?: boolean;
+    timeout?: number;
+  }): Promise<Address> {
+    const address = await save(ipfs, this, options)
+    this.address = address;
+    return address;
+  }
+
+  static load(ipfs: IPFS, address: Address, options?: {
+    timeout?: number;
+  }): Promise<Store<any>> {
+    return load(ipfs, address, Store, options) as Promise<Store<any>>
   }
 }

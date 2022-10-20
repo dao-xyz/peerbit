@@ -1,6 +1,6 @@
-import { Address } from "../io"
 
 import assert from 'assert'
+import { Address } from '../io'
 
 describe('Parse Address', () => {
   it('throws an error if address is empty', () => {

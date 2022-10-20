@@ -1,4 +1,3 @@
-
 import assert from 'assert'
 import fs from 'fs-extra'
 import path from 'path'
@@ -38,11 +37,6 @@ describe(`orbit-db - Create & Open `, function () {
   let localDataPath: string
   let replicationTopic: string
 
-  const filterFunc = (src: string, dest: string) => {
-    // windows has problems copying these files...
-    return !(src.includes('LOG') || src.includes('LOCK'))
-  }
-
   beforeAll(async () => {
     rmrf.sync(dbPath)
     ipfsd = await startIpfs('js-ipfs', config.daemon1)
@@ -55,16 +49,18 @@ describe(`orbit-db - Create & Open `, function () {
        await fs.copy(path.join(ipfsFixturesDir, 'datastore'), path.join(ipfsd.path, 'datastore'), { filter: filterFunc })
   */
     orbitdb = await OrbitDB.createInstance(ipfs, { directory: dbPath })
+
   })
 
   afterAll(async () => {
-    if (orbitdb)
+    if (orbitdb) {
       await orbitdb.stop()
+    }
 
-    if (ipfsd)
+    if (ipfsd) {
       await stopIpfs(ipfsd)
+    }
 
-    rmrf.sync(ipfsFixturesDir)
   })
 
   describe('Create', function () {
@@ -87,7 +83,7 @@ describe(`orbit-db - Create & Open `, function () {
       })
 
       it('saves database manifest reference locally', async () => {
-        const address = db.store.id
+        const address = db.store.address.toString();
         const manifestHash = address.split('/')[2]
         await db.store._cache._store.open()
         const value = await db.store._cache.get(path.join(address, '/_manifest'))
@@ -114,15 +110,15 @@ describe(`orbit-db - Create & Open `, function () {
   describe('Open', function () {
 
     it('opens a database - name only', async () => {
-      const db = await orbitdb.open(new EventStore({ name: 'abc' }), replicationTopic, {})
+      const db = await orbitdb.open(new EventStore({}), replicationTopic, {})
       assert.equal(db.address.toString().indexOf('/peerbit'), 0)
       assert.equal(db.address.toString().indexOf('zd'), 9)
       await db.store.drop()
     })
 
     it('opens a database - with a different identity', async () => {
-      const signKey = await orbitdb.keystore.createEd25519Key({ id: new Uint8Array([0]) });
-      const db = await orbitdb.open(new EventStore({ name: 'abc' }), replicationTopic, { identity: { ...signKey.keypair, sign: (data) => signKey.keypair.sign(data) } })
+      const signKey = await orbitdb.keystore.createEd25519Key();
+      const db = await orbitdb.open(new EventStore({}), replicationTopic, { identity: { ...signKey.keypair, sign: (data) => signKey.keypair.sign(data) } })
       assert.equal(db.address.toString().indexOf('/peerbit'), 0)
       assert.equal(db.address.toString().indexOf('zd'), 9)
       expect(db.store.identity.publicKey.equals(signKey.keypair.publicKey));
@@ -130,8 +126,8 @@ describe(`orbit-db - Create & Open `, function () {
     })
 
     it('opens the same database - from an address', async () => {
-      const signKey = await orbitdb.keystore.createEd25519Key({ id: new Uint8Array([321]) });
-      const db = await orbitdb.open(new EventStore({ name: 'abc' }), replicationTopic, { identity: { ...signKey.keypair, sign: (data) => signKey.keypair.sign(data) } })
+      const signKey = await orbitdb.keystore.createEd25519Key();
+      const db = await orbitdb.open(new EventStore({}), replicationTopic, { identity: { ...signKey.keypair, sign: (data) => signKey.keypair.sign(data) } })
       const db2 = await orbitdb.open(await Store.load(orbitdb._ipfs, db.store.address), replicationTopic,)
       assert.equal(db2.address.toString().indexOf('/peerbit'), 0)
       assert.equal(db2.address.toString().indexOf('zd'), 9)
@@ -140,7 +136,7 @@ describe(`orbit-db - Create & Open `, function () {
     })
 
     it('doesn\'t open a database if we don\'t have it locally', async () => {
-      const db = await orbitdb.open(new EventStore({ name: 'abcabc' }), replicationTopic, {})
+      const db = await orbitdb.open(new EventStore({}), replicationTopic, {})
       const address = new Address(db.address.cid.slice(0, -1) + 'A')
       await db.store.drop()
       return new Promise(async (resolve, reject) => {
@@ -165,7 +161,7 @@ describe(`orbit-db - Create & Open `, function () {
      }) */
 
     it('open the database and it has the added entries', async () => {
-      const db = await orbitdb.open(new EventStore({ name: 'ZZZ' }), replicationTopic, {})
+      const db = await orbitdb.open(new EventStore({}), replicationTopic, {})
       await db.add('hello1')
       await db.add('hello2')
       await db.store.close()
@@ -184,14 +180,7 @@ describe(`orbit-db - Create & Open `, function () {
   })
 
   describe("Close", function () {
-    beforeEach(async () => {
-      try {
-        if (orbitdb) await orbitdb.stop()
-      } catch (error) {
-        // can cause issues with Level because opening the thing in beforeAll is not synchronous
-      }
-      orbitdb = await OrbitDB.createInstance(ipfs, { directory: dbPath })
-    })
+
     it('closes a custom store', async () => {
       const directory = path.join(dbPath, "custom-store")
       const db = await orbitdb.open(new EventStore({}), replicationTopic, { directory })
@@ -228,23 +217,27 @@ describe(`orbit-db - Create & Open `, function () {
       const db3 = await orbitdb.open(new EventStore({ name: 'xyz3' }), replicationTopic, { directory })
       const db4 = await orbitdb.open(new EventStore({ name: 'xyz4' }), replicationTopic, { directory: directory2 })
       const db5 = await orbitdb.open(new EventStore({ name: 'xyz5' }), replicationTopic, {})
-      await db1.store.close()
-      await db2.store.close()
-      await db4.store.close()
+      try {
+        await db1.store.close()
+        await db2.store.close()
+        await db4.store.close()
 
-      expect(orbitdb.cache._store.status).toEqual('open')
-      expect(db2.store._cache._store.status).toEqual('open')
-      expect(db3.store._cache._store.status).toEqual('open')
-      expect(db4.store._cache._store.status).toEqual('closed')
+        expect(orbitdb.cache._store.status).toEqual('open')
+        expect(db2.store._cache._store.status).toEqual('open')
+        expect(db3.store._cache._store.status).toEqual('open')
+        expect(db4.store._cache._store.status).toEqual('closed')
 
-      await db3.store.close()
-      await db5.store.close()
+        await db3.store.close()
+        await db5.store.close()
 
-      expect(orbitdb.cache._store.status).toEqual('closed')
-      expect(db2.store._cache._store.status).toEqual('closed')
-      expect(db3.store._cache._store.status).toEqual('closed')
-      expect(db4.store._cache._store.status).toEqual('closed')
-      expect(db5.store._cache._store.status).toEqual('closed')
+        expect(orbitdb.cache._store.status).toEqual('closed')
+        expect(db2.store._cache._store.status).toEqual('closed')
+        expect(db3.store._cache._store.status).toEqual('closed')
+        expect(db4.store._cache._store.status).toEqual('closed')
+        expect(db5.store._cache._store.status).toEqual('closed')
+      } catch (error) {
+        const x = 123;
+      }
 
     })
   })

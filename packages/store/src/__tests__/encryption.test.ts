@@ -6,7 +6,6 @@ import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore"
 import { PublicKeyEncryptionResolver, X25519PublicKey } from '@dao-xyz/peerbit-crypto'
 import { AccessError } from "@dao-xyz/peerbit-crypto"
 import { SimpleIndex } from './utils.js'
-import { Address } from '../io.js'
 import { Controller } from 'ipfsd-ctl'
 import { IPFS } from 'ipfs-core-types'
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
@@ -27,6 +26,7 @@ import {
 import { Level } from 'level'
 import { Entry } from '@dao-xyz/ipfs-log'
 import { delay, waitFor } from '@dao-xyz/time'
+import { Address } from '../io.js'
 const API = 'js-ipfs'
 describe(`addOperation`, function () {
   let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, keystore: Keystore, identityStore: Level, store: Store<any>, cacheStore: Level, senderKey: KeyWithMeta<Ed25519Keypair>, recieverKey: KeyWithMeta<Ed25519Keypair>, encryption: PublicKeyEncryptionResolver

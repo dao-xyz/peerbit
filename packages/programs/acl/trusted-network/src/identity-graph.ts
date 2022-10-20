@@ -111,7 +111,7 @@ export const hasPathToTarget = async (start: Key, target: (key: Key) => boolean,
 }
 
 
-@variant(3)
+@variant(10)
 export class Relation extends SystemBinaryPayload {
 
     @field({ type: 'string' })

@@ -4,7 +4,7 @@ import { SystemBinaryPayload } from "@dao-xyz/bpayload";
 export type IdentityProviderType = 'orbitdb' | 'ethereum' | 'solana';
 
 
-@variant(0)
+@variant(2)
 export class Crypto extends SystemBinaryPayload {
 
 }

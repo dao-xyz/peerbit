@@ -3,7 +3,7 @@ import assert from 'assert'
 import rmrf from 'rimraf'
 import { delay, waitFor } from '@dao-xyz/time'
 
-import { OrbitDB } from '../orbit-db'
+import { OrbitDB, StoreWithConfig } from '../orbit-db'
 
 import { EventStore, Operation } from './utils/stores/event-store'
 import { jest } from '@jest/globals';
@@ -21,6 +21,7 @@ import {
     connectPeers,
     waitForPeers,
 } from '@dao-xyz/peerbit-test-utils'
+import { Store } from '@dao-xyz/peerbit-dstore'
 
 const orbitdbPath1 = './orbitdb/tests/write-only/1'
 const orbitdbPath2 = './orbitdb/tests/write-only/2'
@@ -95,7 +96,7 @@ Object.keys(testAPIs).forEach(API => {
 
         it('write 1 entry replicate false', async () => {
 
-            await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
+            await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
             db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, { directory: dbPath2, replicate: false })
 
             await db1.add('hello');
@@ -110,7 +111,7 @@ Object.keys(testAPIs).forEach(API => {
 
         it('encrypted clock sync write 1 entry replicate false', async () => {
 
-            await waitForPeers(ipfs2, [orbitdb1.id], db1.address.toString())
+            await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
             const encryptionKey = await orbitdb1.keystore.createEd25519Key({ id: 'encryption key', group: replicationTopic });
             db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, { directory: dbPath2, replicate: false })
 
@@ -144,13 +145,14 @@ Object.keys(testAPIs).forEach(API => {
 
             expect(store.store.oplog.heads).toHaveLength(1);
 
-            await waitFor(() => Object.values(orbitdb2.stores[replicationTopic]).length > 0, { timeout: 20 * 1000, delayInterval: 50 });
+            await waitFor(() => Object.values(orbitdb2.programs[replicationTopic]).length > 0, { timeout: 20 * 1000, delayInterval: 50 });
 
-            const replicatedStore = Object.values(orbitdb2.stores[replicationTopic])[0];
-            await waitFor(() => replicatedStore.oplog.values.length == 2);
+            const replicatedProgramAndStores = Object.values(orbitdb2.programs[replicationTopic])[0];
+            const replicatedStore: StoreWithConfig = replicatedProgramAndStores.stores.values().next().value
+            await waitFor(() => replicatedStore.store.oplog.values.length == 2);
             expect(replicatedStore).toBeDefined();
-            expect(replicatedStore.oplog.heads).toHaveLength(1);
-            expect(replicatedStore.oplog.heads[0].hash).toEqual(world.hash);
+            expect(replicatedStore.store.oplog.heads).toHaveLength(1);
+            expect(replicatedStore.store.oplog.heads[0].hash).toEqual(world.hash);
 
         })
     })

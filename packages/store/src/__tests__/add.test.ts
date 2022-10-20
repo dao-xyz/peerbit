@@ -5,7 +5,6 @@ import { default as Cache } from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore"
 import { Entry } from '@dao-xyz/ipfs-log'
 import { SimpleIndex } from './utils.js'
-import { Address } from '../io.js'
 import { Controller } from 'ipfsd-ctl'
 import { IPFS } from 'ipfs-core-types'
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
@@ -26,6 +25,7 @@ import {
   createStore
 } from '@dao-xyz/peerbit-test-utils'
 import { Level } from 'level'
+import { Address } from '../io.js'
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`addOperation ${IPFS}`, function () {

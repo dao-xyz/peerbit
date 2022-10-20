@@ -151,12 +151,14 @@ export class TrustedNetwork extends Program {
     }
 
     async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<any>): Promise<this> {
-        const typeMap = options.typeMap ? { ...options.typeMap } : {}
-        typeMap[Relation.name] = Relation;
         const saveOrResolved = await options.saveOrResolve(ipfs, this);
-        if (saveOrResolved !== this) {
+        if (saveOrResolved && saveOrResolved !== this) {
             return saveOrResolved as this;
         }
+
+        const typeMap = options.typeMap ? { ...options.typeMap } : {}
+        typeMap[Relation.name] = Relation;
+
         await this.trustGraph.init(ipfs, identity, { ...options, typeMap, canRead: this.canRead.bind(this), canAppend: this.canAppend.bind(this) }) // self referencing access controller
         await this.query.init(ipfs, identity, { ...options, queryType: RequestHeadsMessage, responseType: HeadsMessages, responseHandler: this.exchangeHeads.bind(this) })
         await super.init(ipfs, identity, options);

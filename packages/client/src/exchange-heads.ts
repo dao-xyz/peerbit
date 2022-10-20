@@ -1,18 +1,62 @@
-import { variant, field, vec, serialize } from '@dao-xyz/borsh';
+import { variant, option, field, vec, serialize } from '@dao-xyz/borsh';
 import { Entry, Identity } from '@dao-xyz/ipfs-log'
 import { ProtocolMessage } from './message.js';
-import { Store } from '@dao-xyz/peerbit-dstore';
+import { Address, Store } from '@dao-xyz/peerbit-dstore';
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned } from '@dao-xyz/peerbit-crypto';
 import { ResourceRequirement } from './exchange-replication.js';
 // @ts-ignore
 import Logger from 'logplease'
-import { EntryWithRefs } from '@dao-xyz/peerbit-dstore';
+import { Program } from '@dao-xyz/peerbit-program';
+import { fixedUint8Array } from '@dao-xyz/borsh-utils';
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
 
 
+export class MinReplicas {
+  get value(): number {
+    throw new Error("Not implemented")
+  }
+}
+
+@variant(0)
+export class AbsolutMinReplicas extends MinReplicas {
+
+  _value: number;
+  constructor(value: number) {
+    super()
+    this._value = value
+  }
+  get value() {
+    return this._value;
+  }
+}
+
+
+
+
+/**
+ * This thing allows use to faster sync since we can provide 
+ * references that can be read concurrently to 
+ * the entry when doing Log.fromEntry or Log.fromEntryHash
+ */
+@variant(0)
+export class EntryWithRefs<T> {
+
+  @field({ type: Entry })
+  entry: Entry<T>
+
+  @field({ type: vec(Entry) })
+  references: Entry<T>[] // are some parents to the entry
+
+  constructor(properties?: { entry: Entry<T>, references: Entry<T>[] }) {
+    if (properties) {
+      this.entry = properties.entry;
+      this.references = properties.references;
+    }
+  }
+}
 
 @variant([0, 0])
 export class ExchangeHeadsMessage<T> extends ProtocolMessage {
@@ -20,27 +64,38 @@ export class ExchangeHeadsMessage<T> extends ProtocolMessage {
   @field({ type: 'string' })
   replicationTopic: string;
 
-  @field({ type: 'string' })
-  address: string;
+  @field({ type: Address })
+  storeAddress: Address;
+
+  @field({ type: Address })
+  programAddress: Address;
 
   @field({ type: vec(EntryWithRefs) })
   heads: EntryWithRefs<T>[];
 
-  @field({ type: vec(ResourceRequirement) })
-  resourceRequirements: ResourceRequirement[];
+
+  @field({ type: option(MinReplicas) })
+  minReplicas?: MinReplicas
+
+  @field({ type: fixedUint8Array(4) })
+  reserved: Uint8Array = new Uint8Array(4);
+
 
   constructor(props?: {
     replicationTopic: string,
-    address: string,
+    storeAddress: Address,
+    programAddress: Address,
     heads: EntryWithRefs<T>[],
-    resourceRequirements?: ResourceRequirement[]
+    minReplicas?: MinReplicas,
   }) {
     super();
     if (props) {
-      this.resourceRequirements = props.resourceRequirements || [];
+      /* this.resourceRequirements = props.resourceRequirements || []; */
       this.replicationTopic = props.replicationTopic;
-      this.address = props.address;
+      this.storeAddress = props.storeAddress;
+      this.programAddress = props.programAddress;
       this.heads = props.heads;
+      this.minReplicas = props.minReplicas;
     }
   }
 }
@@ -67,7 +122,7 @@ export class RequestHeadsMessage extends ProtocolMessage {
 }
 
 
-export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>, store: Store<any>, identity: Identity, heads: Entry<any>[], replicationTopic: string, includeReferences: boolean) => {
+export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>, store: Store<any>, program: Program, identity: Identity, heads: Entry<any>[], replicationTopic: string, includeReferences: boolean) => {
   const gids = new Set(heads.map(h => h.gid));
   if (gids.size > 1) {
     throw new Error("Expected to share heads only from 1 gid")
@@ -126,7 +181,7 @@ export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>
     }
     await Promise.all(promises); */
 
-    const message = new ExchangeHeadsMessage({ replicationTopic, address: store.address.toString(), heads: headsWithRefs });
+    const message = new ExchangeHeadsMessage({ replicationTopic, storeAddress: store.address, programAddress: program.address, heads: headsWithRefs });
     const signer = async (data: Uint8Array) => {
       return {
         signature: await identity.sign(data),

@@ -13,7 +13,7 @@ export interface Manifest {
     data: Uint8Array
 }
 
-export interface Addressable { get name(): string }
+export interface Addressable { get name(): string, get address(): Address | undefined }
 
 @variant(0)
 export class Address {
@@ -27,6 +27,10 @@ export class Address {
 
     toString() {
         return Address.join(this.cid)
+    }
+
+    equals(other: Address) {
+        return this.cid === other.cid;
     }
 
     static isValid(oaddress: { toString(): string }) {

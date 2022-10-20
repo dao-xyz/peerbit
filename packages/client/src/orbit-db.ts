@@ -1,5 +1,5 @@
 import path from 'path'
-import { Address, IStoreOptions, Saveable, Store } from '@dao-xyz/peerbit-dstore'
+import { IStoreOptions, Store, Address, Saveable, Addressable } from '@dao-xyz/peerbit-dstore'
 // @ts-ignore
 import Logger from 'logplease'
 import { IPFS, IPFS as IPFSInstance } from 'ipfs-core-types';
@@ -7,7 +7,7 @@ import Cache from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import { isDefined } from './is-defined.js'
 import { Level } from 'level';
-import { exchangeHeads, ExchangeHeadsMessage } from './exchange-heads.js'
+import { exchangeHeads, ExchangeHeadsMessage, AbsolutMinReplicas, EntryWithRefs, MinReplicas } from './exchange-heads.js'
 import { Entry, Identity, toBase64 } from '@dao-xyz/ipfs-log'
 import { serialize, deserialize } from '@dao-xyz/borsh'
 import { ProtocolMessage } from './message.js'
@@ -31,7 +31,6 @@ import { delay, waitFor } from '@dao-xyz/time'
 import { LRUCounter } from './lru-counter.js'
 import { IpfsPubsubPeerMonitor } from '@dao-xyz/ipfs-pubsub-peer-monitor';
 import type { PeerId } from '@libp2p/interface-peer-id';
-import { EntryWithRefs } from '@dao-xyz/peerbit-dstore';
 import { exchangeSwarmAddresses, ExchangeSwarmMessage } from './exchange-network.js';
 /* let v8 = undefined;
 if (isNode) {
@@ -56,8 +55,7 @@ export type CreateInstanceOptions = { storage?: Storage, directory?: string, key
 export type OpenStoreOptions = {
   identity?: Identity,
   directory?: string,
-  timeout?: number,
-  rejectIfAlreadyOpen?: boolean
+  timeout?: number
 } & IStoreOptions<any>;
 const groupByGid = <T extends (Entry<any> | EntryWithRefs<any>)>(entries: T[]) => {
   const groupByGid: Map<string, T[]> = new Map()
@@ -73,6 +71,14 @@ const groupByGid = <T extends (Entry<any> | EntryWithRefs<any>)>(entries: T[]) =
   return groupByGid;
 }
 
+
+export interface StoreWithConfig {
+  store: Store<any>,
+  minReplicas: MinReplicas,
+  //TODO add replicate: boolean 
+}
+
+
 export class OrbitDB {
 
   _ipfs: IPFSInstance;
@@ -87,8 +93,8 @@ export class OrbitDB {
   storage: Storage;
   caches: { [key: string]: { cache: Cache<any>, handlers: Set<string> } };
   keystore: Keystore;
-  minReplicas: number;
-  stores: { [topic: string]: { [address: string]: Store<any> } };
+  _minReplicas: number;
+  programs: { [topic: string]: { [address: string]: { program: Program, stores: Map<string, StoreWithConfig> } } };
   localNetwork: boolean;
   _trustedNetwork: Map<string, TrustedNetwork>
   /*  heapsizeLimitForForks: number = 1000 * 1000 * 1000; */
@@ -120,9 +126,9 @@ export class OrbitDB {
     this.storage = options.storage
     this._directConnections = new Map();
     this._trustedNetwork = new Map();
-    this.stores = {}
+    this.programs = {}
     this.caches = {}
-    this.minReplicas = options.minReplicas || MIN_REPLICAS;
+    this._minReplicas = options.minReplicas || MIN_REPLICAS;
     this.localNetwork = options.localNetwork;
     this.caches[this.directory] = { cache: options.cache, handlers: new Set() }
     this.keystore = options.keystore
@@ -299,9 +305,9 @@ export class OrbitDB {
     await this.keystore.close()
 
     // Close all open databases
-    for (const [key, dbs] of Object.entries(this.stores)) {
-      await Promise.all(Object.values(dbs).map(db => db.close && db.close()));
-      delete this.stores[key]
+    for (const [key, dbs] of Object.entries(this.programs)) {
+      await Promise.all(Object.values(dbs).map(db => [...db.stores.values()].map(store => store?.store?.close && store.store.close()).flat()).flat());
+      delete this.programs[key]
     }
 
     const caches = Object.keys(this.caches)
@@ -311,7 +317,7 @@ export class OrbitDB {
     }
 
     // Remove all databases from the state
-    this.stores = {}
+    this.programs = {}
   }
 
   // Alias for disconnect()
@@ -327,31 +333,43 @@ export class OrbitDB {
 
 
   // Callback for local writes to the database. We the update to pubsub.
-  _onWrite<T>(store: Store<any>, entry: Entry<T>, replicationTopic: string) {
-    const sendAll = (data: Uint8Array): Promise<void> => this._ipfs.pubsub.publish(replicationTopic, data);
-    let send = sendAll;
-    if (store.replicate) {
-      // send to peers directly
-      send = async (data: Uint8Array) => {
-        const replicators = await this.findReplicators(replicationTopic, store.replicate, entry.gid);
-        const channels: SharedChannel<DirectChannel>[] = [];
-        for (const replicator of replicators) {
-          if (replicator === this.id.toString()) {
-            continue;
+  onWrite<T>(program: Program) {
+    return (store: Store<any>, entry: Entry<T>, replicationTopic: string): void => {
+      const storeAddress = store.address.toString();
+      const storeInfo = this.programs[replicationTopic][program.address.toString()].stores.get(storeAddress);
+      if (!storeInfo) {
+        throw new Error("Missing store info")
+      }
+      const sendAll = (data: Uint8Array): Promise<void> => this._ipfs.pubsub.publish(replicationTopic, data);
+      let send = sendAll;
+      if (store.replicate) {
+        // send to peers directly
+        send = async (data: Uint8Array) => {
+          const replicators = await this.findReplicators(replicationTopic, store.replicate, entry.gid, storeInfo.minReplicas.value);
+          const channels: SharedChannel<DirectChannel>[] = [];
+          for (const replicator of replicators) {
+            if (replicator === this.id.toString()) {
+              continue;
+            }
+            let channel = this._directConnections.get(replicator);
+            if (!channel) { // we are missing a channel, send to all instead as fallback
+              return sendAll(data);
+            }
+            else {
+              channels.push(channel);
+            }
           }
-          let channel = this._directConnections.get(replicator);
-          if (!channel) { // we are missing a channel, send to all instead as fallback
-            return sendAll(data);
-          }
-          else {
-            channels.push(channel);
-          }
+          await Promise.all(channels.map(channel => channel.channel.send(data)));
+          return;
         }
-        await Promise.all(channels.map(channel => channel.channel.send(data)));
-        return;
+      }
+      for (const value of Object.values(this.programs[replicationTopic])) {
+        if (value.stores.has(storeAddress)) {
+          exchangeHeads(send, store, value.program, this.identity, [entry], replicationTopic, true)
+        }
       }
     }
-    exchangeHeads(send, store, this.identity, [entry], replicationTopic, true)
+
   }
 
   // Callback for receiving a message from the network
@@ -364,10 +382,17 @@ export class OrbitDB {
       await signedMessage.verify();
       const msg = signedMessage.getValue(ProtocolMessage);
       const sender: SignKey | undefined = signedMessage.signature?.publicKey;
-      const checkTrustedSender = async (replicationTopic: string): Promise<boolean> => {
+      const checkTrustedSender = async (replicationTopic: string, onlyNetworked: boolean): Promise<boolean> => {
         let isTrusted = false;
         if (sender) {
-          isTrusted = !!(await this.getNetwork(replicationTopic)?.isTrusted(sender))
+          let network = this.getNetwork(replicationTopic);
+          if (!network) {
+            if (onlyNetworked) {
+              return false;
+            }
+            return true;
+          }
+          isTrusted = !!(await network.isTrusted(sender))
         }
         if (!isTrusted) {
           logger.info("Recieved message from untrusted peer")
@@ -382,22 +407,24 @@ export class OrbitDB {
          * I can use them to load associated logs and join/sync them with the data stores I own
          */
 
-        const { replicationTopic, address, heads } = msg
-        const senderIsTrusted = await checkTrustedSender(replicationTopic);
+        const { replicationTopic, storeAddress, programAddress, heads } = msg
+        const senderIsTrusted = await checkTrustedSender(replicationTopic, false);
         // replication topic === trustedNetwork address
 
-        let stores = this.stores[replicationTopic]
-        if (!stores) {
+        let pstores = this.programs[replicationTopic]
+        if (!pstores) {
           if (!senderIsTrusted) {
             return; // dont allow untrusted senders to open stores
           }
 
-          stores = {};
-          this.stores[replicationTopic] = stores
+          pstores = {};
+          this.programs[replicationTopic] = pstores
         }
         const isReplicating = this._replicationTopicSubscriptions.has(replicationTopic); // TODO should be TrustedNetwork has my ipfs id
+        const saddress = storeAddress.toString();
+        const paddress = programAddress.toString();
 
-        if (heads && stores) {
+        if (heads && pstores) {
 
           /*   let isLeaderResolver: () => Promise<{ leaders: string[], isLeader: boolean }> = async () => {
               const leaders = await this.findLeaders(replicationTopic, address, Buffer.from(signedMessage.signature.signature).toString('base64'), this.minReplicas);
@@ -417,7 +444,7 @@ export class OrbitDB {
           // DO CHECKS here and dont pass isLeader check to sync methodd
 
           const leaderCache: Map<string, string[]> = new Map();
-          if (!stores[address]) {
+          if (!pstores[paddress]) {
             // open store if is leader and sender is trusted
 
             if (!senderIsTrusted) {
@@ -426,37 +453,45 @@ export class OrbitDB {
 
             for (const [gid, value] of groupByGid(heads)) {
               // Check if root, if so, we check if we should open the store
-              const leaders = await this.findLeaders(replicationTopic, isReplicating, gid, this.minReplicas); // Todo reuse calculations
+              const leaders = await this.findLeaders(replicationTopic, isReplicating, gid, msg.minReplicas?.value || this._minReplicas); // Todo reuse calculations
               leaderCache.set(gid, leaders);
               if (leaders.find(x => x === this.id.toString())) {
-                await this.open(Address.parse(address), replicationTopic, { directory: this.directory, identity: this.identity })
+                await this.open(Address.parse(paddress), replicationTopic, { directory: this.directory, identity: this.identity })
               }
             }
-            if (!stores[address]) {
+            if (!pstores[paddress]) {
               return;
             }
           }
 
-          const store = stores[address];
+          const programAndStores = pstores[paddress];
           /*           heads.sort(store.oplog._sortFn); */
           /*    const mergeable = [];
              const newItems: Map<string, Entry<any>> = new Map(); */
-
-          const toMerge: EntryWithRefs<any>[] = [];
+          const storeInfo = this.programs[replicationTopic][paddress].stores.get(saddress);
+          if (!storeInfo) {
+            throw new Error("Missing store info, which was expected to exist for " + replicationTopic + ", " + paddress + ", " + saddress)
+          }
+          const toMerge: Entry<any>[] = [];
           for (const [gid, value] of groupByGid(heads)) {
-            const leaders = leaderCache.get(gid) || await this.findLeaders(replicationTopic, isReplicating, gid, this.minReplicas);
+            const leaders = leaderCache.get(gid) || await this.findLeaders(replicationTopic, isReplicating, gid, storeInfo.minReplicas.value);
             const isLeader = leaders.find((l) => l === this.id.toString());
             if (!isLeader) {
               continue;
             }
             value.forEach((head) => {
-              toMerge.push(head);
+              toMerge.push(head.entry);
+              head.references.forEach((r) => toMerge.push(r));
             })
 
           }
           if (toMerge.length > 0) {
+            const store = programAndStores.stores.get(saddress);
+            if (!store) {
+              throw new Error("Unexpected, missing store on sync")
+            }
             try {
-              await store.sync(toMerge);
+              await store.store.sync(toMerge);
               const x = 123;
             } catch (error) {
               const y = 345;
@@ -515,7 +550,7 @@ export class OrbitDB {
              else {
                // Full sync
                
- 
+   
              } */
 
           /*      }
@@ -524,7 +559,7 @@ export class OrbitDB {
            } */
         }
 
-        logger.debug(`Received ${heads.length} heads for '${address}':\n`, JSON.stringify(heads.map(e => e.entry.hash), null, 2))
+        logger.debug(`Received ${heads.length} heads for '${paddress}/${saddress}':\n`, JSON.stringify(heads.map(e => e.entry.hash), null, 2))
       }
       /*  else if (msg instanceof RequestHeadsMessage) {
           // I have recieved a message urging me to share my heads
@@ -533,8 +568,8 @@ export class OrbitDB {
          if (!(await checkTrustedSender(replicationTopic))) {
            return;
          }
- 
-         const stores = this.stores[replicationTopic];  // Send the heads if we have any
+   
+         const stores = this.programs[replicationTopic];  // Send the heads if we have any
          if (stores) {
            for (const [storeAddress, store] of Object.entries(stores)) {
              if (store.replicate) {
@@ -568,7 +603,7 @@ export class OrbitDB {
           return;
         }
 
-        if (!await checkTrustedSender(message.topic)) {
+        if (!await checkTrustedSender(message.topic, false)) {
           return;
         }
 
@@ -593,7 +628,7 @@ export class OrbitDB {
         }
 
         if (msg.condition instanceof RequestKeysByReplicationTopic) {
-          if (!await checkTrustedSender(msg.condition.replicationTopic)) {
+          if (!await checkTrustedSender(msg.condition.replicationTopic, true)) {
             return;
           }
           const canExchangeKey: KeyAccessCondition = (key) => key.group === (msg.condition as RequestKeysByReplicationTopic<any>).replicationTopic;
@@ -609,22 +644,22 @@ export class OrbitDB {
         }
 
       }
-      else if (msg instanceof RequestReplicatorInfo) {
-
+      /* else if (msg instanceof RequestReplicatorInfo) {
+  
         if (!peer) {
           logger.error("Execting a sigmed pubsub message")
           return;
         }
-
-        const store = this.stores[msg.replicationTopic]?.[msg.address];
+  
+        const store = this.programs[msg.replicationTopic]?.[msg.address];
         if (!store || !store.replicate) {
           return;
         }
-
-        if (!(await checkTrustedSender(msg.replicationTopic))) {
+  
+        if (!(await checkTrustedSender(msg.replicationTopic, true))) {
           return;
         }
-
+  
         // if supports store, return resp
         if (store) {
           const send = this._directConnections.has(peer.toString()) ? (message: Uint8Array) => (this._directConnections.get(peer.toString()) as SharedChannel<DirectChannel>).channel.send(message) : (message: Uint8Array) => this._ipfs.pubsub.publish(msg.replicationTopic, message);
@@ -640,39 +675,39 @@ export class OrbitDB {
         }
       }
       else if (msg instanceof ReplicatorInfo) {
-
-        if (!(await checkTrustedSender(msg.replicationTopic))) {
+  
+        if (!(await checkTrustedSender(msg.replicationTopic, true))) {
           return;
         }
-
+  
         if (!sender) {
           logger.info("Expecing sender when recieving replicatio info")
           return;
         }
-
+  
         // TODO singleton
         const hashcode = sender.hashCode();
-
+  
         this._peerInfoLRU.set(hashcode, {
           peerInfo: msg,
           publicKey: sender
         } as PeerInfoWithMeta)
-
+  
         if (msg.fromId) {
           await this._peerInfoResponseCounter.increment(msg.fromId);
         }
         msg.heads?.forEach((h) => {
           this._supportedHashesLRU.increment(h);
         })
-
-      }
+  
+      } */
 
       /*  else if (msg instanceof RequestReplication) {
- 
+   
          if (!this._subscribeForReplication.has(msg.replicationTopic)) {
            return;
          }
- 
+   
          if (!(await checkTrustedSender(msg.replicationTopic))) {
            return;
          }
@@ -702,47 +737,48 @@ export class OrbitDB {
 
 
     // determine if we should open a channel (we are replicating a store on the topic + a weak check the peer is trusted)
-    const stores = this.stores[replicationTopic];
-    if (stores) {
-      for (const [_storeAddress, store] of Object.entries(stores)) {
-        if (store.replicate) {
-          // create a channel for sending/receiving messages
-          /*  const channel = await this.getChannel(peer, replicationTopic); */
-          /*  await exchangeHeads((msg) => channel.send(Buffer.from(msg)), store, (key) => this._supportedHashesLRU.get(key) >= this.minReplicas, await this.getSigner()); */
-          /*    await exchangeHeads(this.id, async (peer, msg) => {
-               const channel = await this.getChannel(peer, replicationTopic);
-               return channel.send(Buffer.from(msg));
-             }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner()); */
+    const programs = this.programs[replicationTopic];
+    if (programs) {
+      for (const [_storeAddress, programAndStores] of Object.entries(programs)) {
+        for (const [k, store] of programAndStores.stores) {
+          if (store.store.replicate) {
+            // create a channel for sending/receiving messages
+            /*  const channel = await this.getChannel(peer, replicationTopic); */
+            /*  await exchangeHeads((msg) => channel.send(Buffer.from(msg)), store, (key) => this._supportedHashesLRU.get(key) >= this.minReplicas, await this.getSigner()); */
+            /*    await exchangeHeads(this.id, async (peer, msg) => {
+                 const channel = await this.getChannel(peer, replicationTopic);
+                 return channel.send(Buffer.from(msg));
+               }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner()); */
 
-          /*  let openChannel: boolean;
-           const network = this.getNetwork(replicationTopic);
-           if (network) { // network could be undefined because we are just to create it, in that case we will allow all connections and assume they are limited
-             openChannel = await network.isTrusted(new IPFSAddress({ address: peer })) // this could be false if even if it should be true because network info is not update (yet)
-           }
-           else {
-             openChannel = true;
-           }
-           if (openChannel) {
-             await this.getChannel(peer, replicationTopic);
-           } */
-          await exchangeSwarmAddresses((data) => this._ipfs.pubsub.publish(replicationTopic, data), this.identity, peer, await this._ipfs.swarm.peers(), this.getNetwork(replicationTopic), this.localNetwork)
-          await this.getChannel(peer, replicationTopic); // always open a channel, and drop channels if necessary (not trusted) (TODO)
-          return; // we return because we have know opened a channel to this peer
+            /*  let openChannel: boolean;
+             const network = this.getNetwork(replicationTopic);
+             if (network) { // network could be undefined because we are just to create it, in that case we will allow all connections and assume they are limited
+               openChannel = await network.isTrusted(new IPFSAddress({ address: peer })) // this could be false if even if it should be true because network info is not update (yet)
+             }
+             else {
+               openChannel = true;
+             }
+             if (openChannel) {
+               await this.getChannel(peer, replicationTopic);
+             } */
+            await exchangeSwarmAddresses((data) => this._ipfs.pubsub.publish(replicationTopic, data), this.identity, peer, await this._ipfs.swarm.peers(), this.getNetwork(replicationTopic), this.localNetwork)
+            await this.getChannel(peer, replicationTopic); // always open a channel, and drop channels if necessary (not trusted) (TODO)
+            return; // we return because we have know opened a channel to this peer
 
-          // Creation of this channel here, will make sure it is created even though a head might not be exchanged
+            // Creation of this channel here, will make sure it is created even though a head might not be exchanged
 
-          /*       await exchangeHeads(this.id, async (peer, msg) => {
-                  const channel = await this.getChannel(peer, replicationTopic);
-                  return channel.send(Buffer.from(msg));
-                }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner()); */
+            /*       await exchangeHeads(this.id, async (peer, msg) => {
+                    const channel = await this.getChannel(peer, replicationTopic);
+                    return channel.send(Buffer.from(msg));
+                  }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner()); */
 
+          }
+          else {
+            const x = 123;
+            // If replicate false, we are in write mode. Means we should exchange all heads 
+            /*   await exchangeHeads((message) => this._ipfs.pubsub.publish(replicationTopic, message), store, () => false, await this.getSigner()) */
+          }
         }
-        else {
-          const x = 123;
-          // If replicate false, we are in write mode. Means we should exchange all heads 
-          /*   await exchangeHeads((message) => this._ipfs.pubsub.publish(replicationTopic, message), store, () => false, await this.getSigner()) */
-        }
-
 
       }
     }
@@ -753,7 +789,7 @@ export class OrbitDB {
     // get all topics for this peer
     if (this._directConnections.has(peer)) {
       for (const replicationTopic of this._directConnections.get(peer).dependencies) {
-        for (const store of Object.values(this.stores[replicationTopic])) {
+        for (const store of Object.values(this.programs[replicationTopic])) {
           const heads = await store.getHeads();
           const groupedByGid = groupByGid(heads);
           for (const [gid, entries] of groupedByGid) {
@@ -788,54 +824,56 @@ export class OrbitDB {
     }
 
     for (const replicationTopic of connections.dependencies) {
-      const stores = this.stores[replicationTopic];
-      if (stores) {
-        for (const store of Object.values(stores)) {
-          const heads = store.oplog.heads;
-          const groupedByGid = groupByGid(heads);
-          for (const [gid, entries] of groupedByGid) {
-            if (entries.length === 0) {
-              continue; // TODO maybe close store?
-            }
-            /*     const oldPeers = this.findReplicators(store, gid, [channel.recieverId]);
-                const oldPeersSet = new Set(this.findReplicators(store, gid, [channel.recieverId])); */
-            const oldPeersSet = this._gidPeersHistory.get(gid);
-            const newPeers = await this.findReplicators(replicationTopic, store.replicate, gid);
-            /* const index = oldPeers.findIndex(p => p === channel.recieverId); */
-            for (const newPeer of newPeers) {
-              if (!oldPeersSet?.has(newPeer) && newPeer !== this.id.toString()) { // second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
-
-                // send heads to the new peer
-                const channel = this._directConnections.get(newPeer)?.channel;
-                if (!channel) {
-
-                  logger.error("Missing channel when reorg to peer: " + newPeer.toString())
-                  continue
-                }
-
-                await exchangeHeads(async (message) => {
-                  await channel.send(message);
-                }, store, this.identity, entries, replicationTopic, true)
+      const programs = this.programs[replicationTopic];
+      if (programs) {
+        for (const programAndStores of Object.values(programs)) {
+          for (const [_, store] of programAndStores.stores) {
+            const heads = store.store.oplog.heads;
+            const groupedByGid = groupByGid(heads);
+            for (const [gid, entries] of groupedByGid) {
+              if (entries.length === 0) {
+                continue; // TODO maybe close store?
               }
-            }
+              /*     const oldPeers = this.findReplicators(store, gid, [channel.recieverId]);
+                  const oldPeersSet = new Set(this.findReplicators(store, gid, [channel.recieverId])); */
+              const oldPeersSet = this._gidPeersHistory.get(gid);
+              const newPeers = await this.findReplicators(replicationTopic, store.store.replicate, gid, store.minReplicas.value);
+              /* const index = oldPeers.findIndex(p => p === channel.recieverId); */
+              for (const newPeer of newPeers) {
+                if (!oldPeersSet?.has(newPeer) && newPeer !== this.id.toString()) { // second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
 
-            if (!newPeers.find(x => x === this.id.toString())) {
-              // delete entries since we are not suppose to replicate this anymore
-              // TODO add delay? freeze time? (to ensure resiliance for bad io)
-              store.oplog.removeAll(entries);
+                  // send heads to the new peer
+                  const channel = this._directConnections.get(newPeer)?.channel;
+                  if (!channel) {
 
-              // TODO if length === 0 maybe close store? 
-            }
-            this._gidPeersHistory.set(gid, new Set(newPeers))
+                    logger.error("Missing channel when reorg to peer: " + newPeer.toString())
+                    continue
+                  }
+
+                  await exchangeHeads(async (message) => {
+                    await channel.send(message);
+                  }, store.store, programAndStores.program, this.identity, entries, replicationTopic, true)
+                }
+              }
+
+              if (!newPeers.find(x => x === this.id.toString())) {
+                // delete entries since we are not suppose to replicate this anymore
+                // TODO add delay? freeze time? (to ensure resiliance for bad io)
+                store.store.oplog.removeAll(entries);
+
+                // TODO if length === 0 maybe close store? 
+              }
+              this._gidPeersHistory.set(gid, new Set(newPeers))
             /* if (index !== -1)  */{ //
-              // We lost an replicating peer,
-              // find diff
+                // We lost an replicating peer,
+                // find diff
 
-              /* if (peers[(index + 1) & peers.length] === this.id) { */
+                /* if (peers[(index + 1) & peers.length] === this.id) { */
 
-              // is should tell the others that we need one more replicator
-              //const
-              /* } */
+                // is should tell the others that we need one more replicator
+                //const
+                /* } */
+              }
             }
           }
         }
@@ -907,47 +945,58 @@ export class OrbitDB {
 
 
   // Callback when a database was closed
-  async _onClose(db: Store<any>, replicationTopic: string) { // TODO Can we really close a this.stores, either we close all stores in the replication topic or none
-    const address = db.address.toString()
-    logger.debug(`Close ${address}`)
+  async _onClose(program: Program, db: Store<any>, replicationTopic: string) { // TODO Can we really close a this.programs, either we close all stores in the replication topic or none
+
+    const promise = await this._openStorePromise;
+    if (promise && promise.address.equals(program.address)) {
+      this._openStorePromise = undefined;
+    }
+
+    const storeAddress = db.address.toString()
+    const programAddress = program.address.toString();
+
+    logger.debug(`Close ${programAddress}/${storeAddress}`)
 
     // Unsubscribe from pubsub
-    await this._replicationTopicSubscriptions.get(replicationTopic)?.close(db.id);
+    await this._replicationTopicSubscriptions.get(replicationTopic)?.close(db.address.toString());
 
 
     const dir = db && db.options.directory ? db.options.directory : this.directory
     const cache = this.caches[dir]
 
-    if (cache && cache.handlers.has(address)) {
-      cache.handlers.delete(address)
+    if (cache && cache.handlers.has(storeAddress)) {
+      cache.handlers.delete(storeAddress)
       if (!cache.handlers.size) {
         await cache.cache.close()
       }
     }
 
-    delete this.stores[replicationTopic][address]
+    const programAndStores = this.programs[replicationTopic][programAddress];
+    programAndStores.stores.delete(storeAddress)
+    if (programAndStores.stores.size === 0) {
+      delete this.programs[replicationTopic][programAddress]
 
-    const otherStoresUsingSameReplicationTopic = this.stores[replicationTopic]
+      const otherStoresUsingSameReplicationTopic = this.programs[replicationTopic]
 
-    // close all connections with this repplication topic if this is the last dependency
-    const isLastStoreForReplicationTopic = Object.keys(otherStoresUsingSameReplicationTopic).length === 0;
-    if (isLastStoreForReplicationTopic) {
+      // close all connections with this repplication topic if this is the last dependency
+      const isLastStoreForReplicationTopic = Object.keys(otherStoresUsingSameReplicationTopic).length === 0;
+      if (isLastStoreForReplicationTopic) {
 
-      /*   const cron = this._replicationTopicJobs.get(db.replicationTopic);
-        if (cron) {
-          cron.controller.abort();
-          this._replicationTopicJobs.delete(db.replicationTopic);
+        /*   const cron = this._replicationTopicJobs.get(db.replicationTopic);
+          if (cron) {
+            cron.controller.abort();
+            this._replicationTopicJobs.delete(db.replicationTopic);
+          }
+     */
+        for (const [key, connection] of this._directConnections) {
+          await connection.close(replicationTopic);
+          // Delete connection from thing
+
+          // TODO what happens if we close a store, but not its direct connection? we should open direct connections and make it dependenct on the replciation topic
         }
-   */
-      for (const [key, connection] of this._directConnections) {
-        await connection.close(replicationTopic);
-        // Delete connection from thing
-
-        // TODO what happens if we close a store, but not its direct connection? we should open direct connections and make it dependenct on the replciation topic
       }
+
     }
-
-
 
   }
 
@@ -969,32 +1018,39 @@ export class OrbitDB {
     const storeAddress = store.address.toString();
     if (!storeAddress) { throw new Error("Address undefined") }
    
-    const existingStore = this.stores[storeAddress];
+    const existingStore = this.programs[storeAddress];
     if (!!existingStore && existingStore !== store) { // second condition only makes this throw error if we are to add a new instance with the same address
       throw new Error(`Store at ${storeAddress} is already created`)
     }
-    this.stores[storeAddress] = store;
+    this.programs[storeAddress] = store;
   }
   */
-  async addStore(store: Store<any>, replicationTopic: string) {
-    if (!this.stores[replicationTopic]) {
-      this.stores[replicationTopic] = {};
+  async addStore(program: Program, store: Store<any>, replicationTopic: string) {
+    if (!this.programs[replicationTopic]) {
+      this.programs[replicationTopic] = {};
     }
-    if (this.stores[replicationTopic] === undefined) {
+    if (this.programs[replicationTopic] === undefined) {
       throw new Error("Unexpected behaviour")
     }
 
+    const programAddress = program.address.toString();
     const storeAddress = store.address.toString();
-    const existingStore = this.stores[replicationTopic][storeAddress];
-    if (!!existingStore && existingStore !== store) { // second condition only makes this throw error if we are to add a new instance with the same address
+    const existingProgramAndStores = this.programs[replicationTopic][programAddress];
+    if (!!existingProgramAndStores && existingProgramAndStores.program !== program) { // second condition only makes this throw error if we are to add a new instance with the same address
       throw new Error(`Store at ${replicationTopic}/${storeAddress} is already created`)
     }
-    this.stores[replicationTopic][storeAddress] = store;
+    if (!this.programs[replicationTopic][programAddress]) {
+      this.programs[replicationTopic][programAddress] = {
+        program,
+        stores: new Map()
+      }
+    }
+    this.programs[replicationTopic][programAddress].stores.set(store.address.toString(), { store, minReplicas: new AbsolutMinReplicas(this._minReplicas) });
 
     /* if (!this._replicationTopicJobs.has(replicationTopic) && store.replicate) {
       const controller = new AbortController();
       const job = await createEmitHealthCheckJob({
-        stores: () => Object.keys(this.stores[replicationTopic]),
+        stores: () => Object.keys(this.programs[replicationTopic]),
         subscribingForReplication: (topic) => this._subscribeForReplication.has(topic)
       }, replicationTopic, (r, d) => this._ipfs.pubsub.publish(r, d), () => this._ipfs.isOnline(), controller, await this.getSigner(), this.encryption);
       job();
@@ -1066,8 +1122,8 @@ export class OrbitDB {
     return !!(leaders.find(id => id === this.id.toString()))
   }
 
-  findReplicators(replicationTopic: string, replicating: boolean, gid: string/* , addPeers: string[] = [], removePeers: string[] = [] */): Promise<string[]> {
-    return this.findLeaders(replicationTopic, replicating, gid, this.minReplicas);
+  findReplicators(replicationTopic: string, replicating: boolean, gid: string, minReplicas: number): Promise<string[]> {
+    return this.findLeaders(replicationTopic, replicating, gid, minReplicas);
   }
 
 
@@ -1169,8 +1225,8 @@ export class OrbitDB {
 
 
   async subscribeToReplicationTopic(topic: string): Promise<void> {
-    if (!this.stores[topic]) {
-      this.stores[topic] = {};
+    if (!this.programs[topic]) {
+      this.programs[topic] = {};
     }
     if (!this._replicationTopicSubscriptions.has(topic)) {
       const topicMonitor = new IpfsPubsubPeerMonitor(this._ipfs.pubsub, topic, {
@@ -1198,7 +1254,7 @@ export class OrbitDB {
 
   }
   hasSubscribedToReplicationTopic(topic: string): boolean {
-    return !!this.stores[topic]
+    return !!this.programs[topic]
   }
   unsubscribeToReplicationTopic(topic: string | TrustedNetwork, id: string = '_'): Promise<boolean> | undefined {
     if (typeof topic !== 'string') {
@@ -1228,7 +1284,7 @@ export class OrbitDB {
   }
 
 
-  _openStorePromise: Promise<Program | Store<any> | undefined>
+  _openStorePromise?: Promise<Program | undefined>
 
   /**
    * Default behaviour of a store is only to accept heads that are forks (new roots) with some probability
@@ -1237,19 +1293,24 @@ export class OrbitDB {
    * @param options 
    * @returns 
    */
-  async open<S extends Program | Store<any>>(storeOrAddress: /* string | Address |  */S | Address | string, replicationTopic: string, options: OpenStoreOptions = {}): Promise<S> {
+  async open<S extends Program>(storeOrAddress: /* string | Address |  */S | Address, replicationTopic: string, options: OpenStoreOptions = {}): Promise<S> {
 
 
     // TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?
-    await this._openStorePromise;
+    const promise = await this._openStorePromise;
+    const fromAddress = storeOrAddress instanceof Address ? storeOrAddress : storeOrAddress.address;
+    if (fromAddress && promise?.address.equals(fromAddress)) {
+      return promise as S;
+    }
+
     this._openStorePromise = new Promise<S | undefined>(async (resolve, reject) => {
-      let store = storeOrAddress as S;
+      let program = storeOrAddress as S;
       if (typeof storeOrAddress === 'string') {
         storeOrAddress = Address.parse(storeOrAddress);
       }
       if (storeOrAddress instanceof Address) {
         try {
-          store = await Program.load(this._ipfs, storeOrAddress as any as Address, options) as any as S // TODO fix typings
+          program = await Program.load(this._ipfs, storeOrAddress as any as Address, options) as any as S // TODO fix typings
         } catch (error) {
           logger.error("Failed to load store with address: " + storeOrAddress.toString());
           reject(error);
@@ -1260,7 +1321,7 @@ export class OrbitDB {
         logger.debug('open()')
 
         options = Object.assign({ localOnly: false, create: false }, options)
-        logger.debug(`Open database '${store}'`)
+        logger.debug(`Open database '${program.constructor.name}`)
 
         const resolveCache = async (address: Address) => {
           const cache = await this._requestCache(address.toString(), options.directory || this.directory)
@@ -1284,81 +1345,87 @@ export class OrbitDB {
         }
 
         // Open the the database
-        store.init && await store.init(this._ipfs, options.identity || this.identity, {
+        const saveOrResolve = async (_ipfs: IPFS, store: Saveable) => {
+          const address = await store.save(this._ipfs);
+          const addressString = address.toString();
+          if (store instanceof Program) {
+            return this.programs[replicationTopic]?.[addressString]?.program || store; // TODO distinguish between composable programs and not
+          }
+          return store;
+        }
+
+        await program.save(this._ipfs);
+
+        await program.init(this._ipfs, options.identity || this.identity, {
           replicate: true, ...options, ...{
             resolveCache,
-            saveOrResolve: async (ipfs: IPFS, store: Saveable) => {
-              const address = await store.save(this._ipfs);
-              const a = address.toString();
-              const alreadyHaveStore = this.stores[replicationTopic]?.[a];
-              if (options.rejectIfAlreadyOpen) {
-                new Error(`Store at ${replicationTopic}/${a} is already created`)
+            saveOrResolve: saveOrResolve.bind(this),
+            /*           resourceOptions: options.resourceOptions || this.heapsizeLimitForForks ? { heapSizeLimit: () => this.heapsizeLimitForForks } : undefined,
+             */
+            onClose: async (store) => {
+              await this._onClose(program, store, replicationTopic)
+              if (options.onClose) {
+                return options.onClose(store);
               }
-              return alreadyHaveStore || store;
-            }
-          },
-          /*           resourceOptions: options.resourceOptions || this.heapsizeLimitForForks ? { heapSizeLimit: () => this.heapsizeLimitForForks } : undefined,
-           */
-          onClose: async (store) => {
-            await this._onClose(store, replicationTopic)
-            if (options.onClose) {
-              return options.onClose(store);
-            }
-            return;
-          },
-          onDrop: async (store) => {
-            await this._onDrop(store)
-            if (options.onDrop) {
-              return options.onDrop(store);
-            }
-            return;
-          },
-          onLoad: async (store) => {
-            await this._onLoad(store)
-            if (options.onLoad) {
-              return options.onLoad(store);
-            }
-            return;
-          },
-          onWrite: async (store, entry) => {
-            await this._onWrite(store, entry, replicationTopic)
-            if (options.onWrite) {
-              return options.onWrite(store, entry);
-            }
-            return;
-          },
-          onReplicationComplete: async (store) => {
-            if (options.onReplicationComplete) {
-              options.onReplicationComplete(store);
-            }
-          },
-          onReplicationProgress: async (store, entry) => {
-            if (options.onReplicationProgress) {
-              options.onReplicationProgress(store, entry);
-            }
-          },
-          onReplicationQueued: async (store, entry) => {
-            if (options.onReplicationQueued) {
-              options.onReplicationQueued(store, entry);
-            }
-          },
-          onOpen: async (store) => {
+              return;
+            },
+            onDrop: async (store) => {
+              await this._onDrop(store)
+              if (options.onDrop) {
+                return options.onDrop(store);
+              }
+              return;
+            },
+            onLoad: async (store) => {
+              await this._onLoad(store)
+              if (options.onLoad) {
+                return options.onLoad(store);
+              }
+              return;
+            },
+            onWrite: async (store, entry) => {
+              await this.onWrite(program)(store, entry, replicationTopic)
+              if (options.onWrite) {
+                return options.onWrite(store, entry);
+              }
+              return;
+            },
+            onReplicationComplete: async (store) => {
+              if (options.onReplicationComplete) {
+                options.onReplicationComplete(store);
+              }
+            },
+            onReplicationProgress: async (store, entry) => {
+              if (options.onReplicationProgress) {
+                options.onReplicationProgress(store, entry);
+              }
+            },
+            onReplicationQueued: async (store, entry) => {
+              if (options.onReplicationQueued) {
+                options.onReplicationQueued(store, entry);
+              }
+            },
+            onOpen: async (store) => {
 
-            await this.addStore(store, replicationTopic)
-            await this.subscribeToReplicationTopic(replicationTopic);
+              await this.addStore(program, store, replicationTopic)
+              await this.subscribeToReplicationTopic(replicationTopic);
 
-            if (options.onOpen) {
-              return options.onOpen(store);
+              if (options.onOpen) {
+                return options.onOpen(store);
+              }
+              return;
             }
-            return;
           }
         });
-        resolve(store)
+        resolve(program)
       } catch (error) {
         reject(error);
       }
     })
     const openStore = await this._openStorePromise;
+    if (!openStore?.address) {
+      throw new Error("Unexpected")
+    }
     if (openStore instanceof TrustedNetwork && !this._trustedNetwork.has(openStore.address.toString())) {
       this._trustedNetwork.set(openStore.address.toString(), openStore)
     }
