@@ -39,8 +39,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       ipfsd = await startIpfs(IPFS, config.daemon1)
       ipfs = ipfsd.api
-      /*       const id = (await ipfsd.api.id()).id
-       */
       signKey = await keystore.createEd25519Key();
       cacheStore = await createStore(path.join(__filename, 'cache'))
       const cache = new Cache(cacheStore)

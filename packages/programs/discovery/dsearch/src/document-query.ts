@@ -56,9 +56,6 @@ export class FieldByteMatchQuery extends FieldQuery {
         }
     }
 
-    /* public apply(doc: any): boolean {
-        return doc[this.key] === this.value
-    } */
 }
 
 @variant(1)
@@ -76,10 +73,6 @@ export class FieldStringMatchQuery extends FieldQuery {
             this.value = props.value;
         }
     }
-
-    /* public apply(doc: any): boolean {
-        return (doc[this.key] as string).toLowerCase().indexOf(this.value.toLowerCase()) != -1;
-    } */
 }
 export enum Compare {
     Equal = 0,

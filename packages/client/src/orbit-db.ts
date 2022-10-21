@@ -642,84 +642,7 @@ export class OrbitDB {
         }
 
       }
-      /* else if (msg instanceof RequestReplicatorInfo) {
-  
-        if (!peer) {
-          logger.error("Execting a sigmed pubsub message")
-          return;
-        }
-  
-        const store = this.programs[msg.replicationTopic]?.[msg.address];
-        if (!store || !store.replicate) {
-          return;
-        }
-  
-        if (!(await checkTrustedSender(msg.replicationTopic, true))) {
-          return;
-        }
-  
-        // if supports store, return resp
-        if (store) {
-          const send = this._directConnections.has(peer.toString()) ? (message: Uint8Array) => (this._directConnections.get(peer.toString()) as SharedChannel<DirectChannel>).channel.send(message) : (message: Uint8Array) => this._ipfs.pubsub.publish(msg.replicationTopic, message);
-          if (msg.heads) {
-            let ownedHeads = msg.heads.filter(h => !!store.oplog._entryIndex.get(h));
-            if (ownedHeads.length > 0) {
-              await exchangePeerInfo(msg.id, msg.replicationTopic, store, ownedHeads, send, await this.getSigner())
-            }
-          }
-          else {
-            await exchangePeerInfo(msg.id, msg.replicationTopic, store, undefined, send, await this.getSigner())
-          }
-        }
-      }
-      else if (msg instanceof ReplicatorInfo) {
-  
-        if (!(await checkTrustedSender(msg.replicationTopic, true))) {
-          return;
-        }
-  
-        if (!sender) {
-          logger.info("Expecing sender when recieving replicatio info")
-          return;
-        }
-  
-        // TODO singleton
-        const hashcode = sender.hashCode();
-  
-        this._peerInfoLRU.set(hashcode, {
-          peerInfo: msg,
-          publicKey: sender
-        } as PeerInfoWithMeta)
-  
-        if (msg.fromId) {
-          await this._peerInfoResponseCounter.increment(msg.fromId);
-        }
-        msg.heads?.forEach((h) => {
-          this._supportedHashesLRU.increment(h);
-        })
-  
-      } */
 
-      /*  else if (msg instanceof RequestReplication) {
-   
-         if (!this._subscribeForReplication.has(msg.replicationTopic)) {
-           return;
-         }
-   
-         if (!(await checkTrustedSender(msg.replicationTopic))) {
-           return;
-         }
-         for (const r of msg.resourceRequirements) {
-           if (!await r.ok(this)) {
-             return; // does not fulfill criteria
-           }
-         }
-         // TODO only leader open?
-         await this.open(msg.store, { replicationTopic: msg.replicationTopic });
-         if (msg.heads.length > 0) {
-           await msg.store.sync(msg.heads, () => this.isLeader(msg.store, Buffer.from(data).toString('base64'), XXX))
-         }
-       } */
 
       else {
         throw new Error("Unexpected message")
@@ -741,24 +664,7 @@ export class OrbitDB {
         for (const [_, store] of programAndStores.program.allStores) {
           if (store.replicate) {
             // create a channel for sending/receiving messages
-            /*  const channel = await this.getChannel(peer, replicationTopic); */
-            /*  await exchangeHeads((msg) => channel.send(Buffer.from(msg)), store, (key) => this._supportedHashesLRU.get(key) >= this.minReplicas, await this.getSigner()); */
-            /*    await exchangeHeads(this.id, async (peer, msg) => {
-                 const channel = await this.getChannel(peer, replicationTopic);
-                 return channel.send(Buffer.from(msg));
-               }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner()); */
 
-            /*  let openChannel: boolean;
-             const network = this.getNetwork(replicationTopic);
-             if (network) { // network could be undefined because we are just to create it, in that case we will allow all connections and assume they are limited
-               openChannel = await network.isTrusted(new IPFSAddress({ address: peer })) // this could be false if even if it should be true because network info is not update (yet)
-             }
-             else {
-               openChannel = true;
-             }
-             if (openChannel) {
-               await this.getChannel(peer, replicationTopic);
-             } */
             await exchangeSwarmAddresses((data) => this._ipfs.pubsub.publish(replicationTopic, data), this.identity, peer, await this._ipfs.swarm.peers(), this.getNetwork(replicationTopic), this.localNetwork)
             await this.getChannel(peer, replicationTopic); // always open a channel, and drop channels if necessary (not trusted) (TODO)
             return; // we return because we have know opened a channel to this peer
@@ -772,9 +678,7 @@ export class OrbitDB {
 
           }
           else {
-            const x = 123;
             // If replicate false, we are in write mode. Means we should exchange all heads 
-            /*   await exchangeHeads((message) => this._ipfs.pubsub.publish(replicationTopic, message), store, () => false, await this.getSigner()) */
           }
         }
 
@@ -878,7 +782,6 @@ export class OrbitDB {
       }
 
     }
-
   }
 
 
@@ -1029,19 +932,6 @@ export class OrbitDB {
       program,
       minReplicas
     }
-
-
-    /* if (!this._replicationTopicJobs.has(replicationTopic) && store.replicate) {
-      const controller = new AbortController();
-      const job = await createEmitHealthCheckJob({
-        stores: () => Object.keys(this.programs[replicationTopic]),
-        subscribingForReplication: (topic) => this._subscribeForReplication.has(topic)
-      }, replicationTopic, (r, d) => this._ipfs.pubsub.publish(r, d), () => this._ipfs.isOnline(), controller, await this.getSigner(), this.encryption);
-      job();
-      this._replicationTopicJobs.set(replicationTopic, {
-        controller
-      })
-    } */
   }
 
   _getPeersLRU: LRU<string, Promise<PeerInfoWithMeta[]>> = new LRU({ max: 500, ttl: WAIT_FOR_PEERS_TIME })

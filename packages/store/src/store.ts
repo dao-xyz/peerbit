@@ -116,12 +116,6 @@ export interface IStoreOptions<T> {
   onReplicationComplete?: (store: Store<any>) => void
   onReady?: (store: Store<T>) => void,
 
-
-  /**
-   * Name to name conditioned some external property
-   */
-  /*   nameResolver?: (name: string) => string */
-
   encryption?: PublicKeyEncryptionResolver,
   maxHistory?: number,
   fetchEntryTimeout?: number,
@@ -131,43 +125,18 @@ export interface IStoreOptions<T> {
   sortFn?: ISortFunction,
   prune?: PruneOptions,
   onUpdate?: (oplog: Log<T>, entries?: Entry<T>[]) => void,
-  /*   resourceOptions?: ResourceOptions<T>,
-   */
+
 }
 
-/* export type ResourceOptions<T> = { heapSizeLimit: () => number };
- */
+
 
 export interface IInitializationOptions<T> extends IStoreOptions<T>, IInitializationOptionsDefault<T> {
 
-  /* encryption?: {
-    encrypt: (arr: Uint8Array, keyGroup: string) => Promise<{ bytes: Uint8Array, keyId: Uint8Array }>
-    decrypt: (arr: Uint8Array, keyGroup: string, keyId: Uint8Array) => Promise<Uint8Array>
-  }, */
 
   resolveCache: (address: Address) => Promise<Cache<CachedValue>> | Cache<CachedValue>
 
 }
 
-/* export const DefaultOptions: IInitializationOptions<any> = {
-
-  fetchEntryTimeout: undefined,
-
-  syncLocal: false,
-  sortFn: undefined,
-  maxHistory: -1,
-  referenceCount: 32,
-  replicationConcurrency: 32,
-  typeMap: {},
-  encoding: JSON_ENCODING,
-  onClose: undefined,
-  onDrop: undefined,
-  onLoad: undefined,
-  resolveCache: undefined,
-  resourceOptions: undefined,
-
-}
- */
 interface IInitializationOptionsDefault<T> {
 
   maxHistory?: number,
@@ -561,10 +530,6 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
   async sync(heads: (Entry<T>)[]) {
 
 
-    /* const mem = await this.checkMemory();
-    if (!mem) {
-      return; // TODO state will not be accurate
-    } */
 
     this._stats.syncRequestsReceieved += 1
     logger.debug(`Sync request #${this._stats.syncRequestsReceieved} ${heads.length}`)

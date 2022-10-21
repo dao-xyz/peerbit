@@ -1,16 +1,14 @@
 import { PayloadOperation, StringIndex, encoding } from './string-index.js'
-import { DSearch, DSearchInitializationOptions, QueryType, StoreAddressMatchQuery } from '@dao-xyz/peerbit-dsearch';
+import { DSearch, QueryType, StoreAddressMatchQuery } from '@dao-xyz/peerbit-dsearch';
 import { RangeCoordinate, RangeCoordinates, Result, ResultWithSource, StringMatchQuery } from '@dao-xyz/peerbit-dsearch';
 import { StringQueryRequest } from '@dao-xyz/peerbit-dsearch';
 import { Range } from './range.js';
-import { deserialize, field, serialize, variant } from '@dao-xyz/borsh';
+import { field, variant } from '@dao-xyz/borsh';
 import { CustomBinaryPayload } from '@dao-xyz/peerbit-bpayload';
-import { Address, IInitializationOptions, IStoreOptions, load, Store } from '@dao-xyz/peerbit-store';
-import { IPFS } from 'ipfs-core-types';
-import { BORSH_ENCODING, CanAppend, Identity } from '@dao-xyz/ipfs-log';
+import { Store } from '@dao-xyz/peerbit-store';
+import { BORSH_ENCODING, CanAppend } from '@dao-xyz/ipfs-log';
 import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';
-import { RootProgram, Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program';
-import { count } from 'console';
+import { RootProgram, Program } from '@dao-xyz/peerbit-program';
 import { QueryOptions } from '@dao-xyz/peerbit-dquery';
 export const STRING_STORE_TYPE = 'string_store';
 const findAllOccurrences = (str: string, substr: string): number[] => {
@@ -156,7 +154,6 @@ export class DString extends Program implements RootProgram {
 
 
 @variant("string")
-/* @variant([0, 2]) */
 export class StringResultSource extends CustomBinaryPayload {
 
   @field({ type: 'string' })

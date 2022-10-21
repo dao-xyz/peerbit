@@ -60,9 +60,6 @@ export class DDocs<T extends BinaryPayload> extends Program {
     return this;
   }
 
-  /* get encoding(): Encoding<Operation<T>> {
-    return;
-  } */
 
   public get(key: any, caseSensitive = false): IndexedValue<T>[] {
     key = key.toString()
@@ -211,24 +208,6 @@ export class DDocs<T extends BinaryPayload> extends Program {
   }
 
 
-  /* TODO  
-   public batchPut(docs: T[]) {
-      const mapper = (doc, idx) => {
-        return this._addOperationBatch(
-          {
-            op: 'PUT',
-            key: asString(doc[this.indexBy]),
-            value: doc
-          },
-          true,
-          idx === docs.length - 1
-        )
-      }
-  
-      return pMap(docs, mapper, { concurrency: 1 })
-        .then(() => this.saveSnapshot())
-    } */
-
   public put(doc: T, options = {}) {
     if (!(doc as any)[this.indexBy]) { throw new Error(`The provided document doesn't contain field '${this.indexBy}'`) }
     const ser = serialize(doc);
@@ -271,16 +250,7 @@ export class DDocs<T extends BinaryPayload> extends Program {
   public get size(): number {
     return Object.keys(this._index).length
   }
-  /*   clone(newName: string): DDocs<T> {
-      return new DDocs<T>({
-        accessController: this.accessController.clone(newName),
-        indexBy: this.indexBy,
-        objectType: this.objectType,
-        name: newName,
-        queryRegion: this.queryRegion
-      })
-    }
-   */
+
 }
 
 

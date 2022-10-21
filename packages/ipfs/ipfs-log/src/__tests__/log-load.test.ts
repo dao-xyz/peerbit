@@ -786,22 +786,22 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log = new Log(ipfs, { ...signKey4.keypair, sign: (data) => signKey4.keypair.sign(data) }, { logId: 'X' })
 
         for (let i = 1; i <= 5; i++) {
-          await logA.append('entryA' + i, { nexts: logA.heads  /* logA.getPow2Refs(nextPointersAmount) */ })
+          await logA.append('entryA' + i, { nexts: logA.heads })
         }
 
         for (let i = 1; i <= 5; i++) {
-          await logB.append('entryB' + i, { nexts: logB.heads /* logB.getPow2Refs(nextPointersAmount) */ })
+          await logB.append('entryB' + i, { nexts: logB.heads })
         }
 
         await log3.join(logA)
         await log3.join(logB)
 
         for (let i = 6; i <= 10; i++) {
-          await logA.append('entryA' + i, { nexts: logA.heads /*  logA.getPow2Refs(nextPointersAmount) */ })
+          await logA.append('entryA' + i, { nexts: logA.heads })
         }
 
         await log.join(log3)
-        await log.append('entryC0', { nexts: logB.heads /* log.getPow2Refs(nextPointersAmount) */ })
+        await log.append('entryC0', { nexts: logB.heads })
 
         await log.join(logA)
 
@@ -862,22 +862,22 @@ Object.keys(testAPIs).forEach((IPFS) => {
         const log = new Log(ipfs, { ...signKey4.keypair, sign: (data) => signKey4.keypair.sign(data) }, { logId: 'X' })
 
         for (let i = 1; i <= 5; i++) {
-          await logA.append('entryA' + i, { nexts: logA.heads  /* logA.getPow2Refs(nextPointersAmount) */ })
+          await logA.append('entryA' + i, { nexts: logA.heads })
         }
 
         for (let i = 1; i <= 5; i++) {
-          await logB.append('entryB' + i, { nexts: logB.heads /* logB.getPow2Refs(nextPointersAmount) */ })
+          await logB.append('entryB' + i, { nexts: logB.heads })
         }
 
         await log3.join(logA)
         await log3.join(logB)
 
         for (let i = 6; i <= 10; i++) {
-          await logA.append('entryA' + i, { nexts: logA.heads /*  logA.getPow2Refs(nextPointersAmount) */ })
+          await logA.append('entryA' + i, { nexts: logA.heads })
         }
 
         await log.join(log3)
-        await log.append('entryC0', { nexts: logB.heads /* log.getPow2Refs(nextPointersAmount) */ })
+        await log.append('entryC0', { nexts: logB.heads })
 
         await log.join(logA)
 

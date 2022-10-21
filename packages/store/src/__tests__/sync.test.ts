@@ -38,8 +38,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
             keystore = new Keystore(await createStore(path.join(__filename, 'identity')))
 
             session = await Session.connected(2);
-            /*       const id = (await ipfsd.api.id()).id
-             */
             signKey = await keystore.createEd25519Key();
         })
 

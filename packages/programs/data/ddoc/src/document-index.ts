@@ -165,20 +165,14 @@ export class DocumentIndex<T> {
   }
 
   deserializeOrItem(entry: Entry<Operation<T>>, operation: PutOperation<T>): IndexedValue<T> {
-    /* if (typeof item.payload.value !== 'string')
-      return item as LogEntry<T> */
     const item: IndexedValue<T> = {
       entry,
       key: operation.key,
       value: this.deserializeOrPass(operation)
     }
     return item;
-    /* const newItem = { ...item, payload: { ...item.payload } };
-    newItem.payload.value = this.deserializeOrPass(newItem.payload.value)
-    return newItem as LogEntry<T>; */
-  }
 
-}
+  }
 
 
 

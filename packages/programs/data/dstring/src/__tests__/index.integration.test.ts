@@ -11,49 +11,10 @@ import path, { dirname } from 'path';
 import { Identity } from '@dao-xyz/ipfs-log';
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto';
 import { DefaultOptions } from '@dao-xyz/peerbit-store';
-import { deserialize, serialize, variant } from '@dao-xyz/borsh';
-import { QueryRequestV0, QueryResponseV0, DQuery, QueryOptions, query } from '@dao-xyz/peerbit-dquery';
+import { deserialize, serialize } from '@dao-xyz/borsh';
+import { QueryRequestV0, DQuery, QueryOptions, query } from '@dao-xyz/peerbit-dquery';
 
 const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
-/* const storeTestSetup = async (): Promise<{
-    creator: Peer,
-    observer: Peer,
-    storeCreator: DString
-}> => {
-
-    const session = await Session.connected(2)
-
-    let [peer, observer] = session.peers;
-
-    // Create store
-    const accessController = new IPFSAccessController({
-        write: ['*']
-    });
-    accessController.allowAll = true;
-    const store = new DString({
-        name: 'store',
-        accessController: accessController
-    });
-
-    store.queryRegion = 'world';
-
-    let storeCreator = await peer.orbitDB.open<DString>(store)
-    await storeCreator.load();
-    await storeCreator._initializationPromise;
-
-    expect(await peer.node.pubsub.ls()).toHaveLength(2); // replication and query topic
-    const observerSubscriptions = await observer.ls();
-    expect(observerSubscriptions).toHaveLength(0);
-
-    return {
-        creator: peer,
-        observer,
-        storeCreator
-    }
-}
- */
-
 
 const mquery = (ipfs: IPFS, topic: string, request: StringQueryRequest, responseHandler: (results: Results) => void, options: QueryOptions | undefined) => (
     query(ipfs, topic, new QueryRequestV0({
