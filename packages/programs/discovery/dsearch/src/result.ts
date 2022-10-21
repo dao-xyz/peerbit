@@ -1,6 +1,6 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh";
 
-import { BinaryPayload } from "@dao-xyz/bpayload";
+import { BinaryPayload } from "@dao-xyz/peerbit-bpayload";
 
 
 export class ResultCoordinates { }

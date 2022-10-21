@@ -2,10 +2,10 @@ import { field, serialize, serializeField, variant } from "@dao-xyz/borsh";
 import { DDocs, IndexedValue } from "@dao-xyz/peerbit-ddoc";
 import { Key, PlainKey, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 // @ts-ignore
-import { SystemBinaryPayload } from "@dao-xyz/bpayload";
+import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { DocumentQueryRequest, DSearch, MemoryCompare, MemoryCompareQuery, Result, ResultWithSource } from "@dao-xyz/peerbit-dsearch";
 import { createHash } from "crypto";
-import { joinUint8Arrays, U8IntArraySerializer } from '@dao-xyz/borsh-utils'
+import { joinUint8Arrays, UInt8ArraySerializer } from '@dao-xyz/peerbit-borsh-utils'
 import { DQuery } from "@dao-xyz/peerbit-dquery";
 
 export type RelationResolver = { resolve: (key: PublicSignKey, db: DDocs<Relation>) => Promise<Result[]>, next: (relation: AnyRelation) => PublicSignKey }
@@ -126,7 +126,7 @@ export class AnyRelation extends Relation {
     @field({ type: Key })
     from: Key
 
-    @field(U8IntArraySerializer)
+    @field(UInt8ArraySerializer)
     padding: Uint8Array;
 
     @field({ type: Key })

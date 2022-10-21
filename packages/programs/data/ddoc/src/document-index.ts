@@ -2,7 +2,7 @@ import { Constructor, deserialize, field, variant, vec } from "@dao-xyz/borsh";
 import { asString, Hashable } from "./utils";
 import { BORSH_ENCODING, Encoding, Entry } from "@dao-xyz/ipfs-log";
 import { Log } from "@dao-xyz/ipfs-log";
-import { U8IntArraySerializer } from "@dao-xyz/borsh-utils";
+import { UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
 
 @variant(0)
 export class Operation<T> { }
@@ -13,7 +13,7 @@ export class PutOperation<T> extends Operation<T> {
   @field({ type: 'string' })
   key: string
 
-  @field(U8IntArraySerializer)
+  @field(UInt8ArraySerializer)
   data: Uint8Array
 
   _value?: T

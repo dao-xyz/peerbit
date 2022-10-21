@@ -18,7 +18,7 @@ import {
     Session
 } from '@dao-xyz/peerbit-test-utils'
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
-import { delay, waitFor } from '@dao-xyz/time'
+import { delay, waitFor } from '@dao-xyz/peerbit-time'
 import { AccessError, Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 
 const orbitdbPath1 = './orbitdb/tests/network/1'

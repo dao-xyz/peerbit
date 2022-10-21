@@ -1,5 +1,5 @@
 import { Constructor, field, getSchemasBottomUp, variant } from "@dao-xyz/borsh";
-import { SystemBinaryPayload } from "@dao-xyz/bpayload";
+import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { Identity } from "@dao-xyz/ipfs-log";
 import { IPFS } from "ipfs-core-types";
 import { IInitializationOptions, Store, Initiable, Address, Addressable, Saveable, save, load } from '@dao-xyz/peerbit-dstore';

@@ -1,7 +1,7 @@
 
 import { Session } from '../session.js'
 import waitForPeers from '../wait-for-peers.js';
-import { delay } from '@dao-xyz/time';
+import { delay } from '@dao-xyz/peerbit-time';
 describe(`Session`, function () {
     let session: Session;
     beforeEach(async () => {

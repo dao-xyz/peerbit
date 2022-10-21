@@ -1,6 +1,6 @@
 import { field, BinaryWriter, vec, variant } from "@dao-xyz/borsh";
 import { DDocs } from "@dao-xyz/peerbit-ddoc";
-import { SystemBinaryPayload } from "@dao-xyz/bpayload";
+import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { Address } from "@dao-xyz/peerbit-dstore";
 import { DSearch } from "@dao-xyz/peerbit-dsearch";
 import { DQuery } from "@dao-xyz/peerbit-dquery";

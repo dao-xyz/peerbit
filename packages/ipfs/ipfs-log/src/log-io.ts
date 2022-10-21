@@ -2,7 +2,7 @@ import { Entry } from './entry'
 import { EntryFetchAllOptions, EntryIO, strictFetchOptions } from './entry-io'
 import { ISortFunction, LastWriteWins, NoZeroes } from './log-sorting'
 import * as LogError from './log-errors'
-import io from '@dao-xyz/io-utils';
+import io from '@dao-xyz/peerbit-io-utils';
 import { isDefined } from './is-defined';
 import { findUniques } from './find-uniques';
 import { difference } from './difference';

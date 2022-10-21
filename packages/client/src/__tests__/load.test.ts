@@ -18,7 +18,7 @@ import {
   startIpfs,
   stopIpfs
 } from '@dao-xyz/peerbit-test-utils'
-import { waitFor } from '@dao-xyz/time'
+import { waitFor } from '@dao-xyz/peerbit-time'
 
 const dbPath = './orbitdb/tests/persistency'
 

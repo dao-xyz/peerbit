@@ -1,6 +1,6 @@
 import { Entry } from './entry'
 import { LamportClock as Clock } from './lamport-clock'
-import { arraysCompare } from '@dao-xyz/borsh-utils';
+import { arraysCompare } from '@dao-xyz/peerbit-borsh-utils';
 
 const First = (a: any, b: any) => a
 

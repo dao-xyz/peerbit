@@ -1,5 +1,5 @@
 {
-  "name": "@dao-xyz/borsh-utils",
+  "name": "@dao-xyz/peerbit-borsh-utils",
   "version": "0.0.1",
   "description": "Utility methods for borsh",
   "type": "module",

@@ -5,7 +5,7 @@ import { Entry } from '../entry';
 import { Log } from '../log.js'
 import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import { jest } from '@jest/globals';
-import { arraysCompare } from '@dao-xyz/borsh-utils';
+import { arraysCompare } from '@dao-xyz/peerbit-borsh-utils';
 // Test utils
 import {
   nodeConfig as config,

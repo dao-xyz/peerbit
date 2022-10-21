@@ -47,8 +47,8 @@
     "scripts": {
         "clean": "lerna run clean",
         "build": "lerna run build",
-        "test": "node ./node_modules/.bin/jest test  -c jest.config.unit.ts --runInBand --forceExit",
-        "test:integration": "node ./node_modules/.bin/jest test -c jest.config.integration.ts --runInBand --forceExit",
+        "test": "node --experimental-vm-modules ./node_modules/.bin/jest test  -c jest.config.unit.ts  --forceExit",
+        "test:integration": "node --experimental-vm-modules ./node_modules/.bin/jest test -c jest.config.integration.ts --forceExit",
         "deploy": "yarn deploy:docs && yarn deploy:example",
         "deploy:docs": "yarn docs && gh-pages --dist docs --dotfiles",
         "docs": "shx rm -rf docs && NODE_OPTIONS=--max_old_space_size=8192 typedoc && shx cp ./{.nojekyll} docs/",

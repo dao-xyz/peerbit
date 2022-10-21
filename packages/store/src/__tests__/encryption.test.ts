@@ -25,7 +25,7 @@ import {
 } from '@dao-xyz/peerbit-test-utils'
 import { Level } from 'level'
 import { Entry, JSON_ENCODING } from '@dao-xyz/ipfs-log'
-import { delay, waitFor } from '@dao-xyz/time'
+import { delay, waitFor } from '@dao-xyz/peerbit-time'
 import { Address } from '../io.js'
 const API = 'js-ipfs'
 describe(`addOperation`, function () {

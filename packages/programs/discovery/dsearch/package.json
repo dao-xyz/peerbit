@@ -32,8 +32,8 @@
   "dependencies": {
     "@dao-xyz/ipfs-log": "^5.5.15",
     "@dao-xyz/borsh": "^3.3.0",
-    "@dao-xyz/bpayload": "^0.0.11",
-    "@dao-xyz/time": "^0.0.11",
+    "@dao-xyz/peerbit-bpayload": "^0.0.11",
+    "@dao-xyz/peerbit-time": "^0.0.11",
     "@dao-xyz/peerbit-crypto": "^0.0.1",
     "@dao-xyz/peerbit-dquery": "^0.0.1",
     "uuid": "^8.3.2"

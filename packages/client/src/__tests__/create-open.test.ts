@@ -3,7 +3,6 @@ import fs from 'fs-extra'
 import path from 'path'
 import rmrf from 'rimraf'
 // @ts-ignore
-/* import Zip from 'adm-zip' */
 import { OrbitDB } from '../orbit-db'
 import { KeyValueStore } from './utils/stores/key-value-store'
 
@@ -41,11 +40,6 @@ describe(`orbit-db - Create & Open `, function () {
     ipfs = ipfsd.api
     replicationTopic = uuid();
 
-    /*    const zip = new Zip(ipfsFixtures)
-       await zip.extractAllToAsync(path.join('./packages/orbit-db/src/__tests__', 'fixtures'), true)
-       await fs.copy(path.join(ipfsFixturesDir, 'blocks'), path.join(ipfsd.path, 'blocks'))
-       await fs.copy(path.join(ipfsFixturesDir, 'datastore'), path.join(ipfsd.path, 'datastore'), { filter: filterFunc })
-  */
     orbitdb = await OrbitDB.createInstance(ipfs, { directory: dbPath })
 
   })

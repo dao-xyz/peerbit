@@ -10,7 +10,7 @@ import { AccessError } from "@dao-xyz/peerbit-crypto"
 
 import { jest } from '@jest/globals';
 import { KeyWithMeta } from '@dao-xyz/peerbit-keystore'
-import { waitFor } from '@dao-xyz/time'
+import { waitFor } from '@dao-xyz/peerbit-time'
 
 // Include test utilities
 import {

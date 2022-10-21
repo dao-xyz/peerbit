@@ -1,6 +1,6 @@
 import assert from 'assert'
 import { IpfsPubsubPeerMonitor } from '../index.js'
-import { waitFor } from '@dao-xyz/time';
+import { waitFor } from '@dao-xyz/peerbit-time';
 
 const peers = ['A', 'B', 'C']
 const topic = 'tests'

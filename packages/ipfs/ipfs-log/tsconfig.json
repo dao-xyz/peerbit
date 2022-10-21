@@ -2,7 +2,9 @@
     "extends": "../../../tsconfig.json",
     "include": [
         "src",
-        "src/__tests__/fixtures"
+    ],
+    "exclude": [
+        "src/__tests__"
     ],
     "compilerOptions": {
         "noEmit": false,

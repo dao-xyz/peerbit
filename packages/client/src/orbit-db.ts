@@ -27,7 +27,7 @@ import { multiaddr } from '@multiformats/multiaddr'
 import { Program } from '@dao-xyz/peerbit-program';
 
 // @ts-ignore
-import { delay, waitFor } from '@dao-xyz/time'
+import { delay, waitFor } from '@dao-xyz/peerbit-time'
 import { LRUCounter } from './lru-counter.js'
 import { IpfsPubsubPeerMonitor } from '@dao-xyz/ipfs-pubsub-peer-monitor';
 import type { PeerId } from '@libp2p/interface-peer-id';

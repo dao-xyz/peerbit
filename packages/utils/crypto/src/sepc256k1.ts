@@ -2,7 +2,7 @@ import { field, variant } from "@dao-xyz/borsh";
 import { PublicSignKey, SignKey } from './key.js';
 import { verifyMessage } from '@ethersproject/wallet'
 import sodium from 'libsodium-wrappers';
-import { fixedUint8Array } from "@dao-xyz/borsh-utils";
+import { fixedUint8Array } from "@dao-xyz/peerbit-borsh-utils";
 
 
 @variant(2)

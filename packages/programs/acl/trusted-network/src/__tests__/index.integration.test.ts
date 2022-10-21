@@ -1,6 +1,6 @@
 import { Session, Peer, waitForPeers } from '@dao-xyz/peerbit-test-utils'
 import { AnyRelation, createIdentityGraphStore, getFromByTo, getPathGenerator, getToByFrom, TrustedNetwork, KEY_OFFSET, PUBLIC_KEY_WIDTH, Relation } from '..';
-import { waitFor } from '@dao-xyz/time';
+import { waitFor } from '@dao-xyz/peerbit-time';
 import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { DocumentQueryRequest, Results, ResultWithSource } from '@dao-xyz/peerbit-dsearch';
 import { Secp256k1PublicKey } from '@dao-xyz/peerbit-crypto';

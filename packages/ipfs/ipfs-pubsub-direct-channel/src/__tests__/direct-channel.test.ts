@@ -7,7 +7,7 @@ import {
 } from '@dao-xyz/peerbit-test-utils'
 import { DirectChannel as Channel } from '../direct-channel.js';
 import { v1 as PROTOCOL } from '../protocol.js';
-import { delay, waitFor } from '@dao-xyz/time';
+import { delay, waitFor } from '@dao-xyz/peerbit-time';
 import { waitForPeers } from '../wait-for-peers.js';
 import type { PeerId } from '@libp2p/interface-peer-id';
 

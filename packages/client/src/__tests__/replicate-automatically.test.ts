@@ -15,7 +15,7 @@ import {
   testAPIs,
   Session
 } from '@dao-xyz/peerbit-test-utils'
-import { waitFor } from "@dao-xyz/time"
+import { waitFor } from "@dao-xyz/peerbit-time"
 
 const dbPath1 = './orbitdb/tests/replicate-automatically/1'
 const dbPath2 = './orbitdb/tests/replicate-automatically/2'

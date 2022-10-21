@@ -1,5 +1,5 @@
 {
-  "name": "@dao-xyz/io-utils",
+  "name": "@dao-xyz/peerbit-io-utils",
   "version": "1.1.0",
   "description": "IO helper module for orbit-db",
   "type": "module",
@@ -29,7 +29,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/orbitdb/io-utils.git"
+    "url": "git+https://github.com/dao-xyz/peerbit.git"
   },
   "keywords": [
     "orbitdb",
@@ -38,9 +38,9 @@
   "author": "shamb0t",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/orbitdb/io-utils/issues"
+    "url": "https://github.com/dao-xyz/peerbit/issues"
   },
-  "homepage": "https://github.com/orbitdb/io-utils#readme",
+  "homepage": "https://github.com/dao-xyz/peerbit#readme",
   "localMaintainers": [
     "shamb0t <shams@haja.io>",
     "hajamark <mark@haja.io>"

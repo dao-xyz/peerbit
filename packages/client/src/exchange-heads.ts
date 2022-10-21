@@ -8,7 +8,7 @@ import { ResourceRequirement } from './exchange-replication.js';
 // @ts-ignore
 import Logger from 'logplease'
 import { Program } from '@dao-xyz/peerbit-program';
-import { fixedUint8Array } from '@dao-xyz/borsh-utils';
+import { fixedUint8Array } from '@dao-xyz/peerbit-borsh-utils';
 const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 

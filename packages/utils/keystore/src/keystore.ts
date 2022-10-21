@@ -1,9 +1,9 @@
 import { Level } from 'level';
 import LRU from 'lru-cache';
 import { variant, field, serialize, deserialize, option, Constructor } from '@dao-xyz/borsh';
-import { U8IntArraySerializer, } from '@dao-xyz/borsh-utils';
+import { UInt8ArraySerializer, } from '@dao-xyz/peerbit-borsh-utils';
 import { X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519PrivateKey, Keypair, X25519Keypair, Ed25519Keypair, PublicSignKey, PublicKeyEncryptionKey } from '@dao-xyz/peerbit-crypto';
-import { waitFor } from '@dao-xyz/time';
+import { waitFor } from '@dao-xyz/peerbit-time';
 import { createHash, Sign } from 'crypto';
 import sodium, { KeyPair } from 'libsodium-wrappers';
 import { StoreError } from './errors';
@@ -80,10 +80,10 @@ const NONCE_LENGTH = 24;
 export class EncryptedMessage {
 
 
-  @field(U8IntArraySerializer)
+  @field(UInt8ArraySerializer)
   nonce: Uint8Array
 
-  @field(U8IntArraySerializer)
+  @field(UInt8ArraySerializer)
   cipher: Uint8Array
 
   constructor(props?: EncryptedMessage) {

@@ -33,10 +33,7 @@
     "@dao-xyz/borsh": "^3.3.0",
     "@dao-xyz/peerbit-dsearch": "^0.0.43",
     "@dao-xyz/peerbit-dstore": "^0.0.21",
-    "@dao-xyz/time": "^0.0.11"
-  },
-  "devDependencies": {
-    "@dao-xyz-types/orbit-db": "^0.0.39"
+    "@dao-xyz/peerbit-time": "^0.0.11"
   },
   "gitHead": "d10b89ef1a120a58e1a7e92aadcc2bb536a37e3e"
 }

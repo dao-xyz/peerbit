@@ -2,7 +2,7 @@
 
 import { serialize } from "@dao-xyz/borsh";
 import type { Message } from '@libp2p/interface-pubsub'
-import { delay, waitFor } from "@dao-xyz/time";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { MaybeSigned, decryptVerifyInto, DecryptedThing, MaybeEncrypted, AccessError, X25519PublicKey, Ed25519PublicKey, X25519Keypair, GetEncryptionKeypair, GetAnyKeypair, SignKey } from "@dao-xyz/peerbit-crypto"
 import { IPFS } from "ipfs-core-types";
 import { Identity } from "@dao-xyz/ipfs-log";

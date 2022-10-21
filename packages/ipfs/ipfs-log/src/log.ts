@@ -84,19 +84,6 @@ export class Log<T> extends GSet {
   _encryption?: PublicKeyEncryptionResolver
 
   joinConcurrency: number;
-  /**
-   * Create a new Log instance
-   * @param {IPFS} ipfs An IPFS instance
-   * @param {Object} identity Identity (https://github.com/orbitdb/orbit-db-identity-provider/blob/master/src/identity.js)
-   * @param {Object} options
-   * @param {string} options.logId ID of the log
-   * @param {Object} options.access AccessController (./default-access-controller)
-   * @param {Array<Entry<T>>} options.entries An Array of Entries from which to create the log
-   * @param {Array<Entry<T>>} options.heads Set the heads of the log
-   * @param {Clock} options.clock Set the clock of the log
-   * @param {Function} options.sortFn The sort function - by default LastWriteWins
-   * @return {Log} The log instance
-   */
 
   constructor(ipfs: IPFS, identity: Identity, options: LogOptions<T> = {}) {
 

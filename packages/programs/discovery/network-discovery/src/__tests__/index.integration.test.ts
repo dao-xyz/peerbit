@@ -1,5 +1,5 @@
 import { Session } from '@dao-xyz/peerbit-test-utils'
-import { waitFor } from '@dao-xyz/time';
+import { waitFor } from '@dao-xyz/peerbit-time';
 import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { Identity } from '@dao-xyz/ipfs-log';
 import { createStore } from '@dao-xyz/peerbit-test-utils';

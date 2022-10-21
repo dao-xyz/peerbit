@@ -1,6 +1,6 @@
 export * from './errors.js';
 import { field, variant } from '@dao-xyz/borsh';
-import { arraysCompare, fixedUint8Array } from '@dao-xyz/borsh-utils';
+import { arraysCompare, fixedUint8Array } from '@dao-xyz/peerbit-borsh-utils';
 import sodium from 'libsodium-wrappers';
 import { Keypair, PrivateEncryptionKey, PublicKeyEncryptionKey } from './key.js';
 import { Ed25519Keypair, Ed25519PublicKey, Ed25519PrivateKey } from './ed25519.js';
@@ -169,7 +169,7 @@ export class MaybeSigned<T>  {
 /* @variant(0)
 export class UnsignedMessage<T> extends MaybeSigned<T> {
 
-    @field(U8IntArraySerializer)
+    @field(UInt8ArraySerializer)
     data: Uint8Array
 
     constructor(props?: {
@@ -199,7 +199,7 @@ export class UnsignedMessage<T> extends MaybeSigned<T> {
 @variant(1)
 export class SignedMessage<T> extends MaybeSigned<T> {
 
-    @field(U8IntArraySerializer)
+    @field(UInt8ArraySerializer)
     signature: Uint8Array
 
     @field(bufferSerializer(Ed25519PublicKey))

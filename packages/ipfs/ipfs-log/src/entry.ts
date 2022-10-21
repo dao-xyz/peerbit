@@ -1,9 +1,9 @@
 import { LamportClock as Clock } from './lamport-clock'
 import { isDefined } from './is-defined'
 import { variant, field, vec, option, serialize, deserialize } from '@dao-xyz/borsh';
-import io from '@dao-xyz/io-utils';
+import io from '@dao-xyz/peerbit-io-utils';
 import { IPFS } from 'ipfs-core-types'
-import { arraysEqual, joinUint8Arrays, U8IntArraySerializer } from '@dao-xyz/borsh-utils';
+import { arraysEqual, joinUint8Arrays, UInt8ArraySerializer } from '@dao-xyz/peerbit-borsh-utils';
 import { DecryptedThing, MaybeEncrypted, MaybeX25519PublicKey, PublicSignKey, SignKey, X25519PublicKey, PublicKeyEncryptionResolver, SignatureWithKey, AccessError } from "@dao-xyz/peerbit-crypto";
 import { max, toBase64 } from './utils.js';
 import sodium from 'libsodium-wrappers';
@@ -72,7 +72,7 @@ export class Payload<T>
 
   /*   _encoding: Encoding<T> */
 
-  @field(U8IntArraySerializer)
+  @field(UInt8ArraySerializer)
   data: Uint8Array
 
   _value?: T;

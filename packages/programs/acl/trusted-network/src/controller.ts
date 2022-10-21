@@ -9,10 +9,10 @@ import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from 'ipfs-core-types';
 import { DeleteOperation } from "@dao-xyz/peerbit-ddoc";
 import { AnyRelation, createIdentityGraphStore, getPathGenerator, hasPath, Relation, getFromByTo, getToByFrom, hasRelation } from "./identity-graph";
-import { BinaryPayload } from "@dao-xyz/bpayload";
+import { BinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { Program, RootProgram } from '@dao-xyz/peerbit-program';
 import { DQuery } from "@dao-xyz/peerbit-dquery";
-import { waitFor } from "@dao-xyz/time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 
 const encoding = BORSH_ENCODING(Operation);
 

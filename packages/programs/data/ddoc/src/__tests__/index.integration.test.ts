@@ -2,7 +2,7 @@
 import { deserialize, field, option, serialize, variant } from '@dao-xyz/borsh';
 import { DDocs } from '../document-store';
 import { DocumentQueryRequest, Compare, FieldBigIntCompareQuery, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort, MemoryCompareQuery, MemoryCompare, Results, DSearch } from '@dao-xyz/peerbit-dsearch';
-import { CustomBinaryPayload } from '@dao-xyz/bpayload';
+import { CustomBinaryPayload } from '@dao-xyz/peerbit-bpayload';
 import { QueryRequestV0, query, QueryOptions, DQuery } from '@dao-xyz/peerbit-dquery';
 import { Session, createStore } from '@dao-xyz/peerbit-test-utils';
 import { DefaultOptions } from '@dao-xyz/peerbit-dstore';

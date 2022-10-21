@@ -13,7 +13,7 @@ import {
     Session,
 } from '@dao-xyz/peerbit-test-utils'
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
-import { delay, waitFor, waitForAsync } from "@dao-xyz/time";
+import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 
 const dbPath1 = './orbitdb/tests/sharding/1'
 const dbPath2 = './orbitdb/tests/sharding/2'

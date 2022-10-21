@@ -15,7 +15,7 @@ import { jest } from '@jest/globals';
 
 import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
-import { waitFor } from '@dao-xyz/time'
+import { waitFor } from '@dao-xyz/peerbit-time'
 import { Level } from 'level'
 import { Entry, JSON_ENCODING } from '@dao-xyz/ipfs-log'
 

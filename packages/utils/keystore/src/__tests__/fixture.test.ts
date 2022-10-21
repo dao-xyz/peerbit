@@ -1,6 +1,6 @@
 import { createStore, Keystore } from "../keystore.js"
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { delay } from "@dao-xyz/time";
+import { delay } from "@dao-xyz/peerbit-time";
 import { fixturePath } from './fixture.js';
 
 

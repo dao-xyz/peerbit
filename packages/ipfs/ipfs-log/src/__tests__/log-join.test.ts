@@ -4,7 +4,7 @@ import fs from 'fs-extra'
 import { Entry } from '../entry.js';
 import { Log } from '../log.js'
 import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
-import { arraysCompare } from '@dao-xyz/borsh-utils';
+import { arraysCompare } from '@dao-xyz/peerbit-borsh-utils';
 import { LamportClock as Clock } from '../lamport-clock.js';
 import { jest } from '@jest/globals';
 

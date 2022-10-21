@@ -15,7 +15,7 @@ import {
     connectPeers
 } from '@dao-xyz/peerbit-test-utils'
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
-import { waitFor } from '@dao-xyz/time'
+import { waitFor } from '@dao-xyz/peerbit-time'
 
 const orbitdbPath1 = './orbitdb/tests/discovery/1'
 const orbitdbPath2 = './orbitdb/tests/discovery/2'

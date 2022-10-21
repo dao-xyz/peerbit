@@ -8,7 +8,7 @@ import { LamportClock as Clock } from '../lamport-clock.js'
 import { Log } from '../log.js'
 import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import fs from 'fs-extra'
-import io from '@dao-xyz/io-utils'
+import io from '@dao-xyz/peerbit-io-utils'
 
 // For tiebreaker testing
 import { LastWriteWins } from '../log-sorting.js';
@@ -32,7 +32,7 @@ import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import path from 'path';
-import { arraysCompare } from '@dao-xyz/borsh-utils';
+import { arraysCompare } from '@dao-xyz/peerbit-borsh-utils';
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;

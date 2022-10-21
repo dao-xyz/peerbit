@@ -1,15 +1,15 @@
 
-import { arraysCompare, U8IntArraySerializer } from '../index.js';
+import { arraysCompare, UInt8ArraySerializer } from '../index.js';
 import { field, serialize, deserialize } from '@dao-xyz/borsh';
 
-describe('U8IntArraySerializer', () => {
+describe('UInt8ArraySerializer', () => {
   it('ser/der', () => {
     class Test {
 
-      @field(U8IntArraySerializer)
+      @field(UInt8ArraySerializer)
       a: Uint8Array;
 
-      @field(U8IntArraySerializer)
+      @field(UInt8ArraySerializer)
       b: Uint8Array
 
     }

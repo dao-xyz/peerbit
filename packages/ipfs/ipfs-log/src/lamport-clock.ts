@@ -1,11 +1,11 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { U8IntArraySerializer } from "@dao-xyz/borsh-utils";
-import { arraysCompare, arraysEqual } from "@dao-xyz/borsh-utils";
+import { UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
+import { arraysCompare, arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
 
 @variant(0)
 export class LamportClock {
 
-  @field(U8IntArraySerializer)
+  @field(UInt8ArraySerializer)
   id: Uint8Array;
 
   @field({ type: 'u64' })

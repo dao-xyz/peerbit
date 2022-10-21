@@ -6,7 +6,7 @@ import { Encoding, EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log'
 import { Entry } from '@dao-xyz/ipfs-log'
 import { Replicator } from './replicator.js'
 import { ReplicationInfo } from './replication-info.js'
-import io from '@dao-xyz/io-utils'
+import io from '@dao-xyz/peerbit-io-utils'
 import Cache from '@dao-xyz/peerbit-cache';
 import { variant, field, vec, Constructor } from '@dao-xyz/borsh';
 import { IPFS } from 'ipfs-core-types'
@@ -18,11 +18,11 @@ import { AccessError, MaybeEncrypted, PublicKeyEncryptionResolver, SignatureWith
 
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
-import { joinUint8Arrays } from '@dao-xyz/borsh-utils';
+import { joinUint8Arrays } from '@dao-xyz/peerbit-borsh-utils';
 // @ts-ignore
 import Logger from 'logplease'
 import { Address, Addressable, load, save } from './io.js'
-import { SystemBinaryPayload } from '@dao-xyz/bpayload'
+import { SystemBinaryPayload } from '@dao-xyz/peerbit-bpayload'
 
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
 Logger.setLogLevel('ERROR')

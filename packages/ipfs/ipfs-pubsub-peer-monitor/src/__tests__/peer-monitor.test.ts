@@ -2,7 +2,7 @@
 import assert, { equal } from 'assert'
 import EventEmitter from 'events'
 import { IpfsPubsubPeerMonitor } from '../index.js'
-import { waitFor } from '@dao-xyz/time';
+import { waitFor } from '@dao-xyz/peerbit-time';
 import type { PeerId } from '@libp2p/interface-peer-id';
 
 const peers = ['A', 'B', 'C', 'D', 'E']

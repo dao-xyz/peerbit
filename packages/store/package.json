@@ -38,7 +38,7 @@
   "dependencies": {
     "multihashes": "~3.0.1",
     "@dao-xyz/peerbit-cache": "^0.4.0",
-    "@dao-xyz/io-utils": "^1.1.0",
+    "@dao-xyz/peerbit-io-utils": "^1.1.0",
     "@dao-xyz/ipfs-log": "^5.5.15",
     "it-to-stream": "^1.0.0",
     "logplease": "^1.2.15",

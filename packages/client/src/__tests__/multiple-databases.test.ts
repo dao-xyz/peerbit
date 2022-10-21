@@ -18,7 +18,7 @@ import {
   waitForPeers,
   testAPIs,
 } from '@dao-xyz/peerbit-test-utils'
-import { delay, waitFor } from '@dao-xyz/time';
+import { delay, waitFor } from '@dao-xyz/peerbit-time';
 
 const dbPath1 = './orbitdb/tests/multiple-databases/1'
 const dbPath2 = './orbitdb/tests/multiple-databases/2'

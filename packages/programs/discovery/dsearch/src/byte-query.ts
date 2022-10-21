@@ -1,11 +1,11 @@
 import { field, variant, vec } from "@dao-xyz/borsh";
-import { U8IntArraySerializer } from "@dao-xyz/borsh-utils";
+import { UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
 import { Query } from "./query-interface.js";
 
 @variant(0)
 export class MemoryCompare {
 
-    @field(U8IntArraySerializer)
+    @field(UInt8ArraySerializer)
     bytes: Uint8Array
 
     @field({ type: 'u64' })

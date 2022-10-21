@@ -2,7 +2,7 @@ import { field, variant, vec } from "@dao-xyz/borsh";
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 import { X25519PublicKey } from '@dao-xyz/peerbit-crypto'
-import { U8IntArraySerializer } from '@dao-xyz/borsh-utils'
+import { UInt8ArraySerializer } from '@dao-xyz/peerbit-borsh-utils'
 
 @variant(0)
 export class QueryRequestV0 {
@@ -13,7 +13,7 @@ export class QueryRequestV0 {
     @field({ type: vec(X25519PublicKey) })
     responseRecievers: X25519PublicKey[]
 
-    @field(U8IntArraySerializer)
+    @field(UInt8ArraySerializer)
     query: Uint8Array
 
     constructor(properties?: {
@@ -37,7 +37,7 @@ export class QueryRequestV0 {
 @variant(0)
 export class QueryResponseV0 {
 
-    @field(U8IntArraySerializer)
+    @field(UInt8ArraySerializer)
     response: Uint8Array
 
     constructor(properties?: {

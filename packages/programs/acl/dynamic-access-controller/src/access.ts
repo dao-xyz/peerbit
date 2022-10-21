@@ -1,7 +1,7 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh"
 import { serialize } from "@dao-xyz/borsh"
 import { AccessCondition } from "./condition"
-import { SystemBinaryPayload } from '@dao-xyz/bpayload';
+import { SystemBinaryPayload } from '@dao-xyz/peerbit-bpayload';
 
 export enum AccessType {
     Any = 0,

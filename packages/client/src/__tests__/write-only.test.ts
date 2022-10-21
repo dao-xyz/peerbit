@@ -1,7 +1,7 @@
 
 import assert from 'assert'
 import rmrf from 'rimraf'
-import { delay, waitFor } from '@dao-xyz/time'
+import { delay, waitFor } from '@dao-xyz/peerbit-time'
 
 import { OrbitDB } from '../orbit-db'
 

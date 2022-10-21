@@ -17,7 +17,7 @@ import {
     Session,
 } from '@dao-xyz/peerbit-test-utils'
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
-import { delay, waitFor } from '@dao-xyz/time'
+import { delay, waitFor } from '@dao-xyz/peerbit-time'
 
 const orbitdbPath1 = './orbitdb/tests/leader/1'
 const orbitdbPath2 = './orbitdb/tests/leader/2'

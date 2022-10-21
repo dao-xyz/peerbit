@@ -1,6 +1,6 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { PrivateSignKey, PublicSignKey, SignKey, Keypair } from './key.js';
-import { arraysCompare, fixedUint8Array } from '@dao-xyz/borsh-utils';
+import { arraysCompare, fixedUint8Array } from '@dao-xyz/peerbit-borsh-utils';
 import sodium from 'libsodium-wrappers';
 import { Signer } from "./signer.js";
 

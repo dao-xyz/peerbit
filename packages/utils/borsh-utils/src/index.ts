@@ -1,6 +1,6 @@
 import { BinaryReader, BinaryWriter, Constructor } from "@dao-xyz/borsh";
 
-export const U8IntArraySerializer = {
+export const UInt8ArraySerializer = {
     serialize: (obj: Uint8Array, writer: BinaryWriter) => {
         writer.writeU32(obj.length);
         for (let i = 0; i < obj.length; i++) {

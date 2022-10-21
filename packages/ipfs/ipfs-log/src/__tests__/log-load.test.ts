@@ -7,7 +7,7 @@ import { Entry } from '../entry.js';
 import { Log } from '../log.js'
 import { createStore, Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import { LogCreator } from './utils/log-creator.js'
-import { arraysCompare } from '@dao-xyz/borsh-utils';
+import { arraysCompare } from '@dao-xyz/peerbit-borsh-utils';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import path from 'path';

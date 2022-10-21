@@ -8,7 +8,7 @@ import { SimpleIndex } from './utils.js'
 import { Controller } from 'ipfsd-ctl'
 import { IPFS } from 'ipfs-core-types'
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
-import { delay, waitFor } from '@dao-xyz/time';
+import { delay, waitFor } from '@dao-xyz/peerbit-time';
 import { fileURLToPath } from 'url';
 import { jest } from '@jest/globals';
 import path from 'path';

@@ -1,5 +1,5 @@
 import { serialize, variant } from "@dao-xyz/borsh";
-import { SystemBinaryPayload } from "@dao-xyz/bpayload";
+import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 
 export type IdentityProviderType = 'orbitdb' | 'ethereum' | 'solana';
 
@@ -91,7 +91,7 @@ export class PlainKey extends OtherKey { }
 @variant(1)
 export class PublicKey extends TrustData {
 
-    @field(U8IntArraySerializer)
+    @field(UInt8ArraySerializer)
     id: Uint8Array;
 
     @field({ type: 'string' })

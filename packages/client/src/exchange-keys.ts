@@ -1,11 +1,11 @@
 import { variant, field, option, serialize, vec } from '@dao-xyz/borsh';
 import { ProtocolMessage } from './message.js';
-import { U8IntArraySerializer } from '@dao-xyz/borsh-utils';
+import { UInt8ArraySerializer } from '@dao-xyz/peerbit-borsh-utils';
 import { Ed25519Keypair, Ed25519PublicKey, K, PublicKeyEncryptionResolver, X25519Keypair, X25519PublicKey } from '@dao-xyz/peerbit-crypto'
 import { Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore';
 import { MaybeSigned, SignatureWithKey } from '@dao-xyz/peerbit-crypto';
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
-import { TimeoutError, waitForAsync } from '@dao-xyz/time';
+import { TimeoutError, waitForAsync } from '@dao-xyz/peerbit-time';
 import { Key } from '@dao-xyz/peerbit-crypto';
 import { Constructor } from '@dao-xyz/borsh';
 // @ts-ignore
@@ -15,16 +15,13 @@ const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
 export type KeyAccessCondition = (keyToAccess: KeyWithMeta<Ed25519Keypair | X25519Keypair>) => boolean;
-//export type KeyType = 'ethereum' | 'solana' | 'orbitdb';
-
-
 
 export class SignedX25519PublicKey {
 
-    @field(U8IntArraySerializer)
+    @field(UInt8ArraySerializer)
     signature: Uint8Array
 
-    @field(U8IntArraySerializer)
+    @field(UInt8ArraySerializer)
     publicKey: Uint8Array // Ed25519PublicKey 
 
     constructor(props?: {
@@ -41,10 +38,10 @@ export class SignedX25519PublicKey {
 
 export class PublicKeyMessage {
 
-    @field(U8IntArraySerializer)
+    @field(UInt8ArraySerializer)
     message: Uint8Array
 
-    @field(U8IntArraySerializer)
+    @field(UInt8ArraySerializer)
     key: Uint8Array
 
     constructor(props?: {
