@@ -1,5 +1,5 @@
 import { PayloadOperation, StringIndex, encoding } from './string-index.js'
-import { DSearch, DSearchInitializationOptions, QueryType } from '@dao-xyz/peerbit-dsearch';
+import { DSearch, DSearchInitializationOptions, QueryType, StoreAddressMatchQuery } from '@dao-xyz/peerbit-dsearch';
 import { RangeCoordinate, RangeCoordinates, Result, ResultWithSource, StringMatchQuery } from '@dao-xyz/peerbit-dsearch';
 import { StringQueryRequest } from '@dao-xyz/peerbit-dsearch';
 import { Range } from './range.js';
@@ -10,6 +10,8 @@ import { IPFS } from 'ipfs-core-types';
 import { BORSH_ENCODING, CanAppend, Identity } from '@dao-xyz/ipfs-log';
 import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';
 import { RootProgram, Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program';
+import { count } from 'console';
+import { QueryOptions } from '@dao-xyz/peerbit-dquery';
 export const STRING_STORE_TYPE = 'string_store';
 const findAllOccurrences = (str: string, substr: string): number[] => {
   str = str.toLowerCase();
@@ -124,8 +126,34 @@ export class DString extends Program implements RootProgram {
     })];
   }
 
-
+  async toString(options?: { remote: { callback: (string: string) => any, queryOptions: QueryOptions } }): Promise<string | undefined> {
+    if (options?.remote) {
+      const counter: Map<string, number> = new Map();
+      await this.search.query(new StringQueryRequest({
+        queries: [new StoreAddressMatchQuery({
+          address: this.address.toString()
+        })]
+      }), (response) => {
+        const result = ((response.results[0] as ResultWithSource).source as StringResultSource).string;
+        options?.remote.callback && options?.remote.callback(result)
+        counter.set(result, (counter.get(result) || 0) + 1)
+      }, options.remote.queryOptions);
+      let max = -1;
+      let ret: string | undefined = undefined;
+      counter.forEach((v, k) => {
+        if (max < v) {
+          max = v
+          ret = k;
+        }
+      })
+      return ret;
+    }
+    else {
+      return this._index.string;
+    }
+  }
 }
+
 
 @variant("string")
 /* @variant([0, 2]) */

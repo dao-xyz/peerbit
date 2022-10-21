@@ -98,7 +98,7 @@ describe('query', () => {
         });
         await writeStore.init(writer, await createIdentity(), { store: { ...DefaultOptions, replicate: true, resolveCache: () => new Cache(cacheStore1) } });
 
-        const observerStore = await DString.load(session.peers[1].ipfs, writeStore.address) as DString;
+        observerStore = await DString.load(session.peers[1].ipfs, writeStore.address) as DString;
         observerStore.search._query.subscribeToQueries = false;
         await observerStore.init(observer, await createIdentity(), { store: { ...DefaultOptions, resolveCache: () => new Cache(cacheStore2) } })
 
@@ -197,6 +197,16 @@ describe('query', () => {
 
     });
 
+
+    it('toString remote', async () => {
+        await writeStore.add('hello', new Range({ offset: 0n, length: 'hello'.length }));
+        await writeStore.add('world', new Range({ offset: BigInt('hello '.length), length: 'world'.length }));
+
+        let callbackValues: string[] = [];
+        const string = await observerStore.toString({ remote: { callback: (s) => callbackValues.push(s), queryOptions: { waitForAmount: 1 } } })
+        expect(string).toEqual('hello world');
+        expect(callbackValues).toEqual(['hello world']);
+    })
 
 
 }) 
