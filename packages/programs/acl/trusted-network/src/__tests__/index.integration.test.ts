@@ -38,7 +38,7 @@ class IdentityGraph extends Program implements RootProgram {
             this.store = properties.store;
         }
     }
-    async start(): Promise<void> {
+    async setup(): Promise<void> {
         await this.store.setup({ type: Relation })
     }
 

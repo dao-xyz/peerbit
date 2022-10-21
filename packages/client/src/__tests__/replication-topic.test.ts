@@ -72,16 +72,16 @@ Object.keys(testAPIs).forEach(API => {
       clearInterval(timer)
 
       if (db1)
-        await db1.store.drop()
+        await db1.drop()
 
       if (db2)
-        await db2.store.drop()
+        await db2.drop()
 
       if (db3)
-        await db3.store.drop()
+        await db3.drop()
 
       if (db4)
-        await db4.store.drop()
+        await db4.drop()
 
       if (orbitdb1)
         await orbitdb1.stop()

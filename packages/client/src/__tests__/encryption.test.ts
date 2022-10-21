@@ -102,13 +102,13 @@ Object.keys(testAPIs).forEach(API => {
       options = {}
 
       if (db1)
-        await db1.store.drop()
+        await db1.drop()
 
       if (db2)
-        await db2.store.drop()
+        await db2.drop()
 
       if (db3)
-        await db3.store.drop()
+        await db3.drop()
 
       if (orbitdb1)
         await orbitdb1.stop()
@@ -214,7 +214,7 @@ Object.keys(testAPIs).forEach(API => {
 
 
       // Now close db2 and open db3 and make sure message are available
-      await db2.store.drop();
+      await db2.drop();
       options = Object.assign({}, options, { directory: dbPath3 })
       db3 = await orbitdb3.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb3._ipfs, db1.address), replicationTopic, {
         ...options, onReplicationComplete: async (store) => {

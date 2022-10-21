@@ -1,12 +1,12 @@
-import { Session, Peer, waitForPeers } from '@dao-xyz/peerbit-test-utils'
+import { Session } from '@dao-xyz/peerbit-test-utils'
 import { waitFor } from '@dao-xyz/time';
 import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { Identity } from '@dao-xyz/ipfs-log';
 import { createStore } from '@dao-xyz/peerbit-test-utils';
 import { Level } from 'level';
 import { fileURLToPath } from 'url';
-import path, { dirname } from 'path';
-import { CachedValue, DefaultOptions, IStoreOptions, Store } from '@dao-xyz/peerbit-dstore';
+import path from 'path';
+import { CachedValue, DefaultOptions, IStoreOptions } from '@dao-xyz/peerbit-dstore';
 import Cache from '@dao-xyz/peerbit-cache';
 import { Program } from '@dao-xyz/peerbit-program';
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';

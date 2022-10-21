@@ -52,7 +52,7 @@ class DocumentDDoc extends Program implements RootProgram {
       this.docs = properties.docs;
     }
   }
-  async start(): Promise<void> {
+  async setup(): Promise<void> {
     await this.docs.setup({ type: Document })
   }
 

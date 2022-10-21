@@ -1,4 +1,4 @@
-import { Constructor, field, variant } from "@dao-xyz/borsh";
+import { field, variant } from "@dao-xyz/borsh";
 import { createStore, Session } from '@dao-xyz/peerbit-test-utils';
 import { DynamicAccessController } from "..";
 import { Access, AccessType } from "../access";
@@ -6,17 +6,16 @@ import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
 import { waitFor } from '@dao-xyz/time';
 import { DocumentQueryRequest, DSearch, FieldStringMatchQuery, Results } from "@dao-xyz/peerbit-dsearch";
 import { AccessError, Ed25519Keypair, MaybeEncrypted, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
-import { BinaryPayload, CustomBinaryPayload } from "@dao-xyz/bpayload";
+import { CustomBinaryPayload } from "@dao-xyz/bpayload";
 import { DDocs } from "@dao-xyz/peerbit-ddoc";
 import type { Identity, Payload } from "@dao-xyz/ipfs-log";
 import { Level } from 'level';
-import { CachedValue, DefaultOptions, IInitializationOptions } from '@dao-xyz/peerbit-dstore';
+import { CachedValue, DefaultOptions } from '@dao-xyz/peerbit-dstore';
 import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
 import Cache from '@dao-xyz/peerbit-cache';
 import { DQuery } from "@dao-xyz/peerbit-dquery";
-import { Program, ProgramInitializationOptions, RootProgram } from "@dao-xyz/peerbit-program";
-import { IPFS } from "ipfs-core-types";
+import { Program, RootProgram } from "@dao-xyz/peerbit-program";
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 
@@ -68,9 +67,7 @@ class TestStore extends Program implements RootProgram {
             })
         }
     }
-    async start(): Promise<void> {
-        return this.setup();
-    }
+
     async setup() {
         await this.accessController.setup();
         await this.store.setup({ type: Document, canRead: this.accessController.canRead.bind(this.accessController), canAppend: this.accessController.canAppend.bind(this.accessController) });
@@ -81,7 +78,7 @@ describe('index', () => {
     let session: Session, identites: Identity[], cacheStore: Level[]
 
     const identity = (i: number) => identites[i];
-    const init = <T extends Program>(store: T, i: number, options: { canRead?: (key: SignatureWithKey) => Promise<boolean>, canAppend?: (payload: MaybeEncrypted<Payload<any>>, key: MaybeEncrypted<SignatureWithKey>) => Promise<boolean> } = {}) => (store.init && store.init(session.peers[i].ipfs, identites[i], { ...options, store: { ...DefaultOptions, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]) } })) as Promise<T>
+    const init = <T extends Program>(store: T, i: number, options: { store: { replicate: boolean }, canRead?: (key: SignatureWithKey) => Promise<boolean>, canAppend?: (payload: MaybeEncrypted<Payload<any>>, key: MaybeEncrypted<SignatureWithKey>) => Promise<boolean> } = { store: { replicate: true } }) => (store.init && store.init(session.peers[i].ipfs, identites[i], { ...options, store: { ...DefaultOptions, ...options.store, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]) } })) as Promise<T>
 
     beforeAll(async () => {
         session = await Session.connected(3);
@@ -117,6 +114,8 @@ describe('index', () => {
         await l0a.accessController.acl.trustedNetwork.add(identity(1).publicKey);
 
         await (l0b.accessController).acl.trustedNetwork.trustGraph.store.sync((l0a.accessController).acl.trustedNetwork.trustGraph.store.oplog.heads);
+
+        await waitFor(() => l0b.accessController.acl.trustedNetwork.trustGraph.store.oplog.length === 1);
         await waitFor(() => Object.keys((l0b.accessController).acl.trustedNetwork.trustGraph._index._index).length === 1);
 
         await l0b.store.put(new Document({
@@ -300,7 +299,7 @@ describe('index', () => {
     it('can query', async () => {
 
 
-        const l0a = await init(new TestStore({ identity: identity(0) }), 0, { canRead: () => Promise.resolve(true) });
+        const l0a = await init(new TestStore({ identity: identity(0) }), 0, { store: { replicate: true }, canRead: () => Promise.resolve(true) });
         await (l0a.accessController).acl.access.put(new Access({
             accessCondition: new AnyAccessCondition(),
             accessTypes: [AccessType.Any]
@@ -308,7 +307,7 @@ describe('index', () => {
 
         const dbb = await TestStore.load(session.peers[1].ipfs, l0a.address) as TestStore;
 
-        const l0b = await init(dbb, 1, { canRead: () => Promise.resolve(true) });
+        const l0b = await init(dbb, 1, { store: { replicate: false }, canRead: () => Promise.resolve(true) });
 
         // Allow all for easy query
         (l0b.accessController).acl.access.store.sync((l0a.accessController).acl.access.store.oplog.heads)

@@ -3,7 +3,7 @@ import assert from 'assert'
 import rmrf from 'rimraf'
 import { delay, waitFor } from '@dao-xyz/time'
 
-import { OrbitDB, StoreWithConfig } from '../orbit-db'
+import { OrbitDB } from '../orbit-db'
 
 import { EventStore, Operation } from './utils/stores/event-store'
 import { jest } from '@jest/globals';
@@ -148,11 +148,11 @@ Object.keys(testAPIs).forEach(API => {
             await waitFor(() => Object.values(orbitdb2.programs[replicationTopic]).length > 0, { timeout: 20 * 1000, delayInterval: 50 });
 
             const replicatedProgramAndStores = Object.values(orbitdb2.programs[replicationTopic])[0];
-            const replicatedStore: StoreWithConfig = replicatedProgramAndStores.stores.values().next().value
-            await waitFor(() => replicatedStore.store.oplog.values.length == 2);
+            const replicatedStore = replicatedProgramAndStores.program.stores[0]
+            await waitFor(() => replicatedStore.oplog.values.length == 2);
             expect(replicatedStore).toBeDefined();
-            expect(replicatedStore.store.oplog.heads).toHaveLength(1);
-            expect(replicatedStore.store.oplog.heads[0].hash).toEqual(world.hash);
+            expect(replicatedStore.oplog.heads).toHaveLength(1);
+            expect(replicatedStore.oplog.heads[0].hash).toEqual(world.hash);
 
         })
     })

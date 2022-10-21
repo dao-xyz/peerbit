@@ -96,7 +96,7 @@ describe('query', () => {
                 })
             })
         });
-        await writeStore.init(writer, await createIdentity(), { store: { ...DefaultOptions, resolveCache: () => new Cache(cacheStore1) } });
+        await writeStore.init(writer, await createIdentity(), { store: { ...DefaultOptions, replicate: true, resolveCache: () => new Cache(cacheStore1) } });
 
         const observerStore = await DString.load(session.peers[1].ipfs, writeStore.address) as DString;
         observerStore.search._query.subscribeToQueries = false;

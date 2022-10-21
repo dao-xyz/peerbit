@@ -91,11 +91,11 @@ Object.keys(testAPIs).forEach(API => {
 
       afterAll(async () => {
         if (db1) {
-          await db1.store.drop()
+          await db1.drop()
         }
 
         if (db2) {
-          await db2.store.drop()
+          await db2.drop()
         }
       })
 
@@ -142,8 +142,8 @@ Object.keys(testAPIs).forEach(API => {
                 expect(result1.length).toEqual(entryCount)
                 expect(result2.length).toEqual(entryCount)
 
-                await db3.store.drop()
-                await db4.store.drop() */
+                await db3.drop()
+                await db4.drop() */
               } catch (e: any) {
                 reject(e)
               }

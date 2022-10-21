@@ -77,10 +77,10 @@ Object.keys(testAPIs).forEach(API => {
       options = {} as any
 
       if (db1)
-        await db1.store.drop()
+        await db1.drop()
 
       if (db2)
-        await db2.store.drop()
+        await db2.drop()
 
       if (orbitdb1)
         await orbitdb1.stop()

@@ -62,21 +62,20 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
   describe('load', function () {
     beforeEach(async () => {
-      const dbName = new Date().getTime().toString()
       const entryArr = []
 
       for (let i = 0; i < entryCount; i++)
         entryArr.push(i)
 
-      db = await orbitdb1.open(new EventStore<string>({ name: dbName }), uuid())
+      db = await orbitdb1.open(new EventStore<string>({}), uuid())
       address = db.address.toString()
       await mapSeries(entryArr, (i) => db.add('hello' + i))
-      await db.store.close()
+      await db.close()
       db = null as any
     })
 
     afterEach(async () => {
-      await db?.store.drop()
+      await db?.drop()
     })
 
     it('loads database from local cache', async () => {
@@ -109,7 +108,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
         expect(items[0].payload.getValue().value).toEqual('hello0')
         expect(items[1].payload.getValue().value).toEqual('hello1')
         expect(items[items.length - 1].payload.getValue().value).toEqual('hello' + (entryCount - 1))
-        await db.store.close()
+        await db.close()
       }
     })
 
@@ -127,7 +126,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
               resolve(true)
             }
           })
-        await db.store.close()
+        await db.close()
       })
     }) */
 
@@ -140,7 +139,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
         const items = db.iterator({ limit: -1 }).collect()
         expect(items.length).toEqual(entryCount + i + 1)
         expect(items[items.length - 1].payload.getValue().value).toEqual('hello' + (entryCount + i))
-        await db.store.close()
+        await db.close()
       }
     })
 
@@ -188,10 +187,10 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
   describe('load from empty snapshot', function () {
     it('loads database from an empty snapshot', async () => {
-      db = await orbitdb1.open(new EventStore<string>({ name: 'empty-snapshot' }), uuid())
+      db = await orbitdb1.open(new EventStore<string>({}), uuid())
       address = db.address.toString()
       await db.store.saveSnapshot()
-      await db.store.close()
+      await db.close()
 
       db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
       await db.store.loadFromSnapshot()
@@ -202,22 +201,21 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
   describe('load from snapshot', function () {
     beforeEach(async () => {
-      const dbName = new Date().getTime().toString()
       const entryArr = []
 
       for (let i = 0; i < entryCount; i++)
         entryArr.push(i)
 
-      db = await orbitdb1.open(new EventStore<string>({ name: dbName }), uuid())
+      db = await orbitdb1.open(new EventStore<string>({}), uuid())
       address = db.address.toString()
       await mapSeries(entryArr, (i) => db.add('hello' + i))
       await db.store.saveSnapshot()
-      await db.store.close()
+      await db.close()
       db = null as any
     })
 
     afterEach(async () => {
-      await db?.store.drop()
+      await db?.drop()
     })
 
     it('loads database from snapshot', async () => {
@@ -240,13 +238,13 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
         expect(items[0].payload.getValue().value).toEqual('hello0')
         expect(items[items.length - 1].payload.getValue().value).toEqual('hello' + (entryCount + i))
         await db.store.saveSnapshot()
-        await db.store.close()
+        await db.close()
       }
     })
 
     it('throws an error when trying to load a missing snapshot', async () => {
       db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
-      await db.store.drop()
+      await db.drop()
       db = null as any
       db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
 

@@ -211,6 +211,8 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
 
   _canAppend?: CanAppend<T>;
   _onUpdate?: (oplog: Log<T>, entries?: Entry<T>[]) => void
+  _onUpdateOption?: (oplog: Log<T>, entries?: Entry<T>[]) => void
+
   // An access controller that is note part of the store manifest, usefull for circular store -> access controller -> store structures
 
   _options: IInitializationOptions<T>;
@@ -270,7 +272,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
 
     // Create IDs, names and paths
     this.identity = identity;
-    this._onUpdate = options.onUpdate;
+    this._onUpdateOption = options.onUpdate;
 
     /* this.events = new EventEmitter() */
     this.remoteHeadsPath = path.join(this.address.toString(), '_remoteHeads')
@@ -448,10 +450,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
   }
 
   set onUpdate(onUpdate: (oplog: Log<T>, entries?: Entry<T>[]) => void) {
-    this._onUpdate = (oplog: Log<T>, entries?: Entry<T>[]) => {
-      onUpdate(oplog, entries)
-      this._options.onUpdate && this._options.onUpdate(oplog, entries)
-    };
+    this._onUpdate = onUpdate;
   }
 
   async close() {
@@ -717,6 +716,9 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
   async _updateIndex(entries?: Entry<T>[]) {
     if (this._onUpdate) {
       this._onUpdate(this._oplog, entries);
+    }
+    if (this._onUpdateOption) {
+      this._onUpdateOption(this._oplog, entries);
     }
   }
 

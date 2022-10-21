@@ -17,13 +17,13 @@ import {
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
 import { waitFor } from '@dao-xyz/time'
 
-const orbitdbPath1 = './orbitdb/tests/leader/1'
-const orbitdbPath2 = './orbitdb/tests/leader/2'
-const orbitdbPath3 = './orbitdb/tests/leader/3'
+const orbitdbPath1 = './orbitdb/tests/discovery/1'
+const orbitdbPath2 = './orbitdb/tests/discovery/2'
+const orbitdbPath3 = './orbitdb/tests/discovery/3'
 
-const dbPath1 = './orbitdb/tests/leader/1/db1'
-const dbPath2 = './orbitdb/tests/leader/2/db2'
-const dbPath3 = './orbitdb/tests/leader/3/db3'
+const dbPath1 = './orbitdb/tests/discovery/1/db1'
+const dbPath2 = './orbitdb/tests/discovery/2/db2'
+const dbPath3 = './orbitdb/tests/discovery/3/db3'
 
 Object.keys(testAPIs).forEach(API => {
     describe(`orbit-db - discovery`, function () {
@@ -31,7 +31,7 @@ Object.keys(testAPIs).forEach(API => {
         jest.setTimeout(config.timeout * 2)
 
         let session1: Session, session2: Session;
-        let orbitdb1: OrbitDB, orbitdb2: OrbitDB, orbitdb3: OrbitDB, db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>
+        let orbitdb1: OrbitDB, orbitdb2: OrbitDB, orbitdb3: OrbitDB
 
 
         beforeAll(async () => {
@@ -63,14 +63,6 @@ Object.keys(testAPIs).forEach(API => {
 
         afterEach(async () => {
 
-            if (db1)
-                await db1.store.drop()
-
-            if (db2)
-                await db2.store.drop()
-
-            if (db3)
-                await db3.store.drop()
 
             if (orbitdb1)
                 await orbitdb1.stop()

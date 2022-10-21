@@ -13,8 +13,7 @@ import { IPFS } from "ipfs-core-types";
 import {
   nodeConfig as config,
   startIpfs,
-  stopIpfs,
-  testAPIs,
+  stopIpfs
 } from '@dao-xyz/peerbit-test-utils'
 
 import {

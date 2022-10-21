@@ -75,7 +75,7 @@ Object.keys(testAPIs).forEach(API => {
         sign: (data) => signKey1.keypair.sign(data)
       })
       expect(db.store.identity.publicKey.equals(signKey1.keypair.publicKey))
-      await db.store.close()
+      await db.close()
     })
   })
 })

@@ -21,13 +21,13 @@ import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
 import { delay, waitFor } from '@dao-xyz/time'
 import { AccessError, Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 
-const orbitdbPath1 = './orbitdb/tests/leader/1'
-const orbitdbPath2 = './orbitdb/tests/leader/2'
-const orbitdbPath3 = './orbitdb/tests/leader/3'
+const orbitdbPath1 = './orbitdb/tests/network/1'
+const orbitdbPath2 = './orbitdb/tests/network/2'
+const orbitdbPath3 = './orbitdb/tests/network/3'
 
-const dbPath1 = './orbitdb/tests/leader/1/db1'
-const dbPath2 = './orbitdb/tests/leader/2/db2'
-const dbPath3 = './orbitdb/tests/leader/3/db3'
+const dbPath1 = './orbitdb/tests/network/1/db1'
+const dbPath2 = './orbitdb/tests/network/2/db2'
+const dbPath3 = './orbitdb/tests/network/3/db3'
 
 Object.keys(testAPIs).forEach(API => {
     describe(`orbit-db - network`, function () {
@@ -66,13 +66,13 @@ Object.keys(testAPIs).forEach(API => {
         afterEach(async () => {
 
             if (db1)
-                await db1.store.drop()
+                await db1.drop()
 
             if (db2)
-                await db2.store.drop()
+                await db2.drop()
 
             if (db3)
-                await db3.store.drop()
+                await db3.drop()
 
             if (orbitdb1)
                 await orbitdb1.stop()

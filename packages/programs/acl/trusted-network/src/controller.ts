@@ -142,13 +142,10 @@ export class TrustedNetwork extends Program implements RootProgram {
         }
     }
 
-    async start() {
-        await this.setup();
-    }
 
     async setup() {
         await this.trustGraph.setup({ type: Relation, canAppend: this.canAppend.bind(this), canRead: this.canRead.bind(this) }) // self referencing access controller
-        await this.query.setup({ queryType: RequestHeadsMessage, responseType: HeadsMessages, responseHandler: this.exchangeHeads.bind(this) })
+        await this.query.setup({ queryType: RequestHeadsMessage, responseType: HeadsMessages, responseHandler: this.exchangeHeads.bind(this), canRead: () => Promise.resolve(true) })
     }
 
     exchangeHeads(_query: RequestHeadsMessage): HeadsMessages | undefined {

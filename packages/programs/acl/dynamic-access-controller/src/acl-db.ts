@@ -138,12 +138,9 @@ export class AccessStore extends Program implements RootProgram {
         return false;
     }
 
-    async start() {
-        await this.setup();
-    }
-
     async setup() {
-        this.identityGraphController.setup({ canRead: this.canRead.bind(this) })
-        this.access.setup({ type: AccessData, canAppend: this.canAppend.bind(this), canRead: this.canRead.bind(this) })
+        await this.identityGraphController.setup({ canRead: this.canRead.bind(this) })
+        await this.access.setup({ type: AccessData, canAppend: this.canAppend.bind(this), canRead: this.canRead.bind(this) })
+        await this.trustedNetwork.setup();
     }
 }

@@ -4,7 +4,9 @@ import { SignatureWithKey, SignKey } from '@dao-xyz/peerbit-crypto';
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
 import { QueryRequestV0, QueryResponseV0 } from './query.js';
 import { query, QueryOptions, respond } from './io.js'
-import { Program } from '@dao-xyz/peerbit-program'
+import { Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program'
+import { IPFS } from 'ipfs-core-types';
+import { Identity } from '@dao-xyz/ipfs-log';
 
 export const getQueryTopic = (region: string): string => {
     return region + '/query';
@@ -38,16 +40,24 @@ export class DQuery<Q, R> extends Program {
         }
     }
 
+    s: boolean = false;
+
     public async setup(options: DQueryInitializationOptions<Q, R>) {
+        this.s = true;
         this._responseHandler = options.responseHandler;
         this._queryType = options.queryType;
         this._responseType = options.responseType;
         this.canRead = options.canRead || (() => Promise.resolve(true));
-        if (this.subscribeToQueries) {
-            this._subscribeToQueries();
-        }
+
     }
 
+    async init(ipfs: IPFS<{}>, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
+        await super.init(ipfs, identity, options);
+        if (this.subscribeToQueries) {
+            await this._subscribeToQueries();
+        }
+        return this;
+    }
 
     public async close(): Promise<void> {
         await this._initializationPromise;

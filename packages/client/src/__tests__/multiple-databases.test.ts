@@ -127,13 +127,13 @@ Object.keys(testAPIs).forEach(API => {
 
     afterEach(async () => {
       /*  for (let db of remoteDatabasesA)
-         await db.store.drop()
+         await db.drop()
  
        for (let db of remoteDatabasesB)
-         await db.store.drop()
+         await db.drop()
  
        for (let db of localDatabases)
-         await db.store.drop() */
+         await db.drop() */
     }
     )
 
@@ -198,7 +198,7 @@ Object.keys(testAPIs).forEach(API => {
       const subscriptions = (await orbitdb3._ipfs.pubsub.ls());
       expect(subscriptions.length).toEqual(directConnections + 1 + 1); //+ 1 for 1 replication topic + 1 for subcribing to "self" topic
       for (let i = 0; i < dbCount; i++) {
-        await remoteDatabasesB[i].store.drop();
+        await remoteDatabasesB[i].drop();
         if (i === dbCount - 1) {
           await delay(3000);
           const connections = (await orbitdb3._ipfs.pubsub.ls());

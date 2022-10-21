@@ -32,6 +32,7 @@ import { LRUCounter } from './lru-counter.js'
 import { IpfsPubsubPeerMonitor } from '@dao-xyz/ipfs-pubsub-peer-monitor';
 import type { PeerId } from '@libp2p/interface-peer-id';
 import { exchangeSwarmAddresses, ExchangeSwarmMessage } from './exchange-network.js';
+import { off } from 'process';
 /* let v8 = undefined;
 if (isNode) {
   v8 = require('v8');
@@ -55,7 +56,8 @@ export type CreateInstanceOptions = { storage?: Storage, directory?: string, key
 export type OpenStoreOptions = {
   identity?: Identity,
   directory?: string,
-  timeout?: number
+  timeout?: number,
+  minReplicas?: MinReplicas
 } & IStoreOptions<any>;
 const groupByGid = <T extends (Entry<any> | EntryWithRefs<any>)>(entries: T[]) => {
   const groupByGid: Map<string, T[]> = new Map()
@@ -71,12 +73,6 @@ const groupByGid = <T extends (Entry<any> | EntryWithRefs<any>)>(entries: T[]) =
   return groupByGid;
 }
 
-
-export interface StoreWithConfig {
-  store: Store<any>,
-  minReplicas: MinReplicas,
-  //TODO add replicate: boolean 
-}
 
 
 export class OrbitDB {
@@ -94,7 +90,7 @@ export class OrbitDB {
   caches: { [key: string]: { cache: Cache<any>, handlers: Set<string> } };
   keystore: Keystore;
   _minReplicas: number;
-  programs: { [topic: string]: { [address: string]: { program: Program, stores: Map<string, StoreWithConfig> } } };
+  programs: { [topic: string]: { [address: string]: { program: Program, minReplicas: MinReplicas } } };
   localNetwork: boolean;
   _trustedNetwork: Map<string, TrustedNetwork>
   /*  heapsizeLimitForForks: number = 1000 * 1000 * 1000; */
@@ -306,7 +302,8 @@ export class OrbitDB {
 
     // Close all open databases
     for (const [key, dbs] of Object.entries(this.programs)) {
-      await Promise.all(Object.values(dbs).map(db => [...db.stores.values()].map(store => store?.store?.close && store.store.close()).flat()).flat());
+
+      await Promise.all(Object.values(dbs).map(program => program.program.close()))
       delete this.programs[key]
     }
 
@@ -336,7 +333,7 @@ export class OrbitDB {
   onWrite<T>(program: Program) {
     return (store: Store<any>, entry: Entry<T>, replicationTopic: string): void => {
       const storeAddress = store.address.toString();
-      const storeInfo = this.programs[replicationTopic][program.address.toString()].stores.get(storeAddress);
+      const storeInfo = this.programs[replicationTopic][program.address.toString()].program.allStores.get(storeAddress);
       if (!storeInfo) {
         throw new Error("Missing store info")
       }
@@ -345,7 +342,7 @@ export class OrbitDB {
       if (store.replicate) {
         // send to peers directly
         send = async (data: Uint8Array) => {
-          const replicators = await this.findReplicators(replicationTopic, store.replicate, entry.gid, storeInfo.minReplicas.value);
+          const replicators = await this.findReplicators(replicationTopic, store.replicate, entry.gid, this.programs[replicationTopic][program.address.toString()].minReplicas.value);
           const channels: SharedChannel<DirectChannel>[] = [];
           for (const replicator of replicators) {
             if (replicator === this.id.toString()) {
@@ -364,7 +361,7 @@ export class OrbitDB {
         }
       }
       for (const value of Object.values(this.programs[replicationTopic])) {
-        if (value.stores.has(storeAddress)) {
+        if (value.program.allStores.has(storeAddress)) {
           exchangeHeads(send, store, value.program, this.identity, [entry], replicationTopic, true)
         }
       }
@@ -456,7 +453,7 @@ export class OrbitDB {
               const leaders = await this.findLeaders(replicationTopic, isReplicating, gid, msg.minReplicas?.value || this._minReplicas); // Todo reuse calculations
               leaderCache.set(gid, leaders);
               if (leaders.find(x => x === this.id.toString())) {
-                await this.open(Address.parse(paddress), replicationTopic, { directory: this.directory, identity: this.identity })
+                await this.open(Address.parse(paddress), replicationTopic, { directory: this.directory, identity: this.identity, minReplicas: msg.minReplicas })
               }
             }
             if (!pstores[paddress]) {
@@ -468,13 +465,14 @@ export class OrbitDB {
           /*           heads.sort(store.oplog._sortFn); */
           /*    const mergeable = [];
              const newItems: Map<string, Entry<any>> = new Map(); */
-          const storeInfo = this.programs[replicationTopic][paddress].stores.get(saddress);
+          const programInfo = this.programs[replicationTopic][paddress];
+          const storeInfo = programInfo.program.allStores.get(saddress);
           if (!storeInfo) {
             throw new Error("Missing store info, which was expected to exist for " + replicationTopic + ", " + paddress + ", " + saddress)
           }
           const toMerge: Entry<any>[] = [];
           for (const [gid, value] of groupByGid(heads)) {
-            const leaders = leaderCache.get(gid) || await this.findLeaders(replicationTopic, isReplicating, gid, storeInfo.minReplicas.value);
+            const leaders = leaderCache.get(gid) || await this.findLeaders(replicationTopic, isReplicating, gid, programInfo.minReplicas.value);
             const isLeader = leaders.find((l) => l === this.id.toString());
             if (!isLeader) {
               continue;
@@ -486,12 +484,12 @@ export class OrbitDB {
 
           }
           if (toMerge.length > 0) {
-            const store = programAndStores.stores.get(saddress);
+            const store = programAndStores.program.allStores.get(saddress);
             if (!store) {
               throw new Error("Unexpected, missing store on sync")
             }
             try {
-              await store.store.sync(toMerge);
+              await store.sync(toMerge);
               const x = 123;
             } catch (error) {
               const y = 345;
@@ -740,8 +738,8 @@ export class OrbitDB {
     const programs = this.programs[replicationTopic];
     if (programs) {
       for (const [_storeAddress, programAndStores] of Object.entries(programs)) {
-        for (const [k, store] of programAndStores.stores) {
-          if (store.store.replicate) {
+        for (const [_, store] of programAndStores.program.allStores) {
+          if (store.replicate) {
             // create a channel for sending/receiving messages
             /*  const channel = await this.getChannel(peer, replicationTopic); */
             /*  await exchangeHeads((msg) => channel.send(Buffer.from(msg)), store, (key) => this._supportedHashesLRU.get(key) >= this.minReplicas, await this.getSigner()); */
@@ -826,9 +824,9 @@ export class OrbitDB {
     for (const replicationTopic of connections.dependencies) {
       const programs = this.programs[replicationTopic];
       if (programs) {
-        for (const programAndStores of Object.values(programs)) {
-          for (const [_, store] of programAndStores.stores) {
-            const heads = store.store.oplog.heads;
+        for (const programInfo of Object.values(programs)) {
+          for (const [_, store] of programInfo.program.allStores) {
+            const heads = store.oplog.heads;
             const groupedByGid = groupByGid(heads);
             for (const [gid, entries] of groupedByGid) {
               if (entries.length === 0) {
@@ -837,7 +835,7 @@ export class OrbitDB {
               /*     const oldPeers = this.findReplicators(store, gid, [channel.recieverId]);
                   const oldPeersSet = new Set(this.findReplicators(store, gid, [channel.recieverId])); */
               const oldPeersSet = this._gidPeersHistory.get(gid);
-              const newPeers = await this.findReplicators(replicationTopic, store.store.replicate, gid, store.minReplicas.value);
+              const newPeers = await this.findReplicators(replicationTopic, store.replicate, gid, programInfo.minReplicas.value);
               /* const index = oldPeers.findIndex(p => p === channel.recieverId); */
               for (const newPeer of newPeers) {
                 if (!oldPeersSet?.has(newPeer) && newPeer !== this.id.toString()) { // second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
@@ -852,14 +850,14 @@ export class OrbitDB {
 
                   await exchangeHeads(async (message) => {
                     await channel.send(message);
-                  }, store.store, programAndStores.program, this.identity, entries, replicationTopic, true)
+                  }, store, programInfo.program, this.identity, entries, replicationTopic, true)
                 }
               }
 
               if (!newPeers.find(x => x === this.id.toString())) {
                 // delete entries since we are not suppose to replicate this anymore
                 // TODO add delay? freeze time? (to ensure resiliance for bad io)
-                store.store.oplog.removeAll(entries);
+                store.oplog.removeAll(entries);
 
                 // TODO if length === 0 maybe close store? 
               }
@@ -944,7 +942,7 @@ export class OrbitDB {
 
 
 
-  // Callback when a database was closed
+  // Callback when a store was closed
   async _onClose(program: Program, db: Store<any>, replicationTopic: string) { // TODO Can we really close a this.programs, either we close all stores in the replication topic or none
 
     const promise = await this._openStorePromise;
@@ -961,7 +959,7 @@ export class OrbitDB {
     await this._replicationTopicSubscriptions.get(replicationTopic)?.close(db.address.toString());
 
 
-    const dir = db && db.options.directory ? db.options.directory : this.directory
+    const dir = db && db._options.directory ? db._options.directory : this.directory
     const cache = this.caches[dir]
 
     if (cache && cache.handlers.has(storeAddress)) {
@@ -970,45 +968,34 @@ export class OrbitDB {
         await cache.cache.close()
       }
     }
+  }
+  async _onProgamClose(program: Program, replicationTopic: string) {
 
-    const programAndStores = this.programs[replicationTopic][programAddress];
-    programAndStores.stores.delete(storeAddress)
-    if (programAndStores.stores.size === 0) {
-      delete this.programs[replicationTopic][programAddress]
+    const programAddress = program.address.toString();
+    delete this.programs[replicationTopic][programAddress]
+    const otherStoresUsingSameReplicationTopic = this.programs[replicationTopic]
+    // close all connections with this repplication topic if this is the last dependency
+    const isLastStoreForReplicationTopic = Object.keys(otherStoresUsingSameReplicationTopic).length === 0;
+    if (isLastStoreForReplicationTopic) {
 
-      const otherStoresUsingSameReplicationTopic = this.programs[replicationTopic]
+      for (const [key, connection] of this._directConnections) {
+        await connection.close(replicationTopic);
+        // Delete connection from thing
 
-      // close all connections with this repplication topic if this is the last dependency
-      const isLastStoreForReplicationTopic = Object.keys(otherStoresUsingSameReplicationTopic).length === 0;
-      if (isLastStoreForReplicationTopic) {
-
-        /*   const cron = this._replicationTopicJobs.get(db.replicationTopic);
-          if (cron) {
-            cron.controller.abort();
-            this._replicationTopicJobs.delete(db.replicationTopic);
-          }
-     */
-        for (const [key, connection] of this._directConnections) {
-          await connection.close(replicationTopic);
-          // Delete connection from thing
-
-          // TODO what happens if we close a store, but not its direct connection? we should open direct connections and make it dependenct on the replciation topic
-        }
+        // TODO what happens if we close a store, but not its direct connection? we should open direct connections and make it dependenct on the replciation topic
       }
-
     }
-
   }
 
   async _onDrop(db: Store<any>) {
     const address = db.address.toString()
-    const dir = db && db.options.directory ? db.options.directory : this.directory
+    const dir = db && db._options.directory ? db._options.directory : this.directory
     await this._requestCache(address, dir, db._cache)
   }
 
   async _onLoad(db: Store<any>) {
     const address = db.address.toString()
-    const dir = db && db.options.directory ? db.options.directory : this.directory
+    const dir = db && db._options.directory ? db._options.directory : this.directory
     await this._requestCache(address, dir, db._cache)
     /*   this.addStore(db); */
   }
@@ -1025,7 +1012,7 @@ export class OrbitDB {
     this.programs[storeAddress] = store;
   }
   */
-  async addStore(program: Program, store: Store<any>, replicationTopic: string) {
+  async addProgram(replicationTopic: string, program: Program, minReplicas: MinReplicas) {
     if (!this.programs[replicationTopic]) {
       this.programs[replicationTopic] = {};
     }
@@ -1034,18 +1021,15 @@ export class OrbitDB {
     }
 
     const programAddress = program.address.toString();
-    const storeAddress = store.address.toString();
     const existingProgramAndStores = this.programs[replicationTopic][programAddress];
     if (!!existingProgramAndStores && existingProgramAndStores.program !== program) { // second condition only makes this throw error if we are to add a new instance with the same address
-      throw new Error(`Store at ${replicationTopic}/${storeAddress} is already created`)
+      throw new Error(`Program at ${replicationTopic} is already created`)
     }
-    if (!this.programs[replicationTopic][programAddress]) {
-      this.programs[replicationTopic][programAddress] = {
-        program,
-        stores: new Map()
-      }
+    this.programs[replicationTopic][programAddress] = {
+      program,
+      minReplicas
     }
-    this.programs[replicationTopic][programAddress].stores.set(store.address.toString(), { store, minReplicas: new AbsolutMinReplicas(this._minReplicas) });
+
 
     /* if (!this._replicationTopicJobs.has(replicationTopic) && store.replicate) {
       const controller = new AbortController();
@@ -1348,66 +1332,71 @@ export class OrbitDB {
 
 
         await program.save(this._ipfs);
+        const existingProgram = this.programs[replicationTopic]?.[program.address.toString()]
+        if (existingProgram) {
+          return existingProgram;
+        }
         await program.init(this._ipfs, options.identity || this.identity, {
-          replicate: true, ...options, ...{
-            store: {
-              resolveCache,
-              onClose: async (store) => {
-                await this._onClose(program, store, replicationTopic)
-                if (options.onClose) {
-                  return options.onClose(store);
-                }
-                return;
-              },
-              onDrop: async (store) => {
-                await this._onDrop(store)
-                if (options.onDrop) {
-                  return options.onDrop(store);
-                }
-                return;
-              },
-              onLoad: async (store) => {
-                await this._onLoad(store)
-                if (options.onLoad) {
-                  return options.onLoad(store);
-                }
-                return;
-              },
-              onWrite: async (store, entry) => {
-                await this.onWrite(program)(store, entry, replicationTopic)
-                if (options.onWrite) {
-                  return options.onWrite(store, entry);
-                }
-                return;
-              },
-              onReplicationComplete: async (store) => {
-                if (options.onReplicationComplete) {
-                  options.onReplicationComplete(store);
-                }
-              },
-              onReplicationProgress: async (store, entry) => {
-                if (options.onReplicationProgress) {
-                  options.onReplicationProgress(store, entry);
-                }
-              },
-              onReplicationQueued: async (store, entry) => {
-                if (options.onReplicationQueued) {
-                  options.onReplicationQueued(store, entry);
-                }
-              },
-              onOpen: async (store) => {
-
-                await this.addStore(program, store, replicationTopic)
-                await this.subscribeToReplicationTopic(replicationTopic);
-
-                if (options.onOpen) {
-                  return options.onOpen(store);
-                }
-                return;
+          onClose: () => this._onProgamClose(program, replicationTopic),
+          onDrop: () => this._onProgamClose(program, replicationTopic),
+          store: {
+            replicate: true,
+            ...options,
+            resolveCache,
+            onClose: async (store) => {
+              await this._onClose(program, store, replicationTopic)
+              if (options.onClose) {
+                return options.onClose(store);
               }
+              return;
+            },
+            onDrop: async (store) => {
+              await this._onDrop(store)
+              if (options.onDrop) {
+                return options.onDrop(store);
+              }
+              return;
+            },
+            onLoad: async (store) => {
+              await this._onLoad(store)
+              if (options.onLoad) {
+                return options.onLoad(store);
+              }
+              return;
+            },
+            onWrite: async (store, entry) => {
+              await this.onWrite(program)(store, entry, replicationTopic)
+              if (options.onWrite) {
+                return options.onWrite(store, entry);
+              }
+              return;
+            },
+            onReplicationComplete: async (store) => {
+              if (options.onReplicationComplete) {
+                options.onReplicationComplete(store);
+              }
+            },
+            onReplicationProgress: async (store, entry) => {
+              if (options.onReplicationProgress) {
+                options.onReplicationProgress(store, entry);
+              }
+            },
+            onReplicationQueued: async (store, entry) => {
+              if (options.onReplicationQueued) {
+                options.onReplicationQueued(store, entry);
+              }
+            },
+            onOpen: async (store) => {
+              if (options.onOpen) {
+                return options.onOpen(store);
+              }
+              return;
             }
+
           }
         });
+        await this.addProgram(replicationTopic, program, options.minReplicas || new AbsolutMinReplicas(this._minReplicas));
+        await this.subscribeToReplicationTopic(replicationTopic);
         resolve(program)
       } catch (error) {
         reject(error);

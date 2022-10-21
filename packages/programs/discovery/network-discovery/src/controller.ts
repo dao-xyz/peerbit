@@ -18,8 +18,9 @@ export class NetworkDiscovery extends Program {
     @field({ type: DDocs })
     info: DDocs<NetworkInfo>
 
+
     _peerId: string;
-    _options: ProgramInitializationOptions;
+    _options: ProgramInitializationOptions
 
     constructor(props?: {
         name?: string,
@@ -27,9 +28,13 @@ export class NetworkDiscovery extends Program {
     }) {
         super(props);
         this.info = createDiscoveryStore(props);
-
     }
 
+    async init(ipfs: IPFS<{}>, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
+        this._peerId = (await ipfs.id()).id.toString();
+        this._options = options;
+        return super.init(ipfs, identity, options);
+    }
     async canAppend(mpayload: MaybeEncrypted<Payload<Operation<NetworkInfo>>>, keyEncrypted: MaybeEncrypted<SignatureWithKey>): Promise<boolean> {
         // check if the peer id is trusted by the signature
         const kr = this.info.store.oplog._encryption?.getAnyKeypair || (() => Promise.resolve(undefined));
@@ -79,14 +84,8 @@ export class NetworkDiscovery extends Program {
     }
 
 
-    async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
-        this._peerId = (await ipfs.id()).id.toString();
-        this._ipfs = ipfs;
-        this._identity = identity;
-        this._options = options;
-        await this.info.init(ipfs, identity, { ...options, store: { ...options.store, typeMap: { [NetworkInfo.name]: NetworkInfo }, canAppend: this.canAppend.bind(this) } }) // self referencing access controller
-        await super.init(ipfs, identity, options);
-        return this;
+    async setup() {
+        await this.info.setup({ type: NetworkInfo, canAppend: this.canAppend.bind(this) }) // self referencing access controller
     }
 
 

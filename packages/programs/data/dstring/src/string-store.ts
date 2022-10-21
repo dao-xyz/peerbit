@@ -48,21 +48,17 @@ export class DString extends Program implements RootProgram {
     this._index = new StringIndex();
   }
 
-  async start() {
-    await this.setup({})
-  }
 
-  async setup(options: { canRead?(key: SignatureWithKey): Promise<boolean>, canAppend?: CanAppend<PayloadOperation> }): Promise<this> {
+  async setup(options?: { canRead?(key: SignatureWithKey): Promise<boolean>, canAppend?: CanAppend<PayloadOperation> }) {
 
     this.store.onUpdate = this._index.updateIndex.bind(this._index)
-    if (options.canAppend) {
+    if (options?.canAppend) {
       this.store.canAppend = options.canAppend;
     }
 
-    await this.search.setup({ ...options, context: { address: this.address }, canRead: options.canRead, queryHandler: this.queryHandler.bind(this) })
+    await this.search.setup({ ...options, context: { address: () => this.address }, canRead: options?.canRead, queryHandler: this.queryHandler.bind(this) })
 
     this._setup = true;
-    return this;
 
   }
 

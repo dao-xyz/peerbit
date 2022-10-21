@@ -56,7 +56,7 @@ export class DDocs<T extends BinaryPayload> extends Program {
     if (options.canAppend) {
       this.store.canAppend = options.canAppend
     }
-    await this.search.setup({ context: { address: this.address }, canRead: options.canRead, queryHandler: this.queryHandler.bind(this) });
+    await this.search.setup({ context: { address: () => this.address }, canRead: options.canRead, queryHandler: this.queryHandler.bind(this) });
     return this;
   }
 

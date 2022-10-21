@@ -15,7 +15,7 @@ export const getQueryTopic = (region: string): string => {
 /* export type IQueryStoreOptions<T> = IStoreOptions<T> & { queryRegion?: string, subscribeToQueries: boolean };
  */
 
-export type SearchContext = { address: Address };
+export type SearchContext = { address: () => Address };
 export type DSearchInitializationOptions<T> = { canRead?(signature: SignatureWithKey | undefined): Promise<boolean>, context: SearchContext, queryHandler: (query: QueryType) => Promise<Result[]> };
 
 @variant([0, 2])
@@ -26,6 +26,8 @@ export class DSearch<T> extends Program {
 
     _queryHandler: (query: QueryType) => Promise<Result[]>
     _context: SearchContext;
+
+    _setup: boolean = false;
     constructor(properties: { query: DQuery<QueryType, Results>, name?: string }) {
         super(properties)
         if (properties) {
@@ -35,18 +37,21 @@ export class DSearch<T> extends Program {
 
 
     public async setup(options: DSearchInitializationOptions<T>) {
+        this._setup = true;
         this._queryHandler = options.queryHandler;
         this._context = options.context;
         await this._query.setup({ canRead: options.canRead, responseHandler: this._onQueryMessage.bind(this), queryType: QueryType, responseType: Results })
     }
 
     async _onQueryMessage(query: QueryType, from?: SignKey): Promise<Results | undefined> {
-
+        if (!this._setup) {
+            throw new Error(".setup(...) needs to be invoked before use")
+        }
         if (query instanceof MultipleQueriesType) {
             // Handle context queries
             for (const q of query.queries) {
                 if (q instanceof StoreAddressMatchQuery) {
-                    if (q.address != this._context.address.toString()) {
+                    if (q.address != this._context.address().toString()) {
                         // This query is not for me!
                         return;
                     }

@@ -101,9 +101,6 @@ export class DynamicAccessController<T> extends Program implements RootProgram {
         return this._db.canAppend(payload, identityEncrypted)
     }
 
-    async start(): Promise<void> {
-
-    }
     async setup() {
         this._db.setup();
     }
