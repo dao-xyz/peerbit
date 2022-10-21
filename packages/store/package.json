@@ -47,7 +47,6 @@
     "readable-stream": "~3.6.0"
   },
   "devDependencies": {
-    "@dao-xyz/peerbit-cache": "^0.4.0",
     "@dao-xyz/peerbit-keystore": "^0.0.4",
     "@dao-xyz/peerbit-test-utils": "^0.0.3",
     "go-ipfs": "^0.16.0-rc1",
@@ -60,5 +59,5 @@
   "localMaintainers": [
     "dao.xyz"
   ],
-  "gitHead": "d10b89ef1a120a58e1a7e92aadcc2bb536a37e3e"
+  "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
 }

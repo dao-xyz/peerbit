@@ -30,5 +30,6 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^3.3.0"
-  }
+  },
+  "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
 }

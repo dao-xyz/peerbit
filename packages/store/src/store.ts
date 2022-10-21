@@ -281,9 +281,6 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     this.queuePath = path.join(this.address.toString(), 'queue')
     this.manifestPath = path.join(this.address.toString(), '_manifest')
 
-    /* this.sharding.init(options.requestNewShard); */
-
-
 
     // External dependencies
     this._cache = await this._options.resolveCache(this.address);
@@ -574,40 +571,6 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     if (heads.length === 0) {
       return
     }
-
-    /*     this.allowForks = await this.checkMemory();
-     */
-    /* let hasKnown = false;
-    outer:
-    for (const head of heads) {
-      for (const hash of head.next) {
-        if (this._oplog.has(hash)) {
-          hasKnown = true;
-        }
-        if (hasKnown) {
-          break outer;
-        }
-      }
-    }
-  
-    if (!hasKnown) {
-      // Is a fork/independent state
-      if (!this.allowForks) {
-        logger.info("Seems to be a fork, and this store does not allow them")
-        return Promise.resolve(null)
-      }
-    }
-  */
-
-
-
-    /* if (!hasKnown) {
-      if (!leaderInfo.isLeader) {
-        logger.info("Is not leader so I am rejecting the fork")
-        return Promise.resolve(null);
-      }f
-    } */
-
 
     const handle = async (headToHandle: Entry<T>) => {
 

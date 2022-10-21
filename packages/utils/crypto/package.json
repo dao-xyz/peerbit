@@ -37,5 +37,6 @@
     "@dao-xyz/peerbit-bpayload": "^0.0.13",
     "@ethersproject/wallet": "^5.7.0",
     "libsodium-wrappers": "^0.7.10"
-  }
+  },
+  "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
 }
