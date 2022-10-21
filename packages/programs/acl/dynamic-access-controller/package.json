@@ -1,5 +1,5 @@
 {
-  "name": "@dao-xyz/orbit-db-dynamic-access-controller",
+  "name": "@dao-xyz/peerbit-dynamic-access-controller",
   "version": "0.0.28",
   "description": "Access controller that operates on a DB",
   "type": "module",
