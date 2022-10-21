@@ -21,7 +21,6 @@
   },
   "files": [
     "lib",
-    "src",
     "LICENSE"
   ],
   "engines": {

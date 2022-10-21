@@ -12,7 +12,6 @@
   },
   "files": [
     "lib",
-    "src",
     "LICENSE"
   ],
   "publishConfig": {

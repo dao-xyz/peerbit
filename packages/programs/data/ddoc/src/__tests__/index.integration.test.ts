@@ -14,7 +14,6 @@ import { Level } from 'level';
 import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
 import { Program, RootProgram } from '@dao-xyz/peerbit-program';
-import { Doc } from 'prettier';
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;

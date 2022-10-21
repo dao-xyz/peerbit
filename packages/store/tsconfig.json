@@ -3,9 +3,6 @@
     "include": [
         "src"
     ],
-    "exclude": [
-        "src/__tests__"
-    ],
     "compilerOptions": {
         "noEmit": false,
         "outDir": "lib/esm"
