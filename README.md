@@ -23,6 +23,56 @@ Started originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS 
 
 ### [How Peerbit differs from OrbitDB](./documentation/DIFFERENCE.md)
 
+
+## Example code 
+Below is a short example how you can create a collaborative text document: 
+
+```typescript
+import { DString} from '@dao-xyz/peerbit-dstring'
+import { Peerbit } from '@dao-xyz/peerbit'
+import { Program, RootProgram } from '@dao-xyz/peerbit-program'
+
+class CollaborativeText extends Program implements RootProgram
+    
+    @field({type: DString})
+    dstring: DString // distributed string 
+
+    constructor()
+    {
+        this.dstring = new DSstring()
+    }
+
+    async setup()
+    {
+        await this.dstring.setup({canAppend: this.canAppend, canRead: this.canRead})
+    }
+
+    async canAppend(payload, identity): Promise<boolean>
+    {
+       // .. acl logic writers
+    }
+
+    async canRead(identity): Promise<boolean>
+    {
+        // .. acl logic for readers
+    }
+
+}
+
+// ... 
+
+const peer = Peerbit.createInstance (ipfs, options ...)
+const document = peer.open(new CollaborativeText());
+console.log(document.address) /// this address can be opened by another peer 
+
+
+//  ... 
+await document.add('hello', new Range({ offset: 0n, length: 'hello'.length }));
+await document.add('world', new Range({ offset: BigInt('hello '.length), length: 'world'.length }));
+
+console.log(await document.dstring.toString()) // 'hello world'
+```
+
 </br>
 </br>
 </br>
