@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-dynamic-access-controller",
-  "version": "0.0.28",
+  "version": "0.0.29",
   "description": "Access controller that operates on a DB",
   "type": "module",
   "sideEffects": false,
@@ -30,9 +30,9 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^3.3.0",
-    "@dao-xyz/peerbit-dsearch": "^0.0.43",
-    "@dao-xyz/peerbit-ddoc": "^0.0.75",
-    "@dao-xyz/peerbit-trusted-network": "^0.0.28",
+    "@dao-xyz/peerbit-ddoc": "^0.0.76",
+    "@dao-xyz/peerbit-dsearch": "^0.0.44",
+    "@dao-xyz/peerbit-trusted-network": "^0.0.29",
     "p-map": "~1.1.1",
     "uuid": "^8.3.2"
   },

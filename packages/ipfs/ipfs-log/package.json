@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/ipfs-log",
-  "version": "5.5.15",
+  "version": "5.5.16",
   "description": "Append-only log CRDT on IPFS",
   "author": "Haad",
   "license": "MIT",
@@ -30,17 +30,18 @@
   ],
   "dependencies": {
     "@dao-xyz/borsh": "^3.3.0",
-    "@dao-xyz/peerbit-crypto": "^0.0.1",
+    "@dao-xyz/peerbit-crypto": "^0.0.2",
+    "@dao-xyz/peerbit-io-utils": "^1.1.1",
     "json-stringify-deterministic": "^1.0.7",
     "multihashing-async": "^2.0.1",
-    "@dao-xyz/peerbit-io-utils": "^1.1.0",
     "p-do-whilst": "^1.1.0",
     "p-each-series": "^3.0.0",
     "p-map": "^5.5.0",
     "p-whilst": "^3.0.0"
   },
   "devDependencies": {
-    "@dao-xyz/peerbit-keystore": "^0.0.2",
+    "@dao-xyz/peerbit-keystore": "^0.0.3",
+    "@dao-xyz/peerbit-test-utils": "^0.0.2",
     "@mapbox/node-pre-gyp": "^1.0.5",
     "assert": "^2.0.0",
     "eslint": "^7.32.0",
@@ -55,7 +56,6 @@
     "node-pre-gyp": "^0.13.0",
     "nyc": "^15.0.1",
     "orbit-db-benchmark-runner": "^1.0.3",
-    "@dao-xyz/peerbit-test-utils": "^0.0.1",
     "path-browserify": "^1.0.1",
     "stream-browserify": "^3.0.0",
     "webpack": "^5.37.1",

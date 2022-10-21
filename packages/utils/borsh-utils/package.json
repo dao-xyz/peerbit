@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-borsh-utils",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Utility methods for borsh",
   "type": "module",
   "sideEffects": false,
@@ -30,6 +30,5 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^3.3.0"
-  },
-  "devDependencies": {}
+  }
 }
