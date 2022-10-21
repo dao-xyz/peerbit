@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-io-utils",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "IO helper module for orbit-db",
   "type": "module",
   "sideEffects": false,
@@ -45,8 +45,8 @@
     "hajamark <mark@haja.io>"
   ],
   "devDependencies": {
-    "c8": "^7.12.0",
-    "@dao-xyz/peerbit-test-utils": "^0.0.1"
+    "@dao-xyz/peerbit-test-utils": "^0.0.2",
+    "c8": "^7.12.0"
   },
   "peerDependencies": {
     "go-ipfs": "*",

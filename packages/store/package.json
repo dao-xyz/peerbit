@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-store",
-  "version": "0.0.21",
+  "version": "0.0.22",
   "description": "Modified base class for orbit db stores for Typescript with CJS and ESM builds",
   "type": "module",
   "sideEffects": false,
@@ -35,27 +35,27 @@
   },
   "license": "MIT",
   "dependencies": {
-    "multihashes": "~3.0.1",
-    "@dao-xyz/peerbit-cache": "^0.4.0",
-    "@dao-xyz/peerbit-io-utils": "^1.1.0",
-    "@dao-xyz/ipfs-log": "^5.5.15",
+    "@dao-xyz/ipfs-log": "^5.5.16",
+    "@dao-xyz/peerbit-cache": "^0.4.1",
+    "@dao-xyz/peerbit-io-utils": "^1.1.1",
     "it-to-stream": "^1.0.0",
     "logplease": "^1.2.15",
+    "multihashes": "~3.0.1",
     "p-each-series": "^3.0.0",
     "p-map": "^5.5.0",
     "p-queue": "^7.3.0",
     "readable-stream": "~3.6.0"
   },
   "devDependencies": {
-    "@dao-xyz/peerbit-keystore": "^0.0.2",
+    "@dao-xyz/peerbit-cache": "^0.4.0",
+    "@dao-xyz/peerbit-keystore": "^0.0.3",
+    "@dao-xyz/peerbit-test-utils": "^0.0.2",
     "go-ipfs": "^0.16.0-rc1",
     "ipfs": "^0.64.2",
     "ipfsd-ctl": "^12.0.3",
-    "memdown": "^6.0.0",
-    "@dao-xyz/peerbit-cache": "^0.4.0",
-    "@dao-xyz/peerbit-test-utils": "^0.0.1",
     "level": "^8.0.0",
-    "libsodium-wrappers": "^0.7.10"
+    "libsodium-wrappers": "^0.7.10",
+    "memdown": "^6.0.0"
   },
   "localMaintainers": [
     "dao.xyz"

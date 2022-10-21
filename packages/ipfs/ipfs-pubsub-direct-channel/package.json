@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/ipfs-pubsub-direct-channel",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "1-to-1 communication channel over IPFS Pubsub between two peers",
   "license": "MIT",
   "type": "module",
@@ -27,12 +27,12 @@
   ],
   "dependencies": {
     "@dao-xyz/borsh": "^3.3.0",
-    "@dao-xyz/peerbit-borsh-utils": "^0.0.1",
-    "@dao-xyz/ipfs-pubsub-peer-monitor": "^0.0.8",
-    "@dao-xyz/peerbit-test-utils": "^0.0.1"
+    "@dao-xyz/ipfs-pubsub-peer-monitor": "^0.0.9",
+    "@dao-xyz/peerbit-borsh-utils": "^0.0.2",
+    "@dao-xyz/peerbit-test-utils": "^0.0.2"
   },
   "devDependencies": {
-    "@dao-xyz/peerbit-time": "^0.0.11",
+    "@dao-xyz/peerbit-time": "^0.0.12",
     "@mapbox/node-pre-gyp": "^1.0.5",
     "assert": "^2.0.0",
     "eslint": "^7.32.0",
@@ -45,8 +45,8 @@
     "json-loader": "~0.5.7",
     "node-pre-gyp": "^0.13.0",
     "nyc": "^15.0.1",
-    "webpack": "^5.37.1",
-    "p-map-series": "^3.0.0"
+    "p-map-series": "^3.0.0",
+    "webpack": "^5.37.1"
   },
   "scripts": {
     "clean": "shx rm -rf lib/*",
