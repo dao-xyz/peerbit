@@ -1,5 +1,5 @@
 import path from 'path'
-import { IStoreOptions, Store, Address, Saveable, Addressable } from '@dao-xyz/peerbit-dstore'
+import { IStoreOptions, Store, Address, Saveable, Addressable } from '@dao-xyz/peerbit-store'
 // @ts-ignore
 import Logger from 'logplease'
 import { IPFS, IPFS as IPFSInstance } from 'ipfs-core-types';

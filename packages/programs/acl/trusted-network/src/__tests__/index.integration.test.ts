@@ -10,7 +10,7 @@ import { createStore } from '@dao-xyz/peerbit-test-utils';
 import { Level } from 'level';
 import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
-import { CachedValue, DefaultOptions, IStoreOptions } from '@dao-xyz/peerbit-dstore';
+import { CachedValue, DefaultOptions, IStoreOptions } from '@dao-xyz/peerbit-store';
 import Cache from '@dao-xyz/peerbit-cache';
 import { field, serialize, variant } from '@dao-xyz/borsh';
 import { Program, RootProgram } from '@dao-xyz/peerbit-program';

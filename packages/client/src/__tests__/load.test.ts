@@ -3,7 +3,7 @@ import assert from 'assert'
 import mapSeries from 'p-map-series'
 import rmrf from 'rimraf'
 import path from 'path'
-import { Address } from '@dao-xyz/peerbit-dstore'
+import { Address } from '@dao-xyz/peerbit-store'
 import { OrbitDB } from '../orbit-db.js'
 import { EventStore } from './utils/stores/event-store.js'
 import { jest } from '@jest/globals';

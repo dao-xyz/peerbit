@@ -5,7 +5,7 @@ import { DocumentQueryRequest, Compare, FieldBigIntCompareQuery, SortDirection, 
 import { CustomBinaryPayload } from '@dao-xyz/peerbit-bpayload';
 import { QueryRequestV0, query, QueryOptions, DQuery } from '@dao-xyz/peerbit-dquery';
 import { Session, createStore } from '@dao-xyz/peerbit-test-utils';
-import { DefaultOptions } from '@dao-xyz/peerbit-dstore';
+import { DefaultOptions } from '@dao-xyz/peerbit-store';
 import { Identity } from '@dao-xyz/ipfs-log';
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto';
 import { IPFS } from 'ipfs-core-types';

@@ -1,6 +1,6 @@
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import { DDocs, Operation, PutOperation } from "@dao-xyz/peerbit-ddoc";
-import { Address, IInitializationOptions, save } from "@dao-xyz/peerbit-dstore";
+import { Address, IInitializationOptions, save } from "@dao-xyz/peerbit-store";
 import { BORSH_ENCODING, Entry, Identity, Payload } from "@dao-xyz/ipfs-log";
 import { createHash } from "crypto";
 import { IPFSAddress, Key, OtherKey, PublicSignKey, SignatureWithKey } from "@dao-xyz/peerbit-crypto";

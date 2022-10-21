@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
 import { Identity } from '@dao-xyz/ipfs-log';
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto';
-import { DefaultOptions } from '@dao-xyz/peerbit-dstore';
+import { DefaultOptions } from '@dao-xyz/peerbit-store';
 import { deserialize, serialize, variant } from '@dao-xyz/borsh';
 import { QueryRequestV0, QueryResponseV0, DQuery, QueryOptions, query } from '@dao-xyz/peerbit-dquery';
 

@@ -1,7 +1,7 @@
 import { variant, option, field, vec, serialize } from '@dao-xyz/borsh';
 import { Entry, Identity } from '@dao-xyz/ipfs-log'
 import { ProtocolMessage } from './message.js';
-import { Address, Store } from '@dao-xyz/peerbit-dstore';
+import { Address, Store } from '@dao-xyz/peerbit-store';
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned } from '@dao-xyz/peerbit-crypto';
 import { ResourceRequirement } from './exchange-replication.js';

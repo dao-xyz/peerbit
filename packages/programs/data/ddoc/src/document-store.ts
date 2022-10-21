@@ -4,7 +4,7 @@ import { asString } from './utils.js';
 import { DocumentQueryRequest, FieldQuery, FieldStringMatchQuery, Result, ResultWithSource, SortDirection, FieldByteMatchQuery, FieldBigIntCompareQuery, Compare, Query, MemoryCompareQuery, DSearchInitializationOptions, QueryType } from '@dao-xyz/peerbit-dsearch';
 import { BinaryPayload } from '@dao-xyz/peerbit-bpayload';
 import { arraysEqual } from '@dao-xyz/peerbit-borsh-utils';
-import { Store, IInitializationOptions } from '@dao-xyz/peerbit-dstore';
+import { Store, IInitializationOptions } from '@dao-xyz/peerbit-store';
 import { DSearch } from '@dao-xyz/peerbit-dsearch';
 import { BORSH_ENCODING, CanAppend, Identity, Payload } from '@dao-xyz/ipfs-log';
 import { IPFS } from 'ipfs-core-types';

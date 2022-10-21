@@ -1,7 +1,7 @@
 import { Identity, JSON_ENCODING, Log } from "@dao-xyz/ipfs-log";
 import { Entry } from "@dao-xyz/ipfs-log";
-import { Address, IInitializationOptions, load } from "@dao-xyz/peerbit-dstore";
-import { Store } from "@dao-xyz/peerbit-dstore"
+import { Address, IInitializationOptions, load } from "@dao-xyz/peerbit-store";
+import { Store } from "@dao-xyz/peerbit-store"
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log';
 import { variant, field } from '@dao-xyz/borsh';
 import { Program, ProgramInitializationOptions } from "@dao-xyz/peerbit-program";

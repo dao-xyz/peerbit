@@ -10,7 +10,7 @@ import { IPFS } from "ipfs-core-types";
 import { OrbitDB } from '../orbit-db'
 
 import { EventStore, Operation } from './utils/stores/event-store'
-import { IStoreOptions } from '@dao-xyz/peerbit-dstore'
+import { IStoreOptions } from '@dao-xyz/peerbit-store'
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 // Include test utilities

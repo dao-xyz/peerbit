@@ -6,7 +6,7 @@ import { createStore } from '@dao-xyz/peerbit-test-utils';
 import { Level } from 'level';
 import { fileURLToPath } from 'url';
 import path from 'path';
-import { CachedValue, DefaultOptions, IStoreOptions } from '@dao-xyz/peerbit-dstore';
+import { CachedValue, DefaultOptions, IStoreOptions } from '@dao-xyz/peerbit-store';
 import Cache from '@dao-xyz/peerbit-cache';
 import { Program } from '@dao-xyz/peerbit-program';
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';

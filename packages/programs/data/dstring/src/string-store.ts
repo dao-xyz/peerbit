@@ -5,7 +5,7 @@ import { StringQueryRequest } from '@dao-xyz/peerbit-dsearch';
 import { Range } from './range.js';
 import { deserialize, field, serialize, variant } from '@dao-xyz/borsh';
 import { CustomBinaryPayload } from '@dao-xyz/peerbit-bpayload';
-import { Address, IInitializationOptions, IStoreOptions, load, Store } from '@dao-xyz/peerbit-dstore';
+import { Address, IInitializationOptions, IStoreOptions, load, Store } from '@dao-xyz/peerbit-store';
 import { IPFS } from 'ipfs-core-types';
 import { BORSH_ENCODING, CanAppend, Identity } from '@dao-xyz/ipfs-log';
 import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';

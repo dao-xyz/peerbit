@@ -6,7 +6,7 @@ import rmrf from 'rimraf'
 import { OrbitDB } from '../orbit-db'
 import { KeyValueStore } from './utils/stores/key-value-store'
 
-import { Address, Store } from '@dao-xyz/peerbit-dstore'
+import { Address, Store } from '@dao-xyz/peerbit-store'
 import { EventStore } from './utils/stores'
 
 // @ts-ignore 

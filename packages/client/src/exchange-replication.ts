@@ -4,7 +4,7 @@ import { ProtocolMessage } from './message.js';
 import isNode from 'is-node';
 import { MaybeSigned, PublicSignKey } from '@dao-xyz/peerbit-crypto';
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
-import { Address, Store } from '@dao-xyz/peerbit-dstore';
+import { Address, Store } from '@dao-xyz/peerbit-store';
 import { OrbitDB } from './orbit-db.js';
 import { StringSetSerializer } from '@dao-xyz/peerbit-borsh-utils';
 // @ts-ignore

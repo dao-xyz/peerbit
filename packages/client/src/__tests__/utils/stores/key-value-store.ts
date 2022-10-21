@@ -1,5 +1,5 @@
 import { JSON_ENCODING, Log } from "@dao-xyz/ipfs-log";
-import { Store } from "@dao-xyz/peerbit-dstore"
+import { Store } from "@dao-xyz/peerbit-store"
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log';
 import { variant, field } from '@dao-xyz/borsh';
 import { Program } from "@dao-xyz/peerbit-program";

@@ -4,7 +4,7 @@ import rmrf from 'rimraf'
 import { Entry } from '@dao-xyz/ipfs-log'
 import { OrbitDB } from '../orbit-db'
 import { EventStore, Operation } from './utils/stores/event-store'
-import { IStoreOptions } from '@dao-xyz/peerbit-dstore';
+import { IStoreOptions } from '@dao-xyz/peerbit-store';
 import { Ed25519Keypair, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
 import { AccessError } from "@dao-xyz/peerbit-crypto"
 

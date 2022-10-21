@@ -1,5 +1,5 @@
 import { field, variant } from "@dao-xyz/borsh"
-import { Store } from "@dao-xyz/peerbit-dstore";
+import { Store } from "@dao-xyz/peerbit-store";
 import { Program } from "..";
 
 describe('program', () => {

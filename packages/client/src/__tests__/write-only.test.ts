@@ -21,7 +21,7 @@ import {
     connectPeers,
     waitForPeers,
 } from '@dao-xyz/peerbit-test-utils'
-import { Store } from '@dao-xyz/peerbit-dstore'
+import { Store } from '@dao-xyz/peerbit-store'
 
 const orbitdbPath1 = './orbitdb/tests/write-only/1'
 const orbitdbPath2 = './orbitdb/tests/write-only/2'
