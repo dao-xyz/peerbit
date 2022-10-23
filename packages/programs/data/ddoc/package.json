@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-ddoc",
-  "version": "0.0.84",
+  "version": "0.0.85",
   "description": "Document Store for orbit-db with binary ser/der",
   "type": "module",
   "sideEffects": false,
@@ -31,8 +31,8 @@
   "dependencies": {
     "@dao-xyz/borsh": "^3.4.2",
     "@dao-xyz/peerbit-bpayload": "^0.0.15",
-    "@dao-xyz/peerbit-dsearch": "^0.0.52",
-    "@dao-xyz/peerbit-store": "^0.0.28",
+    "@dao-xyz/peerbit-dsearch": "^0.0.53",
+    "@dao-xyz/peerbit-store": "^0.0.29",
     "uuid": "^8.3.2"
   },
   "devDependencies": {
