@@ -4,7 +4,7 @@ import mapSeries from 'p-map-series'
 import rmrf from 'rimraf'
 import path from 'path'
 import { Address } from '@dao-xyz/peerbit-store'
-import { OrbitDB } from '../orbit-db.js'
+import { Peerbit } from '../peer.js'
 import { EventStore } from './utils/stores/event-store.js'
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
@@ -42,14 +42,14 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
   const entryCount = 10
 
-  let ipfsd: Controller, ipfs: IPFS, orbitdb1: OrbitDB, db: EventStore<string>, address: string
+  let ipfsd: Controller, ipfs: IPFS, orbitdb1: Peerbit, db: EventStore<string>, address: string
 
   beforeAll(async () => {
     const options: any = Object.assign({}, test.orbitDBConfig)
     rmrf.sync(dbPath)
     ipfsd = await startIpfs(API, config.daemon1)
     ipfs = ipfsd.api
-    orbitdb1 = await OrbitDB.createInstance(ipfs, options)
+    orbitdb1 = await Peerbit.create(ipfs, options)
   })
 
   afterAll(async () => {

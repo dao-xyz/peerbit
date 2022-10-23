@@ -60,7 +60,7 @@ class CollaborativeText extends Program {
 
 // ... 
 
-const peer = Peerbit.createInstance (ipfs, options ...)
+const peer = Peerbit.create (ipfs, options ...)
 const document = peer.open(new CollaborativeText());
 console.log(document.address) /// this address can be opened by another peer 
 

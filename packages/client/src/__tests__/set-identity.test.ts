@@ -1,4 +1,4 @@
-import { OrbitDB } from "../orbit-db"
+import { Peerbit } from "../peer"
 
 import fs from 'fs'
 import rmrf from 'rimraf'
@@ -33,7 +33,7 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Set identities (${API})`, function () {
     jest.setTimeout(config.timeout)
 
-    let ipfsd: Controller, ipfs: IPFS, orbitdb: OrbitDB, keystore: Keystore, options: any
+    let ipfsd: Controller, ipfs: IPFS, orbitdb: Peerbit, keystore: Keystore, options: any
     let signKey1: KeyWithMeta<Ed25519Keypair>, signKey2: KeyWithMeta<Ed25519Keypair>
 
     beforeAll(async () => {
@@ -47,7 +47,7 @@ Object.keys(testAPIs).forEach(API => {
       keystore = new Keystore(identityStore)
       signKey1 = await keystore.createEd25519Key() as KeyWithMeta<Ed25519Keypair>;;
       signKey2 = await keystore.createEd25519Key() as KeyWithMeta<Ed25519Keypair>;;
-      orbitdb = await OrbitDB.createInstance(ipfs, { directory: dbPath })
+      orbitdb = await Peerbit.create(ipfs, { directory: dbPath })
     })
 
     afterAll(async () => {

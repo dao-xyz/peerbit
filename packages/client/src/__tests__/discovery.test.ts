@@ -1,7 +1,7 @@
 //
 import rmrf from 'rimraf'
 
-import { OrbitDB } from '../orbit-db'
+import { Peerbit } from '../peer'
 
 import { jest } from '@jest/globals';
 
@@ -30,7 +30,7 @@ Object.keys(testAPIs).forEach(API => {
         jest.setTimeout(config.timeout * 2)
 
         let session1: Session, session2: Session;
-        let orbitdb1: OrbitDB, orbitdb2: OrbitDB, orbitdb3: OrbitDB
+        let orbitdb1: Peerbit, orbitdb2: Peerbit, orbitdb3: Peerbit
 
 
         beforeAll(async () => {
@@ -53,9 +53,9 @@ Object.keys(testAPIs).forEach(API => {
             rmrf.sync(dbPath2)
             rmrf.sync(dbPath3)
 
-            orbitdb1 = await OrbitDB.createInstance(session1.peers[0].ipfs, { directory: orbitdbPath1, localNetwork: true })
-            orbitdb2 = await OrbitDB.createInstance(session1.peers[1].ipfs, { directory: orbitdbPath2, localNetwork: true })
-            orbitdb3 = await OrbitDB.createInstance(session2.peers[0].ipfs, { directory: orbitdbPath3, localNetwork: true })
+            orbitdb1 = await Peerbit.create(session1.peers[0].ipfs, { directory: orbitdbPath1, localNetwork: true })
+            orbitdb2 = await Peerbit.create(session1.peers[1].ipfs, { directory: orbitdbPath2, localNetwork: true })
+            orbitdb3 = await Peerbit.create(session2.peers[0].ipfs, { directory: orbitdbPath3, localNetwork: true })
 
 
         })

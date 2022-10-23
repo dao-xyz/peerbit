@@ -1,5 +1,5 @@
 
-import { OrbitDB } from "../orbit-db"
+import { Peerbit } from "../peer"
 
 import { EventStore } from "./utils/stores/event-store"
 import { KeyValueStore } from "./utils/stores/key-value-store"
@@ -27,7 +27,7 @@ Object.keys(testAPIs).forEach(API => {
     jest.setTimeout(config.timeout * 14)
 
     /*  let ipfsd1: Controller, ipfsd2: Controller, ipfsd3: Controller, ipfsd4: Controller, ipfs1: IPFS, ipfs2: IPFS, ipfs3: IPFS, ipfs4: IPFS */
-    let orbitdb1: OrbitDB, orbitdb2: OrbitDB, orbitdb3: OrbitDB, orbitdb4: OrbitDB
+    let orbitdb1: Peerbit, orbitdb2: Peerbit, orbitdb3: Peerbit, orbitdb4: Peerbit
     let session: Session;
     beforeAll(async () => {
       rmrf.sync('./orbitdb')
@@ -74,8 +74,8 @@ Object.keys(testAPIs).forEach(API => {
 
     it('starts replicating the database when peers connect', async () => {
       console.log('Peers connected')
-      orbitdb1 = await OrbitDB.createInstance(session.peers[0].ipfs, { directory: dbPath1 })
-      orbitdb2 = await OrbitDB.createInstance(session.peers[1].ipfs, { directory: dbPath2 })
+      orbitdb1 = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath1 })
+      orbitdb2 = await Peerbit.create(session.peers[1].ipfs, { directory: dbPath2 })
 
       const entryCount = 33
       const entryArr = []

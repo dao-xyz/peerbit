@@ -2,7 +2,7 @@
 import assert from 'assert'
 import rmrf from 'rimraf'
 import { Entry } from '@dao-xyz/ipfs-log'
-import { OrbitDB } from '../orbit-db'
+import { Peerbit } from '../peer'
 import { EventStore, Operation } from './utils/stores/event-store'
 import { IStoreOptions } from '@dao-xyz/peerbit-store';
 import { Ed25519Keypair, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
@@ -46,7 +46,7 @@ Object.keys(testAPIs).forEach(API => {
     jest.setTimeout(config.timeout * 2)
 
     let session: Session;
-    let orbitdb1: OrbitDB, orbitdb2: OrbitDB, orbitdb3: OrbitDB, db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>
+    let orbitdb1: Peerbit, orbitdb2: Peerbit, orbitdb3: Peerbit, db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>
     let recieverKey: KeyWithMeta<Ed25519Keypair>
     let options: IStoreOptions<any>
     let replicationTopic: string;
@@ -70,7 +70,7 @@ Object.keys(testAPIs).forEach(API => {
       rmrf.sync(dbPath2)
       rmrf.sync(dbPath3)
 
-      orbitdb1 = await OrbitDB.createInstance(session.peers[0].ipfs, {
+      orbitdb1 = await Peerbit.create(session.peers[0].ipfs, {
         directory: orbitdbPath1, waitForKeysTimout: 1000
       },)
 
@@ -78,7 +78,7 @@ Object.keys(testAPIs).forEach(API => {
       await orbitdb1.joinNetwork(network);
 
       // Trusted client 2
-      orbitdb2 = await OrbitDB.createInstance(session.peers[1].ipfs, { directory: orbitdbPath2, waitForKeysTimout: 1000 })
+      orbitdb2 = await Peerbit.create(session.peers[1].ipfs, { directory: orbitdbPath2, waitForKeysTimout: 1000 })
       await network.add(orbitdb2.id)
       await network.add(orbitdb2.identity.publicKey)
       replicationTopic = network.address.toString();
@@ -87,7 +87,7 @@ Object.keys(testAPIs).forEach(API => {
       await orbitdb2.joinNetwork(network)
 
       // Untrusted client 3
-      orbitdb3 = await OrbitDB.createInstance(session.peers[2].ipfs, { directory: orbitdbPath3, waitForKeysTimout: 1000 })
+      orbitdb3 = await Peerbit.create(session.peers[2].ipfs, { directory: orbitdbPath3, waitForKeysTimout: 1000 })
 
       recieverKey = await orbitdb2.keystore.createEd25519Key();
 

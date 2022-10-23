@@ -3,7 +3,7 @@ import fs from 'fs-extra'
 import path from 'path'
 import rmrf from 'rimraf'
 // @ts-ignore
-import { OrbitDB } from '../orbit-db'
+import { Peerbit } from '../peer'
 import { KeyValueStore } from './utils/stores/key-value-store'
 
 import { Address, Store } from '@dao-xyz/peerbit-store'
@@ -30,7 +30,7 @@ describe(`orbit-db - Create & Open `, function () {
   jest.retryTimes(1) // windows...
   jest.setTimeout(config.timeout)
 
-  let ipfsd: Controller, ipfs: IPFS, orbitdb: OrbitDB, address
+  let ipfsd: Controller, ipfs: IPFS, orbitdb: Peerbit, address
   let localDataPath: string
   let replicationTopic: string
 
@@ -40,7 +40,7 @@ describe(`orbit-db - Create & Open `, function () {
     ipfs = ipfsd.api
     replicationTopic = uuid();
 
-    orbitdb = await OrbitDB.createInstance(ipfs, { directory: dbPath })
+    orbitdb = await Peerbit.create(ipfs, { directory: dbPath })
 
   })
 

@@ -2,7 +2,7 @@
 import assert from 'assert'
 import rmrf from 'rimraf'
 import path from 'path'
-import { OrbitDB } from '../orbit-db'
+import { Peerbit } from '../peer'
 import { createStore } from './storage.js'
 import CustomCache from '@dao-xyz/peerbit-cache'
 import { jest } from '@jest/globals';
@@ -25,7 +25,7 @@ const dbPath = './orbitdb/tests/customKeystore'
 describe(`orbit-db - Use a Custom Cache`, function () {
   jest.setTimeout(20000)
 
-  let ipfsd: Controller, ipfs: IPFS, orbitdb1: OrbitDB, store
+  let ipfsd: Controller, ipfs: IPFS, orbitdb1: Peerbit, store
 
   beforeAll(async () => {
     store = await createStore("local")
@@ -34,7 +34,7 @@ describe(`orbit-db - Use a Custom Cache`, function () {
     rmrf.sync(dbPath)
     ipfsd = await startIpfs('js-ipfs', config.daemon1)
     ipfs = ipfsd.api
-    orbitdb1 = await OrbitDB.createInstance(ipfs, {
+    orbitdb1 = await Peerbit.create(ipfs, {
       directory: path.join(dbPath, '1'),
       cache: cache
     })

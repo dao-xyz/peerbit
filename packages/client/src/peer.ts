@@ -74,7 +74,7 @@ const groupByGid = <T extends (Entry<any> | EntryWithRefs<any>)>(entries: T[]) =
 
 
 
-export class OrbitDB {
+export class Peerbit {
 
   _ipfs: IPFSInstance;
   /* 
@@ -220,7 +220,7 @@ export class OrbitDB {
   }
 
 
-  static async createInstance(ipfs: IPFS, options: CreateInstanceOptions = {}) {
+  static async create(ipfs: IPFS, options: CreateInstanceOptions = {}) {
     let id: PeerId = (await ipfs.id()).id;
     const directory = options.directory || './orbitdb'
 
@@ -275,7 +275,7 @@ export class OrbitDB {
     const cache = options.cache || new Cache(await storage.createStore(path.join(directory, id.toString(), '/cache')));
     const localNetwork = options.localNetwork || false;
     const finalOptions = Object.assign({}, options, { peerId: id, keystore, identity, directory, storage, cache, localNetwork })
-    return new OrbitDB(ipfs, identity, finalOptions)
+    return new Peerbit(ipfs, identity, finalOptions)
   }
 
 

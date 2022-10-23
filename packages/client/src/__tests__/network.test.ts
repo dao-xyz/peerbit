@@ -2,7 +2,7 @@
 import rmrf from 'rimraf'
 
 import { DirectChannel } from '@dao-xyz/ipfs-pubsub-direct-channel'
-import { OrbitDB } from '../orbit-db'
+import { Peerbit } from '../peer'
 
 import { EventStore } from './utils/stores/event-store'
 import { jest } from '@jest/globals';
@@ -35,7 +35,7 @@ Object.keys(testAPIs).forEach(API => {
         jest.setTimeout(config.timeout * 2)
 
         let session: Session;
-        let orbitdb1: OrbitDB, orbitdb2: OrbitDB, orbitdb3: OrbitDB, db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>
+        let orbitdb1: Peerbit, orbitdb2: Peerbit, orbitdb3: Peerbit, db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>
 
 
         beforeAll(async () => {
@@ -56,9 +56,9 @@ Object.keys(testAPIs).forEach(API => {
             rmrf.sync(dbPath2)
             rmrf.sync(dbPath3)
 
-            orbitdb1 = await OrbitDB.createInstance(session.peers[0].ipfs, { directory: orbitdbPath1 })
-            orbitdb2 = await OrbitDB.createInstance(session.peers[1].ipfs, { directory: orbitdbPath2 })
-            orbitdb3 = await OrbitDB.createInstance(session.peers[2].ipfs, { directory: orbitdbPath3 })
+            orbitdb1 = await Peerbit.create(session.peers[0].ipfs, { directory: orbitdbPath1 })
+            orbitdb2 = await Peerbit.create(session.peers[1].ipfs, { directory: orbitdbPath2 })
+            orbitdb3 = await Peerbit.create(session.peers[2].ipfs, { directory: orbitdbPath3 })
 
 
         })

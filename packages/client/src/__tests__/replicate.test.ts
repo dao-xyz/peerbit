@@ -7,7 +7,7 @@ import { delay, waitFor } from '@dao-xyz/peerbit-time'
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
-import { OrbitDB } from '../orbit-db'
+import { Peerbit } from '../peer'
 
 import { EventStore, Operation } from './utils/stores/event-store'
 import { IStoreOptions } from '@dao-xyz/peerbit-store'
@@ -33,7 +33,7 @@ Object.keys(testAPIs).forEach(API => {
     jest.setTimeout(config.timeout * 2)
 
     let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS
-    let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore<string>, db2: EventStore<string>
+    let orbitdb1: Peerbit, orbitdb2: Peerbit, db1: EventStore<string>, db2: EventStore<string>
     let replicationTopic: string;
     let options: IStoreOptions<any>;
 
@@ -63,8 +63,8 @@ Object.keys(testAPIs).forEach(API => {
       rmrf.sync(dbPath1)
       rmrf.sync(dbPath2)
 
-      orbitdb1 = await OrbitDB.createInstance(ipfs1, { directory: orbitdbPath1 })
-      orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2 })
+      orbitdb1 = await Peerbit.create(ipfs1, { directory: orbitdbPath1 })
+      orbitdb2 = await Peerbit.create(ipfs2, { directory: orbitdbPath2 })
 
 
       options = Object.assign({}, options, { directory: dbPath1 })

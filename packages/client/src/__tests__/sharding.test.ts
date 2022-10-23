@@ -1,5 +1,5 @@
 
-import { OrbitDB } from "../orbit-db"
+import { Peerbit } from "../peer"
 
 import { EventStore } from "./utils/stores/event-store"
 
@@ -23,7 +23,7 @@ Object.keys(testAPIs).forEach(API => {
         jest.setTimeout(config.timeout * 3)
 
         let session: Session;
-        let orbitdb1: OrbitDB, orbitdb2: OrbitDB, orbitdb3: OrbitDB, db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>, replicationTopic: string;
+        let orbitdb1: Peerbit, orbitdb2: Peerbit, orbitdb3: Peerbit, db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>, replicationTopic: string;
 
         beforeEach(async () => {
             rmrf.sync('./orbitdb')
@@ -31,9 +31,9 @@ Object.keys(testAPIs).forEach(API => {
             rmrf.sync(dbPath2)
             session = await Session.connected(3);
 
-            orbitdb1 = await OrbitDB.createInstance(session.peers[0].ipfs, { directory: dbPath1 })
-            orbitdb2 = await OrbitDB.createInstance(session.peers[1].ipfs, { directory: dbPath2 })
-            orbitdb3 = await OrbitDB.createInstance(session.peers[2].ipfs, { directory: dbPath2 })
+            orbitdb1 = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath1 })
+            orbitdb2 = await Peerbit.create(session.peers[1].ipfs, { directory: dbPath2 })
+            orbitdb3 = await Peerbit.create(session.peers[2].ipfs, { directory: dbPath2 })
 
             const network = await orbitdb1.openNetwork(new TrustedNetwork({ name: 'network-tests', rootTrust: orbitdb1.identity.publicKey }), { directory: dbPath1 })
             await orbitdb1.joinNetwork(network);

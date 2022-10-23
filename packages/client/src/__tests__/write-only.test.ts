@@ -3,7 +3,7 @@ import assert from 'assert'
 import rmrf from 'rimraf'
 import { delay, waitFor } from '@dao-xyz/peerbit-time'
 import { variant, field } from '@dao-xyz/borsh'
-import { OrbitDB } from '../orbit-db'
+import { Peerbit } from '../peer'
 
 import { EventStore, Operation } from './utils/stores/event-store'
 import { jest } from '@jest/globals';
@@ -39,7 +39,7 @@ Object.keys(testAPIs).forEach(API => {
         jest.setTimeout(config.timeout * 2)
 
         let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS
-        let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: EventStore<string>, db2: EventStore<string>
+        let orbitdb1: Peerbit, orbitdb2: Peerbit, db1: EventStore<string>, db2: EventStore<string>
         let replicationTopic: string;
         let timer: any
 
@@ -71,12 +71,12 @@ Object.keys(testAPIs).forEach(API => {
             rmrf.sync(dbPath1)
             rmrf.sync(dbPath2)
 
-            orbitdb1 = await OrbitDB.createInstance(ipfs1, {
+            orbitdb1 = await Peerbit.create(ipfs1, {
                 directory: orbitdbPath1,/*  canAccessKeys: async (requester, _keyToAccess) => {
                     return requester.equals(orbitdb2.identity.publicKey); // allow orbitdb1 to share keys with orbitdb2
                 },  */waitForKeysTimout: 1000
             })
-            orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2 })
+            orbitdb2 = await Peerbit.create(ipfs2, { directory: orbitdbPath2 })
             db1 = await orbitdb1.open(new EventStore<string>({
                 name: 'abc',
 

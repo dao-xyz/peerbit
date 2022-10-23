@@ -5,7 +5,7 @@ import isNode from 'is-node';
 import { MaybeSigned, PublicSignKey } from '@dao-xyz/peerbit-crypto';
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { Address, Store } from '@dao-xyz/peerbit-store';
-import { OrbitDB } from './orbit-db.js';
+import { Peerbit } from './peer.js';
 import { StringSetSerializer } from '@dao-xyz/peerbit-borsh-utils';
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
@@ -181,7 +181,7 @@ export const exchangePeerInfo = async (fromId: string, replicationTopic: string,
 
 export class ResourceRequirement {
 
-    async ok(_orbitdb: OrbitDB): Promise<boolean> {
+    async ok(_orbitdb: Peerbit): Promise<boolean> {
         throw new Error("Not implemented")
     }
 }

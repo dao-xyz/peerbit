@@ -1,7 +1,7 @@
 
 import mapSeries from 'p-each-series'
 import rmrf from 'rimraf'
-import { OrbitDB } from '../orbit-db'
+import { Peerbit } from '../peer'
 
 import { EventStore } from './utils/stores'
 import { jest } from '@jest/globals';
@@ -30,7 +30,7 @@ Object.keys(testAPIs).forEach(API => {
     jest.setTimeout(60000)
 
     let ipfsd1: Controller, ipfsd2: Controller, ipfsd3: Controller, ipfs1: IPFS, ipfs2: IPFS, ipfs3: IPFS
-    let orbitdb1: OrbitDB, orbitdb2: OrbitDB, orbitdb3: OrbitDB
+    let orbitdb1: Peerbit, orbitdb2: Peerbit, orbitdb3: Peerbit
 
     let localDatabases: EventStore<string>[] = []
     let remoteDatabasesA: EventStore<string>[] = []
@@ -58,9 +58,9 @@ Object.keys(testAPIs).forEach(API => {
       await connectPeers(ipfs2, ipfs3, { filter: isLocalhostAddress })
 
       console.log("Peers connected")
-      orbitdb1 = await OrbitDB.createInstance(ipfs1, { directory: dbPath1 })
-      orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: dbPath2 })
-      orbitdb3 = await OrbitDB.createInstance(ipfs3, { directory: dbPath3 })
+      orbitdb1 = await Peerbit.create(ipfs1, { directory: dbPath1 })
+      orbitdb2 = await Peerbit.create(ipfs2, { directory: dbPath2 })
+      orbitdb3 = await Peerbit.create(ipfs3, { directory: dbPath3 })
       orbitdb2._minReplicas = 3;
       orbitdb3._minReplicas = 3;
       orbitdb1._minReplicas = 3;

@@ -2,7 +2,7 @@
 
 
 import rmrf from 'rimraf'
-import { OrbitDB } from '../orbit-db'
+import { Peerbit } from '../peer'
 import { EventStore } from './utils/stores/event-store'
 
 import { jest } from '@jest/globals';
@@ -29,7 +29,7 @@ Object.keys(testAPIs).forEach(API => {
         jest.setTimeout(config.timeout * 2)
 
         let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS
-        let orbitdb1: OrbitDB, orbitdb2: OrbitDB, db1: SimpleStoreContract, db2: SimpleStoreContract
+        let orbitdb1: Peerbit, orbitdb2: Peerbit, db1: SimpleStoreContract, db2: SimpleStoreContract
 
 
         beforeAll(async () => {
@@ -58,8 +58,8 @@ Object.keys(testAPIs).forEach(API => {
             rmrf.sync(dbPath1)
             rmrf.sync(dbPath2)
 
-            orbitdb1 = await OrbitDB.createInstance(ipfs1, { directory: orbitdbPath1 })
-            orbitdb2 = await OrbitDB.createInstance(ipfs2, { directory: orbitdbPath2 })
+            orbitdb1 = await Peerbit.create(ipfs1, { directory: orbitdbPath1 })
+            orbitdb2 = await Peerbit.create(ipfs2, { directory: orbitdbPath2 })
 
 
         })
