@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-dquery",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "Cross peer com. primitives",
   "type": "module",
   "sideEffects": false,
