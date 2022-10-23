@@ -10,7 +10,7 @@ Peerbit started as a fork of OrbitDB in order to support some key features that 
 - Tests are now written in `jest` rather than `mocha`
 - Type safety. Messages are encoded with [Borsh](https://github.com/near/borsh) serialization format. This format allows one to have a strict type checks during serialization/deserialization and enables message polymorphism which JSON does not (in a easy way) support and provides a much more compact data representation.
 - Performance critical modules are written with the mindset that they might be ported to Rust/WASM at some point.
-- In OrbitDB it was assumes that a store always have an access controller, here, we don't make that assumption. In fact every "program" that is allowed to update a state needs to define checks ```canAppend```, ```canRead``` or delagate these checks to some "access controller", there are a few predefined [here](../packages/programs/acl). This allows you to have more freedom when creating "programs" as you can pick, choose and combine programs to build the functionality you want to achieve. 
+- In OrbitDB it was assumed that a store always has an access controller, here, we don't make that assumption. In fact every "program" that is allowed to update a state needs to define checks ```canAppend```, ```canRead``` or delagate these checks to some "access controller", there are a few predefined ACLs [here](../packages/programs/acl). This way, you have more freedom when creating "programs" as you can pick, choose and combine programs to build the functionality you want to achieve. 
  
 ## Features
  
