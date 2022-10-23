@@ -31,6 +31,8 @@ Below is a short example how you can create a collaborative text document:
 import { DString } from '@dao-xyz/peerbit-dstring'
 import { Peerbit } from '@dao-xyz/peerbit'
 import { Program } from '@dao-xyz/peerbit-program'
+import { SignKey } from '@dao-xyz/peerbit-crypto';
+import { Range, DString } from '@dao-xyz/peerbit-dstriing';
 
 class CollaborativeText extends Program {
 
@@ -47,12 +49,12 @@ class CollaborativeText extends Program {
 
     async canAppend(
         payload: () => Promise<T>,
-        key: () => Promise<SignatureWithKey>
+        key: () => Promise<SignKey>
     ): Promise<boolean> {
         // .. acl logic writers
     }
 
-    async canRead(identity?: SignatureWithKey): Promise<boolean> {
+    async canRead(identity?: SignKey): Promise<boolean> {
         // .. acl logic for readers
     }
 
