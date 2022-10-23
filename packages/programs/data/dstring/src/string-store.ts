@@ -9,7 +9,7 @@ import { Store } from '@dao-xyz/peerbit-store';
 import { BORSH_ENCODING, CanAppend } from '@dao-xyz/ipfs-log';
 import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';
 import { Program } from '@dao-xyz/peerbit-program';
-import { QueryOptions } from '@dao-xyz/peerbit-dquery';
+import { QueryOptions, CanRead } from '@dao-xyz/peerbit-dquery';
 export const STRING_STORE_TYPE = 'string_store';
 const findAllOccurrences = (str: string, substr: string): number[] => {
   str = str.toLowerCase();
@@ -49,7 +49,7 @@ export class DString extends Program {
   }
 
 
-  async setup(options?: { canRead?(key: SignatureWithKey): Promise<boolean>, canAppend?: CanAppend<PayloadOperation> }) {
+  async setup(options?: { canRead?: CanRead, canAppend?: CanAppend<PayloadOperation> }) {
 
     this.store.onUpdate = this._index.updateIndex.bind(this._index)
     if (options?.canAppend) {

@@ -13,8 +13,8 @@ export const getQueryTopic = (region: string): string => {
     return region + '?';
 }
 
-
-export type DQueryInitializationOptions<Q, R> = { queryType: Constructor<Q>, responseType: Constructor<R>, canRead?(key: SignatureWithKey | undefined): Promise<boolean>, responseHandler: ResponseHandler<Q, R> };
+export type CanRead = (key?: SignKey) => Promise<boolean>;
+export type DQueryInitializationOptions<Q, R> = { queryType: Constructor<Q>, responseType: Constructor<R>, canRead?: CanRead, responseHandler: ResponseHandler<Q, R> };
 export type ResponseHandler<Q, R> = (query: Q, from?: SignKey) => Promise<R | undefined> | R | undefined;
 
 abstract class QueryTopic {
@@ -73,7 +73,7 @@ export class DQuery<Q, R> extends ComposableProgram {
     _responseHandler: ResponseHandler<Q, R>
     _queryType: Constructor<Q>
     _responseType: Constructor<R>
-    canRead: (key: SignatureWithKey | undefined) => Promise<boolean>
+    canRead: CanRead
 
     constructor(properties: { name?: string, queryRegion?: string, queryAddressSuffix?: string }) {
         super(properties)
@@ -137,7 +137,7 @@ export class DQuery<Q, R> extends ComposableProgram {
         try {
             try {
                 let { result: query, from } = await decryptVerifyInto(msg.data, QueryRequestV0, this._encryption?.getAnyKeypair || (() => Promise.resolve(undefined)), {
-                    isTrusted: (key) => this.canRead(key.signature)
+                    isTrusted: (key) => this.canRead(key.signature?.publicKey)
                 })
                 const response = await this._responseHandler(deserialize(query.query, this._queryType), from);
                 if (response) {

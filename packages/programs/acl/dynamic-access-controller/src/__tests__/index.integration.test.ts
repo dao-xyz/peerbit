@@ -7,13 +7,13 @@ import { DocumentQueryRequest, DSearch, FieldStringMatchQuery, Results } from "@
 import { AccessError, Ed25519Keypair, MaybeEncrypted, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { CustomBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { DDocs } from "@dao-xyz/peerbit-ddoc";
-import type { Identity, Payload } from "@dao-xyz/ipfs-log";
+import type { CanAppend, Identity, Payload } from "@dao-xyz/ipfs-log";
 import { Level } from 'level';
 import { CachedValue, DefaultOptions } from '@dao-xyz/peerbit-store';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import Cache from '@dao-xyz/peerbit-cache';
-import { DQuery } from "@dao-xyz/peerbit-dquery";
+import { CanRead, DQuery } from "@dao-xyz/peerbit-dquery";
 import { Program } from "@dao-xyz/peerbit-program";
 import { DynamicAccessController } from "../acl-db";
 const __filename = fileURLToPath(import.meta.url);
@@ -78,7 +78,7 @@ describe('index', () => {
     let session: Session, identites: Identity[], cacheStore: Level[]
 
     const identity = (i: number) => identites[i];
-    const init = <T extends Program>(store: T, i: number, options: { store: { replicate: boolean }, canRead?: (key: SignatureWithKey) => Promise<boolean>, canAppend?: (payload: MaybeEncrypted<Payload<any>>, key: MaybeEncrypted<SignatureWithKey>) => Promise<boolean> } = { store: { replicate: true } }) => (store.init && store.init(session.peers[i].ipfs, identites[i], { ...options, store: { ...DefaultOptions, ...options.store, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]) } })) as Promise<T>
+    const init = <T extends Program>(store: T, i: number, options: { store: { replicate: boolean }, canRead?: CanRead, canAppend?: CanAppend<T> } = { store: { replicate: true } }) => (store.init && store.init(session.peers[i].ipfs, identites[i], { ...options, store: { ...DefaultOptions, ...options.store, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]) } })) as Promise<T>
 
     beforeAll(async () => {
         session = await Session.connected(3);

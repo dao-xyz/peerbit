@@ -9,7 +9,7 @@ import { DeleteOperation } from "@dao-xyz/peerbit-ddoc";
 import { AnyRelation, createIdentityGraphStore, getPathGenerator, hasPath, Relation, getFromByTo, getToByFrom, hasRelation } from "./identity-graph";
 import { BinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { Program } from '@dao-xyz/peerbit-program';
-import { DQuery } from "@dao-xyz/peerbit-dquery";
+import { CanRead, DQuery } from "@dao-xyz/peerbit-dquery";
 import { waitFor } from "@dao-xyz/peerbit-time";
 
 const encoding = BORSH_ENCODING(Operation);
@@ -74,7 +74,7 @@ export class RelationContract extends Program {
     }
 
 
-    async setup(options?: { canRead?(key: SignatureWithKey): Promise<boolean> }) {
+    async setup(options?: { canRead?: CanRead }) {
         await this.relationGraph.setup({ type: Relation, canAppend: this.canAppend.bind(this), canRead: options?.canRead }) // self referencing access controller
     }
 
@@ -159,11 +159,11 @@ export class TrustedNetwork extends Program {
         return canAppendByRelation(payload, keyEncrypted, async (key) => await this.isTrusted(key))
     }
 
-    async canRead(key: SignatureWithKey | undefined): Promise<boolean> {
+    async canRead(key?: SignKey): Promise<boolean> {
         if (!key) {
             return false;
         }
-        return await this.isTrusted(key.publicKey);
+        return await this.isTrusted(key);
     }
 
     async add(trustee: PublicSignKey | PeerId/*  | Identity | IdentitySerializable */) {

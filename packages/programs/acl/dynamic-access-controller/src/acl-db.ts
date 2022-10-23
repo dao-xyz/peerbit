@@ -57,7 +57,7 @@ export class DynamicAccessController extends Program {
 
     // custom can append
 
-    async canRead(s: SignatureWithKey | undefined): Promise<boolean> {
+    async canRead(s: SignKey | undefined): Promise<boolean> {
         // TODO, improve, caching etc
 
         if (!s) {
@@ -66,7 +66,7 @@ export class DynamicAccessController extends Program {
 
 
         // Check whether it is trusted by trust web
-        if (await this.trustedNetwork.isTrusted(s.publicKey)) {
+        if (await this.trustedNetwork.isTrusted(s)) {
             return true;
         }
 
@@ -86,10 +86,10 @@ export class DynamicAccessController extends Program {
             }
         }
 
-        if (await canReadCheck(s.publicKey)) {
+        if (await canReadCheck(s)) {
             return true;
         }
-        for await (const trustedByKey of getPathGenerator(s.publicKey, this.identityGraphController.relationGraph, getFromByTo)) {
+        for await (const trustedByKey of getPathGenerator(s, this.identityGraphController.relationGraph, getFromByTo)) {
             if (await canReadCheck(trustedByKey.from)) {
                 return true;
             }

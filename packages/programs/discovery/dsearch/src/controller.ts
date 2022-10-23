@@ -1,22 +1,15 @@
 import { field, variant } from '@dao-xyz/borsh';
-import { SignatureWithKey, SignKey } from "@dao-xyz/peerbit-crypto";
-import { IPFS } from 'ipfs-core-types';
-import { QueryOptions, DQuery } from '@dao-xyz/peerbit-dquery';
-import { Identity } from '@dao-xyz/ipfs-log';
-import { ComposableProgram, Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program'
-import { Address, IInitializationOptions } from '@dao-xyz/peerbit-store';
+import { SignKey } from "@dao-xyz/peerbit-crypto";
+import { QueryOptions, DQuery, CanRead } from '@dao-xyz/peerbit-dquery';
+import { ComposableProgram } from '@dao-xyz/peerbit-program'
+import { Address } from '@dao-xyz/peerbit-store';
 import { MultipleQueriesType, QueryType } from './query-interface';
 import { Result, Results } from './result';
 import { StoreAddressMatchQuery } from './context';
 
-export const getQueryTopic = (region: string): string => {
-    return region + '/query';
-}
-/* export type IQueryStoreOptions<T> = IStoreOptions<T> & { queryRegion?: string, subscribeToQueries: boolean };
- */
 
 export type SearchContext = { address: () => Address };
-export type DSearchInitializationOptions<T> = { canRead?(signature: SignatureWithKey | undefined): Promise<boolean>, context: SearchContext, queryHandler: (query: QueryType) => Promise<Result[]> };
+export type DSearchInitializationOptions<T> = { canRead?: CanRead, context: SearchContext, queryHandler: (query: QueryType) => Promise<Result[]> };
 
 @variant([0, 2])
 export class DSearch<T> extends ComposableProgram {

@@ -9,6 +9,7 @@ import { DSearch } from '@dao-xyz/peerbit-dsearch';
 import { BORSH_ENCODING, CanAppend, Payload } from '@dao-xyz/ipfs-log';
 import { SignatureWithKey, SignKey } from '@dao-xyz/peerbit-crypto';
 import { CanOpenSubPrograms, ComposableProgram, Program, ProgramOwner } from '@dao-xyz/peerbit-program';
+import { CanRead } from '@dao-xyz/peerbit-dquery';
 
 const replaceAll = (str: string, search: any, replacement: any) => str.toString().split(search).join(replacement)
 
@@ -47,7 +48,7 @@ export class DDocs<T extends BinaryPayload> extends ComposableProgram implements
   }
 
 
-  async setup(options: { type: Constructor<T>, canRead?(key: SignatureWithKey): Promise<boolean>, canAppend?: CanAppend<Operation<T>> }) {
+  async setup(options: { type: Constructor<T>, canRead?: CanRead, canAppend?: CanAppend<Operation<T>> }) {
 
     this._clazz = options.type;
     this._index.init(this._clazz);
