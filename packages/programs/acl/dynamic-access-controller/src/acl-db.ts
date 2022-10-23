@@ -12,7 +12,7 @@ import { Program } from '@dao-xyz/peerbit-program';
 import { DQuery } from '@dao-xyz/peerbit-dquery';
 
 @variant([0, 12])
-export class AccessStore extends Program {
+export class DynamicAccessController extends Program {
 
     @field({ type: DDocs })
     access: DDocs<AccessData>;
@@ -100,7 +100,7 @@ export class AccessStore extends Program {
         return false;
     }
 
-    async canAppend(payload: MaybeEncrypted<Payload<any>>, key: MaybeEncrypted<SignatureWithKey>): Promise<boolean> {
+    async canAppend(key: MaybeEncrypted<SignatureWithKey>): Promise<boolean> {
         // TODO, improve, caching etc
 
 
@@ -140,7 +140,7 @@ export class AccessStore extends Program {
 
     async setup() {
         await this.identityGraphController.setup({ canRead: this.canRead.bind(this) })
-        await this.access.setup({ type: AccessData, canAppend: this.canAppend.bind(this), canRead: this.canRead.bind(this) })
+        await this.access.setup({ type: AccessData, canAppend: (_, identity) => this.canAppend(identity), canRead: this.canRead.bind(this) })
         await this.trustedNetwork.setup();
     }
 }

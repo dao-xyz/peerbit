@@ -1,6 +1,5 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { createStore, Session } from '@dao-xyz/peerbit-test-utils';
-import { DynamicAccessController } from "..";
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
 import { waitFor } from '@dao-xyz/peerbit-time';
@@ -16,6 +15,7 @@ import path, { dirname } from 'path';
 import Cache from '@dao-xyz/peerbit-cache';
 import { DQuery } from "@dao-xyz/peerbit-dquery";
 import { Program } from "@dao-xyz/peerbit-program";
+import { DynamicAccessController } from "../acl-db";
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 
@@ -49,7 +49,7 @@ class TestStore extends Program {
     store: DDocs<Document>
 
     @field({ type: DynamicAccessController })
-    accessController: DynamicAccessController<Document>
+    accessController: DynamicAccessController
 
     constructor(properties: { name?: string, identity: Identity, accessControllerName?: string }) {
         super(properties)
@@ -70,7 +70,7 @@ class TestStore extends Program {
 
     async setup() {
         await this.accessController.setup();
-        await this.store.setup({ type: Document, canRead: this.accessController.canRead.bind(this.accessController), canAppend: this.accessController.canAppend.bind(this.accessController) });
+        await this.store.setup({ type: Document, canRead: this.accessController.canRead.bind(this.accessController), canAppend: (payload, identity) => this.accessController.canAppend(identity) });
     }
 }
 describe('index', () => {
@@ -111,12 +111,12 @@ describe('index', () => {
         await expect(l0b.store.put(new Document({
             id: 'id'
         }))).rejects.toBeInstanceOf(AccessError); // Not trusted
-        await l0a.accessController.acl.trustedNetwork.add(identity(1).publicKey);
+        await l0a.accessController.trustedNetwork.add(identity(1).publicKey);
 
-        await (l0b.accessController).acl.trustedNetwork.trustGraph.store.sync((l0a.accessController).acl.trustedNetwork.trustGraph.store.oplog.heads);
+        await (l0b.accessController).trustedNetwork.trustGraph.store.sync((l0a.accessController).trustedNetwork.trustGraph.store.oplog.heads);
 
-        await waitFor(() => l0b.accessController.acl.trustedNetwork.trustGraph.store.oplog.length === 1);
-        await waitFor(() => Object.keys((l0b.accessController).acl.trustedNetwork.trustGraph._index._index).length === 1);
+        await waitFor(() => l0b.accessController.trustedNetwork.trustGraph.store.oplog.length === 1);
+        await waitFor(() => Object.keys((l0b.accessController).trustedNetwork.trustGraph._index._index).length === 1);
 
         await l0b.store.put(new Document({
             id: '2'
@@ -149,15 +149,15 @@ describe('index', () => {
             }))).rejects.toBeInstanceOf(AccessError); // Not trusted
 
 
-            await (l0a.accessController).acl.access.put(new Access({
+            await (l0a.accessController).access.put(new Access({
                 accessCondition: new PublicKeyAccessCondition({
                     key: identity(1).publicKey
                 }),
                 accessTypes: [AccessType.Any]
             }));
 
-            await (l0b.accessController).acl.access.store.sync((l0a.accessController).acl.access.store.oplog.heads);
-            await waitFor(() => Object.keys((l0b.accessController).acl.access._index._index).length === 1);
+            await (l0b.accessController).access.store.sync((l0a.accessController).access.store.oplog.heads);
+            await waitFor(() => Object.keys((l0b.accessController).access._index._index).length === 1);
             await l0b.store.put(new Document({
                 id: '2'
             })) // Now trusted 
@@ -182,26 +182,26 @@ describe('index', () => {
             }))).rejects.toBeInstanceOf(AccessError); // Not trusted
 
 
-            await (l0a.accessController).acl.access.put(new Access({
+            await (l0a.accessController).access.put(new Access({
                 accessCondition: new PublicKeyAccessCondition({
                     key: identity(1).publicKey
                 }),
                 accessTypes: [AccessType.Any]
             }));
 
-            await (l0b.accessController).acl.access.store.sync((l0a.accessController).acl.access.store.oplog.heads);
-            await (l0c.accessController).acl.access.store.sync((l0a.accessController).acl.access.store.oplog.heads);
+            await (l0b.accessController).access.store.sync((l0a.accessController).access.store.oplog.heads);
+            await (l0c.accessController).access.store.sync((l0a.accessController).access.store.oplog.heads);
 
             await expect(l0c.store.put(new Document({
                 id: 'id'
             }))).rejects.toBeInstanceOf(AccessError); // Not trusted
 
 
-            await waitFor(() => Object.keys((l0b.accessController).acl.access._index._index).length == 1)
-            await (((l0b.accessController).acl.identityGraphController.addRelation(identity(2).publicKey)));
-            await (l0c.accessController).acl.identityGraphController.relationGraph.store.sync((l0b.accessController).acl.identityGraphController.relationGraph.store.oplog.heads);
+            await waitFor(() => Object.keys((l0b.accessController).access._index._index).length == 1)
+            await (((l0b.accessController).identityGraphController.addRelation(identity(2).publicKey)));
+            await (l0c.accessController).identityGraphController.relationGraph.store.sync((l0b.accessController).identityGraphController.relationGraph.store.oplog.heads);
 
-            await waitFor(() => Object.keys((l0c.accessController).acl.identityGraphController.relationGraph._index._index).length === 1);
+            await waitFor(() => Object.keys((l0c.accessController).identityGraphController.relationGraph._index._index).length === 1);
             await l0c.store.put(new Document({
                 id: '2'
             })) // Now trusted 
@@ -230,10 +230,10 @@ describe('index', () => {
                 accessTypes: [AccessType.Any]
             });
             expect(access.id).toBeDefined();
-            await (l0a.accessController).acl.access.put(access);
-            await (l0b.accessController).acl.access.store.sync((l0a.accessController).acl.access.store.oplog.heads);
+            await (l0a.accessController).access.put(access);
+            await (l0b.accessController).access.store.sync((l0a.accessController).access.store.oplog.heads);
 
-            await waitFor(() => Object.keys((l0b.accessController).acl.access._index._index).length === 1);
+            await waitFor(() => Object.keys((l0b.accessController).access._index._index).length === 1);
             await l0b.store.put(new Document({
                 id: '2'
             })) // Now trusted 
@@ -275,7 +275,7 @@ describe('index', () => {
 
             expect(await q()).toBeUndefined(); // Because no read access
 
-            await (l0a.accessController).acl.access.put(new Access({
+            await (l0a.accessController).access.put(new Access({
                 accessCondition: new AnyAccessCondition(),
                 accessTypes: [AccessType.Read]
             }).initialize());
@@ -292,7 +292,7 @@ describe('index', () => {
         const l0a = await init(new TestStore({ identity: identity(0) }), 0);
         const l0b = await init(new TestStore({ identity: identity(0) }), 0);
         expect(l0a.address).not.toEqual(l0b.address)
-        expect((l0a.accessController).acl.address.toString()).not.toEqual((l0b.accessController).acl.address.toString())
+        expect((l0a.accessController).address.toString()).not.toEqual((l0b.accessController).address.toString())
 
     })
 
@@ -300,7 +300,7 @@ describe('index', () => {
 
 
         const l0a = await init(new TestStore({ identity: identity(0) }), 0, { store: { replicate: true }, canRead: () => Promise.resolve(true) });
-        await (l0a.accessController).acl.access.put(new Access({
+        await (l0a.accessController).access.put(new Access({
             accessCondition: new AnyAccessCondition(),
             accessTypes: [AccessType.Any]
         }).initialize());
@@ -310,12 +310,12 @@ describe('index', () => {
         const l0b = await init(dbb, 1, { store: { replicate: false }, canRead: () => Promise.resolve(true) });
 
         // Allow all for easy query
-        (l0b.accessController).acl.access.store.sync((l0a.accessController).acl.access.store.oplog.heads)
-        await waitFor(() => Object.keys((l0a.accessController).acl.access._index._index).length === 1);
-        await waitFor(() => Object.keys((l0b.accessController).acl.access._index._index).length === 1);
+        (l0b.accessController).access.store.sync((l0a.accessController).access.store.oplog.heads)
+        await waitFor(() => Object.keys((l0a.accessController).access._index._index).length === 1);
+        await waitFor(() => Object.keys((l0b.accessController).access._index._index).length === 1);
 
         let results: Results = undefined as any;
-        l0a.accessController.acl.access.search.query(new DocumentQueryRequest({
+        l0a.accessController.access.search.query(new DocumentQueryRequest({
             queries: []
         })
             , (response) => {
