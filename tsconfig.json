@@ -26,6 +26,7 @@
         "esModuleInterop": true,
         "noEmit": true,
         "noEmitOnError": false,
+        "noImplicitAny": false,
         "declaration": true,
         "sourceMap": true,
         "stripInternal": true,
@@ -36,7 +37,8 @@
         "emitDecoratorMetadata": true,
         "experimentalDecorators": true,
         "typeRoots": [
-            "node_modules/@types"
+            "node_modules/@types",
+            "node_modeles/@multiformats/multiaddrs/dist"
         ],
         "skipLibCheck": true,
     },

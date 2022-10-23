@@ -82,7 +82,7 @@ Object.keys(testAPIs).forEach(API => {
 
             const entryCount = 30;
             // expect min replicas 2 with 3 peers, this means that 66% of entries (ca) will be at peer 2 and 3, and peer1 will have all of them since 1 is the creator
-            const promises = [];
+            const promises: Promise<any>[] = [];
             for (let i = 0; i < entryCount; i++) {
                 promises.push(db1.add(i.toString(), { nexts: [] }));
             }

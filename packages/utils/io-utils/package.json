@@ -54,9 +54,9 @@
     "ipfsd-ctl": "*"
   },
   "dependencies": {
-    "@ipld/dag-cbor": "^7.0.2",
-    "@ipld/dag-pb": "^2.1.9",
-    "multiformats": "^9.9.0"
+    "@ipld/dag-cbor": "^8.0.0",
+    "@ipld/dag-pb": "^3.0.0",
+    "multiformats": "^10.0.2"
   },
   "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
 }

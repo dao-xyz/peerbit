@@ -101,7 +101,7 @@ Object.keys(testAPIs).forEach(API => {
 
       it('replicates database of 100 entries and loads it from the disk', async () => {
         const entryCount = 100
-        const entryArr = []
+        const entryArr: number[] = []
         let timer: any;
 
         for (let i = 0; i < entryCount; i++)

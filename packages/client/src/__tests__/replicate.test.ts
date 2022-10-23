@@ -205,7 +205,7 @@ Object.keys(testAPIs).forEach(API => {
       const entryCount = 99
 
       // Trigger replication
-      let adds = []
+      let adds: number[] = []
       for (let i = 0; i < entryCount; i++) {
         adds.push(i)
       }
@@ -240,7 +240,7 @@ Object.keys(testAPIs).forEach(API => {
       const entryCount = 15
 
       // Trigger replication
-      const adds = []
+      const adds: number[] = []
       for (let i = 0; i < entryCount; i++) {
         adds.push(i)
       }
@@ -323,7 +323,7 @@ Object.keys(testAPIs).forEach(API => {
       const entryCount = 15
 
       // Trigger replication
-      const adds = []
+      const adds: number[] = []
       for (let i = 0; i < entryCount; i++) {
         adds.push(i)
       }

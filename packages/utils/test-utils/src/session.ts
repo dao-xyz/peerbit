@@ -5,6 +5,7 @@ import { startIpfs } from "./start-ipfs.js";
 import getIpfsPeerId from "./get-ipfs-peer-id.js";
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
+import { Controller } from "ipfsd-ctl";
 
 export interface Peer {
     ipfsd: any,
@@ -19,12 +20,12 @@ export class Session {
     }
 
     static async connected(n: number, api: 'js-ipfs' | 'go-ipfs' | string = 'js-ipfs', config?: any, connectFilter?: { filter: (addrs: string) => boolean }) {
-        const promises = [];
+        const promises: Promise<Controller>[] = [];
         for (let i = 0; i < n; i++) {
             promises.push(startIpfs(api, { ...(config || nodeConfig.defaultIpfsConfig), repo: './tmp/ipfs/repo-' + uuid() }))
         }
         const ipfsd = await Promise.all(promises);
-        const connectPromises = []
+        const connectPromises: Promise<any>[] = []
         const ids = await Promise.all(ipfsd.map(d => getIpfsPeerId(d.api)))
         const ipfs = ipfsd.map(ipfsd => ipfsd.api);
 

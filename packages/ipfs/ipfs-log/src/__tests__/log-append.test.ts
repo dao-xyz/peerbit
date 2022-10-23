@@ -104,7 +104,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       beforeAll(async () => {
         // Do sign function really need to returnr publcikey
         log = new Log(ipfs, { ...signKey.keypair, sign: (data) => signKey.keypair.sign(data) }, { logId: 'A' })
-        let prev = undefined;
+        let prev: any = undefined;
         for (let i = 0; i < amount; i++) {
           prev = await log.append('hello' + i, { pin: false, nexts: prev ? [prev] : undefined })//,  refs: log.getPow2Refs(nextPointerAmount) })
           // Make sure the log has the right heads after each append

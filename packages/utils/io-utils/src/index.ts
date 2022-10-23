@@ -30,12 +30,12 @@ const stringifyCid = (cid: any, options: any = {}): any => {
   if (Array.isArray(cid)) {
     return cid.map(stringifyCid)
   }
+  const base = options.base || defaultBase
 
   if (cid['/']) {
-    return cid['/']
+    return cid.toString(defaultBase)
   }
 
-  const base = options.base || defaultBase
   return cid.toString(base)
 }
 

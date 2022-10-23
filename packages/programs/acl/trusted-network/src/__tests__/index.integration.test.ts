@@ -136,7 +136,7 @@ describe('index', () => {
             expect(((aIsTrusting[0] as ResultWithSource).source as AnyRelation).id).toEqual(ab.id);
 
             // Test generator
-            const relationsFromGeneratorFromByTo = [];
+            const relationsFromGeneratorFromByTo: AnyRelation[] = [];
             for await (const relation of getPathGenerator(c, store.store, getFromByTo)) {
                 relationsFromGeneratorFromByTo.push(relation);
             }
@@ -145,7 +145,7 @@ describe('index', () => {
             expect(relationsFromGeneratorFromByTo[1].id).toEqual(ab.id);
 
 
-            const relationsFromGeneratorToByFrom = [];
+            const relationsFromGeneratorToByFrom: AnyRelation[] = [];
             for await (const relation of getPathGenerator(a, store.store, getToByFrom)) {
                 relationsFromGeneratorToByFrom.push(relation);
             }
@@ -228,7 +228,7 @@ describe('index', () => {
             expect(responses).toHaveLength(2);
 
             // Try query with untrusted
-            let untrustedResponse = undefined;
+            let untrustedResponse: any = undefined;
             await l0b.trustGraph.search.query(new DocumentQueryRequest({
                 queries: []
             }), (response) => {

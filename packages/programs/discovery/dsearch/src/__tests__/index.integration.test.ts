@@ -56,7 +56,7 @@ describe('query', () => {
     })
 
     await waitForPeers(session.peers[1].ipfs, [session.peers[0].id], topic);
-    let results = [];
+    let results: number[] = [];
     await query(session.peers[1].ipfs, topic, new QueryRequestV0({
       query: serialize(new DocumentQueryRequest({
         queries: [new FieldStringMatchQuery({

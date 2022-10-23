@@ -17,7 +17,7 @@ export const startIpfs = async (type: 'js-ipfs' | 'go-ipfs' | string, config = {
 
   // Spawn an IPFS daemon (type defined in)
   try {
-    const ipfsd = createController(controllerConfig)
+    const ipfsd = await createController(controllerConfig)
     return ipfsd
   } catch (err) {
     throw new Error(err as any)

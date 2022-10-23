@@ -61,7 +61,7 @@ export async function* getPathGenerator(from: Key, db: DDocs<Relation>, resolver
     let iter = [from];
     const visited = new Set();
     while (iter.length > 0) {
-        const newIter = [];
+        const newIter: PublicSignKey[] = [];
         for (const value of iter) {
             const results = await resolver.resolve(value, db);
             for (const result of results) {

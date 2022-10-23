@@ -78,7 +78,7 @@ Object.keys(testAPIs).forEach(API => {
       orbitdb2 = await Peerbit.create(session.peers[1].ipfs, { directory: dbPath2 })
 
       const entryCount = 33
-      const entryArr = []
+      const entryArr: number[] = []
 
       const replicationTopic = uuid();
 

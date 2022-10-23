@@ -62,7 +62,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
   describe('load', function () {
     beforeEach(async () => {
-      const entryArr = []
+      const entryArr: number[] = []
 
       for (let i = 0; i < entryCount; i++)
         entryArr.push(i)
@@ -203,7 +203,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
   describe('load from snapshot', function () {
     beforeEach(async () => {
-      const entryArr = []
+      const entryArr: number[] = []
 
       for (let i = 0; i < entryCount; i++)
         entryArr.push(i)

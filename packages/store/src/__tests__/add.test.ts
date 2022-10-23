@@ -26,7 +26,7 @@ import {
 } from '@dao-xyz/peerbit-test-utils'
 import { Level } from 'level'
 import { Address } from '../io.js'
-
+import { create } from 'ipfs-http-client';
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`addOperation ${IPFS}`, function () {
     let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, identityStore: Level, store: Store<any>, cacheStore: Level

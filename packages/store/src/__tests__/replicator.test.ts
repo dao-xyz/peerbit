@@ -78,7 +78,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
         }, { logId: store._oplog._id })
         console.log(`writing ${logLength} entries to the log`)
-        let prev = undefined;
+        let prev: any = undefined;
         for (let i = 0; i < logLength; i++) {
           prev = await log2.append(`entry${i}`, { nexts: prev ? [prev] : undefined })
         }

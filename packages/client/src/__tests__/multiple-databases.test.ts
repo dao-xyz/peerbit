@@ -139,7 +139,7 @@ Object.keys(testAPIs).forEach(API => {
 
     it('replicates multiple open databases', async () => {
       const entryCount = 1
-      const entryArr = []
+      const entryArr: number[] = []
 
 
 

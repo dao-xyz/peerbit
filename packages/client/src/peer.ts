@@ -20,7 +20,7 @@ import LRU from 'lru-cache';
 import { DirectChannel } from '@dao-xyz/ipfs-pubsub-direct-channel'
 import { encryptionWithRequestKey } from './encryption.js'
 import { MaybeSigned } from '@dao-xyz/peerbit-crypto';
-import { WAIT_FOR_PEERS_TIME, exchangePeerInfo, ReplicatorInfo, PeerInfoWithMeta, RequestReplicatorInfo, requestPeerInfo } from './exchange-replication.js'
+import { WAIT_FOR_PEERS_TIME, PeerInfoWithMeta, RequestReplicatorInfo, requestPeerInfo } from './exchange-replication.js'
 import { createHash } from 'crypto'
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
 import { multiaddr } from '@multiformats/multiaddr'
@@ -145,6 +145,10 @@ export class Peerbit {
     /*     AccessControllersModule = options.AccessControllers || AccessControllers
      */
     this._replicationTopicSubscriptions = new Map();
+  }
+
+  get ipfs(): IPFS {
+    return this._ipfs;
   }
 
   get cache() { return this.caches[this.directory].cache }
