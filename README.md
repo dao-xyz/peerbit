@@ -38,7 +38,7 @@ class CollaborativeText extends Program {
     dstring: DString // distributed string 
 
     constructor() {
-        this.dstring = new DSstring()
+        this.dstring = new DString()
     }
 
     async setup() {
