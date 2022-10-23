@@ -28,32 +28,31 @@ Started originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS 
 Below is a short example how you can create a collaborative text document: 
 
 ```typescript
-import { DString} from '@dao-xyz/peerbit-dstring'
+import { DString } from '@dao-xyz/peerbit-dstring'
 import { Peerbit } from '@dao-xyz/peerbit'
 import { Program } from '@dao-xyz/peerbit-program'
 
-class CollaborativeText extends Program
-    
-    @field({type: DString})
+class CollaborativeText extends Program {
+
+    @field({ type: DString })
     dstring: DString // distributed string 
 
-    constructor()
-    {
+    constructor() {
         this.dstring = new DSstring()
     }
 
-    async setup()
-    {
-        await this.dstring.setup({canAppend: this.canAppend, canRead: this.canRead})
+    async setup() {
+        await this.dstring.setup({ canAppend: this.canAppend, canRead: this.canRead })
     }
 
-    async canAppend(payload:MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<SignatureWithKey>): Promise<boolean>
-    {
-       // .. acl logic writers
+    async canAppend(
+        payload: MaybeEncrypted<Payload<T>>,
+        key: MaybeEncrypted<SignatureWithKey>
+    ): Promise<boolean> {
+        // .. acl logic writers
     }
 
-    async canRead(identity?: SignatureWithKey): Promise<boolean>
-    {
+    async canRead(identity?: SignatureWithKey): Promise<boolean> {
         // .. acl logic for readers
     }
 
