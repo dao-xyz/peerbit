@@ -15,7 +15,7 @@ import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
 import Cache from '@dao-xyz/peerbit-cache';
 import { DQuery } from "@dao-xyz/peerbit-dquery";
-import { Program, RootProgram } from "@dao-xyz/peerbit-program";
+import { Program } from "@dao-xyz/peerbit-program";
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 
@@ -43,7 +43,7 @@ const createIdentity = async () => {
 
 
 @variant([0, 251])
-class TestStore extends Program implements RootProgram {
+class TestStore extends Program {
 
     @field({ type: DDocs })
     store: DDocs<Document>

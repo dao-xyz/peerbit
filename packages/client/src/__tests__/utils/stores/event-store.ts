@@ -4,8 +4,7 @@ import { Address, IInitializationOptions, load } from "@dao-xyz/peerbit-store";
 import { Store } from "@dao-xyz/peerbit-store"
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log';
 import { variant, field } from '@dao-xyz/borsh';
-import { Program, ProgramInitializationOptions } from "@dao-xyz/peerbit-program";
-const encoding = JSON_ENCODING;
+import { AbstractProgram, Program, ProgramInitializationOptions } from "@dao-xyz/peerbit-program";
 
 // TODO: generalize the Iterator functions and spin to its own module
 export interface Operation<T> {
@@ -13,6 +12,9 @@ export interface Operation<T> {
     key?: string
     value?: T
 }
+
+const encoding = JSON_ENCODING;
+
 export class EventIndex<T> {
     _index: Log<Operation<T>>;
     constructor() {
@@ -49,12 +51,13 @@ export class EventStore<T> extends Program {
     }
 
 
-    add(data: any, options?: {
+    add(data: T, options?: {
         onProgressCallback?: (any: any) => void;
         pin?: boolean;
         reciever?: EncryptionTemplateMaybeEncrypted,
         nexts?: Entry<any>[]
     }) {
+
         return this.store._addOperation({
             op: 'ADD',
             value: data

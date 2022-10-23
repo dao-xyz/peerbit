@@ -1,8 +1,8 @@
 import { deserialize, field, variant } from "@dao-xyz/borsh";
 import { DDocs, DeleteOperation, Operation, PutOperation } from "@dao-xyz/peerbit-ddoc";
-import { Address, IInitializationOptions } from "@dao-xyz/peerbit-store";
+import { Address } from "@dao-xyz/peerbit-store";
 import { BORSH_ENCODING, Identity, Payload } from "@dao-xyz/ipfs-log";
-import { PublicSignKey, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
+import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from 'ipfs-core-types';
 import { createDiscoveryStore, NetworkInfo } from "./state";

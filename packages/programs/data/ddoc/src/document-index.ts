@@ -173,6 +173,4 @@ export class DocumentIndex<T> {
     return item;
 
   }
-
-
-
+}

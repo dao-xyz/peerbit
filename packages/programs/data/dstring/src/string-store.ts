@@ -8,7 +8,7 @@ import { CustomBinaryPayload } from '@dao-xyz/peerbit-bpayload';
 import { Store } from '@dao-xyz/peerbit-store';
 import { BORSH_ENCODING, CanAppend } from '@dao-xyz/ipfs-log';
 import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';
-import { RootProgram, Program } from '@dao-xyz/peerbit-program';
+import { Program } from '@dao-xyz/peerbit-program';
 import { QueryOptions } from '@dao-xyz/peerbit-dquery';
 export const STRING_STORE_TYPE = 'string_store';
 const findAllOccurrences = (str: string, substr: string): number[] => {
@@ -29,7 +29,7 @@ const encond = BORSH_ENCODING(PayloadOperation)
 export type StringStoreOptions = { canRead?: (key: SignatureWithKey) => Promise<boolean> };
 
 @variant([0, 5])
-export class DString extends Program implements RootProgram {
+export class DString extends Program {
 
   @field({ type: Store })
   store: Store<PayloadOperation>

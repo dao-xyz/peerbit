@@ -1,16 +1,14 @@
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import { DDocs, Operation, PutOperation } from "@dao-xyz/peerbit-ddoc";
-import { Address, IInitializationOptions, save } from "@dao-xyz/peerbit-store";
-import { BORSH_ENCODING, Entry, Identity, Payload } from "@dao-xyz/ipfs-log";
+import { BORSH_ENCODING, Entry, Payload } from "@dao-xyz/ipfs-log";
 import { createHash } from "crypto";
 import { IPFSAddress, Key, OtherKey, PublicSignKey, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import type { PeerId } from '@libp2p/interface-peer-id';
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
-import { IPFS } from 'ipfs-core-types';
 import { DeleteOperation } from "@dao-xyz/peerbit-ddoc";
 import { AnyRelation, createIdentityGraphStore, getPathGenerator, hasPath, Relation, getFromByTo, getToByFrom, hasRelation } from "./identity-graph";
 import { BinaryPayload } from "@dao-xyz/peerbit-bpayload";
-import { Program, RootProgram } from '@dao-xyz/peerbit-program';
+import { Program } from '@dao-xyz/peerbit-program';
 import { DQuery } from "@dao-xyz/peerbit-dquery";
 import { waitFor } from "@dao-xyz/peerbit-time";
 
@@ -118,7 +116,7 @@ export class HeadsMessages extends Message {
  */
 
 @variant([0, 11])
-export class TrustedNetwork extends Program implements RootProgram {
+export class TrustedNetwork extends Program {
 
     @field({ type: PublicSignKey })
     rootTrust: PublicSignKey
@@ -138,7 +136,7 @@ export class TrustedNetwork extends Program implements RootProgram {
         if (props) {
             this.trustGraph = createIdentityGraphStore(props);
             this.rootTrust = props.rootTrust;
-            this.query = props.query || new DQuery({});
+            this.query = props.query || new DQuery({ queryAddressSuffix: 'heads' });
         }
     }
 

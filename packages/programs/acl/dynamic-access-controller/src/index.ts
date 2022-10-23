@@ -22,7 +22,7 @@ import { Operation } from "@dao-xyz/peerbit-ddoc";
 import { v4 as uuid } from 'uuid';
 import { IPFS } from "ipfs-core-types";
 import { DSearchInitializationOptions } from "@dao-xyz/peerbit-dsearch";
-import { Program, ProgramInitializationOptions, RootProgram } from "@dao-xyz/peerbit-program";
+import { Program, ProgramInitializationOptions } from "@dao-xyz/peerbit-program";
 
 
 @variant(0)
@@ -53,7 +53,7 @@ export type AccessVerifier = (identity: PublicSignKey) => Promise<boolean>
 
 
 @variant([0, 3])
-export class DynamicAccessController<T> extends Program implements RootProgram {
+export class DynamicAccessController<T> extends Program {
 
     /*  _storeAccessCondition: (entry: Entry<T>, store: B) => Promise<boolean>; */
 

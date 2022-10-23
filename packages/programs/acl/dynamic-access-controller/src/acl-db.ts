@@ -8,11 +8,11 @@ import { MaybeEncrypted, PublicSignKey, SignatureWithKey } from '@dao-xyz/peerbi
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 import { DSearch } from '@dao-xyz/peerbit-dsearch';
-import { Program, RootProgram } from '@dao-xyz/peerbit-program';
+import { Program } from '@dao-xyz/peerbit-program';
 import { DQuery } from '@dao-xyz/peerbit-dquery';
 
 @variant([0, 12])
-export class AccessStore extends Program implements RootProgram {
+export class AccessStore extends Program {
 
     @field({ type: DDocs })
     access: DDocs<AccessData>;

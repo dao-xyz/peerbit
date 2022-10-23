@@ -30,9 +30,9 @@ Below is a short example how you can create a collaborative text document:
 ```typescript
 import { DString} from '@dao-xyz/peerbit-dstring'
 import { Peerbit } from '@dao-xyz/peerbit'
-import { Program, RootProgram } from '@dao-xyz/peerbit-program'
+import { Program } from '@dao-xyz/peerbit-program'
 
-class CollaborativeText extends Program implements RootProgram
+class CollaborativeText extends Program
     
     @field({type: DString})
     dstring: DString // distributed string 
@@ -47,12 +47,12 @@ class CollaborativeText extends Program implements RootProgram
         await this.dstring.setup({canAppend: this.canAppend, canRead: this.canRead})
     }
 
-    async canAppend(payload, identity): Promise<boolean>
+    async canAppend(payload:MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<SignatureWithKey>): Promise<boolean>
     {
        // .. acl logic writers
     }
 
-    async canRead(identity): Promise<boolean>
+    async canRead(identity?: SignatureWithKey): Promise<boolean>
     {
         // .. acl logic for readers
     }
@@ -67,10 +67,12 @@ console.log(document.address) /// this address can be opened by another peer
 
 
 //  ... 
-await document.add('hello', new Range({ offset: 0n, length: 'hello'.length }));
-await document.add('world', new Range({ offset: BigInt('hello '.length), length: 'world'.length }));
+await document.add('hello', new Range({ offset: 0n, length: 6n }));
+await document.add('world', new Range({ offset: 7n), length: 5n }));
 
-console.log(await document.dstring.toString()) // 'hello world'
+console.log(await document.dstring.toString()) // 'hello world' from local store
+console.log(await document.dstring.toString({remote: {maxAggregationTime: 3000 }})) // 'hello world' from peers
+
 ```
 
 </br>

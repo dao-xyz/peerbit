@@ -4,23 +4,66 @@ import { SignatureWithKey, SignKey } from '@dao-xyz/peerbit-crypto';
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
 import { QueryRequestV0, QueryResponseV0 } from './query.js';
 import { query, QueryOptions, respond } from './io.js'
-import { Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program'
+import { ComposableProgram, Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program'
 import { IPFS } from 'ipfs-core-types';
 import { Identity } from '@dao-xyz/ipfs-log';
+import { Address } from '@dao-xyz/peerbit-store';
 
 export const getQueryTopic = (region: string): string => {
-    return region + '/query';
+    return region + '?';
 }
 
 
 export type DQueryInitializationOptions<Q, R> = { queryType: Constructor<Q>, responseType: Constructor<R>, canRead?(key: SignatureWithKey | undefined): Promise<boolean>, responseHandler: ResponseHandler<Q, R> };
 export type ResponseHandler<Q, R> = (query: Q, from?: SignKey) => Promise<R | undefined> | R | undefined;
 
-@variant([0, 1])
-export class DQuery<Q, R> extends Program {
+abstract class QueryTopic {
 
-    @field({ type: option('string') })
-    queryRegion?: string;
+    abstract from(address: Address): string;
+}
+
+@variant(0)
+class QueryRegion extends QueryTopic {
+
+    @field({ type: 'string' })
+    name: string
+    constructor(properties?: { name: string }) {
+        super();
+        if (properties) {
+            this.name = properties.name
+
+        }
+    }
+
+    from(_address: Address) {
+        return this.name;
+    }
+}
+
+
+@variant(1)
+class QueryAddressSuffix extends QueryTopic {
+
+    @field({ type: 'string' })
+    suffix: string
+    constructor(properties?: { suffix: string }) {
+        super();
+        if (properties) {
+            this.suffix = properties.suffix
+
+        }
+    }
+
+    from(address: Address) {
+        return address.toString() + '/' + this.suffix
+    }
+}
+@variant([0, 1])
+export class DQuery<Q, R> extends ComposableProgram {
+
+    @field({ type: option(QueryTopic) })
+    queryRegion?: QueryTopic;
+
 
     subscribeToQueries: boolean = true;
 
@@ -32,10 +75,20 @@ export class DQuery<Q, R> extends Program {
     _responseType: Constructor<R>
     canRead: (key: SignatureWithKey | undefined) => Promise<boolean>
 
-    constructor(properties: { name?: string, queryRegion?: string }) {
+    constructor(properties: { name?: string, queryRegion?: string, queryAddressSuffix?: string }) {
         super(properties)
         if (properties) {
-            this.queryRegion = properties.queryRegion;
+            if (!!properties.queryRegion && !!properties.queryRegion == !!properties.queryAddressSuffix) {
+                throw new Error("Expected either queryRegion or queryAddressSuffix or none")
+            }
+
+            if (properties.queryRegion) {
+                this.queryRegion = new QueryRegion({ name: properties.queryRegion })
+            }
+            else if (properties.queryAddressSuffix) {
+                this.queryRegion = new QueryAddressSuffix({ suffix: properties.queryAddressSuffix })
+
+            }
             // is this props ser or not??? 
         }
     }
@@ -113,14 +166,12 @@ export class DQuery<Q, R> extends Program {
     }
 
 
+
     public get queryTopic(): string {
-        if (!this.address) {
+        if (!this.parentProgram.address) {
             throw new Error("Not initialized");
         }
-        if (this.queryRegion)
-            return getQueryTopic(this.queryRegion); // this store is accessed through some shared query group
-        else {
-            return getQueryTopic(this.address.toString()); // this tore is accessed by querying the store directly
-        }
+        const queryTopic = this.queryRegion ? this.queryRegion.from(this.parentProgram.address) : getQueryTopic(this.parentProgram.address.toString())
+        return queryTopic;
     }
 }

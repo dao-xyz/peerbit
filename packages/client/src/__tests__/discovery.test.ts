@@ -3,7 +3,6 @@ import rmrf from 'rimraf'
 
 import { OrbitDB } from '../orbit-db'
 
-import { EventStore } from './utils/stores/event-store'
 import { jest } from '@jest/globals';
 
 

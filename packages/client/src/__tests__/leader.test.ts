@@ -118,15 +118,14 @@ Object.keys(testAPIs).forEach(API => {
 
 
             const replicationTopic = uuid();
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), replicationTopic
-                , { directory: dbPath1 })
+            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), { replicationTopic: replicationTopic, directory: dbPath1 })
 
             const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, 123, 1));
             expect(isLeaderAOneLeader);
             const isLeaderATwoLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, 123, 2));
             expect(isLeaderATwoLeader);
 
-            db2 = await orbitdb2.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath2 })
+            db2 = await orbitdb2.open<EventStore<string>>(db1.address, { replicationTopic, directory: dbPath2 })
 
             await waitFor(() => (orbitdb1._directConnections.size === 1))
             await waitFor(() => (orbitdb2._directConnections.size === 1))
@@ -154,9 +153,8 @@ Object.keys(testAPIs).forEach(API => {
 
 
             const replicationTopic = uuid()
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), replicationTopic
-                , { replicate: false, directory: dbPath1 })
-            db2 = await orbitdb2.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath2 })
+            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), { replicationTopic: replicationTopic, replicate: false, directory: dbPath1 })
+            db2 = await orbitdb2.open<EventStore<string>>(db1.address, { replicationTopic, directory: dbPath2 })
 
             // One leader
             const slot = 0;
@@ -179,10 +177,9 @@ Object.keys(testAPIs).forEach(API => {
 
 
             const replicationTopic = uuid();
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), replicationTopic
-                , { replicate: false, directory: dbPath1 })
-            db2 = await orbitdb2.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath2 })
-            db3 = await orbitdb3.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath3 })
+            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), { replicationTopic: replicationTopic, replicate: false, directory: dbPath1 })
+            db2 = await orbitdb2.open<EventStore<string>>(db1.address, { replicationTopic, directory: dbPath2 })
+            db3 = await orbitdb3.open<EventStore<string>>(db1.address, { replicationTopic, directory: dbPath3 })
 
             await waitForPeers(session.peers[1].ipfs, [orbitdb3.id], DirectChannel.getTopic([orbitdb2.id, orbitdb3.id]))
             await waitForPeers(session.peers[2].ipfs, [orbitdb2.id], DirectChannel.getTopic([orbitdb2.id, orbitdb3.id]))
@@ -217,10 +214,9 @@ Object.keys(testAPIs).forEach(API => {
 
 
             const replicationTopic = uuid();
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), replicationTopic
-                , { directory: dbPath1 })
-            db2 = await orbitdb2.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath2 })
-            db3 = await orbitdb3.open<EventStore<string>>(db1.address, replicationTopic, { directory: dbPath3 })
+            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), { replicationTopic: replicationTopic, directory: dbPath1 })
+            db2 = await orbitdb2.open<EventStore<string>>(db1.address, { replicationTopic, directory: dbPath2 })
+            db3 = await orbitdb3.open<EventStore<string>>(db1.address, { replicationTopic, directory: dbPath3 })
 
             await waitFor(() => (orbitdb1._directConnections.size === 2))
             await waitFor(() => (orbitdb2._directConnections.size === 2))

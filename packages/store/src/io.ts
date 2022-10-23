@@ -3,7 +3,7 @@
 import path from 'path'
 import io from '@dao-xyz/peerbit-io-utils';
 import { CID } from 'multiformats/cid'
-import { serialize, deserialize, Constructor } from '@dao-xyz/borsh';
+import { serialize, deserialize, Constructor, AbstractType } from '@dao-xyz/borsh';
 import { IPFS } from 'ipfs-core-types'
 import { variant, field } from '@dao-xyz/borsh';
 
@@ -96,7 +96,7 @@ export const save = async (ipfs: IPFS, thing: Addressable, options: { format?: s
 }
 
 
-export const load = async <S extends Addressable & { address: Address }>(ipfs: IPFS, address: Address, into: Constructor<S>, options: { timeout?: number } = {}): Promise<S> => {
+export const load = async <S extends Addressable & { address: Address }>(ipfs: IPFS, address: Address, into: Constructor<S> | AbstractType<S>, options: { timeout?: number } = {}): Promise<S> => {
     const manifest: Manifest = await io.read(ipfs, address.cid, options);
     const der = deserialize(manifest.data, into)
     der.address = Address.parse(Address.join(address.cid))

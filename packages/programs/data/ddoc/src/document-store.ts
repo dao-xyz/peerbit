@@ -4,19 +4,18 @@ import { asString } from './utils.js';
 import { DocumentQueryRequest, FieldQuery, FieldStringMatchQuery, Result, ResultWithSource, SortDirection, FieldByteMatchQuery, FieldBigIntCompareQuery, Compare, Query, MemoryCompareQuery, DSearchInitializationOptions, QueryType } from '@dao-xyz/peerbit-dsearch';
 import { BinaryPayload } from '@dao-xyz/peerbit-bpayload';
 import { arraysEqual } from '@dao-xyz/peerbit-borsh-utils';
-import { Store, IInitializationOptions } from '@dao-xyz/peerbit-store';
+import { Store } from '@dao-xyz/peerbit-store';
 import { DSearch } from '@dao-xyz/peerbit-dsearch';
-import { BORSH_ENCODING, CanAppend, Identity, Payload } from '@dao-xyz/ipfs-log';
-import { IPFS } from 'ipfs-core-types';
+import { BORSH_ENCODING, CanAppend, Payload } from '@dao-xyz/ipfs-log';
 import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';
-import { Program, ProgramInitializationOptions, RootProgram } from '@dao-xyz/peerbit-program';
+import { ComposableProgram, Program } from '@dao-xyz/peerbit-program';
 
 const replaceAll = (str: string, search: any, replacement: any) => str.toString().split(search).join(replacement)
 
 const encoding = BORSH_ENCODING(Operation);
 
 @variant([0, 6])
-export class DDocs<T extends BinaryPayload> extends Program {
+export class DDocs<T extends BinaryPayload> extends ComposableProgram {
 
   @field({ type: Store })
   store: Store<Operation<T>>
@@ -56,8 +55,7 @@ export class DDocs<T extends BinaryPayload> extends Program {
     if (options.canAppend) {
       this.store.canAppend = options.canAppend
     }
-    await this.search.setup({ context: { address: () => this.address }, canRead: options.canRead, queryHandler: this.queryHandler.bind(this) });
-    return this;
+    await this.search.setup({ context: { address: () => this.parentProgram.address }, canRead: options.canRead, queryHandler: this.queryHandler.bind(this) });
   }
 
 
@@ -209,6 +207,12 @@ export class DDocs<T extends BinaryPayload> extends Program {
 
 
   public put(doc: T, options = {}) {
+    if (doc instanceof Program) {
+      doc.parentProgram = this.parentProgram;
+      doc.parentProgamAddress = this.parentProgram.address;
+    }
+
+
     if (!(doc as any)[this.indexBy]) { throw new Error(`The provided document doesn't contain field '${this.indexBy}'`) }
     const ser = serialize(doc);
     return this.store._addOperation(

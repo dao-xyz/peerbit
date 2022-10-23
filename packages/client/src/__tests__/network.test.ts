@@ -99,6 +99,7 @@ Object.keys(testAPIs).forEach(API => {
 
             await orbitdb2.openNetwork(network.address, { directory: dbPath2 })
             await orbitdb3.openNetwork(network.address, { directory: dbPath3 })
+            await delay(10000);
             await waitFor(() => orbitdb1._directConnections.size === 2);
 
             await waitFor(() => Object.keys((orbitdb3.getNetwork(network.address) as TrustedNetwork).trustGraph._index._index).length === 4)

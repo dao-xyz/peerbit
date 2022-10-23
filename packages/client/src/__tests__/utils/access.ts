@@ -1,10 +1,10 @@
 import { variant, field } from '@dao-xyz/borsh';
 import { EventStore } from "./stores";
-import { Program, RootProgram } from "@dao-xyz/peerbit-program";
+import { Program } from "@dao-xyz/peerbit-program";
 
 
 @variant([0, 251])
-export class SimpleStoreContract extends Program implements RootProgram {
+export class SimpleStoreContract extends Program {
 
     @field({ type: EventStore })
     store: EventStore<string>;

@@ -1,16 +1,16 @@
 import { field, variant } from "@dao-xyz/borsh"
 import { Store } from "@dao-xyz/peerbit-store";
-import { Program } from "..";
+import { ComposableProgram, Program } from "..";
 
 describe('program', () => {
     it('can resolve stores and programs', () => {
 
         @variant(0)
-        class P1 extends Program {
+        class P1 extends ComposableProgram {
 
         }
         @variant(1)
-        class P2 extends Program {
+        class P2 extends ComposableProgram {
             @field({ type: Store })
             store: Store<any>;
 

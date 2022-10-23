@@ -2,7 +2,7 @@
 import assert from 'assert'
 import rmrf from 'rimraf'
 import { delay, waitFor } from '@dao-xyz/peerbit-time'
-
+import { variant, field } from '@dao-xyz/borsh'
 import { OrbitDB } from '../orbit-db'
 
 import { EventStore, Operation } from './utils/stores/event-store'
@@ -11,6 +11,8 @@ import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
 // @ts-ignore 
 import { v4 as uuid } from 'uuid';
+
+import { DDocs, PutOperation } from '@dao-xyz/peerbit-ddoc';
 
 // Include test utilities
 import {
@@ -21,7 +23,10 @@ import {
     connectPeers,
     waitForPeers,
 } from '@dao-xyz/peerbit-test-utils'
-import { Store } from '@dao-xyz/peerbit-store'
+import { CanOpenSubPrograms, Program } from '@dao-xyz/peerbit-program'
+import { SignKey } from '@dao-xyz/peerbit-crypto'
+import { DSearch } from '@dao-xyz/peerbit-dsearch'
+import { DQuery } from '@dao-xyz/peerbit-dquery'
 
 const orbitdbPath1 = './orbitdb/tests/write-only/1'
 const orbitdbPath2 = './orbitdb/tests/write-only/2'
@@ -75,7 +80,7 @@ Object.keys(testAPIs).forEach(API => {
             db1 = await orbitdb1.open(new EventStore<string>({
                 name: 'abc',
 
-            }), replicationTopic, { directory: dbPath1 })
+            }), { replicationTopic, directory: dbPath1 })
         })
 
         afterEach(async () => {
@@ -97,7 +102,7 @@ Object.keys(testAPIs).forEach(API => {
         it('write 1 entry replicate false', async () => {
 
             await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
-            db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, { directory: dbPath2, replicate: false })
+            db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), { replicationTopic, directory: dbPath2, replicate: false })
 
             await db1.add('hello');
             /*   await waitFor(() => db2._oplog.clock.time > 0); */
@@ -113,7 +118,7 @@ Object.keys(testAPIs).forEach(API => {
 
             await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
             const encryptionKey = await orbitdb1.keystore.createEd25519Key({ id: 'encryption key', group: replicationTopic });
-            db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, { directory: dbPath2, replicate: false })
+            db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), { replicationTopic, directory: dbPath2, replicate: false })
 
             await db1.add('hello', {
                 reciever: {
@@ -138,7 +143,7 @@ Object.keys(testAPIs).forEach(API => {
             const replicationTopic = 'x';
             const store = new EventStore<string>({ name: 'replication-tests' });
             await orbitdb2.subscribeToReplicationTopic(replicationTopic);
-            await orbitdb1.open(store, replicationTopic, { replicate: false }); // this would be a "light" client, write -only
+            await orbitdb1.open(store, { replicationTopic, replicate: false });
 
             const hello = await store.add('hello', { nexts: [] });
             const world = await store.add('world', { nexts: [hello] });
@@ -153,6 +158,52 @@ Object.keys(testAPIs).forEach(API => {
             expect(replicatedStore).toBeDefined();
             expect(replicatedStore.oplog.heads).toHaveLength(1);
             expect(replicatedStore.oplog.heads[0].hash).toEqual(world.hash);
+
+        })
+
+        it('will open store on exchange heads message when trusted', async () => {
+
+            const replicationTopic = 'x';
+
+            const cb: { program: Program, identity: SignKey }[] = [];
+
+            @variant([0, 239])
+            class ProgramWithSubprogram extends Program implements CanOpenSubPrograms {
+
+                @field({ type: DDocs })
+                eventStore: DDocs<EventStore<string>>
+
+                constructor(eventStore: DDocs<EventStore<string>>) {
+                    super()
+                    this.eventStore = eventStore;
+                }
+
+                async canOpen(program: Program, identity: SignKey): Promise<boolean> {
+                    cb.push({ program, identity }); // this is what we are testing, are we going here when opening a subprogram?
+                    return true;
+                }
+
+                setup(): Promise<void> {
+                    return this.eventStore.setup({ type: EventStore });
+                }
+            }
+            const store = new ProgramWithSubprogram(new DDocs<EventStore<string>>({ name: 'replication-tests', indexBy: 'name', search: new DSearch({ query: new DQuery({}) }) }));
+            await orbitdb2.subscribeToReplicationTopic(replicationTopic);
+            const openedStore = await orbitdb1.open(store, { replicationTopic, replicate: false });
+
+            const eventStore = await store.eventStore.put(new EventStore({ name: 'store 1' }), { nexts: [] });
+            const _eventStore2 = await store.eventStore.put(new EventStore({ name: 'store 2' }), { nexts: [eventStore] });
+
+            expect(store.eventStore.store.oplog.heads).toHaveLength(1);
+
+            await waitFor(() => Object.values(orbitdb2.programs[replicationTopic]).length > 0, { timeout: 20 * 1000, delayInterval: 50 });
+
+
+            const eventStoreString = ((await eventStore.payload.getValue()) as PutOperation<any>).value as EventStore<string>;
+            await orbitdb1.open(eventStoreString, { replicationTopic, replicate: false });
+            await eventStoreString.add("hello")
+            await waitFor(() => cb.length === 1);
+            expect(cb[0].identity.equals(orbitdb1.identity.publicKey))
 
         })
     })

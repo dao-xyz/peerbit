@@ -402,10 +402,10 @@
   dependencies:
     "@jridgewell/trace-mapping" "0.3.9"
 
-"@dao-xyz/borsh@^3.3.0":
-  version "3.3.0"
-  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-3.3.0.tgz#1fea8c7b405765eeb073b83ba67054cf71c91a88"
-  integrity sha512-3d40ecwBnTP+Y7YP1lM6mkPT2oDAU5TDmLo/MIdSGEV3fW6BKbDKopBzDtW4gW6m/eoAz7psdvWfFJZbGELS/A==
+"@dao-xyz/borsh@^3.4.2":
+  version "3.4.2"
+  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-3.4.2.tgz#a2d15f39e1835a3ecf7e538be64ce7b2f9e73e94"
+  integrity sha512-3b69fmJUv1bAkRiYKIeIp1Q2gnh7XZ6OKENi2+BycgWD02GbkOs7ZInF3wv9yTSjWmhq8RBNpdbBgQj3vP1nSA==
   dependencies:
     text-encoding-utf-8 "^1.0.2"
 

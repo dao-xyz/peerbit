@@ -49,11 +49,11 @@ Object.keys(testAPIs).forEach(API => {
             replicationTopic = network.address.toString();
 
             db1 = await orbitdb1.open(new EventStore<string>({ name: 'sharding-tests' })
-                , replicationTopic)
+                , { replicationTopic })
 
-            db2 = await orbitdb2.open(db1.address, replicationTopic) as EventStore<string>
+            db2 = await orbitdb2.open(db1.address, { replicationTopic }) as EventStore<string>
 
-            db3 = await orbitdb3.open(db1.address, replicationTopic) as EventStore<string>
+            db3 = await orbitdb3.open(db1.address, { replicationTopic }) as EventStore<string>
 
         })
 

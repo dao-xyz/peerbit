@@ -13,7 +13,7 @@ import Cache from '@dao-xyz/peerbit-cache';
 import { Level } from 'level';
 import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
-import { Program, RootProgram } from '@dao-xyz/peerbit-program';
+import { Program } from '@dao-xyz/peerbit-program';
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -40,7 +40,7 @@ class Document extends CustomBinaryPayload {
 }
 
 @variant([0, 244])
-class DocumentDDoc extends Program implements RootProgram {
+class DocumentDDoc extends Program {
 
   @field({ type: DDocs })
   docs: DDocs<Document>

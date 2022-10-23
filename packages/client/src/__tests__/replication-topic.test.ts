@@ -93,14 +93,15 @@ Object.keys(testAPIs).forEach(API => {
     it('replicates database of 1 entry', async () => {
       let options = { directory: dbPath2 }
       const replicationTopic = uuid();
-      db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), replicationTopic
-        , { ...Object.assign({}, options, { directory: dbPath1 }) })
+      db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' })
+        , { ...Object.assign({}, options, { directory: dbPath1 }), replicationTopic })
       await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
 
       options = { ...options, directory: dbPath2 }
       let replicatedEventCount = 0
       let done = false
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), replicationTopic, {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), {
+        replicationTopic,
         ...options, onReplicationComplete: (store) => {
           replicatedEventCount++
           // Once db2 has finished replication, make sure it has all elements
@@ -109,7 +110,7 @@ Object.keys(testAPIs).forEach(API => {
           done = (all === 1)
         }
       })
-      db3 = await orbitdb2.open(new EventStore<string>({ name: 'replication-tests-same-topic' }), replicationTopic, { ...options })
+      db3 = await orbitdb2.open(new EventStore<string>({ name: 'replication-tests-same-topic' }), { replicationTopic, ...options })
 
       await waitFor(() => orbitdb1._directConnections.size === 1);
       await waitFor(() => orbitdb2._directConnections.size === 1);

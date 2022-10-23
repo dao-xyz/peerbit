@@ -36,7 +36,7 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@dao-xyz/borsh": "^3.3.0",
+    "@dao-xyz/borsh": "^3.4.2",
     "level": "^8.0.0",
     "logplease": "~1.2.15"
   },

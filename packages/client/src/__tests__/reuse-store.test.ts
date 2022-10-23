@@ -82,8 +82,8 @@ Object.keys(testAPIs).forEach(API => {
         it('open same store twice will share instance', async () => {
 
             const replicationTopic = 'topic';
-            db1 = await orbitdb1.open(new SimpleStoreContract({ store: new EventStore({ name: 'some db' }) }), replicationTopic)
-            const sameDb = await orbitdb1.open(new SimpleStoreContract({ store: new EventStore({ name: 'some db' }) }), replicationTopic)
+            db1 = await orbitdb1.open(new SimpleStoreContract({ store: new EventStore({ name: 'some db' }) }), { replicationTopic })
+            const sameDb = await orbitdb1.open(new SimpleStoreContract({ store: new EventStore({ name: 'some db' }) }), { replicationTopic })
             expect(db1 === sameDb);
 
         })
@@ -94,12 +94,12 @@ Object.keys(testAPIs).forEach(API => {
                 store: new EventStore<string>({
                     name: 'event store'
                 })
-            }), replicationTopic)
+            }), { replicationTopic })
             db2 = await orbitdb1.open(new SimpleStoreContract({
                 store: new EventStore<string>({
                     name: 'event store'
                 })
-            }), replicationTopic)
+            }), { replicationTopic })
             expect(db1 !== db2);
             expect(db1.store === db2.store);
 
@@ -112,12 +112,12 @@ Object.keys(testAPIs).forEach(API => {
                 store: new EventStore<string>({
                     name: 'event store'
                 })
-            }), 'a')
+            }), { replicationTopic: 'a' })
             db2 = await orbitdb1.open(new SimpleStoreContract({
                 store: new EventStore<string>({
                     name: 'event store'
                 })
-            }), 'b')
+            }), { replicationTopic: 'b' })
             expect(db1 !== db2);
             expect(db1.store !== db2.store);
 

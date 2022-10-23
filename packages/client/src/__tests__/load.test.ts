@@ -145,7 +145,8 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
     it('loading a database emits \'ready\' event', async () => {
       let done = false;
-      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid(), {
+      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), {
+        replicationTopic: uuid(),
         onReady: (store) => {
           const items = db.iterator({ limit: -1 }).collect()
           expect(items.length).toEqual(entryCount)
@@ -161,7 +162,8 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
     it('loading a database emits \'load.progress\' event', async () => {
       let count = 0
       let done = false;
-      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid(), {
+      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), {
+        replicationTopic: uuid(),
         onLoadProgress: (store, entry) => {
           count++
           expect(address).toEqual(db.address.toString())
@@ -259,7 +261,8 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
     it('loading a database emits \'ready\' event', async () => {
       let done = false;
-      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid(), {
+      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), {
+        replicationTopic: uuid(),
         onReady: (store) => {
           const items = db.iterator({ limit: -1 }).collect()
           expect(items.length).toEqual(entryCount)
@@ -275,7 +278,8 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
     it('loading a database emits \'load.progress\' event', async () => {
       let done = false;
       let count = 0;
-      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid(), {
+      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), {
+        replicationTopic: uuid(),
         onLoadProgress: (store, entry) => {
           count++
           expect(address).toEqual(db.address.toString())
