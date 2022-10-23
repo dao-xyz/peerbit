@@ -11,7 +11,7 @@ import type { Identity, Payload } from "@dao-xyz/ipfs-log";
 import { Level } from 'level';
 import { CachedValue, DefaultOptions } from '@dao-xyz/peerbit-store';
 import { fileURLToPath } from 'url';
-import path, { dirname } from 'path';
+import path from 'path';
 import Cache from '@dao-xyz/peerbit-cache';
 import { DQuery } from "@dao-xyz/peerbit-dquery";
 import { Program } from "@dao-xyz/peerbit-program";

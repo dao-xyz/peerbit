@@ -2,7 +2,7 @@ import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import { DDocs, Operation, PutOperation } from "@dao-xyz/peerbit-ddoc";
 import { BORSH_ENCODING, Entry, Payload } from "@dao-xyz/ipfs-log";
 import { createHash } from "crypto";
-import { IPFSAddress, Key, OtherKey, PublicSignKey, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
+import { IPFSAddress, Key, OtherKey, PublicSignKey, SignatureWithKey, SignKey } from "@dao-xyz/peerbit-crypto";
 import type { PeerId } from '@libp2p/interface-peer-id';
 import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
 import { DeleteOperation } from "@dao-xyz/peerbit-ddoc";
@@ -14,17 +14,15 @@ import { waitFor } from "@dao-xyz/peerbit-time";
 
 const encoding = BORSH_ENCODING(Operation);
 
-const canAppendByRelation = async (mpayload: MaybeEncrypted<Payload<Operation<any>>>, keyEncrypted: MaybeEncrypted<SignatureWithKey>, db: DDocs<Relation>, isTrusted?: (key: PublicSignKey) => Promise<boolean>): Promise<boolean> => {
+const canAppendByRelation = async (mpayload: () => Promise<Payload<Operation<any>>>, mkey: () => Promise<SignKey>, isTrusted?: (key: PublicSignKey) => Promise<boolean>): Promise<boolean> => {
 
     // verify the payload 
-    const decrypted = (await mpayload.decrypt(db.store.oplog._encryption?.getAnyKeypair || (() => Promise.resolve(undefined)))).decrypted;
-    const payload = decrypted.getValue(Payload);
+    const payload = await mpayload();
     const operation = payload.getValue(encoding);
     if (operation instanceof PutOperation || operation instanceof DeleteOperation) {
         /*  const relation: Relation = operation.value || deserialize(operation.data, Relation); */
-        await keyEncrypted.decrypt(db.store.oplog._encryption?.getAnyKeypair || (() => Promise.resolve(undefined)));
-        const key = keyEncrypted.decrypted.getValue(SignatureWithKey).publicKey;
 
+        const key = await mkey()
         if (operation instanceof PutOperation) {
             // TODO, this clause is only applicable when we modify the identityGraph, but it does not make sense that the canAppend method does not know what the payload will
             // be, upon deserialization. There should be known in the `canAppend` method whether we are appending to the identityGraph.
@@ -71,8 +69,8 @@ export class RelationContract extends Program {
         }
     }
 
-    async canAppend(payload: MaybeEncrypted<Payload<Operation<Relation>>>, keyEncrypted: MaybeEncrypted<SignatureWithKey>): Promise<boolean> {
-        return canAppendByRelation(payload, keyEncrypted, this.relationGraph)
+    async canAppend(payload: () => Promise<Payload<Operation<Relation>>>, keyEncrypted: () => Promise<SignKey>): Promise<boolean> {
+        return canAppendByRelation(payload, keyEncrypted)
     }
 
 
@@ -156,9 +154,9 @@ export class TrustedNetwork extends Program {
     }
 
 
-    async canAppend(payload: MaybeEncrypted<Payload<Operation<any>>>, keyEncrypted: MaybeEncrypted<SignatureWithKey>): Promise<boolean> {
+    async canAppend(payload: () => Promise<Payload<Operation<any>>>, keyEncrypted: () => Promise<SignKey>): Promise<boolean> {
 
-        return canAppendByRelation(payload, keyEncrypted, this.trustGraph, async (key) => await this.isTrusted(key))
+        return canAppendByRelation(payload, keyEncrypted, async (key) => await this.isTrusted(key))
     }
 
     async canRead(key: SignatureWithKey | undefined): Promise<boolean> {

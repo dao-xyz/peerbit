@@ -426,7 +426,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
     })
 
     if (properties.canAppend) {
-      if (! await properties.canAppend(new DecryptedThing({ value: payloadToSave }), signatureEncrypted)) {
+      if (! await properties.canAppend(() => Promise.resolve(payloadToSave), () => Promise.resolve(properties.identity.publicKey))) {
         throw new AccessError()
       }
     }

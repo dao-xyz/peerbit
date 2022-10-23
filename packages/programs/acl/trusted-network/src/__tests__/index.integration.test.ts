@@ -1,4 +1,4 @@
-import { Session, Peer, waitForPeers } from '@dao-xyz/peerbit-test-utils'
+import { Session, waitForPeers } from '@dao-xyz/peerbit-test-utils'
 import { AnyRelation, createIdentityGraphStore, getFromByTo, getPathGenerator, getToByFrom, TrustedNetwork, KEY_OFFSET, PUBLIC_KEY_WIDTH, Relation } from '..';
 import { waitFor } from '@dao-xyz/peerbit-time';
 import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
@@ -9,7 +9,7 @@ import { Identity } from '@dao-xyz/ipfs-log';
 import { createStore } from '@dao-xyz/peerbit-test-utils';
 import { Level } from 'level';
 import { fileURLToPath } from 'url';
-import path, { dirname } from 'path';
+import path from 'path';
 import { CachedValue, DefaultOptions, IStoreOptions } from '@dao-xyz/peerbit-store';
 import Cache from '@dao-xyz/peerbit-cache';
 import { field, serialize, variant } from '@dao-xyz/borsh';

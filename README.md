@@ -46,8 +46,8 @@ class CollaborativeText extends Program {
     }
 
     async canAppend(
-        payload: MaybeEncrypted<Payload<T>>,
-        key: MaybeEncrypted<SignatureWithKey>
+        payload: () => Promise<Payload<T>>,
+        key: () => Promise<SignatureWithKey>
     ): Promise<boolean> {
         // .. acl logic writers
     }

@@ -42,7 +42,7 @@ export class MaybeEncrypted<T>  {
         throw new Error("Not implented")
     }
 
-    async decrypt(keyResolver: GetAnyKeypair): Promise<DecryptedThing<T>> {
+    async decrypt(keyResolver?: GetAnyKeypair): Promise<DecryptedThing<T>> {
         throw new Error("Not implemented")
     }
     equals(other: MaybeEncrypted<T>): boolean {

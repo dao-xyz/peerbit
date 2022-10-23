@@ -3,7 +3,7 @@ import { DDocs, Operation } from '@dao-xyz/peerbit-ddoc';
 import { getPathGenerator, TrustedNetwork, getFromByTo, RelationContract } from '@dao-xyz/peerbit-trusted-network';
 import { Access, AccessData, AccessType } from './access';
 import { Identity, Payload } from '@dao-xyz/ipfs-log'
-import { MaybeEncrypted, PublicSignKey, SignatureWithKey } from '@dao-xyz/peerbit-crypto';
+import { MaybeEncrypted, PublicSignKey, SignatureWithKey, SignKey } from '@dao-xyz/peerbit-crypto';
 
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
@@ -100,14 +100,13 @@ export class DynamicAccessController extends Program {
         return false;
     }
 
-    async canAppend(key: MaybeEncrypted<SignatureWithKey>): Promise<boolean> {
+    async canAppend(mkey: () => Promise<SignKey>): Promise<boolean> {
         // TODO, improve, caching etc
 
 
         // Check whether it is trusted by trust web
-        const signature = key.decrypted.getValue(SignatureWithKey)
-
-        if (await this.trustedNetwork.isTrusted(signature.publicKey)) {
+        const key = await mkey();
+        if (await this.trustedNetwork.isTrusted(key)) {
             return true;
         }
         // Else check whether its trusted by this access controller
@@ -126,10 +125,10 @@ export class DynamicAccessController extends Program {
 
             }
         }
-        if (await canWriteCheck(signature.publicKey)) {
+        if (await canWriteCheck(key)) {
             return true;
         }
-        for await (const trustedByKey of getPathGenerator(signature.publicKey, this.identityGraphController.relationGraph, getFromByTo)) {
+        for await (const trustedByKey of getPathGenerator(key, this.identityGraphController.relationGraph, getFromByTo)) {
             if (await canWriteCheck(trustedByKey.from)) {
                 return true;
             }

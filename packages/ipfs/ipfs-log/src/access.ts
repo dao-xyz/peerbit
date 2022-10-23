@@ -1,4 +1,4 @@
-import { MaybeEncrypted, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
+import { MaybeEncrypted, SignatureWithKey, SignKey } from "@dao-xyz/peerbit-crypto";
 import { Payload } from './entry';
 
 // TODO extend IPFS-LOG access controller interface for canAppend method
@@ -21,4 +21,4 @@ export class DefaultAccessController<T> implements CanAppendAccessController<T> 
   }
 }
  */
-export type CanAppend<T> = (payload: MaybeEncrypted<Payload<T>>, key: MaybeEncrypted<SignatureWithKey>) => Promise<boolean> | boolean
+export type CanAppend<T> = (payload: () => Promise<Payload<T>>, identity: () => Promise<SignKey>) => Promise<boolean> | boolean

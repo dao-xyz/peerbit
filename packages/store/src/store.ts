@@ -14,7 +14,7 @@ import { IPFS } from 'ipfs-core-types'
 // @ts-ignore
 import { serialize, deserialize } from '@dao-xyz/borsh';
 import { Snapshot } from './snapshot.js'
-import { AccessError, MaybeEncrypted, PublicKeyEncryptionResolver, SignatureWithKey } from "@dao-xyz/peerbit-crypto"
+import { AccessError, PublicKeyEncryptionResolver, SignatureWithKey } from "@dao-xyz/peerbit-crypto"
 
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
@@ -541,7 +541,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
 
       // TODO Fix types
 
-      if (this.canAppend && !(await this.canAppend(headToHandle._payload, headToHandle._signature))) {
+      if (this.canAppend && !(await this.canAppend(() => headToHandle._payload.decrypt(this.oplog._encryption?.getAnyKeypair).then(p => p.getValue(Payload)), () => (headToHandle._signature.decrypt(this.oplog._encryption?.getAnyKeypair).then(p => p.getValue(SignatureWithKey).publicKey))))) {
         return Promise.resolve(null)
       }
 
