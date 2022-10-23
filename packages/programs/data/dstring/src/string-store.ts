@@ -6,15 +6,16 @@ import { Range } from './range.js';
 import { field, variant } from '@dao-xyz/borsh';
 import { CustomBinaryPayload } from '@dao-xyz/peerbit-bpayload';
 import { Store } from '@dao-xyz/peerbit-store';
-import { BORSH_ENCODING, CanAppend } from '@dao-xyz/ipfs-log';
+import { BORSH_ENCODING, CanAppend, Identity } from '@dao-xyz/ipfs-log';
 import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';
-import { Program } from '@dao-xyz/peerbit-program';
+import { Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program';
 import { QueryOptions, CanRead } from '@dao-xyz/peerbit-dquery';
+import { IPFS } from 'ipfs-core-types';
 export const STRING_STORE_TYPE = 'string_store';
 const findAllOccurrences = (str: string, substr: string): number[] => {
   str = str.toLowerCase();
 
-  let result = [];
+  let result: number[] = [];
 
   let idx = str.indexOf(substr)
 
@@ -38,7 +39,7 @@ export class DString extends Program {
   search: DSearch<PayloadOperation>;
 
   _index: StringIndex;
-  _setup = false;
+
   constructor(properties: { name?: string, search: DSearch<PayloadOperation> }) {
     super(properties)
     if (properties) {
@@ -58,17 +59,10 @@ export class DString extends Program {
 
     await this.search.setup({ ...options, context: { address: () => this.address }, canRead: options?.canRead, queryHandler: this.queryHandler.bind(this) })
 
-    this._setup = true;
 
   }
 
-  checkSetup() {
-    if (!this._setup) {
-      throw new Error(".setup(...) needs to be invoked before use")
-    }
-  }
   add(value: string, index: Range, options = {}) {
-    this.checkSetup();
     return this.store._addOperation(new PayloadOperation({
       index,
       value,
@@ -76,7 +70,6 @@ export class DString extends Program {
   }
 
   del(index: Range, options = {}) {
-    this.checkSetup();
     const operation = {
       index
     } as PayloadOperation
@@ -84,7 +77,6 @@ export class DString extends Program {
   }
 
   async queryHandler(query: QueryType): Promise<Result[]> {
-    this.checkSetup();
     if (query instanceof StringQueryRequest == false) {
       return [];
     }

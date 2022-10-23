@@ -7,7 +7,7 @@ import { IPFS } from 'ipfs-core-types';
 import { Level } from 'level';;
 import Cache from '@dao-xyz/peerbit-cache';
 import { fileURLToPath } from 'url';
-import path, { dirname } from 'path';
+import path from 'path';
 import { Identity } from '@dao-xyz/ipfs-log';
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto';
 import { DefaultOptions } from '@dao-xyz/peerbit-store';
@@ -72,7 +72,6 @@ describe('query', () => {
     })
 
     it('only context', async () => {
-
         await writeStore.add('hello', new Range({ offset: 0n, length: 'hello'.length }));
         await writeStore.add('world', new Range({ offset: BigInt('hello '.length), length: 'world'.length }));
 
