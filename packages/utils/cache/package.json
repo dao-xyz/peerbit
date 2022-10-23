@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-cache",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "Local cache for Peerbit",
   "type": "module",
   "publishConfig": {
@@ -41,7 +41,7 @@
     "logplease": "~1.2.15"
   },
   "devDependencies": {
-    "@dao-xyz/peerbit-test-utils": "^0.0.5",
+    "@dao-xyz/peerbit-test-utils": "^0.0.6",
     "jsondown": "^1.0.0",
     "localstorage-down": "^0.6.7",
     "memdown": "^6.0.0",
