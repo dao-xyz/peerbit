@@ -8,13 +8,13 @@ import { Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import { isDefined } from './is-defined.js'
 import { Level } from 'level';
 import { exchangeHeads, ExchangeHeadsMessage, AbsolutMinReplicas, EntryWithRefs, MinReplicas } from './exchange-heads.js'
-import { Entry, Identity, toBase64 } from '@dao-xyz/ipfs-log'
+import { Entry, Identity, Payload, toBase64 } from '@dao-xyz/ipfs-log'
 import { serialize, deserialize } from '@dao-xyz/borsh'
 import { ProtocolMessage } from './message.js'
 import type { Message as PubSubMessage, SignedMessage as SignedPubSubMessage } from '@libp2p/interface-pubsub';
 import { SharedChannel, SharedIPFSChannel } from './channel.js'
 import { exchangeKeys, KeyResponseMessage, KeyAccessCondition, recieveKeys, requestAndWaitForKeys, RequestKeyMessage, RequestKeyCondition, RequestKeysByKey, RequestKeysByReplicationTopic } from './exchange-keys.js'
-import { AccessError, DecryptedThing, Ed25519Keypair, EncryptedThing, MaybeEncrypted, PublicKeyEncryptionResolver, SignKey, X25519Keypair } from "@dao-xyz/peerbit-crypto"
+import { AccessError, DecryptedThing, Ed25519Keypair, EncryptedThing, MaybeEncrypted, PublicKeyEncryptionResolver, SignatureWithKey, SignKey, X25519Keypair } from "@dao-xyz/peerbit-crypto"
 import { X25519PublicKey, IPFSAddress } from '@dao-xyz/peerbit-crypto'
 import LRU from 'lru-cache';
 import { DirectChannel } from '@dao-xyz/ipfs-pubsub-direct-channel'
@@ -50,7 +50,7 @@ export type CreateOptions = { keystore: Keystore, identity: Identity, directory:
 export type CreateInstanceOptions = { storage?: Storage, directory?: string, keystore?: Keystore, peerId?: PeerId, identity?: Identity, cache?: Cache<any>, localNetwork?: boolean } & OptionalCreateOptions;
 export type OpenStoreOptions = {
   identity?: Identity,
-  requestingIdentity?: SignKey,
+  entryToReplicate?: Entry<any>,
   directory?: string,
   timeout?: number,
   minReplicas?: MinReplicas
@@ -341,7 +341,7 @@ export class Peerbit {
   onWrite<T>(program: Program) {
     return (store: Store<any>, entry: Entry<T>, replicationTopic: string): void => {
       const storeAddress = store.address.toString();
-      const storeInfo = this.programs[replicationTopic][program.address.toString()].program.allStores.get(storeAddress);
+      const storeInfo = this.programs[replicationTopic][program.address.toString()].program.allStoresMap.get(storeAddress);
       if (!storeInfo) {
         throw new Error("Missing store info")
       }
@@ -369,7 +369,7 @@ export class Peerbit {
         }
       }
       for (const value of Object.values(this.programs[replicationTopic])) {
-        if (value.program.allStores.has(storeAddress)) {
+        if (value.program.allStoresMap.has(storeAddress)) {
           exchangeHeads(send, store, value.program, this.identity, [entry], replicationTopic, true)
         }
       }
@@ -436,13 +436,17 @@ export class Peerbit {
 
           const leaderCache: Map<string, string[]> = new Map();
           await this._maybeOpenStorePromise;
-          for (const [gid, value] of groupByGid(heads)) {
+          for (const [gid, entries] of groupByGid(heads)) {
             // Check if root, if so, we check if we should open the store
             const leaders = await this.findLeaders(replicationTopic, isReplicating, gid, msg.minReplicas?.value || this._minReplicas); // Todo reuse calculations
             leaderCache.set(gid, leaders);
             if (leaders.find(x => x === this.id.toString())) {
               try {
-                await this.open(Address.parse(paddress), { replicationTopic, directory: this.directory, requestingIdentity: sender, verifyCanOpen: true, identity: this.identity, minReplicas: msg.minReplicas })
+                // Assumption: All entries should suffice as references 
+                // when passing to this.open as reasons/proof of validity of opening the store
+                const oneEntry = entries[0].entry;
+
+                await this.open(Address.parse(paddress), { replicationTopic, directory: this.directory, entryToReplicate: oneEntry, verifyCanOpen: true, identity: this.identity, minReplicas: msg.minReplicas })
               }
               catch (error) {
                 if (error instanceof AccessError) {
@@ -456,7 +460,7 @@ export class Peerbit {
 
           const programAndStores = pstores[paddress];
           const programInfo = this.programs[replicationTopic][paddress];
-          const storeInfo = programInfo.program.allStores.get(saddress);
+          const storeInfo = programInfo.program.allStoresMap.get(saddress);
           if (!storeInfo) {
             throw new Error("Missing store info, which was expected to exist for " + replicationTopic + ", " + paddress + ", " + saddress)
           }
@@ -474,7 +478,7 @@ export class Peerbit {
 
           }
           if (toMerge.length > 0) {
-            const store = programAndStores.program.allStores.get(saddress);
+            const store = programAndStores.program.allStoresMap.get(saddress);
             if (!store) {
               throw new Error("Unexpected, missing store on sync")
             }
@@ -587,7 +591,7 @@ export class Peerbit {
     const programs = this.programs[replicationTopic];
     if (programs) {
       for (const [_storeAddress, programAndStores] of Object.entries(programs)) {
-        for (const [_, store] of programAndStores.program.allStores) {
+        for (const [_, store] of programAndStores.program.allStoresMap) {
           if (store.replicate) {
             // create a channel for sending/receiving messages
 
@@ -655,7 +659,7 @@ export class Peerbit {
       const programs = this.programs[replicationTopic];
       if (programs) {
         for (const programInfo of Object.values(programs)) {
-          for (const [_, store] of programInfo.program.allStores) {
+          for (const [_, store] of programInfo.program.allStoresMap) {
             const heads = store.oplog.heads;
             const groupedByGid = groupByGid(heads);
             for (const [gid, entries] of groupedByGid) {
@@ -826,17 +830,17 @@ export class Peerbit {
 
 
 
-  _getProgramRoot(program: AbstractProgram, replicationTopic: string): Program | undefined {
-    let parent = program
-    while (parent?.parentProgram || (parent as Program).parentProgamAddress) {
-      const parentAddress = parent?.parentProgram?.address || (parent as Program).parentProgamAddress
-      parent = this.programs[replicationTopic]?.[parentAddress.toString()]?.program;
-    }
-    if (program instanceof Program === false) {
-      throw new Error("Unexpected")
-    }
-    return parent as Program;
-  }
+  /*   _getProgramRoot(program: AbstractProgram, replicationTopic: string): Program | undefined {
+      let parent = program.programOwner
+      while (parent?.parentProgram || (parent as Program).parentProgamAddress) {
+        const parentAddress = parent?.parentProgram?.address || (parent as Program).parentProgamAddress
+        parent = this.programs[replicationTopic]?.[parentAddress.toString()]?.program;
+      }
+      if (program instanceof Program === false) {
+        throw new Error("Unexpected")
+      }
+      return parent as Program;
+    } */
 
   async addProgram(replicationTopic: string, program: Program, minReplicas: MinReplicas): Promise<ProgramWithMetadata> {
     if (!this.programs[replicationTopic]) {
@@ -1136,19 +1140,24 @@ export class Peerbit {
         let pstores = this.programs[definedReplicationTopic];
         if ((!pstores || !pstores[programAddress.toString()]) && options.verifyCanOpen) {
           // open store if is leader and sender is trusted
-          let senderCanOpen: boolean;
+          let senderCanOpen: boolean = false;
 
-          if (!program.parentProgamAddress) {
+          if (!program.programOwner) {
             // can open is is trusted by netwoek?
-            senderCanOpen = await this._canOpenProgram(options.requestingIdentity, definedReplicationTopic);
+            senderCanOpen = await this._canOpenProgram(await options.entryToReplicate?._signature.decrypt(this.encryption.getAnyKeypair).then(k => k.getValue(SignatureWithKey).publicKey), definedReplicationTopic);
           }
-          else {
-            const rootParent = await this._getProgramRoot(program, definedReplicationTopic);
-            if (!rootParent) {
-              throw new AccessError("Unexpected")
+          else if (options.entryToReplicate) {
+
+            let ownerProgram: AbstractProgram | undefined = this.programs[definedReplicationTopic]?.[program.programOwner.address.toString()]?.program;
+            if (program.programOwner.subProgramAddress) {
+              ownerProgram = ownerProgram?.allProgramsMap.get(program.programOwner.subProgramAddress.toString())
             }
-            const canOpen = ((rootParent as Program) as any as CanOpenSubPrograms).canOpen
-            senderCanOpen = !!canOpen && !!options.requestingIdentity && await canOpen(program, options.requestingIdentity)
+            if (!ownerProgram) {
+              throw new AccessError("Failed to find owner program")
+            }
+            // TOOD make typesafe
+            const csp = ((ownerProgram as Program) as any as CanOpenSubPrograms)
+            senderCanOpen = !!csp.canOpen && await csp.canOpen(program, () => (options.entryToReplicate as Entry<any>)._payload.decrypt(this.encryption.getAnyKeypair).then(p => p.getValue(Payload)), () => (options.entryToReplicate as Entry<any>)._signature.decrypt(this.encryption.getAnyKeypair).then(k => k.getValue(SignatureWithKey).publicKey))
           }
 
           if (!senderCanOpen) {

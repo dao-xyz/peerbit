@@ -7,15 +7,15 @@ import { arraysEqual } from '@dao-xyz/peerbit-borsh-utils';
 import { Store } from '@dao-xyz/peerbit-store';
 import { DSearch } from '@dao-xyz/peerbit-dsearch';
 import { BORSH_ENCODING, CanAppend, Payload } from '@dao-xyz/ipfs-log';
-import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';
-import { ComposableProgram, Program } from '@dao-xyz/peerbit-program';
+import { SignatureWithKey, SignKey } from '@dao-xyz/peerbit-crypto';
+import { CanOpenSubPrograms, ComposableProgram, Program, ProgramOwner } from '@dao-xyz/peerbit-program';
 
 const replaceAll = (str: string, search: any, replacement: any) => str.toString().split(search).join(replacement)
 
 const encoding = BORSH_ENCODING(Operation);
 
 @variant([0, 6])
-export class DDocs<T extends BinaryPayload> extends ComposableProgram {
+export class DDocs<T extends BinaryPayload> extends ComposableProgram implements CanOpenSubPrograms {
 
   @field({ type: Store })
   store: Store<Operation<T>>
@@ -58,6 +58,12 @@ export class DDocs<T extends BinaryPayload> extends ComposableProgram {
     await this.search.setup({ context: { address: () => this.parentProgram.address }, canRead: options.canRead, queryHandler: this.queryHandler.bind(this) });
   }
 
+  async canOpen(program: Program, payload: () => Promise<Payload<any>>, identity: () => Promise<SignKey>): Promise<boolean> {
+    if (this._clazz && program instanceof this._clazz) {
+      return !!this.store.canAppend && this.store.canAppend(payload, identity)
+    }
+    return false;
+  }
 
   public get(key: any, caseSensitive = false): IndexedValue<T>[] {
     key = key.toString()
@@ -208,8 +214,10 @@ export class DDocs<T extends BinaryPayload> extends ComposableProgram {
 
   public put(doc: T, options = {}) {
     if (doc instanceof Program) {
-      doc.parentProgram = this.parentProgram;
-      doc.parentProgamAddress = this.parentProgram.address;
+      doc.programOwner = new ProgramOwner({
+        address: this.parentProgram.address,
+        subProgramAddress: this.address
+      })
     }
 
 
