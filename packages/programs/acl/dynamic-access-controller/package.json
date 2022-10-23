@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-dynamic-access-controller",
-  "version": "0.0.32",
+  "version": "0.0.33",
   "description": "Access controller that operates on a DB",
   "type": "module",
   "sideEffects": false,
