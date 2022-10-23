@@ -1,6 +1,6 @@
 import { LamportClock as Clock } from './lamport-clock'
 import { isDefined } from './is-defined'
-import { variant, field, vec, option, serialize, deserialize } from '@dao-xyz/borsh';
+import { variant, field, vec, option, serialize, deserialize, Constructor } from '@dao-xyz/borsh';
 import io from '@dao-xyz/peerbit-io-utils';
 import { IPFS } from 'ipfs-core-types'
 import { arraysEqual, joinUint8Arrays, UInt8ArraySerializer } from '@dao-xyz/peerbit-borsh-utils';
@@ -426,7 +426,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
     })
 
     if (properties.canAppend) {
-      if (! await properties.canAppend(() => Promise.resolve(payloadToSave), () => Promise.resolve(properties.identity.publicKey))) {
+      if (! await properties.canAppend(() => Promise.resolve(properties.data), () => Promise.resolve(properties.identity.publicKey))) {
         throw new AccessError()
       }
     }

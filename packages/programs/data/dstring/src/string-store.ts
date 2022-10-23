@@ -8,9 +8,8 @@ import { CustomBinaryPayload } from '@dao-xyz/peerbit-bpayload';
 import { Store } from '@dao-xyz/peerbit-store';
 import { BORSH_ENCODING, CanAppend, Identity } from '@dao-xyz/ipfs-log';
 import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';
-import { Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program';
+import { Program } from '@dao-xyz/peerbit-program';
 import { QueryOptions, CanRead } from '@dao-xyz/peerbit-dquery';
-import { IPFS } from 'ipfs-core-types';
 export const STRING_STORE_TYPE = 'string_store';
 const findAllOccurrences = (str: string, substr: string): number[] => {
   str = str.toLowerCase();
@@ -26,7 +25,6 @@ const findAllOccurrences = (str: string, substr: string): number[] => {
   return result;
 }
 
-const encond = BORSH_ENCODING(PayloadOperation)
 export type StringStoreOptions = { canRead?: (key: SignatureWithKey) => Promise<boolean> };
 
 @variant([0, 5])
@@ -52,7 +50,7 @@ export class DString extends Program {
 
   async setup(options?: { canRead?: CanRead, canAppend?: CanAppend<PayloadOperation> }) {
 
-    this.store.onUpdate = this._index.updateIndex.bind(this._index)
+    this.store.setup({ encoding, onUpdate: this._index.updateIndex.bind(this._index) });
     if (options?.canAppend) {
       this.store.canAppend = options.canAppend;
     }

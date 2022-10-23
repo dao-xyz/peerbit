@@ -4,7 +4,6 @@ import * as ipfsModule from 'ipfs'
 import * as ipfsHttpModule from 'ipfs-http-client'
 // @ts-ignore
 import * as ipfsBin from 'go-ipfs'
-import { IPFSOptions } from 'ipfsd-ctl/src/types';
 
 export const factoryConfig = {
     defaults: {
@@ -63,7 +62,7 @@ export const browserConfig = {
                 }
             }
         }
-    } as IPFSOptions,
+    },
     daemon1: {
         relay: { enabled: true, hop: { enabled: true, active: true } },
         EXPERIMENTAL: {
@@ -86,7 +85,7 @@ export const browserConfig = {
                 }
             }
         }
-    } as IPFSOptions,
+    },
     daemon2: {
         relay: { enabled: true, hop: { enabled: true, active: true } },
         EXPERIMENTAL: {
@@ -109,7 +108,7 @@ export const browserConfig = {
                 }
             }
         }
-    } as IPFSOptions
+    }
 }
 
 
@@ -162,7 +161,7 @@ export const nodeConfig = {
                 }
             }
         }
-    } as IPFSOptions,
+    },
     daemon2: {
         EXPERIMENTAL: {
             pubsub: true
@@ -183,5 +182,5 @@ export const nodeConfig = {
                 }
             }
         }
-    } as IPFSOptions
+    }
 }

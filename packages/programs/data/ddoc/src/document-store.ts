@@ -1,4 +1,4 @@
-import { DeleteOperation, DocumentIndex, IndexedValue, Operation, PutAllOperation, PutOperation } from './document-index'
+import { DeleteOperation, DocumentIndex, IndexedValue, Operation, PutAllOperation, PutOperation, encoding } from './document-index'
 import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
 import { asString } from './utils.js';
 import { DocumentQueryRequest, FieldQuery, FieldStringMatchQuery, Result, ResultWithSource, SortDirection, FieldByteMatchQuery, FieldBigIntCompareQuery, Compare, Query, MemoryCompareQuery, DSearchInitializationOptions, QueryType } from '@dao-xyz/peerbit-dsearch';
@@ -7,13 +7,12 @@ import { arraysEqual } from '@dao-xyz/peerbit-borsh-utils';
 import { Store } from '@dao-xyz/peerbit-store';
 import { DSearch } from '@dao-xyz/peerbit-dsearch';
 import { BORSH_ENCODING, CanAppend, Payload } from '@dao-xyz/ipfs-log';
-import { SignatureWithKey, SignKey } from '@dao-xyz/peerbit-crypto';
+import { SignKey } from '@dao-xyz/peerbit-crypto';
 import { CanOpenSubPrograms, ComposableProgram, Program, ProgramOwner } from '@dao-xyz/peerbit-program';
 import { CanRead } from '@dao-xyz/peerbit-dquery';
 
 const replaceAll = (str: string, search: any, replacement: any) => str.toString().split(search).join(replacement)
 
-const encoding = BORSH_ENCODING(Operation);
 
 @variant([0, 6])
 export class DDocs<T extends BinaryPayload> extends ComposableProgram implements CanOpenSubPrograms {
@@ -52,14 +51,14 @@ export class DDocs<T extends BinaryPayload> extends ComposableProgram implements
 
     this._clazz = options.type;
     this._index.init(this._clazz);
-    this.store.onUpdate = this._index.updateIndex.bind(this._index);
+    this.store.setup({ encoding: BORSH_ENCODING(Operation), onUpdate: this._index.updateIndex.bind(this._index) })
     if (options.canAppend) {
       this.store.canAppend = options.canAppend
     }
     await this.search.setup({ context: { address: () => this.parentProgram.address }, canRead: options.canRead, queryHandler: this.queryHandler.bind(this) });
   }
 
-  async canOpen(program: Program, payload: () => Promise<Payload<any>>, identity: () => Promise<SignKey>): Promise<boolean> {
+  async canOpen(program: Program, payload: () => Promise<any>, identity: () => Promise<SignKey>): Promise<boolean> {
     if (this._clazz && program instanceof this._clazz) {
       return !!this.store.canAppend && this.store.canAppend(payload, identity)
     }
@@ -143,7 +142,7 @@ export class DDocs<T extends BinaryPayload> extends ComposableProgram implements
             }
             else if (f instanceof MemoryCompareQuery) {
               const payload = doc.entry._payload.decrypted.getValue(Payload);
-              const operation = payload.getValue(encoding);
+              const operation = payload.getValue(this.store.encoding);
               if (operation instanceof PutOperation) {
                 const bytes = operation.data;
                 for (const compare of f.compares) {

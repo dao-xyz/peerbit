@@ -35,10 +35,9 @@ export class NetworkDiscovery extends Program {
         this._options = options;
         return super.init(ipfs, identity, options);
     }
-    async canAppend(mpayload: () => Promise<Payload<Operation<NetworkInfo>>>, mkey: () => Promise<SignKey>): Promise<boolean> {
+    async canAppend(mpayload: () => Promise<Operation<NetworkInfo>>, mkey: () => Promise<SignKey>): Promise<boolean> {
         // check if the peer id is trusted by the signature
-        const payload = await mpayload();
-        const operation = payload.getValue(encoding);
+        const operation = await mpayload();
 
         // i.e. load the network?
         if (operation instanceof PutOperation || operation instanceof DeleteOperation) {

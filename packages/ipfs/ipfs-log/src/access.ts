@@ -21,4 +21,4 @@ export class DefaultAccessController<T> implements CanAppendAccessController<T> 
   }
 }
  */
-export type CanAppend<T> = (payload: () => Promise<Payload<T>>, identity: () => Promise<SignKey>) => Promise<boolean> | boolean
+export type CanAppend<T> = (payload: () => Promise<T>, identity: () => Promise<SignKey>) => Promise<boolean> | boolean

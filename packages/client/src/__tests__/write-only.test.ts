@@ -165,7 +165,7 @@ describe(`orbit-db - Write-only`, function () {
 
         const replicationTopic = 'x';
 
-        let cb: { payload: Payload<Operation<EventStore<string>>>, identity: SignKey }[] = [];
+        let cb: { payload: Operation<EventStore<string>>, identity: SignKey }[] = [];
 
         @variant([0, 239])
         class ProgramWithSubprogram extends Program {
@@ -178,7 +178,7 @@ describe(`orbit-db - Write-only`, function () {
                 this.eventStore = eventStore;
             }
 
-            async canAppend(payload: () => Promise<Payload<Operation<EventStore<string>>>>, identity: () => Promise<SignKey>): Promise<boolean> {
+            async canAppend(payload: () => Promise<Operation<EventStore<string>>>, identity: () => Promise<SignKey>): Promise<boolean> {
 
                 cb.push({ payload: await payload(), identity: await identity() }); // this is what we are testing, are we going here when opening a subprogram?
                 return true;

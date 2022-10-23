@@ -1,6 +1,6 @@
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import { DDocs, Operation, PutOperation } from "@dao-xyz/peerbit-ddoc";
-import { BORSH_ENCODING, Entry, Payload } from "@dao-xyz/ipfs-log";
+import { Entry, Payload } from "@dao-xyz/ipfs-log";
 import { createHash } from "crypto";
 import { IPFSAddress, Key, OtherKey, PublicSignKey, SignatureWithKey, SignKey } from "@dao-xyz/peerbit-crypto";
 import type { PeerId } from '@libp2p/interface-peer-id';
@@ -12,13 +12,10 @@ import { Program } from '@dao-xyz/peerbit-program';
 import { CanRead, DQuery } from "@dao-xyz/peerbit-dquery";
 import { waitFor } from "@dao-xyz/peerbit-time";
 
-const encoding = BORSH_ENCODING(Operation);
-
-const canAppendByRelation = async (mpayload: () => Promise<Payload<Operation<any>>>, mkey: () => Promise<SignKey>, isTrusted?: (key: PublicSignKey) => Promise<boolean>): Promise<boolean> => {
+const canAppendByRelation = async (mpayload: () => Promise<Operation<any>>, mkey: () => Promise<SignKey>, isTrusted?: (key: PublicSignKey) => Promise<boolean>): Promise<boolean> => {
 
     // verify the payload 
-    const payload = await mpayload();
-    const operation = payload.getValue(encoding);
+    const operation = await mpayload();
     if (operation instanceof PutOperation || operation instanceof DeleteOperation) {
         /*  const relation: Relation = operation.value || deserialize(operation.data, Relation); */
 
@@ -69,7 +66,7 @@ export class RelationContract extends Program {
         }
     }
 
-    async canAppend(payload: () => Promise<Payload<Operation<Relation>>>, keyEncrypted: () => Promise<SignKey>): Promise<boolean> {
+    async canAppend(payload: () => Promise<Operation<Relation>>, keyEncrypted: () => Promise<SignKey>): Promise<boolean> {
         return canAppendByRelation(payload, keyEncrypted)
     }
 
@@ -154,7 +151,7 @@ export class TrustedNetwork extends Program {
     }
 
 
-    async canAppend(payload: () => Promise<Payload<Operation<any>>>, keyEncrypted: () => Promise<SignKey>): Promise<boolean> {
+    async canAppend(payload: () => Promise<Operation<any>>, keyEncrypted: () => Promise<SignKey>): Promise<boolean> {
 
         return canAppendByRelation(payload, keyEncrypted, async (key) => await this.isTrusted(key))
     }

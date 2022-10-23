@@ -12,11 +12,11 @@ import * as ipfsHttpModule from 'ipfs-http-client'
 import * as ipfsBin from 'go-ipfs'
 
 import dotenv from 'dotenv'
-import { NodeType } from 'ipfsd-ctl/src/types'
+import { ControllerType } from 'ipfsd-ctl';
 dotenv.config();
 
 interface Module {
-  type: NodeType
+  type: ControllerType
   test: boolean,
   disposable: boolean,
   args?: string[]
@@ -27,8 +27,8 @@ interface Module {
 }
 
 const jsIpfs = {
-  'js-ipfs': {
-    type: 'proc' as NodeType,
+  ['js-ipfs' as ControllerType]: {
+    type: 'proc',
     test: true,
     disposable: true,
     ipfsModule
@@ -36,8 +36,8 @@ const jsIpfs = {
 }
 
 const goIpfs = {
-  'go-ipfs': {
-    type: 'go' as NodeType,
+  ['go-ipfs' as ControllerType]: {
+    type: 'go',
     test: true,
     disposable: true,
     args: ['--enable-pubsub-experiment'],
@@ -47,7 +47,7 @@ const goIpfs = {
 }
 
 // By default, we run tests against js-ipfs.
-let testAPIs: { "js-ipfs"?: Module, 'go-ipfs'?: Module, } = Object.assign({}, jsIpfs)
+let testAPIs: { 'js-ipfs'?: Module, 'go-ipfs'?: Module, } = Object.assign({}, jsIpfs)
 
 // Setting env variable 'TEST=all' will make tests run with js-ipfs and go-ipfs.
 // Setting env variable 'TEST=go' will make tests run with go-ipfs.

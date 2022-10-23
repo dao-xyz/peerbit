@@ -7,6 +7,8 @@ import { UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
 @variant(0)
 export class Operation<T> { }
 
+export const encoding = BORSH_ENCODING(Operation);
+
 @variant(0)
 export class PutOperation<T> extends Operation<T> {
 
@@ -84,7 +86,6 @@ export interface IndexedValue<T> {
 export class DocumentIndex<T> {
   _index: { [key: string]: IndexedValue<T> };
   clazz: Constructor<T>
-  _encoding: Encoding<Operation<T>>
 
   constructor() {
     this._index = {}
@@ -92,7 +93,6 @@ export class DocumentIndex<T> {
 
   init(clazz: Constructor<T>) {
     this.clazz = clazz;
-    this._encoding = BORSH_ENCODING(Operation)
   }
 
   get(key: Hashable): IndexedValue<T> {
@@ -105,7 +105,7 @@ export class DocumentIndex<T> {
       throw new Error("Not initialized");
     }
     const reducer = (handled: { [key: string]: boolean }, item: Entry<Operation<T>>) => {
-      let payload = item.payload.getValue(this._encoding);
+      let payload = item.payload.getValue(encoding);
       if (payload instanceof PutAllOperation) {
         for (const doc of payload.docs) {
           if (doc && handled[doc.key] !== true) {

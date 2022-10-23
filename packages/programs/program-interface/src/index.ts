@@ -243,7 +243,7 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
 }
 
 export interface CanOpenSubPrograms {
-    canOpen(program: Program, payload: () => Promise<Payload<any>>, identity: () => Promise<SignKey>): Promise<boolean>
+    canOpen(program: Program, payload: () => Promise<any>, identity: () => Promise<SignKey>): Promise<boolean>
 }
 
 

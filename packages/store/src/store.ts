@@ -1,7 +1,7 @@
 import path from 'path'
 import mapSeries from 'p-each-series'
 import PQueue from 'p-queue'
-import { Log, ISortFunction, PruneOptions, LogOptions, Identity, max, min, CanAppend, Payload } from '@dao-xyz/ipfs-log'
+import { Log, ISortFunction, PruneOptions, LogOptions, Identity, max, min, CanAppend, Payload, BORSH_ENCODING, JSON_ENCODING } from '@dao-xyz/ipfs-log'
 import { Encoding, EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log'
 import { Entry } from '@dao-xyz/ipfs-log'
 import { Replicator } from './replicator.js'
@@ -172,11 +172,13 @@ export interface Saveable {
 
 
 
+
 @variant(0)
 export class Store<T> extends SystemBinaryPayload implements Addressable, Initiable<T>, Saveable {
 
   @field({ type: 'string' })
   name: string;
+
 
   _canAppend?: CanAppend<T>;
   _onUpdate?: (oplog: Log<T>, entries?: Entry<T>[]) => void
@@ -196,6 +198,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
   manifestPath: string;
   initialized: boolean;
   address: Address
+  encoding: Encoding<T> = JSON_ENCODING;
 
   /*   allowForks: boolean = true;
    */
@@ -216,6 +219,11 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     if (properties) {
       this.name = (properties.parent?.name ? (properties.parent?.name + '/') : '') + (properties.name || uuid());
     }
+  }
+
+  setup(properties: { encoding: Encoding<T>, onUpdate: (oplog: Log<T>, entries?: Entry<T>[]) => void }) {
+    this.encoding = properties.encoding;
+    this.onUpdate = properties.onUpdate
   }
 
   async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<T>): Promise<this> {
@@ -340,6 +348,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
 
     return this;
   }
+
 
 
   updateStateFromLogs = async (logs: Log<T>[]) => {
@@ -541,7 +550,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
 
       // TODO Fix types
 
-      if (this.canAppend && !(await this.canAppend(() => headToHandle._payload.decrypt(this.oplog._encryption?.getAnyKeypair).then(p => p.getValue(Payload)), () => (headToHandle._signature.decrypt(this.oplog._encryption?.getAnyKeypair).then(p => p.getValue(SignatureWithKey).publicKey))))) {
+      if (this.canAppend && !(await this.canAppend(() => headToHandle._payload.decrypt(this.oplog._encryption?.getAnyKeypair).then(p => p.getValue(Payload).getValue(this.encoding)), () => (headToHandle._signature.decrypt(this.oplog._encryption?.getAnyKeypair).then(p => p.getValue(SignatureWithKey).publicKey))))) {
         return Promise.resolve(null)
       }
 
@@ -614,7 +623,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     const snapshotCID = await this._cache.getBinary(this.snapshotPath, CID)
 
     if (snapshotCID) {
-      const chunks = []
+      const chunks: any[] = []
       for await (const chunk of this._ipfs.cat(snapshotCID.hash)) {
         chunks.push(chunk)
       }
