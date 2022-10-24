@@ -226,7 +226,7 @@ export const requestAndWaitForKeys = async<T extends (Ed25519Keypair | X25519Key
         try {
             const key = await waitForAsync(() => keystore.getKey<T>(condition.key), {
                 timeout,
-                delayInterval: 50
+                delayInterval: 50,
             });
             return key ? [key] : undefined;
 

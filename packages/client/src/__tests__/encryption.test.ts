@@ -112,13 +112,13 @@ Object.keys(testAPIs).forEach(API => {
         await db3.drop()
 
       if (orbitdb1)
-        await orbitdb1.stop()
+        await orbitdb1.disconnect()
 
       if (orbitdb2)
-        await orbitdb2.stop()
+        await orbitdb2.disconnect()
 
       if (orbitdb3)
-        await orbitdb3.stop()
+        await orbitdb3.disconnect()
     })
 
     it('replicates database of 1 entry known keys', async () => {

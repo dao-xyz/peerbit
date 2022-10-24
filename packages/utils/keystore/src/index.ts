@@ -1,1 +1,2 @@
-export * from './keystore';
+export * from './keystore.js';
+export * from './errors.js';

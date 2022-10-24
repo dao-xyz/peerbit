@@ -4,7 +4,7 @@ import { IStoreOptions, Store, Address, Saveable, Addressable } from '@dao-xyz/p
 import Logger from 'logplease'
 import { IPFS, IPFS as IPFSInstance } from 'ipfs-core-types';
 import Cache from '@dao-xyz/peerbit-cache'
-import { Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore'
+import { Keystore, KeyWithMeta, StoreError } from '@dao-xyz/peerbit-keystore'
 import { isDefined } from './is-defined.js'
 import { Level } from 'level';
 import { exchangeHeads, ExchangeHeadsMessage, AbsolutMinReplicas, EntryWithRefs, MinReplicas } from './exchange-heads.js'
@@ -183,10 +183,21 @@ export class Peerbit {
       })
     })
     this._keysInflightMap.set(promiseKey, promise);
-    const result = await promise;
-    this._keyRequestsLRU.set(promiseKey, result ? result : null);
-    this._keysInflightMap.delete(promiseKey);
-    return result;
+
+    try {
+      const result = await promise;
+      this._keyRequestsLRU.set(promiseKey, result ? result : null);
+      this._keysInflightMap.delete(promiseKey);
+      return result;
+    } catch (error) {
+      if (error instanceof StoreError) {
+        if (this._disconnected) {
+          return undefined;
+        }
+        throw error;
+      }
+    }
+
   }
 
   async decryptedSignedThing(data: Uint8Array): Promise<DecryptedThing<MaybeSigned<Uint8Array>>> {
@@ -283,7 +294,9 @@ export class Peerbit {
   }
 
 
+  _disconnected: boolean = false;
   async disconnect() {
+    this._disconnected = true;
     // Close a direct connection and remove it from internal state
 
     for (const [_topic, channel] of this._replicationTopicSubscriptions) {
@@ -594,14 +607,27 @@ export class Peerbit {
     // determine if we should open a channel (we are replicating a store on the topic + a weak check the peer is trusted)
     const programs = this.programs[replicationTopic];
     if (programs) {
+
+      // Should subscription to a replication be a proof of "REPLICATING?"
+      const entries = Object.entries(programs);
+      const initializeAsReplicator = async () => {
+        await exchangeSwarmAddresses((data) => this._ipfs.pubsub.publish(replicationTopic, data), this.identity, peer, await this._ipfs.swarm.peers(), this.getNetwork(replicationTopic), this.localNetwork)
+        await this.getChannel(peer, replicationTopic); // always open a channel, and drop channels if necessary (not trusted) (TODO)
+      }
+      if (entries.length === 0) {
+        // we are subscribed to replicationTopic, but we have not opened any store, this "means" 
+        // that we are intending to replicate data for this topic 
+        await initializeAsReplicator();
+        return;
+      }
+
       for (const [_storeAddress, programAndStores] of Object.entries(programs)) {
         for (const [_, store] of programAndStores.program.allStoresMap) {
           if (store.replicate) {
             // create a channel for sending/receiving messages
 
-            await exchangeSwarmAddresses((data) => this._ipfs.pubsub.publish(replicationTopic, data), this.identity, peer, await this._ipfs.swarm.peers(), this.getNetwork(replicationTopic), this.localNetwork)
-            await this.getChannel(peer, replicationTopic); // always open a channel, and drop channels if necessary (not trusted) (TODO)
-            return; // we return because we have know opened a channel to this peer
+            await initializeAsReplicator();
+            return;
 
             // Creation of this channel here, will make sure it is created even though a head might not be exchangee
 
@@ -1031,6 +1057,10 @@ export class Peerbit {
 
 
   async subscribeToReplicationTopic(topic: string): Promise<void> {
+    if (this._disconnected) {
+      throw new Error("Disconnected")
+    }
+
     if (!this.programs[topic]) {
       this.programs[topic] = {};
     }
@@ -1100,7 +1130,9 @@ export class Peerbit {
    */
 
   async open<S extends Program>(storeOrAddress: /* string | Address |  */S | Address, options: OpenStoreOptions = {}): Promise<S> {
-
+    if (this._disconnected) {
+      throw new Error("Disconnected")
+    }
     const fn = async (): Promise<ProgramWithMetadata> => {
       // TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?
       let programAddress = storeOrAddress instanceof Address ? storeOrAddress : storeOrAddress.address;

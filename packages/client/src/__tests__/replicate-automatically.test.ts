@@ -36,6 +36,8 @@ Object.keys(testAPIs).forEach(API => {
       rmrf.sync(dbPath3)
       rmrf.sync(dbPath4)
       session = await Session.connected(2, API);
+      orbitdb1 = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath1 })
+      orbitdb2 = await Peerbit.create(session.peers[1].ipfs, { directory: dbPath2 })
       /*    ipfsd1 = await startIpfs(API, config.daemon1)
          ipfsd2 = await startIpfs(API, config.daemon2)
          ipfsd3 = await startIpfs(API, config.daemon2)
@@ -73,9 +75,6 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     it('starts replicating the database when peers connect', async () => {
-      console.log('Peers connected')
-      orbitdb1 = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath1 })
-      orbitdb2 = await Peerbit.create(session.peers[1].ipfs, { directory: dbPath2 })
 
       const entryCount = 33
       const entryArr: number[] = []
@@ -127,9 +126,6 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     it('starts replicating the database when peers connect in write mode', async () => {
-      console.log('Peers connected')
-      orbitdb1 = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath1 })
-      orbitdb2 = await Peerbit.create(session.peers[1].ipfs, { directory: dbPath2 })
 
       const entryCount = 1
       const entryArr: number[] = []
