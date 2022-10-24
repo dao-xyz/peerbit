@@ -14,6 +14,8 @@
   },
   "files": [
     "lib",
+    "src",
+    "!src/__tests__",
     "LICENSE"
   ],
   "publishConfig": {

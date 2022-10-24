@@ -1,6 +1,6 @@
 
 import { deserialize, field, option, serialize, variant } from '@dao-xyz/borsh';
-import { DDocs } from '../document-store';
+import { DDocuments } from '../document-store';
 import { DocumentQueryRequest, Compare, FieldBigIntCompareQuery, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort, MemoryCompareQuery, MemoryCompare, Results, DSearch } from '@dao-xyz/peerbit-dsearch';
 import { CustomBinaryPayload } from '@dao-xyz/peerbit-bpayload';
 import { QueryRequestV0, query, QueryOptions, DQuery } from '@dao-xyz/peerbit-dquery';
@@ -41,10 +41,10 @@ class Document extends CustomBinaryPayload {
 @variant([0, 244])
 class DocumentDDoc extends Program {
 
-  @field({ type: DDocs })
-  docs: DDocs<Document>
+  @field({ type: DDocuments })
+  docs: DDocuments<Document>
 
-  constructor(properties?: { docs: DDocs<Document> }) {
+  constructor(properties?: { docs: DDocuments<Document> }) {
     super();
     if (properties) {
       this.docs = properties.docs;
@@ -92,7 +92,7 @@ describe('index', () => {
 
     // Create store
     writeStore = new DocumentDDoc({
-      docs: new DDocs<Document>({
+      docs: new DDocuments<Document>({
         search: new DSearch({
           query: new DQuery({
             queryRegion: 'world'

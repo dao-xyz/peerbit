@@ -1,5 +1,5 @@
 import { field, variant } from '@dao-xyz/borsh';
-import { DDocs, Operation } from '@dao-xyz/peerbit-ddoc';
+import { DDocuments, Operation } from '@dao-xyz/peerbit-ddoc';
 import { getPathGenerator, TrustedNetwork, getFromByTo, RelationContract } from '@dao-xyz/peerbit-trusted-network';
 import { Access, AccessData, AccessType } from './access';
 import { Entry, Identity, Payload } from '@dao-xyz/ipfs-log'
@@ -14,8 +14,8 @@ import { DQuery } from '@dao-xyz/peerbit-dquery';
 @variant([0, 12])
 export class DynamicAccessController extends Program {
 
-    @field({ type: DDocs })
-    access: DDocs<AccessData>;
+    @field({ type: DDocuments })
+    access: DDocuments<AccessData>;
 
     @field({ type: RelationContract })
     identityGraphController: RelationContract;
@@ -33,7 +33,7 @@ export class DynamicAccessController extends Program {
             if (!opts.trustedNetwork && !opts.rootTrust) {
                 throw new Error("Expecting either TrustedNetwork or rootTrust")
             }
-            this.access = new DDocs({
+            this.access = new DDocuments({
                 indexBy: 'id',
                 search: new DSearch({
                     query: new DQuery({})

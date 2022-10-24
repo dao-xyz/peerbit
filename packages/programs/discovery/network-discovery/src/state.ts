@@ -1,5 +1,5 @@
 import { field, BinaryWriter, vec, variant } from "@dao-xyz/borsh";
-import { DDocs } from "@dao-xyz/peerbit-ddoc";
+import { DDocuments } from "@dao-xyz/peerbit-ddoc";
 import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { Address } from "@dao-xyz/peerbit-store";
 import { DSearch } from "@dao-xyz/peerbit-dsearch";
@@ -71,7 +71,7 @@ export class NetworkInfo extends DiscoveryData {
 
 
 
-export const createDiscoveryStore = (props?: { name?: string, queryRegion?: string }) => new DDocs<NetworkInfo>({
+export const createDiscoveryStore = (props?: { name?: string, queryRegion?: string }) => new DDocuments<NetworkInfo>({
     indexBy: 'id',
     name: props?.name ? props?.name : '' + '_discovery',
     search: new DSearch({

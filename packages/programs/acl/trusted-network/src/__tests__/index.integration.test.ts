@@ -14,7 +14,7 @@ import { CachedValue, DefaultOptions, IStoreOptions } from '@dao-xyz/peerbit-sto
 import Cache from '@dao-xyz/peerbit-cache';
 import { field, serialize, variant } from '@dao-xyz/borsh';
 import { Program } from '@dao-xyz/peerbit-program';
-import { DDocs } from '@dao-xyz/peerbit-ddoc';
+import { DDocuments } from '@dao-xyz/peerbit-ddoc';
 const __filename = fileURLToPath(import.meta.url);
 
 const createIdentity = async () => {
@@ -29,10 +29,10 @@ const createIdentity = async () => {
 @variant([0, 242])
 class IdentityGraph extends Program {
 
-    @field({ type: DDocs })
-    store: DDocs<Relation>
+    @field({ type: DDocuments })
+    store: DDocuments<Relation>
 
-    constructor(properties?: { store: DDocs<Relation> }) {
+    constructor(properties?: { store: DDocuments<Relation> }) {
         super();
         if (properties) {
             this.store = properties.store;

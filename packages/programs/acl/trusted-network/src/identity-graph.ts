@@ -1,5 +1,5 @@
 import { field, serialize, serializeField, variant } from "@dao-xyz/borsh";
-import { DDocs, IndexedValue } from "@dao-xyz/peerbit-ddoc";
+import { DDocuments, IndexedValue } from "@dao-xyz/peerbit-ddoc";
 import { Key, PlainKey, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 // @ts-ignore
 import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
@@ -8,12 +8,12 @@ import { createHash } from "crypto";
 import { joinUint8Arrays, UInt8ArraySerializer } from '@dao-xyz/peerbit-borsh-utils'
 import { DQuery } from "@dao-xyz/peerbit-dquery";
 
-export type RelationResolver = { resolve: (key: PublicSignKey, db: DDocs<Relation>) => Promise<Result[]>, next: (relation: AnyRelation) => PublicSignKey }
+export type RelationResolver = { resolve: (key: PublicSignKey, db: DDocuments<Relation>) => Promise<Result[]>, next: (relation: AnyRelation) => PublicSignKey }
 export const PUBLIC_KEY_WIDTH = 72 // bytes reserved
 
 export const KEY_OFFSET = 3 + 4 + 1 + 28; // SystemBinaryPayload discriminator + Relation discriminator + AnyRelation discriminator + id length u32 + utf8 encoding + id chars
 export const getFromByTo: RelationResolver = {
-    resolve: async (to: PublicSignKey, db: DDocs<Relation>) => {
+    resolve: async (to: PublicSignKey, db: DDocuments<Relation>) => {
         const ser = serialize(to);
         return await db.queryHandler(new DocumentQueryRequest({
             queries: [
@@ -32,7 +32,7 @@ export const getFromByTo: RelationResolver = {
 }
 
 export const getToByFrom: RelationResolver = {
-    resolve: async (from: PublicSignKey, db: DDocs<Relation>) => {
+    resolve: async (from: PublicSignKey, db: DDocuments<Relation>) => {
         const ser = serialize(from);
         return await db.queryHandler(new DocumentQueryRequest({
             queries: [
@@ -57,7 +57,7 @@ export const getToByFrom: RelationResolver = {
 
 
 
-export async function* getPathGenerator(from: Key, db: DDocs<Relation>, resolver: RelationResolver) {
+export async function* getPathGenerator(from: Key, db: DDocuments<Relation>, resolver: RelationResolver) {
     let iter = [from];
     const visited = new Set();
     while (iter.length > 0) {
@@ -90,7 +90,7 @@ export async function* getPathGenerator(from: Key, db: DDocs<Relation>, resolver
  * @param db 
  * @returns 
  */
-export const hasPathToTarget = async (start: Key, target: (key: Key) => boolean, db: DDocs<Relation>, resolver: RelationResolver): Promise<boolean> => {
+export const hasPathToTarget = async (start: Key, target: (key: Key) => boolean, db: DDocuments<Relation>, resolver: RelationResolver): Promise<boolean> => {
 
     if (!db) {
         throw new Error("Not initalized")
@@ -158,17 +158,17 @@ export class AnyRelation extends Relation {
 }
 
 
-export const hasPath = async (start: Key, end: Key, db: DDocs<Relation>, resolver: RelationResolver): Promise<boolean> => {
+export const hasPath = async (start: Key, end: Key, db: DDocuments<Relation>, resolver: RelationResolver): Promise<boolean> => {
     return hasPathToTarget(start, (key) => end.equals(key), db, resolver)
 }
 
-export const hasRelation = (from: Key, to: Key, db: DDocs<Relation>): IndexedValue<Relation>[] => {
+export const hasRelation = (from: Key, to: Key, db: DDocuments<Relation>): IndexedValue<Relation>[] => {
     return db.get(new AnyRelation({ from, to }).id);
 }
 
 
 
-export const createIdentityGraphStore = (props: { name?: string, queryRegion?: string }) => new DDocs<Relation>({
+export const createIdentityGraphStore = (props: { name?: string, queryRegion?: string }) => new DDocuments<Relation>({
     indexBy: 'id',
     name: props?.name ? props?.name : '' + '_relation',
     search: new DSearch({

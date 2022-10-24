@@ -16,10 +16,6 @@ describe(`Session`, function () {
             expect((await peer.ipfsd.api.swarm.peers()).length).toEqual(2)
         }
 
-        await session.peers[0].ipfs.pubsub.subscribe('x', (message) => {
-
-            const x = 123;
-        })
         await waitForPeers(session.peers[1].ipfs, [session.peers[0].id], 'x')
         await session.peers[1].ipfs.pubsub.publish('x', new Uint8Array([1, 2, 3]));
         const x = await session.peers[1].ipfs.pubsub.peers('x');
