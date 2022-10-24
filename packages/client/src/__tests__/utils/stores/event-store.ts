@@ -1,10 +1,9 @@
-import { Identity, JSON_ENCODING, Log } from "@dao-xyz/ipfs-log";
+import { JSON_ENCODING, Log } from "@dao-xyz/ipfs-log";
 import { Entry } from "@dao-xyz/ipfs-log";
-import { Address, IInitializationOptions, load } from "@dao-xyz/peerbit-store";
 import { Store } from "@dao-xyz/peerbit-store"
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log';
 import { variant, field } from '@dao-xyz/borsh';
-import { AbstractProgram, Program, ProgramInitializationOptions } from "@dao-xyz/peerbit-program";
+import { Program } from "@dao-xyz/peerbit-program";
 
 // TODO: generalize the Iterator functions and spin to its own module
 export interface Operation<T> {
@@ -47,7 +46,11 @@ export class EventStore<T> extends Program {
     }
 
     async setup() {
-        this.store.onUpdate = this._index.updateIndex.bind(this._index)
+        this.store.setup({
+            onUpdate: this._index.updateIndex.bind(this._index),
+            encoding,
+            canAppend: () => Promise.resolve(true)
+        })
     }
 
 
@@ -61,7 +64,7 @@ export class EventStore<T> extends Program {
         return this.store._addOperation({
             op: 'ADD',
             value: data
-        }, { ...options, encoding })
+        }, { ...options })
     }
 
     get(hash: string) {

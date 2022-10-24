@@ -2,7 +2,7 @@ import { field, variant } from '@dao-xyz/borsh';
 import { DDocs, Operation } from '@dao-xyz/peerbit-ddoc';
 import { getPathGenerator, TrustedNetwork, getFromByTo, RelationContract } from '@dao-xyz/peerbit-trusted-network';
 import { Access, AccessData, AccessType } from './access';
-import { Identity, Payload } from '@dao-xyz/ipfs-log'
+import { Entry, Identity, Payload } from '@dao-xyz/ipfs-log'
 import { MaybeEncrypted, PublicSignKey, SignatureWithKey, SignKey } from '@dao-xyz/peerbit-crypto';
 
 // @ts-ignore
@@ -100,12 +100,12 @@ export class DynamicAccessController extends Program {
         return false;
     }
 
-    async canAppend(mkey: () => Promise<SignKey>): Promise<boolean> {
+    async canAppend(entry: Entry<any>): Promise<boolean> {
         // TODO, improve, caching etc
 
 
         // Check whether it is trusted by trust web
-        const key = await mkey();
+        const key = await entry.getPublicKey();
         if (await this.trustedNetwork.isTrusted(key)) {
             return true;
         }
@@ -139,7 +139,7 @@ export class DynamicAccessController extends Program {
 
     async setup() {
         await this.identityGraphController.setup({ canRead: this.canRead.bind(this) })
-        await this.access.setup({ type: AccessData, canAppend: (_, identity) => this.canAppend(identity), canRead: this.canRead.bind(this) })
+        await this.access.setup({ type: AccessData, canAppend: this.canAppend.bind(this), canRead: this.canRead.bind(this) })
         await this.trustedNetwork.setup();
     }
 }

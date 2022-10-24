@@ -69,7 +69,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const writes = 10
 
       for (let i = 0; i < writes; i++) {
-        await store._addOperation({ step: i }, { encoding: JSON_ENCODING, })
+        await store._addOperation({ step: i })
       }
       const snapshot = await store.saveSnapshot()
       expect(snapshot[0].path.length).toEqual(46)
@@ -82,7 +82,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const writes = 10
 
       for (let i = 0; i < writes; i++) {
-        await store._addOperation({ step: i }, { encoding: JSON_ENCODING, })
+        await store._addOperation({ step: i })
       }
       await store.saveSnapshot()
       index._index = [];

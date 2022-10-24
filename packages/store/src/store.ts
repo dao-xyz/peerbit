@@ -221,9 +221,10 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     }
   }
 
-  setup(properties: { encoding: Encoding<T>, onUpdate: (oplog: Log<T>, entries?: Entry<T>[]) => void }) {
+  setup(properties: { encoding: Encoding<T>, canAppend: CanAppend<T>, onUpdate: (oplog: Log<T>, entries?: Entry<T>[]) => void }) {
     this.encoding = properties.encoding;
     this.onUpdate = properties.onUpdate
+    this.canAppend = properties.canAppend;
   }
 
   async init(ipfs: IPFS, identity: Identity, options: IInitializationOptions<T>): Promise<this> {
@@ -398,6 +399,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     return {
       logId: this.address.toString(),
       encryption: this._options.encryption,
+      encoding: this.encoding,
       sortFn: this._options.sortFn,
       prune: this._options.prune,
     };
@@ -549,8 +551,8 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     const handle = async (headToHandle: Entry<T>) => {
 
       // TODO Fix types
-
-      if (this.canAppend && !(await this.canAppend(() => headToHandle._payload.decrypt(this.oplog._encryption?.getAnyKeypair).then(p => p.getValue(Payload).getValue(this.encoding)), () => (headToHandle._signature.decrypt(this.oplog._encryption?.getAnyKeypair).then(p => p.getValue(SignatureWithKey).publicKey))))) {
+      await headToHandle.init({ encoding: this.oplog._encoding, encryption: this.oplog._encryption });
+      if (this.canAppend && !(await this.canAppend(headToHandle))) {
         return Promise.resolve(null)
       }
 
@@ -673,7 +675,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     }
   }
 
-  async _addOperation(data: T, options: { encoding: Encoding<T>, skipCanAppendCheck?: boolean, nexts?: Entry<T>[], onProgressCallback?: (any: any) => void, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted }): Promise<Entry<T>> {
+  async _addOperation(data: T, options?: { skipCanAppendCheck?: boolean, nexts?: Entry<T>[], onProgressCallback?: (any: any) => void, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted }): Promise<Entry<T>> {
     const addOperation = async () => {
       // check local cache for latest heads
       if (this._options.syncLocal) {
@@ -681,9 +683,8 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
       }
 
       const entry = await this._oplog.append(data, {
-        nexts: options.nexts, pin: options.pin, reciever: options.reciever,
-        encoding: options.encoding,
-        canAppend: options.skipCanAppendCheck ? undefined : this.canAppend
+        nexts: options?.nexts, pin: options?.pin, reciever: options?.reciever,
+        canAppend: options?.skipCanAppendCheck ? undefined : this.canAppend
       })
 
       // TODO below is not nice, do we really need replication status?

@@ -70,7 +70,7 @@ class TestStore extends Program {
 
     async setup() {
         await this.accessController.setup();
-        await this.store.setup({ type: Document, canRead: this.accessController.canRead.bind(this.accessController), canAppend: (payload, identity) => this.accessController.canAppend(identity) });
+        await this.store.setup({ type: Document, canRead: this.accessController.canRead.bind(this.accessController), canAppend: (entry) => this.accessController.canAppend(entry) });
     }
 }
 describe('index', () => {

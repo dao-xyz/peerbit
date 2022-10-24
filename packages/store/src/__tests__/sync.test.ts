@@ -70,7 +70,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
             const entryCount = 10;
             for (let i = 0; i < entryCount; i++) {
-                await store._addOperation("i: " + i, { encoding: JSON_ENCODING });
+                await store._addOperation("i: " + i);
             }
 
             expect(store.oplog.heads.length).toEqual(1)
@@ -99,7 +99,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
             const entryCount = 10;
             for (let i = 0; i < entryCount; i++) {
-                await store._addOperation(i, { encoding: JSON_ENCODING });
+                await store._addOperation(i);
             }
 
             expect(store.oplog.heads.length).toEqual(1)

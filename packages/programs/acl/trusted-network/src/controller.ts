@@ -12,14 +12,14 @@ import { Program } from '@dao-xyz/peerbit-program';
 import { CanRead, DQuery } from "@dao-xyz/peerbit-dquery";
 import { waitFor } from "@dao-xyz/peerbit-time";
 
-const canAppendByRelation = async (mpayload: () => Promise<Operation<any>>, mkey: () => Promise<SignKey>, isTrusted?: (key: PublicSignKey) => Promise<boolean>): Promise<boolean> => {
+const canAppendByRelation = async (entry: Entry<Operation<Relation>>, isTrusted?: (key: PublicSignKey) => Promise<boolean>): Promise<boolean> => {
 
     // verify the payload 
-    const operation = await mpayload();
+    const operation = await entry.getPayloadValue();
     if (operation instanceof PutOperation || operation instanceof DeleteOperation) {
         /*  const relation: Relation = operation.value || deserialize(operation.data, Relation); */
 
-        const key = await mkey()
+        const key = await entry.getPublicKey();
         if (operation instanceof PutOperation) {
             // TODO, this clause is only applicable when we modify the identityGraph, but it does not make sense that the canAppend method does not know what the payload will
             // be, upon deserialization. There should be known in the `canAppend` method whether we are appending to the identityGraph.
@@ -66,8 +66,8 @@ export class RelationContract extends Program {
         }
     }
 
-    async canAppend(payload: () => Promise<Operation<Relation>>, keyEncrypted: () => Promise<SignKey>): Promise<boolean> {
-        return canAppendByRelation(payload, keyEncrypted)
+    async canAppend(entry: Entry<Operation<Relation>>): Promise<boolean> {
+        return canAppendByRelation(entry)
     }
 
 
@@ -151,9 +151,9 @@ export class TrustedNetwork extends Program {
     }
 
 
-    async canAppend(payload: () => Promise<Operation<any>>, keyEncrypted: () => Promise<SignKey>): Promise<boolean> {
+    async canAppend(entry: Entry<Operation<Relation>>): Promise<boolean> {
 
-        return canAppendByRelation(payload, keyEncrypted, async (key) => await this.isTrusted(key))
+        return canAppendByRelation(entry, async (key) => await this.isTrusted(key))
     }
 
     async canRead(key?: SignKey): Promise<boolean> {

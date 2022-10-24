@@ -1,6 +1,6 @@
 import { AbstractType, Constructor, field, getSchemasBottomUp, option, variant } from "@dao-xyz/borsh";
 import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
-import { Identity, Payload } from "@dao-xyz/ipfs-log";
+import { CanAppend, Entry, Identity, Payload } from "@dao-xyz/ipfs-log";
 import { SignKey } from "@dao-xyz/peerbit-crypto";
 
 import { IPFS } from "ipfs-core-types";
@@ -19,10 +19,12 @@ const checkClazzesCompatible = (clazzA: Constructor<any> | AbstractType<any>, cl
 
 @variant(0)
 export class ProgramOwner {
+
     @field({ type: Address })
     address: Address
+
     @field({ type: option(Address) })
-    subProgramAddress?: Address
+    subProgramAddress?: Address // maybe remove since it is not used actively
 
     constructor(properties?: {
         address: Address,
@@ -243,7 +245,7 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
 }
 
 export interface CanOpenSubPrograms {
-    canOpen(program: Program, payload: () => Promise<any>, identity: () => Promise<SignKey>): Promise<boolean>
+    canOpen(programToOpen: Program, fromEntry: Entry<any>): Promise<boolean>
 }
 
 

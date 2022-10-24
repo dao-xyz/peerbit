@@ -12,11 +12,10 @@ import { IPFS } from 'ipfs-core-types';
 import Cache from '@dao-xyz/peerbit-cache';
 import { Level } from 'level';
 import { fileURLToPath } from 'url';
-import path, { dirname } from 'path';
+import path from 'path';
 import { Program } from '@dao-xyz/peerbit-program';
 
 const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
 
 @variant("document")//@variant([1, 0])
 class Document extends CustomBinaryPayload {
@@ -141,7 +140,6 @@ describe('index', () => {
 
 
   describe('query', () => {
-
 
     it('match all', async () => {
 

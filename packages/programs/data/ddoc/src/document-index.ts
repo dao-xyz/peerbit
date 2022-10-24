@@ -40,6 +40,14 @@ export class PutOperation<T> extends Operation<T> {
     return this._value;
   }
 
+  getValue(encoding: Encoding<T>): T {
+    if (this._value) {
+      return this._value
+    }
+    this._value = encoding.decoder(this.data);
+    return this._value;
+  }
+
 }
 
 @variant(1)

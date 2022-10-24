@@ -99,7 +99,8 @@ describe(`addOperation`, function () {
             fail()
           }
           localHeads.heads[0].init({
-            encryption: store.oplog._encryption
+            encryption: store.oplog._encryption,
+            encoding: store.oplog._encoding
           });
           await localHeads.heads[0].getPayload();
           assert.deepStrictEqual(localHeads.heads[0].payload.getValue(), data)
@@ -122,7 +123,6 @@ describe(`addOperation`, function () {
     }, options);
 
     await store._addOperation(data, {
-      encoding: JSON_ENCODING,
       reciever: {
         clock: recieverKey.keypair.publicKey,
         payload: recieverKey.keypair.publicKey,
@@ -152,7 +152,8 @@ describe(`addOperation`, function () {
         }
 
         localHeads.heads[0].init({
-          encryption: store.oplog._encryption
+          encryption: store.oplog._encryption,
+          encoding: store.oplog._encoding
         });
         try {
           await localHeads.heads[0].getPayload();
@@ -177,7 +178,6 @@ describe(`addOperation`, function () {
 
     const reciever = await keystore.createEd25519Key();
     await store._addOperation(data, {
-      encoding: JSON_ENCODING,
       reciever: {
         clock: undefined,
         payload: reciever.keypair.publicKey,

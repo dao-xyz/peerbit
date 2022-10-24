@@ -1,8 +1,7 @@
 
-import assert from 'assert'
 import rmrf from 'rimraf'
 import { delay, waitFor } from '@dao-xyz/peerbit-time'
-import { variant, field } from '@dao-xyz/borsh'
+import { variant, field, Constructor } from '@dao-xyz/borsh'
 import { Peerbit } from '../peer'
 
 import { EventStore } from './utils/stores/event-store'
@@ -19,15 +18,13 @@ import {
     nodeConfig as config,
     startIpfs,
     stopIpfs,
-    testAPIs,
     connectPeers,
     waitForPeers,
 } from '@dao-xyz/peerbit-test-utils'
 import { CanOpenSubPrograms, Program } from '@dao-xyz/peerbit-program'
-import { SignKey } from '@dao-xyz/peerbit-crypto'
 import { DSearch } from '@dao-xyz/peerbit-dsearch'
 import { DQuery } from '@dao-xyz/peerbit-dquery'
-import { Payload } from '@dao-xyz/ipfs-log'
+import { CanAppend, Entry, Payload } from '@dao-xyz/ipfs-log'
 
 const orbitdbPath1 = './orbitdb/tests/write-only/1'
 const orbitdbPath2 = './orbitdb/tests/write-only/2'
@@ -165,10 +162,10 @@ describe(`orbit-db - Write-only`, function () {
 
         const replicationTopic = 'x';
 
-        let cb: { payload: Operation<EventStore<string>>, identity: SignKey }[] = [];
+        let cb: { entry: Entry<any> }[] = [];
 
         @variant([0, 239])
-        class ProgramWithSubprogram extends Program {
+        class ProgramWithSubprogram extends Program implements CanOpenSubPrograms {
 
             @field({ type: DDocs })
             eventStore: DDocs<EventStore<string>>
@@ -178,24 +175,28 @@ describe(`orbit-db - Write-only`, function () {
                 this.eventStore = eventStore;
             }
 
-            async canAppend(payload: () => Promise<Operation<EventStore<string>>>, identity: () => Promise<SignKey>): Promise<boolean> {
+            async canAppend(entry: Entry<any>): Promise<boolean> {
 
-                cb.push({ payload: await payload(), identity: await identity() }); // this is what we are testing, are we going here when opening a subprogram?
+                cb.push({ entry }); // this is what we are testing, are we going here when opening a subprogram?
                 return true;
             }
 
             setup(): Promise<void> {
                 return this.eventStore.setup({ type: EventStore, canAppend: this.canAppend.bind(this) });
             }
+
+            async canOpen(program: Program, fromEntry: Entry<any>): Promise<boolean> {
+                return program.constructor === EventStore && this.canAppend(fromEntry)
+            }
+
         }
         const store = new ProgramWithSubprogram(new DDocs<EventStore<string>>({ name: 'replication-tests', indexBy: 'name', search: new DSearch({ query: new DQuery({}) }) }));
         await orbitdb2.subscribeToReplicationTopic(replicationTopic);
         const openedStore = await orbitdb1.open(store, { replicationTopic, replicate: false });
 
-        const eventStore = await store.eventStore.put(new EventStore({ name: 'store 1' }), { nexts: [] });
-        const _eventStore2 = await store.eventStore.put(new EventStore({ name: 'store 2' }), { nexts: [eventStore] });
-
-        expect(store.eventStore.store.oplog.heads).toHaveLength(1);
+        const eventStore = await store.eventStore.put(new EventStore({ name: 'store 1' }));
+        const _eventStore2 = await store.eventStore.put(new EventStore({ name: 'store 2' }));
+        expect(store.eventStore.store.oplog.heads).toHaveLength(2); // two independent documents
 
         await waitFor(() => Object.values(orbitdb2.programs[replicationTopic]).length > 0, { timeout: 20 * 1000, delayInterval: 50 });
 
@@ -205,7 +206,8 @@ describe(`orbit-db - Write-only`, function () {
         cb = [];
         await eventStoreString.add("hello") // This will exchange an head that will make client 1 open the store 
         await waitFor(() => cb.length === 1); // one for checking 'can open store' 
-        expect(cb[0].identity.equals(orbitdb1.identity.publicKey))
+        expect((await cb[0].entry.getPublicKey()).equals(orbitdb1.identity.publicKey))
+
 
     })
 })

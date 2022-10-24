@@ -2,7 +2,6 @@ export * from './log.js';
 export * from './log-sorting.js';
 export * from './log-errors.js';
 export * from './log-io.js';
-export * from './access.js';
 export * from './entry.js';
 export * from './utils.js';
 export * from './lamport-clock.js';

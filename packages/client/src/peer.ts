@@ -1161,7 +1161,12 @@ export class Peerbit {
             }
             // TOOD make typesafe
             const csp = ((ownerProgram as Program) as any as CanOpenSubPrograms)
-            senderCanOpen = !!csp.canOpen && await csp.canOpen(program, () => (options.entryToReplicate as Entry<any>)._payload.decrypt(this.encryption.getAnyKeypair).then(p => p.getValue(Payload)), () => (options.entryToReplicate as Entry<any>)._signature.decrypt(this.encryption.getAnyKeypair).then(k => k.getValue(SignatureWithKey).publicKey))
+            if (!csp.canOpen) {
+              senderCanOpen = false
+            }
+            else {
+              senderCanOpen = await csp.canOpen(program, options.entryToReplicate);
+            }
           }
 
           if (!senderCanOpen) {

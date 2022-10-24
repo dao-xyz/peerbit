@@ -9,7 +9,6 @@ import { max, toBase64 } from './utils.js';
 import sodium from 'libsodium-wrappers';
 import { Encoding, JSON_ENCODING } from './encoding';
 import { Identity } from './identity.js';
-import { CanAppend } from './access';
 
 export const maxClockTimeReducer = <T>(res: bigint, acc: Entry<T>): bigint => max(res, acc.clock.time);
 
@@ -52,6 +51,7 @@ export function toBigIntLE(buf: Uint8Array): bigint {
 
 const IpfsNotDefinedError = () => new Error('Ipfs instance not defined')
 
+export type CanAppend<T> = (canAppend: Entry<T>) => Promise<boolean> | boolean
 
 // TODO do we really need to cbor all this way, only two fields are "normal". Raw storage could perhaps work better
 export interface EntrySerialized<T> {
@@ -164,7 +164,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
   static IPLD_LINKS = ['next']
 
   _encryption?: PublicKeyEncryptionResolver
-
+  _encoding?: Encoding<T>
 
 
   constructor(obj?: {
@@ -191,10 +191,18 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
     }
   }
 
-  init(props: { encryption?: PublicKeyEncryptionResolver } | Entry<T>): Entry<T> {
+  init(props: { encryption?: PublicKeyEncryptionResolver, encoding: Encoding<T> } | Entry<T>): Entry<T> {
     const encryption = props instanceof Entry ? props._encryption : props.encryption;
     this._encryption = encryption;
+    this._encoding = props instanceof Entry ? props._encoding : props.encoding
     return this;
+  }
+
+  get encoding() {
+    if (!this._encoding) {
+      throw new Error("Not initialized")
+    }
+    return this._encoding;
   }
 
   serialize(): EntrySerialized<T> {
@@ -239,6 +247,11 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
   async getPayload(): Promise<Payload<T>> {
     await this._payload.decrypt(this._encryption?.getAnyKeypair || (() => Promise.resolve(undefined)))
     return this.payload;
+  }
+
+  async getPayloadValue(): Promise<T> {
+    const payload = await this.getPayload()
+    return payload.getValue(this.encoding);
   }
 
   get publicKey(): PublicSignKey {
@@ -412,6 +425,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
       publicKey: properties.identity.publicKey,
       signature
     }), properties.encryption?.reciever.signature);
+
     const entry: Entry<T> = new Entry<T>({
       payload,
       clock,
@@ -425,14 +439,15 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
       /* refs: properties.refs, */
     })
 
+    entry.init({ encryption: properties.encryption?.options, encoding: properties.encoding });
+
     if (properties.canAppend) {
-      if (! await properties.canAppend(() => Promise.resolve(properties.data), () => Promise.resolve(properties.identity.publicKey))) {
+      if (! await properties.canAppend(entry)) {
         throw new AccessError()
       }
     }
     // Append hash and signature
     entry.hash = await Entry.toMultihash(properties.ipfs, entry, properties.pin)
-    entry.init({ encryption: properties.encryption?.options });
     return entry
   }
 

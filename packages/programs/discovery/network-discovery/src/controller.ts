@@ -1,9 +1,8 @@
 import { deserialize, field, variant } from "@dao-xyz/borsh";
 import { DDocs, DeleteOperation, Operation, PutOperation } from "@dao-xyz/peerbit-ddoc";
 import { Address } from "@dao-xyz/peerbit-store";
-import { BORSH_ENCODING, Identity, Payload } from "@dao-xyz/ipfs-log";
-import { SignatureWithKey, SignKey } from "@dao-xyz/peerbit-crypto";
-import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
+import { BORSH_ENCODING, Entry, Identity } from "@dao-xyz/ipfs-log";
+import { SignKey } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from 'ipfs-core-types';
 import { createDiscoveryStore, NetworkInfo } from "./state";
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
@@ -35,9 +34,9 @@ export class NetworkDiscovery extends Program {
         this._options = options;
         return super.init(ipfs, identity, options);
     }
-    async canAppend(mpayload: () => Promise<Operation<NetworkInfo>>, mkey: () => Promise<SignKey>): Promise<boolean> {
+    async canAppend(entry: Entry<Operation<NetworkInfo>>): Promise<boolean> {
         // check if the peer id is trusted by the signature
-        const operation = await mpayload();
+        const operation = await entry.getPayloadValue();
 
         // i.e. load the network?
         if (operation instanceof PutOperation || operation instanceof DeleteOperation) {
@@ -67,7 +66,7 @@ export class NetworkDiscovery extends Program {
             const network: TrustedNetwork = await Program.load(this.info.store._ipfs, Address.parse(info.network))
 
             await network.init(this._ipfs, this._identity, { ...this._options, store: { ...this._options.store, replicate: false } })
-            let isTrusted: boolean = await network.isTrusted((await mkey()))
+            let isTrusted: boolean = await network.isTrusted((await entry.getPublicKey()))
 
 
             // Close open connections

@@ -4,7 +4,7 @@ import { Entry } from './entry';
 import { IPFS } from 'ipfs-core-types'
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { max, min } from './utils';
-import { Encoding } from './encoding';
+import { Encoding, JSON_ENCODING } from './encoding';
 
 //@ts-ignore
 import Logger from 'logplease'
@@ -153,8 +153,7 @@ export class EntryIO {
 
         const addToResults = async (entry: Entry<T>) => {
           if (!cache[entry.hash] && !shouldExclude(entry.hash)) {
-            entry.init({ encryption: options.encryption });
-
+            entry.init({ encryption: options.encryption, encoding: options.encoding || JSON_ENCODING });
 
             // Todo check bigint conversions
             const ts = Number((await entry.getClock()).time)

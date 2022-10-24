@@ -6,7 +6,7 @@ import { Range } from './range.js';
 import { field, variant } from '@dao-xyz/borsh';
 import { CustomBinaryPayload } from '@dao-xyz/peerbit-bpayload';
 import { Store } from '@dao-xyz/peerbit-store';
-import { BORSH_ENCODING, CanAppend, Identity } from '@dao-xyz/ipfs-log';
+import { BORSH_ENCODING, CanAppend, EncryptionTemplateMaybeEncrypted, Entry, Identity } from '@dao-xyz/ipfs-log';
 import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';
 import { Program } from '@dao-xyz/peerbit-program';
 import { QueryOptions, CanRead } from '@dao-xyz/peerbit-dquery';
@@ -37,6 +37,7 @@ export class DString extends Program {
   search: DSearch<PayloadOperation>;
 
   _index: StringIndex;
+  _optionCanAppend?: CanAppend<PayloadOperation>
 
   constructor(properties: { name?: string, search: DSearch<PayloadOperation> }) {
     super(properties)
@@ -50,7 +51,8 @@ export class DString extends Program {
 
   async setup(options?: { canRead?: CanRead, canAppend?: CanAppend<PayloadOperation> }) {
 
-    this.store.setup({ encoding, onUpdate: this._index.updateIndex.bind(this._index) });
+    this._optionCanAppend = options?.canAppend;
+    this.store.setup({ encoding, canAppend: this.canAppend.bind(this), onUpdate: this._index.updateIndex.bind(this._index) });
     if (options?.canAppend) {
       this.store.canAppend = options.canAppend;
     }
@@ -60,18 +62,53 @@ export class DString extends Program {
 
   }
 
-  add(value: string, index: Range, options = {}) {
+  async canAppend(entry: Entry<PayloadOperation>): Promise<boolean> {
+
+    if (!await this._canAppend(entry)) {
+      return false;
+    }
+    if (this._optionCanAppend && !await this._optionCanAppend(entry)) {
+      return false;
+    }
+    return true;
+  }
+
+  async _canAppend(entry: Entry<PayloadOperation>): Promise<boolean> {
+    if (this.store.oplog.length === 0) {
+      return true;
+    }
+    else {
+      for (const next of entry.next) {
+        if (this.store.oplog.has(next)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  add(value: string, index: Range, options?: {
+    skipCanAppendCheck?: boolean;
+    onProgressCallback?: (any: any) => void;
+    pin?: boolean;
+    reciever?: EncryptionTemplateMaybeEncrypted;
+  }) {
     return this.store._addOperation(new PayloadOperation({
       index,
       value,
-    }), { ...options, encoding })
+    }), { nexts: this.store.oplog.heads, ...options })
   }
 
-  del(index: Range, options = {}) {
+  del(index: Range, options?: {
+    skipCanAppendCheck?: boolean;
+    onProgressCallback?: (any: any) => void;
+    pin?: boolean;
+    reciever?: EncryptionTemplateMaybeEncrypted;
+  }) {
     const operation = {
       index
     } as PayloadOperation
-    return this.store._addOperation(operation, { ...options, encoding })
+    return this.store._addOperation(operation, { nexts: this.store.oplog.heads, ...options })
   }
 
   async queryHandler(query: QueryType): Promise<Result[]> {

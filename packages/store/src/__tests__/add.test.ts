@@ -97,7 +97,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const data = { data: 12345 }
 
 
-      await store._addOperation(data, { encoding: JSON_ENCODING }).then((entry) => {
+      await store._addOperation(data).then((entry) => {
         expect(entry).toBeInstanceOf(Entry)
       }).catch(error => {
         rejects(error);
@@ -140,7 +140,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert(Address.isValid(store.address));
 
       for (let i = 0; i < writes; i++) {
-        await store._addOperation({ step: i }, { encoding: JSON_ENCODING })
+        await store._addOperation({ step: i })
       }
 
       await waitFor(() => done);

@@ -53,7 +53,11 @@ export class KeyValueStore<T> extends Program {
         this._index = new KeyValueIndex();
     }
     async setup() {
-        this.store.onUpdate = this._index.updateIndex.bind(this._index)
+        this.store.setup({
+            onUpdate: this._index.updateIndex.bind(this._index),
+            encoding,
+            canAppend: () => Promise.resolve(true)
+        })
     }
 
     get all() {
@@ -81,7 +85,7 @@ export class KeyValueStore<T> extends Program {
             op: 'PUT',
             key: key,
             value: data
-        }, { ...options, encoding: encoding })
+        }, { ...options })
     }
 
     del(key: string, options?: {
@@ -93,7 +97,7 @@ export class KeyValueStore<T> extends Program {
             op: 'DEL',
             key: key,
             value: undefined
-        }, { ...options, encoding: encoding })
+        }, { ...options })
     }
 }
 
