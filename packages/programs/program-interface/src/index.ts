@@ -11,11 +11,6 @@ import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 
 export type ProgramInitializationOptions = { store: IInitializationOptions<any>, parent?: AbstractProgram, onClose?: () => void, onDrop?: () => void };
 
-const checkClazzesCompatible = (clazzA: Constructor<any> | AbstractType<any>, clazzB: Constructor<any> | AbstractType<any>) => {
-    return clazzA == clazzB || clazzA.isPrototypeOf(clazzB) || clazzB.isPrototypeOf(clazzA)
-}
-
-
 @variant(0)
 export class ProgramOwner {
 
