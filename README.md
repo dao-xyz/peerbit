@@ -32,7 +32,7 @@ import { DString, Range } from '@dao-xyz/peerbit-dstring'
 import { Peerbit } from '@dao-xyz/peerbit'
 import { Program } from '@dao-xyz/peerbit-program'
 import { SignKey } from '@dao-xyz/peerbit-crypto';
-import { Range, DString } from '@dao-xyz/peerbit-dstriing';
+import { Range, DString } from '@dao-xyz/peerbit-dstring';
 
 class CollaborativeText extends Program {
 
@@ -71,8 +71,8 @@ console.log(document.address) /// this address can be opened by another peer
 await document.string.add('hello', new Range({ offset: 0n, length: 6n }));
 await document.string.add('world', new Range({ offset: 7n, length: 5n }));
 
-console.log(await document.dstring.toString()) // 'hello world' from local store
-console.log(await document.dstring.toString({remote: {maxAggregationTime: 3000 }})) // 'hello world' from peers
+console.log(await document.string.toString()) // 'hello world' from local store
+console.log(await document.string.toString({remote: {maxAggregationTime: 3000 }})) // 'hello world' from peers
 
 ```
 
