@@ -74,6 +74,7 @@ export class DString extends Program {
   }
 
   async _canAppend(entry: Entry<PayloadOperation>): Promise<boolean> {
+
     if (this.store.oplog.length === 0) {
       return true;
     }

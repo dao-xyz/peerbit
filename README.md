@@ -28,7 +28,7 @@ Started originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS 
 Below is a short example how you can create a collaborative text document: 
 
 ```typescript
-import { DString } from '@dao-xyz/peerbit-dstring'
+import { DString, Range } from '@dao-xyz/peerbit-dstring'
 import { Peerbit } from '@dao-xyz/peerbit'
 import { Program } from '@dao-xyz/peerbit-program'
 import { SignKey } from '@dao-xyz/peerbit-crypto';

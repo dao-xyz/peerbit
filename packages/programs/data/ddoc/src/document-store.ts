@@ -80,6 +80,7 @@ export class DDocs<T extends BinaryPayload> extends ComposableProgram {
   }
 
   async _canAppend(entry: Entry<Operation<T>>): Promise<boolean> {
+
     const operation = await entry.getPayloadValue();
 
     const pointsToHistory = (history: Entry<Operation<T>>) => {
