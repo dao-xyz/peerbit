@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-bpayload",
-  "version": "0.0.15",
+  "version": "0.0.16",
   "description": "Class for unifying io patterns (der/ser)",
   "type": "module",
   "sideEffects": false,
@@ -32,7 +32,7 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^3.4.2",
-    "@dao-xyz/peerbit-time": "^0.0.14",
+    "@dao-xyz/peerbit-time": "^0.0.15",
     "uuid": "^8.3.2"
   },
   "devDependencies": {
