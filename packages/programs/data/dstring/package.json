@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-dstring",
-  "version": "0.0.76",
+  "version": "0.0.77",
   "description": "String store",
   "type": "module",
   "sideEffects": false,
