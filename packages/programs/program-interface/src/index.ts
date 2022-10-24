@@ -1,7 +1,6 @@
-import { AbstractType, Constructor, field, getSchemasBottomUp, option, variant } from "@dao-xyz/borsh";
+import { AbstractType, Constructor, field, getSchemasBottomUp, option, variant, WrappedType } from "@dao-xyz/borsh";
 import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
-import { CanAppend, Entry, Identity, Payload } from "@dao-xyz/ipfs-log";
-import { SignKey } from "@dao-xyz/peerbit-crypto";
+import { Entry, Identity } from "@dao-xyz/ipfs-log";
 
 import { IPFS } from "ipfs-core-types";
 import { IInitializationOptions, Store, Address, Addressable, Saveable, save, load } from '@dao-xyz/peerbit-store';
@@ -36,6 +35,37 @@ export class ProgramOwner {
         }
     }
 }
+
+const getValuesWithType = <T>(from: any, type: Constructor<T> | AbstractType<T>): T[] => {
+    const schemas = getSchemasBottomUp(from.constructor);
+    const values: T[] = [];
+    for (const schema of schemas) {
+        for (let field of schema.schema.fields) {
+            const value = from[field.key as keyof AbstractProgram];
+            if (!value) {
+                continue;
+            }
+            const p = (element) => {
+                if (element && element instanceof type) {
+                    values.push(element);
+                }
+                else if (typeof element === 'object') {
+                    values.push(...getValuesWithType(element, type))
+                }
+            }
+            if (Array.isArray(value)) {
+                for (const element of value) {
+                    p(element)
+                }
+            }
+            else {
+                p(value);
+            }
+        }
+    }
+    return values;
+}
+
 
 @variant(1)
 export abstract class AbstractProgram extends SystemBinaryPayload implements Addressable, Saveable {
@@ -103,20 +133,7 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
         return this;
     }
 
-    _getFieldsWithType<T>(type: Constructor<T> | AbstractType<T>): T[] {
-        const schemas = getSchemasBottomUp(this.constructor);
-        const fields: string[] = [];
 
-        for (const schema of schemas) {
-            for (const field of schema.schema.fields) {
-                if (checkClazzesCompatible(field.type as Constructor<any>, type)) {
-                    fields.push(field.key);
-                }
-            }
-        }
-        const things = fields.map(field => this[field as keyof AbstractProgram] as any as T) as T[]
-        return things;
-    }
 
     async close(): Promise<void> {
         if (!this.initialized) {
@@ -151,7 +168,7 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
         return this._encryption;
     }
     get stores(): Store<any>[] {
-        return this._getFieldsWithType(Store)
+        return getValuesWithType(this, Store)
     }
 
 
@@ -213,7 +230,7 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
     }
 
     get programs(): AbstractProgram[] {
-        return this._getFieldsWithType(AbstractProgram)
+        return getValuesWithType(this, AbstractProgram)
     }
 
     async save(ipfs: IPFS, options?: {
