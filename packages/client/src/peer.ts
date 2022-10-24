@@ -603,16 +603,15 @@ export class Peerbit {
             await this.getChannel(peer, replicationTopic); // always open a channel, and drop channels if necessary (not trusted) (TODO)
             return; // we return because we have know opened a channel to this peer
 
-            // Creation of this channel here, will make sure it is created even though a head might not be exchanged
-
-            /*       await exchangeHeads(this.id, async (peer, msg) => {
-                    const channel = await this.getChannel(peer, replicationTopic);
-                    return channel.send(Buffer.from(msg));
-                  }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner()); */
+            // Creation of this channel here, will make sure it is created even though a head might not be exchangee
 
           }
           else {
             // If replicate false, we are in write mode. Means we should exchange all heads 
+            // Because we dont know anything about whom are to store data, so we assume all peers might have responsibility
+            const send = (data: Uint8Array) => this._ipfs.pubsub.publish(DirectChannel.getTopic([peer.toString()]), data);
+            await exchangeHeads(send, store, programAndStores.program, this.identity, store.oplog.heads, replicationTopic, false);
+
           }
         }
 
