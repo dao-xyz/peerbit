@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-network-discovery",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "description": "Discovery DB",
   "type": "module",
   "sideEffects": false,
@@ -31,9 +31,9 @@
   "dependencies": {
     "@dao-xyz/borsh": "^3.4.2",
     "@dao-xyz/peerbit-crypto": "^0.0.6",
-    "@dao-xyz/peerbit-ddoc": "^0.0.85",
-    "@dao-xyz/peerbit-dsearch": "^0.0.53",
-    "@dao-xyz/peerbit-trusted-network": "^0.0.38",
+    "@dao-xyz/peerbit-ddoc": "^0.0.86",
+    "@dao-xyz/peerbit-dsearch": "^0.0.54",
+    "@dao-xyz/peerbit-trusted-network": "^0.0.39",
     "p-map": "~1.1.1",
     "uuid": "^8.3.2"
   },
