@@ -15,7 +15,7 @@ import { DQuery } from '@dao-xyz/peerbit-dquery';
 export class DynamicAccessController extends Program {
 
     @field({ type: DDocuments })
-    access: DDocuments<AccessData>;
+    access: DDocuments<Access>;
 
     @field({ type: RelationContract })
     identityGraphController: RelationContract;
@@ -139,7 +139,7 @@ export class DynamicAccessController extends Program {
 
     async setup() {
         await this.identityGraphController.setup({ canRead: this.canRead.bind(this) })
-        await this.access.setup({ type: AccessData, canAppend: this.canAppend.bind(this), canRead: this.canRead.bind(this) })
+        await this.access.setup({ type: Access, canAppend: this.canAppend.bind(this), canRead: this.canRead.bind(this) })
         await this.trustedNetwork.setup();
     }
 }
