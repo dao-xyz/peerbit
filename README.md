@@ -23,6 +23,17 @@ Started originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS 
 
 ### [How Peerbit differs from OrbitDB](./documentation/DIFFERENCE.md)
 
+</br>
+</br>
+</br>
+
+## 🚧 WIP 🚧  Not production ready yet
+
+</br>
+</br>
+</br>
+
+
 
 ## Example code 
 Below is a short example how you can create a collaborative text document: 
@@ -76,15 +87,6 @@ console.log(await document.string.toString({remote: {maxAggregationTime: 3000 }}
 
 ```
 
-</br>
-</br>
-</br>
-
-## 🚧 WIP 🚧  Use with caution
-
-</br>
-</br>
-</br>
 
 Below are descriptions of some modules
 
