@@ -37,14 +37,14 @@ import { Range, DString } from '@dao-xyz/peerbit-dstriing';
 class CollaborativeText extends Program {
 
     @field({ type: DString })
-    dstring: DString // distributed string 
+    string: DString // distributed string 
 
     constructor() {
-        this.dstring = new DString()
+        this.string = new DString()
     }
 
     async setup() {
-        await this.dstring.setup({ canAppend: this.canAppend, canRead: this.canRead })
+        await this.string.setup({ canAppend: this.canAppend, canRead: this.canRead })
     }
 
     async canAppend(
@@ -68,8 +68,8 @@ console.log(document.address) /// this address can be opened by another peer
 
 
 //  ... 
-await document.add('hello', new Range({ offset: 0n, length: 6n }));
-await document.add('world', new Range({ offset: 7n), length: 5n }));
+await document.string.add('hello', new Range({ offset: 0n, length: 6n }));
+await document.string.add('world', new Range({ offset: 7n, length: 5n }));
 
 console.log(await document.dstring.toString()) // 'hello world' from local store
 console.log(await document.dstring.toString({remote: {maxAggregationTime: 3000 }})) // 'hello world' from peers
