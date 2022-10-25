@@ -482,6 +482,9 @@ export class Peerbit {
             throw new Error("Missing store info, which was expected to exist for " + replicationTopic + ", " + paddress + ", " + saddress)
           }
           const toMerge: Entry<any>[] = [];
+
+          await programInfo.program.initializationPromise; // Make sure it is ready
+
           for (const [gid, value] of groupByGid(heads)) {
             const leaders = leaderCache.get(gid) || await this.findLeaders(replicationTopic, isReplicating, gid, programInfo.minReplicas.value);
             const isLeader = leaders.find((l) => l === this.id.toString());

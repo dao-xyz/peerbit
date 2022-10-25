@@ -142,7 +142,7 @@ Object.keys(testAPIs).forEach(API => {
 
 
     it('replicates database of 1 entry unknown keys', async () => {
-
+      // TODO this test is flaky when running all tests at once
 
       options = Object.assign({}, options, { directory: dbPath2 })
 

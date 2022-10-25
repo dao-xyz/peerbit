@@ -58,16 +58,6 @@ class DocumentDDoc extends Program {
 
 const bigIntSort = <T extends (number | bigint)>(a: T, b: T): number => (a > b ? 1 : 0 || -(a < b))
 
-const mquery = (ipfs: IPFS, topic: string, request: DocumentQueryRequest, responseHandler: (results: Results) => void, options: QueryOptions | undefined) => (
-  query(ipfs, topic, new QueryRequestV0({
-    query: serialize(request)
-  }), (response) => {
-    const results = deserialize(response.response, Results);
-    responseHandler(results);
-  }, options)
-)
-
-
 describe('index', () => {
   let session: Session, observer: IPFS, writer: IPFS, writeStore: DocumentDDoc, observerStore: DocumentDDoc, cacheStore1: Level, cacheStore2: Level
 

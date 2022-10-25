@@ -8,6 +8,7 @@ import { IInitializationOptions, Store, Address, Addressable, Saveable, save, lo
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
+import { getValuesWithType } from './utils.js';
 
 export type ProgramInitializationOptions = { store: IInitializationOptions<any>, parent?: AbstractProgram, onClose?: () => void, onDrop?: () => void };
 
@@ -31,36 +32,6 @@ export class ProgramOwner {
     }
 }
 
-const getValuesWithType = <T>(from: any, type: Constructor<T> | AbstractType<T>): T[] => {
-    const schemas = getSchemasBottomUp(from.constructor);
-    const values: T[] = [];
-    for (const schema of schemas) {
-        for (let field of schema.schema.fields) {
-            const value = from[field.key as keyof AbstractProgram];
-            if (!value) {
-                continue;
-            }
-            const p = (element) => {
-                if (element && element instanceof type) {
-                    values.push(element);
-                }
-                else if (typeof element === 'object') {
-                    values.push(...getValuesWithType(element, type))
-                }
-            }
-            if (Array.isArray(value)) {
-                for (const element of value) {
-                    p(element)
-                }
-            }
-            else {
-                p(value);
-            }
-        }
-    }
-    return values;
-}
-
 
 @variant(1)
 export abstract class AbstractProgram extends SystemBinaryPayload implements Addressable, Saveable {
@@ -82,6 +53,7 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
     _onClose?: () => void;
     _onDrop?: () => void;
     _initialized = false;
+    _initializationPromise: Promise<void>
     parentProgram: Program
 
 
@@ -98,34 +70,48 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
     get initialized() {
         return this._initialized
     }
-    async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
+    get initializationPromise(): Promise<void> | undefined {
+        return this._initializationPromise
+    }
 
+
+    async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
 
         if (this.initialized) {
             throw new Error("Already initialized")
         }
 
-        this._ipfs = ipfs;
-        this._identity = identity;
-        this._encryption = options.store.encryption;
-        this._onClose = options.onClose;
-        this._onDrop = options.onDrop;
+        this._initializationPromise = new Promise<void>(async (resolve, reject) => {
+            try {
+                this._ipfs = ipfs;
+                this._identity = identity;
+                this._encryption = options.store.encryption;
+                this._onClose = options.onClose;
+                this._onDrop = options.onDrop;
 
-        const existingAddress = this.address;
-        await this.save(ipfs)
-        if (existingAddress && !existingAddress.equals(this.address)) {
-            throw new Error("Program properties has been changed after constructor so that the hash has changed. Make sure that the 'setup(...)' function does not modify any properties that are to be serialized")
-        }
+                const existingAddress = this.address;
+                await this.save(ipfs)
+                if (existingAddress && !existingAddress.equals(this.address)) {
+                    throw new Error("Program properties has been changed after constructor so that the hash has changed. Make sure that the 'setup(...)' function does not modify any properties that are to be serialized")
+                }
 
-        await Promise.all(this.stores.map(store => store.init(ipfs, identity, options.store)));
-        const nexts = this.programs;
-        for (const next of nexts) {
-            await next.init(ipfs, identity, { ...options, parent: this });
-        }
+                const nexts = this.programs;
+                for (const next of nexts) {
+                    await next.init(ipfs, identity, { ...options, parent: this });
+                }
+                await Promise.all(this.stores.map(s => s.init(ipfs, identity, options.store)))
 
-        this.allStoresMap; // call this to ensure no store duplicates exist and all addresses are available
-        this._initialized = true
+                this.allStoresMap; // call this to ensure no store duplicates exist and all addresses are available
+                this._initialized = true
+            } catch (error) {
+                reject(error)
+            }
+            resolve()
+        })
+        await this._initializationPromise;
         return this;
+
+
     }
 
 
@@ -134,9 +120,14 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
         if (!this.initialized) {
             return;
         }
-        await Promise.all(this.stores.map(s => s.close()))
-        const nexts = this.programs;
-        await Promise.all(this.programs.map(p => p.close()))
+        const promises: Promise<void>[] = []
+        for (const store of this.stores.values()) {
+            promises.push(store.close());
+        }
+        for (const program of this.programs.values()) {
+            promises.push(program.close());
+        }
+        await Promise.all(promises);
         this._onClose && this._onClose();
     }
 
@@ -144,8 +135,14 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
         if (!this.initialized) {
             return;
         }
-        await Promise.all(this.stores.map(s => s.drop()))
-        await Promise.all(this.programs.map(p => p.drop()))
+        const promises: Promise<void>[] = []
+        for (const store of this.stores.values()) {
+            promises.push(store.drop());
+        }
+        for (const program of this.programs.values()) {
+            promises.push(program.drop());
+        }
+        await Promise.all(promises);
         this._initialized = false;
         this._onDrop && this._onDrop();
 
@@ -162,10 +159,26 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
     get encryption(): PublicKeyEncryptionResolver | undefined {
         return this._encryption;
     }
+
+    _stores: Store<any>[]
     get stores(): Store<any>[] {
-        return getValuesWithType(this, Store)
+        if (this._stores) {
+            return this._stores;
+        }
+        this._stores = getValuesWithType(this, Store, AbstractProgram);
+        return this._stores;
     }
 
+
+
+    _allStores: Store<any>[]
+    get allStores(): Store<any>[] {
+        if (this._allStores) {
+            return this._allStores;
+        }
+        this._allStores = getValuesWithType(this, Store);
+        return this._allStores;
+    }
 
 
     _allStoresMap: Map<string, Store<any>>
@@ -174,17 +187,7 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
             return this._allStoresMap;
         }
         const map = new Map<string, Store<any>>();
-        this.stores.map(s => map.set(s.address.toString(), s));
-        const nexts = this.programs;
-        for (const next of nexts) {
-            const submap = next.allStoresMap;
-            submap.forEach((store, address) => {
-                if (map.has(address)) {
-                    throw new Error("Store duplicates detected")
-                }
-                map.set(address, store);
-            })
-        }
+        getValuesWithType(this, Store).map(s => map.set(s.address.toString(), s));
         this._allStoresMap = map;
         return this._allStoresMap;
     }

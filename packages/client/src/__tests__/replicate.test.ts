@@ -3,7 +3,7 @@ import assert from 'assert'
 import mapSeries from 'p-each-series'
 import rmrf from 'rimraf'
 import { Entry } from '@dao-xyz/ipfs-log'
-import { delay, waitFor } from '@dao-xyz/peerbit-time'
+import { waitFor } from '@dao-xyz/peerbit-time'
 import { jest } from '@jest/globals';
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";

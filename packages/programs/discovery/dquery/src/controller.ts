@@ -68,7 +68,6 @@ export class DQuery<Q, R> extends ComposableProgram {
     subscribeToQueries: boolean = true;
 
     _subscribed: boolean = false;
-    _initializationPromise?: Promise<void>;
     _onQueryMessageBinded: any = undefined;
     _responseHandler: ResponseHandler<Q, R>
     _queryType: Constructor<Q>
@@ -121,14 +120,12 @@ export class DQuery<Q, R> extends ComposableProgram {
 
 
     async _subscribeToQueries(): Promise<void> {
-        this._initializationPromise = undefined;
         if (this._subscribed) {
             return
         }
 
         this._onQueryMessageBinded = this._onQueryMessage.bind(this);
         this._initializationPromise = this._ipfs.pubsub.subscribe(this.queryTopic, this._onQueryMessageBinded)
-        await this._initializationPromise;
         this._subscribed = true;
     }
 
