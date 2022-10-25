@@ -9,6 +9,7 @@ import type { PeerId } from '@libp2p/interface-peer-id';
 
 // @ts-ignore
 import Logger from 'logplease';
+import { waitForAsync } from '@dao-xyz/peerbit-time';
 const logger = Logger.create("direct-channel", { color: Logger.Colors.Yellow })
 Logger.setLogLevel('ERROR')
 
@@ -68,8 +69,8 @@ export class DirectChannel {
     return this._peers
   }
 
-  async connect() {
-    await waitForPeers(this._ipfs, [this._receiverID.toString()], this._id, this._isClosed)
+  async connect(options?: { isClosed: () => boolean }): Promise<boolean> {
+    return waitForPeers(this._ipfs, [this._receiverID.toString()], this._id, () => this._isClosed() || (!!options?.isClosed && options.isClosed()))
   }
 
   /**

@@ -2,7 +2,7 @@ import path from 'path'
 import { IStoreOptions, Store, Address, Saveable, Addressable } from '@dao-xyz/peerbit-store'
 // @ts-ignore
 import Logger from 'logplease'
-import { IPFS, IPFS as IPFSInstance } from 'ipfs-core-types';
+import { IPFS } from 'ipfs-core-types';
 import Cache from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta, StoreError } from '@dao-xyz/peerbit-keystore'
 import { isDefined } from './is-defined.js'
@@ -32,6 +32,7 @@ import { LRUCounter } from './lru-counter.js'
 import { IpfsPubsubPeerMonitor } from '@dao-xyz/ipfs-pubsub-peer-monitor';
 import type { PeerId } from '@libp2p/interface-peer-id';
 import { exchangeSwarmAddresses, ExchangeSwarmMessage } from './exchange-network.js';
+import { setTimeout } from 'timers';
 
 const logger = Logger.create('orbit-db')
 Logger.setLogLevel('ERROR')
@@ -76,7 +77,7 @@ const groupByGid = <T extends (Entry<any> | EntryWithRefs<any>)>(entries: T[]) =
 
 export class Peerbit {
 
-  _ipfs: IPFSInstance;
+  _ipfs: IPFS;
   /* 
     _pubsub: PubSub; */
   _directConnections: Map<string, SharedChannel<DirectChannel>>;
@@ -113,7 +114,7 @@ export class Peerbit {
   /*   canAccessKeys: KeyAccessCondition
    */
 
-  constructor(ipfs: IPFSInstance, identity: Identity, options: CreateOptions) {
+  constructor(ipfs: IPFS, identity: Identity, options: CreateOptions) {
     if (!isDefined(ipfs)) { throw new Error('IPFS required') }
     if (!isDefined(identity)) { throw new Error('identity key required') }
 
@@ -295,8 +296,10 @@ export class Peerbit {
 
 
   _disconnected: boolean = false;
+  _disconnecting: boolean = false;
+
   async disconnect() {
-    this._disconnected = true;
+    this._disconnecting = true;
     // Close a direct connection and remove it from internal state
 
     for (const [_topic, channel] of this._replicationTopicSubscriptions) {
@@ -340,6 +343,10 @@ export class Peerbit {
     // Remove all databases from the state
     this.programs = {}
     // this.allPrograms = {}
+
+    this._disconnecting = false;
+    this._disconnected = true;
+
   }
 
   // Alias for disconnect()
@@ -408,6 +415,15 @@ export class Peerbit {
   _maybeOpenStorePromise: Promise<boolean>;
   // Callback for receiving a message from the network
   async _onMessage(message: PubSubMessage) {
+    if (this._disconnecting) {
+      logger.warn("Got message while disconnecting")
+      return;
+    }
+
+    if (this._disconnected) {
+      throw new Error("Got message while disconnecting")
+    }
+
     try {
       const peer = message.type === 'signed' ? (message as SignedPubSubMessage).from : undefined;
       const maybeEncryptedMessage = deserialize(message.data, MaybeEncrypted) as MaybeEncrypted<MaybeSigned<ProtocolMessage>>
@@ -799,7 +815,23 @@ export class Peerbit {
     }
 
     // Wait for the direct channel to be fully connected
-    await channel.connect()
+    try {
+      let cancel = false;
+      setTimeout(() => {
+        cancel = true;
+      }, 20 * 1000) // 20s timeout
+
+      const connected = await channel.connect({ isClosed: () => cancel || this._disconnected || this._disconnecting })
+      if (!connected) {
+        return undefined; // failed to create channel
+      }
+    } catch (error) {
+
+      if (this._disconnected || this._disconnecting) {
+        return // its ok
+      }
+      throw error; // unexpected
+    }
     logger.debug(`Connected to ${peer}`)
 
     return channel;
@@ -1060,7 +1092,7 @@ export class Peerbit {
 
 
   async subscribeToReplicationTopic(topic: string): Promise<void> {
-    if (this._disconnected) {
+    if (this._disconnected || this._disconnecting) {
       throw new Error("Disconnected")
     }
 
@@ -1133,8 +1165,10 @@ export class Peerbit {
    */
 
   async open<S extends Program>(storeOrAddress: /* string | Address |  */S | Address, options: OpenStoreOptions = {}): Promise<S> {
-    if (this._disconnected) {
-      throw new Error("Disconnected")
+
+
+    if (this._disconnected || this._disconnecting) {
+      throw new Error("Can not open a store while disconnected")
     }
     const fn = async (): Promise<ProgramWithMetadata> => {
       // TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?
