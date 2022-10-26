@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-string",
-  "version": "0.0.82",
+  "version": "0.0.83",
   "description": "String store",
   "type": "module",
   "sideEffects": false,
@@ -32,7 +32,7 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^3.4.2",
-    "@dao-xyz/peerbit-anysearch": "^0.0.59",
+    "@dao-xyz/peerbit-anysearch": "^0.0.60",
     "@dao-xyz/peerbit-store": "^0.0.33",
     "@dao-xyz/peerbit-time": "^0.0.15"
   },

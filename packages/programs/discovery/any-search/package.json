@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-anysearch",
-  "version": "0.0.59",
+  "version": "0.0.60",
   "description": "Document Store for orbit-db with binary ser/der",
   "type": "module",
   "sideEffects": false,
@@ -35,7 +35,7 @@
     "@dao-xyz/ipfs-log": "^5.5.27",
     "@dao-xyz/peerbit-bpayload": "^0.0.16",
     "@dao-xyz/peerbit-crypto": "^0.0.7",
-    "@dao-xyz/peerbit-query": "^0.0.18",
+    "@dao-xyz/peerbit-query": "^0.0.19",
     "@dao-xyz/peerbit-time": "^0.0.15",
     "uuid": "^8.3.2"
   },
