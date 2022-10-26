@@ -134,27 +134,6 @@ export class DocumentIndex<T extends BinaryPayload> extends ComposableProgram {
     let stringKey = asString(key);
     return this._index.get(stringKey)
   }
-  /*   public get(key: any, caseSensitive = false): IndexedValue<T>[] {
-      key = key.toString()
-      const terms = key.split(' ')
-      key = terms.length > 1 ? replaceAll(key, '.', ' ').toLowerCase() : key.toLowerCase()
-  
-      const search = (e: string) => {
-        if (terms.length > 1) {
-          return replaceAll(e, '.', ' ').toLowerCase().indexOf(key) !== -1
-        }
-        return e.toLowerCase().indexOf(key) !== -1
-      }
-      const mapper = (e: string) => this._index.get(e)
-      const filter = (e: string) => caseSensitive
-        ? e.indexOf(key) !== -1
-        : search(e)
-  
-      const keys = Object.keys(this._index);
-      return keys.filter(filter)
-        .map(mapper)
-    } */
-
 
   get size(): number {
     return this._index.size;

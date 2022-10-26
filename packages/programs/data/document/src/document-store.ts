@@ -216,12 +216,6 @@ export class Documents<T extends BinaryPayload> extends ComposableProgram {
     }), { nexts: [existing.entry], ...options })
   }
 
-
-
-  public get size(): number {
-    return Object.keys(this._index).length
-  }
-
 }
 
 
