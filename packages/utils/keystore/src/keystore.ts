@@ -253,9 +253,7 @@ export class Keystore {
     }
   }
   async waitForOpen() {
-    if (this.opening) {
-      await waitFor(() => this.open)
-    }
+    await waitFor(() => this.open)
   }
 
   async saveKey<T extends Keypair>(key: KeyWithMeta<T>, options: { id?: string | Buffer | Uint8Array | PublicSignKey, overwrite?: boolean } = {}): Promise<KeyWithMeta<T>> { // TODO fix types 
