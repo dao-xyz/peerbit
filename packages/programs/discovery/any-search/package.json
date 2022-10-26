@@ -35,7 +35,7 @@
     "@dao-xyz/ipfs-log": "^5.5.26",
     "@dao-xyz/peerbit-bpayload": "^0.0.16",
     "@dao-xyz/peerbit-crypto": "^0.0.7",
-    "@dao-xyz/peerbit-query": "^0.0.16",
+    "@dao-xyz/peerbit-query": "^0.0.17",
     "@dao-xyz/peerbit-time": "^0.0.15",
     "uuid": "^8.3.2"
   },
