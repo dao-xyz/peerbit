@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-logindex",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Simple log index",
   "type": "module",
   "sideEffects": false,
@@ -32,10 +32,10 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^3.4.2",
-    "@dao-xyz/ipfs-log": "^5.5.27",
+    "@dao-xyz/ipfs-log": "^5.5.28",
     "@dao-xyz/peerbit-bpayload": "^0.0.16",
     "@dao-xyz/peerbit-crypto": "^0.0.7",
-    "@dao-xyz/peerbit-query": "^0.0.19",
+    "@dao-xyz/peerbit-query": "^0.0.20",
     "@dao-xyz/peerbit-time": "^0.0.15",
     "uuid": "^8.3.2"
   },
