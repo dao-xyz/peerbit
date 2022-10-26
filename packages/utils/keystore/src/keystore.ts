@@ -287,7 +287,7 @@ export class Keystore {
     this._cache.set(publicKeyString, key)
 
     if (key.keypair instanceof Ed25519Keypair) {
-      this.saveKey(new KeyWithMeta({
+      await this.saveKey(new KeyWithMeta({
         group: key.group,
         keypair: await X25519Keypair.from(key.keypair),
         timestamp: key.timestamp
