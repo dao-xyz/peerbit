@@ -1,9 +1,9 @@
 import { field, BinaryWriter, vec, variant } from "@dao-xyz/borsh";
-import { DDocuments, DocumentIndex } from "@dao-xyz/peerbit-ddoc";
+import { DDocuments, DocumentIndex } from "@dao-xyz/peerbit-document";
 import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { Address } from "@dao-xyz/peerbit-store";
-import { DSearch } from "@dao-xyz/peerbit-dsearch";
-import { DQuery } from "@dao-xyz/peerbit-dquery";
+import { DSearch } from "@dao-xyz/peerbit-anysearch";
+import { DQuery } from "@dao-xyz/peerbit-query";
 import { createHash } from "crypto";
 
 

@@ -11,7 +11,7 @@ import { IPFS } from "ipfs-core-types";
 // @ts-ignore 
 import { v4 as uuid } from 'uuid';
 
-import { DDocuments, PutOperation, Operation, DocumentIndex } from '@dao-xyz/peerbit-ddoc';
+import { DDocuments, PutOperation, Operation, DocumentIndex } from '@dao-xyz/peerbit-document';
 
 // Include test utilities
 import {
@@ -22,8 +22,8 @@ import {
     waitForPeers,
 } from '@dao-xyz/peerbit-test-utils'
 import { CanOpenSubPrograms, Program } from '@dao-xyz/peerbit-program'
-import { DSearch } from '@dao-xyz/peerbit-dsearch'
-import { DQuery } from '@dao-xyz/peerbit-dquery'
+import { DSearch } from '@dao-xyz/peerbit-anysearch'
+import { DQuery } from '@dao-xyz/peerbit-query'
 import { CanAppend, Entry, Payload } from '@dao-xyz/ipfs-log'
 
 const orbitdbPath1 = './orbitdb/tests/write-only/1'

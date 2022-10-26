@@ -1,7 +1,7 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh";
 import { Entry, EntryEncryptionTemplate } from "@dao-xyz/ipfs-log";
 import { ComposableProgram } from '@dao-xyz/peerbit-program';
-import { CanRead, DQuery } from "@dao-xyz/peerbit-dquery";
+import { CanRead, DQuery } from "@dao-xyz/peerbit-query";
 import { Store } from "@dao-xyz/peerbit-store";
 import { EncryptedThing, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
 // @ts-ignore

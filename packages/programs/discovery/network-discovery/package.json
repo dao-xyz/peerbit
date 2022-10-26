@@ -33,8 +33,8 @@
   "dependencies": {
     "@dao-xyz/borsh": "^3.4.2",
     "@dao-xyz/peerbit-crypto": "^0.0.7",
-    "@dao-xyz/peerbit-ddoc": "^0.0.91",
-    "@dao-xyz/peerbit-dsearch": "^0.0.58",
+    "@dao-xyz/peerbit-document": "^0.0.91",
+    "@dao-xyz/peerbit-anysearch": "^0.0.58",
     "@dao-xyz/peerbit-trusted-network": "^0.0.44",
     "p-map": "~1.1.1",
     "uuid": "^8.3.2"

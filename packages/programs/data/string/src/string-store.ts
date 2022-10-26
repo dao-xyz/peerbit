@@ -1,7 +1,7 @@
 import { PayloadOperation, StringIndex, encoding } from './string-index.js'
-import { DSearch, QueryType, StoreAddressMatchQuery } from '@dao-xyz/peerbit-dsearch';
-import { RangeCoordinate, RangeCoordinates, Result, ResultWithSource, StringMatchQuery } from '@dao-xyz/peerbit-dsearch';
-import { StringQueryRequest } from '@dao-xyz/peerbit-dsearch';
+import { DSearch, QueryType, StoreAddressMatchQuery } from '@dao-xyz/peerbit-anysearch';
+import { RangeCoordinate, RangeCoordinates, Result, ResultWithSource, StringMatchQuery } from '@dao-xyz/peerbit-anysearch';
+import { StringQueryRequest } from '@dao-xyz/peerbit-anysearch';
 import { Range } from './range.js';
 import { field, variant } from '@dao-xyz/borsh';
 import { CustomBinaryPayload } from '@dao-xyz/peerbit-bpayload';
@@ -9,7 +9,7 @@ import { Store } from '@dao-xyz/peerbit-store';
 import { BORSH_ENCODING, CanAppend, EncryptionTemplateMaybeEncrypted, Entry, Identity } from '@dao-xyz/ipfs-log';
 import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';
 import { Program } from '@dao-xyz/peerbit-program';
-import { QueryOptions, CanRead } from '@dao-xyz/peerbit-dquery';
+import { QueryOptions, CanRead } from '@dao-xyz/peerbit-query';
 export const STRING_STORE_TYPE = 'string_store';
 const findAllOccurrences = (str: string, substr: string): number[] => {
   str = str.toLowerCase();

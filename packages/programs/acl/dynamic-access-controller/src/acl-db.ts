@@ -1,5 +1,5 @@
 import { field, variant } from '@dao-xyz/borsh';
-import { DDocuments, DocumentIndex } from '@dao-xyz/peerbit-ddoc';
+import { DDocuments, DocumentIndex } from '@dao-xyz/peerbit-document';
 import { getPathGenerator, TrustedNetwork, getFromByTo, RelationContract } from '@dao-xyz/peerbit-trusted-network';
 import { Access, AccessType } from './access';
 import { Entry } from '@dao-xyz/ipfs-log'
@@ -7,9 +7,9 @@ import { PublicSignKey, SignKey } from '@dao-xyz/peerbit-crypto';
 
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
-import { DSearch } from '@dao-xyz/peerbit-dsearch';
+import { DSearch } from '@dao-xyz/peerbit-anysearch';
 import { Program } from '@dao-xyz/peerbit-program';
-import { DQuery } from '@dao-xyz/peerbit-dquery';
+import { DQuery } from '@dao-xyz/peerbit-query';
 
 @variant([0, 12])
 export class DynamicAccessController extends Program {

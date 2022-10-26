@@ -1,12 +1,12 @@
 import { field, serialize, serializeField, variant } from "@dao-xyz/borsh";
-import { DDocuments, DocumentIndex, IndexedValue } from "@dao-xyz/peerbit-ddoc";
+import { DDocuments, DocumentIndex, IndexedValue } from "@dao-xyz/peerbit-document";
 import { Key, PlainKey, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 // @ts-ignore
 import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
-import { PageQueryRequest, DSearch, MemoryCompare, MemoryCompareQuery, Result, ResultWithSource } from "@dao-xyz/peerbit-dsearch";
+import { PageQueryRequest, DSearch, MemoryCompare, MemoryCompareQuery, Result, ResultWithSource } from "@dao-xyz/peerbit-anysearch";
 import { createHash } from "crypto";
 import { joinUint8Arrays, UInt8ArraySerializer } from '@dao-xyz/peerbit-borsh-utils'
-import { DQuery } from "@dao-xyz/peerbit-dquery";
+import { DQuery } from "@dao-xyz/peerbit-query";
 
 export type RelationResolver = { resolve: (key: PublicSignKey, db: DDocuments<Relation>) => Promise<Result[]>, next: (relation: AnyRelation) => PublicSignKey }
 export const PUBLIC_KEY_WIDTH = 72 // bytes reserved

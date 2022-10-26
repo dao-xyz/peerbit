@@ -1,14 +1,14 @@
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
-import { DDocuments, Operation, PutOperation } from "@dao-xyz/peerbit-ddoc";
+import { DDocuments, Operation, PutOperation } from "@dao-xyz/peerbit-document";
 import { Entry } from "@dao-xyz/ipfs-log";
 import { createHash } from "crypto";
 import { IPFSAddress, Key, OtherKey, PublicSignKey, SignKey } from "@dao-xyz/peerbit-crypto";
 import type { PeerId } from '@libp2p/interface-peer-id';
-import { DeleteOperation } from "@dao-xyz/peerbit-ddoc";
+import { DeleteOperation } from "@dao-xyz/peerbit-document";
 import { AnyRelation, createIdentityGraphStore, getPathGenerator, hasPath, Relation, getFromByTo, getToByFrom, getRelation } from "./identity-graph";
 import { BinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { Program } from '@dao-xyz/peerbit-program';
-import { CanRead, DQuery } from "@dao-xyz/peerbit-dquery";
+import { CanRead, DQuery } from "@dao-xyz/peerbit-query";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { LogIndex, LogQueryRequest } from "@dao-xyz/peerbit-logindex";
 

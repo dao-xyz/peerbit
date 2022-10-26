@@ -5,7 +5,7 @@ import { BinaryPayload } from '@dao-xyz/peerbit-bpayload';
 import { Store } from '@dao-xyz/peerbit-store';
 import { BORSH_ENCODING, CanAppend, Encoding, EncryptionTemplateMaybeEncrypted, Entry } from '@dao-xyz/ipfs-log';
 import { CanOpenSubPrograms, ComposableProgram, Program, ProgramOwner } from '@dao-xyz/peerbit-program';
-import { CanRead } from '@dao-xyz/peerbit-dquery';
+import { CanRead } from '@dao-xyz/peerbit-query';
 import { LogIndex } from '@dao-xyz/peerbit-logindex'
 
 // @ts-ignore

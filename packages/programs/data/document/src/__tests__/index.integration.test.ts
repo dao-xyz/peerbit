@@ -1,9 +1,9 @@
 
 import { field, option, serialize, variant } from '@dao-xyz/borsh';
 import { DDocuments } from '../document-store';
-import { Compare, FieldBigIntCompareQuery, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort, MemoryCompareQuery, MemoryCompare, Results, DSearch, PageQueryRequest } from '@dao-xyz/peerbit-dsearch';
+import { Compare, FieldBigIntCompareQuery, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort, MemoryCompareQuery, MemoryCompare, Results, DSearch, PageQueryRequest } from '@dao-xyz/peerbit-anysearch';
 import { CustomBinaryPayload } from '@dao-xyz/peerbit-bpayload';
-import { DQuery } from '@dao-xyz/peerbit-dquery';
+import { DQuery } from '@dao-xyz/peerbit-query';
 import { Session, createStore } from '@dao-xyz/peerbit-test-utils';
 import { DefaultOptions } from '@dao-xyz/peerbit-store';
 import { Identity } from '@dao-xyz/ipfs-log';

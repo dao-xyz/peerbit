@@ -10,7 +10,7 @@ import path from 'path';
 import { HeadsMessage, LogEntryEncryptionQuery, LogIndex, LogQueryRequest } from '../controller';
 import { fileURLToPath } from 'url';
 import { waitFor } from '@dao-xyz/peerbit-time';
-import { DQuery } from '@dao-xyz/peerbit-dquery';
+import { DQuery } from '@dao-xyz/peerbit-query';
 const __filename = fileURLToPath(import.meta.url);
 
 

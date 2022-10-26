@@ -1,5 +1,5 @@
 import { deserialize, field, variant } from "@dao-xyz/borsh";
-import { DDocuments, DeleteOperation, Operation, PutOperation } from "@dao-xyz/peerbit-ddoc";
+import { DDocuments, DeleteOperation, Operation, PutOperation } from "@dao-xyz/peerbit-document";
 import { Address } from "@dao-xyz/peerbit-store";
 import { BORSH_ENCODING, Entry, Identity } from "@dao-xyz/ipfs-log";
 import { IPFS } from 'ipfs-core-types';

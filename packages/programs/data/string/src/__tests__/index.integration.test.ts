@@ -1,6 +1,6 @@
 
 import { StringResultSource, DString, STRING_STORE_TYPE } from '../string-store.js';
-import { ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates, StoreAddressMatchQuery, DSearch, Results } from '@dao-xyz/peerbit-dsearch';
+import { ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates, StoreAddressMatchQuery, DSearch, Results } from '@dao-xyz/peerbit-anysearch';
 import { Range } from '../range.js';
 import { createStore, Session } from '@dao-xyz/peerbit-test-utils';
 import { IPFS } from 'ipfs-core-types';
@@ -12,7 +12,7 @@ import { Identity } from '@dao-xyz/ipfs-log';
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto';
 import { DefaultOptions } from '@dao-xyz/peerbit-store';
 import { deserialize, serialize } from '@dao-xyz/borsh';
-import { QueryRequestV0, DQuery, QueryOptions, query } from '@dao-xyz/peerbit-dquery';
+import { QueryRequestV0, DQuery, QueryOptions, query } from '@dao-xyz/peerbit-query';
 
 const __filename = fileURLToPath(import.meta.url);
 

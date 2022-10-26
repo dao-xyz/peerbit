@@ -2,7 +2,7 @@ import { Session, waitForPeers } from '@dao-xyz/peerbit-test-utils'
 import { AnyRelation, createIdentityGraphStore, getFromByTo, getPathGenerator, getToByFrom, TrustedNetwork, KEY_OFFSET, PUBLIC_KEY_WIDTH, Relation } from '..';
 import { waitFor } from '@dao-xyz/peerbit-time';
 import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { PageQueryRequest, Results, ResultWithSource } from '@dao-xyz/peerbit-dsearch';
+import { PageQueryRequest, Results, ResultWithSource } from '@dao-xyz/peerbit-anysearch';
 import { Secp256k1PublicKey } from '@dao-xyz/peerbit-crypto';
 import { Wallet } from '@ethersproject/wallet'
 import { Identity } from '@dao-xyz/ipfs-log';
@@ -14,7 +14,7 @@ import { CachedValue, DefaultOptions, IStoreOptions } from '@dao-xyz/peerbit-sto
 import Cache from '@dao-xyz/peerbit-cache';
 import { field, serialize, variant } from '@dao-xyz/borsh';
 import { Program } from '@dao-xyz/peerbit-program';
-import { DDocuments } from '@dao-xyz/peerbit-ddoc';
+import { DDocuments } from '@dao-xyz/peerbit-document';
 const __filename = fileURLToPath(import.meta.url);
 
 const createIdentity = async () => {

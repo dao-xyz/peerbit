@@ -1,7 +1,7 @@
 {
-  "name": "@dao-xyz/peerbit-dstring",
-  "version": "0.0.81",
-  "description": "String store",
+  "name": "@dao-xyz/peerbit-anysearch",
+  "version": "0.0.58",
+  "description": "Document Store for orbit-db with binary ser/der",
   "type": "module",
   "sideEffects": false,
   "main": "lib/cjs/index.js",
@@ -32,9 +32,15 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^3.4.2",
-    "@dao-xyz/peerbit-dsearch": "^0.0.58",
-    "@dao-xyz/peerbit-store": "^0.0.32",
-    "@dao-xyz/peerbit-time": "^0.0.15"
+    "@dao-xyz/ipfs-log": "^5.5.26",
+    "@dao-xyz/peerbit-bpayload": "^0.0.16",
+    "@dao-xyz/peerbit-crypto": "^0.0.7",
+    "@dao-xyz/peerbit-query": "^0.0.16",
+    "@dao-xyz/peerbit-time": "^0.0.15",
+    "uuid": "^8.3.2"
+  },
+  "devDependencies": {
+    "ipfs": "^0.64.2"
   },
   "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
 }

@@ -3,7 +3,7 @@ import { Store } from "@dao-xyz/peerbit-store"
 import { EncryptionTemplateMaybeEncrypted } from '@dao-xyz/ipfs-log';
 import { variant, field } from '@dao-xyz/borsh';
 import { Program } from "@dao-xyz/peerbit-program";
-import { Operation } from "@dao-xyz/peerbit-ddoc";
+import { Operation } from "@dao-xyz/peerbit-document";
 
 
 export class KeyValueIndex {

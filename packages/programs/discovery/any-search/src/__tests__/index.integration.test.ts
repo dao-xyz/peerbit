@@ -7,7 +7,7 @@ import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { Session, waitForPeers } from '@dao-xyz/peerbit-test-utils';
 import { CustomBinaryPayload } from '@dao-xyz/peerbit-bpayload';
 import { decryptVerifyInto, Ed25519Keypair, Ed25519PublicKey, X25519Keypair, X25519PublicKey, X25519SecretKey } from "@dao-xyz/peerbit-crypto";
-import { QueryRequestV0, QueryResponseV0, query, respond } from '@dao-xyz/peerbit-dquery';
+import { QueryRequestV0, QueryResponseV0, query, respond } from '@dao-xyz/peerbit-query';
 import { Ed25519Identity } from "@dao-xyz/ipfs-log";
 import { Results } from "../result";
 

@@ -1,6 +1,6 @@
 import { field, variant } from '@dao-xyz/borsh';
 import { SignKey } from "@dao-xyz/peerbit-crypto";
-import { QueryOptions, DQuery, CanRead } from '@dao-xyz/peerbit-dquery';
+import { QueryOptions, DQuery, CanRead } from '@dao-xyz/peerbit-query';
 import { ComposableProgram } from '@dao-xyz/peerbit-program'
 import { Address } from '@dao-xyz/peerbit-store';
 import { MultipleQueriesType, QueryType } from './query-interface';

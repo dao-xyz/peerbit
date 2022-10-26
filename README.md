@@ -39,11 +39,11 @@ Started originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS 
 Below is a short example how you can create a collaborative text document: 
 
 ```typescript
-import { DString, Range } from '@dao-xyz/peerbit-dstring'
+import { DString, Range } from '@dao-xyz/peerbit-string'
 import { Peerbit } from '@dao-xyz/peerbit'
 import { Program } from '@dao-xyz/peerbit-program'
 import { SignKey } from '@dao-xyz/peerbit-crypto';
-import { Range, DString } from '@dao-xyz/peerbit-dstring';
+import { Range, DString } from '@dao-xyz/peerbit-string';
 
 class CollaborativeText extends Program {
 
@@ -98,7 +98,7 @@ The peer client
 - Leader and leader rotation routines for building functionality around leaders
 
 ## [Programs](./packages/programs)
-Contains composable programs you can build your program with. For example distributed [document store](./packages/programs/data/ddoc), [search](./packages/programs/discovery/dsearch), [chain agnostic access controller](./packages/programs/acl/dynamic-access-controller) 
+Contains composable programs you can build your program with. For example distributed [document store](./packages/programs/data/document), [search](./packages/programs/discovery/any-search), [chain agnostic access controller](./packages/programs/acl/dynamic-access-controller) 
 
 ## [Utils](./packages/utils/)
 Utilities libraries that do not have their own category yet
