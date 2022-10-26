@@ -4,7 +4,7 @@ import { BORSH_ENCODING, Encoding, Entry, Payload } from "@dao-xyz/ipfs-log";
 import { Log } from "@dao-xyz/ipfs-log";
 import { arraysEqual, UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
 import { ComposableProgram, Program } from "@dao-xyz/peerbit-program";
-import { Compare, DSearch, FieldBigIntCompareQuery, FieldByteMatchQuery, FieldStringMatchQuery, MemoryCompareQuery, PageQueryRequest, Query, QueryType, Result, ResultWithSource, SortDirection, StateFieldQuery } from "@dao-xyz/peerbit-anysearch";
+import { Compare, AnySearch, FieldBigIntCompareQuery, FieldByteMatchQuery, FieldStringMatchQuery, MemoryCompareQuery, PageQueryRequest, Query, QueryType, Result, ResultWithSource, SortDirection, StateFieldQuery } from "@dao-xyz/peerbit-anysearch";
 // @ts-ignore
 import Logger from 'logplease'
 import { AccessError, EncryptedThing, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
@@ -102,8 +102,8 @@ export interface IndexedValue<T> {
 @variant([0, 8])
 export class DocumentIndex<T extends BinaryPayload> extends ComposableProgram {
 
-  @field({ type: DSearch })
-  search: DSearch<Operation<T>>
+  @field({ type: AnySearch })
+  search: AnySearch<Operation<T>>
 
   @field({ type: 'string' })
   indexBy: string;
@@ -113,7 +113,7 @@ export class DocumentIndex<T extends BinaryPayload> extends ComposableProgram {
   type: Constructor<T>
 
   constructor(properties?: {
-    search: DSearch<Operation<T>>
+    search: AnySearch<Operation<T>>
     indexBy: string
   }) {
     super();

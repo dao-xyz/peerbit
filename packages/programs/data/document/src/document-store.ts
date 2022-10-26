@@ -12,7 +12,7 @@ import { LogIndex } from '@dao-xyz/peerbit-logindex'
 import Logger from 'logplease'
 import { AccessError } from '@dao-xyz/peerbit-crypto';
 
-const logger = Logger.create('DDocuments')
+const logger = Logger.create('Documents')
 Logger.setLogLevel('ERROR')
 
 export class OperationError extends Error {
@@ -21,7 +21,7 @@ export class OperationError extends Error {
   }
 }
 @variant([0, 7])
-export class DDocuments<T extends BinaryPayload> extends ComposableProgram {
+export class Documents<T extends BinaryPayload> extends ComposableProgram {
 
   @field({ type: Store })
   store: Store<Operation<T>>
@@ -119,7 +119,7 @@ export class DDocuments<T extends BinaryPayload> extends ComposableProgram {
         const existingDocument = this._index.get(key)
         if (!!existingDocument) {
           if (!this.canEdit) {
-            //Key already exist and this instance DDocuments can note overrite/edit'
+            //Key already exist and this instance Documents can note overrite/edit'
             return false
           }
 
@@ -165,7 +165,7 @@ export class DDocuments<T extends BinaryPayload> extends ComposableProgram {
   }) {
     if (doc instanceof Program) {
       if (!(this.parentProgram as any as CanOpenSubPrograms).canOpen) {
-        throw new Error("Class " + this.parentProgram.constructor.name + " needs to implement CanOpenSubPrograms for this DDocuments store to progams")
+        throw new Error("Class " + this.parentProgram.constructor.name + " needs to implement CanOpenSubPrograms for this Documents store to progams")
       }
       doc.programOwner = new ProgramOwner({
         address: this.parentProgram.address

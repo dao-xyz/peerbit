@@ -1,5 +1,5 @@
 import { deserialize, field, variant } from "@dao-xyz/borsh";
-import { DDocuments, DeleteOperation, Operation, PutOperation } from "@dao-xyz/peerbit-document";
+import { Documents, DeleteOperation, Operation, PutOperation } from "@dao-xyz/peerbit-document";
 import { Address } from "@dao-xyz/peerbit-store";
 import { BORSH_ENCODING, Entry, Identity } from "@dao-xyz/ipfs-log";
 import { IPFS } from 'ipfs-core-types';
@@ -13,8 +13,8 @@ const encoding = BORSH_ENCODING(Operation);
 @variant([0, 20])
 export class NetworkDiscovery extends Program {
 
-    @field({ type: DDocuments })
-    info: DDocuments<NetworkInfo>
+    @field({ type: Documents })
+    info: Documents<NetworkInfo>
 
 
     _peerId: string;

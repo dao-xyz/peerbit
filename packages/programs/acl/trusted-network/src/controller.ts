@@ -1,5 +1,5 @@
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
-import { DDocuments, Operation, PutOperation } from "@dao-xyz/peerbit-document";
+import { Documents, Operation, PutOperation } from "@dao-xyz/peerbit-document";
 import { Entry } from "@dao-xyz/ipfs-log";
 import { createHash } from "crypto";
 import { IPFSAddress, Key, OtherKey, PublicSignKey, SignKey } from "@dao-xyz/peerbit-crypto";
@@ -53,8 +53,8 @@ const canAppendByRelation = async (entry: Entry<Operation<Relation>>, isTrusted?
 @variant([0, 10])
 export class RelationContract extends Program {
 
-    @field({ type: DDocuments })
-    relationGraph: DDocuments<Relation>
+    @field({ type: Documents })
+    relationGraph: Documents<Relation>
 
     constructor(props?: {
         name?: string,
@@ -95,8 +95,8 @@ export class TrustedNetwork extends Program {
     @field({ type: PublicSignKey })
     rootTrust: PublicSignKey
 
-    @field({ type: DDocuments })
-    trustGraph: DDocuments<Relation>
+    @field({ type: Documents })
+    trustGraph: Documents<Relation>
 
     @field({ type: LogIndex })
     logIndex: LogIndex;

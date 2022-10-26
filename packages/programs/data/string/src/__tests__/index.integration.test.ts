@@ -1,6 +1,6 @@
 
 import { StringResultSource, DString, STRING_STORE_TYPE } from '../string-store.js';
-import { ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates, StoreAddressMatchQuery, DSearch, Results } from '@dao-xyz/peerbit-anysearch';
+import { ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates, StoreAddressMatchQuery, AnySearch, Results } from '@dao-xyz/peerbit-anysearch';
 import { Range } from '../range.js';
 import { createStore, Session } from '@dao-xyz/peerbit-test-utils';
 import { IPFS } from 'ipfs-core-types';
@@ -51,7 +51,7 @@ describe('query', () => {
 
         // Create store
         writeStore = new DString({
-            search: new DSearch({
+            search: new AnySearch({
                 query: new DQuery({
                     queryRegion: 'world'
                 })

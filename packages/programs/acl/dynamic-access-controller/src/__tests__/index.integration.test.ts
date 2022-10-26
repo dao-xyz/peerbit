@@ -3,10 +3,10 @@ import { createStore, Session } from '@dao-xyz/peerbit-test-utils';
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
 import { waitFor } from '@dao-xyz/peerbit-time';
-import { PageQueryRequest, DSearch, FieldStringMatchQuery, Results } from "@dao-xyz/peerbit-anysearch";
+import { PageQueryRequest, AnySearch, FieldStringMatchQuery, Results } from "@dao-xyz/peerbit-anysearch";
 import { AccessError, Ed25519Keypair, MaybeEncrypted, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { CustomBinaryPayload } from "@dao-xyz/peerbit-bpayload";
-import { DDocuments, DocumentIndex } from "@dao-xyz/peerbit-document";
+import { Documents, DocumentIndex } from "@dao-xyz/peerbit-document";
 import type { CanAppend, Identity, Payload } from "@dao-xyz/ipfs-log";
 import { Level } from 'level';
 import { CachedValue, DefaultOptions } from '@dao-xyz/peerbit-store';
@@ -45,8 +45,8 @@ const createIdentity = async () => {
 @variant([0, 251])
 class TestStore extends Program {
 
-    @field({ type: DDocuments })
-    store: DDocuments<Document>
+    @field({ type: Documents })
+    store: Documents<Document>
 
     @field({ type: DynamicAccessController })
     accessController: DynamicAccessController
@@ -54,11 +54,11 @@ class TestStore extends Program {
     constructor(properties: { name?: string, identity: Identity, accessControllerName?: string }) {
         super(properties)
         if (properties) {
-            this.store = new DDocuments({
+            this.store = new Documents({
                 name: 'test',
                 index: new DocumentIndex({
                     indexBy: 'id',
-                    search: new DSearch({
+                    search: new AnySearch({
                         query: new DQuery({})
                     })
                 })

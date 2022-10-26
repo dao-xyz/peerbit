@@ -6,7 +6,7 @@ import { Store } from "@dao-xyz/peerbit-store";
 import { EncryptedThing, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
 // @ts-ignore
 import Logger from 'logplease'
-const logger = Logger.create('DDocuments')
+const logger = Logger.create('Documents')
 Logger.setLogLevel('ERROR')
 
 

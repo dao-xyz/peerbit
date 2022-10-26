@@ -1,7 +1,7 @@
 
 import { field, option, serialize, variant } from '@dao-xyz/borsh';
-import { DDocuments } from '../document-store';
-import { Compare, FieldBigIntCompareQuery, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort, MemoryCompareQuery, MemoryCompare, Results, DSearch, PageQueryRequest } from '@dao-xyz/peerbit-anysearch';
+import { Documents } from '../document-store';
+import { Compare, FieldBigIntCompareQuery, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort, MemoryCompareQuery, MemoryCompare, Results, AnySearch, PageQueryRequest } from '@dao-xyz/peerbit-anysearch';
 import { CustomBinaryPayload } from '@dao-xyz/peerbit-bpayload';
 import { DQuery } from '@dao-xyz/peerbit-query';
 import { Session, createStore } from '@dao-xyz/peerbit-test-utils';
@@ -47,10 +47,10 @@ class Document extends CustomBinaryPayload {
 @variant([0, 244])
 class DocumentDDoc extends Program {
 
-  @field({ type: DDocuments })
-  docs: DDocuments<Document>
+  @field({ type: Documents })
+  docs: Documents<Document>
 
-  constructor(properties?: { docs: DDocuments<Document> }) {
+  constructor(properties?: { docs: Documents<Document> }) {
     super();
     if (properties) {
       this.docs = properties.docs;
@@ -92,9 +92,9 @@ describe('index', () => {
     // Create store
     for (let i = 0; i < peersCount; i++) {
       const store = i > 0 ? await DocumentDDoc.load<DocumentDDoc>(session.peers[i].ipfs, stores[0].address) : new DocumentDDoc({
-        docs: new DDocuments<Document>({
+        docs: new Documents<Document>({
           index: new DocumentIndex({
-            search: new DSearch({
+            search: new AnySearch({
               query: new DQuery({
                 queryRegion: queryRegion
               })
@@ -164,9 +164,9 @@ describe('index', () => {
     it('can add and delete', async () => {
 
       const store = new DocumentDDoc({
-        docs: new DDocuments<Document>({
+        docs: new Documents<Document>({
           index: new DocumentIndex({
-            search: new DSearch({
+            search: new AnySearch({
               query: new DQuery({
                 queryRegion: '_'
               })

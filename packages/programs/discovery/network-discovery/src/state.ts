@@ -1,8 +1,8 @@
 import { field, BinaryWriter, vec, variant } from "@dao-xyz/borsh";
-import { DDocuments, DocumentIndex } from "@dao-xyz/peerbit-document";
+import { Documents, DocumentIndex } from "@dao-xyz/peerbit-document";
 import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { Address } from "@dao-xyz/peerbit-store";
-import { DSearch } from "@dao-xyz/peerbit-anysearch";
+import { AnySearch } from "@dao-xyz/peerbit-anysearch";
 import { DQuery } from "@dao-xyz/peerbit-query";
 import { createHash } from "crypto";
 
@@ -71,11 +71,11 @@ export class NetworkInfo extends DiscoveryData {
 
 
 
-export const createDiscoveryStore = (props?: { name?: string, queryRegion?: string }) => new DDocuments<NetworkInfo>({
+export const createDiscoveryStore = (props?: { name?: string, queryRegion?: string }) => new Documents<NetworkInfo>({
     name: props?.name ? props?.name : '' + '_discovery',
     index: new DocumentIndex({
         indexBy: 'id',
-        search: new DSearch({
+        search: new AnySearch({
             query: new DQuery({
                 queryRegion: props?.queryRegion
             })

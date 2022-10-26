@@ -1,19 +1,19 @@
 import { field, serialize, serializeField, variant } from "@dao-xyz/borsh";
-import { DDocuments, DocumentIndex, IndexedValue } from "@dao-xyz/peerbit-document";
+import { Documents, DocumentIndex, IndexedValue } from "@dao-xyz/peerbit-document";
 import { Key, PlainKey, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 // @ts-ignore
 import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
-import { PageQueryRequest, DSearch, MemoryCompare, MemoryCompareQuery, Result, ResultWithSource } from "@dao-xyz/peerbit-anysearch";
+import { PageQueryRequest, AnySearch, MemoryCompare, MemoryCompareQuery, Result, ResultWithSource } from "@dao-xyz/peerbit-anysearch";
 import { createHash } from "crypto";
 import { joinUint8Arrays, UInt8ArraySerializer } from '@dao-xyz/peerbit-borsh-utils'
 import { DQuery } from "@dao-xyz/peerbit-query";
 
-export type RelationResolver = { resolve: (key: PublicSignKey, db: DDocuments<Relation>) => Promise<Result[]>, next: (relation: AnyRelation) => PublicSignKey }
+export type RelationResolver = { resolve: (key: PublicSignKey, db: Documents<Relation>) => Promise<Result[]>, next: (relation: AnyRelation) => PublicSignKey }
 export const PUBLIC_KEY_WIDTH = 72 // bytes reserved
 
 export const KEY_OFFSET = 3 + 4 + 1 + 28; // SystemBinaryPayload discriminator + Relation discriminator + AnyRelation discriminator + id length u32 + utf8 encoding + id chars
 export const getFromByTo: RelationResolver = {
-    resolve: async (to: PublicSignKey, db: DDocuments<Relation>) => {
+    resolve: async (to: PublicSignKey, db: Documents<Relation>) => {
         const ser = serialize(to);
         return await db.index.queryHandler(new PageQueryRequest({
             queries: [
@@ -32,7 +32,7 @@ export const getFromByTo: RelationResolver = {
 }
 
 export const getToByFrom: RelationResolver = {
-    resolve: async (from: PublicSignKey, db: DDocuments<Relation>) => {
+    resolve: async (from: PublicSignKey, db: Documents<Relation>) => {
         const ser = serialize(from);
         return await db.index.queryHandler(new PageQueryRequest({
             queries: [
@@ -57,7 +57,7 @@ export const getToByFrom: RelationResolver = {
 
 
 
-export async function* getPathGenerator(from: Key, db: DDocuments<Relation>, resolver: RelationResolver) {
+export async function* getPathGenerator(from: Key, db: Documents<Relation>, resolver: RelationResolver) {
     let iter = [from];
     const visited = new Set();
     while (iter.length > 0) {
@@ -90,7 +90,7 @@ export async function* getPathGenerator(from: Key, db: DDocuments<Relation>, res
  * @param db 
  * @returns 
  */
-export const hasPathToTarget = async (start: Key, target: (key: Key) => boolean, db: DDocuments<Relation>, resolver: RelationResolver): Promise<boolean> => {
+export const hasPathToTarget = async (start: Key, target: (key: Key) => boolean, db: Documents<Relation>, resolver: RelationResolver): Promise<boolean> => {
 
     if (!db) {
         throw new Error("Not initalized")
@@ -158,21 +158,21 @@ export class AnyRelation extends Relation {
 }
 
 
-export const hasPath = async (start: Key, end: Key, db: DDocuments<Relation>, resolver: RelationResolver): Promise<boolean> => {
+export const hasPath = async (start: Key, end: Key, db: Documents<Relation>, resolver: RelationResolver): Promise<boolean> => {
     return hasPathToTarget(start, (key) => end.equals(key), db, resolver)
 }
 
-export const getRelation = (from: Key, to: Key, db: DDocuments<Relation>): IndexedValue<Relation> | undefined => {
+export const getRelation = (from: Key, to: Key, db: Documents<Relation>): IndexedValue<Relation> | undefined => {
     return db.index.get(new AnyRelation({ from, to }).id);
 }
 
 
 
-export const createIdentityGraphStore = (props: { name?: string, queryRegion?: string }) => new DDocuments<Relation>({
+export const createIdentityGraphStore = (props: { name?: string, queryRegion?: string }) => new Documents<Relation>({
     name: props?.name ? props?.name : '' + '_relation',
     index: new DocumentIndex({
         indexBy: 'id',
-        search: new DSearch({
+        search: new AnySearch({
             query: new DQuery({
                 queryRegion: props.queryRegion
             })

@@ -1,5 +1,5 @@
 import { PayloadOperation, StringIndex, encoding } from './string-index.js'
-import { DSearch, QueryType, StoreAddressMatchQuery } from '@dao-xyz/peerbit-anysearch';
+import { AnySearch, QueryType, StoreAddressMatchQuery } from '@dao-xyz/peerbit-anysearch';
 import { RangeCoordinate, RangeCoordinates, Result, ResultWithSource, StringMatchQuery } from '@dao-xyz/peerbit-anysearch';
 import { StringQueryRequest } from '@dao-xyz/peerbit-anysearch';
 import { Range } from './range.js';
@@ -33,13 +33,13 @@ export class DString extends Program {
   @field({ type: Store })
   store: Store<PayloadOperation>
 
-  @field({ type: DSearch })
-  search: DSearch<PayloadOperation>;
+  @field({ type: AnySearch })
+  search: AnySearch<PayloadOperation>;
 
   _index: StringIndex;
   _optionCanAppend?: CanAppend<PayloadOperation>
 
-  constructor(properties: { name?: string, search: DSearch<PayloadOperation> }) {
+  constructor(properties: { name?: string, search: AnySearch<PayloadOperation> }) {
     super(properties)
     if (properties) {
       this.search = properties.search

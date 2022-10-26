@@ -11,7 +11,7 @@ import { IPFS } from "ipfs-core-types";
 // @ts-ignore 
 import { v4 as uuid } from 'uuid';
 
-import { DDocuments, PutOperation, Operation, DocumentIndex } from '@dao-xyz/peerbit-document';
+import { Documents, PutOperation, Operation, DocumentIndex } from '@dao-xyz/peerbit-document';
 
 // Include test utilities
 import {
@@ -22,7 +22,7 @@ import {
     waitForPeers,
 } from '@dao-xyz/peerbit-test-utils'
 import { CanOpenSubPrograms, Program } from '@dao-xyz/peerbit-program'
-import { DSearch } from '@dao-xyz/peerbit-anysearch'
+import { AnySearch } from '@dao-xyz/peerbit-anysearch'
 import { DQuery } from '@dao-xyz/peerbit-query'
 import { CanAppend, Entry, Payload } from '@dao-xyz/ipfs-log'
 
@@ -167,10 +167,10 @@ describe(`orbit-db - Write-only`, function () {
         @variant([0, 239])
         class ProgramWithSubprogram extends Program implements CanOpenSubPrograms {
 
-            @field({ type: DDocuments })
-            eventStore: DDocuments<EventStore<string>>
+            @field({ type: Documents })
+            eventStore: Documents<EventStore<string>>
 
-            constructor(eventStore: DDocuments<EventStore<string>>) {
+            constructor(eventStore: Documents<EventStore<string>>) {
                 super()
                 this.eventStore = eventStore;
             }
@@ -190,7 +190,7 @@ describe(`orbit-db - Write-only`, function () {
             }
 
         }
-        const store = new ProgramWithSubprogram(new DDocuments<EventStore<string>>({ name: 'replication-tests', index: new DocumentIndex({ indexBy: 'name', search: new DSearch({ query: new DQuery({}) }) }) }));
+        const store = new ProgramWithSubprogram(new Documents<EventStore<string>>({ name: 'replication-tests', index: new DocumentIndex({ indexBy: 'name', search: new AnySearch({ query: new DQuery({}) }) }) }));
         await orbitdb2.subscribeToReplicationTopic(replicationTopic);
         const openedStore = await orbitdb1.open(store, { replicationTopic, replicate: false });
 

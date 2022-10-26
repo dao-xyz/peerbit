@@ -9,10 +9,10 @@ import { StoreAddressMatchQuery } from './context';
 
 
 export type SearchContext = { address: () => Address };
-export type DSearchInitializationOptions<T> = { canRead?: CanRead, context: SearchContext, queryHandler: (query: QueryType) => Promise<Result[]> };
+export type AnySearchInitializationOptions<T> = { canRead?: CanRead, context: SearchContext, queryHandler: (query: QueryType) => Promise<Result[]> };
 
 @variant([0, 2])
-export class DSearch<T> extends ComposableProgram {
+export class AnySearch<T> extends ComposableProgram {
 
     @field({ type: DQuery })
     _query: DQuery<QueryType, Results>
@@ -29,7 +29,7 @@ export class DSearch<T> extends ComposableProgram {
     }
 
 
-    public async setup(options: DSearchInitializationOptions<T>) {
+    public async setup(options: AnySearchInitializationOptions<T>) {
         this._setup = true;
         this._queryHandler = options.queryHandler;
         this._context = options.context;
