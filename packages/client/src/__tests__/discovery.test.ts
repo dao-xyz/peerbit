@@ -85,7 +85,7 @@ Object.keys(testAPIs).forEach(API => {
             // trust client 3
             await network.add(orbitdb3.id) // we have to trust peer because else other party will not exchange heads
             await network.add(orbitdb3.identity.publicKey) // will have to trust identity because else this can t add more idenetities
-            await waitFor(() => Object.keys((orbitdb1.getNetwork(network.address) as TrustedNetwork).trustGraph._index._index).length === 5)
+            await waitFor(() => (orbitdb1.getNetwork(network.address) as TrustedNetwork).trustGraph.index.size === 5)
 
             await orbitdb2.openNetwork(network.address, { directory: dbPath2 })
 

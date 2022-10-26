@@ -61,13 +61,13 @@ describe('index', () => {
 
             await l0b.trustGraph.store.sync(l0a.trustGraph.store.oplog.heads);
 
-            await waitFor(() => Object.keys(l0b.trustGraph._index._index).length == 1)
+            await waitFor(() => l0b.trustGraph.index.size == 1)
 
             await l0b.add(identity(2).publicKey); // Will only work if peer2 is trusted
             await l0a.trustGraph.store.sync(l0b.trustGraph.store.oplog.heads);
 
-            await waitFor(() => Object.keys(l0b.trustGraph._index._index).length == 2)
-            await waitFor(() => Object.keys(l0a.trustGraph._index._index).length == 2)
+            await waitFor(() => l0b.trustGraph.index.size == 2)
+            await waitFor(() => l0a.trustGraph.index.size == 2)
 
             const discovery = new NetworkDiscovery()
             await init(discovery, 3, { store: { replicate: true } });

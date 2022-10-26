@@ -196,6 +196,7 @@ export class Replicator<T> {
       {
         // TODO, load all store options?
         encryption: this._store._oplog._encryption,
+        encoding: this._store._oplog._encoding,
         sortFn: this._store._oplog._sortFn,
         length: -1,
         exclude: [],
@@ -210,6 +211,7 @@ export class Replicator<T> {
       {
         // TODO, load all store options?
         encryption: this._store._oplog._encryption,
+        encoding: this._store._oplog._encoding,
         sortFn: this._store._oplog._sortFn,
         length: -1,
         exclude: [],

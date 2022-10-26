@@ -83,7 +83,7 @@ Object.keys(testAPIs).forEach(API => {
       await network.add(orbitdb2.identity.publicKey)
       replicationTopic = network.address.toString();
       await orbitdb2.openNetwork(network.address)
-      await waitFor(() => Object.keys(orbitdb2.getNetwork(replicationTopic)?.trustGraph._index._index as any).length === 3);
+      await waitFor(() => orbitdb2.getNetwork(replicationTopic)?.trustGraph.index.size === 3);
       await orbitdb2.joinNetwork(network)
 
       // Untrusted client 3

@@ -1,9 +1,9 @@
 import { field, variant } from '@dao-xyz/borsh';
-import { DDocuments, Operation } from '@dao-xyz/peerbit-ddoc';
+import { DDocuments, DocumentIndex } from '@dao-xyz/peerbit-ddoc';
 import { getPathGenerator, TrustedNetwork, getFromByTo, RelationContract } from '@dao-xyz/peerbit-trusted-network';
-import { Access, AccessData, AccessType } from './access';
-import { Entry, Identity, Payload } from '@dao-xyz/ipfs-log'
-import { MaybeEncrypted, PublicSignKey, SignatureWithKey, SignKey } from '@dao-xyz/peerbit-crypto';
+import { Access, AccessType } from './access';
+import { Entry } from '@dao-xyz/ipfs-log'
+import { PublicSignKey, SignKey } from '@dao-xyz/peerbit-crypto';
 
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
@@ -34,9 +34,11 @@ export class DynamicAccessController extends Program {
                 throw new Error("Expecting either TrustedNetwork or rootTrust")
             }
             this.access = new DDocuments({
-                indexBy: 'id',
-                search: new DSearch({
-                    query: new DQuery({})
+                index: new DocumentIndex({
+                    indexBy: 'id',
+                    search: new DSearch({
+                        query: new DQuery({})
+                    })
                 })
             })
 
@@ -72,7 +74,7 @@ export class DynamicAccessController extends Program {
 
         // Else check whether its trusted by this access controller
         const canReadCheck = async (key: PublicSignKey) => {
-            for (const value of Object.values(this.access._index._index)) {
+            for (const value of this.access.index._index.values()) {
                 const access = value.value;
                 if (access instanceof Access) {
                     if (access.accessTypes.find((x) => x === AccessType.Any || x === AccessType.Read) !== undefined) {
@@ -111,7 +113,7 @@ export class DynamicAccessController extends Program {
         }
         // Else check whether its trusted by this access controller
         const canWriteCheck = async (key: PublicSignKey) => {
-            for (const value of Object.values(this.access._index._index)) {
+            for (const value of this.access.index._index.values()) {
                 const access = value.value
                 if (access instanceof Access) {
                     if (access.accessTypes.find((x) => x === AccessType.Any || x === AccessType.Write) !== undefined) {

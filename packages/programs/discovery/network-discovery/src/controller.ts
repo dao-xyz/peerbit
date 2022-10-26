@@ -2,7 +2,6 @@ import { deserialize, field, variant } from "@dao-xyz/borsh";
 import { DDocuments, DeleteOperation, Operation, PutOperation } from "@dao-xyz/peerbit-ddoc";
 import { Address } from "@dao-xyz/peerbit-store";
 import { BORSH_ENCODING, Entry, Identity } from "@dao-xyz/ipfs-log";
-import { SignKey } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from 'ipfs-core-types';
 import { createDiscoveryStore, NetworkInfo } from "./state";
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
@@ -43,11 +42,11 @@ export class NetworkDiscovery extends Program {
 
             let info: NetworkInfo;
             if (operation instanceof DeleteOperation) {
-                const infos = this.info.get(operation.key)
-                if (infos.length === 0 || infos.length > 1) {
+                const retrievedValue = this.info.index.get(operation.key)
+                if (!retrievedValue) {
                     return false;
                 }
-                info = infos[0].value
+                info = retrievedValue.value;
 
             }
             else {

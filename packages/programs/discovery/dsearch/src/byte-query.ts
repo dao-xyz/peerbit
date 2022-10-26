@@ -22,7 +22,7 @@ export class MemoryCompare {
     }
 }
 
-@variant(3)
+@variant(4)
 export class MemoryCompareQuery extends Query {
 
     @field({ type: vec(MemoryCompare) })

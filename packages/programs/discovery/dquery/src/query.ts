@@ -1,4 +1,5 @@
 import { field, variant, vec } from "@dao-xyz/borsh";
+
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 import { X25519PublicKey } from '@dao-xyz/peerbit-crypto'

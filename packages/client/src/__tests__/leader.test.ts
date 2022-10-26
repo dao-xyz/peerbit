@@ -90,7 +90,7 @@ Object.keys(testAPIs).forEach(API => {
             await network.add(orbitdb2.id);
             await network.add(orbitdb2.identity.publicKey);
             await orbitdb2.openNetwork(network.address, { directory: dbPath2 });
-            await waitFor(() => Object.keys((orbitdb2.getNetwork(network.address) as TrustedNetwork).trustGraph._index._index).length === 3);
+            await waitFor(() => (orbitdb2.getNetwork(network.address) as TrustedNetwork).trustGraph.index.size === 3);
             await orbitdb2.joinNetwork(network);
 
             // but dont trust client 3
@@ -100,7 +100,7 @@ Object.keys(testAPIs).forEach(API => {
             await waitFor(() => orbitdb1._directConnections.size === 2); // to 2 and 3
             await waitFor(() => orbitdb2._directConnections.size === 1); // to 1
             await waitFor(() => orbitdb3._directConnections.size === 1); // to 1
-            await waitFor(() => Object.keys((orbitdb2.getNetwork(network.address) as TrustedNetwork).trustGraph._index._index).length === 4) // 1. identiy -> peer id, 1. -> 2 identity, 1. -> 2. peer id and 2. identity -> peer id, 
+            await waitFor(() => (orbitdb2.getNetwork(network.address) as TrustedNetwork).trustGraph.index.size === 4) // 1. identiy -> peer id, 1. -> 2 identity, 1. -> 2. peer id and 2. identity -> peer id, 
 
             // now find 3 leaders from the network with 2 trusted participants (should return 2 leaders if trust control works correctly)
             const leadersFrom1 = await orbitdb1.findLeaders(network.address.toString(), true, "", 3);

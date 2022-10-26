@@ -95,16 +95,16 @@ Object.keys(testAPIs).forEach(API => {
 
             // but only partially trust client 2
             await network.add(orbitdb2.identity.publicKey) // omitt adding trust to orbitdb2 peer id, so we can test that it does not recieve heads
-            await waitFor(() => Object.keys((orbitdb1.getNetwork(network.address) as TrustedNetwork).trustGraph._index._index).length === 4)
+            await waitFor(() => (orbitdb1.getNetwork(network.address) as TrustedNetwork).trustGraph.index.size === 4)
 
             await orbitdb2.openNetwork(network.address, { directory: dbPath2 })
             await orbitdb3.openNetwork(network.address, { directory: dbPath3 })
             await delay(10000);
             await waitFor(() => orbitdb1._directConnections.size === 2);
 
-            await waitFor(() => Object.keys((orbitdb3.getNetwork(network.address) as TrustedNetwork).trustGraph._index._index).length === 4)
+            await waitFor(() => (orbitdb3.getNetwork(network.address) as TrustedNetwork).trustGraph.index.size === 4)
 
-            expect(Object.keys((orbitdb2.getNetwork(network.address) as TrustedNetwork).trustGraph._index._index)).toHaveLength(0); // because peer id is not trusted so it will not recieve heads
+            expect((orbitdb2.getNetwork(network.address) as TrustedNetwork).trustGraph.index.size).toEqual(0); // because peer id is not trusted so it will not recieve heads
             await orbitdb3.joinNetwork(network); // will add relation form client 3 to peer id 3 (it also exist another relation from client 1 to peer id 3 btw, but these are not the same)
 
 
@@ -115,11 +115,11 @@ Object.keys(testAPIs).forEach(API => {
             await (orbitdb1.getNetwork(network.address) as TrustedNetwork).add((await Ed25519Keypair.create()).publicKey)
             await (orbitdb3.getNetwork(network.address) as TrustedNetwork).add((await Ed25519Keypair.create()).publicKey)
 
-            await waitFor(() => Object.keys((orbitdb1.getNetwork(network.address) as TrustedNetwork).trustGraph._index._index).length === 7)
-            await waitFor(() => Object.keys((orbitdb3.getNetwork(network.address) as TrustedNetwork).trustGraph._index._index).length === 7)
+            await waitFor(() => (orbitdb1.getNetwork(network.address) as TrustedNetwork).trustGraph.index.size === 7)
+            await waitFor(() => (orbitdb3.getNetwork(network.address) as TrustedNetwork).trustGraph.index.size === 7)
 
             await delay(2000); // arb. delay
-            expect(Object.keys((orbitdb2.getNetwork(network.address) as TrustedNetwork).trustGraph._index._index)).toHaveLength(0); // because peer id is not trusted so it will not recieve heads
+            expect((orbitdb2.getNetwork(network.address) as TrustedNetwork).trustGraph.index.size).toEqual(0); // because peer id is not trusted so it will not recieve heads
 
         })
     })

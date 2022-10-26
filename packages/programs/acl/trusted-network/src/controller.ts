@@ -1,16 +1,16 @@
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import { DDocuments, Operation, PutOperation } from "@dao-xyz/peerbit-ddoc";
-import { Entry, Payload } from "@dao-xyz/ipfs-log";
+import { Entry } from "@dao-xyz/ipfs-log";
 import { createHash } from "crypto";
-import { IPFSAddress, Key, OtherKey, PublicSignKey, SignatureWithKey, SignKey } from "@dao-xyz/peerbit-crypto";
+import { IPFSAddress, Key, OtherKey, PublicSignKey, SignKey } from "@dao-xyz/peerbit-crypto";
 import type { PeerId } from '@libp2p/interface-peer-id';
-import { MaybeEncrypted } from "@dao-xyz/peerbit-crypto";
 import { DeleteOperation } from "@dao-xyz/peerbit-ddoc";
-import { AnyRelation, createIdentityGraphStore, getPathGenerator, hasPath, Relation, getFromByTo, getToByFrom, hasRelation } from "./identity-graph";
+import { AnyRelation, createIdentityGraphStore, getPathGenerator, hasPath, Relation, getFromByTo, getToByFrom, getRelation } from "./identity-graph";
 import { BinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { Program } from '@dao-xyz/peerbit-program';
 import { CanRead, DQuery } from "@dao-xyz/peerbit-dquery";
 import { waitFor } from "@dao-xyz/peerbit-time";
+import { LogIndex, LogQueryRequest } from "@dao-xyz/peerbit-logindex";
 
 const canAppendByRelation = async (entry: Entry<Operation<Relation>>, isTrusted?: (key: PublicSignKey) => Promise<boolean>): Promise<boolean> => {
 
@@ -85,27 +85,6 @@ export class RelationContract extends Program {
     }
 }
 
-export class Message {
-
-}
-@variant(0)
-export class RequestHeadsMessage extends Message { }
-
-@variant(1)
-export class HeadsMessages extends Message {
-
-    @field({ type: vec(Entry) })
-    heads: Entry<any>[]
-
-    constructor(properties?: { heads: Entry<any>[] }) {
-        super();
-        if (properties) {
-            this.heads = properties.heads;
-        }
-    }
-}
-
-
 /**
  * Not shardeable since we can not query trusted relations, because this would lead to a recursive problem where we then need to determine whether the responder is trusted or not
  */
@@ -119,37 +98,27 @@ export class TrustedNetwork extends Program {
     @field({ type: DDocuments })
     trustGraph: DDocuments<Relation>
 
-    @field({ type: DQuery })
-    query: DQuery<RequestHeadsMessage, HeadsMessages>;
+    @field({ type: LogIndex })
+    logIndex: LogIndex;
 
     constructor(props?: {
         name?: string,
         rootTrust: PublicSignKey,
-        query?: DQuery<RequestHeadsMessage, HeadsMessages>
+        logIndex?: LogIndex
     }) {
         super(props);
         if (props) {
             this.trustGraph = createIdentityGraphStore(props);
             this.rootTrust = props.rootTrust;
-            this.query = props.query || new DQuery({ queryAddressSuffix: 'heads' });
+            this.logIndex = props.logIndex || new LogIndex({ query: new DQuery({ queryAddressSuffix: 'heads' }) });
         }
     }
 
 
     async setup() {
         await this.trustGraph.setup({ type: Relation, canAppend: this.canAppend.bind(this), canRead: this.canRead.bind(this) }) // self referencing access controller
-        await this.query.setup({ queryType: RequestHeadsMessage, responseType: HeadsMessages, responseHandler: this.exchangeHeads.bind(this), canRead: () => Promise.resolve(true) })
+        await this.logIndex.setup({ store: this.trustGraph.store })
     }
-
-    exchangeHeads(_query: RequestHeadsMessage): HeadsMessages | undefined {
-        if (!this.trustGraph.store.replicate) {
-            return undefined // we do this because we might not have all the heads
-        }
-        return new HeadsMessages({
-            heads: this.trustGraph.store.oplog.heads
-        });
-    }
-
 
     async canAppend(entry: Entry<Operation<Relation>>): Promise<boolean> {
 
@@ -174,7 +143,7 @@ export class TrustedNetwork extends Program {
     }
 
     hasRelation(trustee: PublicSignKey | PeerId, truster = this.rootTrust) {
-        return !!hasRelation(truster, trustee instanceof Key ? trustee : new IPFSAddress({ address: trustee.toString() }), this.trustGraph)[0]?.value;
+        return !!getRelation(truster, trustee instanceof Key ? trustee : new IPFSAddress({ address: trustee.toString() }), this.trustGraph);
     }
 
 
@@ -200,12 +169,13 @@ export class TrustedNetwork extends Program {
         }
         else {
             let trusted = false;
-            this.query.query(new RequestHeadsMessage(), async (heads, from) => {
+            this.logIndex.query.query(new LogQueryRequest({ queries: [] }), async (heads, from) => {
                 if (!from) {
                     return;
                 }
 
                 const logs = await Promise.all(heads.heads.map(h => this.trustGraph.store._replicator._replicateLog(h)));
+
                 await this.trustGraph.store.updateStateFromLogs(logs);
 
                 const isTrustedSender = await this._isTrustedLocal(from, truster);

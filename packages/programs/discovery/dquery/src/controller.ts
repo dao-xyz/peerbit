@@ -92,10 +92,8 @@ export class DQuery<Q, R> extends ComposableProgram {
         }
     }
 
-    s: boolean = false;
 
     public async setup(options: DQueryInitializationOptions<Q, R>) {
-        this.s = true;
         this._responseHandler = options.responseHandler;
         this._queryType = options.queryType;
         this._responseType = options.responseType;
@@ -103,9 +101,9 @@ export class DQuery<Q, R> extends ComposableProgram {
 
     }
 
-    async init(ipfs: IPFS<{}>, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
+    async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
         await super.init(ipfs, identity, options);
-        if (this.subscribeToQueries) {
+        if (options.store.replicate) {
             await this._subscribeToQueries();
         }
         return this;
@@ -159,7 +157,9 @@ export class DQuery<Q, R> extends ComposableProgram {
         return query(this._ipfs, this.queryTopic, new QueryRequestV0({
             query: serialize(queryRequest),
             responseRecievers: options?.responseRecievers
-        }), (response, from) => { responseHandler(deserialize(response.response, this._responseType), from) }, options);
+        }), (response, from) => {
+            responseHandler(deserialize(response.response, this._responseType), from)
+        }, options);
     }
 
 

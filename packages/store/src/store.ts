@@ -373,7 +373,19 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
 
         // update the store's index after joining the logs
         // and persisting the latest heads
-        await this._updateIndex()
+        try {
+          await this._updateIndex()
+
+        } catch (error) {
+          if (error instanceof AccessError) {
+            // recieved data that I could not decrypt
+            // TODO add better handling
+            return;
+          }
+          else {
+            throw error;
+          }
+        }
 
         if (this._oplog.length > this.replicationStatus.progress) {
           this._recalculateReplicationStatus(this._oplog.length)
@@ -382,6 +394,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
 
       }
     } catch (e) {
+
       throw e;
     }
   }

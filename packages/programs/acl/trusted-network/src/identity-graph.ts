@@ -1,9 +1,9 @@
 import { field, serialize, serializeField, variant } from "@dao-xyz/borsh";
-import { DDocuments, IndexedValue } from "@dao-xyz/peerbit-ddoc";
+import { DDocuments, DocumentIndex, IndexedValue } from "@dao-xyz/peerbit-ddoc";
 import { Key, PlainKey, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 // @ts-ignore
 import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
-import { DocumentQueryRequest, DSearch, MemoryCompare, MemoryCompareQuery, Result, ResultWithSource } from "@dao-xyz/peerbit-dsearch";
+import { PageQueryRequest, DSearch, MemoryCompare, MemoryCompareQuery, Result, ResultWithSource } from "@dao-xyz/peerbit-dsearch";
 import { createHash } from "crypto";
 import { joinUint8Arrays, UInt8ArraySerializer } from '@dao-xyz/peerbit-borsh-utils'
 import { DQuery } from "@dao-xyz/peerbit-dquery";
@@ -15,7 +15,7 @@ export const KEY_OFFSET = 3 + 4 + 1 + 28; // SystemBinaryPayload discriminator +
 export const getFromByTo: RelationResolver = {
     resolve: async (to: PublicSignKey, db: DDocuments<Relation>) => {
         const ser = serialize(to);
-        return await db.queryHandler(new DocumentQueryRequest({
+        return await db.index.queryHandler(new PageQueryRequest({
             queries: [
                 new MemoryCompareQuery({
                     compares: [
@@ -34,7 +34,7 @@ export const getFromByTo: RelationResolver = {
 export const getToByFrom: RelationResolver = {
     resolve: async (from: PublicSignKey, db: DDocuments<Relation>) => {
         const ser = serialize(from);
-        return await db.queryHandler(new DocumentQueryRequest({
+        return await db.index.queryHandler(new PageQueryRequest({
             queries: [
                 new MemoryCompareQuery({
                     compares: [
@@ -162,18 +162,21 @@ export const hasPath = async (start: Key, end: Key, db: DDocuments<Relation>, re
     return hasPathToTarget(start, (key) => end.equals(key), db, resolver)
 }
 
-export const hasRelation = (from: Key, to: Key, db: DDocuments<Relation>): IndexedValue<Relation>[] => {
-    return db.get(new AnyRelation({ from, to }).id);
+export const getRelation = (from: Key, to: Key, db: DDocuments<Relation>): IndexedValue<Relation> | undefined => {
+    return db.index.get(new AnyRelation({ from, to }).id);
 }
 
 
 
 export const createIdentityGraphStore = (props: { name?: string, queryRegion?: string }) => new DDocuments<Relation>({
-    indexBy: 'id',
     name: props?.name ? props?.name : '' + '_relation',
-    search: new DSearch({
-        query: new DQuery({
-            queryRegion: props.queryRegion
+    index: new DocumentIndex({
+        indexBy: 'id',
+        search: new DSearch({
+            query: new DQuery({
+                queryRegion: props.queryRegion
+            })
         })
     })
+
 })

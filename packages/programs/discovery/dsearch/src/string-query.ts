@@ -2,7 +2,7 @@ import { field, variant } from "@dao-xyz/borsh";
 import { MultipleQueriesType, Query } from './query-interface.js';
 
 
-@variant(2)
+@variant(3)
 export class StringMatchQuery extends Query {
 
     @field({ type: 'string' })

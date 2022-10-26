@@ -1,71 +1,80 @@
-import { DeleteOperation, DocumentIndex, IndexedValue, Operation, PutOperation, encoding } from './document-index'
+import { DeleteOperation, DocumentIndex, Operation, PutOperation } from './document-index'
 import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
 import { asString } from './utils.js';
-import { DocumentQueryRequest, FieldQuery, FieldStringMatchQuery, Result, ResultWithSource, SortDirection, FieldByteMatchQuery, FieldBigIntCompareQuery, Compare, Query, MemoryCompareQuery, DSearchInitializationOptions, QueryType } from '@dao-xyz/peerbit-dsearch';
 import { BinaryPayload } from '@dao-xyz/peerbit-bpayload';
-import { arraysEqual } from '@dao-xyz/peerbit-borsh-utils';
 import { Store } from '@dao-xyz/peerbit-store';
-import { DSearch } from '@dao-xyz/peerbit-dsearch';
-import { BORSH_ENCODING, CanAppend, Encoding, EncryptionTemplateMaybeEncrypted, Entry, Payload } from '@dao-xyz/ipfs-log';
+import { BORSH_ENCODING, CanAppend, Encoding, EncryptionTemplateMaybeEncrypted, Entry } from '@dao-xyz/ipfs-log';
 import { CanOpenSubPrograms, ComposableProgram, Program, ProgramOwner } from '@dao-xyz/peerbit-program';
 import { CanRead } from '@dao-xyz/peerbit-dquery';
+import { LogIndex } from '@dao-xyz/peerbit-logindex'
 
-const replaceAll = (str: string, search: any, replacement: any) => str.toString().split(search).join(replacement)
+// @ts-ignore
+import Logger from 'logplease'
+import { AccessError } from '@dao-xyz/peerbit-crypto';
+
+const logger = Logger.create('DDocuments')
+Logger.setLogLevel('ERROR')
+
 export class OperationError extends Error {
   constructor(message?: string) {
     super(message);
   }
 }
-@variant([0, 6])
+@variant([0, 7])
 export class DDocuments<T extends BinaryPayload> extends ComposableProgram {
 
   @field({ type: Store })
   store: Store<Operation<T>>
 
-  @field({ type: 'string' })
-  indexBy: string;
-
-  @field({ type: DSearch })
-  search: DSearch<Operation<T>>
-
   @field({ type: 'bool' })
   canEdit: boolean; // "Can I overwrite a document?"
 
+  @field({ type: DocumentIndex })
+  _index: DocumentIndex<T>;
+
+  @field({ type: LogIndex })
+  _logIndex: LogIndex
+
   _clazz?: Constructor<T>;
 
-  _index: DocumentIndex<T>;
   _valueEncoding: Encoding<T>
 
   _optionCanAppend?: CanAppend<Operation<T>>
 
   constructor(properties: {
     name?: string,
-    indexBy: string,
-    search: DSearch<Operation<T>>
-    canEdit?: boolean
+    canEdit?: boolean,
+    index: DocumentIndex<T>,
+    logIndex?: LogIndex
   }) {
     super(properties)
     if (properties) {
       this.store = new Store(properties);
-      this.indexBy = properties.indexBy;
-      this.search = properties.search;
       this.canEdit = properties.canEdit || false
+      this._index = properties.index;
+      this._logIndex = properties.logIndex || new LogIndex({ name: properties.name });
     }
-    this._index = new DocumentIndex();
   }
 
 
+  get logIndex(): LogIndex {
+    return this._logIndex;
+  }
+  get index(): DocumentIndex<T> {
+    return this._index;
+  }
   async setup(options: { type: Constructor<T>, canRead?: CanRead, canAppend?: CanAppend<Operation<T>> }) {
 
     this._clazz = options.type;
     this._valueEncoding = BORSH_ENCODING(this._clazz);
-    this._index.init(this._clazz);
-    this.store.setup({ encoding: BORSH_ENCODING(Operation), canAppend: this.canAppend.bind(this), onUpdate: this._index.updateIndex.bind(this._index) })
     if (options.canAppend) {
       this._optionCanAppend = options.canAppend
     }
+    await this.store.setup({ encoding: BORSH_ENCODING(Operation), canAppend: this.canAppend.bind(this), onUpdate: this._index.updateIndex.bind(this._index) })
+    await this._logIndex.setup({ store: this.store, canRead: options.canRead || (() => Promise.resolve(true)) })
+    await this._index.setup({ type: this._clazz, canRead: options.canRead || (() => Promise.resolve(true)) })
 
-    await this.search.setup({ context: { address: () => this.parentProgram.address }, canRead: options.canRead, queryHandler: this.queryHandler.bind(this) });
+
   }
   async canAppend(entry: Entry<Operation<T>>): Promise<boolean> {
     const l0 = await this._canAppend(entry);
@@ -81,7 +90,7 @@ export class DDocuments<T extends BinaryPayload> extends ComposableProgram {
 
   async _canAppend(entry: Entry<Operation<T>>): Promise<boolean> {
 
-    const operation = await entry.getPayloadValue();
+
 
     const pointsToHistory = (history: Entry<Operation<T>>) => {
       // make sure nexts only points to this document at some point in history
@@ -96,192 +105,56 @@ export class DDocuments<T extends BinaryPayload> extends ComposableProgram {
       return false;
     }
 
-    if (operation instanceof PutOperation) {
-      // check nexts
-      const putOperation = operation as PutOperation<T>
+    try {
 
-      const key = (putOperation.getValue(this._valueEncoding))[this.indexBy];
-      if (!key) {
-        throw new Error("Unexpected")
-      }
-      const existingDocument = this._index.get(key)
-      if (!!existingDocument) {
-        if (!this.canEdit) {
-          //Key already exist and this instance DDocuments can note overrite/edit'
-          return false
+      const operation = await entry.getPayloadValue();
+      if (operation instanceof PutOperation) {
+        // check nexts
+        const putOperation = operation as PutOperation<T>
+
+        const key = (putOperation.getValue(this._valueEncoding))[this._index.indexBy];
+        if (!key) {
+          throw new Error("Expecting document to contained index field")
         }
+        const existingDocument = this._index.get(key)
+        if (!!existingDocument) {
+          if (!this.canEdit) {
+            //Key already exist and this instance DDocuments can note overrite/edit'
+            return false
+          }
 
+          if (entry.next.length !== 1) {
+            return false;
+          }
+
+          return pointsToHistory(existingDocument.entry)
+        }
+        else {
+          if (entry.next.length !== 0) {
+            return false;
+          }
+        }
+      }
+
+      else if (operation instanceof DeleteOperation) {
         if (entry.next.length !== 1) {
           return false;
-        }
-
-        return pointsToHistory(existingDocument.entry)
-      }
-      else {
-        if (entry.next.length !== 0) {
+        } 2
+        const existingDocument = this._index.get(operation.key)
+        if (!existingDocument) { // already deleted
           return false;
         }
+        return pointsToHistory(existingDocument.entry) // references the existing document
       }
-    }
-    else if (operation instanceof DeleteOperation) {
-      if (entry.next.length !== 1) {
-        return false;
+    } catch (error) {
+      if (error instanceof AccessError) {
+        return false; // we cant index because we can not decrypt
       }
-      const existingDocument = this._index.get(operation.key)
-      if (!existingDocument) { // already deleted
-        return false;
-      }
-      return pointsToHistory(existingDocument.entry) // references the existing document
+      throw error;
     }
     return true;
   }
 
-
-  public get(key: any, caseSensitive = false): IndexedValue<T>[] {
-    key = key.toString()
-    const terms = key.split(' ')
-    key = terms.length > 1 ? replaceAll(key, '.', ' ').toLowerCase() : key.toLowerCase()
-
-    const search = (e: string) => {
-      if (terms.length > 1) {
-        return replaceAll(e, '.', ' ').toLowerCase().indexOf(key) !== -1
-      }
-      return e.toLowerCase().indexOf(key) !== -1
-    }
-    const mapper = (e: string) => this._index.get(e)
-    const filter = (e: string) => caseSensitive
-      ? e.indexOf(key) !== -1
-      : search(e)
-
-    const keys = Object.keys(this._index._index);
-    return keys.filter(filter)
-      .map(mapper)
-  }
-
-  _queryDocuments(filter: ((doc: IndexedValue<T>) => boolean)): IndexedValue<T>[] {
-    // Whether we return the full operation data or just the db value
-    return Object.keys(this._index._index)
-      .map((e) => this._index.get(e))
-      .filter((doc) => filter(doc))
-  }
-
-  queryHandler(query: QueryType): Promise<Result[]> {
-    if (query instanceof DocumentQueryRequest) {
-      let queries: Query[] = query.queries
-      let results = this._queryDocuments(
-        doc =>
-          queries?.length > 0 ? queries.map(f => {
-            if (f instanceof FieldQuery) {
-              let fv: any = doc.value;
-              for (let i = 0; i < f.key.length; i++) {
-                fv = fv[f.key[i]];
-              }
-
-              if (f instanceof FieldStringMatchQuery) {
-                if (typeof fv !== 'string')
-                  return false;
-                return fv.toLowerCase().indexOf(f.value.toLowerCase()) !== -1;
-              }
-              if (f instanceof FieldByteMatchQuery) {
-                if (!Array.isArray(fv))
-                  return false;
-                return arraysEqual(fv, f.value)
-              }
-              if (f instanceof FieldBigIntCompareQuery) {
-                let value: bigint | number = fv;
-
-                if (typeof value !== 'bigint' && typeof value !== 'number') {
-                  return false;
-                }
-
-                switch (f.compare) {
-                  case Compare.Equal:
-                    return value == f.value; // == because with want bigint == number at some cases
-                  case Compare.Greater:
-                    return value > f.value;
-                  case Compare.GreaterOrEqual:
-                    return value >= f.value;
-                  case Compare.Less:
-                    return value < f.value;
-                  case Compare.LessOrEqual:
-                    return value <= f.value;
-                  default:
-                    console.warn("Unexpected compare");
-                    return false;
-                }
-              }
-              return false
-            }
-            else if (f instanceof MemoryCompareQuery) {
-              const payload = doc.entry._payload.decrypted.getValue(Payload);
-              const operation = payload.getValue(this.store.encoding);
-              if (operation instanceof PutOperation) {
-                const bytes = operation.data;
-                for (const compare of f.compares) {
-                  const offsetn = Number(compare.offset); // TODO type check
-
-                  for (let b = 0; b < compare.bytes.length; b++) {
-                    if (bytes[offsetn + b] !== compare.bytes[b]) {
-                      return false;
-                    }
-                  }
-                }
-              }
-              else {
-                // TODO add implementations for PutAll
-                return false;
-              }
-              return true;
-            }
-            else {
-              throw new Error("Unsupported query type")
-            }
-          }).reduce((prev, current) => prev && current) : true
-      ).map(x => x.value);
-
-      if (query.sort) {
-        const sort = query.sort;
-        const resolveField = (obj: T) => {
-          let v = obj;
-          for (let i = 0; i < sort.key.length; i++) {
-            v = (v as any)[sort.key[i]]
-          }
-          return v
-        }
-        let direction = 1;
-        if (query.sort.direction == SortDirection.Descending) {
-          direction = -1;
-        }
-        results.sort((a, b) => {
-          const af = resolveField(a)
-          const bf = resolveField(b)
-          if (af < bf) {
-            return -direction;
-          }
-          else if (af > bf) {
-            return direction;
-          }
-          return 0;
-        })
-      }
-      // TODO check conversions
-      if (query.offset) {
-        results = results.slice(Number(query.offset));
-      }
-
-      if (query.size) {
-        results = results.slice(0, Number(query.size));
-      }
-      return Promise.resolve(results.map(r => new ResultWithSource({
-        source: r
-      })));
-    }
-
-
-    // TODO diagnostics for other query types
-    return Promise.resolve([]);
-
-  }
 
 
   public put(doc: T, options?: {
@@ -299,17 +172,15 @@ export class DDocuments<T extends BinaryPayload> extends ComposableProgram {
       })
     }
 
-
-    const key = (doc as any)[this.indexBy];
-    if (!key) { throw new Error(`The provided document doesn't contain field '${this.indexBy}'`) }
+    const key = (doc as any)[this._index.indexBy];
+    if (!key) { throw new Error(`The provided document doesn't contain field '${this._index.indexBy}'`) }
     const ser = serialize(doc);
-
     const existingDocument = this._index.get(key)
 
     return this.store._addOperation(
       new PutOperation(
         {
-          key: asString((doc as any)[this.indexBy]),
+          key: asString((doc as any)[this._index.indexBy]),
           data: ser,
           value: doc
 

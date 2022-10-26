@@ -241,7 +241,7 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
         // set parents of subprograms to this 
         for (const [i, program] of this.allPrograms.entries()) {
             if (program instanceof ComposableProgram) {
-                program.index = i;
+                program._programIndex = i;
             }
             program.parentProgram = this.parentProgram || this;
         }
@@ -282,6 +282,6 @@ export abstract class ComposableProgram extends AbstractProgram {
 
 
     @field({ type: 'u32' })
-    index: number = 0; // Prevent duplicates for subprograms
+    _programIndex: number = 0; // Prevent duplicates for subprograms
 
 }

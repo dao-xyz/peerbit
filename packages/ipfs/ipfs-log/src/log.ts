@@ -505,7 +505,7 @@ export class Log<T> extends GSet {
         options.onGidsShadowed(missingGids);
       }
     }
-
+    entry.init({ encoding: this._encoding, encryption: this._encryption })
     return entry
   }
 

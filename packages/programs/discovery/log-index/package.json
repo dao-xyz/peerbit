@@ -1,7 +1,7 @@
 {
-  "name": "@dao-xyz/peerbit-trusted-network",
-  "version": "0.0.44",
-  "description": "Access controller that operates on a DB",
+  "name": "@dao-xyz/peerbit-logindex",
+  "version": "0.0.1",
+  "description": "Simple log index",
   "type": "module",
   "sideEffects": false,
   "main": "lib/cjs/index.js",
@@ -32,16 +32,14 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^3.4.2",
+    "@dao-xyz/ipfs-log": "^5.5.26",
+    "@dao-xyz/peerbit-bpayload": "^0.0.16",
     "@dao-xyz/peerbit-crypto": "^0.0.7",
-    "@dao-xyz/peerbit-ddoc": "^0.0.91",
-    "@dao-xyz/peerbit-dsearch": "^0.0.58",
-    "@dao-xyz/peerbit-logindex": "^0.0.1",
-    "p-map": "~1.1.1",
+    "@dao-xyz/peerbit-dquery": "^0.0.16",
+    "@dao-xyz/peerbit-time": "^0.0.15",
     "uuid": "^8.3.2"
   },
   "devDependencies": {
-    "@dao-xyz/peerbit-time": "^0.0.15",
-    "@ethersproject/wallet": "^5.7.0",
     "ipfs": "^0.64.2"
   },
   "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"

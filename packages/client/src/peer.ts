@@ -1,7 +1,5 @@
 import path from 'path'
 import { IStoreOptions, Store, Address, Saveable, Addressable } from '@dao-xyz/peerbit-store'
-// @ts-ignore
-import Logger from 'logplease'
 import { IPFS } from 'ipfs-core-types';
 import Cache from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta, StoreError } from '@dao-xyz/peerbit-keystore'
@@ -34,6 +32,8 @@ import type { PeerId } from '@libp2p/interface-peer-id';
 import { exchangeSwarmAddresses, ExchangeSwarmMessage } from './exchange-network.js';
 import { setTimeout } from 'timers';
 
+// @ts-ignore
+import Logger from 'logplease'
 const logger = Logger.create('orbit-db')
 Logger.setLogLevel('ERROR')
 

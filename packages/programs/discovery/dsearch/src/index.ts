@@ -1,6 +1,6 @@
 export * from './query.js';
 export * from './query-interface.js';
-export * from './document-query.js';
+export * from './state-query.js';
 export * from './query-interface.js';
 export * from './result.js';
 export * from './string-query.js';

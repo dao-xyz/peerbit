@@ -1,4 +1,4 @@
-import { DocumentQueryRequest, FieldStringMatchQuery, StoreAddressMatchQuery, ResultWithSource } from "../"
+import { PageQueryRequest, FieldStringMatchQuery, StoreAddressMatchQuery, ResultWithSource } from "../"
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 import type { Message } from '@libp2p/interface-pubsub'
@@ -58,7 +58,7 @@ describe('query', () => {
     await waitForPeers(session.peers[1].ipfs, [session.peers[0].id], topic);
     let results: number[] = [];
     await query(session.peers[1].ipfs, topic, new QueryRequestV0({
-      query: serialize(new DocumentQueryRequest({
+      query: serialize(new PageQueryRequest({
         queries: [new FieldStringMatchQuery({
           key: 'a',
           value: 'b'
@@ -107,7 +107,7 @@ describe('query', () => {
 
     let results: number[] = [];
     await query(session.peers[1].ipfs, topic, new QueryRequestV0({
-      query: serialize(new DocumentQueryRequest({
+      query: serialize(new PageQueryRequest({
         queries: []
       }))
     }), (resp) => {
@@ -148,7 +148,7 @@ describe('query', () => {
 
     let results: number[] = [];
     await query(session.peers[0].ipfs, topic, new QueryRequestV0({
-      query: serialize(new DocumentQueryRequest({
+      query: serialize(new PageQueryRequest({
         queries: []
       }))
     }), (resp) => {
@@ -196,7 +196,7 @@ describe('query', () => {
 
     let results: number[] = [];
     await query(session.peers[0].ipfs, topic, new QueryRequestV0({
-      query: serialize(new DocumentQueryRequest({
+      query: serialize(new PageQueryRequest({
         queries: []
       })),
     }), (resp, from) => {
@@ -246,7 +246,7 @@ describe('query', () => {
 
     let results: number[] = [];
     await query(session.peers[0].ipfs, topic, new QueryRequestV0({
-      query: serialize(new DocumentQueryRequest({
+      query: serialize(new PageQueryRequest({
         queries: []
       })),
       responseRecievers: [await X25519PublicKey.from(requester.publicKey)]

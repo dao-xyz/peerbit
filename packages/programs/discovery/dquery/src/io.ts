@@ -57,7 +57,7 @@ export const query = async (ipfs: IPFS, topic: string, query: QueryRequestV0, re
     } catch (error: any) {
         // timeout
         if (error.constructor.name != "TimeoutError") {
-            throw new Error("Got unexpected error when query");
+            throw new Error("Got unexpected error when query: " + error.constructor.name);
         }
     }
     const serializedQuery = serialize(query);

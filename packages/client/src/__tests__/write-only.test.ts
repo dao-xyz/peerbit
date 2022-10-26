@@ -11,7 +11,7 @@ import { IPFS } from "ipfs-core-types";
 // @ts-ignore 
 import { v4 as uuid } from 'uuid';
 
-import { DDocuments, PutOperation, Operation } from '@dao-xyz/peerbit-ddoc';
+import { DDocuments, PutOperation, Operation, DocumentIndex } from '@dao-xyz/peerbit-ddoc';
 
 // Include test utilities
 import {
@@ -190,7 +190,7 @@ describe(`orbit-db - Write-only`, function () {
             }
 
         }
-        const store = new ProgramWithSubprogram(new DDocuments<EventStore<string>>({ name: 'replication-tests', indexBy: 'name', search: new DSearch({ query: new DQuery({}) }) }));
+        const store = new ProgramWithSubprogram(new DDocuments<EventStore<string>>({ name: 'replication-tests', index: new DocumentIndex({ indexBy: 'name', search: new DSearch({ query: new DQuery({}) }) }) }));
         await orbitdb2.subscribeToReplicationTopic(replicationTopic);
         const openedStore = await orbitdb1.open(store, { replicationTopic, replicate: false });
 

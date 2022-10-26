@@ -35,6 +35,7 @@
     "@dao-xyz/peerbit-bpayload": "^0.0.16",
     "@dao-xyz/peerbit-dsearch": "^0.0.58",
     "@dao-xyz/peerbit-store": "^0.0.32",
+    "@dao-xyz/peerbit-logindex": "^0.0.1",
     "uuid": "^8.3.2"
   },
   "devDependencies": {

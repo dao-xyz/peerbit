@@ -2,7 +2,7 @@ import { Session, waitForPeers } from '@dao-xyz/peerbit-test-utils'
 import { AnyRelation, createIdentityGraphStore, getFromByTo, getPathGenerator, getToByFrom, TrustedNetwork, KEY_OFFSET, PUBLIC_KEY_WIDTH, Relation } from '..';
 import { waitFor } from '@dao-xyz/peerbit-time';
 import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { DocumentQueryRequest, Results, ResultWithSource } from '@dao-xyz/peerbit-dsearch';
+import { PageQueryRequest, Results, ResultWithSource } from '@dao-xyz/peerbit-dsearch';
 import { Secp256k1PublicKey } from '@dao-xyz/peerbit-crypto';
 import { Wallet } from '@ethersproject/wallet'
 import { Identity } from '@dao-xyz/ipfs-log';
@@ -54,7 +54,7 @@ describe('index', () => {
         cacheStore = [];
         for (let i = 0; i < session.peers.length; i++) {
             identites.push(await createIdentity());
-            cacheStore.push(await createStore(path.join(__filename, '/cache/', i.toString())))
+            cacheStore.push(await createStore(path.join(__filename, '/cache/' + i.toString())))
         }
 
     })
@@ -202,19 +202,20 @@ describe('index', () => {
 
             await l0b.trustGraph.store.sync(l0a.trustGraph.store.oplog.heads);
 
-            await waitFor(() => Object.keys(l0b.trustGraph._index._index).length == 1)
+            await waitFor(() => l0b.trustGraph.index.size == 1)
 
             await l0b.add(identity(2).publicKey); // Will only work if peer2 is trusted
 
             await l0a.trustGraph.store.sync(l0b.trustGraph.store.oplog.heads);
 
-            await waitFor(() => Object.keys(l0b.trustGraph._index._index).length == 2)
-            await waitFor(() => Object.keys(l0a.trustGraph._index._index).length == 2)
+            await waitFor(() => l0b.trustGraph.index.size == 2)
+            await waitFor(() => l0a.trustGraph.index.size == 2)
 
-            await waitForPeers(session.peers[2].ipfs, [session.peers[0].id, session.peers[1].id], l0b.trustGraph.search._query.queryTopic)
+            await waitForPeers(session.peers[2].ipfs, [session.peers[0].id, session.peers[1].id], l0b.trustGraph.index.search._query.queryTopic)
+
             // Try query with trusted
             let responses: Results[] = [];
-            await l0b.trustGraph.search.query(new DocumentQueryRequest({
+            await l0b.trustGraph.index.search.query(new PageQueryRequest({
                 queries: []
             }), (response) => {
                 responses.push(response);
@@ -229,7 +230,7 @@ describe('index', () => {
 
             // Try query with untrusted
             let untrustedResponse: any = undefined;
-            await l0b.trustGraph.search.query(new DocumentQueryRequest({
+            await l0b.trustGraph.index.search.query(new PageQueryRequest({
                 queries: []
             }), (response) => {
                 untrustedResponse = response
@@ -244,16 +245,14 @@ describe('index', () => {
             // now check if peer3 is trusted from peer perspective
             expect(await l0a.isTrusted(identity(2).publicKey)).toBeTrue();
 
-            // check if peer3 is trusted from a peer that is not rpelicating
+            // check if peer3 is trusted from a peer that is not replicating
             let l0observer: TrustedNetwork = await TrustedNetwork.load(session.peers[1].ipfs, l0a.address) as any
             await init(l0observer, 1, { store: { replicate: false } });
             expect(await l0observer.isTrusted(identity(2).publicKey)).toBeTrue();
             expect(await l0observer.isTrusted(identity(3).publicKey)).toBeFalse();
 
-
             const trusted = await l0a.getTrusted();
             expect(trusted.map(k => k.bytes)).toContainAllValues([identity(0).publicKey.bytes, identity(1).publicKey.bytes, identity(2).publicKey.bytes])
-
 
         })
 

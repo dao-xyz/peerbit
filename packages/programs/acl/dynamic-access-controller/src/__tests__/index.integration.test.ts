@@ -3,10 +3,10 @@ import { createStore, Session } from '@dao-xyz/peerbit-test-utils';
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
 import { waitFor } from '@dao-xyz/peerbit-time';
-import { DocumentQueryRequest, DSearch, FieldStringMatchQuery, Results } from "@dao-xyz/peerbit-dsearch";
+import { PageQueryRequest, DSearch, FieldStringMatchQuery, Results } from "@dao-xyz/peerbit-dsearch";
 import { AccessError, Ed25519Keypair, MaybeEncrypted, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { CustomBinaryPayload } from "@dao-xyz/peerbit-bpayload";
-import { DDocuments } from "@dao-xyz/peerbit-ddoc";
+import { DDocuments, DocumentIndex } from "@dao-xyz/peerbit-ddoc";
 import type { CanAppend, Identity, Payload } from "@dao-xyz/ipfs-log";
 import { Level } from 'level';
 import { CachedValue, DefaultOptions } from '@dao-xyz/peerbit-store';
@@ -56,9 +56,11 @@ class TestStore extends Program {
         if (properties) {
             this.store = new DDocuments({
                 name: 'test',
-                indexBy: 'id',
-                search: new DSearch({
-                    query: new DQuery({})
+                index: new DocumentIndex({
+                    indexBy: 'id',
+                    search: new DSearch({
+                        query: new DQuery({})
+                    })
                 })
             });
             this.accessController = new DynamicAccessController({
@@ -116,7 +118,7 @@ describe('index', () => {
         await (l0b.accessController).trustedNetwork.trustGraph.store.sync((l0a.accessController).trustedNetwork.trustGraph.store.oplog.heads);
 
         await waitFor(() => l0b.accessController.trustedNetwork.trustGraph.store.oplog.length === 1);
-        await waitFor(() => Object.keys((l0b.accessController).trustedNetwork.trustGraph._index._index).length === 1);
+        await waitFor(() => (l0b.accessController).trustedNetwork.trustGraph._index.size === 1);
 
         await l0b.store.put(new Document({
             id: '2'
@@ -125,8 +127,8 @@ describe('index', () => {
         await l0a.store.store.sync(l0b.store.store.oplog.heads);
         await l0b.store.store.sync(l0a.store.store.oplog.heads);
 
-        await waitFor(() => Object.keys(l0a.store._index._index).length === 2);
-        await waitFor(() => Object.keys(l0b.store._index._index).length === 2);
+        await waitFor(() => l0a.store.index.size === 2);
+        await waitFor(() => l0b.store.index.size === 2);
 
     })
 
@@ -143,7 +145,7 @@ describe('index', () => {
             const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1) as TestStore;
 
             await l0b.store.store.sync(l0a.store.store.oplog.heads);
-            await waitFor(() => Object.keys(l0b.store._index._index).length === 1)
+            await waitFor(() => l0b.store.index.size === 1)
             await expect(l0b.store.put(new Document({
                 id: 'id'
             }))).rejects.toBeInstanceOf(AccessError); // Not trusted
@@ -157,7 +159,7 @@ describe('index', () => {
             }));
 
             await (l0b.accessController).access.store.sync((l0a.accessController).access.store.oplog.heads);
-            await waitFor(() => Object.keys((l0b.accessController).access._index._index).length === 1);
+            await waitFor(() => (l0b.accessController).access.index.size === 1);
             await l0b.store.put(new Document({
                 id: '2'
             })) // Now trusted 
@@ -197,11 +199,11 @@ describe('index', () => {
             }))).rejects.toBeInstanceOf(AccessError); // Not trusted
 
 
-            await waitFor(() => Object.keys((l0b.accessController).access._index._index).length == 1)
+            await waitFor(() => (l0b.accessController).access.index.size == 1)
             await (((l0b.accessController).identityGraphController.addRelation(identity(2).publicKey)));
             await (l0c.accessController).identityGraphController.relationGraph.store.sync((l0b.accessController).identityGraphController.relationGraph.store.oplog.heads);
 
-            await waitFor(() => Object.keys((l0c.accessController).identityGraphController.relationGraph._index._index).length === 1);
+            await waitFor(() => (l0c.accessController).identityGraphController.relationGraph.index.size === 1);
             await l0c.store.put(new Document({
                 id: '2'
             })) // Now trusted 
@@ -233,7 +235,7 @@ describe('index', () => {
             await (l0a.accessController).access.put(access);
             await (l0b.accessController).access.store.sync((l0a.accessController).access.store.oplog.heads);
 
-            await waitFor(() => Object.keys((l0b.accessController).access._index._index).length === 1);
+            await waitFor(() => (l0b.accessController).access.index.size === 1);
             await l0b.store.put(new Document({
                 id: '2'
             })) // Now trusted 
@@ -254,7 +256,7 @@ describe('index', () => {
 
             const q = async (): Promise<Results> => {
                 let results: Results = undefined as any;
-                l0a.store.search.query(new DocumentQueryRequest({
+                l0a.store.index.search.query(new PageQueryRequest({
                     queries: [new FieldStringMatchQuery({
                         key: 'id',
                         value: '1'
@@ -311,11 +313,11 @@ describe('index', () => {
 
         // Allow all for easy query
         (l0b.accessController).access.store.sync((l0a.accessController).access.store.oplog.heads)
-        await waitFor(() => Object.keys((l0a.accessController).access._index._index).length === 1);
-        await waitFor(() => Object.keys((l0b.accessController).access._index._index).length === 1);
+        await waitFor(() => (l0a.accessController).access.index.size === 1);
+        await waitFor(() => (l0b.accessController).access.index.size === 1);
 
         let results: Results = undefined as any;
-        l0a.accessController.access.search.query(new DocumentQueryRequest({
+        l0a.accessController.access.index.search.query(new PageQueryRequest({
             queries: []
         })
             , (response) => {
