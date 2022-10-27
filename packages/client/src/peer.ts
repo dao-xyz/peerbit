@@ -134,7 +134,7 @@ export class Peerbit {
     this.localNetwork = options.localNetwork;
     this.caches[this.directory] = { cache: options.cache, handlers: new Set() }
     this.keystore = options.keystore
-    if (options.waitForKeysTimout) {
+    if (typeof options.waitForKeysTimout === 'number') {
       this._waitForKeysTimeout = options.waitForKeysTimout;
     }
     this._openProgramQueue = new PQueue({ concurrency: 1 })
@@ -159,6 +159,9 @@ export class Peerbit {
   }
 
   async requestAndWaitForKeys<T extends (Ed25519Keypair | X25519Keypair)>(replicationTopic: string, condition: RequestKeyCondition<T>): Promise<KeyWithMeta<T>[] | undefined> {
+    if (!this._trustedNetwork.get(replicationTopic)) {
+      return;
+    }
     const promiseKey = condition.hashcode;
     const existingPromise = this._keysInflightMap.get(promiseKey);
     if (existingPromise) {
@@ -227,9 +230,9 @@ export class Peerbit {
     const keys = (await this.keystore.getKeys<Ed25519Keypair | X25519Keypair>(replicationTopic));
     let key = keys?.[0];
     if (!key) {
-      const keys = await this.requestAndWaitForKeys(replicationTopic, new RequestKeysByReplicationTopic({
+      const keys = this._waitForKeysTimeout ? await this.requestAndWaitForKeys(replicationTopic, new RequestKeysByReplicationTopic({
         replicationTopic
-      }))
+      })) : undefined;
       key = keys ? keys[0] : undefined;
     }
     return key;
@@ -1263,9 +1266,9 @@ export class Peerbit {
         }
 
         if (!options.encryption) {
-          options.encryption = encryptionWithRequestKey(this.identity, this.keystore, (key) => this.requestAndWaitForKeys(definedReplicationTopic, new RequestKeysByKey<(Ed25519Keypair | X25519Keypair)>({
+          options.encryption = encryptionWithRequestKey(this.identity, this.keystore, this._waitForKeysTimeout ? (key) => this.requestAndWaitForKeys(definedReplicationTopic, new RequestKeysByKey<(Ed25519Keypair | X25519Keypair)>({
             key
-          })))
+          })) : undefined)
         }
 
 
