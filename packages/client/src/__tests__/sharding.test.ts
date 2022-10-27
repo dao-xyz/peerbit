@@ -35,7 +35,7 @@ Object.keys(testAPIs).forEach(API => {
             orbitdb2 = await Peerbit.create(session.peers[1].ipfs, { directory: dbPath2 })
             orbitdb3 = await Peerbit.create(session.peers[2].ipfs, { directory: dbPath2 })
 
-            const network = await orbitdb1.openNetwork(new TrustedNetwork({ name: 'network-tests', rootTrust: orbitdb1.identity.publicKey }), { directory: dbPath1 })
+            const network = await orbitdb1.openNetwork(new TrustedNetwork({ id: 'network-tests', rootTrust: orbitdb1.identity.publicKey }), { directory: dbPath1 })
             await orbitdb1.joinNetwork(network);
 
             // trust client 3
@@ -48,7 +48,7 @@ Object.keys(testAPIs).forEach(API => {
 
             replicationTopic = network.address.toString();
 
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'sharding-tests' })
+            db1 = await orbitdb1.open(new EventStore<string>({ id: 'sharding-tests' })
                 , { replicationTopic })
 
             db2 = await orbitdb2.open(db1.address, { replicationTopic }) as EventStore<string>

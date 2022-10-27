@@ -34,6 +34,6 @@ const stress = {
 }
 
 export default [
-  { name: 'join-baseline', ...base, ...baseline },
-  { name: 'join-stress', ...base, ...stress }
+  { id: 'join-baseline', ...base, ...baseline },
+  { id: 'join-stress', ...base, ...stress }
 ]

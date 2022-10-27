@@ -71,8 +71,8 @@ export class NetworkInfo extends DiscoveryData {
 
 
 
-export const createDiscoveryStore = (props?: { name?: string, queryRegion?: string }) => new Documents<NetworkInfo>({
-    name: props?.name ? props?.name : '' + '_discovery',
+export const createDiscoveryStore = (props?: { id?: string, queryRegion?: string }) => new Documents<NetworkInfo>({
+    id: props?.id ? props?.id : '' + '_discovery',
     index: new DocumentIndex({
         indexBy: 'id',
         search: new AnySearch({

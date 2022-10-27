@@ -84,7 +84,7 @@ export class NFTAccessCondition extends AccessCondition {
     network: Network
 
     @field({ type: 'string' })
-    name: string
+    id: string
 
     @field({ type: option(vec(NFTPropertyCondition)) })
     properties: NFTPropertyCondition

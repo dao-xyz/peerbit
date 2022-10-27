@@ -38,8 +38,8 @@ const counts = [1, 100, 1000]
 const benchmarks: any[] = []
 for (const count of counts) {
   const c = { count }
-  benchmarks.push({ name: `heads-${count}-baseline`, ...base, ...c, ...baseline })
-  benchmarks.push({ name: `heads-${count}-stress`, ...base, ...c, ...stress })
+  benchmarks.push({ id: `heads-${count}-baseline`, ...base, ...c, ...baseline })
+  benchmarks.push({ id: `heads-${count}-stress`, ...base, ...c, ...stress })
 }
 
 export default benchmarks

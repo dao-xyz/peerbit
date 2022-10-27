@@ -28,6 +28,6 @@ const stress = {
 }
 
 export default [
-  { name: 'append-baseline', ...base, ...baseline },
-  { name: 'append-stress', ...base, ...stress }
+  { id: 'append-baseline', ...base, ...baseline },
+  { id: 'append-stress', ...base, ...stress }
 ]

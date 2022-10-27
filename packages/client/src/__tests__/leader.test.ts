@@ -83,7 +83,7 @@ Object.keys(testAPIs).forEach(API => {
         })
 
         it('will use trusted network for filtering', async () => {
-            const network = await orbitdb1.openNetwork(new TrustedNetwork({ name: 'network', rootTrust: orbitdb1.identity.publicKey }), { directory: dbPath1 })
+            const network = await orbitdb1.openNetwork(new TrustedNetwork({ id: 'network', rootTrust: orbitdb1.identity.publicKey }), { directory: dbPath1 })
             await orbitdb1.joinNetwork(network);
 
             // make client 2 trusted
@@ -118,7 +118,7 @@ Object.keys(testAPIs).forEach(API => {
 
 
             const replicationTopic = uuid();
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), { replicationTopic: replicationTopic, directory: dbPath1 })
+            db1 = await orbitdb1.open(new EventStore<string>({ id: 'replication-tests' }), { replicationTopic: replicationTopic, directory: dbPath1 })
 
             const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, 123, 1));
             expect(isLeaderAOneLeader);
@@ -153,7 +153,7 @@ Object.keys(testAPIs).forEach(API => {
 
 
             const replicationTopic = uuid()
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), { replicationTopic: replicationTopic, replicate: false, directory: dbPath1 })
+            db1 = await orbitdb1.open(new EventStore<string>({ id: 'replication-tests' }), { replicationTopic: replicationTopic, replicate: false, directory: dbPath1 })
             db2 = await orbitdb2.open<EventStore<string>>(db1.address, { replicationTopic, directory: dbPath2 })
 
             // One leader
@@ -177,7 +177,7 @@ Object.keys(testAPIs).forEach(API => {
 
 
             const replicationTopic = uuid();
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), { replicationTopic: replicationTopic, replicate: false, directory: dbPath1 })
+            db1 = await orbitdb1.open(new EventStore<string>({ id: 'replication-tests' }), { replicationTopic: replicationTopic, replicate: false, directory: dbPath1 })
             db2 = await orbitdb2.open<EventStore<string>>(db1.address, { replicationTopic, directory: dbPath2 })
             db3 = await orbitdb3.open<EventStore<string>>(db1.address, { replicationTopic, directory: dbPath3 })
 
@@ -214,7 +214,7 @@ Object.keys(testAPIs).forEach(API => {
 
 
             const replicationTopic = uuid();
-            db1 = await orbitdb1.open(new EventStore<string>({ name: 'replication-tests' }), { replicationTopic: replicationTopic, directory: dbPath1 })
+            db1 = await orbitdb1.open(new EventStore<string>({ id: 'replication-tests' }), { replicationTopic: replicationTopic, directory: dbPath1 })
             db2 = await orbitdb2.open<EventStore<string>>(db1.address, { replicationTopic, directory: dbPath2 })
             db3 = await orbitdb3.open<EventStore<string>>(db1.address, { replicationTopic, directory: dbPath3 })
 

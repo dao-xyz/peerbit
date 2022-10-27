@@ -13,7 +13,7 @@ export interface Manifest {
     data: Uint8Array
 }
 
-export interface Addressable { get name(): string, get address(): Address | undefined }
+export interface Addressable { get id(): string, get address(): Address | undefined }
 
 @variant(0)
 export class Address {

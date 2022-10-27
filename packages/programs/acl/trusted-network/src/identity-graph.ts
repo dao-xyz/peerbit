@@ -168,8 +168,8 @@ export const getRelation = (from: Key, to: Key, db: Documents<Relation>): Indexe
 
 
 
-export const createIdentityGraphStore = (props: { name?: string, queryRegion?: string }) => new Documents<Relation>({
-    name: props?.name ? props?.name : '' + '_relation',
+export const createIdentityGraphStore = (props: { id?: string, queryRegion?: string }) => new Documents<Relation>({
+    id: props?.id ? props?.id : '' + '_relation',
     index: new DocumentIndex({
         indexBy: 'id',
         search: new AnySearch({

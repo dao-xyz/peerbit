@@ -26,17 +26,17 @@ abstract class QueryTopic {
 class QueryRegion extends QueryTopic {
 
     @field({ type: 'string' })
-    name: string
-    constructor(properties?: { name: string }) {
+    id: string
+    constructor(properties?: { id: string }) {
         super();
         if (properties) {
-            this.name = properties.name
+            this.id = properties.id
 
         }
     }
 
     from(_address: Address) {
-        return this.name;
+        return this.id;
     }
 }
 
@@ -74,7 +74,7 @@ export class DQuery<Q, R> extends ComposableProgram {
     _responseType: Constructor<R>
     canRead: CanRead
 
-    constructor(properties: { name?: string, queryRegion?: string, queryAddressSuffix?: string }) {
+    constructor(properties: { id?: string, queryRegion?: string, queryAddressSuffix?: string }) {
         super(properties)
         if (properties) {
             if (!!properties.queryRegion && !!properties.queryRegion == !!properties.queryAddressSuffix) {
@@ -82,7 +82,7 @@ export class DQuery<Q, R> extends ComposableProgram {
             }
 
             if (properties.queryRegion) {
-                this.queryRegion = new QueryRegion({ name: properties.queryRegion })
+                this.queryRegion = new QueryRegion({ id: properties.queryRegion })
             }
             else if (properties.queryAddressSuffix) {
                 this.queryRegion = new QueryAddressSuffix({ suffix: properties.queryAddressSuffix })

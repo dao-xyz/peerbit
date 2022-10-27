@@ -41,7 +41,7 @@ export class DString extends Program {
 
   _optionCanAppend?: CanAppend<StringOperation>
 
-  constructor(properties: { name?: string, search: AnySearch<StringOperation> }) {
+  constructor(properties: { id?: string, search: AnySearch<StringOperation> }) {
     super(properties)
     if (properties) {
       this.search = properties.search

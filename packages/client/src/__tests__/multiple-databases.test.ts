@@ -99,7 +99,7 @@ Object.keys(testAPIs).forEach(API => {
       // Open the databases on the first node
       const replicationTopic = uuid();
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb1.open(new EventStore<string>({ name: 'local-' + i }), { ...options, replicationTopic })
+        const db = await orbitdb1.open(new EventStore<string>({ id: 'local-' + i }), { ...options, replicationTopic })
         localDatabases.push(db)
       }
       for (let i = 0; i < dbCount; i++) {

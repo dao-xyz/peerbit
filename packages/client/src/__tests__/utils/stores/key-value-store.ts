@@ -46,7 +46,7 @@ export class KeyValueStore<T> extends Program {
     store: Store<Operation<T>>
 
     constructor(properties: {
-        name: string
+        id: string
     }) {
         super(properties);
         this.store = new Store({ ...properties })

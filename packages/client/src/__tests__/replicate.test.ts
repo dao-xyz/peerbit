@@ -69,7 +69,7 @@ Object.keys(testAPIs).forEach(API => {
 
       options = Object.assign({}, options, { directory: dbPath1 })
       replicationTopic = uuid();
-      db1 = await orbitdb1.open(new EventStore<string>({ name: 'a' })
+      db1 = await orbitdb1.open(new EventStore<string>({ id: 'a' })
         , { ...options, replicationTopic })
     })
 

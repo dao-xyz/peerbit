@@ -21,7 +21,7 @@ export class AnySearch<T> extends ComposableProgram {
     _context: SearchContext;
 
     _setup: boolean = false;
-    constructor(properties: { query: DQuery<QueryType, Results>, name?: string }) {
+    constructor(properties: { query: DQuery<QueryType, Results>, id?: string }) {
         super(properties)
         if (properties) {
             this._query = properties.query;

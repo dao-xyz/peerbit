@@ -39,7 +39,7 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
 
 
     @field({ type: 'string' })
-    name: string;
+    id: string;
 
     @field({ type: option(ProgramOwner) })
     programOwner?: ProgramOwner // Will control whether this program can be opened or not
@@ -57,13 +57,13 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
     parentProgram: Program
 
 
-    constructor(properties?: { name?: string }) {
+    constructor(properties?: { id?: string }) {
         super();
         if (properties) {
-            this.name = (properties.name || uuid());
+            this.id = (properties.id || uuid());
         }
         else {
-            this.name = uuid()
+            this.id = uuid()
         }
     }
 

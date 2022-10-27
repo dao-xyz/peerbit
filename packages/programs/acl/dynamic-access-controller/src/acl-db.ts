@@ -24,7 +24,7 @@ export class DynamicAccessController extends Program {
     trustedNetwork: TrustedNetwork
 
     constructor(opts?: {
-        name?: string;
+        id?: string;
         rootTrust?: PublicSignKey,
         trustedNetwork?: TrustedNetwork
     }) {
@@ -43,10 +43,10 @@ export class DynamicAccessController extends Program {
             })
 
             this.trustedNetwork = opts.trustedNetwork ? opts.trustedNetwork : new TrustedNetwork({
-                name: (opts.name || uuid()) + "_region",
+                id: (opts.id || uuid()) + "_region",
                 rootTrust: opts.rootTrust as PublicSignKey
             })
-            this.identityGraphController = new RelationContract({ name: 'relation', });
+            this.identityGraphController = new RelationContract({ id: 'relation', });
         }
     }
 

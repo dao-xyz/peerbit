@@ -44,7 +44,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         beforeEach(async () => {
             const cache = new Cache(cacheStore)
             index = new SimpleIndex();
-            store = new Store({ name: 'name' })
+            store = new Store({ id: 'name' })
             await store.init(session.peers[0].ipfs, {
                 ...signKey.keypair,
                 sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
@@ -62,7 +62,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
             const cache = new Cache(cacheStore)
             const index2 = new SimpleIndex();
-            const store2 = new Store({ name: 'name2' })
+            const store2 = new Store({ id: 'name2' })
             await store2.init(session.peers[1].ipfs, {
                 ...signKey.keypair,
                 sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
@@ -84,7 +84,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
             const cache = new Cache(cacheStore)
             const index2 = new SimpleIndex();
-            const store2 = new Store({ name: 'name2' })
+            const store2 = new Store({ id: 'name2' })
 
             const progressCallbackEntries: Entry<any>[] = [];
             await store2.init(session.peers[1].ipfs, {

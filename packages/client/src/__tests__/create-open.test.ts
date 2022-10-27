@@ -60,7 +60,7 @@ describe(`orbit-db - Create & Open `, function () {
       let db: KeyValueStore<string>;
 
       beforeAll(async () => {
-        db = await orbitdb.open(new KeyValueStore<string>({ name: 'second' }), { replicationTopic: uuid(), replicate: false })
+        db = await orbitdb.open(new KeyValueStore<string>({ id: 'second' }), { replicationTopic: uuid(), replicate: false })
         localDataPath = path.join(dbPath, orbitdb.id.toString(), 'cache')
         await db.close()
       })
@@ -89,7 +89,7 @@ describe(`orbit-db - Create & Open `, function () {
 
       it('can pass local database directory as an option', async () => {
         const dir = './peerbit/tests/another-feed-' + uuid();
-        const db2 = await orbitdb.open(new EventStore({ name: 'third' }),
+        const db2 = await orbitdb.open(new EventStore({ id: 'third' }),
           { replicationTopic: uuid(), directory: dir })
         expect(fs.existsSync(dir)).toEqual(true)
         await db2.close()
@@ -140,7 +140,7 @@ describe(`orbit-db - Create & Open `, function () {
 
     /*  TODO, this test throws error, but not the expected one
     it('throws an error if trying to open a database locally and we don\'t have it', async () => {
-       const db = await orbitdb.open(new EventStore({ name: 'abc' }), { replicationTopic })
+       const db = await orbitdb.open(new EventStore({ id: 'abc' }), { replicationTopic })
        const address = new Address(db.address.cid.slice(0, -1) + 'A')
        await db.drop()
        try {
@@ -203,11 +203,11 @@ describe(`orbit-db - Create & Open `, function () {
       const directory2 = path.join(dbPath, "custom-store2")
 
 
-      const db1 = await orbitdb.open(new EventStore({ name: 'xyz1' }), { replicationTopic })
-      const db2 = await orbitdb.open(new EventStore({ name: 'xyz2' }), { replicationTopic, directory })
-      const db3 = await orbitdb.open(new EventStore({ name: 'xyz3' }), { replicationTopic, directory })
-      const db4 = await orbitdb.open(new EventStore({ name: 'xyz4' }), { replicationTopic, directory: directory2 })
-      const db5 = await orbitdb.open(new EventStore({ name: 'xyz5' }), { replicationTopic })
+      const db1 = await orbitdb.open(new EventStore({ id: 'xyz1' }), { replicationTopic })
+      const db2 = await orbitdb.open(new EventStore({ id: 'xyz2' }), { replicationTopic, directory })
+      const db3 = await orbitdb.open(new EventStore({ id: 'xyz3' }), { replicationTopic, directory })
+      const db4 = await orbitdb.open(new EventStore({ id: 'xyz4' }), { replicationTopic, directory: directory2 })
+      const db5 = await orbitdb.open(new EventStore({ id: 'xyz5' }), { replicationTopic })
       try {
         await db1.close()
         await db2.close()

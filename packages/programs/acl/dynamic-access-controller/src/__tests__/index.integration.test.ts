@@ -51,11 +51,11 @@ class TestStore extends Program {
     @field({ type: DynamicAccessController })
     accessController: DynamicAccessController
 
-    constructor(properties: { name?: string, identity: Identity, accessControllerName?: string }) {
+    constructor(properties: { id?: string, identity: Identity, accessControllerName?: string }) {
         super(properties)
         if (properties) {
             this.store = new Documents({
-                name: 'test',
+                id: 'test',
                 index: new DocumentIndex({
                     indexBy: 'id',
                     search: new AnySearch({
@@ -64,7 +64,7 @@ class TestStore extends Program {
                 })
             });
             this.accessController = new DynamicAccessController({
-                name: properties.accessControllerName || 'test-acl',
+                id: properties.accessControllerName || 'test-acl',
                 rootTrust: properties.identity?.publicKey
             })
         }

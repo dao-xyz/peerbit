@@ -154,7 +154,7 @@ export const DefaultOptions: IInitializationOptionsDefault<any> = {
   referenceCount: 32,
   replicationConcurrency: 32,
   typeMap: {},
-  /* nameResolver: (name: string) => name, */
+  /* nameResolver: (id: string) => name, */
 
 }
 
@@ -178,7 +178,7 @@ export interface Saveable {
 export class Store<T> extends SystemBinaryPayload implements Addressable, Initiable<T>, Saveable {
 
   @field({ type: 'string' })
-  name: string;
+  id: string;
 
 
   _canAppend?: CanAppend<T>;
@@ -215,10 +215,10 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
   _key: string;
 
 
-  constructor(properties?: { name?: string, parent?: { name: string } }) {
+  constructor(properties?: { id?: string, parent?: { id: string } }) {
     super();
     if (properties) {
-      this.name = (properties.parent?.name ? (properties.parent?.name + '/') : '') + (properties.name || uuid());
+      this.id = (properties.parent?.id ? (properties.parent?.id + '/') : '') + (properties.id || uuid());
     }
   }
 

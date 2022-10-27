@@ -72,12 +72,12 @@ Object.keys(testAPIs).forEach(API => {
       await cache2.clear();
       index1 = new SimpleIndex();
       index2 = new SimpleIndex();
-      store1 = new Store({ name: 'name' })
+      store1 = new Store({ id: 'name' })
       await store1.init(ipfs, {
         ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { ...DefaultOptions, resolveCache: () => Promise.resolve(new Cache(cache1)), onUpdate: index1.updateIndex.bind(index1) });
-      store2 = new Store({ name: 'name' })
+      store2 = new Store({ id: 'name' })
       await store2.init(ipfs, {
         ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))

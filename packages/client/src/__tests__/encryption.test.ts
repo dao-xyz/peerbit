@@ -74,7 +74,7 @@ Object.keys(testAPIs).forEach(API => {
         directory: orbitdbPath1, waitForKeysTimout: 1000
       },)
 
-      const network = await orbitdb1.openNetwork(new TrustedNetwork({ name: 'network-tests', rootTrust: orbitdb1.identity.publicKey }), { directory: dbPath1 })
+      const network = await orbitdb1.openNetwork(new TrustedNetwork({ id: 'network-tests', rootTrust: orbitdb1.identity.publicKey }), { directory: dbPath1 })
       await orbitdb1.joinNetwork(network);
 
       // Trusted client 2

@@ -72,7 +72,7 @@ Object.keys(testAPIs).forEach(API => {
         // Set write access for both clients
         replicationTopic = uuid();
         db1 = await orbitdb1.open(new EventStore<string>({
-          name: 'events',
+          id: 'events',
 
         }), { replicationTopic, directory: dbPath1, })
         // Set 'localOnly' flag on and it'll error if the database doesn't exist locally

@@ -38,7 +38,7 @@ describe(`Constructor`, function () {
     signKey = await keystore.createEd25519Key();
     ipfs = await startIpfs('js-ipfs', ipfsConfig.daemon1)
     const options = Object.assign({}, DefaultOptions, { resolveCache: () => Promise.resolve(cache) })
-    store = new Store({ name: 'name' })
+    store = new Store({ id: 'name' })
     await store.init(ipfs.api, {
       ...signKey.keypair,
       sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))

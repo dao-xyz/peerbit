@@ -75,7 +75,7 @@ describe(`orbit-db - Write-only`, function () {
         })
         orbitdb2 = await Peerbit.create(ipfs2, { directory: orbitdbPath2 })
         db1 = await orbitdb1.open(new EventStore<string>({
-            name: 'abc',
+            id: 'abc',
 
         }), { replicationTopic, directory: dbPath1 })
     })
@@ -138,7 +138,7 @@ describe(`orbit-db - Write-only`, function () {
     it('will open store on exchange heads message', async () => {
 
         const replicationTopic = 'x';
-        const store = new EventStore<string>({ name: 'replication-tests' });
+        const store = new EventStore<string>({ id: 'replication-tests' });
         await orbitdb2.subscribeToReplicationTopic(replicationTopic);
         await orbitdb1.open(store, { replicationTopic, replicate: false });
 
@@ -190,12 +190,12 @@ describe(`orbit-db - Write-only`, function () {
             }
 
         }
-        const store = new ProgramWithSubprogram(new Documents<EventStore<string>>({ name: 'replication-tests', index: new DocumentIndex({ indexBy: 'name', search: new AnySearch({ query: new DQuery({}) }) }) }));
+        const store = new ProgramWithSubprogram(new Documents<EventStore<string>>({ id: 'replication-tests', index: new DocumentIndex({ indexBy: 'id', search: new AnySearch({ query: new DQuery({}) }) }) }));
         await orbitdb2.subscribeToReplicationTopic(replicationTopic);
         const openedStore = await orbitdb1.open(store, { replicationTopic, replicate: false });
 
-        const eventStore = await store.eventStore.put(new EventStore({ name: 'store 1' }));
-        const _eventStore2 = await store.eventStore.put(new EventStore({ name: 'store 2' }));
+        const eventStore = await store.eventStore.put(new EventStore({ id: 'store 1' }));
+        const _eventStore2 = await store.eventStore.put(new EventStore({ id: 'store 2' }));
         expect(store.eventStore.store.oplog.heads).toHaveLength(2); // two independent documents
 
         await waitFor(() => Object.values(orbitdb2.programs[replicationTopic]).length > 0, { timeout: 20 * 1000, delayInterval: 50 });

@@ -45,7 +45,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       index = new SimpleIndex();
 
       const options = Object.assign({}, DefaultOptions, { replicationConcurrency: 123, resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index) })
-      store = new Store({ name: 'name' })
+      store = new Store({ id: 'name' })
       await store.init(ipfs, {
         ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))

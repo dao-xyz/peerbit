@@ -282,20 +282,20 @@ describe('index', () => {
        it('sort offset ascending', async () => {
          let doc = new Document({
            id: '1',
-           name: 'hey',
+           id: 'hey',
            number: 1n
          });
  
          let doc2 = new Document({
            id: '2',
-           name: 'hey',
+           id: 'hey',
            number: 2n
  
          });
  
          let doc3 = new Document({
            id: '3',
-           name: 'hey',
+           id: 'hey',
            number: 3n
          });
  
@@ -331,19 +331,19 @@ describe('index', () => {
  
          let doc = new Document({
            id: '1',
-           name: 'hey',
+           id: 'hey',
            number: 1n
          });
          let doc2 = new Document({
            id: '2',
-           name: 'hey',
+           id: 'hey',
            number: 2n
  
          });
  
          let doc3 = new Document({
            id: '3',
-           name: 'hey',
+           id: 'hey',
            number: 3n
  
          });

@@ -82,8 +82,8 @@ Object.keys(testAPIs).forEach(API => {
         it('open same store twice will share instance', async () => {
 
             const replicationTopic = 'topic';
-            db1 = await orbitdb1.open(new SimpleStoreContract({ store: new EventStore({ name: 'some db' }) }), { replicationTopic })
-            const sameDb = await orbitdb1.open(new SimpleStoreContract({ store: new EventStore({ name: 'some db' }) }), { replicationTopic })
+            db1 = await orbitdb1.open(new SimpleStoreContract({ store: new EventStore({ id: 'some db' }) }), { replicationTopic })
+            const sameDb = await orbitdb1.open(new SimpleStoreContract({ store: new EventStore({ id: 'some db' }) }), { replicationTopic })
             expect(db1 === sameDb);
 
         })
@@ -92,12 +92,12 @@ Object.keys(testAPIs).forEach(API => {
             const replicationTopic = 'topic';
             db1 = await orbitdb1.open(new SimpleStoreContract({
                 store: new EventStore<string>({
-                    name: 'event store'
+                    id: 'event store'
                 })
             }), { replicationTopic })
             db2 = await orbitdb1.open(new SimpleStoreContract({
                 store: new EventStore<string>({
-                    name: 'event store'
+                    id: 'event store'
                 })
             }), { replicationTopic })
             expect(db1 !== db2);
@@ -110,12 +110,12 @@ Object.keys(testAPIs).forEach(API => {
             // TODO is this expected behaviour?
             db1 = await orbitdb1.open(new SimpleStoreContract({
                 store: new EventStore<string>({
-                    name: 'event store'
+                    id: 'event store'
                 })
             }), { replicationTopic: 'a' })
             db2 = await orbitdb1.open(new SimpleStoreContract({
                 store: new EventStore<string>({
-                    name: 'event store'
+                    id: 'event store'
                 })
             }), { replicationTopic: 'b' })
             expect(db1 !== db2);

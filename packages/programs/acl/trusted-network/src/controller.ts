@@ -57,7 +57,7 @@ export class RelationContract extends Program {
     relationGraph: Documents<Relation>
 
     constructor(props?: {
-        name?: string,
+        id?: string,
         queryRegion?: string
     }) {
         super(props)
@@ -102,7 +102,7 @@ export class TrustedNetwork extends Program {
     logIndex: LogIndex;
 
     constructor(props?: {
-        name?: string,
+        id?: string,
         rootTrust: PublicSignKey,
         logIndex?: LogIndex
     }) {

@@ -65,7 +65,7 @@ Object.keys(testAPIs).forEach(API => {
 
     it('sets identity', async () => {
       const db = await orbitdb.open(new EventStore<string>({
-        name: 'abc',
+        id: 'abc',
 
       }), options)
       expect(db.store.identity.publicKey.equals(orbitdb.identity.publicKey))

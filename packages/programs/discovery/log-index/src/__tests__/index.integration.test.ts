@@ -30,7 +30,7 @@ describe('query', () => {
 
     const queryTopic = uuid();
     for (let i = 0; i < peersCount; i++) {
-      const store = new Store({ name: 'name' });
+      const store = new Store({ id: 'name' });
       const signKey = await Ed25519Keypair.create();
       const cache = new Cache(cacheStores[i])
       const logIndex = new LogIndex({ query: new DQuery({ queryRegion: queryTopic }) });

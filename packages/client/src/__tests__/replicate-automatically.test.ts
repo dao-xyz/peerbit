@@ -81,9 +81,9 @@ Object.keys(testAPIs).forEach(API => {
 
       const replicationTopic = uuid();
 
-      const db1 = await orbitdb1.open(new EventStore<string>({ name: 'replicate-automatically-tests' }), { replicationTopic })
+      const db1 = await orbitdb1.open(new EventStore<string>({ id: 'replicate-automatically-tests' }), { replicationTopic })
 
-      const db3 = await orbitdb1.open(new KeyValueStore<string>({ name: 'replicate-automatically-tests-kv' }), {
+      const db3 = await orbitdb1.open(new KeyValueStore<string>({ id: 'replicate-automatically-tests-kv' }), {
         replicationTopic,
         onReplicationComplete: (_) => {
           fail();
@@ -132,7 +132,7 @@ Object.keys(testAPIs).forEach(API => {
 
       const replicationTopic = uuid();
 
-      const db1 = await orbitdb1.open(new EventStore<string>({ name: 'replicate-automatically-tests' }), { replicationTopic, replicate: false })
+      const db1 = await orbitdb1.open(new EventStore<string>({ id: 'replicate-automatically-tests' }), { replicationTopic, replicate: false })
 
       // Create the entries in the first database
       for (let i = 0; i < entryCount; i++) {

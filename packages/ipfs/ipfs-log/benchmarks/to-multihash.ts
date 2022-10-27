@@ -38,8 +38,8 @@ const counts = [1, 100, 1000]
 const benchmarks: any[] = []
 for (const count of counts) {
   const c = { count }
-  benchmarks.push({ name: `toMultihash-${count}-baseline`, ...base, ...c, ...baseline })
-  benchmarks.push({ name: `toMultihash-${count}-stress`, ...base, ...c, ...stress })
+  benchmarks.push({ id: `toMultihash-${count}-baseline`, ...base, ...c, ...baseline })
+  benchmarks.push({ id: `toMultihash-${count}-stress`, ...base, ...c, ...stress })
 }
 
 export default benchmarks

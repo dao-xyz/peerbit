@@ -102,7 +102,7 @@ describe('index', () => {
             const c = (await Ed25519Keypair.create()).publicKey;
 
             const store = new IdentityGraph({
-                store: createIdentityGraphStore({ name: session.peers[0].id.toString() })
+                store: createIdentityGraphStore({ id: session.peers[0].id.toString() })
             })
             await init(store, 0);
 
@@ -163,7 +163,7 @@ describe('index', () => {
             })
 
             const store = new IdentityGraph({
-                store: createIdentityGraphStore({ name: session.peers[0].id.toString() })
+                store: createIdentityGraphStore({ id: session.peers[0].id.toString() })
             })
             await init(store, 0);
 

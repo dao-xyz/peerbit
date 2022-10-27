@@ -42,7 +42,7 @@ export class Documents<T extends BinaryPayload> extends ComposableProgram {
   _optionCanAppend?: CanAppend<Operation<T>>
 
   constructor(properties: {
-    name?: string,
+    id?: string,
     canEdit?: boolean,
     index: DocumentIndex<T>,
     logIndex?: LogIndex
@@ -52,7 +52,7 @@ export class Documents<T extends BinaryPayload> extends ComposableProgram {
       this.store = new Store(properties);
       this.canEdit = properties.canEdit || false
       this._index = properties.index;
-      this._logIndex = properties.logIndex || new LogIndex({ name: properties.name });
+      this._logIndex = properties.logIndex || new LogIndex({ id: properties.id });
     }
   }
 

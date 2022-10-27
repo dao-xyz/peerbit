@@ -21,7 +21,7 @@ export class NetworkDiscovery extends Program {
     _options: ProgramInitializationOptions
 
     constructor(props?: {
-        name?: string,
+        id?: string,
         queryRegion?: string
     }) {
         super(props);
