@@ -106,6 +106,8 @@ export class Peerbit {
   _peerInfoResponseCounter: LRUCounter = new LRUCounter(new LRU({ ttl: 100000 }))
   _canOpenProgram: (identity: SignKey | undefined, replicationTopic: string) => Promise<boolean>
   _openProgramQueue: PQueue
+  _disconnected: boolean = false;
+  _disconnecting: boolean = false;
 
   //_peerInfoMap: Map<string, Map<string, Set<string>>> // peer -> store -> heads
   /*   _replicationTopicJobs: Map<string, { controller: AbortController }> = new Map(); */
@@ -298,8 +300,6 @@ export class Peerbit {
   }
 
 
-  _disconnected: boolean = false;
-  _disconnecting: boolean = false;
 
   async disconnect() {
     this._disconnecting = true;
@@ -424,7 +424,7 @@ export class Peerbit {
     }
 
     if (this._disconnected) {
-      throw new Error("Got message while disconnecting")
+      throw new Error("Got message while disconnected")
     }
 
     try {
