@@ -19,13 +19,6 @@ export interface PublicKeyEncryptionResolver {
 export type GetAnyKeypair = (publicKey: (X25519PublicKey | Ed25519PublicKey)[]) => Promise<{ index: number, keypair: (X25519Keypair | Ed25519Keypair) } | undefined>;
 export type GetEncryptionKeypair = (() => (Promise<X25519Keypair | Ed25519Keypair> | X25519Keypair | Ed25519Keypair)) | X25519Keypair | Ed25519Keypair;
 
-const getKeypairAsX25519Keypair = async (keypair: X25519Keypair | Ed25519Keypair): Promise<X25519Keypair> => {
-    if (keypair instanceof X25519Keypair) {
-        return keypair
-    }
-    return X25519Keypair.from(keypair)
-}
-
 
 @variant(0)
 export class MaybeEncrypted<T>  {
