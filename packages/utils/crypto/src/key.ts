@@ -13,7 +13,7 @@ export class Crypto extends SystemBinaryPayload {
 
 
 @variant(0)
-export class Key extends Crypto {
+export abstract class Key extends Crypto {
 
     equals(other: Key): boolean {
         throw new Error("Not implemented");
@@ -33,7 +33,7 @@ export class Key extends Crypto {
 }
 
 @variant(1)
-export class Keypair extends Crypto {
+export abstract class Keypair extends Crypto {
 
     publicKey: PublicSignKey | PublicKeyEncryptionKey
 
@@ -51,40 +51,41 @@ export class Keypair extends Crypto {
 // ---- SIGNATURE KEYS -----
 
 @variant(0)
-export class SignKey extends Key {
+export abstract class SignKey extends Key {
 
 }
 @variant(0)
-export class PublicSignKey extends SignKey {
+export abstract class PublicSignKey extends SignKey {
 
 }
+
 @variant(1)
-export class PrivateSignKey extends SignKey {
+export abstract class PrivateSignKey extends SignKey {
 
 }
 
 
 // ---- PUBLIC KEY ENCRYPTION -----
 @variant(1)
-export class PublicKeyEncryption extends Key {
+export abstract class PublicKeyEncryption extends Key {
 
 }
 @variant(0)
-export class PublicKeyEncryptionKey extends PublicKeyEncryption {
+export abstract class PublicKeyEncryptionKey extends PublicKeyEncryption {
 
 }
 
 @variant(1)
-export class PrivateEncryptionKey extends PublicKeyEncryption {
+export abstract class PrivateEncryptionKey extends PublicKeyEncryption {
 
 }
 
 // ---- OTHER KEYS ----
 @variant(2)
-export class OtherKey extends Key { }
+export abstract class OtherKey extends Key { }
 
 @variant(0)
-export class PlainKey extends OtherKey { }
+export abstract class PlainKey extends OtherKey { }
 
 
 /* 
