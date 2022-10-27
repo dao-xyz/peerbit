@@ -181,8 +181,8 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
 
 
   _canAppend?: CanAppend<T>;
-  _onUpdate?: (oplog: Log<T>, entries?: Entry<T>[]) => void
-  _onUpdateOption?: (oplog: Log<T>, entries?: Entry<T>[]) => void
+  _onUpdate?: (oplog: Log<T>, entries?: Entry<T>[]) => Promise<void> | void
+  _onUpdateOption?: (oplog: Log<T>, entries?: Entry<T>[]) => Promise<void> | void
 
   // An access controller that is note part of the store manifest, usefull for circular store -> access controller -> store structures
 
@@ -658,7 +658,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     // TODO add better error handling
     try {
       if (this._onUpdate) {
-        this._onUpdate(this._oplog, entries);
+        await this._onUpdate(this._oplog, entries);
       }
     } catch (error) {
       if (error instanceof AccessError) {
@@ -672,7 +672,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
 
     try {
       if (this._onUpdateOption) {
-        this._onUpdateOption(this._oplog, entries);
+        await this._onUpdateOption(this._oplog, entries);
       }
     }
     catch (error) {

@@ -1,6 +1,7 @@
 import { field, option, variant } from '@dao-xyz/borsh';
 import { BORSH_ENCODING, Log } from '@dao-xyz/ipfs-log';
 import { Entry } from '@dao-xyz/ipfs-log';
+import { AccessError } from '@dao-xyz/peerbit-crypto';
 import { ComposableProgram } from '@dao-xyz/peerbit-program';
 import { Range } from './range.js';
 
@@ -43,7 +44,11 @@ export class StringIndex extends ComposableProgram {
 }
 
 export const applyOperations = async (string: string, operations: Entry<StringOperation>[]): Promise<string> => {
-  await Promise.all(operations.map(operation => operation.getPayload()))
+  try {
+    await Promise.all(operations.map(operation => operation.getPayload()))
+  } catch (error) {
+    throw error;
+  }
   operations.reduce((handled: string[], item: Entry<StringOperation>, _) => {
     if (!handled.includes(item.hash)) {
       handled.push(item.hash)

@@ -9,10 +9,11 @@ import Cache from '@dao-xyz/peerbit-cache';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { Identity } from '@dao-xyz/ipfs-log';
-import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto';
+import { Ed25519Keypair, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
 import { DefaultOptions } from '@dao-xyz/peerbit-store';
 import { deserialize, serialize } from '@dao-xyz/borsh';
 import { QueryRequestV0, DQuery, QueryOptions, query } from '@dao-xyz/peerbit-query';
+import { delay, waitFor } from '@dao-xyz/peerbit-time';
 
 const __filename = fileURLToPath(import.meta.url);
 
@@ -57,7 +58,7 @@ describe('query', () => {
                 })
             })
         });
-        await writeStore.init(writer, await createIdentity(), { store: { ...DefaultOptions, replicate: true, resolveCache: () => new Cache(cacheStore1) } });
+        await writeStore.init(writer, await createIdentity(), { store: { ...DefaultOptions, encryption: { getAnyKeypair: (_) => Promise.resolve(undefined), getEncryptionKeypair: () => Ed25519Keypair.create() }, replicate: true, resolveCache: () => new Cache(cacheStore1) } });
 
         observerStore = await DString.load(session.peers[1].ipfs, writeStore.address) as DString;
         observerStore.search._query.subscribeToQueries = false;
@@ -168,5 +169,11 @@ describe('query', () => {
         expect(callbackValues).toEqual(['hello world']);
     })
 
+    it('handles AccessError gracefully', async () => {
+        await writeStore.add('hello', new Range({ offset: 0n, length: 'hello'.length }), { reciever: { clock: undefined, signature: undefined, payload: [await X25519PublicKey.create()] } });
+        await writeStore.store.close();
+        await writeStore.store.load();
+        await waitFor(() => writeStore.store.oplog.values.length === 1)
+    })
 
 }) 
