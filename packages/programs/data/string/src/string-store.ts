@@ -36,7 +36,9 @@ export class DString extends Program {
   @field({ type: AnySearch })
   search: AnySearch<StringOperation>;
 
+  @field({ type: StringIndex })
   _index: StringIndex;
+
   _optionCanAppend?: CanAppend<StringOperation>
 
   constructor(properties: { name?: string, search: AnySearch<StringOperation> }) {
@@ -44,8 +46,8 @@ export class DString extends Program {
     if (properties) {
       this.search = properties.search
       this.store = new Store(properties);
+      this._index = new StringIndex(properties);
     }
-    this._index = new StringIndex();
   }
 
 
@@ -58,7 +60,7 @@ export class DString extends Program {
     }
 
     await this.search.setup({ ...options, context: { address: () => this.address }, canRead: options?.canRead, queryHandler: this.queryHandler.bind(this) })
-
+    await this._index.setup();
 
   }
 

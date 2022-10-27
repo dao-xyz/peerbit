@@ -20,7 +20,7 @@ export class OperationError extends Error {
     super(message);
   }
 }
-@variant([0, 7])
+@variant([0, 8])
 export class Documents<T extends BinaryPayload> extends ComposableProgram {
 
   @field({ type: Store })

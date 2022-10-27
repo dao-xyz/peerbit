@@ -94,7 +94,7 @@ export class LogQueryRequest {
 /**
  * Index for querying entries in any stores log (meta info of entries)
  */
-@variant([0, 6])
+@variant([0, 7])
 export class LogIndex extends ComposableProgram {
 
     @field({ type: DQuery })

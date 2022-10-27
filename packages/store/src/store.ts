@@ -373,19 +373,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
 
         // update the store's index after joining the logs
         // and persisting the latest heads
-        try {
-          await this._updateIndex()
-
-        } catch (error) {
-          if (error instanceof AccessError) {
-            // recieved data that I could not decrypt
-            // TODO add better handling
-            return;
-          }
-          else {
-            throw error;
-          }
-        }
+        await this._updateIndex()
 
         if (this._oplog.length > this.replicationStatus.progress) {
           this._recalculateReplicationStatus(this._oplog.length)
@@ -666,11 +654,37 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
   }
 
   async _updateIndex(entries?: Entry<T>[]) {
-    if (this._onUpdate) {
-      this._onUpdate(this._oplog, entries);
+
+    // TODO add better error handling
+    try {
+      if (this._onUpdate) {
+        this._onUpdate(this._oplog, entries);
+      }
+    } catch (error) {
+      if (error instanceof AccessError) {
+        // fail silently for now
+        logger.info("Could not update index due to AccessError")
+      }
+      else {
+        throw error;
+      }
     }
-    if (this._onUpdateOption) {
-      this._onUpdateOption(this._oplog, entries);
+
+    try {
+      if (this._onUpdateOption) {
+        this._onUpdateOption(this._oplog, entries);
+      }
+    }
+    catch (error) {
+      if (error instanceof AccessError) {
+        // fail silently for now
+        logger.info("Could not update index due to AccessError")
+
+      }
+      else {
+        throw error
+
+      }
     }
   }
 
