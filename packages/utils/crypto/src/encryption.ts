@@ -9,7 +9,6 @@ import { Ed25519Keypair, Ed25519PublicKey } from './ed25519.js';
 
 const NONCE_LENGTH = 24;
 
-export type MaybeX25519PublicKey = (X25519PublicKey | X25519PublicKey[] | undefined);
 
 export interface PublicKeyEncryptionResolver {
     getEncryptionKeypair: GetEncryptionKeypair,
