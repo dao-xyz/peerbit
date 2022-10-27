@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-query",
-  "version": "0.0.22",
+  "version": "0.0.23",
   "description": "Cross peer com. primitives",
   "type": "module",
   "sideEffects": false,
@@ -34,8 +34,8 @@
     "@dao-xyz/borsh": "^3.4.2",
     "@dao-xyz/peerbit-bpayload": "^0.0.16",
     "@dao-xyz/peerbit-crypto": "^0.0.8",
-    "@dao-xyz/peerbit-program": "^0.0.19",
-    "@dao-xyz/peerbit-store": "^0.0.36",
+    "@dao-xyz/peerbit-program": "^0.0.20",
+    "@dao-xyz/peerbit-store": "^0.0.37",
     "@dao-xyz/peerbit-time": "^0.0.15",
     "uuid": "^8.3.2"
   },
