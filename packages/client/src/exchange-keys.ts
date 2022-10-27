@@ -291,8 +291,6 @@ export const exchangeKeys = async <T extends Ed25519Keypair | X25519Keypair>(
         secretKeys = keys;
     }
     else if (request.condition instanceof RequestKeysByKey) {
-        const y = 123;
-        const x = "123123";
         const key = await keystore.getKey<T>(request.condition.key)
         if (key) {
             group = key.group

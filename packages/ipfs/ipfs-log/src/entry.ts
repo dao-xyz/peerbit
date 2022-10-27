@@ -4,15 +4,17 @@ import { variant, field, vec, option, serialize, deserialize, Constructor } from
 import io from '@dao-xyz/peerbit-io-utils';
 import { IPFS } from 'ipfs-core-types'
 import { arraysEqual, joinUint8Arrays, UInt8ArraySerializer } from '@dao-xyz/peerbit-borsh-utils';
-import { DecryptedThing, MaybeEncrypted, MaybeX25519PublicKey, PublicSignKey, SignKey, X25519PublicKey, PublicKeyEncryptionResolver, SignatureWithKey, AccessError } from "@dao-xyz/peerbit-crypto";
+import { DecryptedThing, MaybeEncrypted, PublicSignKey, SignKey, X25519PublicKey, PublicKeyEncryptionResolver, SignatureWithKey, AccessError, Ed25519PublicKey } from "@dao-xyz/peerbit-crypto";
 import { max, toBase64 } from './utils.js';
 import sodium from 'libsodium-wrappers';
 import { Encoding, JSON_ENCODING } from './encoding';
 import { Identity } from './identity.js';
 
+export type MaybeEncryptionPublicKey = (X25519PublicKey | X25519PublicKey[] | Ed25519PublicKey | Ed25519PublicKey[] | undefined);
+
 export const maxClockTimeReducer = <T>(res: bigint, acc: Entry<T>): bigint => max(res, acc.clock.time);
 
-export type EncryptionTemplateMaybeEncrypted = EntryEncryptionTemplate<MaybeX25519PublicKey, MaybeX25519PublicKey, MaybeX25519PublicKey>;
+export type EncryptionTemplateMaybeEncrypted = EntryEncryptionTemplate<MaybeEncryptionPublicKey, MaybeEncryptionPublicKey, MaybeEncryptionPublicKey>;
 export interface EntryEncryption {
   reciever: EncryptionTemplateMaybeEncrypted,
   options: PublicKeyEncryptionResolver
@@ -329,11 +331,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
       value: properties.data
     });
 
-    if (properties.encryption?.reciever && !properties.encryption) {
-
-    }
-
-    const maybeEncrypt = async<Q>(thing: Q, reciever?: X25519PublicKey | X25519PublicKey[]): Promise<MaybeEncrypted<Q>> => {
+    const maybeEncrypt = async<Q>(thing: Q, reciever?: MaybeEncryptionPublicKey): Promise<MaybeEncrypted<Q>> => {
 
       const recievers = reciever ? (Array.isArray(reciever) ? reciever : [reciever]) : undefined
       if (recievers?.length && recievers?.length > 0) {
