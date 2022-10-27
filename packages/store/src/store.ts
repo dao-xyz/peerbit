@@ -23,6 +23,7 @@ import { joinUint8Arrays } from '@dao-xyz/peerbit-borsh-utils';
 import Logger from 'logplease'
 import { Address, Addressable, load, save } from './io.js'
 import { SystemBinaryPayload } from '@dao-xyz/peerbit-bpayload'
+import { EntryWithRefs } from './entry-with-refs.js'
 
 const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
 Logger.setLogLevel('ERROR')
@@ -539,39 +540,54 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     this._options.onReady && this._options.onReady(this)
   }
 
-  async sync(heads: (Entry<T>)[]) {
+  /**
+   * 
+   * @param heads 
+   * @returns true, synchronization resolved in new entries
+   */
+  async sync(heads: (EntryWithRefs<T> | Entry<T>)[]): Promise<boolean> {
 
 
 
     this._stats.syncRequestsReceieved += 1
     logger.debug(`Sync request #${this._stats.syncRequestsReceieved} ${heads.length}`)
     if (heads.length === 0) {
-      return
+      return false
     }
 
-    const handle = async (headToHandle: Entry<T>) => {
-
-      // TODO Fix types
-      await headToHandle.init({ encoding: this.oplog._encoding, encryption: this.oplog._encryption });
-      if (this.canAppend && !(await this.canAppend(headToHandle))) {
+    const handle = async (headToHandle: EntryWithRefs<T> | Entry<T>) => {
+      const allEntries = headToHandle instanceof Entry ? [headToHandle] : [headToHandle.entry, ...headToHandle.references]
+      await Promise.all(allEntries.map(h => h.init({ encoding: this.oplog._encoding, encryption: this.oplog._encryption })))
+      if (this.canAppend && !(await this.canAppend(headToHandle instanceof Entry ? headToHandle : headToHandle.entry))) {
         return Promise.resolve(null)
       }
 
-      const head = headToHandle;
-      const hash = await io.write(this._ipfs, 'dag-cbor', head.serialize(), { links: Entry.IPLD_LINKS })
-      if (hash !== head.hash) {
-        throw new Error("Head hash didn\'t match the contents")
-      }
+      await Promise.all(allEntries.map(async (head) => {
+        const hash = await io.write(this._ipfs, 'dag-cbor', head.serialize(), { links: Entry.IPLD_LINKS })
+        if (hash !== head.hash) {
+          throw new Error("Head hash didn\'t match the contents")
+        }
+      }))
       return headToHandle
     }
-
-    return mapSeries(heads, handle)
+    const hash = (entry: EntryWithRefs<T> | Entry<T>) => {
+      if (entry instanceof Entry) {
+        return entry.hash
+      }
+      return entry.entry.hash
+    }
+    let newHeads = heads.filter(e => !hash(e) || !this.oplog.has(hash(e)));
+    if (newHeads.length === 0) {
+      return false;
+    }
+    await mapSeries(newHeads, handle)
       .then(async (saved) => {
         return this._replicator.load(saved.filter(e => e !== null))
       })
+    return true;
   }
 
-  loadMoreFrom(entries: (string | Entry<any>)[]) {
+  loadMoreFrom(entries: (string[] | Entry<any>[] | EntryWithRefs<any>[])) {
     this._replicator.load(entries)
   }
 

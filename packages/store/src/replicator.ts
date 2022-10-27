@@ -2,6 +2,7 @@ import PQueue from 'p-queue'
 import { CanAppend, Identity, Log } from '@dao-xyz/ipfs-log'
 import { IPFS } from 'ipfs-core-types'
 import { Entry } from '@dao-xyz/ipfs-log';
+import { EntryWithRefs } from './entry-with-refs';
 
 const flatMap = (res: any[], val: any) => res.concat(val)
 
@@ -14,12 +15,15 @@ interface Store<T> {
   canAppend?: CanAppend<T>
 }
 
-const entryHash = (e: Entry<any> | string) => {
+const entryHash = (e: EntryWithRefs<any> | Entry<any> | string) => {
   let h: string;
   if (e instanceof Entry) {
     h = e.hash;
   }
-  else { h = e }
+  else if (typeof e === 'string') { h = e }
+  else {
+    h = e.entry.hash;
+  }
   return h;
 }
 
@@ -102,7 +106,7 @@ export class Replicator<T> {
     Process new heads.
     Param 'entries' is an Array of Entry instances or strings (of CIDs).
    */
-  async load(entries: (Entry<T> | string)[]) {
+  async load(entries: (Entry<T> | EntryWithRefs<T> | string)[]) {
     try {
       // Add entries to the replication queue
       this._addToQueue(entries)
@@ -111,47 +115,54 @@ export class Replicator<T> {
     }
   }
 
-  async _addToQueue(entries: (Entry<T> | string)[]) {
-    // Function to determine if an entry should be fetched (ie. do we have it somewhere already?)
-    const shouldExclude = (e: Entry<T> | string) => {
-      let h = entryHash(e);
-      return h && this._store._oplog && (this._store._oplog.has(h) || this._fetching[h] !== undefined || this._fetched[h])
-    }
-
-    // A task to process a given entries
-    const createReplicationTask = (e: Entry<T> | string) => {
-      // Add to internal "currently fetching" cache
-      const hash = entryHash(e);
-      this._fetching[hash] = true
-      // The returned function is the processing function / task
-      // to run concurrently
-      return async () => {
-        // Call onReplicationProgress only for entries that have .hash field,
-        // if it is a string don't call it (added internally from .next)
-        if (typeof e !== 'string' && this.onReplicationQueued) {
-          this.onReplicationQueued(e)
-        }
-        try {
-          // Replicate the log starting from the entry's hash (CID)
-          const log = await this._replicateLog(e)
-          // Add the fetched log to the internal cache to wait
-          // for "onReplicationComplete"
-          this._logs.push(log)
-        } catch (e) {
-          console.error(e)
-          throw e
-        }
-        // Remove from internal cache
-        delete this._fetching[hash]
-      }
-    }
+  async _addToQueue(entries: (Entry<T> | EntryWithRefs<T> | string)[]) {
 
     if (entries.length > 0) {
+
       // Create a processing tasks from each entry/hash that we
       // should include based on the exclusion filter function
-      const tasks = entries
-        .filter((e) => !shouldExclude(e))
-        .map((e) => createReplicationTask(e))
+      const tasks: (() => Promise<void>)[] = [];
+      for (const entry of entries) {
+        let hash = entryHash(entry);
+        const exclude = (h: string) => h && this._store._oplog && (this._store._oplog.has(h) || this._fetching[h] !== undefined || this._fetched[h])
+        if (exclude(hash)) {
+          continue;
+        }
+
+        this._fetching[hash] = true
+        if (typeof entry !== 'string' && (entry as EntryWithRefs<any>).references) {
+          const entryWithRefs = (entry as EntryWithRefs<any>);
+          entryWithRefs.references = [...entryWithRefs.references.filter(r => !exclude(r.hash))]
+          entryWithRefs.references.forEach((r) => {
+            this._fetching[r.hash] = true
+          })
+        }
+        tasks.push(async () => {
+          // Call onReplicationProgress only for entries that have .hash field,
+          // if it is a string don't call it (added internally from .next)
+          if (typeof entry !== 'string' && this.onReplicationQueued) {
+            this.onReplicationQueued(entry instanceof Entry ? entry : entry.entry)
+          }
+          try {
+            // Replicate the log starting from the entry's hash (CID)
+            const log = await this._replicateLog(entry)
+            // Add the fetched log to the internal cache to wait
+            // for "onReplicationComplete"
+            this._logs.push(log)
+          } catch (e) {
+            console.error(e)
+            throw e
+          }
+          // Remove from internal cache
+          delete this._fetching[hash]
+          if (typeof entry !== 'string' && (entry as EntryWithRefs<any>).references) {
+            const entryWithRefs = (entry as EntryWithRefs<any>);
+            entryWithRefs.references.forEach((r) => {
+              delete this._fetching[r.hash]
+            })
+          }
+        })
+      };
       // Add the tasks to the processing queue
       if (tasks.length > 0) {
         this._q.addAll(tasks)
@@ -173,7 +184,7 @@ export class Replicator<T> {
     this._q.start()
   }
 
-  async _replicateLog(entry: Entry<T> | string): Promise<Log<T>> {
+  async _replicateLog(entry: EntryWithRefs<T> | Entry<T> | string): Promise<Log<T>> {
 
 
     // Notify the Store that we made progress
@@ -188,39 +199,43 @@ export class Replicator<T> {
       return /* h !== entryHash(entry) && */ !!h && this._store._oplog && (this._store._oplog.has(h) || this._fetching[h] !== undefined || this._fetched[h] !== undefined)
     }
 
-    // Fetch and load a log from the entry hash
-    const log = entry instanceof Entry ? await Log.fromEntry(
-      this._store._ipfs,
-      this._store.identity,
-      entry,
-      {
-        // TODO, load all store options?
-        encryption: this._store._oplog._encryption,
-        encoding: this._store._oplog._encoding,
-        sortFn: this._store._oplog._sortFn,
-        length: -1,
-        exclude: [],
-        shouldExclude,
-        concurrency: this._concurrency,
-        onProgressCallback
-      }
-    ) : await Log.fromEntryHash<T>(
-      this._store._ipfs,
-      this._store.identity,
-      entry,
-      {
-        // TODO, load all store options?
-        encryption: this._store._oplog._encryption,
-        encoding: this._store._oplog._encoding,
-        sortFn: this._store._oplog._sortFn,
-        length: -1,
-        exclude: [],
-        shouldExclude,
-        concurrency: this._concurrency,
-        onProgressCallback
-      }
-    )
-
+    let log: Log<any>;
+    if (typeof entry === 'string') {
+      log = await Log.fromEntryHash<T>(
+        this._store._ipfs,
+        this._store.identity,
+        entry,
+        {
+          // TODO, load all store options?
+          encryption: this._store._oplog._encryption,
+          encoding: this._store._oplog._encoding,
+          sortFn: this._store._oplog._sortFn,
+          length: -1,
+          exclude: [],
+          shouldExclude,
+          concurrency: this._concurrency,
+          onProgressCallback
+        }
+      )
+    }
+    else {
+      log = await Log.fromEntry(
+        this._store._ipfs,
+        this._store.identity,
+        entry instanceof Entry ? entry : [entry.entry, ...entry.references],
+        {
+          // TODO, load all store options?
+          encryption: this._store._oplog._encryption,
+          encoding: this._store._oplog._encoding,
+          sortFn: this._store._oplog._sortFn,
+          length: -1,
+          exclude: [],
+          shouldExclude,
+          concurrency: this._concurrency,
+          onProgressCallback
+        }
+      )
+    }
     // Return all next pointers
     const nexts = log.values.map(e => e.next).reduce(flatMap, [])
     try {

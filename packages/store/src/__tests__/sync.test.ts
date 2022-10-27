@@ -104,7 +104,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
             expect(store.oplog.heads.length).toEqual(1)
             expect(store.oplog.values.length).toEqual(entryCount);
-            await store2.sync([store.oplog.heads[0], store.oplog.values[3], store.oplog.values[6]]);
+            await store2.sync([{ entry: store.oplog.heads[0], references: [store.oplog.values[3], store.oplog.values[6]] }]);
             await waitFor(() => store2.oplog.values.length == entryCount);
             expect(progressCallbackEntries).toHaveLength(10);
             expect(progressCallbackEntries[0].payload.getValue()).toEqual(9); // because head

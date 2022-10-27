@@ -46,7 +46,7 @@ interface ProgramWithMetadata {
 
 export type StoreOperations = 'write' | 'all'
 export type Storage = { createStore: (string: string) => Level }
-export type OptionalCreateOptions = { minReplicas?: number, waitForKeysTimout?: number, canOpenProgram?(identity: SignKey | undefined, replicationTopic: string): Promise<boolean> }
+export type OptionalCreateOptions = { minReplicas?: number, waitForKeysTimout?: number, canOpenProgram?(replicationTopic: string, entryToReplicate?: Entry<any>): Promise<boolean> }
 export type CreateOptions = { keystore: Keystore, identity: Identity, directory: string, peerId: PeerId, storage: Storage, cache: Cache<any>, localNetwork: boolean } & OptionalCreateOptions;
 export type CreateInstanceOptions = { storage?: Storage, directory?: string, keystore?: Keystore, peerId?: PeerId, identity?: Identity, cache?: Cache<any>, localNetwork?: boolean } & OptionalCreateOptions;
 export type OpenStoreOptions = {
@@ -104,7 +104,7 @@ export class Peerbit {
   _peerInfoLRU: Map<string, PeerInfoWithMeta> = new Map();// LRU = new LRU({ max: 1000, ttl:  EMIT_HEALTHCHECK_INTERVAL * 4 });
   _supportedHashesLRU: LRUCounter = new LRUCounter(new LRU({ ttl: 60000 }))
   _peerInfoResponseCounter: LRUCounter = new LRUCounter(new LRU({ ttl: 100000 }))
-  _canOpenProgram: (identity: SignKey | undefined, replicationTopic: string) => Promise<boolean>
+  _canOpenProgram: (replicationTopic: string, entryTopReplicate?: Entry<any>) => Promise<boolean>
   _openProgramQueue: PQueue
   _disconnected: boolean = false;
   _disconnecting: boolean = false;
@@ -132,7 +132,7 @@ export class Peerbit {
     // this.allPrograms = { }
     this.caches = {}
     this._minReplicas = options.minReplicas || MIN_REPLICAS;
-    this._canOpenProgram = options.canOpenProgram || ((identity, replicationTopic) => !this.getNetwork(replicationTopic) ? Promise.resolve(true) : this.isTrustedByNetwork(identity, replicationTopic))
+    this._canOpenProgram = options.canOpenProgram || (async (replicationTopic, entryToReplicate) => !this.getNetwork(replicationTopic) ? Promise.resolve(true) : (this.isTrustedByNetwork(!entryToReplicate ? undefined : await entryToReplicate.getSignature().then(x => x.publicKey).catch(e => undefined), replicationTopic)))
     this.localNetwork = options.localNetwork;
     this.caches[this.directory] = { cache: options.cache, handlers: new Set() }
     this.keystore = options.keystore
@@ -500,10 +500,9 @@ export class Peerbit {
           if (!storeInfo) {
             throw new Error("Missing store info, which was expected to exist for " + replicationTopic + ", " + paddress + ", " + saddress)
           }
-          const toMerge: Entry<any>[] = [];
+          const toMerge: EntryWithRefs<any>[] = [];
 
           await programInfo.program.initializationPromise; // Make sure it is ready
-
           for (const [gid, value] of groupByGid(heads)) {
             const leaders = leaderCache.get(gid) || await this.findLeaders(replicationTopic, isReplicating, gid, programInfo.minReplicas.value);
             const isLeader = leaders.find((l) => l === this.id.toString());
@@ -511,8 +510,7 @@ export class Peerbit {
               continue;
             }
             value.forEach((head) => {
-              toMerge.push(head.entry);
-              head.references.forEach((r) => toMerge.push(r));
+              toMerge.push(head);
             })
 
           }
@@ -1219,7 +1217,7 @@ export class Peerbit {
 
           if (!program.programOwner) {
             // can open is is trusted by netwoek?
-            senderCanOpen = await this._canOpenProgram(await options.entryToReplicate?._signature.decrypt(this.encryption.getAnyKeypair).then(k => k.getValue(SignatureWithKey).publicKey), definedReplicationTopic);
+            senderCanOpen = await this._canOpenProgram(definedReplicationTopic, options.entryToReplicate);
           }
           else if (options.entryToReplicate) {
 
