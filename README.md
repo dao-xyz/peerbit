@@ -43,7 +43,7 @@ import { DString, Range } from '@dao-xyz/peerbit-string'
 import { Peerbit } from '@dao-xyz/peerbit'
 import { Program } from '@dao-xyz/peerbit-program'
 import { SignKey } from '@dao-xyz/peerbit-crypto';
-import { Range, DString } from '@dao-xyz/peerbit-string';
+import { Range, DString, StringOperation } from '@dao-xyz/peerbit-string';
 
 class CollaborativeText extends Program {
 
@@ -59,8 +59,7 @@ class CollaborativeText extends Program {
     }
 
     async canAppend(
-        payload: () => Promise<T>,
-        key: () => Promise<SignKey>
+        entry: Entry<StringOperation>
     ): Promise<boolean> {
         // .. acl logic writers
     }
