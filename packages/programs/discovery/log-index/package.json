@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-logindex",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Simple log index",
   "type": "module",
   "sideEffects": false,
@@ -35,7 +35,7 @@
     "@dao-xyz/ipfs-log": "^5.5.29",
     "@dao-xyz/peerbit-bpayload": "^0.0.16",
     "@dao-xyz/peerbit-crypto": "^0.0.8",
-    "@dao-xyz/peerbit-query": "^0.0.21",
+    "@dao-xyz/peerbit-query": "^0.0.22",
     "@dao-xyz/peerbit-time": "^0.0.15",
     "uuid": "^8.3.2"
   },
