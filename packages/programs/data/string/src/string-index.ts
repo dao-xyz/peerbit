@@ -4,7 +4,7 @@ import { Entry } from '@dao-xyz/ipfs-log';
 import { Range } from './range.js';
 
 @variant(0)
-export class PayloadOperation {
+export class StringOperation {
 
   @field({ type: Range })
   index: Range
@@ -19,7 +19,7 @@ export class PayloadOperation {
     }
   }
 }
-export const encoding = BORSH_ENCODING(PayloadOperation);
+export const encoding = BORSH_ENCODING(StringOperation);
 
 
 export class StringIndex {
@@ -33,14 +33,14 @@ export class StringIndex {
     return this._string;
   }
 
-  async updateIndex(oplog: Log<PayloadOperation>) {
+  async updateIndex(oplog: Log<StringOperation>) {
     this._string = await applyOperations('', oplog.values);
   }
 }
 
-export const applyOperations = async (string: string, operations: Entry<PayloadOperation>[]): Promise<string> => {
+export const applyOperations = async (string: string, operations: Entry<StringOperation>[]): Promise<string> => {
   await Promise.all(operations.map(operation => operation.getPayload()))
-  operations.reduce((handled: string[], item: Entry<PayloadOperation>, _) => {
+  operations.reduce((handled: string[], item: Entry<StringOperation>, _) => {
     if (!handled.includes(item.hash)) {
       handled.push(item.hash)
       string = applyOperation(string, item.payload.getValue(encoding));
@@ -50,7 +50,7 @@ export const applyOperations = async (string: string, operations: Entry<PayloadO
   }, [])
   return string;
 }
-export const applyOperation = (s: string, operation: PayloadOperation): string => {
+export const applyOperation = (s: string, operation: StringOperation): string => {
   // TODO check bounds number
   let to = Number(operation.index.offset) + Number(operation.index.length);
   if (operation.value != undefined) {

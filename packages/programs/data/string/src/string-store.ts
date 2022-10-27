@@ -1,4 +1,4 @@
-import { PayloadOperation, StringIndex, encoding } from './string-index.js'
+import { StringOperation, StringIndex, encoding } from './string-index.js'
 import { AnySearch, QueryType, StoreAddressMatchQuery } from '@dao-xyz/peerbit-anysearch';
 import { RangeCoordinate, RangeCoordinates, Result, ResultWithSource, StringMatchQuery } from '@dao-xyz/peerbit-anysearch';
 import { StringQueryRequest } from '@dao-xyz/peerbit-anysearch';
@@ -31,15 +31,15 @@ export type StringStoreOptions = { canRead?: (key: SignatureWithKey) => Promise<
 export class DString extends Program {
 
   @field({ type: Store })
-  store: Store<PayloadOperation>
+  store: Store<StringOperation>
 
   @field({ type: AnySearch })
-  search: AnySearch<PayloadOperation>;
+  search: AnySearch<StringOperation>;
 
   _index: StringIndex;
-  _optionCanAppend?: CanAppend<PayloadOperation>
+  _optionCanAppend?: CanAppend<StringOperation>
 
-  constructor(properties: { name?: string, search: AnySearch<PayloadOperation> }) {
+  constructor(properties: { name?: string, search: AnySearch<StringOperation> }) {
     super(properties)
     if (properties) {
       this.search = properties.search
@@ -49,7 +49,7 @@ export class DString extends Program {
   }
 
 
-  async setup(options?: { canRead?: CanRead, canAppend?: CanAppend<PayloadOperation> }) {
+  async setup(options?: { canRead?: CanRead, canAppend?: CanAppend<StringOperation> }) {
 
     this._optionCanAppend = options?.canAppend;
     this.store.setup({ encoding, canAppend: this.canAppend.bind(this), onUpdate: this._index.updateIndex.bind(this._index) });
@@ -62,7 +62,7 @@ export class DString extends Program {
 
   }
 
-  async canAppend(entry: Entry<PayloadOperation>): Promise<boolean> {
+  async canAppend(entry: Entry<StringOperation>): Promise<boolean> {
 
     if (!await this._canAppend(entry)) {
       return false;
@@ -73,7 +73,7 @@ export class DString extends Program {
     return true;
   }
 
-  async _canAppend(entry: Entry<PayloadOperation>): Promise<boolean> {
+  async _canAppend(entry: Entry<StringOperation>): Promise<boolean> {
 
     if (this.store.oplog.length === 0) {
       return true;
@@ -94,7 +94,7 @@ export class DString extends Program {
     pin?: boolean;
     reciever?: EncryptionTemplateMaybeEncrypted;
   }) {
-    return this.store._addOperation(new PayloadOperation({
+    return this.store._addOperation(new StringOperation({
       index,
       value,
     }), { nexts: this.store.oplog.heads, ...options })
@@ -108,7 +108,7 @@ export class DString extends Program {
   }) {
     const operation = {
       index
-    } as PayloadOperation
+    } as StringOperation
     return this.store._addOperation(operation, { nexts: this.store.oplog.heads, ...options })
   }
 

@@ -1,9 +1,9 @@
 import { Range } from "../range.js";
-import { PayloadOperation, applyOperations } from "../string-index.js";
+import { StringOperation, applyOperations } from "../string-index.js";
 
 describe('operations', () => {
     it('add', async () => {
-        const operations: PayloadOperation[] = [
+        const operations: StringOperation[] = [
             {
                 index: new Range({
                     offset: 0,
@@ -44,7 +44,7 @@ describe('operations', () => {
     })
 
     it('replace', async () => {
-        const operations: PayloadOperation[] = [
+        const operations: StringOperation[] = [
             {
                 index: new Range({
                     offset: 0,
@@ -95,7 +95,7 @@ describe('operations', () => {
     })
 
     it('delete', async () => {
-        const operations: PayloadOperation[] = [
+        const operations: StringOperation[] = [
             {
                 index: new Range({
                     offset: 0,
