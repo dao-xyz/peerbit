@@ -27,7 +27,9 @@ Started originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS 
 </br>
 </br>
 
-## 🚧 WIP 🚧  Not production ready yet
+## Alpha release
+
+Backwards compatibility for new releases might be lacking. Use with caution and please report bugs and issues you are experiencing when developing with Peerbit. 
 
 </br>
 </br>
