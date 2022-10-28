@@ -37,16 +37,16 @@ export class DynamicAccessController extends Program {
                 index: new DocumentIndex({
                     indexBy: 'id',
                     search: new AnySearch({
-                        query: new DQuery({})
+                        query: new DQuery({ id: this.id })
                     })
                 })
             })
 
             this.trustedNetwork = opts.trustedNetwork ? opts.trustedNetwork : new TrustedNetwork({
-                id: (opts.id || uuid()) + "_region",
+                id: this.id,
                 rootTrust: opts.rootTrust as PublicSignKey
             })
-            this.identityGraphController = new RelationContract({ id: 'relation', });
+            this.identityGraphController = new RelationContract({ id: this.id });
         }
     }
 

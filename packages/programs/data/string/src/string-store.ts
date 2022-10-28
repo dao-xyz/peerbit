@@ -6,10 +6,11 @@ import { Range } from './range.js';
 import { field, variant } from '@dao-xyz/borsh';
 import { CustomBinaryPayload } from '@dao-xyz/peerbit-bpayload';
 import { Store } from '@dao-xyz/peerbit-store';
-import { BORSH_ENCODING, CanAppend, EncryptionTemplateMaybeEncrypted, Entry, Identity } from '@dao-xyz/ipfs-log';
+import { CanAppend, EncryptionTemplateMaybeEncrypted, Entry } from '@dao-xyz/ipfs-log';
 import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';
 import { Program } from '@dao-xyz/peerbit-program';
-import { QueryOptions, CanRead } from '@dao-xyz/peerbit-query';
+import { QueryOptions, CanRead, DQuery } from '@dao-xyz/peerbit-query';
+
 export const STRING_STORE_TYPE = 'string_store';
 const findAllOccurrences = (str: string, substr: string): number[] => {
   str = str.toLowerCase();
@@ -41,10 +42,10 @@ export class DString extends Program {
 
   _optionCanAppend?: CanAppend<StringOperation>
 
-  constructor(properties: { id?: string, search: AnySearch<StringOperation> }) {
+  constructor(properties: { id?: string, search?: AnySearch<StringOperation> }) {
     super(properties)
     if (properties) {
-      this.search = properties.search
+      this.search = properties.search || new AnySearch({ id: this.id, query: new DQuery({ id: this.id }) })
       this.store = new Store(properties);
       this._index = new StringIndex(properties);
     }

@@ -86,25 +86,18 @@ describe('index', () => {
       cacheStores.push(await createStore(path.join(__filename, 'cache- ' + i)));
     }
 
-
-
-    const queryRegion = uuid();
     // Create store
     for (let i = 0; i < peersCount; i++) {
       const store = i > 0 ? await DocumentDDoc.load<DocumentDDoc>(session.peers[i].ipfs, stores[0].address) : new DocumentDDoc({
         docs: new Documents<Document>({
           index: new DocumentIndex({
-            search: new AnySearch({
-              query: new DQuery({
-                queryRegion: queryRegion
-              })
-            }),
             indexBy: 'id'
           })
         })
       });
       const keypair = await X25519Keypair.create();
       (await store.init(session.peers[i].ipfs, await createIdentity(), {
+        replicationTopic: '_',
         store: {
           ...DefaultOptions, replicate: i === 0, encryption: {
             getEncryptionKeypair: () => Promise.resolve(keypair as Ed25519Keypair | X25519Keypair),
@@ -166,17 +159,13 @@ describe('index', () => {
       const store = new DocumentDDoc({
         docs: new Documents<Document>({
           index: new DocumentIndex({
-            search: new AnySearch({
-              query: new DQuery({
-                queryRegion: '_'
-              })
-            }),
             indexBy: 'id'
           })
         })
       });
       const keypair = await X25519Keypair.create();
       (await store.init(session.peers[0].ipfs, await createIdentity(), {
+        replicationTopic: 'topic',
         store: {
           ...DefaultOptions, replicate: true, encryption: {
             getEncryptionKeypair: () => Promise.resolve(keypair as Ed25519Keypair | X25519Keypair),

@@ -10,7 +10,7 @@ import { v4 as uuid } from 'uuid';
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { getValuesWithType } from './utils.js';
 
-export type ProgramInitializationOptions = { store: IInitializationOptions<any>, parent?: AbstractProgram, onClose?: () => void, onDrop?: () => void };
+export type ProgramInitializationOptions = { store: IInitializationOptions<any>, parent?: AbstractProgram, replicationTopic: string, onClose?: () => void, onDrop?: () => void };
 
 @variant(0)
 export class ProgramOwner {

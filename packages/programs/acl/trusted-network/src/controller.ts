@@ -62,7 +62,7 @@ export class RelationContract extends Program {
     }) {
         super(props)
         if (props) {
-            this.relationGraph = createIdentityGraphStore(props);
+            this.relationGraph = createIdentityGraphStore({ ...props, id: this.id });
         }
     }
 
@@ -108,9 +108,9 @@ export class TrustedNetwork extends Program {
     }) {
         super(props);
         if (props) {
-            this.trustGraph = createIdentityGraphStore(props);
+            this.trustGraph = createIdentityGraphStore({ ...props, id: this.id });
             this.rootTrust = props.rootTrust;
-            this.logIndex = props.logIndex || new LogIndex({ query: new DQuery({ queryAddressSuffix: 'heads' }) });
+            this.logIndex = props.logIndex || new LogIndex({ id: this.id, query: new DQuery({ id: this.id }) });
         }
     }
 

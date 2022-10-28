@@ -27,7 +27,7 @@ describe('index', () => {
     let session: Session, identites: Identity[], cacheStore: Level[]
 
     const identity = (i: number) => identites[i];
-    const init = (store: Program, i: number, options: { store?: IStoreOptions<any> } = {}) => store.init && store.init(session.peers[i].ipfs, identites[i], { ...options, store: { ...options.store, ...DefaultOptions, replicate: true, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]) } })
+    const init = (store: Program, i: number, options: { store?: IStoreOptions<any> } = {}) => store.init && store.init(session.peers[i].ipfs, identites[i], { replicationTopic: '_', ...options, store: { ...options.store, ...DefaultOptions, replicate: true, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]) } })
     beforeAll(async () => {
         session = await Session.connected(4);
         identites = [];
@@ -51,7 +51,7 @@ describe('index', () => {
 
             // created network with identity 0, 1, 2
             const l0a = new TrustedNetwork({
-                rootTrust: identity(0).publicKey
+                rootTrust: identity(0).publicKey,
             });
 
             await init(l0a, 0);

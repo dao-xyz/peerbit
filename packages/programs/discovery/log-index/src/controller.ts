@@ -1,7 +1,7 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh";
 import { Entry, EntryEncryptionTemplate } from "@dao-xyz/ipfs-log";
 import { ComposableProgram } from '@dao-xyz/peerbit-program';
-import { CanRead, DQuery } from "@dao-xyz/peerbit-query";
+import { CanRead, DQuery, DQueryInitializationOptions, QueryTopicOption } from "@dao-xyz/peerbit-query";
 import { Store } from "@dao-xyz/peerbit-store";
 import { EncryptedThing, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
 // @ts-ignore
@@ -106,7 +106,7 @@ export class LogIndex extends ComposableProgram {
         query?: DQuery<LogQueryRequest, HeadsMessage>
     }) {
         super(props);
-        this.query = props?.query || new DQuery({ queryAddressSuffix: 'heads' });
+        this.query = props?.query || new DQuery({ id: props?.id });
 
     }
 
@@ -114,9 +114,9 @@ export class LogIndex extends ComposableProgram {
         return this._store;
     }
 
-    async setup(properties: { store: Store<any>, canRead?: CanRead }) {
+    async setup(properties: { store: Store<any>, canRead?: CanRead, queryTopic?: QueryTopicOption }) {
         this._store = properties?.store;
-        await this.query.setup({ queryType: LogQueryRequest, responseType: HeadsMessage, responseHandler: this.responseHandler.bind(this), canRead: properties.canRead || (() => Promise.resolve(true)) })
+        await this.query.setup({ queryType: LogQueryRequest, responseType: HeadsMessage, responseHandler: this.responseHandler.bind(this), canRead: properties.canRead || (() => Promise.resolve(true)), queryTopic: properties.queryTopic })
     }
 
     _queryEntries(filter: ((entry: Entry<any>) => boolean)): Entry<any>[] {

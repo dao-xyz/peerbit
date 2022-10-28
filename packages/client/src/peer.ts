@@ -1271,6 +1271,7 @@ export class Peerbit {
 
 
         await program.init(this._ipfs, options.identity || this.identity, {
+          replicationTopic: definedReplicationTopic,
           onClose: () => this._onProgamClose(program, definedReplicationTopic),
           onDrop: () => this._onProgamClose(program, definedReplicationTopic),
           store: {

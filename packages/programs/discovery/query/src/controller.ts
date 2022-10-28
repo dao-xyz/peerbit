@@ -1,4 +1,4 @@
-import { Constructor, deserialize, field, option, serialize, variant } from '@dao-xyz/borsh';
+import { BinaryWriter, Constructor, deserialize, field, getSchemasBottomUp, option, serialize, variant } from '@dao-xyz/borsh';
 import type { Message } from '@libp2p/interface-pubsub'
 import { SignatureWithKey, SignKey } from '@dao-xyz/peerbit-crypto';
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
@@ -9,24 +9,58 @@ import { IPFS } from 'ipfs-core-types';
 import { Identity } from '@dao-xyz/ipfs-log';
 import { Address } from '@dao-xyz/peerbit-store';
 
-export const getQueryTopic = (region: string): string => {
-    return region + '?';
+export const getDiscriminatorApproximation = (constructor: Constructor<any>): Uint8Array => {
+    const schemas = getSchemasBottomUp(constructor);
+    // assume ordered
+    const writer = new BinaryWriter();
+    for (let i = 0; i < schemas.length; i++) {
+        const clazz = schemas[i];
+        const variant = clazz.schema.variant;
+        if (variant == undefined) {
+            continue;
+        }
+        if (typeof variant === 'string') {
+            writer.writeString(variant)
+        }
+        else if (typeof variant === 'number') {
+            writer.writeU8(variant)
+        }
+        else if (Array.isArray(variant)) {
+            variant.forEach((v) => {
+                writer.writeU8(v)
+            })
+        }
+        else {
+            throw new Error("Can not resolve discriminator for variant with type: " + (typeof variant))
+        }
+
+    }
+
+    return writer.toArray();
+
+}
+
+export const getQueryTopic = (parentProgram: Program, region: string): string => {
+    const disriminator = getDiscriminatorApproximation(parentProgram.constructor as Constructor<any>);
+    return region + '/' + Buffer.from(disriminator).toString('base64') + '/?';
 }
 
 export type CanRead = (key?: SignKey) => Promise<boolean>;
-export type DQueryInitializationOptions<Q, R> = { queryType: Constructor<Q>, responseType: Constructor<R>, canRead?: CanRead, responseHandler: ResponseHandler<Q, R> };
+export type QueryTopicOption = ({ queryAddressSuffix: string } | { queryRegion: string })
+export type DQueryInitializationOptions<Q, R> = { queryTopic?: QueryTopicOption, queryType: Constructor<Q>, responseType: Constructor<R>, canRead?: CanRead, responseHandler: ResponseHandler<Q, R> };
 export type ResponseHandler<Q, R> = (query: Q, from?: SignKey) => Promise<R | undefined> | R | undefined;
 
-abstract class QueryTopic {
+export abstract class QueryTopic {
 
     abstract from(address: Address): string;
 }
 
 @variant(0)
-class QueryRegion extends QueryTopic {
+export class QueryRegion extends QueryTopic {
 
     @field({ type: 'string' })
     id: string
+
     constructor(properties?: { id: string }) {
         super();
         if (properties) {
@@ -42,7 +76,7 @@ class QueryRegion extends QueryTopic {
 
 
 @variant(1)
-class QueryAddressSuffix extends QueryTopic {
+export class QueryAddressSuffix extends QueryTopic {
 
     @field({ type: 'string' })
     suffix: string
@@ -61,9 +95,7 @@ class QueryAddressSuffix extends QueryTopic {
 @variant([0, 1])
 export class DQuery<Q, R> extends ComposableProgram {
 
-    @field({ type: option(QueryTopic) })
     queryRegion?: QueryTopic;
-
 
     subscribeToQueries: boolean = true;
 
@@ -72,28 +104,28 @@ export class DQuery<Q, R> extends ComposableProgram {
     _responseHandler: ResponseHandler<Q, R>
     _queryType: Constructor<Q>
     _responseType: Constructor<R>
+    _replicationTopic: string;
     canRead: CanRead
 
-    constructor(properties: { id?: string, queryRegion?: string, queryAddressSuffix?: string }) {
+    constructor(properties: { id?: string }) {
         super(properties)
-        if (properties) {
-            if (!!properties.queryRegion && !!properties.queryRegion == !!properties.queryAddressSuffix) {
-                throw new Error("Expected either queryRegion or queryAddressSuffix or none")
-            }
-
-            if (properties.queryRegion) {
-                this.queryRegion = new QueryRegion({ id: properties.queryRegion })
-            }
-            else if (properties.queryAddressSuffix) {
-                this.queryRegion = new QueryAddressSuffix({ suffix: properties.queryAddressSuffix })
-
-            }
-            // is this props ser or not??? 
-        }
     }
 
 
     public async setup(options: DQueryInitializationOptions<Q, R>) {
+
+        if (options.queryTopic) {
+            if (!!(options.queryTopic as { queryRegion }).queryRegion && !!(options.queryTopic as { queryRegion }).queryRegion == !!(options.queryTopic as { queryAddressSuffix }).queryAddressSuffix) {
+                throw new Error("Expected either queryRegion or queryAddressSuffix or none")
+            }
+            if ((options.queryTopic as { queryRegion }).queryRegion) {
+                this.queryRegion = new QueryRegion({ id: (options.queryTopic as { queryRegion }).queryRegion })
+            }
+            else if ((options.queryTopic as { queryAddressSuffix })) {
+                this.queryRegion = new QueryAddressSuffix({ suffix: (options.queryTopic as { queryAddressSuffix }).queryAddressSuffix })
+            }
+        }
+
         this._responseHandler = options.responseHandler;
         this._queryType = options.queryType;
         this._responseType = options.responseType;
@@ -103,6 +135,7 @@ export class DQuery<Q, R> extends ComposableProgram {
 
     async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
         await super.init(ipfs, identity, options);
+        this._replicationTopic = options.replicationTopic;
         if (options.store.replicate) {
             await this._subscribeToQueries();
         }
@@ -148,7 +181,10 @@ export class DQuery<Q, R> extends ComposableProgram {
                 throw error;
             }
 
-        } catch (error) {
+        } catch (error: any) {
+            if (error.constructor.name === 'BorshError') {
+                return; // unknown message
+            }
             console.error(error)
         }
     }
@@ -168,7 +204,7 @@ export class DQuery<Q, R> extends ComposableProgram {
         if (!this.parentProgram.address) {
             throw new Error("Not initialized");
         }
-        const queryTopic = this.queryRegion ? this.queryRegion.from(this.parentProgram.address) : getQueryTopic(this.parentProgram.address.toString())
+        const queryTopic = this.queryRegion ? this.queryRegion.from(this.parentProgram.address) : getQueryTopic(this.parentProgram, this._replicationTopic)
         return queryTopic;
     }
 }

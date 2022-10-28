@@ -1,6 +1,6 @@
 import { field, variant } from '@dao-xyz/borsh';
 import { SignKey } from "@dao-xyz/peerbit-crypto";
-import { QueryOptions, DQuery, CanRead } from '@dao-xyz/peerbit-query';
+import { QueryOptions, DQuery, CanRead, QueryTopicOption } from '@dao-xyz/peerbit-query';
 import { ComposableProgram } from '@dao-xyz/peerbit-program'
 import { Address } from '@dao-xyz/peerbit-store';
 import { MultipleQueriesType, QueryType } from './query-interface';
@@ -29,11 +29,11 @@ export class AnySearch<T> extends ComposableProgram {
     }
 
 
-    public async setup(options: AnySearchInitializationOptions<T>) {
+    public async setup(options: AnySearchInitializationOptions<T> & { queryTopic?: QueryTopicOption }) {
         this._setup = true;
         this._queryHandler = options.queryHandler;
         this._context = options.context;
-        await this._query.setup({ canRead: options.canRead, responseHandler: this._onQueryMessage.bind(this), queryType: QueryType, responseType: Results })
+        await this._query.setup({ canRead: options.canRead, responseHandler: this._onQueryMessage.bind(this), queryType: QueryType, responseType: Results, queryTopic: options.queryTopic })
     }
 
     async _onQueryMessage(query: QueryType, from?: SignKey): Promise<Results | undefined> {

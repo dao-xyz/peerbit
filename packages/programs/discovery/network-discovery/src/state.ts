@@ -74,11 +74,6 @@ export class NetworkInfo extends DiscoveryData {
 export const createDiscoveryStore = (props?: { id?: string, queryRegion?: string }) => new Documents<NetworkInfo>({
     id: props?.id ? props?.id : '' + '_discovery',
     index: new DocumentIndex({
-        indexBy: 'id',
-        search: new AnySearch({
-            query: new DQuery({
-                queryRegion: props?.queryRegion
-            })
-        })
+        indexBy: 'id'
     })
 })

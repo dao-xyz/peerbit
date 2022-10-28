@@ -9,7 +9,7 @@ import { Compare, AnySearch, FieldBigIntCompareQuery, FieldByteMatchQuery, Field
 import Logger from 'logplease'
 import { AccessError, EncryptedThing, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
 import { BinaryPayload } from "@dao-xyz/peerbit-bpayload";
-import { CanRead } from "@dao-xyz/peerbit-query";
+import { CanRead, DQuery } from "@dao-xyz/peerbit-query";
 const logger = Logger.create('DocumentsIndex')
 Logger.setLogLevel('ERROR')
 @variant(0)
@@ -113,12 +113,13 @@ export class DocumentIndex<T extends BinaryPayload> extends ComposableProgram {
   type: Constructor<T>
 
   constructor(properties?: {
-    search: AnySearch<Operation<T>>
+    id?: string
+    search?: AnySearch<Operation<T>>
     indexBy: string
   }) {
-    super();
+    super(properties);
     if (properties) {
-      this.search = properties.search;
+      this.search = properties.search || new AnySearch({ id: this.id, query: new DQuery({ id: this.id }) });
       this.indexBy = properties.indexBy
     }
     this._index = new Map()

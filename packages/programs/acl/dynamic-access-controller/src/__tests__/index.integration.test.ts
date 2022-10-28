@@ -16,6 +16,8 @@ import Cache from '@dao-xyz/peerbit-cache';
 import { CanRead, DQuery } from "@dao-xyz/peerbit-query";
 import { Program } from "@dao-xyz/peerbit-program";
 import { DynamicAccessController } from "../acl-db";
+import { v4 as uuid } from 'uuid';
+
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 
@@ -80,7 +82,7 @@ describe('index', () => {
     let session: Session, identites: Identity[], cacheStore: Level[]
 
     const identity = (i: number) => identites[i];
-    const init = <T extends Program>(store: T, i: number, options: { store: { replicate: boolean }, canRead?: CanRead, canAppend?: CanAppend<T> } = { store: { replicate: true } }) => (store.init && store.init(session.peers[i].ipfs, identites[i], { ...options, store: { ...DefaultOptions, ...options.store, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]) } })) as Promise<T>
+    const init = <T extends Program>(store: T, i: number, options: { replicationTopic: string, store: { replicate: boolean }, canRead?: CanRead, canAppend?: CanAppend<T> }) => (store.init && store.init(session.peers[i].ipfs, identites[i], { ...options, store: { ...DefaultOptions, ...options.store, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]) } })) as Promise<T>
 
     beforeAll(async () => {
         session = await Session.connected(3);
@@ -102,13 +104,14 @@ describe('index', () => {
     it('can write from trust web', async () => {
 
         const s = new TestStore({ identity: identity(0) });
-        const l0a = await init(s, 0);
+        const options = { replicationTopic: uuid(), store: { replicate: true } }
+        const l0a = await init(s, 0, options);
 
         await l0a.store.put(new Document({
             id: '1'
         }));
 
-        const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1) as TestStore;
+        const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1, options) as TestStore;
 
         await expect(l0b.store.put(new Document({
             id: 'id'
@@ -135,14 +138,15 @@ describe('index', () => {
 
     describe('conditions', () => {
         it('publickey', async () => {
+            const options = { replicationTopic: uuid(), store: { replicate: true } }
 
-            const l0a = await init(new TestStore({ identity: identity(0) }), 0);
+            const l0a = await init(new TestStore({ identity: identity(0) }), 0, options);
 
             await l0a.store.put(new Document({
                 id: '1'
             }));
 
-            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1) as TestStore;
+            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1, options) as TestStore;
 
             await l0b.store.store.sync(l0a.store.store.oplog.heads);
             await waitFor(() => l0b.store.index.size === 1)
@@ -170,14 +174,16 @@ describe('index', () => {
 
         it('through trust chain', async () => {
 
-            const l0a = await init(new TestStore({ identity: identity(0) }), 0);
+            const options = { replicationTopic: uuid(), store: { replicate: true } }
+
+            const l0a = await init(new TestStore({ identity: identity(0) }), 0, options);
 
             await l0a.store.put(new Document({
                 id: '1'
             }));
 
-            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1) as TestStore;
-            const l0c = await init(await TestStore.load(session.peers[2].ipfs, l0a.address), 2) as TestStore;
+            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1, options) as TestStore;
+            const l0c = await init(await TestStore.load(session.peers[2].ipfs, l0a.address), 2, options) as TestStore;
 
             await expect(l0c.store.put(new Document({
                 id: 'id'
@@ -215,13 +221,15 @@ describe('index', () => {
 
         it('any access', async () => {
 
-            const l0a = await init(new TestStore({ identity: identity(0) }), 0);
+            const options = { replicationTopic: uuid(), store: { replicate: true } }
+
+            const l0a = await init(new TestStore({ identity: identity(0) }), 0, options);
             await l0a.store.put(new Document({
                 id: '1'
             }));
 
 
-            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1) as TestStore;
+            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1, options) as TestStore;
             await expect(l0b.store.put(new Document({
                 id: 'id'
             }))).rejects.toBeInstanceOf(AccessError); // Not trusted
@@ -246,8 +254,9 @@ describe('index', () => {
 
         it('read access', async () => {
 
+            const options = { replicationTopic: uuid(), store: { replicate: true } }
 
-            const l0a = await init(new TestStore({ identity: identity(0) }), 0);
+            const l0a = await init(new TestStore({ identity: identity(0) }), 0, options);
 
             await l0a.store.put(new Document({
                 id: '1'
@@ -291,8 +300,10 @@ describe('index', () => {
 
     it('manifests are unique', async () => {
 
-        const l0a = await init(new TestStore({ identity: identity(0) }), 0);
-        const l0b = await init(new TestStore({ identity: identity(0) }), 0);
+        const options = { replicationTopic: uuid(), store: { replicate: true } }
+
+        const l0a = await init(new TestStore({ identity: identity(0) }), 0, options);
+        const l0b = await init(new TestStore({ identity: identity(0) }), 0, options);
         expect(l0a.address).not.toEqual(l0b.address)
         expect((l0a.accessController).address.toString()).not.toEqual((l0b.accessController).address.toString())
 
@@ -301,7 +312,9 @@ describe('index', () => {
     it('can query', async () => {
 
 
-        const l0a = await init(new TestStore({ identity: identity(0) }), 0, { store: { replicate: true }, canRead: () => Promise.resolve(true) });
+        const options = { replicationTopic: uuid(), store: { replicate: true } }
+
+        const l0a = await init(new TestStore({ identity: identity(0) }), 0, { ...options, canRead: () => Promise.resolve(true) });
         await (l0a.accessController).access.put(new Access({
             accessCondition: new AnyAccessCondition(),
             accessTypes: [AccessType.Any]
@@ -309,7 +322,7 @@ describe('index', () => {
 
         const dbb = await TestStore.load(session.peers[1].ipfs, l0a.address) as TestStore;
 
-        const l0b = await init(dbb, 1, { store: { replicate: false }, canRead: () => Promise.resolve(true) });
+        const l0b = await init(dbb, 1, { ...options, store: { replicate: false }, canRead: () => Promise.resolve(true) });
 
         // Allow all for easy query
         (l0b.accessController).access.store.sync((l0a.accessController).access.store.oplog.heads)

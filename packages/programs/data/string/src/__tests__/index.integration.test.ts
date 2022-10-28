@@ -14,7 +14,7 @@ import { DefaultOptions } from '@dao-xyz/peerbit-store';
 import { deserialize, serialize } from '@dao-xyz/borsh';
 import { QueryRequestV0, DQuery, QueryOptions, query } from '@dao-xyz/peerbit-query';
 import { delay, waitFor } from '@dao-xyz/peerbit-time';
-
+import { v4 as uuid } from 'uuid';
 const __filename = fileURLToPath(import.meta.url);
 
 const mquery = (ipfs: IPFS, topic: string, request: StringQueryRequest, responseHandler: (results: Results) => void, options: QueryOptions | undefined) => (
@@ -25,6 +25,14 @@ const mquery = (ipfs: IPFS, topic: string, request: StringQueryRequest, response
         responseHandler(results);
     }, options)
 )
+
+const createIdentity = async () => {
+    const ed = await Ed25519Keypair.create();
+    return {
+        publicKey: ed.publicKey,
+        sign: (data) => ed.sign(data)
+    } as Identity
+}
 
 describe('query', () => {
 
@@ -37,32 +45,18 @@ describe('query', () => {
         writer = session.peers[1].ipfs;
         cacheStore1 = await createStore(path.join(__filename, 'cache1'));
         cacheStore2 = await createStore(path.join(__filename, 'cache2'));
-
     })
 
     beforeEach(async () => {
 
-        const createIdentity = async () => {
-            const ed = await Ed25519Keypair.create();
-            return {
-                publicKey: ed.publicKey,
-                sign: (data) => ed.sign(data)
-            } as Identity
-        }
-
         // Create store
-        writeStore = new DString({
-            search: new AnySearch({
-                query: new DQuery({
-                    queryRegion: 'world'
-                })
-            })
-        });
-        await writeStore.init(writer, await createIdentity(), { store: { ...DefaultOptions, encryption: { getAnyKeypair: (_) => Promise.resolve(undefined), getEncryptionKeypair: () => Ed25519Keypair.create() }, replicate: true, resolveCache: () => new Cache(cacheStore1) } });
+        writeStore = new DString({});
+        const replicationTopic = uuid();
+        await writeStore.init(writer, await createIdentity(), { replicationTopic, store: { ...DefaultOptions, encryption: { getAnyKeypair: (_) => Promise.resolve(undefined), getEncryptionKeypair: () => Ed25519Keypair.create() }, replicate: true, resolveCache: () => new Cache(cacheStore1) } });
 
         observerStore = await DString.load(session.peers[1].ipfs, writeStore.address) as DString;
         observerStore.search._query.subscribeToQueries = false;
-        await observerStore.init(observer, await createIdentity(), { store: { ...DefaultOptions, resolveCache: () => new Cache(cacheStore2) } })
+        await observerStore.init(observer, await createIdentity(), { replicationTopic, store: { ...DefaultOptions, resolveCache: () => new Cache(cacheStore2) } })
 
     })
 
@@ -170,10 +164,13 @@ describe('query', () => {
     })
 
     it('handles AccessError gracefully', async () => {
-        await writeStore.add('hello', new Range({ offset: 0n, length: 'hello'.length }), { reciever: { clock: undefined, signature: undefined, payload: [await X25519PublicKey.create()] } });
-        await writeStore.store.close();
-        await writeStore.store.load();
-        await waitFor(() => writeStore.store.oplog.values.length === 1)
+        const store = new DString({});
+        await store.init(writer, await createIdentity(), { replicationTopic: uuid(), store: { ...DefaultOptions, encryption: { getAnyKeypair: (_) => Promise.resolve(undefined), getEncryptionKeypair: () => Ed25519Keypair.create() }, replicate: true, resolveCache: () => new Cache(cacheStore1) } });
+
+        await store.add('hello', new Range({ offset: 0n, length: 'hello'.length }), { reciever: { clock: undefined, signature: undefined, payload: [await X25519PublicKey.create()] } });
+        await store.store.close();
+        await store.store.load();
+        await waitFor(() => store.store.oplog.values.length === 1)
     })
 
 }) 

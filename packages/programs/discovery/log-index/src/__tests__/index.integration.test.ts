@@ -33,9 +33,9 @@ describe('query', () => {
       const store = new Store({ id: 'name' });
       const signKey = await Ed25519Keypair.create();
       const cache = new Cache(cacheStores[i])
-      const logIndex = new LogIndex({ query: new DQuery({ queryRegion: queryTopic }) });
+      const logIndex = new LogIndex({ query: new DQuery({}) });
       logIndex.query.parentProgram = { address: new Address('1') } as any // because query topic needs a parent with address
-      await logIndex.setup({ store })
+      await logIndex.setup({ store, queryTopic: { queryRegion: queryTopic } })
       logIndices.push(logIndex);
       const encryption = {
         getEncryptionKeypair: () => Promise.resolve(signKey as Ed25519Keypair | X25519Keypair),
@@ -57,7 +57,7 @@ describe('query', () => {
       await logIndex.init(session.peers[i].ipfs, {
         ...signKey,
         sign: async (data: Uint8Array) => (await signKey.sign(data))
-      }, { store: { ...DefaultOptions, encryption, replicate: i === 0, resolveCache: () => Promise.resolve(cache) } });
+      }, { replicationTopic: '_', store: { ...DefaultOptions, encryption, replicate: i === 0, resolveCache: () => Promise.resolve(cache) } });
     }
     expect(logIndices[0].query.queryTopic).toEqual(logIndices[1].query.queryTopic)
   })

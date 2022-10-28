@@ -15,6 +15,7 @@ import Cache from '@dao-xyz/peerbit-cache';
 import { field, serialize, variant } from '@dao-xyz/borsh';
 import { Program } from '@dao-xyz/peerbit-program';
 import { Documents } from '@dao-xyz/peerbit-document';
+import { v4 as uuid } from 'uuid';
 const __filename = fileURLToPath(import.meta.url);
 
 const createIdentity = async () => {
@@ -47,7 +48,7 @@ describe('index', () => {
     let session: Session, identites: Identity[], cacheStore: Level[]
 
     const identity = (i: number) => identites[i];
-    const init = (store: Program, i: number, options: { store?: IStoreOptions<any> } = {}) => store.init && store.init(session.peers[i].ipfs, identites[i], { ...options, store: { ...DefaultOptions, replicate: true, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]), ...options.store } })
+    const init = (store: Program, i: number, options: { replicationTopic: string, store?: IStoreOptions<any> }) => store.init && store.init(session.peers[i].ipfs, identites[i], { ...options, store: { ...DefaultOptions, replicate: true, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]), ...options.store } })
     beforeAll(async () => {
         session = await Session.connected(4);
         identites = [];
@@ -104,7 +105,7 @@ describe('index', () => {
             const store = new IdentityGraph({
                 store: createIdentityGraphStore({ id: session.peers[0].id.toString() })
             })
-            await init(store, 0);
+            await init(store, 0, { replicationTopic: uuid() });
 
             const ab = new AnyRelation({
                 to: b,
@@ -165,7 +166,8 @@ describe('index', () => {
             const store = new IdentityGraph({
                 store: createIdentityGraphStore({ id: session.peers[0].id.toString() })
             })
-            await init(store, 0);
+            const replicationTopic = uuid();
+            await init(store, 0, { replicationTopic });
 
             const ab = new AnyRelation({
                 to: b,
@@ -187,18 +189,28 @@ describe('index', () => {
 
     describe('TrustedNetwork', () => {
 
+        it('can be deterministic', async () => {
+
+            const key = (await Ed25519Keypair.create()).publicKey;
+            const t1 = new TrustedNetwork({ id: 'x', rootTrust: key });
+            const t2 = new TrustedNetwork({ id: 'x', rootTrust: key });
+            expect(serialize(t1)).toEqual(serialize(t2));
+
+        })
         it('trusted by chain', async () => {
 
             const l0a = new TrustedNetwork({
                 rootTrust: identity(0).publicKey
             });
 
-            await init(l0a, 0);
+            const replicationTopic = uuid();
+
+            await init(l0a, 0, { replicationTopic });
 
             await l0a.add(identity(1).publicKey);
 
             let l0b: TrustedNetwork = await TrustedNetwork.load(session.peers[1].ipfs, l0a.address) as any
-            await init(l0b, 1);
+            await init(l0b, 1, { replicationTopic });
 
             await l0b.trustGraph.store.sync(l0a.trustGraph.store.oplog.heads);
 
@@ -247,7 +259,7 @@ describe('index', () => {
 
             // check if peer3 is trusted from a peer that is not replicating
             let l0observer: TrustedNetwork = await TrustedNetwork.load(session.peers[1].ipfs, l0a.address) as any
-            await init(l0observer, 1, { store: { replicate: false } });
+            await init(l0observer, 1, { replicationTopic, store: { replicate: false } });
             expect(await l0observer.isTrusted(identity(2).publicKey)).toBeTrue();
             expect(await l0observer.isTrusted(identity(3).publicKey)).toBeFalse();
 
@@ -262,7 +274,7 @@ describe('index', () => {
                 rootTrust: identity(0).publicKey
             });
 
-            await init(l0a, 0);
+            await init(l0a, 0, { replicationTopic: uuid() });
 
             await l0a.add(identity(1).publicKey);
             expect(l0a.hasRelation(identity(0).publicKey, identity(1).publicKey)).toBeFalse()
@@ -276,7 +288,7 @@ describe('index', () => {
             let l0a = new TrustedNetwork({
                 rootTrust: identity(0).publicKey
             });
-            await init(l0a, 0);
+            await init(l0a, 0, { replicationTopic: uuid() });
 
             expect(l0a.trustGraph.put(new AnyRelation({
                 to: new Secp256k1PublicKey({
@@ -297,11 +309,12 @@ describe('index', () => {
             let l0a = new TrustedNetwork({
                 rootTrust: identity(0).publicKey
             });
+            const replicationTopic = uuid();
 
-            await init(l0a, 0);
+            await init(l0a, 0, { replicationTopic });
 
             let l0b: TrustedNetwork = await TrustedNetwork.load(session.peers[1].ipfs, l0a.address) as any
-            await init(l0b, 1);
+            await init(l0b, 1, { replicationTopic });
 
 
             // Can not append peer3Key since its not trusted by the root
