@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-bpayload",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "description": "Class for unifying io patterns (der/ser)",
   "type": "module",
   "sideEffects": false,
