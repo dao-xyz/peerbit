@@ -20,7 +20,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     let ipfs: IPFS, ipfsd: Controller
 
     beforeAll(async () => {
-      ipfsd = await startIpfs(IPFS, config)
+      ipfsd = await startIpfs('go-ipfs', config)
       ipfs = ipfsd.api
     })
 
