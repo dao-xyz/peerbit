@@ -33,7 +33,7 @@ const stringifyCid = (cid: any, options: any = {}): any => {
   const base = options.base || defaultBase
 
   if (cid['/']) {
-    return cid['/']
+    return cid['/'].toString(base);
   }
 
   return cid.toString(base)
