@@ -34,9 +34,12 @@ export class DynamicAccessController extends Program {
                 throw new Error("Expecting either TrustedNetwork or rootTrust")
             }
             this.access = new Documents({
+                id: this.id,
                 index: new DocumentIndex({
+                    id: this.id,
                     indexBy: 'id',
                     search: new AnySearch({
+                        id: this.id,
                         query: new DQuery({ id: this.id })
                     })
                 })

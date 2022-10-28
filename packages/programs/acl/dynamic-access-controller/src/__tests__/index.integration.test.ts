@@ -1,4 +1,4 @@
-import { field, variant } from "@dao-xyz/borsh";
+import { field, serialize, variant } from "@dao-xyz/borsh";
 import { createStore, Session } from '@dao-xyz/peerbit-test-utils';
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
@@ -100,6 +100,14 @@ describe('index', () => {
         await Promise.all(cacheStore?.map((c) => c.close()));
     })
 
+    it('can be deterministic', async () => {
+
+        const key = (await Ed25519Keypair.create()).publicKey;
+        const t1 = new DynamicAccessController({ id: 'x', rootTrust: key });
+        const t2 = new DynamicAccessController({ id: 'x', rootTrust: key });
+        expect(serialize(t1)).toEqual(serialize(t2));
+
+    })
 
     it('can write from trust web', async () => {
 
