@@ -57,7 +57,7 @@ class TestStore extends Program {
         super(properties)
         if (properties) {
             this.store = new Documents({
-                id: 'test',
+                id: properties.id,
                 index: new DocumentIndex({
                     indexBy: 'id',
                     search: new AnySearch({
@@ -313,7 +313,7 @@ describe('index', () => {
         const l0a = await init(new TestStore({ identity: identity(0) }), 0, options);
         const l0b = await init(new TestStore({ identity: identity(0) }), 0, options);
         expect(l0a.address).not.toEqual(l0b.address)
-        expect((l0a.accessController).address.toString()).not.toEqual((l0b.accessController).address.toString())
+        expect((l0a.accessController).address.toString()).toEqual((l0b.accessController).address.toString())
 
     })
 
