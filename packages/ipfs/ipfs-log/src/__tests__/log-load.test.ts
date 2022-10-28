@@ -79,9 +79,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
       ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig)
       ipfs = ipfsd.api
 
-      const memstore = new MemStore()
-      ipfs.object.put = memstore.put.bind(memstore)
-      ipfs.object.get = memstore.get.bind(memstore) as any
+      const memstore = new MemStore();
+      (ipfs.object as any).put = memstore.put.bind(memstore);
+      (ipfs.object as any).get = memstore.get.bind(memstore) as any;
     })
 
     afterAll(async () => {
