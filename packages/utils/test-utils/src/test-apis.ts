@@ -8,7 +8,6 @@
 
 import * as ipfsModule from 'ipfs'
 import * as ipfsHttpModule from 'ipfs-http-client'
-// @ts-ignore, because go-ipfs does not have typings
 import * as ipfsBin from 'go-ipfs'
 
 import dotenv from 'dotenv'
