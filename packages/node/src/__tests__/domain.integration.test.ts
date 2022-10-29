@@ -2,8 +2,6 @@ import { Session } from '@dao-xyz/peerbit-test-utils';
 import { setupDomain } from '../domain';
 import { fileURLToPath } from "url";
 import path from 'path';
-import { exec } from 'child_process';
-import { delay } from '@dao-xyz/peerbit-time';
 const __filename = fileURLToPath(import.meta.url);
 
 describe('ssl', () => {
@@ -19,7 +17,7 @@ describe('ssl', () => {
     })
 
     it('can setup domain', async () => {
-
+        const { exec } = await import('child_process');
         const containerName = 'nginx-certbot-' + +new Date;
         const { domain } = await setupDomain(session.peers[0].ipfs, 'marcus@dao.xyz', path.join(__filename, '../tmp/config'), false, containerName);
         expect(domain.length > 0).toBeTrue()

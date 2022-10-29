@@ -1,6 +1,6 @@
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers'
-import { DEFAULT_TOPIC, replicator, ReplicatorOptions } from './node.js';
+import { DEFAULT_TOPIC, replicator } from './node.js';
 
 import { Peerbit } from '@dao-xyz/peerbit';
 import { startIpfs } from './ipfs.js';
