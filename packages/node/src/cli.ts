@@ -88,7 +88,7 @@ export const getReplicatorArgs = async () => {
 
 export const cli = async (options?: { onStart: (properties: { replicationTopic: string, network?: TrustedNetwork, peer: Peerbit }) => void }) => {
 
-    const args = getReplicatorArgs() as any as (ReplicatorCLIArgs | DomainCLIArgs);
+    const args = (await getReplicatorArgs()) as any as (ReplicatorCLIArgs | DomainCLIArgs);
     const controller = await startIpfs(args.ipfs)
     const cmd = args._[0];
     if (cmd === 'start') {

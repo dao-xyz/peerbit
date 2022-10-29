@@ -9,9 +9,9 @@ import { Ed25519Keypair, X25519Keypair, X25519PublicKey } from '@dao-xyz/peerbit
 import { jest } from '@jest/globals';
 import fs from 'fs-extra'
 import { StoreError } from '../errors.js';
-import { delay } from '@dao-xyz/peerbit-time';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
+
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 import { deserialize, serialize } from '@dao-xyz/borsh';
