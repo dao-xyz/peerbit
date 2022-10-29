@@ -1,5 +1,4 @@
 
-import { hideBin } from 'yargs/helpers'
 import { DEFAULT_TOPIC, replicator } from './node.js';
 import { Peerbit } from '@dao-xyz/peerbit';
 import { startIpfs } from './ipfs.js';
@@ -82,6 +81,8 @@ export const DOMAIN_CLI_CONFIG: { [key: string]: any } = {
 export const addReplicatorCommands = <T extends { command: (...any) => T }>(yargs: T): T => yargs.command('start', 'Start node', REPLICATOR_CLI_CONFIG).command('domain', 'Setup domain', DOMAIN_CLI_CONFIG)
 export const getReplicatorArgs = async () => {
     const yargs = await import('yargs');
+    const { hideBin } = await import('yargs/helpers');
+
     addReplicatorCommands(yargs.default(hideBin(process.argv))).help().argv;
 }
 
