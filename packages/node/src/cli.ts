@@ -83,7 +83,7 @@ export const getReplicatorArgs = async () => {
     const yargs = await import('yargs');
     const { hideBin } = await import('yargs/helpers');
 
-    addReplicatorCommands(yargs.default(hideBin(process.argv))).help().argv;
+    return addReplicatorCommands(yargs.default(hideBin(process.argv))).help().argv;
 }
 
 export const cli = async (options?: { onStart: (properties: { replicationTopic: string, network?: TrustedNetwork, peer: Peerbit }) => void }) => {
