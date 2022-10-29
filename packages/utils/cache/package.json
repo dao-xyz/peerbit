@@ -6,6 +6,14 @@
   "publishConfig": {
     "access": "public"
   },
+  "files": [
+    "lib",
+    "src",
+    "src/nginx-template.conf",
+    "!src/**/__tests__",
+    "!lib/**/__tests__",
+    "LICENSE"
+  ],
   "main": "lib/cjs/index.js",
   "module": "lib/esm/index.mjs",
   "types": "lib/esm/index.d.ts",

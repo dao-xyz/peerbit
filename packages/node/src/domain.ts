@@ -1,9 +1,7 @@
 import { IPFS } from "ipfs-core-types";
 import isNode from 'is-node';
 import path from "path";
-import { fileURLToPath } from "url";
 import { waitFor, waitForAsync } from '@dao-xyz/peerbit-time';
-import axios from "axios";
 
 const validateEmail = (email) => {
     return String(email)
@@ -17,6 +15,8 @@ const createConfig = async (ipfs: IPFS, outputPath: string): Promise<{ domain: s
     if (!isNode) {
         throw new Error("Config can only be created with node");
     }
+    const { fileURLToPath } = await import("url");
+
     const domain = await createDomain();
     const __filename = fileURLToPath(import.meta.url);
     const fs = await import('fs');
@@ -141,6 +141,8 @@ export const setupDomain = async (ipfs: IPFS, email: string, nginxConfigPath?: s
     console.log(domain);
 
     if (waitForUp) {
+        const { default: axios } = await import("axios");
+
         console.log('Waiting for domain to be ready ...')
         await waitForAsync(async () => {
             try {
