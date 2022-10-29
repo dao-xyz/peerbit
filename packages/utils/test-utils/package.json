@@ -20,7 +20,8 @@
   "files": [
     "lib",
     "src",
-    "!src/__tests__",
+    "!src/**/__tests__",
+    "!lib/**/__tests__",
     "LICENSE"
   ],
   "repository": {
