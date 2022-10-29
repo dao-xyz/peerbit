@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-keystore",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "description": "A local key manager for OrbitDB",
   "sideEffects": false,
   "main": "lib/cjs/index.js",
@@ -44,7 +44,7 @@
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
-    "@dao-xyz/peerbit-test-utils": "^0.0.9",
+    "@dao-xyz/peerbit-test-utils": "^0.0.10",
     "@types/libsodium-wrappers": "^0.7.9",
     "is-node": "^1.0.2",
     "json-loader": "~0.5.7",
