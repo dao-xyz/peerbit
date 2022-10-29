@@ -46,7 +46,8 @@
     "shx": "^0.3.3",
     "tslib": "^2.4.0",
     "typescript": "^4.8.4",
-    "yaml": "^1.10.2"
+    "yaml": "^1.10.2",
+    "yargs": "^17.6.0"
   },
   "dependencies": {
     "@dao-xyz/peerbit": "^0.0.36",
