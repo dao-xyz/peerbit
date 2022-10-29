@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-keystore",
-  "version": "0.0.20",
+  "version": "0.0.21",
   "description": "A local key manager for OrbitDB",
   "sideEffects": false,
   "main": "lib/cjs/index.js",
