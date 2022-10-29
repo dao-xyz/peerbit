@@ -11,6 +11,7 @@
             "packages/ipfs/ipfs-pubsub-peer-monitor",
             "packages/ipfs/ipfs-log",
             "packages/client",
+            "packages/node",
             "packages/programs/acl/dynamic-access-controller",
             "packages/programs/acl/trusted-network",
             "packages/programs/program-interface",
