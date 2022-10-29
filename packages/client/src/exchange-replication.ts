@@ -9,10 +9,7 @@ import { Peerbit } from './peer.js';
 import { StringSetSerializer } from '@dao-xyz/peerbit-borsh-utils';
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
-let v8: Promise<any> | undefined = undefined;
-if (isNode) {
-    v8 = import('v8');
-}
+
 
 export const WAIT_FOR_PEERS_TIME = 5000;
 
@@ -35,14 +32,12 @@ export class ReplicatorInfo extends ProtocolMessage {
         @field({ type: 'bool' })
         allowForks: boolean
      */
-    @field({ type: 'u64' })
-    memoryLeft: bigint
+
 
     constructor(props?: {
         fromId?: string;
         replicationTopic: string,
         store: string,
-        memoryLeft: bigint,
 /*         allowForks: boolean
  */        heads?: Set<string> | string[]
     }) {
@@ -51,7 +46,6 @@ export class ReplicatorInfo extends ProtocolMessage {
             this.fromId = props.fromId;
             this.replicationTopic = props.replicationTopic;
             this.store = props.store;
-            this.memoryLeft = props.memoryLeft;
             this.heads = Array.isArray(props.heads) ? new Set(props.heads) : this.heads;
             /*  this.allowForks = props.allowForks; */
         }
@@ -167,8 +161,7 @@ export const exchangePeerInfo = async (fromId: string, replicationTopic: string,
             replicationTopic,
             store: store.address.toString(),
             /*   allowForks: store.allowForks, */
-            heads,
-            memoryLeft: (await v8).getHeapStatistics().total_available_size //v8
+            heads
         }))
     }).sign(sign)
 
