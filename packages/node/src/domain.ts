@@ -15,7 +15,7 @@ const createConfig = async (ipfs: IPFS, outputPath: string): Promise<{ domain: s
     if (!isNode) {
         throw new Error("Config can only be created with node");
     }
-    const url = await import("url");
+    const url = await import("url"); // do not do const { fileURLToPath } = await import("url") because it will fail in browser
     const domain = await createDomain();
     const __filename = url.fileURLToPath(import.meta.url);
     const fs = await import('fs');
