@@ -121,6 +121,9 @@ export const cli = async (options?: { cliName: string, onStart: (properties: { r
                 })
             }
         });
+
+        // TODO add listener for ctrl c (exit) to save snapshots
+
     }
     else if (cmd === 'relay') {
         await printNodeInfo();
