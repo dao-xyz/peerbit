@@ -4,35 +4,42 @@ import { Peerbit } from '@dao-xyz/peerbit';
 import { startIpfs } from './ipfs.js';
 import { setupDomain } from './domain.js';
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
+export type AnyCLIArgs = { _: string[], ipfs: 'go' | 'js', disposable: boolean }
 
-export type ReplicatorCLIArgs = { _: string[], host: string, /* iip?: string,  */topic: string, ipfs: 'go' | 'js', bootstrap: string[], root: boolean, timeout: number };
-
-export const REPLICATOR_CLI_CONFIG: { [key: string]: any } = {
+export type ReplicatorCLIArgs = AnyCLIArgs & {  /*host: string, iip?: string,  */topic: string,  /* bootstrap: string[],  */root: boolean, timeout: number };
+const ANY_ARGS_CONFIG = {
     ipfs: {
         description: 'IPFS type',
         type: 'string',
         choices: ['go', 'js'],
         default: 'go',
     },
-    host: {
-        description: 'Host',
-        alias: 'h',
-        type: 'string',
-        default: 'localhost'
-    },
-    verbose: {
-        description: 'Verbose',
-        alias: 'v',
-        type: 'boolean',
-        default: false
-    },
-
-    bootstrap: {
-        description: 'Bootstrap addresses (initial swarm connections)',
-        alias: 'bs',
-        type: 'array',
-        default: []
-    },
+    disposable: {
+        description: 'Run IPFS node as disposable (will be destroyed on termination)',
+        boolean: true
+    }
+}
+export const REPLICATOR_CLI_CONFIG: { [key: string]: any } = {
+    ...ANY_ARGS_CONFIG,
+    /*     host: {
+            description: 'Host',
+            alias: 'h',
+            type: 'string',
+            default: 'localhost'
+        },
+        verbose: {
+            description: 'Verbose',
+            alias: 'v',
+            type: 'boolean',
+            default: false
+        },
+    
+        bootstrap: {
+            description: 'Bootstrap addresses (initial swarm connections)',
+            alias: 'bs',
+            type: 'array',
+            default: []
+        }, */
     topic: {
         description: "Network address or rootTrust key in form [CHAIN TYPE]/[PUBLICKEY]. e.g. if ethereum: \"ethereum/0x4e54fD83...\" or any topic",
         alias: 't',
@@ -50,16 +57,16 @@ export const REPLICATOR_CLI_CONFIG: { [key: string]: any } = {
     }
 };
 
-export type DomainCLIArgs = { _: string[], ipfs: 'go' | 'js', email: string, outdir?: string, wait: boolean };
+
+export const RELAY_CLI_CONFIG: { [key: string]: any } = ANY_ARGS_CONFIG;
+
+export type RelayCLIArgs = AnyCLIArgs;
+
+export type DomainCLIArgs = AnyCLIArgs & { email: string, outdir?: string, wait: boolean };
 
 
 export const DOMAIN_CLI_CONFIG: { [key: string]: any } = {
-    ipfs: {
-        description: 'IPFS type',
-        type: 'string',
-        choices: ['go', 'js'],
-        default: 'go',
-    },
+    ...ANY_ARGS_CONFIG,
     email: {
         description: 'Email for Lets encrypt autorenewal messages',
         type: 'string',
@@ -78,7 +85,7 @@ export const DOMAIN_CLI_CONFIG: { [key: string]: any } = {
     }
 };
 
-export const addReplicatorCommands = <T extends { command: (...any) => T }>(yargs: T): T => yargs.command('start', 'Start node', REPLICATOR_CLI_CONFIG).command('domain', 'Setup domain', DOMAIN_CLI_CONFIG)
+export const addReplicatorCommands = <T extends { command: (...any) => T }>(yargs: T): T => yargs.command('start', 'Start node', REPLICATOR_CLI_CONFIG).command('relay', 'Start IPFS as a simple node', RELAY_CLI_CONFIG).command('domain', 'Setup domain', DOMAIN_CLI_CONFIG)
 export const getReplicatorArgs = async () => {
     const yargs = await import('yargs');
     const { hideBin } = await import('yargs/helpers');
@@ -86,12 +93,21 @@ export const getReplicatorArgs = async () => {
     return addReplicatorCommands(yargs.default(hideBin(process.argv))).help().argv;
 }
 
-export const cli = async (options?: { onStart: (properties: { replicationTopic: string, network?: TrustedNetwork, peer: Peerbit }) => void }) => {
+export const cli = async (options?: { cliName: string, onStart: (properties: { replicationTopic: string, network?: TrustedNetwork, peer: Peerbit }) => void }) => {
 
-    const args = (await getReplicatorArgs()) as any as (ReplicatorCLIArgs | DomainCLIArgs);
-    const controller = await startIpfs(args.ipfs)
+    const cliName = options?.cliName || 'peerbit'
+    const args = (await getReplicatorArgs()) as any as (ReplicatorCLIArgs | DomainCLIArgs | RelayCLIArgs);
+    const controller = await startIpfs(args.ipfs, { module: { disposable: args.disposable } })
     const cmd = args._[0];
-    if (cmd === 'start') {
+    const printNodeInfo = async () => {
+        console.log('Starting node with address(es): ');
+        const id = await controller.api.id()
+        id.addresses.forEach((addr) => {
+            console.log(addr.toString());
+        })
+    }
+    if (cmd === 'replicator') {
+        await printNodeInfo();
         const parsed = args as ReplicatorCLIArgs;
         const peer = await Peerbit.create(controller.api);
         replicator({
@@ -106,12 +122,34 @@ export const cli = async (options?: { onStart: (properties: { replicationTopic: 
             }
         });
     }
+    else if (cmd === 'relay') {
+        await printNodeInfo();
+
+
+        // do nothing, just dont shut down (IPFS is running)
+
+        // TODO add listener for ctrl c (exit)
+    }
     // add stop command below
     /// ...
     /// ...
     else if (cmd === 'domain') {
+        if (args.disposable && process.env.JEST_WORKER_ID !== undefined) {
+            throw new Error("Disposable nodes behind a domain is currently not supported") // because the frontend will not show the right address
+
+        }
+
         const parsed = args as DomainCLIArgs;
         await setupDomain(controller.api, parsed.email, parsed.outdir, parsed.wait)
+        await controller.api.stop();
+        console.log('Before you can connect to your node you need to run:')
+        console.log('Either:')
+        console.log(cliName + ' relay')
+        console.log('or: ')
+        console.log(cliName + ' replicator')
+        console.log('add "--help" for documentation:')
+        const { exit } = await import('process');
+        exit();
     }
 }
 

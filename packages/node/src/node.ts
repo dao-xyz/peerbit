@@ -19,11 +19,6 @@ export type ReplicatorOptions = { bootstrap?: string[], peer: Peerbit, onReady?:
  */
 export const replicator = async (options: ReplicatorOptions) => {
     const node = options.peer;
-    console.log('Starting node with address(es): ');
-    const id = await node.ipfs.id()
-    id.addresses.forEach((addr) => {
-        console.log(addr.toString());
-    })
     options.bootstrap && await Promise.all(options.bootstrap.map(b => node.ipfs.swarm.connect(multiaddr(b))))
 
     if (options.root && options.topic && options.topic !== DEFAULT_TOPIC) {
