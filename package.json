@@ -49,6 +49,7 @@
     "scripts": {
         "clean": "lerna run clean",
         "build": "lerna run build",
+        "build-node": "cd ./packages/node/ && yarn build",
         "test": "node --experimental-vm-modules ./node_modules/.bin/jest test  -c jest.config.unit.ts  --forceExit",
         "test:integration": "node --experimental-vm-modules ./node_modules/.bin/jest test -c jest.config.integration.ts --forceExit",
         "deploy": "yarn deploy:docs && yarn deploy:example",
