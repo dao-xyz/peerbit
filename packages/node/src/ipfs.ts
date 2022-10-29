@@ -17,6 +17,8 @@ interface Module {
 /**
  * If Browser, it will resolve js, else you can choose go or js
  * Will start as disposable as default
+ * At the moment, swarm settings has to be Swarm: ["/ip4/0.0.0.0/tcp/4001", "/ip4/0.0.0.0/tcp/8081/ws", "/ip6/::/tcp/4001"] to match nginx config
+ * 
  */
 export const startIpfs = async (type: 'js' | 'go', options?: { ipfsOptions?: IPFSOptions, module?: { disposable: boolean, go?: { args?: string[] } } }) => {
 
@@ -25,7 +27,7 @@ export const startIpfs = async (type: 'js' | 'go', options?: { ipfsOptions?: IPF
         if (type === 'go')
             throw new Error("Not supported")
     }
-    const disposable = options?.module?.disposable || true; // false default?
+    const disposable = options?.module?.disposable || false;
     if (type === 'js') {
         const ipfsModule = await import('ipfs')
         module = {
@@ -61,7 +63,7 @@ export const startIpfs = async (type: 'js' | 'go', options?: { ipfsOptions?: IPF
         config: {
             Addresses: {
                 API: '/ip4/127.0.0.1/tcp/0',
-                Swarm: ['/ip4/0.0.0.0/tcp/0'], // ["/ip4/0.0.0.0/tcp/4001", "/ip4/0.0.0.0/tcp/8081/ws", "/ip6/::/tcp/4001"], //
+                Swarm: ["/ip4/0.0.0.0/tcp/4001", "/ip4/0.0.0.0/tcp/8081/ws", "/ip6/::/tcp/4001"], //
                 Gateway: '/ip4/0.0.0.0/tcp/0'
             },
             Bootstrap: [],
@@ -79,7 +81,7 @@ export const startIpfs = async (type: 'js' | 'go', options?: { ipfsOptions?: IPF
     module.ipfsOptions = ipfsOptions;
 
     const controller = await createController(module)
-    if (disposable && !controller.started) {
+    if (!disposable && !controller.started) {
         await controller.start();
     }
     return controller;

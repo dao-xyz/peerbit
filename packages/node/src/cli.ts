@@ -106,6 +106,9 @@ export const cli = async (options?: { onStart: (properties: { replicationTopic: 
             }
         });
     }
+    // add stop command below
+    /// ...
+    /// ...
     else if (cmd === 'domain') {
         const parsed = args as DomainCLIArgs;
         await setupDomain(controller.api, parsed.email, parsed.outdir, parsed.wait)
