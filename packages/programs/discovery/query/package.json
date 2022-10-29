@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-query",
-  "version": "0.0.31",
+  "version": "0.0.32",
   "description": "Cross peer com. primitives",
   "type": "module",
   "sideEffects": false,
@@ -33,11 +33,11 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^3.4.2",
-    "@dao-xyz/peerbit-bpayload": "^0.0.18",
-    "@dao-xyz/peerbit-crypto": "^0.0.12",
-    "@dao-xyz/peerbit-program": "^0.0.28",
-    "@dao-xyz/peerbit-store": "^0.0.44",
-    "@dao-xyz/peerbit-time": "^0.0.16",
+    "@dao-xyz/peerbit-bpayload": "^0.0.19",
+    "@dao-xyz/peerbit-crypto": "^0.0.13",
+    "@dao-xyz/peerbit-program": "^0.0.29",
+    "@dao-xyz/peerbit-store": "^0.0.45",
+    "@dao-xyz/peerbit-time": "^0.0.17",
     "uuid": "^8.3.2"
   },
   "devDependencies": {

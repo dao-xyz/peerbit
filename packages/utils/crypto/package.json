@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-crypto",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "description": "Crypto fn",
   "type": "module",
   "sideEffects": false,
@@ -37,7 +37,7 @@
   "dependencies": {
     "@dao-xyz/borsh": "^3.4.2",
     "@dao-xyz/peerbit-borsh-utils": "^0.0.8",
-    "@dao-xyz/peerbit-bpayload": "^0.0.18",
+    "@dao-xyz/peerbit-bpayload": "^0.0.19",
     "@ethersproject/wallet": "^5.7.0",
     "libsodium-wrappers": "^0.7.10"
   },
