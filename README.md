@@ -102,4 +102,4 @@ The peer client
 Contains composable programs you can build your program with. For example distributed [document store](./packages/programs/data/document), [search](./packages/programs/discovery/any-search), [chain agnostic access controller](./packages/programs/acl/dynamic-access-controller) 
 
 ## [Utils](./packages/utils/)
-Utilities libraries that do not have their own category yet
+Utility libraries that do not have their own category yet
