@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-test-utils",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "description": "Test utils for Peerbit",
   "type": "module",
   "sideEffects": false,
@@ -31,7 +31,7 @@
   "author": "shamb0t <shams@haja.io>",
   "license": "MIT",
   "devDependencies": {
-    "@dao-xyz/peerbit-time": "^0.0.15",
+    "@dao-xyz/peerbit-time": "^0.0.16",
     "c8": "^7.11.3",
     "go-ipfs": "^0.15.0",
     "ipfs": "^0.65.0",

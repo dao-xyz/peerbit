@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit",
-  "version": "0.0.33",
+  "version": "0.0.34",
   "description": "Distributed p2p database on IPFS",
   "author": "Haad",
   "license": "MIT",
@@ -30,14 +30,14 @@
     "require": "./lib/cjs/index.js"
   },
   "dependencies": {
-    "@dao-xyz/ipfs-pubsub-direct-channel": "^0.0.19",
-    "@dao-xyz/peerbit-cache": "^0.4.10",
-    "@dao-xyz/peerbit-crypto": "^0.0.10",
-    "@dao-xyz/peerbit-io-utils": "^1.1.9",
-    "@dao-xyz/peerbit-keystore": "^0.0.17",
-    "@dao-xyz/peerbit-program": "^0.0.26",
-    "@dao-xyz/peerbit-store": "^0.0.42",
-    "@dao-xyz/peerbit-trusted-network": "^0.0.57",
+    "@dao-xyz/ipfs-pubsub-direct-channel": "^0.0.20",
+    "@dao-xyz/peerbit-cache": "^0.4.11",
+    "@dao-xyz/peerbit-crypto": "^0.0.11",
+    "@dao-xyz/peerbit-io-utils": "^1.1.10",
+    "@dao-xyz/peerbit-keystore": "^0.0.18",
+    "@dao-xyz/peerbit-program": "^0.0.27",
+    "@dao-xyz/peerbit-store": "^0.0.43",
+    "@dao-xyz/peerbit-trusted-network": "^0.0.58",
     "is-node": "^1.0.2",
     "level": "^8.0.0",
     "localstorage-down": "^0.6.7",
@@ -47,8 +47,8 @@
     "wherearewe": "^1.0.2"
   },
   "devDependencies": {
-    "@dao-xyz/peerbit-document": "^0.0.104",
-    "@dao-xyz/peerbit-test-utils": "^0.0.10",
+    "@dao-xyz/peerbit-document": "^0.0.105",
+    "@dao-xyz/peerbit-test-utils": "^0.0.11",
     "cpy-cli": "^3.1.1",
     "eslint": "^6.8.0",
     "fs-extra": "^9.0.1",

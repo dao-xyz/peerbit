@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-network-discovery",
-  "version": "0.0.30",
+  "version": "0.0.31",
   "description": "Discovery DB",
   "type": "module",
   "sideEffects": false,
@@ -33,15 +33,15 @@
   "license": "MIT",
   "dependencies": {
     "@dao-xyz/borsh": "^3.4.2",
-    "@dao-xyz/peerbit-anysearch": "^0.0.70",
-    "@dao-xyz/peerbit-crypto": "^0.0.10",
-    "@dao-xyz/peerbit-document": "^0.0.104",
-    "@dao-xyz/peerbit-trusted-network": "^0.0.57",
+    "@dao-xyz/peerbit-anysearch": "^0.0.71",
+    "@dao-xyz/peerbit-crypto": "^0.0.11",
+    "@dao-xyz/peerbit-document": "^0.0.105",
+    "@dao-xyz/peerbit-trusted-network": "^0.0.58",
     "p-map": "~1.1.1",
     "uuid": "^8.3.2"
   },
   "devDependencies": {
-    "@dao-xyz/peerbit-time": "^0.0.15",
+    "@dao-xyz/peerbit-time": "^0.0.16",
     "@ethersproject/wallet": "^5.7.0",
     "ipfs": "^0.65.0"
   },
