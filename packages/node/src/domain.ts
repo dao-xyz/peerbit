@@ -15,10 +15,9 @@ const createConfig = async (ipfs: IPFS, outputPath: string): Promise<{ domain: s
     if (!isNode) {
         throw new Error("Config can only be created with node");
     }
-    const { fileURLToPath } = await import("url");
-
+    const url = await import("url");
     const domain = await createDomain();
-    const __filename = fileURLToPath(import.meta.url);
+    const __filename = url.fileURLToPath(import.meta.url);
     const fs = await import('fs');
     let file = fs.readFileSync(path.join(__filename, '../nginx-template.conf'), 'utf-8');
     const ipfsId = (await ipfs.id()).id.toString()
