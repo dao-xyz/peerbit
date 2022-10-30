@@ -27,7 +27,7 @@ Started originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS 
 </br>
 </br>
 
-## Alpha release
+## Alpha status
 
 Backwards compatibility for new releases might be lacking. Use with caution and please report bugs and issues you are experiencing when developing with Peerbit. 
 
@@ -98,8 +98,70 @@ The peer client
 - Exchange replication info. Healthcheck/Redundancy diagnostics. 
 - Leader and leader rotation routines for building functionality around leaders
 
+### Installation 
+```sh
+npm install @dao-xyz/peerbit
+```
+
+```typescript
+import { Peerbit } from '@dao-xyz/peerbit'
+
+// Create a peer from an ipfs instance
+const peer = await Peerbit.create(IPFS CLIENT, {... options ...})
+
+// Open a program 
+const program = await peer.open(PRORGAM ADDRESS or PRORGAM)
+program.doThings()
+```
+
 ## [Programs](./packages/programs)
 Contains composable programs you can build your program with. For example distributed [document store](./packages/programs/data/document), [search](./packages/programs/discovery/any-search), [chain agnostic access controller](./packages/programs/acl/dynamic-access-controller) 
 
+A program lets you write control mechanism for Append-Only logs (which are represented as a Store), example program
+
+```typescript 
+import { Store } from '@dao-xyz/peerbit-store'
+import { Program } from '@dao-xyz/peerbit-program' 
+import { field, variant } from '@dao-xyz/borst-ts' 
+
+@variant("My string store") // name it to ensure uniqueness
+class StringStore extends Program  // Needs to extend Program if you are going to store Store<any> in your class
+{
+    @field({type: Store}) // decorate it for serialization purposes 
+    store: Store<string>
+
+    constructor(properties?:{ store: Store<any>}) {
+        if(properties)
+        {
+            this.store = properties.store
+        }
+    }
+
+    async setup() 
+    {
+        // some setup routine that is called before the Program opens
+        await store.setup({ encoding: ... , canAppend: ..., canRead: ...})
+    }
+}
+
+
+
+// Later 
+
+const peer = await Peerbit.create(IPFS CLIENT, {... options ...})
+
+const program = await peer.open(new StringStore(), ... options ...)
+ 
+// Now you can interact the store through 
+program.store.addOperation( ... )
+```
+
+See the [DString](./packages/programs/data/string) for a complete working example that also includes a string search index
+
+
+
 ## [Utils](./packages/utils/)
 Utility libraries that do not have their own category yet
+
+The most important module here is 
+```@dao-xyz/peerbi-crypto``` that is defining all different key types for signing and encrypting messages.
