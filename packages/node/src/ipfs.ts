@@ -81,14 +81,11 @@ export const startIpfs = async (type: 'js' | 'go', options?: { ipfsOptions?: IPF
     module.ipfsOptions = ipfsOptions;
 
     const controller = await createController(module)
-    if (disposable) {
-        if (!controller.initialized) {
-            await controller.init();
-        }
-        if (!controller.started) {
-            await controller.start();
-
-        }
+    if (!controller.initialized) {
+        await controller.init();
+    }
+    if (!controller.started) {
+        await controller.start();
     }
     return controller;
 }
