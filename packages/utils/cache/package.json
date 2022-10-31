@@ -52,15 +52,10 @@
     "@dao-xyz/peerbit-test-utils": "^0.0.12",
     "jsondown": "^1.0.0",
     "localstorage-down": "^0.6.7",
-    "memdown": "^6.0.0",
-    "sqlite3": "^5.0.2",
-    "webpack": "^4.39.0",
-    "webpack-cli": "^3.3.6"
+    "memdown": "^6.1.1"
   },
   "localMaintainers": [
-    "haad <haad@haja.io>",
-    "shamb0t <shams@haja.io>",
-    "hajamark <mark@haja.io>"
+    "dao.xyz"
   ],
   "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
 }
