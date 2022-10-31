@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-node",
-  "version": "0.0.29",
+  "version": "0.0.30",
   "author": "dao.xyz",
   "repository": "https://github.com/@dao-xyz/dsocial",
   "license": "Apache-2.0",
@@ -50,7 +50,7 @@
     "yargs": "^17.6.0"
   },
   "dependencies": {
-    "@dao-xyz/peerbit": "^0.0.39",
+    "@dao-xyz/peerbit": "^0.0.40",
     "ipfsd-ctl": "^12.2.2",
     "is-node": "^1.0.2"
   },
