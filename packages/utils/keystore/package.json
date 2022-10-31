@@ -39,10 +39,8 @@
     "level": "^8.0.0",
     "libp2p-crypto": "^0.21.2",
     "lru-cache": "^7.14.0",
-    "mkdirp": "^0.5.5",
     "reachdown": "^1.1.0",
-    "safe-buffer": "^5.2.1",
-    "tweetnacl": "^1.0.3"
+    "safe-buffer": "^5.2.1"
   },
   "devDependencies": {
     "@dao-xyz/peerbit-test-utils": "^0.0.12",
@@ -55,18 +53,8 @@
   },
   "bugs": "https://github.com/dao-xyz/peerbit/issues",
   "homepage": "https://github.com/dao-xyz/peerbit",
-  "contributors": [
-    "adam-palazzo",
-    "haadcode",
-    "RichardLitt",
-    "shamb0t",
-    "thiagodelgado111",
-    "willemneal"
-  ],
   "localMaintainers": [
-    "haad <haad@haja.io>",
-    "shamb0t <shams@haja.io>",
-    "hajamark <mark@haja.io>"
+    "dao.xyz"
   ],
   "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
 }
