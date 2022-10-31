@@ -8,11 +8,10 @@ import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { TimeoutError, waitForAsync } from '@dao-xyz/peerbit-time';
 import { Key } from '@dao-xyz/peerbit-crypto';
 import { Constructor } from '@dao-xyz/borsh';
-// @ts-ignore
-import Logger from 'logplease'
+
 import { Identity } from '@dao-xyz/ipfs-log';
-const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
-Logger.setLogLevel('ERROR')
+import { logger as parentLogger } from './logger.js'
+const logger = parentLogger.child({ module: 'exchange-keys' });
 
 export type KeyAccessCondition = (keyToAccess: KeyWithMeta<Ed25519Keypair | X25519Keypair>) => boolean;
 

@@ -1,7 +1,5 @@
-// @ts-ignore
-import Logger from 'logplease'
-const logger = Logger.create('cache', { color: Logger.Colors.Magenta })
-Logger.setLogLevel('ERROR')
+import pino from 'pino'
+const logger = pino().child({ module: 'cache' });
 
 import { serialize, deserialize, Constructor } from '@dao-xyz/borsh';
 import { Level } from 'level';

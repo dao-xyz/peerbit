@@ -46,7 +46,7 @@
   "dependencies": {
     "@dao-xyz/borsh": "^3.4.2",
     "level": "^8.0.0",
-    "logplease": "~1.2.15"
+    "pino": "^8.7.0"
   },
   "devDependencies": {
     "@dao-xyz/peerbit-test-utils": "^0.0.12",

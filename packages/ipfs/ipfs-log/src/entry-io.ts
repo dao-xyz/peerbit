@@ -7,9 +7,9 @@ import { max, min } from './utils';
 import { Encoding, JSON_ENCODING } from './encoding';
 
 //@ts-ignore
-import Logger from 'logplease'
-const logger = Logger.create('entry-io', { color: Logger.Colors.Yellow })
-Logger.setLogLevel('ERROR')
+import { logger as parentLogger } from './logger.js'
+const logger = parentLogger.child({ module: 'entry-io' });
+
 const hasItems = (arr: any[]) => arr && arr.length > 0
 
 

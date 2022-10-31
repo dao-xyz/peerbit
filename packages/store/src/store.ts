@@ -19,14 +19,14 @@ import { AccessError, PublicKeyEncryptionResolver, SignatureWithKey } from "@dao
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 import { joinUint8Arrays } from '@dao-xyz/peerbit-borsh-utils';
-// @ts-ignore
-import Logger from 'logplease'
+
 import { Address, Addressable, load, save } from './io.js'
 import { SystemBinaryPayload } from '@dao-xyz/peerbit-bpayload'
 import { EntryWithRefs } from './entry-with-refs.js'
+import pino from 'pino'
+const logger = pino().child({ module: 'store' });
 
-const logger = Logger.create('orbit-db.store', { color: Logger.Colors.Blue })
-Logger.setLogLevel('ERROR')
+
 
 export class CachedValue { }
 

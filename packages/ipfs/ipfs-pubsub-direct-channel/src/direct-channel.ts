@@ -7,12 +7,9 @@ import type { Message, SignedMessage } from '@libp2p/interface-pubsub';
 import type { EventHandler } from '@libp2p/interfaces/events';
 import type { PeerId } from '@libp2p/interface-peer-id';
 
-// @ts-ignore
-import Logger from 'logplease';
-import { waitForAsync } from '@dao-xyz/peerbit-time';
-const logger = Logger.create("direct-channel", { color: Logger.Colors.Yellow })
-Logger.setLogLevel('ERROR')
 
+import { logger as parentLogger } from './logger.js'
+const logger = parentLogger.child({ module: 'direct-channel' });
 
 /**
  * Communication channel over Pubsub between two IPFS nodes

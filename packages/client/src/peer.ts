@@ -31,11 +31,11 @@ import { IpfsPubsubPeerMonitor } from '@dao-xyz/ipfs-pubsub-peer-monitor';
 import type { PeerId } from '@libp2p/interface-peer-id';
 import { exchangeSwarmAddresses, ExchangeSwarmMessage } from './exchange-network.js';
 import { setTimeout } from 'timers';
-
 // @ts-ignore
-import Logger from 'logplease'
-const logger = Logger.create('orbit-db')
-Logger.setLogLevel('ERROR')
+import { logger as parentLogger } from './logger.js'
+const logger = parentLogger.child({ module: 'peer' });
+// @ts-ignore
+
 
 const MIN_REPLICAS = 2;
 

@@ -4,11 +4,8 @@ import { ComposableProgram } from '@dao-xyz/peerbit-program';
 import { CanRead, DQuery, DQueryInitializationOptions, QueryTopicOption } from "@dao-xyz/peerbit-query";
 import { Store } from "@dao-xyz/peerbit-store";
 import { EncryptedThing, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
-// @ts-ignore
-import Logger from 'logplease'
-const logger = Logger.create('Documents')
-Logger.setLogLevel('ERROR')
-
+import pino from 'pino'
+const logger = pino().child({ module: 'log-index' });
 
 @variant(0)
 export class HeadsMessage {

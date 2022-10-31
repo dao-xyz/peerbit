@@ -16,12 +16,11 @@ import { LamportClock as Clock, LamportClock } from './lamport-clock.js'
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { serialize } from '@dao-xyz/borsh';
 
-// @ts-ignore
-import Logger from 'logplease'
+
 import { Encoding, JSON_ENCODING } from "./encoding.js"
 import { Identity } from "./identity.js"
-const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
-Logger.setLogLevel('ERROR')
+import { logger as parentLogger } from './logger.js'
+const logger = parentLogger.child({ module: 'ipfs-log' });
 
 const { LastWriteWins, NoZeroes } = Sorting
 const randomId = () => new Date().getTime().toString()

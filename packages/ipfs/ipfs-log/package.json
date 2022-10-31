@@ -40,12 +40,13 @@
     "p-do-whilst": "^1.1.0",
     "p-each-series": "^3.0.0",
     "p-map": "^5.5.0",
-    "p-whilst": "^3.0.0"
+    "p-whilst": "^3.0.0",
+    "pino": "^8.7.0"
   },
   "devDependencies": {
     "@dao-xyz/peerbit-keystore": "^0.0.21",
     "@dao-xyz/peerbit-test-utils": "^0.0.12",
-    "@mapbox/node-pre-gyp": "^1.0.5",
+    "@mapbox/node-pre-gyp": "^1.0.10",
     "assert": "^2.0.0",
     "eslint": "^7.32.0",
     "fs-extra": "^10.0.0",
@@ -56,7 +57,7 @@
     "jsdoc": "^3.6.6",
     "json-loader": "~0.5.7",
     "node-polyfill-webpack-plugin": "^1.1.4",
-    "node-pre-gyp": "^0.13.0",
+    "node-pre-gyp": "^0.17.0",
     "nyc": "^15.0.1",
     "orbit-db-benchmark-runner": "^1.0.3",
     "path-browserify": "^1.0.1",

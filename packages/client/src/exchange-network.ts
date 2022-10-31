@@ -3,13 +3,10 @@ import { ProtocolMessage } from './message.js';
 import { IPFSAddress } from '@dao-xyz/peerbit-crypto'
 import { MaybeSigned, SignatureWithKey } from '@dao-xyz/peerbit-crypto';
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
-// @ts-ignore
-import Logger from 'logplease'
 import { Identity } from '@dao-xyz/ipfs-log';
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
 import { PeersResult } from 'ipfs-core-types/dist/src/swarm/index.js';
-const logger = Logger.create('exchange-network', { color: Logger.Colors.Yellow })
-Logger.setLogLevel('ERROR')
+
 
 @variant(0)
 export class PeerInfo {

@@ -8,12 +8,10 @@ import { CanOpenSubPrograms, ComposableProgram, Program, ProgramOwner } from '@d
 import { CanRead } from '@dao-xyz/peerbit-query';
 import { LogIndex } from '@dao-xyz/peerbit-logindex'
 
-// @ts-ignore
-import Logger from 'logplease'
 import { AccessError } from '@dao-xyz/peerbit-crypto';
 
-const logger = Logger.create('Documents')
-Logger.setLogLevel('ERROR')
+import pino from 'pino'
+const logger = pino().child({ module: 'document-store' });
 
 export class OperationError extends Error {
   constructor(message?: string) {

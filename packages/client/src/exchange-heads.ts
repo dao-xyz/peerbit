@@ -5,12 +5,11 @@ import { Address, Store } from '@dao-xyz/peerbit-store';
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned } from '@dao-xyz/peerbit-crypto';
 import { ResourceRequirement } from './exchange-replication.js';
-// @ts-ignore
-import Logger from 'logplease'
+
 import { Program } from '@dao-xyz/peerbit-program';
 import { fixedUint8Array } from '@dao-xyz/peerbit-borsh-utils';
-const logger = Logger.create('exchange-heads', { color: Logger.Colors.Yellow })
-Logger.setLogLevel('ERROR')
+import { logger as parentLogger } from './logger.js'
+const logger = parentLogger.child({ module: 'exchange-heads' });
 
 
 

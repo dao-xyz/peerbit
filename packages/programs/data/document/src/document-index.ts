@@ -6,12 +6,13 @@ import { arraysEqual, UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils"
 import { ComposableProgram, Program } from "@dao-xyz/peerbit-program";
 import { Compare, AnySearch, FieldBigIntCompareQuery, FieldByteMatchQuery, FieldStringMatchQuery, MemoryCompareQuery, PageQueryRequest, Query, QueryType, Result, ResultWithSource, SortDirection, StateFieldQuery } from "@dao-xyz/peerbit-anysearch";
 // @ts-ignore
-import Logger from 'logplease'
 import { AccessError, EncryptedThing, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
 import { BinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { CanRead, DQuery } from "@dao-xyz/peerbit-query";
-const logger = Logger.create('DocumentsIndex')
-Logger.setLogLevel('ERROR')
+import pino from 'pino'
+const logger = pino().child({ module: 'document-index' });
+
+
 @variant(0)
 export class Operation<T> { }
 

@@ -3,14 +3,7 @@ import { IPFS } from 'ipfs-core-types'
 import type { Message, SignedMessage } from '@libp2p/interface-pubsub'
 import type { EventHandler } from '@libp2p/interfaces/events'
 import type { PeerId } from '@libp2p/interface-peer-id';
-/* export const getOrCreateChannel = async (pubsub: SharedPubSub, peer: string, getDirectConnection: (peer: string) => DirectChannel, onMessage: (message: { data: Uint8Array }) => void, monitor?: {
-    onNewPeerCallback?: (channel: DirectChannel, peer: string) => void,
-    onPeerLeaveCallback?: (channel: DirectChannel, peer: string) => void
-}): Promise<DirectChannel> => {
 
-   
-
-} */
 
 interface Closable { close: () => Promise<void> };
 export class SharedChannel<T extends Closable>
