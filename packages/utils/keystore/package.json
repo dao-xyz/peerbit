@@ -35,7 +35,6 @@
     "@dao-xyz/peerbit-borsh-utils": "^0.0.8",
     "@dao-xyz/peerbit-crypto": "^0.0.13",
     "@dao-xyz/peerbit-time": "^0.0.17",
-    "elliptic": "^6.5.4",
     "level": "^8.0.0",
     "lru-cache": "^7.14.0",
     "reachdown": "^1.1.0",
