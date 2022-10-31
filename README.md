@@ -31,6 +31,8 @@ Started originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS 
 
 Backwards compatibility for new releases might be lacking. Use with caution and please report bugs and issues you are experiencing when developing with Peerbit. 
 
+### Documentation is lacking at the moment. Be patient! Read module tests for know to know how you can use different modules. Feel free to write an issue to ask any question!  
+
 </br>
 </br>
 </br>
