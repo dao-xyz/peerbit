@@ -152,6 +152,8 @@ const peer = await Peerbit.create(IPFS CLIENT, {... options ...})
 
 const program = await peer.open(new StringStore(), ... options ...)
  
+console.log(program.address) // "peerbit/123xyz..." 
+
 // Now you can interact the store through 
 program.store.addOperation( ... )
 ```
