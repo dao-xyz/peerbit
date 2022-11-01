@@ -59,19 +59,21 @@ describe(`Cache - level`, function () {
       try {
         await cache.get('fooKey')
       } catch (e: any) {
-        assert(true)
+        fail();
       }
 
       await cache.set(d.key, JSON.stringify(d.value))
       await cache.del(d.key)
       try {
         await store.get(d.key)
+        fail()
       } catch (e: any) {
         assert(true)
       }
 
       try {
         await cache.del('fooKey')
+        fail()
       } catch (e: any) {
         assert(true)
       }

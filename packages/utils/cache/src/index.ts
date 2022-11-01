@@ -29,15 +29,15 @@ export default class Cache<T> {
     }
   }
 
-  async get<T>(key: string) {
+  async get<T>(key: string): Promise<T | undefined> {
     return new Promise((resolve, reject) => {
       this._store.get(key, (err, value) => {
         if (err) {
           // Ignore error if key was not found
-          if (err.toString().indexOf('NotFoundError: Key not found in database') === -1 &&
-            err.toString().indexOf('NotFound') === -1) {
+          if (err["status"] !== 404) {
             return reject(err)
           }
+          resolve(undefined)
         }
         resolve(value ? JSON.parse(value) : null)
       })
@@ -49,11 +49,8 @@ export default class Cache<T> {
     return new Promise((resolve, reject) => {
       this._store.put(key, JSON.stringify(value), (err) => {
         if (err) {
-          // Ignore error if key was not found
-          if (err.toString().indexOf('NotFoundError: Key not found in database') === -1 &&
-            err.toString().indexOf('NotFound') === -1) {
-            return reject(err)
-          }
+          return reject(err)
+
         }
         logger.debug(`cache: Set ${key} to ${JSON.stringify(value)}`)
         resolve(true)
@@ -61,22 +58,20 @@ export default class Cache<T> {
     })
   }
 
-  async getBinary<B extends T>(key: string, clazz: Constructor<B>): Promise<B | null> {
+  async getBinary<B extends T>(key: string, clazz: Constructor<B>): Promise<B | undefined> {
     return new Promise((resolve, reject) => {
       this._store.get(key, { valueEncoding: 'view' }, (err: any, value: string | undefined) => {
         if (err) {
-          // Ignore error if key was not found
-          if (err.toString().indexOf('NotFoundError: Key not found in database') === -1 &&
-            err.toString().indexOf('NotFound') === -1) {
+          if (err["status"] !== 404) {
             return reject(err)
           }
         }
-        if (value == undefined) {
-          resolve(null)
+        if (!value) {
+          resolve(undefined)
           return;
         }
         let buffer = Buffer.isBuffer(value) ? value : Buffer.from(value);
-        const der = value ? deserialize(buffer, clazz) : null
+        const der = value ? deserialize(buffer, clazz) : undefined
         resolve(der)
       })
     })

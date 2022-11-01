@@ -1401,6 +1401,8 @@ export class Peerbit {
 
     const addr = dbAddress.toString()
     const data = await cache.get(path.join(addr, '_manifest'))
+    const data2 = await cache.get(path.join(addr, '_manifest2'))
+
     return data !== undefined && data !== null
   }
 
