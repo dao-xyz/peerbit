@@ -49,6 +49,7 @@ import { Program } from '@dao-xyz/peerbit-program'
 import { SignKey } from '@dao-xyz/peerbit-crypto';
 import { Range, DString, StringOperation } from '@dao-xyz/peerbit-string';
 
+@variant([3,4]) // You have to give the program a variant/discriminator as a list of length 2 (for now)
 class CollaborativeText extends Program {
 
     @field({ type: DString })
@@ -168,4 +169,4 @@ See the [DString](./packages/programs/data/string) for a complete working exampl
 Utility libraries that do not have their own category yet
 
 The most important module here is 
-```@dao-xyz/peerbi-crypto``` that is defining all different key types for signing and encrypting messages.
+```@dao-xyz/peerbit-crypto``` that is defining all different key types for signing and encrypting messages.
