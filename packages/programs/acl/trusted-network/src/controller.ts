@@ -80,7 +80,7 @@ export class RelationContract extends Program {
         /*  trustee = PublicKey.from(trustee); */
         await this.relationGraph.put(new AnyRelation({
             to: to,
-            from: this.relationGraph.store.identity.publicKey
+            from: options?.identity?.publicKey || this.relationGraph.store.identity.publicKey
         }), options);
     }
 }
