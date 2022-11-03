@@ -9,6 +9,7 @@ import { Peerbit } from './peer.js';
 import { StringSetSerializer } from '@dao-xyz/peerbit-borsh-utils';
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
+import { Identity } from '@dao-xyz/ipfs-log'
 
 
 export const WAIT_FOR_PEERS_TIME = 5000;
@@ -141,11 +142,16 @@ export interface PeerInfoWithMeta {
 }
  */
 
-export const requestPeerInfo = async (serializedRequest: Uint8Array, replicationTopic: string, publish: (topic: string, message: Uint8Array) => Promise<void>, sign: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: PublicSignKey }>) => {
+export const requestPeerInfo = async (serializedRequest: Uint8Array, replicationTopic: string, publish: (topic: string, message: Uint8Array) => Promise<void>, identity: Identity) => {
 
     const signedMessage = await new MaybeSigned({
         data: serializedRequest
-    }).sign(sign)
+    }).sign(async (data) => {
+        return {
+            publicKey: identity.publicKey,
+            signature: await identity.sign(data)
+        }
+    })
     const decryptedMessage = new DecryptedThing({
         data: serialize(signedMessage)
     })// TODO add encryption  .init(encryption).encrypt(lala)

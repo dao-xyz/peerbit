@@ -73,7 +73,7 @@ describe(`orbit-db - Write-only`, function () {
                 return requester.equals(orbitdb2.identity.publicKey); // allow orbitdb1 to share keys with orbitdb2
             },  */waitForKeysTimout: 1000
         })
-        orbitdb2 = await Peerbit.create(ipfs2, { directory: orbitdbPath2 })
+        orbitdb2 = await Peerbit.create(ipfs2, { directory: orbitdbPath2, limitSigning: true }) // limitSigning = dont sign exchange heads request
         db1 = await orbitdb1.open(new EventStore<string>({
             id: 'abc',
 
@@ -110,6 +110,7 @@ describe(`orbit-db - Write-only`, function () {
         expect(db2.store.oplog.values.length).toEqual(1);
 
     })
+
 
     it('encrypted clock sync write 1 entry replicate false', async () => {
 

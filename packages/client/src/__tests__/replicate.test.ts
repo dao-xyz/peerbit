@@ -122,6 +122,7 @@ Object.keys(testAPIs).forEach(API => {
 
     });
 
+
     it('replicates database of 100 entries', async () => {
 
       await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)

@@ -121,7 +121,7 @@ export class RequestHeadsMessage extends ProtocolMessage {
 }
 
 
-export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>, store: Store<any>, program: Program, identity: Identity, heads: Entry<any>[], replicationTopic: string, includeReferences: boolean) => {
+export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>, store: Store<any>, program: Program, heads: Entry<any>[], replicationTopic: string, includeReferences: boolean, identity?: Identity) => {
   const gids = new Set(heads.map(h => h.gid));
   if (gids.size > 1) {
     throw new Error("Expected to share heads only from 1 gid")
@@ -181,13 +181,18 @@ export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>
     await Promise.all(promises); */
 
     const message = new ExchangeHeadsMessage({ replicationTopic, storeAddress: store.address, programAddress: program.address, heads: headsWithRefs });
-    const signer = async (data: Uint8Array) => {
-      return {
-        signature: await identity.sign(data),
-        publicKey: identity.publicKey
-      }
-    };
-    const signedMessage = await new MaybeSigned({ data: serialize(message) }).sign(signer)
+    const maybeSigned = new MaybeSigned({ data: serialize(message) });
+    let signedMessage: MaybeSigned<any> = maybeSigned;
+    if (identity) {
+      const signer = async (data: Uint8Array) => {
+        return {
+          signature: await identity.sign(data),
+          publicKey: identity.publicKey
+        }
+      };
+      signedMessage = await signedMessage.sign(signer)
+    }
+
     const decryptedMessage = new DecryptedThing({
       data: serialize(signedMessage)
     }) // TODO encryption?

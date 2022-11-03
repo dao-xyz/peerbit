@@ -46,7 +46,7 @@ interface ProgramWithMetadata {
 
 export type StoreOperations = 'write' | 'all'
 export type Storage = { createStore: (string: string) => Level }
-export type OptionalCreateOptions = { minReplicas?: number, waitForKeysTimout?: number, canOpenProgram?(replicationTopic: string, entryToReplicate?: Entry<any>): Promise<boolean> }
+export type OptionalCreateOptions = { limitSigning?: boolean, minReplicas?: number, waitForKeysTimout?: number, canOpenProgram?(replicationTopic: string, entryToReplicate?: Entry<any>): Promise<boolean> }
 export type CreateOptions = { keystore: Keystore, identity: Identity, directory: string, peerId: PeerId, storage: Storage, cache: Cache<any>, localNetwork: boolean } & OptionalCreateOptions;
 export type CreateInstanceOptions = { storage?: Storage, directory?: string, keystore?: Keystore, peerId?: PeerId, identity?: Identity, cache?: Cache<any>, localNetwork?: boolean } & OptionalCreateOptions;
 export type OpenStoreOptions = {
@@ -91,6 +91,7 @@ export class Peerbit {
   keystore: Keystore;
   _minReplicas: number;
   programs: { [topic: string]: { [address: string]: ProgramWithMetadata } };
+  limitSigning: boolean;
   //allPrograms: { [topic: string]: { [address: string]: Program } };
 
   localNetwork: boolean;
@@ -132,6 +133,7 @@ export class Peerbit {
     // this.allPrograms = { }
     this.caches = {}
     this._minReplicas = options.minReplicas || MIN_REPLICAS;
+    this.limitSigning = options.limitSigning || false;
     this._canOpenProgram = options.canOpenProgram || (async (replicationTopic, entryToReplicate) => !this.getNetwork(replicationTopic) ? Promise.resolve(true) : (this.isTrustedByNetwork(!entryToReplicate ? undefined : await entryToReplicate.getSignature().then(x => x.publicKey).catch(e => undefined), replicationTopic)))
     this.localNetwork = options.localNetwork;
     this.caches[this.directory] = { cache: options.cache, handlers: new Set() }
@@ -203,18 +205,27 @@ export class Peerbit {
         throw error;
       }
     }
-
   }
 
   async decryptedSignedThing(data: Uint8Array): Promise<DecryptedThing<MaybeSigned<Uint8Array>>> {
-    const signedMessage = await (new MaybeSigned({ data })).sign(await this.getSigner());
+    const signedMessage = await (new MaybeSigned({ data })).sign(async (data) => {
+      return {
+        publicKey: this.identity.publicKey,
+        signature: await this.identity.sign(data)
+      }
+    });
     return new DecryptedThing({
       data: serialize(signedMessage)
     })
   }
 
   async enryptedSignedThing(data: Uint8Array, reciever: X25519PublicKey): Promise<EncryptedThing<MaybeSigned<Uint8Array>>> {
-    const signedMessage = await (new MaybeSigned({ data })).sign(await this.getSigner());
+    const signedMessage = await (new MaybeSigned({ data })).sign(async (data) => {
+      return {
+        publicKey: this.identity.publicKey,
+        signature: await this.identity.sign(data)
+      }
+    });
     return new DecryptedThing<MaybeSigned<Uint8Array>>({
       data: serialize(signedMessage)
     }).encrypt(this.encryption.getEncryptionKeypair, reciever)
@@ -397,7 +408,7 @@ export class Peerbit {
       }
       for (const value of Object.values(this.programs[replicationTopic])) {
         if (value.program.allStoresMap.has(storeAddress)) {
-          exchangeHeads(send, store, value.program, this.identity, [entry], replicationTopic, true)
+          exchangeHeads(send, store, value.program, [entry], replicationTopic, true, this.limitSigning ? undefined : this.identity)
         }
       }
     }
@@ -656,7 +667,7 @@ export class Peerbit {
             // If replicate false, we are in write mode. Means we should exchange all heads 
             // Because we dont know anything about whom are to store data, so we assume all peers might have responsibility
             const send = (data: Uint8Array) => this._ipfs.pubsub.publish(DirectChannel.getTopic([peer.toString()]), data);
-            await exchangeHeads(send, store, programAndStores.program, this.identity, store.oplog.heads, replicationTopic, false);
+            await exchangeHeads(send, store, programAndStores.program, store.oplog.heads, replicationTopic, false, this.limitSigning ? undefined : this.identity);
 
           }
         }
@@ -733,7 +744,7 @@ export class Peerbit {
 
                   await exchangeHeads(async (message) => {
                     await channel.send(message);
-                  }, store, programInfo.program, this.identity, entries, replicationTopic, true)
+                  }, store, programInfo.program, entries, replicationTopic, true, this.limitSigning ? undefined : this.identity)
                 }
               }
 
@@ -765,15 +776,15 @@ export class Peerbit {
 
 
 
-  async getSigner() {
-    return async (bytes: Uint8Array) => {
-      return {
-        signature: await this.identity.sign(bytes),
-        publicKey: this.identity.publicKey
+  /*   async getSigner() {
+      return async (bytes: Uint8Array) => {
+        return {
+          signature: await this.identity.sign(bytes),
+          publicKey: this.identity.publicKey
+        }
       }
     }
-  }
-
+   */
 
   async getChannel(peer: string, fromTopic: string): Promise<DirectChannel | undefined> {
 
@@ -953,7 +964,7 @@ export class Peerbit {
 
     const promise = new Promise<PeerInfoWithMeta[]>(async (r, c) => {
       await this.subscribeToReplicationTopic(request.replicationTopic);
-      await requestPeerInfo(serializedRequest, request.replicationTopic, (topic, message) => this._ipfs.pubsub.publish(topic, message), await this.getSigner())
+      await requestPeerInfo(serializedRequest, request.replicationTopic, (topic, message) => this._ipfs.pubsub.publish(topic, message), this.identity)
       const directConnectionsOnTopic = this.getPeersOnTopic(request.replicationTopic).length
       const timeout = options?.waitForPeersTime || WAIT_FOR_PEERS_TIME * 3;
       if (directConnectionsOnTopic) {
