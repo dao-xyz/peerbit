@@ -4,6 +4,7 @@ import { Peerbit } from '@dao-xyz/peerbit';
 import { startIpfs } from './ipfs.js';
 import { setupDomain } from './domain.js';
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
+import { Controller } from 'ipfsd-ctl';
 export type AnyCLIArgs = { _: string[], ipfs: 'go' | 'js', disposable: boolean }
 
 export type ReplicatorCLIArgs = AnyCLIArgs & {  /*host: string, iip?: string,  */topic: string,  /* bootstrap: string[],  */root: boolean, timeout: number };
@@ -121,13 +122,15 @@ export const cli = async (options?: { cliName: string, onStart: (properties: { r
                 })
             }
         });
+        await shutDownHook(controller)
+
 
         // TODO add listener for ctrl c (exit) to save snapshots
 
     }
     else if (cmd === 'relay') {
         await printNodeInfo();
-
+        await shutDownHook(controller)
 
         // do nothing, just dont shut down (IPFS is running)
 
@@ -155,7 +158,14 @@ export const cli = async (options?: { cliName: string, onStart: (properties: { r
         exit();
     }
 }
-
+const shutDownHook = async (controller: Controller) => {
+    const { exit } = await import('process');
+    process.on('SIGINT', async () => {
+        console.log('Shutting down node');
+        await controller.stop();
+        exit();
+    });
+}
 
 /* 
  let work: Work = {
