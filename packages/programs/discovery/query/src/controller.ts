@@ -1,6 +1,6 @@
 import { BinaryWriter, Constructor, deserialize, field, getSchemasBottomUp, option, serialize, variant } from '@dao-xyz/borsh';
 import type { Message } from '@libp2p/interface-pubsub'
-import { SignatureWithKey, SignKey } from '@dao-xyz/peerbit-crypto';
+import { SignKey } from '@dao-xyz/peerbit-crypto';
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
 import { QueryRequestV0, QueryResponseV0 } from './query.js';
 import { query, QueryOptions, respond } from './io.js'

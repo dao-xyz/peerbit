@@ -1,6 +1,7 @@
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import { Documents, Operation, PutOperation } from "@dao-xyz/peerbit-document";
 import { Entry } from "@dao-xyz/ipfs-log";
+import { LogIndex, LogQueryRequest } from "@dao-xyz/peerbit-logindex";
 import { createHash } from "crypto";
 import { IPFSAddress, Key, OtherKey, PublicSignKey, SignKey } from "@dao-xyz/peerbit-crypto";
 import type { PeerId } from '@libp2p/interface-peer-id';
@@ -10,7 +11,7 @@ import { BinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { Program } from '@dao-xyz/peerbit-program';
 import { CanRead, DQuery } from "@dao-xyz/peerbit-query";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import { LogIndex, LogQueryRequest } from "@dao-xyz/peerbit-logindex";
+import { AddOperationOptions } from "@dao-xyz/peerbit-store";
 
 const canAppendByRelation = async (entry: Entry<Operation<Relation>>, isTrusted?: (key: PublicSignKey) => Promise<boolean>): Promise<boolean> => {
 
@@ -57,8 +58,7 @@ export class RelationContract extends Program {
     relationGraph: Documents<Relation>
 
     constructor(props?: {
-        id?: string,
-        queryRegion?: string
+        id?: string
     }) {
         super(props)
         if (props) {
@@ -76,12 +76,12 @@ export class RelationContract extends Program {
     }
 
 
-    async addRelation(to: PublicSignKey/*  | Identity | IdentitySerializable */) {
+    async addRelation(to: PublicSignKey, options?: AddOperationOptions<Operation<Relation>>) {
         /*  trustee = PublicKey.from(trustee); */
         await this.relationGraph.put(new AnyRelation({
             to: to,
             from: this.relationGraph.store.identity.publicKey
-        }));
+        }), options);
     }
 }
 

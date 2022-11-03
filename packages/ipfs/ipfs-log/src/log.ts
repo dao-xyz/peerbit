@@ -104,7 +104,7 @@ export class Log<T> extends GSet {
       })
     }
  */
-    let { logId, entries, encoding, heads, clock, sortFn, concurrency, prune, encryption } = options;
+    let { logId, entries, encoding, heads, sortFn, concurrency, prune, encryption } = options;
 
     if (isDefined(entries) && !Array.isArray(entries)) {
       throw new Error('\'entries\' argument must be an array of Entry instances')
@@ -406,7 +406,7 @@ export class Log<T> extends GSet {
    * @param {Entry} entry Entry to add
    * @return {Log} New Log containing the appended value
    */
-  async append(data: T, options: { canAppend?: CanAppend<T>, gidSeed?: string, nexts?: Entry<any>[], pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted, onGidsShadowed?: (gids: string[]) => void } = { pin: false }) {
+  async append(data: T, options: { canAppend?: CanAppend<T>, gidSeed?: string, nexts?: Entry<any>[], pin?: boolean, identity?: Identity, reciever?: EncryptionTemplateMaybeEncrypted, onGidsShadowed?: (gids: string[]) => void } = { pin: false }) {
 
     if (options.reciever && !this._encryption) {
       throw new Error("Message is intended to be encrypted but no encryption methods are provided for the log")
@@ -438,7 +438,7 @@ export class Log<T> extends GSet {
     const entry = await Entry.create<T>(
       {
         ipfs: this._storage,
-        identity: this._identity,
+        identity: options.identity || this._identity,
         data,
         clock,
         encoding: this._encoding,

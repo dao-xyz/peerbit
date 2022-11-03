@@ -2,7 +2,7 @@ import { DeleteOperation, DocumentIndex, Operation, PutOperation } from './docum
 import { Constructor, field, serialize, variant } from '@dao-xyz/borsh';
 import { asString } from './utils.js';
 import { BinaryPayload } from '@dao-xyz/peerbit-bpayload';
-import { Store } from '@dao-xyz/peerbit-store';
+import { AddOperationOptions, Store } from '@dao-xyz/peerbit-store';
 import { BORSH_ENCODING, CanAppend, Encoding, EncryptionTemplateMaybeEncrypted, Entry } from '@dao-xyz/ipfs-log';
 import { CanOpenSubPrograms, ComposableProgram, Program, ProgramOwner } from '@dao-xyz/peerbit-program';
 import { CanRead } from '@dao-xyz/peerbit-query';
@@ -155,12 +155,7 @@ export class Documents<T extends BinaryPayload> extends ComposableProgram {
 
 
 
-  public put(doc: T, options?: {
-    skipCanAppendCheck?: boolean;
-    onProgressCallback?: (any: any) => void;
-    pin?: boolean;
-    reciever?: EncryptionTemplateMaybeEncrypted;
-  }) {
+  public put(doc: T, options?: AddOperationOptions<Operation<T>>) {
     if (doc instanceof Program) {
       if (!(this.parentProgram as any as CanOpenSubPrograms).canOpen) {
         throw new Error("Class " + this.parentProgram.constructor.name + " needs to implement CanOpenSubPrograms for this Documents store to progams")

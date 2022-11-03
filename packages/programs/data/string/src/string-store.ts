@@ -5,7 +5,7 @@ import { StringQueryRequest } from '@dao-xyz/peerbit-anysearch';
 import { Range } from './range.js';
 import { field, variant } from '@dao-xyz/borsh';
 import { CustomBinaryPayload } from '@dao-xyz/peerbit-bpayload';
-import { Store } from '@dao-xyz/peerbit-store';
+import { AddOperationOptions, Store } from '@dao-xyz/peerbit-store';
 import { CanAppend, EncryptionTemplateMaybeEncrypted, Entry } from '@dao-xyz/ipfs-log';
 import { SignatureWithKey } from '@dao-xyz/peerbit-crypto';
 import { Program } from '@dao-xyz/peerbit-program';
@@ -91,24 +91,14 @@ export class DString extends Program {
     return false;
   }
 
-  add(value: string, index: Range, options?: {
-    skipCanAppendCheck?: boolean;
-    onProgressCallback?: (any: any) => void;
-    pin?: boolean;
-    reciever?: EncryptionTemplateMaybeEncrypted;
-  }) {
+  add(value: string, index: Range, options?: AddOperationOptions<StringOperation>) {
     return this.store._addOperation(new StringOperation({
       index,
       value,
     }), { nexts: this.store.oplog.heads, ...options })
   }
 
-  del(index: Range, options?: {
-    skipCanAppendCheck?: boolean;
-    onProgressCallback?: (any: any) => void;
-    pin?: boolean;
-    reciever?: EncryptionTemplateMaybeEncrypted;
-  }) {
+  del(index: Range, options?: AddOperationOptions<StringOperation>) {
     const operation = {
       index
     } as StringOperation

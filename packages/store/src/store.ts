@@ -30,6 +30,8 @@ const logger = pino().child({ module: 'store' });
 
 export class CachedValue { }
 
+export type AddOperationOptions<T> = { skipCanAppendCheck?: boolean, identity?: Identity, nexts?: Entry<T>[], onProgressCallback?: (any: any) => void, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted };
+
 @variant(0)
 export class CID extends CachedValue {
 
@@ -718,7 +720,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     }
   }
 
-  async _addOperation(data: T, options?: { skipCanAppendCheck?: boolean, nexts?: Entry<T>[], onProgressCallback?: (any: any) => void, pin?: boolean, reciever?: EncryptionTemplateMaybeEncrypted }): Promise<Entry<T>> {
+  async _addOperation(data: T, options?: AddOperationOptions<T>): Promise<Entry<T>> {
     const addOperation = async () => {
       // check local cache for latest heads
       if (this._options.syncLocal) {
@@ -727,7 +729,8 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
 
       const entry = await this._oplog.append(data, {
         nexts: options?.nexts, pin: options?.pin, reciever: options?.reciever,
-        canAppend: options?.skipCanAppendCheck ? undefined : this.canAppend
+        canAppend: options?.skipCanAppendCheck ? undefined : this.canAppend,
+        identity: options?.identity
       })
 
       // TODO below is not nice, do we really need replication status?
