@@ -39,7 +39,9 @@ Backwards compatibility for new releases might be lacking. Use with caution and 
 
 
 
-## Example code 
+## Example code
+
+### Collaborative text 
 Below is a short example how you can create a collaborative text document: 
 
 ```typescript
@@ -90,6 +92,9 @@ console.log(await document.string.toString()) // 'hello world' from local store
 console.log(await document.string.toString({remote: {maxAggregationTime: 3000 }})) // 'hello world' from peers
 
 ```
+
+### Social media app
+A (under work) [social media application is developed by dao.xyz](https://github.com/dao-xyz/dao.xyz). Contains a frontend, CLI (for managing nodes) and frontend.
 
 
 Below are descriptions of some modules
@@ -170,3 +175,16 @@ Utility libraries that do not have their own category yet
 
 The most important module here is 
 ```@dao-xyz/peerbit-crypto``` that is defining all different key types for signing and encrypting messages.
+
+
+## CLI 
+Peerbit has a CLI for running a non browser node. Tested with Node with version > 16.x
+
+```sh
+npm install -g @dao-xyz/peerbit-node
+```
+
+Documentation
+```
+peerbit --help
+```
