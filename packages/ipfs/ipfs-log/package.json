@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/ipfs-log",
-  "version": "5.5.41",
+  "version": "5.5.42",
   "description": "Append-only log CRDT on IPFS",
   "author": "Haad",
   "license": "MIT",
