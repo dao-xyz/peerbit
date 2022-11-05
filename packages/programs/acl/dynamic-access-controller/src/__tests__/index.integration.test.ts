@@ -57,11 +57,10 @@ class TestStore extends Program {
         super(properties)
         if (properties) {
             this.store = new Documents({
-                id: properties.id,
                 index: new DocumentIndex({
                     indexBy: 'id',
                     search: new AnySearch({
-                        query: new DQuery({})
+                        query: new DQuery()
                     })
                 })
             });
@@ -105,6 +104,9 @@ describe('index', () => {
         const key = (await Ed25519Keypair.create()).publicKey;
         const t1 = new DynamicAccessController({ id: 'x', rootTrust: key });
         const t2 = new DynamicAccessController({ id: 'x', rootTrust: key });
+        t1.setupIndices();
+        t2.setupIndices();
+
         expect(serialize(t1)).toEqual(serialize(t2));
 
     })
@@ -119,7 +121,7 @@ describe('index', () => {
             id: '1'
         }));
 
-        const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1, options) as TestStore;
+        const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address!), 1, options) as TestStore;
 
         await expect(l0b.store.put(new Document({
             id: 'id'
@@ -154,7 +156,7 @@ describe('index', () => {
                 id: '1'
             }));
 
-            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1, options) as TestStore;
+            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address!), 1, options) as TestStore;
 
             await l0b.store.store.sync(l0a.store.store.oplog.heads);
             await waitFor(() => l0b.store.index.size === 1)
@@ -190,8 +192,8 @@ describe('index', () => {
                 id: '1'
             }));
 
-            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1, options) as TestStore;
-            const l0c = await init(await TestStore.load(session.peers[2].ipfs, l0a.address), 2, options) as TestStore;
+            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address!), 1, options) as TestStore;
+            const l0c = await init(await TestStore.load(session.peers[2].ipfs, l0a.address!), 2, options) as TestStore;
 
             await expect(l0c.store.put(new Document({
                 id: 'id'
@@ -237,7 +239,7 @@ describe('index', () => {
             }));
 
 
-            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address), 1, options) as TestStore;
+            const l0b = await init(await TestStore.load(session.peers[1].ipfs, l0a.address!), 1, options) as TestStore;
             await expect(l0b.store.put(new Document({
                 id: 'id'
             }))).rejects.toBeInstanceOf(AccessError); // Not trusted
@@ -313,7 +315,6 @@ describe('index', () => {
         const l0a = await init(new TestStore({ identity: identity(0) }), 0, options);
         const l0b = await init(new TestStore({ identity: identity(0) }), 0, options);
         expect(l0a.address).not.toEqual(l0b.address)
-        expect((l0a.accessController).address.toString()).toEqual((l0b.accessController).address.toString())
 
     })
 
@@ -328,7 +329,7 @@ describe('index', () => {
             accessTypes: [AccessType.Any]
         }).initialize());
 
-        const dbb = await TestStore.load(session.peers[1].ipfs, l0a.address) as TestStore;
+        const dbb = await TestStore.load(session.peers[1].ipfs, l0a.address!) as TestStore;
 
         const l0b = await init(dbb, 1, { ...options, store: { replicate: false }, canRead: () => Promise.resolve(true) });
 

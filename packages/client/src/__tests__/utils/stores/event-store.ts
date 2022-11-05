@@ -41,7 +41,7 @@ export class EventStore<T> extends Program {
         id?: string
     }) {
         super(properties);
-        this.store = new Store({ ...properties })
+        this.store = new Store()
         this._index = new EventIndex();
     }
 

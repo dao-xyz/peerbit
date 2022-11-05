@@ -1,14 +1,13 @@
 import { variant, option, field, vec, serialize } from '@dao-xyz/borsh';
 import { Entry, Identity } from '@dao-xyz/ipfs-log'
 import { ProtocolMessage } from './message.js';
-import { Address, Store } from '@dao-xyz/peerbit-store';
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned } from '@dao-xyz/peerbit-crypto';
-import { ResourceRequirement } from './exchange-replication.js';
 
 import { Program } from '@dao-xyz/peerbit-program';
 import { fixedUint8Array } from '@dao-xyz/peerbit-borsh-utils';
 import { logger as parentLogger } from './logger.js'
+import { Store } from '@dao-xyz/peerbit-store';
 const logger = parentLogger.child({ module: 'exchange-heads' });
 
 
@@ -63,11 +62,15 @@ export class ExchangeHeadsMessage<T> extends ProtocolMessage {
   @field({ type: 'string' })
   replicationTopic: string;
 
-  @field({ type: Address })
-  storeAddress: Address;
+  @field({ type: 'string' })
+  programAddress: string;
 
-  @field({ type: Address })
-  programAddress: Address;
+  @field({ type: 'u32' })
+  storeIndex: number;
+
+  @field({ type: option('u32') })
+  programIndex?: number;
+
 
   @field({ type: vec(EntryWithRefs) })
   heads: EntryWithRefs<T>[];
@@ -82,8 +85,10 @@ export class ExchangeHeadsMessage<T> extends ProtocolMessage {
 
   constructor(props?: {
     replicationTopic: string,
-    storeAddress: Address,
-    programAddress: Address,
+    programIndex?: number,
+    programAddress: string,
+    storeIndex: number;
+
     heads: EntryWithRefs<T>[],
     minReplicas?: MinReplicas,
   }) {
@@ -91,7 +96,8 @@ export class ExchangeHeadsMessage<T> extends ProtocolMessage {
     if (props) {
       /* this.resourceRequirements = props.resourceRequirements || []; */
       this.replicationTopic = props.replicationTopic;
-      this.storeAddress = props.storeAddress;
+      this.storeIndex = props.storeIndex;
+      this.programIndex = props.programIndex;
       this.programAddress = props.programAddress;
       this.heads = props.heads;
       this.minReplicas = props.minReplicas;
@@ -135,7 +141,7 @@ export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>
       references: refs
     })
   });
-  logger.debug(`Send latest heads of '${store.address.toString()}'`)
+  logger.debug(`Send latest heads of '${store._storeIndex}'`)
   if (heads && heads.length > 0) {
 
     /*  const mapFromPeerToHead: Map<string, Entry<any>[]> = new Map();
@@ -180,7 +186,7 @@ export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>
     }
     await Promise.all(promises); */
 
-    const message = new ExchangeHeadsMessage({ replicationTopic, storeAddress: store.address, programAddress: program.address, heads: headsWithRefs });
+    const message = new ExchangeHeadsMessage({ replicationTopic, storeIndex: store._storeIndex, programIndex: program._programIndex, programAddress: ((program.address || program.parentProgram.address)!).toString(), heads: headsWithRefs });
     const maybeSigned = new MaybeSigned({ data: serialize(message) });
     let signedMessage: MaybeSigned<any> = maybeSigned;
     if (identity) {

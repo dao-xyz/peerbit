@@ -88,7 +88,7 @@ describe('index', () => {
 
     // Create store
     for (let i = 0; i < peersCount; i++) {
-      const store = i > 0 ? await DocumentDDoc.load<DocumentDDoc>(session.peers[i].ipfs, stores[0].address) : new DocumentDDoc({
+      const store = i > 0 ? await DocumentDDoc.load<DocumentDDoc>(session.peers[i].ipfs, stores[0].address!) : new DocumentDDoc({
         docs: new Documents<Document>({
           index: new DocumentIndex({
             indexBy: 'id'

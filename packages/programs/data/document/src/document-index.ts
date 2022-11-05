@@ -114,13 +114,12 @@ export class DocumentIndex<T extends BinaryPayload> extends ComposableProgram {
   type: Constructor<T>
 
   constructor(properties?: {
-    id?: string
     search?: AnySearch<Operation<T>>
     indexBy: string
   }) {
-    super(properties);
+    super();
     if (properties) {
-      this.search = properties.search || new AnySearch({ id: this.id, query: new DQuery({ id: this.id }) });
+      this.search = properties.search || new AnySearch({ query: new DQuery() });
       this.indexBy = properties.indexBy
     }
     this._index = new Map()
@@ -128,7 +127,7 @@ export class DocumentIndex<T extends BinaryPayload> extends ComposableProgram {
 
   async setup(properties: { type: Constructor<T>, canRead: CanRead }) {
     this.type = properties.type;
-    await this.search.setup({ context: { address: () => this.parentProgram.address }, canRead: properties.canRead, queryHandler: this.queryHandler.bind(this) });
+    await this.search.setup({ context: this, canRead: properties.canRead, queryHandler: this.queryHandler.bind(this) });
 
   }
 

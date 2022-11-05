@@ -25,7 +25,6 @@ import {
   createStore
 } from '@dao-xyz/peerbit-test-utils'
 import { Level } from 'level'
-import { Address } from '../io.js'
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`addOperation ${IPFS}`, function () {
     let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, identityStore: Level, store: Store<any>, cacheStore: Level
@@ -68,7 +67,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const onWrite = async (store: Store<any>, entry: Entry<any>) => {
         const heads = await store.oplog.heads;
         expect(heads.length).toEqual(1)
-        assert(Address.isValid(store.address))
         assert.deepStrictEqual(entry.payload.getValue(), data)
         expect(store.replicationStatus.progress).toEqual(1n)
         expect(store.replicationStatus.max).toEqual(1n)
@@ -86,12 +84,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
         })
       }
 
-      store = new Store({ id: 'name' })
+      store = new Store({ storeIndex: 0 })
       await store.init(ipfs, {
         ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { ...DefaultOptions, resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index), onWrite: onWrite });
-      assert(Address.isValid(store.address));
 
       const data = { data: 12345 }
 
@@ -131,12 +128,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
         }
       }
 
-      store = new Store({ id: 'name' })
+      store = new Store({ storeIndex: 1 })
       await store.init(ipfs, {
         ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { ...DefaultOptions, resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index), onWrite: onWrite });
-      assert(Address.isValid(store.address));
 
       for (let i = 0; i < writes; i++) {
         await store._addOperation({ step: i })

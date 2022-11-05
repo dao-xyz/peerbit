@@ -18,15 +18,15 @@ const __filenameBase = path.parse(__filename).base;
 // Test utils
 import {
   nodeConfig as config,
-  testAPIs,
   startIpfs,
   stopIpfs,
   createStore
 } from '@dao-xyz/peerbit-test-utils'
+
 import { Level } from 'level'
-import { Entry, JSON_ENCODING } from '@dao-xyz/ipfs-log'
+import { Entry } from '@dao-xyz/ipfs-log'
 import { delay, waitFor } from '@dao-xyz/peerbit-time'
-import { Address } from '../io.js'
+
 const API = 'js-ipfs'
 describe(`addOperation`, function () {
   let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, keystore: Keystore, identityStore: Level, store: Store<any>, cacheStore: Level, senderKey: KeyWithMeta<Ed25519Keypair>, recieverKey: KeyWithMeta<Ed25519Keypair>, encryption: PublicKeyEncryptionResolver
@@ -88,7 +88,6 @@ describe(`addOperation`, function () {
       try {
         const heads = store.oplog.heads;
         expect(heads.length).toEqual(1)
-        assert(Address.isValid(store.address))
         assert.deepStrictEqual(entry.payload.getValue(), data)
         expect(store.replicationStatus.progress).toEqual(1n)
         expect(store.replicationStatus.max).toEqual(1n)
@@ -116,7 +115,7 @@ describe(`addOperation`, function () {
 
     const cache = new Cache(cacheStore)
     const options: IInitializationOptions<any> = { ...DefaultOptions, resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index), encryption, onWrite }
-    store = new Store({ id: 'name' })
+    store = new Store({ storeIndex: 0 })
     await store.init(ipfs, {
       ...signKey.keypair,
       sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
@@ -141,7 +140,6 @@ describe(`addOperation`, function () {
     const onWrite = (store: Store<any>, entry: Entry<any>) => {
       const heads = store.oplog.heads;
       expect(heads.length).toEqual(1)
-      assert(Address.isValid(store.address))
       assert.deepStrictEqual(entry.payload.getValue(), data)
       expect(store.replicationStatus.progress).toEqual(1n)
       expect(store.replicationStatus.max).toEqual(1n)
@@ -170,7 +168,7 @@ describe(`addOperation`, function () {
 
     const cache = new Cache(cacheStore)
     const options: IInitializationOptions<any> = { ...DefaultOptions, resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index), encryption, onWrite }
-    store = new Store({ id: 'name' })
+    store = new Store({ storeIndex: 0 })
     await store.init(ipfs, {
       ...signKey.keypair,
       sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))

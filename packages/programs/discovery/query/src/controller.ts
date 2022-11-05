@@ -4,10 +4,9 @@ import { SignKey } from '@dao-xyz/peerbit-crypto';
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
 import { QueryRequestV0, QueryResponseV0 } from './query.js';
 import { query, QueryOptions, respond } from './io.js'
-import { ComposableProgram, Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program'
+import { Address, ComposableProgram, Program, ProgramInitializationOptions } from '@dao-xyz/peerbit-program'
 import { IPFS } from 'ipfs-core-types';
 import { Identity } from '@dao-xyz/ipfs-log';
-import { Address } from '@dao-xyz/peerbit-store';
 
 export const getDiscriminatorApproximation = (constructor: Constructor<any>): Uint8Array => {
     const schemas = getSchemasBottomUp(constructor);
@@ -107,8 +106,8 @@ export class DQuery<Q, R> extends ComposableProgram {
     _replicationTopic: string;
     canRead: CanRead
 
-    constructor(properties: { id?: string }) {
-        super(properties)
+    constructor() {
+        super()
     }
 
 

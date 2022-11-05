@@ -1,4 +1,4 @@
-import { PageQueryRequest, FieldStringMatchQuery, StoreAddressMatchQuery, ResultWithSource } from "../"
+import { PageQueryRequest, FieldStringMatchQuery, ResultWithSource } from "../"
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 import type { Message } from '@libp2p/interface-pubsub'
@@ -62,8 +62,6 @@ describe('query', () => {
         queries: [new FieldStringMatchQuery({
           key: 'a',
           value: 'b'
-        }), new StoreAddressMatchQuery({
-          address: 'a'
         })
         ]
       }))

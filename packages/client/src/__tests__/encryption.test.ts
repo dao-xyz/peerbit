@@ -81,8 +81,8 @@ Object.keys(testAPIs).forEach(API => {
       orbitdb2 = await Peerbit.create(session.peers[1].ipfs, { directory: orbitdbPath2, waitForKeysTimout: 1000 })
       await network.add(orbitdb2.id)
       await network.add(orbitdb2.identity.publicKey)
-      replicationTopic = network.address.toString();
-      await orbitdb2.openNetwork(network.address)
+      replicationTopic = network.address!.toString();
+      await orbitdb2.openNetwork(network.address!)
       await waitFor(() => orbitdb2.getNetwork(replicationTopic)?.trustGraph.index.size === 3);
       await orbitdb2.joinNetwork(network)
 
@@ -127,7 +127,7 @@ Object.keys(testAPIs).forEach(API => {
       let done = false;
 
 
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address!), {
         replicationTopic,
         ...options, onReplicationComplete: async (_store) => {
           await checkHello(db1);
@@ -150,7 +150,7 @@ Object.keys(testAPIs).forEach(API => {
 
       // We expect during opening that keys are exchange
       let done = false;
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address!), {
         replicationTopic,
         ...options, onReplicationComplete: async (_store) => {
           await checkHello(db1);
@@ -179,7 +179,7 @@ Object.keys(testAPIs).forEach(API => {
 
       // Open store from orbitdb3 so that both client 1 and 2 is listening to the replication topic
       options = Object.assign({}, options, { directory: dbPath2 })
-      await orbitdb2.open(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), {
+      await orbitdb2.open(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address!), {
         replicationTopic,
         ...options
       })
@@ -193,7 +193,7 @@ Object.keys(testAPIs).forEach(API => {
       await waitForPeers(session.peers[2].ipfs, [orbitdb1.id], replicationTopic)
 
       options = Object.assign({}, options, { directory: dbPath2 })
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), { replicationTopic, ...options })
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address!), { replicationTopic, ...options })
 
       const client3Key = await orbitdb3.keystore.createEd25519Key({ id: 'unknown' });
 
@@ -220,7 +220,7 @@ Object.keys(testAPIs).forEach(API => {
       // Now close db2 and open db3 and make sure message are available
       await db2.drop();
       options = Object.assign({}, options, { directory: dbPath3 })
-      db3 = await orbitdb3.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb3._ipfs, db1.address), {
+      db3 = await orbitdb3.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb3._ipfs, db1.address!), {
         replicationTopic,
         ...options, onReplicationComplete: async (store) => {
           const entriesRelay: Entry<Operation<string>>[] = db3.iterator({ limit: -1 }).collect()

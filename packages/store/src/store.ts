@@ -14,13 +14,9 @@ import { IPFS } from 'ipfs-core-types'
 // @ts-ignore
 import { serialize, deserialize } from '@dao-xyz/borsh';
 import { Snapshot } from './snapshot.js'
-import { AccessError, PublicKeyEncryptionResolver, SignatureWithKey } from "@dao-xyz/peerbit-crypto"
-
-// @ts-ignore
-import { v4 as uuid } from 'uuid';
+import { AccessError, PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto"
 import { joinUint8Arrays } from '@dao-xyz/peerbit-borsh-utils';
 
-import { Address, Addressable, load, save } from './io.js'
 import { SystemBinaryPayload } from '@dao-xyz/peerbit-bpayload'
 import { EntryWithRefs } from './entry-with-refs.js'
 import pino from 'pino'
@@ -136,7 +132,7 @@ export interface IStoreOptions<T> {
 export interface IInitializationOptions<T> extends IStoreOptions<T>, IInitializationOptionsDefault<T> {
 
 
-  resolveCache: (address: Address) => Promise<Cache<CachedValue>> | Cache<CachedValue>
+  resolveCache: (store: Store<any>) => Promise<Cache<CachedValue>> | Cache<CachedValue>
 
 }
 
@@ -165,22 +161,15 @@ export const DefaultOptions: IInitializationOptionsDefault<any> = {
 export interface Initiable<T> {
   init?(ipfs: IPFS, identity: Identity, options: IInitializationOptions<T>): Promise<this>;
 }
-export interface Saveable {
-  save(ipfs: any, options?: {
-    format?: string;
-    pin?: boolean;
-    timeout?: number;
-  }): Promise<Address>
-}
 
 
 
 
 @variant(0)
-export class Store<T> extends SystemBinaryPayload implements Addressable, Initiable<T>, Saveable {
+export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
 
-  @field({ type: 'string' })
-  id: string;
+  @field({ type: 'u32' })
+  _storeIndex: number; // how to ensure unqiueness
 
 
   _canAppend?: CanAppend<T>;
@@ -198,9 +187,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
   localHeadsPath: string;
   snapshotPath: string;
   queuePath: string;
-  manifestPath: string;
   initialized: boolean;
-  address: Address
   encoding: Encoding<T> = JSON_ENCODING;
 
   /*   allowForks: boolean = true;
@@ -217,10 +204,10 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
   _key: string;
 
 
-  constructor(properties?: { id?: string, parent?: { id: string } }) {
+  constructor(properties?: { storeIndex: number }) {
     super();
     if (properties) {
-      this.id = (properties.parent?.id ? (properties.parent?.id + '/') : '') + (properties.id || uuid());
+      this._storeIndex = properties?.storeIndex;
     }
   }
 
@@ -243,28 +230,19 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     const opts = { ...DefaultOptions, ...options }
     this._options = opts
 
-
-    // Save manifest
-    await this.save(this._ipfs)
-
-    if (!this.address) {
-      throw new Error("Expecting adddress")
-    }
-
     // Create IDs, names and paths
     this.identity = identity;
     this._onUpdateOption = options.onUpdate;
 
     /* this.events = new EventEmitter() */
-    this.remoteHeadsPath = path.join(this.address.toString(), '_remoteHeads')
-    this.localHeadsPath = path.join(this.address.toString(), '_localHeads')
-    this.snapshotPath = path.join(this.address.toString(), 'snapshot')
-    this.queuePath = path.join(this.address.toString(), 'queue')
-    this.manifestPath = path.join(this.address.toString(), '_manifest')
+    this.remoteHeadsPath = path.join(this.id, '_remoteHeads')
+    this.localHeadsPath = path.join(this.id, '_localHeads')
+    this.snapshotPath = path.join(this.id, 'snapshot')
+    this.queuePath = path.join(this.id, 'queue')
 
 
     // External dependencies
-    this._cache = await this._options.resolveCache(this.address);
+    this._cache = await this._options.resolveCache(this);
 
     // Create the operations log
     this._oplog = new Log<T>(this._ipfs, identity, this.logOptions)
@@ -390,6 +368,13 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     }
   }
 
+  get id(): string {
+    if (typeof this._storeIndex !== 'number') {
+      throw new Error("Store index not set")
+    }
+    return this._storeIndex.toString();
+  }
+
 
   get oplog(): Log<any> {
     return this._oplog;
@@ -401,7 +386,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
 
   get logOptions(): LogOptions<T> {
     return {
-      logId: this.address.toString(),
+      logId: this.id,
       encryption: this._options.encryption,
       encoding: this.encoding,
       sortFn: this._options.sortFn,
@@ -486,7 +471,6 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
     await this._cache.del(this.remoteHeadsPath)
     await this._cache.del(this.snapshotPath)
     await this._cache.del(this.queuePath)
-    await this._cache.del(this.manifestPath)
 
     await this.close()
 
@@ -665,7 +649,7 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
       }
       this._options.onReady && this._options.onReady(this)
     } else {
-      throw new Error(`Snapshot for ${this.address} not found!`)
+      throw new Error(`Snapshot for ${this.id} not found!`)
     }
 
     return this
@@ -791,21 +775,5 @@ export class Store<T> extends SystemBinaryPayload implements Addressable, Initia
 
   clone(): Store<T> {
     return deserialize(serialize(this), this.constructor as any as Constructor<any>);
-  }
-
-  async save(ipfs: IPFS, options?: {
-    format?: string;
-    pin?: boolean;
-    timeout?: number;
-  }): Promise<Address> {
-    const address = await save(ipfs, this, options)
-    this.address = address;
-    return address;
-  }
-
-  static load(ipfs: IPFS, address: Address, options?: {
-    timeout?: number;
-  }): Promise<Store<any>> {
-    return load(ipfs, address, Store, options) as Promise<Store<any>>
   }
 }

@@ -92,6 +92,10 @@ describe(`Cache - level`, function () {
     assert.deepStrictEqual(val, obj)
   })
 
+  it('can create from sublevel', () => {
+    const sublevel = store.sublevel('sublevel')
+    const _sublevelCache = new Cache(sublevel)
+  })
 
   /* data.forEach(d => {
     it(`sets and gets a ${d.key}`, async () => {

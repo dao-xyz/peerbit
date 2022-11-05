@@ -89,22 +89,22 @@ Object.keys(testAPIs).forEach(API => {
             // make client 2 trusted
             await network.add(orbitdb2.id);
             await network.add(orbitdb2.identity.publicKey);
-            await orbitdb2.openNetwork(network.address, { directory: dbPath2 });
-            await waitFor(() => (orbitdb2.getNetwork(network.address) as TrustedNetwork).trustGraph.index.size === 3);
+            await orbitdb2.openNetwork(network.address!, { directory: dbPath2 });
+            await waitFor(() => (orbitdb2.getNetwork(network.address!) as TrustedNetwork).trustGraph.index.size === 3);
             await orbitdb2.joinNetwork(network);
 
             // but dont trust client 3
             // however open direct channels so client 3 could perhaps be a leader anyway (?)
-            orbitdb1.getChannel(orbitdb3.id.toString(), network.address.toString());
-            orbitdb3.getChannel(orbitdb1.id.toString(), network.address.toString());
+            orbitdb1.getChannel(orbitdb3.id.toString(), network.address!.toString());
+            orbitdb3.getChannel(orbitdb1.id.toString(), network.address!.toString());
             await waitFor(() => orbitdb1._directConnections.size === 2); // to 2 and 3
             await waitFor(() => orbitdb2._directConnections.size === 1); // to 1
             await waitFor(() => orbitdb3._directConnections.size === 1); // to 1
-            await waitFor(() => (orbitdb2.getNetwork(network.address) as TrustedNetwork).trustGraph.index.size === 4) // 1. identiy -> peer id, 1. -> 2 identity, 1. -> 2. peer id and 2. identity -> peer id, 
+            await waitFor(() => (orbitdb2.getNetwork(network.address!) as TrustedNetwork).trustGraph.index.size === 4) // 1. identiy -> peer id, 1. -> 2 identity, 1. -> 2. peer id and 2. identity -> peer id, 
 
             // now find 3 leaders from the network with 2 trusted participants (should return 2 leaders if trust control works correctly)
-            const leadersFrom1 = await orbitdb1.findLeaders(network.address.toString(), true, "", 3);
-            const leadersFrom2 = await orbitdb2.findLeaders(network.address.toString(), true, "", 3);
+            const leadersFrom1 = await orbitdb1.findLeaders(network.address!.toString(), true, "", 3);
+            const leadersFrom2 = await orbitdb2.findLeaders(network.address!.toString(), true, "", 3);
             expect(leadersFrom1).toEqual(leadersFrom2);
             expect(leadersFrom1).toHaveLength(2);
             expect(leadersFrom1).toContainAllValues([orbitdb1.id.toString(), orbitdb2.id.toString()]);
@@ -125,7 +125,7 @@ Object.keys(testAPIs).forEach(API => {
             const isLeaderATwoLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, 123, 2));
             expect(isLeaderATwoLeader);
 
-            db2 = await orbitdb2.open<EventStore<string>>(db1.address, { replicationTopic, directory: dbPath2 })
+            db2 = await orbitdb2.open<EventStore<string>>(db1.address!, { replicationTopic, directory: dbPath2 })
 
             await waitFor(() => (orbitdb1._directConnections.size === 1))
             await waitFor(() => (orbitdb2._directConnections.size === 1))
@@ -154,7 +154,7 @@ Object.keys(testAPIs).forEach(API => {
 
             const replicationTopic = uuid()
             db1 = await orbitdb1.open(new EventStore<string>({ id: 'replication-tests' }), { replicationTopic: replicationTopic, replicate: false, directory: dbPath1 })
-            db2 = await orbitdb2.open<EventStore<string>>(db1.address, { replicationTopic, directory: dbPath2 })
+            db2 = await orbitdb2.open<EventStore<string>>(db1.address!, { replicationTopic, directory: dbPath2 })
 
             // One leader
             const slot = 0;
@@ -178,8 +178,8 @@ Object.keys(testAPIs).forEach(API => {
 
             const replicationTopic = uuid();
             db1 = await orbitdb1.open(new EventStore<string>({ id: 'replication-tests' }), { replicationTopic: replicationTopic, replicate: false, directory: dbPath1 })
-            db2 = await orbitdb2.open<EventStore<string>>(db1.address, { replicationTopic, directory: dbPath2 })
-            db3 = await orbitdb3.open<EventStore<string>>(db1.address, { replicationTopic, directory: dbPath3 })
+            db2 = await orbitdb2.open<EventStore<string>>(db1.address!, { replicationTopic, directory: dbPath2 })
+            db3 = await orbitdb3.open<EventStore<string>>(db1.address!, { replicationTopic, directory: dbPath3 })
 
             await waitForPeers(session.peers[1].ipfs, [orbitdb3.id], DirectChannel.getTopic([orbitdb2.id, orbitdb3.id]))
             await waitForPeers(session.peers[2].ipfs, [orbitdb2.id], DirectChannel.getTopic([orbitdb2.id, orbitdb3.id]))
@@ -215,8 +215,8 @@ Object.keys(testAPIs).forEach(API => {
 
             const replicationTopic = uuid();
             db1 = await orbitdb1.open(new EventStore<string>({ id: 'replication-tests' }), { replicationTopic: replicationTopic, directory: dbPath1 })
-            db2 = await orbitdb2.open<EventStore<string>>(db1.address, { replicationTopic, directory: dbPath2 })
-            db3 = await orbitdb3.open<EventStore<string>>(db1.address, { replicationTopic, directory: dbPath3 })
+            db2 = await orbitdb2.open<EventStore<string>>(db1.address!, { replicationTopic, directory: dbPath2 })
+            db3 = await orbitdb3.open<EventStore<string>>(db1.address!, { replicationTopic, directory: dbPath3 })
 
             await waitFor(() => (orbitdb1._directConnections.size === 2))
             await waitFor(() => (orbitdb2._directConnections.size === 2))

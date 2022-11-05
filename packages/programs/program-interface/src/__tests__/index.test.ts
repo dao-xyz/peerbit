@@ -2,6 +2,7 @@ import { field, variant, vec, option } from "@dao-xyz/borsh"
 import { Store } from "@dao-xyz/peerbit-store";
 import { ComposableProgram, Program } from "..";
 import { getValuesWithType } from "../utils";
+import { Session } from '@dao-xyz/peerbit-test-utils'
 
 @variant(0)
 class P1 extends ComposableProgram {
@@ -23,7 +24,7 @@ class ExtendedEmbeddedStore extends EmbeddedStore {
     }
 }
 @variant(1)
-class P2 extends ComposableProgram {
+class P2 extends Program {
 
     @field({ type: vec(option(ExtendedEmbeddedStore)) })
     store?: ExtendedEmbeddedStore[];
@@ -35,6 +36,10 @@ class P2 extends ComposableProgram {
         super();
         this.store = [new ExtendedEmbeddedStore({ store })];
         this.program = new P1();
+    }
+
+    async setup(): Promise<void> {
+        return;
     }
 }
 
@@ -55,6 +60,16 @@ describe('getValuesWithType', () => {
     })
 })
 describe('program', () => {
+
+    let session: Session;
+    beforeAll(async () => {
+        session = await Session.connected(1);
+    })
+
+    afterAll(async () => {
+        await session.stop();
+    })
+
     it('can resolve stores and programs', () => {
 
 
@@ -69,5 +84,67 @@ describe('program', () => {
         const programs = p.programs;
         expect(programs).toHaveLength(1);
         expect(programs[0]).toEqual(p.program);
+    })
+
+    it('create subprogram address', async () => {
+
+
+        const store = new Store();
+        const p = new P2(store);
+        await p.save(session.peers[0].ipfs);
+        expect(p.program.address.toString()).toEndWith('/0');
+
+
+    })
+
+    it('will create indices', async () => {
+
+        @variant([0, 1])
+        class ProgramA extends ComposableProgram {
+
+            @field({ type: Store })
+            storeA: Store<any> = new Store()
+
+        }
+
+        @variant([0, 2])
+        class ProgramB extends ComposableProgram {
+
+            @field({ type: Store })
+            storeB: Store<any> = new Store()
+
+            @field({ type: ProgramA })
+            programA = new ProgramA()
+        }
+
+        @variant([0, 3])
+        class ProgramC extends Program {
+
+            @field({ type: ProgramA })
+            programA = new ProgramA();
+
+            @field({ type: ProgramB })
+            programB = new ProgramB();
+
+            @field({ type: Store })
+            storeC = new Store()
+
+            async setup(): Promise<void> {
+            }
+        }
+
+
+        const pr = new ProgramC();
+        await pr.save(session.peers[0].ipfs);
+
+        expect(pr._programIndex).toBeUndefined();
+        expect(pr.programA._programIndex).toEqual(0);
+        expect(pr.programB._programIndex).toEqual(1);
+        expect(pr.programB.programA._programIndex).toEqual(2);
+        expect(pr.programA.storeA._storeIndex).toEqual(0);
+        expect(pr.programB.storeB._storeIndex).toEqual(1);
+        expect(pr.programB.programA.storeA._storeIndex).toEqual(2);
+        expect(pr.storeC._storeIndex).toEqual(3);
+        // await expect(() => pr.save(session.peers[0].ipfs)).rejects.toThrow(Error);
     })
 })

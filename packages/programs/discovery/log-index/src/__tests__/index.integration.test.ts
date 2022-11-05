@@ -3,7 +3,7 @@
 import { createStore, Session } from '@dao-xyz/peerbit-test-utils';
 import { Ed25519Keypair, Ed25519PublicKey, EncryptedThing, X25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
 import { v4 as uuid } from 'uuid';
-import { Address, DefaultOptions, Store } from '@dao-xyz/peerbit-store';
+import { DefaultOptions, Store } from '@dao-xyz/peerbit-store';
 import Cache from '@dao-xyz/peerbit-cache'
 import { Level } from 'level';
 import path from 'path';
@@ -11,6 +11,7 @@ import { HeadsMessage, LogEntryEncryptionQuery, LogIndex, LogQueryRequest } from
 import { fileURLToPath } from 'url';
 import { waitFor } from '@dao-xyz/peerbit-time';
 import { DQuery } from '@dao-xyz/peerbit-query';
+import { Address } from '@dao-xyz/peerbit-program';
 const __filename = fileURLToPath(import.meta.url);
 
 
@@ -30,11 +31,11 @@ describe('query', () => {
 
     const queryTopic = uuid();
     for (let i = 0; i < peersCount; i++) {
-      const store = new Store({ id: 'name' });
+      const store = new Store({ storeIndex: 0 });
       const signKey = await Ed25519Keypair.create();
       const cache = new Cache(cacheStores[i])
-      const logIndex = new LogIndex({ query: new DQuery({}) });
-      logIndex.query.parentProgram = { address: new Address('1') } as any // because query topic needs a parent with address
+      const logIndex = new LogIndex({ query: new DQuery() });
+      logIndex.query.parentProgram = { address: new Address({ cid: '1' }) } as any // because query topic needs a parent with address
       await logIndex.setup({ store, queryTopic: { queryRegion: queryTopic } })
       logIndices.push(logIndex);
       const encryption = {

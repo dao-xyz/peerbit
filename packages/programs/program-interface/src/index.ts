@@ -1,50 +1,216 @@
-import { AbstractType, Constructor, field, getSchemasBottomUp, option, variant, WrappedType } from "@dao-xyz/borsh";
+import { field, option, variant } from "@dao-xyz/borsh";
 import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { Entry, Identity } from "@dao-xyz/ipfs-log";
-
 import { IPFS } from "ipfs-core-types";
-import { IInitializationOptions, Store, Address, Addressable, Saveable, save, load } from '@dao-xyz/peerbit-store';
+import { IInitializationOptions, Store } from '@dao-xyz/peerbit-store';
 
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { getValuesWithType } from './utils.js';
 
-export type ProgramInitializationOptions = { store: IInitializationOptions<any>, parent?: AbstractProgram, replicationTopic: string, onClose?: () => void, onDrop?: () => void };
+import io from '@dao-xyz/peerbit-io-utils';
+import { serialize, deserialize, Constructor, AbstractType } from '@dao-xyz/borsh';
+import path from 'path'
+import { CID } from 'multiformats/cid'
 
-@variant(0)
-export class ProgramOwner {
+const notEmpty = (e: string) => e !== '' && e !== ' '
 
-    @field({ type: Address })
-    address: Address
+export interface Manifest {
+    data: Uint8Array
+}
 
-    @field({ type: option(Address) })
-    subProgramAddress?: Address // maybe remove since it is not used actively
+export interface Addressable { address?: Address | undefined }
 
-    constructor(properties?: {
-        address: Address,
-        subProgramAddress?: Address
-    }) {
+export class ProgramPath {
+
+    @field({ type: 'u32' })
+    index: number
+
+    constructor(properties: { index: number }) {
         if (properties) {
-            this.address = properties.address;
-            this.subProgramAddress = properties.subProgramAddress;
+            this.index = properties.index
+        }
+    }
+
+    static from(obj: { index: number } | AbstractProgram) {
+        if (obj instanceof AbstractProgram) {
+            if (obj.programIndex == undefined) {
+                throw new Error("Path can be created from a program without an index")
+            }
+            return new ProgramPath({
+                index: obj.programIndex
+            })
+        }
+        else {
+            return new ProgramPath(obj)
         }
     }
 }
 
-
-@variant(1)
-export abstract class AbstractProgram extends SystemBinaryPayload implements Addressable, Saveable {
-
-
+@variant(0)
+export class Address {
 
     @field({ type: 'string' })
-    id: string;
+    cid: string
 
-    @field({ type: option(ProgramOwner) })
-    programOwner?: ProgramOwner // Will control whether this program can be opened or not
+    @field({ type: option(ProgramPath) })
+    path?: ProgramPath
 
-    address: Address;
+
+    constructor(properties: { cid: string, path?: ProgramPath }) {
+        if (properties) {
+            this.cid = properties.cid
+            this.path = properties.path;
+        }
+    }
+
+    toString() {
+        return Address.join(this.cid, this.path)
+    }
+
+    equals(other: Address) {
+        return this.cid === other.cid;
+    }
+
+    withPath(path: ProgramPath | { index: number }): Address {
+        return new Address({ cid: this.cid, path: path instanceof ProgramPath ? path : ProgramPath.from(path) })
+    }
+
+    root(): Address {
+        return new Address({ cid: this.cid })
+    }
+
+
+    static isValid(address: { toString(): string }) {
+        const parsedAddress = address.toString().replace(/\\/g, '/')
+
+        const containsProtocolPrefix = (e: string, i: number) => !((i === 0 || i === 1) && parsedAddress.toString().indexOf('/peerbit') === 0 && e === 'peerbit')
+
+        const parts = parsedAddress.toString()
+            .split('/')
+            .filter(containsProtocolPrefix)
+            .filter(notEmpty)
+
+        let accessControllerHash
+
+        const validateHash = (hash: string) => {
+            const prefixes = ['zd', 'Qm', 'ba', 'k5']
+            for (const p of prefixes) {
+                if (hash.indexOf(p) > -1) {
+                    return true
+                }
+            }
+            return false
+        }
+
+        try {
+            accessControllerHash = validateHash(parts[0])
+                ? CID.parse(parts[0]).toString()
+                : null
+        } catch (e) {
+            return false
+        }
+
+        return accessControllerHash !== null
+    }
+
+    static parse(address: { toString(): string }) {
+        if (!address) { throw new Error(`Not a valid Peerbit address: ${address}`) }
+
+        if (!Address.isValid(address)) { throw new Error(`Not a valid Peerbit address: ${address}`) }
+
+        const parsedAddress = address.toString().replace(/\\/g, '/')
+        const parts = parsedAddress.toString()
+            .split('/')
+            .filter((e, i) => !((i === 0 || i === 1) && parsedAddress.toString().indexOf('/peerbit') === 0 && e === 'peerbit'))
+            .filter(e => e !== '' && e !== ' ')
+
+        return new Address({ cid: parts[0], path: parts.length == 2 ? new ProgramPath({ index: Number(parts[1]) }) : undefined })
+    }
+
+    static join(cid: string, addressPath?: ProgramPath) {
+        const p = (path.posix || path);
+        if (!addressPath)
+            return p.join('/peerbit', cid)
+        else
+            return p.join('/peerbit', cid, addressPath.index.toString())
+
+    }
+
+}
+
+export interface Saveable {
+    save(ipfs: any, options?: {
+        format?: string;
+        pin?: boolean;
+        timeout?: number;
+    }): Promise<Address>
+}
+
+export const save = async (ipfs: IPFS, thing: Addressable, options: { format?: string, pin?: boolean, timeout?: number } = {}): Promise<Address> => {
+    const manifest: Manifest = {
+        data: serialize(thing)
+    }
+    const hash = await io.write(ipfs, options.format || 'dag-cbor', manifest, options)
+    return Address.parse(Address.join(hash))
+}
+
+
+export const load = async <S extends Addressable>(ipfs: IPFS, address: Address, into: Constructor<S> | AbstractType<S>, options: { timeout?: number } = {}): Promise<S> => {
+    const manifest: Manifest = await io.read(ipfs, address.cid, options);
+    const der = deserialize(manifest.data, into)
+    der.address = Address.parse(Address.join(address.cid))
+    return der;
+}
+
+
+
+export type ProgramInitializationOptions = { store: IInitializationOptions<any>, parent?: AbstractProgram, replicationTopic: string, onClose?: () => void, onDrop?: () => void };
+/* 
+@variant(0)
+export class ProgramReference {
+
+    @field({ type: 'string' })
+    address: string
+
+    @field({ type: option('u32') })
+    index?: number
+
+
+    constructor(properties?: {
+        address: Address | string,
+        index?: number
+    } | AbstractProgram) {
+        if (properties) {
+            if (properties instanceof AbstractProgram) {
+                this.address = ((properties instanceof Program ? properties.address : undefined) || properties.parentProgram.address!).toString();
+                this.index = properties.programIndex;
+            }
+            else {
+                this.address = properties.address.toString();
+                this.index = properties.index;
+            }
+        }
+    }
+
+    matches(other: ProgramReference | AbstractProgram) {
+        if (other instanceof ProgramReference)
+            return this.address === other.address && this.index === other.index;
+        return this.matches(new ProgramReference(other))
+    }
+} */
+
+
+@variant(1)
+export abstract class AbstractProgram extends SystemBinaryPayload {
+
+    @field({ type: option('u32') })
+    _programIndex?: number; // Prevent duplicates for subprograms
+
+    @field({ type: option('string') })
+    owner?: string  // Will control whether this program can be opened or not
+
 
 
     _ipfs: IPFS;
@@ -57,15 +223,6 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
     parentProgram: Program
 
 
-    constructor(properties?: { id?: string }) {
-        super();
-        if (properties) {
-            this.id = (properties.id || uuid());
-        }
-        else {
-            this.id = uuid()
-        }
-    }
 
     get initialized() {
         return this._initialized
@@ -74,6 +231,9 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
         return this._initializationPromise
     }
 
+    get programIndex(): number | undefined {
+        return this._programIndex;
+    }
 
     async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
 
@@ -89,19 +249,13 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
                 this._onClose = options.onClose;
                 this._onDrop = options.onDrop;
 
-                const existingAddress = this.address;
-                await this.save(ipfs)
-                if (existingAddress && !existingAddress.equals(this.address)) {
-                    throw new Error("Program properties has been changed after constructor so that the hash has changed. Make sure that the 'setup(...)' function does not modify any properties that are to be serialized")
-                }
-
                 const nexts = this.programs;
                 for (const next of nexts) {
                     await next.init(ipfs, identity, { ...options, parent: this });
                 }
+
                 await Promise.all(this.stores.map(s => s.init(ipfs, identity, options.store)))
 
-                this.allStoresMap; // call this to ensure no store duplicates exist and all addresses are available
                 this._initialized = true
             } catch (error) {
                 reject(error)
@@ -181,13 +335,13 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
     }
 
 
-    _allStoresMap: Map<string, Store<any>>
-    get allStoresMap(): Map<string, Store<any>> {
+    _allStoresMap: Map<number, Store<any>>
+    get allStoresMap(): Map<number, Store<any>> {
         if (this._allStoresMap) {
             return this._allStoresMap;
         }
-        const map = new Map<string, Store<any>>();
-        getValuesWithType(this, Store).map(s => map.set(s.address.toString(), s));
+        const map = new Map<number, Store<any>>();
+        getValuesWithType(this, Store).map(s => map.set(s._storeIndex, s));
         this._allStoresMap = map;
         return this._allStoresMap;
     }
@@ -206,16 +360,16 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
         return this._allPrograms;
     }
 
-    _allProgramsMap: Map<string, AbstractProgram>
-    get allProgramsMap(): Map<string, AbstractProgram> {
-        if (this._allProgramsMap) {
-            return this._allProgramsMap;
+    _subprogramMap: Map<number, AbstractProgram>
+    get subprogramsMap(): Map<number, AbstractProgram> {
+        if (this._subprogramMap) {  // is static, so we cache naively
+            return this._subprogramMap;
         }
-        const map = new Map<string, AbstractProgram>();
-        this.programs.map(s => map.set(s.address.toString(), s));
+        const map = new Map<number, AbstractProgram>();
+        this.programs.map(s => map.set(s._programIndex!, s));
         const nexts = this.programs;
         for (const next of nexts) {
-            const submap = next.allProgramsMap;
+            const submap = next.subprogramsMap;
             submap.forEach((program, address) => {
                 if (map.has(address)) {
                     throw new Error("Store duplicates detected")
@@ -223,39 +377,26 @@ export abstract class AbstractProgram extends SystemBinaryPayload implements Add
                 map.set(address, program);
             })
         }
-        this._allProgramsMap = map;
-        return this._allProgramsMap;
+        this._subprogramMap = map;
+        return this._subprogramMap;
     }
+
 
     get programs(): AbstractProgram[] {
-        return getValuesWithType(this, AbstractProgram)
+        return getValuesWithType(this, AbstractProgram, Store)
     }
 
-    async save(ipfs: IPFS, options?: {
-        format?: string;
-        pin?: boolean;
-        timeout?: number;
-    }): Promise<Address> {
-
-        // post setup
-        // set parents of subprograms to this 
-        for (const [i, program] of this.allPrograms.entries()) {
-            if (program instanceof ComposableProgram) {
-                program._programIndex = i;
+    get address() {
+        if (this.parentProgram) {
+            if (this.programIndex == undefined) {
+                throw new Error("Program index not defined")
             }
-            program.parentProgram = this.parentProgram || this;
+            return this.parentProgram.address.withPath({ index: this.programIndex! })
         }
-
-        const address = await save(ipfs, this, options)
-        this.address = address;
-        return address;
+        throw new Error("ComposableProgram does not have an address and `parentProgram` is undefined")
     }
 
-    static load<S extends Program>(ipfs: IPFS, address: Address, options?: {
-        timeout?: number;
-    }): Promise<S> {
-        return load(ipfs, address, Program, options) as Promise<S>
-    }
+
 
 }
 
@@ -265,13 +406,114 @@ export interface CanOpenSubPrograms {
 
 
 @variant(0)
-export abstract class Program extends AbstractProgram {
+export abstract class Program extends AbstractProgram implements Addressable, Saveable {
+
+    @field({ type: 'string' })
+    id: string;
+
+    _address?: Address;
+
+    constructor(properties?: { id?: string }) {
+        super();
+        if (properties) {
+            this.id = (properties.id || uuid());
+        }
+        else {
+            this.id = uuid()
+        }
+    }
+    get address() {
+        if (this._address) {
+            return this._address
+        }
+        return super.address;
+    }
+
+    set address(address: Address) {
+        this._address = address;
+    }
+
     abstract setup(): Promise<void>
+
+    setupIndices(): void {
+        for (const [ix, store] of this.allStores.entries()) {
+            store._storeIndex = ix;
+        }
+        // post setup
+        // set parents of subprograms to this
+        for (const [ix, program] of this.allPrograms.entries()) {
+            program._programIndex = ix;
+            program.parentProgram = this.parentProgram || this;
+
+        }
+    }
+
     async init(ipfs: IPFS<{}>, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
 
+
+        // TODO, determine whether setup should be called before or after save
+        if (this.parentProgram === undefined) {
+            await this.save(ipfs);
+        }
+
         await this.setup();
-        return super.init(ipfs, identity, options);
+        await super.init(ipfs, identity, options);
+        if (this.parentProgram != undefined && this._address) {
+            throw new Error("Expecting address to be undefined as this program is part of another program")
+        }
+
+        return this;
     }
+
+    async save(ipfs: IPFS, options?: {
+        format?: string;
+        pin?: boolean;
+        timeout?: number;
+    }): Promise<Address> {
+
+        this.setupIndices();
+        const existingAddress = this._address;
+        const address = await save(ipfs, this, options)
+        this._address = address;
+        if (!this.address) {
+            throw new Error("Unexpected")
+        }
+
+        if (existingAddress && !existingAddress.equals(this.address)) {
+            throw new Error("Program properties has been changed after constructor so that the hash has changed. Make sure that the 'setup(...)' function does not modify any properties that are to be serialized")
+        }
+
+        return address;
+    }
+
+    static load<S extends Program>(ipfs: IPFS, address: Address | string, options?: {
+        timeout?: number;
+    }): Promise<S> {
+        return load(ipfs, address instanceof Address ? address : Address.parse(address), Program, options) as Promise<S>
+    }
+
+
+    /*  _allProgramsMap: Map<string, AbstractProgram>
+     get allProgramsMap(): Map<string, AbstractProgram> {
+         if (this._allProgramsMap) {
+             return this._allProgramsMap;
+         }
+         const map = new Map<string, AbstractProgram>();
+         this.programs.map(s => map.set(s.address.toString(), s));
+         const nexts = this.programs;
+         for (const next of nexts) {
+             const submap = next.allProgramsMap;
+             submap.forEach((program, address) => {
+                 if (map.has(address)) {
+                     throw new Error("Store duplicates detected")
+                 }
+                 map.set(address, program);
+             })
+         }
+         this._allProgramsMap = map;
+         return this._allProgramsMap;
+     } */
+
 }
 
 /**
@@ -280,8 +522,5 @@ export abstract class Program extends AbstractProgram {
 @variant(1)
 export abstract class ComposableProgram extends AbstractProgram {
 
-
-    @field({ type: 'u32' })
-    _programIndex: number = 0; // Prevent duplicates for subprograms
 
 }

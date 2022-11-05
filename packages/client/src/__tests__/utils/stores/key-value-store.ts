@@ -49,7 +49,7 @@ export class KeyValueStore<T> extends Program {
         id: string
     }) {
         super(properties);
-        this.store = new Store({ ...properties })
+        this.store = new Store()
         this._index = new KeyValueIndex();
     }
     async setup() {

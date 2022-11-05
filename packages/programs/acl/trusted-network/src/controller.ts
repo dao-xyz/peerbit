@@ -110,7 +110,7 @@ export class TrustedNetwork extends Program {
         if (props) {
             this.trustGraph = createIdentityGraphStore({ ...props, id: this.id });
             this.rootTrust = props.rootTrust;
-            this.logIndex = props.logIndex || new LogIndex({ id: this.id, query: new DQuery({ id: this.id }) });
+            this.logIndex = props.logIndex || new LogIndex({ query: new DQuery() });
         }
     }
 

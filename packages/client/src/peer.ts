@@ -1,5 +1,5 @@
 import path from 'path'
-import { IStoreOptions, Store, Address, Saveable, Addressable } from '@dao-xyz/peerbit-store'
+import { IStoreOptions, Store } from '@dao-xyz/peerbit-store'
 import { IPFS } from 'ipfs-core-types';
 import Cache from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta, StoreError } from '@dao-xyz/peerbit-keystore'
@@ -18,11 +18,11 @@ import LRU from 'lru-cache';
 import { DirectChannel } from '@dao-xyz/ipfs-pubsub-direct-channel'
 import { encryptionWithRequestKey } from './encryption.js'
 import { MaybeSigned } from '@dao-xyz/peerbit-crypto';
-import { WAIT_FOR_PEERS_TIME, PeerInfoWithMeta, RequestReplicatorInfo, requestPeerInfo } from './exchange-replication.js'
+import { WAIT_FOR_PEERS_TIME, PeerInfoWithMeta } from './exchange-replication.js'
 import { createHash } from 'crypto'
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
 import { multiaddr } from '@multiformats/multiaddr'
-import { AbstractProgram, CanOpenSubPrograms, Program } from '@dao-xyz/peerbit-program';
+import { AbstractProgram, CanOpenSubPrograms, Program, Address } from '@dao-xyz/peerbit-program';
 import PQueue from 'p-queue';
 // @ts-ignore
 import { delay, waitFor } from '@dao-xyz/peerbit-time'
@@ -378,8 +378,8 @@ export class Peerbit {
   // Callback for local writes to the database. We the update to pubsub.
   onWrite<T>(program: Program) {
     return (store: Store<any>, entry: Entry<T>, replicationTopic: string): void => {
-      const storeAddress = store.address.toString();
-      const storeInfo = this.programs[replicationTopic][program.address.toString()].program.allStoresMap.get(storeAddress);
+      const programAddress = program.address?.toString() || program.parentProgram.address!.toString();
+      const storeInfo = this.programs[replicationTopic][programAddress].program.allStoresMap.get(store._storeIndex);
       if (!storeInfo) {
         throw new Error("Missing store info")
       }
@@ -388,7 +388,7 @@ export class Peerbit {
       if (store.replicate) {
         // send to peers directly
         send = async (data: Uint8Array) => {
-          const replicators = await this.findReplicators(replicationTopic, store.replicate, entry.gid, this.programs[replicationTopic][program.address.toString()].minReplicas.value);
+          const replicators = await this.findReplicators(replicationTopic, store.replicate, entry.gid, this.programs[replicationTopic][programAddress].minReplicas.value);
           const channels: SharedChannel<DirectChannel>[] = [];
           for (const replicator of replicators) {
             if (replicator === this.id.toString()) {
@@ -406,11 +406,8 @@ export class Peerbit {
           return;
         }
       }
-      for (const value of Object.values(this.programs[replicationTopic])) {
-        if (value.program.allStoresMap.has(storeAddress)) {
-          exchangeHeads(send, store, value.program, [entry], replicationTopic, true, this.limitSigning ? undefined : this.identity)
-        }
-      }
+
+      exchangeHeads(send, store, program, [entry], replicationTopic, true, this.limitSigning ? undefined : this.identity)
     }
 
   }
@@ -471,45 +468,51 @@ export class Peerbit {
          * I can use them to load associated logs and join/sync them with the data stores I own
          */
 
-        const { replicationTopic, storeAddress, programAddress, heads } = msg
+        const { replicationTopic, storeIndex, programIndex, programAddress, heads } = msg
         // replication topic === trustedNetwork address
 
         let pstores = this.programs[replicationTopic]
         const isReplicating = this._replicationTopicSubscriptions.has(replicationTopic); // TODO should be TrustedNetwork has my ipfs id
-        const saddress = storeAddress.toString();
-        const paddress = programAddress.toString();
+        const paddress = programAddress;
 
         if (heads) {
 
           const leaderCache: Map<string, string[]> = new Map();
-          await this._maybeOpenStorePromise;
-          for (const [gid, entries] of groupByGid(heads)) {
-            // Check if root, if so, we check if we should open the store
-            const leaders = await this.findLeaders(replicationTopic, isReplicating, gid, msg.minReplicas?.value || this._minReplicas); // Todo reuse calculations
-            leaderCache.set(gid, leaders);
-            if (leaders.find(x => x === this.id.toString())) {
-              try {
-                // Assumption: All entries should suffice as references 
-                // when passing to this.open as reasons/proof of validity of opening the store
-                const oneEntry = entries[0].entry;
+          if (!pstores[programAddress]) {
+            await this._maybeOpenStorePromise;
+            for (const [gid, entries] of groupByGid(heads)) {
+              // Check if root, if so, we check if we should open the store
+              const leaders = await this.findLeaders(replicationTopic, isReplicating, gid, msg.minReplicas?.value || this._minReplicas); // Todo reuse calculations
+              leaderCache.set(gid, leaders);
+              if (leaders.find(x => x === this.id.toString())) {
+                try {
+                  // Assumption: All entries should suffice as references 
+                  // Assumption: All entries should suffice as references 
+                  // Assumption: All entries should suffice as references 
+                  // Assumption: All entries should suffice as references 
+                  // Assumption: All entries should suffice as references 
+                  // when passing to this.open as reasons/proof of validity of opening the store
+                  const oneEntry = entries[0].entry;
 
-                await this.open(Address.parse(paddress), { replicationTopic, directory: this.directory, entryToReplicate: oneEntry, verifyCanOpen: true, identity: this.identity, minReplicas: msg.minReplicas })
-              }
-              catch (error) {
-                if (error instanceof AccessError) {
-                  return
+                  await this.open(Address.parse(paddress), { replicationTopic, directory: this.directory, entryToReplicate: oneEntry, verifyCanOpen: true, identity: this.identity, minReplicas: msg.minReplicas })
                 }
-                throw error; // unexpected
+                catch (error) {
+                  if (error instanceof AccessError) {
+                    return
+                  }
+                  throw error; // unexpected
+                }
+                break;
               }
-              break;
             }
           }
 
+
           const programAndStores = pstores[paddress];
           const programInfo = this.programs[replicationTopic][paddress];
-          const storeInfo = programInfo.program.allStoresMap.get(saddress);
+          const storeInfo = programInfo.program.allStoresMap.get(storeIndex);
           if (!storeInfo) {
-            throw new Error("Missing store info, which was expected to exist for " + replicationTopic + ", " + paddress + ", " + saddress)
+            throw new Error("Missing store info, which was expected to exist for " + replicationTopic + ", " + paddress + ", " + storeIndex)
           }
           const toMerge: EntryWithRefs<any>[] = [];
 
@@ -526,7 +529,7 @@ export class Peerbit {
 
           }
           if (toMerge.length > 0) {
-            const store = programAndStores.program.allStoresMap.get(saddress);
+            const store = programAndStores.program.allStoresMap.get(storeIndex);
             if (!store) {
               throw new Error("Unexpected, missing store on sync")
             }
@@ -535,7 +538,7 @@ export class Peerbit {
           }
         }
 
-        logger.debug(`Received ${heads.length} heads for '${paddress}/${saddress}':\n`, JSON.stringify(heads.map(e => e.entry.hash), null, 2))
+        logger.debug(`Received ${heads.length} heads for '${paddress}/${storeIndex}':\n`, JSON.stringify(heads.map(e => e.entry.hash), null, 2))
       }
       /*  else if (msg instanceof RequestHeadsMessage) {
           // I have recieved a message urging me to share my heads
@@ -854,20 +857,19 @@ export class Peerbit {
   // Callback when a store was closed
   async _onClose(program: Program, db: Store<any>, replicationTopic: string) { // TODO Can we really close a this.programs, either we close all stores in the replication topic or none
 
-    const storeAddress = db.address.toString()
-    const programAddress = program.address.toString();
+    const programAddress = program.address?.toString();
 
-    logger.debug(`Close ${programAddress}/${storeAddress}`)
+    logger.debug(`Close ${programAddress}/${db.id}`)
 
     // Unsubscribe from pubsub
-    await this._replicationTopicSubscriptions.get(replicationTopic)?.close(db.address.toString());
+    await this._replicationTopicSubscriptions.get(replicationTopic)?.close(db.id);
 
 
     const dir = db && db._options.directory ? db._options.directory : this.directory
     const cache = this.caches[dir]
 
-    if (cache && cache.handlers.has(storeAddress)) {
-      cache.handlers.delete(storeAddress)
+    if (cache && cache.handlers.has(db.id)) {
+      cache.handlers.delete(db.id)
       if (!cache.handlers.size) {
         await cache.cache.close()
       }
@@ -875,8 +877,10 @@ export class Peerbit {
   }
   async _onProgamClose(program: Program, replicationTopic: string) {
 
-    const programAddress = program.address.toString();
-    delete this.programs[replicationTopic][programAddress]
+    const programAddress = program.address?.toString();
+    if (programAddress) {
+      delete this.programs[replicationTopic][programAddress]
+    }
     const otherStoresUsingSameReplicationTopic = this.programs[replicationTopic]
     // close all connections with this repplication topic if this is the last dependency
     const isLastStoreForReplicationTopic = Object.keys(otherStoresUsingSameReplicationTopic).length === 0;
@@ -892,22 +896,21 @@ export class Peerbit {
   }
 
   async _onDrop(db: Store<any>) {
-    const address = db.address.toString()
-    const dir = db && db._options.directory ? db._options.directory : this.directory
-    await this._requestCache(address, dir, db._cache)
+    /*    const address = db.address.toString()
+       const dir = db && db._options.directory ? db._options.directory : this.directory
+       await this._requestCache(address, dir, db._cache) */
   }
 
-  async _onLoad(db: Store<any>) {
-    const address = db.address.toString()
-    const dir = db && db._options.directory ? db._options.directory : this.directory
-    await this._requestCache(address, dir, db._cache)
-    /*   this.addStore(db); */
-  }
+  /*  async _onLoad(db: Store<any>) {
+     const address = db.address.toString()
+     const dir = db && db._options.directory ? db._options.directory : this.directory
+     await this._requestCache(address, dir, db._cache)
+   } */
 
 
 
   /*   _getProgramRoot(program: AbstractProgram, replicationTopic: string): Program | undefined {
-      let parent = program.programOwner
+      let parent = program.ProgramReference
       while (parent?.parentProgram || (parent as Program).parentProgamAddress) {
         const parentAddress = parent?.parentProgram?.address || (parent as Program).parentProgamAddress
         parent = this.programs[replicationTopic]?.[parentAddress.toString()]?.program;
@@ -926,7 +929,10 @@ export class Peerbit {
       throw new Error("Unexpected behaviour")
     }
 
-    const programAddress = program.address.toString();
+    const programAddress = program.address?.toString();
+    if (!programAddress) {
+      throw new Error("Missing program address");
+    }
     const existingProgramAndStores = this.programs[replicationTopic][programAddress];
     if (!!existingProgramAndStores && existingProgramAndStores.program !== program) { // second condition only makes this throw error if we are to add a new instance with the same address
       throw new Error(`Program at ${replicationTopic} is already created`)
@@ -936,7 +942,14 @@ export class Peerbit {
       minReplicas
     };
     this.programs[replicationTopic][programAddress] = p;
+    /*p.program.allPrograms.forEach((subprogram) => {
+     this.programs[replicationTopic][subprogram.address.toString()] = {
+       minReplicas,
+       program: subprogram
+     };
+   }) */
     return p;
+
   }
 
   _getPeersLRU: LRU<string, Promise<PeerInfoWithMeta[]>> = new LRU({ max: 500, ttl: WAIT_FOR_PEERS_TIME })
@@ -949,47 +962,6 @@ export class Peerbit {
       }
     }
     return ret;
-  }
-
-
-  async getPeers(request: RequestReplicatorInfo, options: { ignoreCache?: boolean, waitForPeersTime?: number } = {}): Promise<PeerInfoWithMeta[]> {
-    const serializedRequest = serialize(request);
-    const hashKey = Buffer.from(serializedRequest).toString('base64');
-    if (!options.ignoreCache) {
-      const promise = this._getPeersLRU.get(hashKey);
-      if (promise) {
-        return promise;
-      }
-    }
-
-    const promise = new Promise<PeerInfoWithMeta[]>(async (r, c) => {
-      await this.subscribeToReplicationTopic(request.replicationTopic);
-      await requestPeerInfo(serializedRequest, request.replicationTopic, (topic, message) => this._ipfs.pubsub.publish(topic, message), this.identity)
-      const directConnectionsOnTopic = this.getPeersOnTopic(request.replicationTopic).length
-      const timeout = options?.waitForPeersTime || WAIT_FOR_PEERS_TIME * 3;
-      if (directConnectionsOnTopic) {
-        // Assume that all peers are connected
-        // TODO What happens if directConnectionsOnTopic changes?
-        try {
-          await waitFor(() => this._peerInfoResponseCounter.get(request.id) as number >= directConnectionsOnTopic, { timeout, delayInterval: 400 })
-        } catch (error) {
-        }
-      }
-      else {
-        await delay(timeout);
-      }
-
-      /* const caches: { value: PeerInfoWithMeta }[] = Object.values(this._peerInfoLRU); */
-      const peersSupportingAddress: PeerInfoWithMeta[] = [];
-      this._peerInfoLRU.forEach((v, k) => {
-        if (v.peerInfo.store === request.address) {
-          peersSupportingAddress.push(v)
-        }
-      })
-      r(peersSupportingAddress)
-    })
-    this._getPeersLRU.set(hashKey, promise);
-    return promise
   }
 
   /**
@@ -1065,43 +1037,6 @@ export class Peerbit {
 
 
 
-  /*  _requestingReplicationPromise: Promise<void>;
-   async requestReplication(store: Store<any>, options: { heads?: Entry<any>[], replicationTopic?: string, waitForPeersTime?: number } = {}) {
-     const replicationTopic = options?.replicationTopic || store.replicationTopic;
-     if (!replicationTopic) {
-       throw new Error("Missing replication topic for replication");
-     }
-     await this._requestingReplicationPromise;
-     if (!store.address) {
-       await store.save(this._ipfs);
-     }
-     const currentPeersCountFn = async () => (await this.getPeers(replicationTopic, store.address, options)).length
-     const currentPeersCount = await currentPeersCountFn();
-     this._requestingReplicationPromise = new Promise(async (resolve, reject) => {
-       const signedThing = new DecryptedThing({
-         data: await serialize(await (new MaybeSigned({
-           data: serialize(new RequestReplication({
-             replicationTopic,
-             store,
-             heads: options?.heads,
-             resourceRequirements: [new HeapSizeRequirement({
-               heapSize: BigInt(STORE_MIN_HEAP_SIZE)
-             })]
-           }))
-         })).sign(await this.getSigner()))
-       }) /// TODO add encryption?
-   
-       await this._ipfs.pubsub.publish(replicationTopic, serialize(signedThing));
-       await waitForAsync(async () => await currentPeersCountFn() >= currentPeersCount + 1, {
-         timeout: (options?.waitForPeersTime || 5000) * 2,
-         delayInterval: 50
-       })
-       resolve();
-   
-     })
-     await this._requestingReplicationPromise;
-   } */
-
 
   async subscribeToReplicationTopic(topic: string): Promise<void> {
     if (this._disconnected || this._disconnecting) {
@@ -1131,9 +1066,6 @@ export class Peerbit {
 
     }
 
-    /* if (!this._ipfs.pubsub._subscriptions[topic]) {
-      
-    } */
 
   }
   hasSubscribedToReplicationTopic(topic: string): boolean {
@@ -1141,12 +1073,13 @@ export class Peerbit {
   }
   unsubscribeToReplicationTopic(topic: string | TrustedNetwork, id: string = '_'): Promise<boolean> | undefined {
     if (typeof topic !== 'string') {
+      if (!topic.address) {
+        throw new Error("Can not get network address from topic as TrustedNetwork")
+      }
       topic = topic.address.toString();
     }
 
-    /* if (this._ipfs.pubsub._subscriptions[topic]) { */
-    return this._replicationTopicSubscriptions.get(topic)?.close(id);
-    /* } */
+    return this._replicationTopicSubscriptions.get(topic as string)?.close(id);
   }
 
 
@@ -1176,7 +1109,7 @@ export class Peerbit {
    * @returns 
    */
 
-  async open<S extends Program>(storeOrAddress: /* string | Address |  */S | Address, options: OpenStoreOptions = {}): Promise<S> {
+  async open<S extends Program>(storeOrAddress: /* string | Address |  */S | Address | string, options: OpenStoreOptions = {}): Promise<S> {
 
 
     if (this._disconnected || this._disconnecting) {
@@ -1184,15 +1117,25 @@ export class Peerbit {
     }
     const fn = async (): Promise<ProgramWithMetadata> => {
       // TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?
-      let programAddress = storeOrAddress instanceof Address ? storeOrAddress : storeOrAddress.address;
+      let programAddress: string | undefined;
+      if (storeOrAddress instanceof Address) {
+        programAddress = storeOrAddress.toString()
+      }
+      else if (typeof storeOrAddress === 'string') {
+        programAddress = storeOrAddress;
+      }
+      else {
+        programAddress = storeOrAddress._address?.toString();
+      }
+
       if (typeof storeOrAddress === 'string') {
         storeOrAddress = Address.parse(storeOrAddress);
       }
       let program = storeOrAddress as S;
 
-      if (storeOrAddress instanceof Address) {
+      if (storeOrAddress instanceof Address || typeof storeOrAddress === 'string') {
         try {
-          program = await Program.load(this._ipfs, storeOrAddress as any as Address, options) as any as S // TODO fix typings
+          program = await Program.load(this._ipfs, storeOrAddress, options) as any as S // TODO fix typings
           if (program instanceof Program === false) {
             throw new Error(`Failed to open program because program is of type ${program.constructor.name} and not ${Program.name}`);
           }
@@ -1203,38 +1146,43 @@ export class Peerbit {
         }
       }
 
+      await program.save(this.ipfs);
+      programAddress = program.address?.toString()!;
 
-      if (!program.address) {
-        await program.save(this._ipfs)
+      let definedReplicationTopic: string = (options.replicationTopic || programAddress)!;
+      if (!definedReplicationTopic) {
+        throw new Error("Replication topic is undefined")
       }
-      programAddress = program.address;
-
-      const definedReplicationTopic = options.replicationTopic || programAddress.toString();
-
-
-      const existingProgram = this.programs[definedReplicationTopic]?.[program.address.toString()]
-      if (existingProgram) {
-        return existingProgram;
+      if (programAddress) {
+        const existingProgram = this.programs[definedReplicationTopic]?.[programAddress]
+        if (existingProgram) {
+          return existingProgram;
+        }
       }
+
+
+
 
       try {
 
         logger.debug('open()')
 
         let pstores = this.programs[definedReplicationTopic];
-        if ((!pstores || !pstores[programAddress.toString()]) && options.verifyCanOpen) {
+        if (programAddress && (!pstores || !pstores[programAddress.toString()]) && options.verifyCanOpen) {
           // open store if is leader and sender is trusted
           let senderCanOpen: boolean = false;
 
-          if (!program.programOwner) {
+          if (!program.owner) {
             // can open is is trusted by netwoek?
             senderCanOpen = await this._canOpenProgram(definedReplicationTopic, options.entryToReplicate);
           }
           else if (options.entryToReplicate) {
 
-            let ownerProgram: AbstractProgram | undefined = this.programs[definedReplicationTopic]?.[program.programOwner.address.toString()]?.program;
-            if (program.programOwner.subProgramAddress) {
-              ownerProgram = ownerProgram?.allProgramsMap.get(program.programOwner.subProgramAddress.toString())
+            let ownerAddress = Address.parse(program.owner);
+            let ownerProgramRootAddress = ownerAddress.root();
+            let ownerProgram: AbstractProgram | undefined = this.programs[definedReplicationTopic]?.[ownerProgramRootAddress.toString()]?.program;
+            if (ownerAddress.path) {
+              ownerProgram = ownerProgram?.subprogramsMap.get(ownerAddress.path.index)
             }
             if (!ownerProgram) {
               throw new AccessError("Failed to find owner program")
@@ -1255,24 +1203,9 @@ export class Peerbit {
         }
 
 
-
         options = Object.assign({ localOnly: false, create: false }, options)
         logger.debug(`Open database '${program.constructor.name}`)
 
-        const resolveCache = async (address: Address) => {
-          const cache = await this._requestCache(address.toString(), options.directory || this.directory)
-          const haveDB = await this._haveLocalData(cache, address)
-          logger.debug((haveDB ? 'Found' : 'Didn\'t find') + ` database '${address}'`)
-          if (options.localOnly && !haveDB) {
-            logger.warn(`Database '${address}' doesn't exist!`)
-            throw new Error(`Database '${address}' doesn't exist!`)
-          }
-
-          if (!haveDB) {
-            await this._addManifestToCache(cache, address)
-          }
-          return cache;
-        }
 
         if (!options.encryption) {
           options.encryption = encryptionWithRequestKey(this.identity, this.keystore, this._waitForKeysTimeout ? (key) => this.requestAndWaitForKeys(definedReplicationTopic, new RequestKeysByKey<(Ed25519Keypair | X25519Keypair)>({
@@ -1280,15 +1213,21 @@ export class Peerbit {
           })) : undefined)
         }
 
-
         await program.init(this._ipfs, options.identity || this.identity, {
           replicationTopic: definedReplicationTopic,
-          onClose: () => this._onProgamClose(program, definedReplicationTopic),
-          onDrop: () => this._onProgamClose(program, definedReplicationTopic),
+          onClose: () => this._onProgamClose(program, definedReplicationTopic!),
+          onDrop: () => this._onProgamClose(program, definedReplicationTopic!),
+
           store: {
             replicate: true,
             ...options,
-            resolveCache,
+            resolveCache: (store) => {
+              const programAddress = program.address?.toString();
+              if (!programAddress) {
+                throw new Error("Unexpected");
+              }
+              return new Cache(this.cache._store.sublevel(path.join(programAddress, 'store', store.id)))
+            },
             onClose: async (store) => {
               await this._onClose(program, store, definedReplicationTopic)
               if (options.onClose) {
@@ -1304,7 +1243,7 @@ export class Peerbit {
               return;
             },
             onLoad: async (store) => {
-              await this._onLoad(store)
+              /*  await this._onLoad(store) */
               if (options.onLoad) {
                 return options.onLoad(store);
               }
@@ -1342,8 +1281,21 @@ export class Peerbit {
           }
         });
 
-        if (program instanceof TrustedNetwork && !this._trustedNetwork.has(program.address.toString())) {
-          this._trustedNetwork.set(program.address.toString(), program)
+        const resolveCache = async (address: Address) => {
+          const cache = await this._requestCache(address.toString(), options.directory || this.directory)
+          const haveDB = await this._haveLocalData(cache, address.toString())
+          logger.debug((haveDB ? 'Found' : 'Didn\'t find') + ` database '${address}'`)
+          if (options.localOnly && !haveDB) {
+            logger.warn(`Database '${address}' doesn't exist!`)
+            throw new Error(`Database '${address}' doesn't exist!`)
+          }
+          return cache;
+        }
+        await resolveCache(program.address!);
+
+
+        if (program instanceof TrustedNetwork && !this._trustedNetwork.has(program.address!.toString())) {
+          this._trustedNetwork.set(program.address!.toString(), program)
         }
         const pm = await this.addProgram(definedReplicationTopic, program, options.minReplicas || new AbsolutMinReplicas(this._minReplicas));
         await this.subscribeToReplicationTopic(definedReplicationTopic);
@@ -1384,7 +1336,7 @@ export class Peerbit {
   }
 
   async joinNetwork(address: Address | string | TrustedNetwork) {
-    let trustedNetwork = this._trustedNetwork.get(address instanceof TrustedNetwork ? address.address.toString() : address.toString());
+    let trustedNetwork = this._trustedNetwork.get(address instanceof TrustedNetwork ? address.address!.toString() : address.toString());
     if (!trustedNetwork) {
       throw new Error("TrustedNetwork is not open, please call `openNetwork` prior")
     }
@@ -1393,31 +1345,97 @@ export class Peerbit {
     await trustedNetwork.add(new IPFSAddress({ address: this.id.toString() }))
   }
 
-  // Save the database locally
-  async _addManifestToCache(cache: Cache<any>, dbAddress: Address) {
-    await cache.set(path.join(dbAddress.toString(), '_manifest'), dbAddress.cid)
-    logger.debug(`Saved manifest to IPFS as '${dbAddress.cid}'`)
-  }
-
   /**
    * Check if we have the database, or part of it, saved locally
    * @param  {[Cache]} cache [The OrbitDBCache instance containing the local data]
    * @param  {[Address]} dbAddress [Address of the database to check]
    * @return {[Boolean]} [Returns true if we have cached the db locally, false if not]
    */
-  async _haveLocalData(cache: Cache<any>, dbAddress: Address) {
+  async _haveLocalData(cache: Cache<any>, id: string) {
     if (!cache) {
       return false
     }
 
-    const addr = dbAddress.toString()
+    const addr = id;
     const data = await cache.get(path.join(addr, '_manifest'))
-    const data2 = await cache.get(path.join(addr, '_manifest2'))
-
     return data !== undefined && data !== null
   }
 
+  /* async getPeers(request: RequestReplicatorInfo, options: { ignoreCache?: boolean, waitForPeersTime?: number } = {}): Promise<PeerInfoWithMeta[]> {
+     const serializedRequest = serialize(request);
+     const hashKey = Buffer.from(serializedRequest).toString('base64');
+     if (!options.ignoreCache) {
+       const promise = this._getPeersLRU.get(hashKey);
+       if (promise) {
+         return promise;
+       }
+     }
+ 
+     const promise = new Promise<PeerInfoWithMeta[]>(async (r, c) => {
+       await this.subscribeToReplicationTopic(request.replicationTopic);
+       await requestPeerInfo(serializedRequest, request.replicationTopic, (topic, message) => this._ipfs.pubsub.publish(topic, message), this.identity)
+       const directConnectionsOnTopic = this.getPeersOnTopic(request.replicationTopic).length
+       const timeout = options?.waitForPeersTime || WAIT_FOR_PEERS_TIME * 3;
+       if (directConnectionsOnTopic) {
+         // Assume that all peers are connected
+         // TODO What happens if directConnectionsOnTopic changes?
+         try {
+           await waitFor(() => this._peerInfoResponseCounter.get(request.id) as number >= directConnectionsOnTopic, { timeout, delayInterval: 400 })
+         } catch (error) {
+         }
+       }
+       else {
+         await delay(timeout);
+       }
+ 
+       const peersSupportingAddress: PeerInfoWithMeta[] = [];
+       this._peerInfoLRU.forEach((v, k) => {
+         if (v.peerInfo.store === request.address) {
+           peersSupportingAddress.push(v)
+         }
+       })
+       r(peersSupportingAddress)
+     })
+     this._getPeersLRU.set(hashKey, promise);
+     return promise
+   } */
 
 
+  /*  _requestingReplicationPromise: Promise<void>;
+   async requestReplication(store: Store<any>, options: { heads?: Entry<any>[], replicationTopic?: string, waitForPeersTime?: number } = {}) {
+     const replicationTopic = options?.replicationTopic || store.replicationTopic;
+     if (!replicationTopic) {
+       throw new Error("Missing replication topic for replication");
+     }
+     await this._requestingReplicationPromise;
+     if (!store.address) {
+       await store.save(this._ipfs);
+     }
+     const currentPeersCountFn = async () => (await this.getPeers(replicationTopic, store.address, options)).length
+     const currentPeersCount = await currentPeersCountFn();
+     this._requestingReplicationPromise = new Promise(async (resolve, reject) => {
+       const signedThing = new DecryptedThing({
+         data: await serialize(await (new MaybeSigned({
+           data: serialize(new RequestReplication({
+             replicationTopic,
+             store,
+             heads: options?.heads,
+             resourceRequirements: [new HeapSizeRequirement({
+               heapSize: BigInt(STORE_MIN_HEAP_SIZE)
+             })]
+           }))
+         })).sign(await this.getSigner()))
+       }) /// TODO add encryption?
+   
+       await this._ipfs.pubsub.publish(replicationTopic, serialize(signedThing));
+       await waitForAsync(async () => await currentPeersCountFn() >= currentPeersCount + 1, {
+         timeout: (options?.waitForPeersTime || 5000) * 2,
+         delayInterval: 50
+       })
+       resolve();
+   
+     })
+     await this._requestingReplicationPromise;
+   } */
 
 }

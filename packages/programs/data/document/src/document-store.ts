@@ -4,7 +4,7 @@ import { asString } from './utils.js';
 import { BinaryPayload } from '@dao-xyz/peerbit-bpayload';
 import { AddOperationOptions, Store } from '@dao-xyz/peerbit-store';
 import { BORSH_ENCODING, CanAppend, Encoding, EncryptionTemplateMaybeEncrypted, Entry } from '@dao-xyz/ipfs-log';
-import { CanOpenSubPrograms, ComposableProgram, Program, ProgramOwner } from '@dao-xyz/peerbit-program';
+import { CanOpenSubPrograms, ComposableProgram, Program } from '@dao-xyz/peerbit-program';
 import { CanRead } from '@dao-xyz/peerbit-query';
 import { LogIndex } from '@dao-xyz/peerbit-logindex'
 
@@ -40,17 +40,16 @@ export class Documents<T extends BinaryPayload> extends ComposableProgram {
   _optionCanAppend?: CanAppend<Operation<T>>
 
   constructor(properties: {
-    id?: string,
     canEdit?: boolean,
     index: DocumentIndex<T>,
     logIndex?: LogIndex
   }) {
-    super(properties)
+    super()
     if (properties) {
-      this.store = new Store(properties);
+      this.store = new Store();
       this.canEdit = properties.canEdit || false
       this._index = properties.index;
-      this._logIndex = properties.logIndex || new LogIndex({ id: properties.id });
+      this._logIndex = properties.logIndex || new LogIndex();
     }
   }
 
@@ -160,9 +159,8 @@ export class Documents<T extends BinaryPayload> extends ComposableProgram {
       if (!(this.parentProgram as any as CanOpenSubPrograms).canOpen) {
         throw new Error("Class " + this.parentProgram.constructor.name + " needs to implement CanOpenSubPrograms for this Documents store to progams")
       }
-      doc.programOwner = new ProgramOwner({
-        address: this.parentProgram.address
-      })
+      doc.owner = this.parentProgram.address.toString();
+      doc.setupIndices();
     }
 
     const key = (doc as any)[this._index.indexBy];

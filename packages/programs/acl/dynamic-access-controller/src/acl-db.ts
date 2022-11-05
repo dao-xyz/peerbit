@@ -6,7 +6,6 @@ import { Entry } from '@dao-xyz/ipfs-log'
 import { PublicSignKey, SignKey } from '@dao-xyz/peerbit-crypto';
 
 // @ts-ignore
-import { v4 as uuid } from 'uuid';
 import { AnySearch } from '@dao-xyz/peerbit-anysearch';
 import { Program } from '@dao-xyz/peerbit-program';
 import { DQuery } from '@dao-xyz/peerbit-query';
@@ -34,13 +33,10 @@ export class DynamicAccessController extends Program {
                 throw new Error("Expecting either TrustedNetwork or rootTrust")
             }
             this.access = new Documents({
-                id: this.id,
                 index: new DocumentIndex({
-                    id: this.id,
                     indexBy: 'id',
                     search: new AnySearch({
-                        id: this.id,
-                        query: new DQuery({ id: this.id })
+                        query: new DQuery()
                     })
                 })
             })

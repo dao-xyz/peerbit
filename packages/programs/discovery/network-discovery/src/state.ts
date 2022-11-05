@@ -1,9 +1,6 @@
 import { field, BinaryWriter, vec, variant } from "@dao-xyz/borsh";
 import { Documents, DocumentIndex } from "@dao-xyz/peerbit-document";
 import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
-import { Address } from "@dao-xyz/peerbit-store";
-import { AnySearch } from "@dao-xyz/peerbit-anysearch";
-import { DQuery } from "@dao-xyz/peerbit-query";
 import { createHash } from "crypto";
 
 
@@ -23,8 +20,8 @@ export class NetworkInfo extends DiscoveryData {
     @field({ type: 'string' })
     id: string
 
-    @field({ type: Address })
-    network: Address
+    @field({ type: 'string' })
+    network: string // address
 
     @field({ type: 'string' })
     peerId: string;
@@ -33,7 +30,7 @@ export class NetworkInfo extends DiscoveryData {
     addresses: string[]
 
     constructor(options?: {
-        network: Address,
+        network: string,
         peerId: string,
         addresses: string[]
     }) {
@@ -72,7 +69,6 @@ export class NetworkInfo extends DiscoveryData {
 
 
 export const createDiscoveryStore = (props?: { id?: string, queryRegion?: string }) => new Documents<NetworkInfo>({
-    id: props?.id ? props?.id : '' + '_discovery',
     index: new DocumentIndex({
         indexBy: 'id'
     })

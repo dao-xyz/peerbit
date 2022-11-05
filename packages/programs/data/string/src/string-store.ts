@@ -1,5 +1,5 @@
 import { StringOperation, StringIndex, encoding } from './string-index.js'
-import { AnySearch, QueryType, StoreAddressMatchQuery } from '@dao-xyz/peerbit-anysearch';
+import { AnySearch, QueryType, ProgramMatchQuery } from '@dao-xyz/peerbit-anysearch';
 import { RangeCoordinate, RangeCoordinates, Result, ResultWithSource, StringMatchQuery } from '@dao-xyz/peerbit-anysearch';
 import { StringQueryRequest } from '@dao-xyz/peerbit-anysearch';
 import { Range } from './range.js';
@@ -42,12 +42,12 @@ export class DString extends Program {
 
   _optionCanAppend?: CanAppend<StringOperation>
 
-  constructor(properties: { id?: string, search?: AnySearch<StringOperation> }) {
-    super(properties)
+  constructor(properties: { search?: AnySearch<StringOperation> }) {
+    super()
     if (properties) {
-      this.search = properties.search || new AnySearch({ id: this.id, query: new DQuery({ id: this.id }) })
-      this.store = new Store(properties);
-      this._index = new StringIndex(properties);
+      this.search = properties.search || new AnySearch({ query: new DQuery() })
+      this.store = new Store();
+      this._index = new StringIndex();
     }
   }
 
@@ -60,7 +60,7 @@ export class DString extends Program {
       this.store.canAppend = options.canAppend;
     }
 
-    await this.search.setup({ ...options, context: { address: () => this.address }, canRead: options?.canRead, queryHandler: this.queryHandler.bind(this) })
+    await this.search.setup({ ...options, context: () => this.address, canRead: options?.canRead, queryHandler: this.queryHandler.bind(this) })
     await this._index.setup();
 
   }
@@ -149,8 +149,8 @@ export class DString extends Program {
     if (options?.remote) {
       const counter: Map<string, number> = new Map();
       await this.search.query(new StringQueryRequest({
-        queries: [new StoreAddressMatchQuery({
-          address: this.address.toString()
+        queries: [new ProgramMatchQuery({
+          program: this.address.toString()
         })]
       }), (response) => {
         const result = ((response.results[0] as ResultWithSource).source as StringResultSource).string;

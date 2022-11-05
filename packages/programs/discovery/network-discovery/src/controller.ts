@@ -1,6 +1,5 @@
 import { deserialize, field, variant } from "@dao-xyz/borsh";
 import { Documents, DeleteOperation, Operation, PutOperation } from "@dao-xyz/peerbit-document";
-import { Address } from "@dao-xyz/peerbit-store";
 import { BORSH_ENCODING, Entry, Identity } from "@dao-xyz/ipfs-log";
 import { IPFS } from 'ipfs-core-types';
 import { createDiscoveryStore, NetworkInfo } from "./state";
@@ -33,6 +32,7 @@ export class NetworkDiscovery extends Program {
         this._options = options;
         return super.init(ipfs, identity, options);
     }
+
     async canAppend(entry: Entry<Operation<NetworkInfo>>): Promise<boolean> {
         // check if the peer id is trusted by the signature
         const operation = await entry.getPayloadValue();
@@ -62,7 +62,7 @@ export class NetworkDiscovery extends Program {
             if (isNotMe) {
                 await Promise.all(info.addresses.filter((a) => !existingAddressesSet.has(a)).map((a) => this._ipfs.swarm.connect(getMAddress(a))))
             }
-            const network: TrustedNetwork = await Program.load(this.info.store._ipfs, Address.parse(info.network))
+            const network: TrustedNetwork = await Program.load(this.info.store._ipfs, info.network)
 
             await network.init(this._ipfs, this._identity, { ...this._options, store: { ...this._options.store, replicate: false } })
             let isTrusted: boolean = await network.isTrusted((await entry.getPublicKey()))
@@ -88,7 +88,7 @@ export class NetworkDiscovery extends Program {
         const id = await this._ipfs.id();
         const isNotLocalhostAddress = (addr: string) => !addr.toString().includes('/127.0.0.1/')
         return this.info.put(new NetworkInfo({
-            network: network.address,
+            network: network.address?.toString()!,
             peerId: id.id.toString(),
             addresses: id.addresses.map(x => x.toString()).filter(isNotLocalhostAddress)
         }))
