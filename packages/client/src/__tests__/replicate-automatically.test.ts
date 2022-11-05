@@ -30,7 +30,6 @@ Object.keys(testAPIs).forEach(API => {
     let orbitdb1: Peerbit, orbitdb2: Peerbit, orbitdb3: Peerbit, orbitdb4: Peerbit
     let session: Session;
     beforeAll(async () => {
-      rmrf.sync('./orbitdb')
       rmrf.sync(dbPath1)
       rmrf.sync(dbPath2)
       rmrf.sync(dbPath3)
@@ -99,7 +98,7 @@ Object.keys(testAPIs).forEach(API => {
 
       // Open the second database
       let done = false
-      const db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), {
+      const db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address!), {
         replicationTopic,
         onReplicationComplete: (_) => {
           // Listen for the 'replicated' events and check that all the entries
@@ -115,7 +114,7 @@ Object.keys(testAPIs).forEach(API => {
         }
       })
 
-      const _db4 = await orbitdb2.open<KeyValueStore<string>>(await KeyValueStore.load<KeyValueStore<string>>(orbitdb2._ipfs, db3.address), {
+      const _db4 = await orbitdb2.open<KeyValueStore<string>>(await KeyValueStore.load<KeyValueStore<string>>(orbitdb2._ipfs, db3.address!), {
         replicationTopic,
         onReplicationComplete: (_) => {
           fail();
@@ -143,7 +142,7 @@ Object.keys(testAPIs).forEach(API => {
 
       // Open the second database
       let done = false
-      const db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), {
+      const db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address!), {
         replicationTopic,
         onReplicationComplete: (_) => {
           // Listen for the 'replicated' events and check that all the entries

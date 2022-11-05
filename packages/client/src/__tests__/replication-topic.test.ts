@@ -1,23 +1,17 @@
 
 import rmrf from 'rimraf'
-import { Entry } from '@dao-xyz/ipfs-log'
 import { waitFor } from '@dao-xyz/peerbit-time'
 import { jest } from '@jest/globals';
-import { Controller } from "ipfsd-ctl";
-import { IPFS } from "ipfs-core-types";
 import { Peerbit } from '../peer'
 
-import { EventStore, Operation } from './utils/stores/event-store'
+import { EventStore } from './utils/stores/event-store'
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 
 // Include test utilities
 import {
   nodeConfig as config,
-  startIpfs,
-  stopIpfs,
   testAPIs,
-  connectPeers,
   Session,
 } from '@dao-xyz/peerbit-test-utils'
 
@@ -77,7 +71,7 @@ Object.keys(testAPIs).forEach(API => {
       eventStore = new EventStore<string>({});
       eventStore = await orbitdb1.open(eventStore, { replicationTopic })
       eventStore.add("hello");
-      await waitFor(() => (orbitdb2.programs[replicationTopic]?.[eventStore.address.toString()]?.program as EventStore<string>)?.store?.oplog.values.length === 1)
+      await waitFor(() => (orbitdb2.programs[replicationTopic]?.[eventStore.address!.toString()]?.program as EventStore<string>)?.store?.oplog.values.length === 1)
     })
   })
 })

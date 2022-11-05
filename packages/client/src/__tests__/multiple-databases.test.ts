@@ -103,12 +103,12 @@ Object.keys(testAPIs).forEach(API => {
         localDatabases.push(db)
       }
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, localDatabases[i].address), { replicationTopic, directory: dbPath2, ...options })
+        const db = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, localDatabases[i].address!), { replicationTopic, directory: dbPath2, ...options })
         remoteDatabasesA.push(db)
       }
 
       for (let i = 0; i < dbCount; i++) {
-        const db = await orbitdb3.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb3._ipfs, localDatabases[i].address), { replicationTopic, directory: dbPath3, ...options })
+        const db = await orbitdb3.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb3._ipfs, localDatabases[i].address!), { replicationTopic, directory: dbPath3, ...options })
         remoteDatabasesB.push(db)
       }
 
@@ -165,9 +165,12 @@ Object.keys(testAPIs).forEach(API => {
 
       // check data
       await new Promise((resolve, reject) => {
-        const interval = setInterval(() => {
+        const interval = setInterval(async () => {
           if (allReplicated()) {
             clearInterval(interval)
+
+            await delay(10000) // add some delay, so that we absorb any extra (unwanted) replication
+
             // Verify that the databases contain all the right entries
             remoteDatabasesA.forEach((db) => {
               try {

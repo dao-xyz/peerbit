@@ -24,6 +24,7 @@ export class PeerInfo {
         }
     }
 }
+
 @variant([3, 0])
 export class ExchangeSwarmMessage extends ProtocolMessage {
 

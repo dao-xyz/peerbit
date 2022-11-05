@@ -1,7 +1,6 @@
 import { PublicSignKey, Secp256k1PublicKey, Ed25519PublicKey } from '@dao-xyz/peerbit-crypto';
 import { serialize, deserialize } from '@dao-xyz/borsh'
-import { Program } from '@dao-xyz/peerbit-program';
-import { Address } from '@dao-xyz/peerbit-store'
+import { Program, Address } from '@dao-xyz/peerbit-program';
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
 import { IPFS } from 'ipfs-core-types';
 

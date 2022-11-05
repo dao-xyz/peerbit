@@ -3,11 +3,13 @@ const logger = pino().child({ module: 'cache' });
 
 import { serialize, deserialize, Constructor } from '@dao-xyz/borsh';
 import { Level } from 'level';
+import { AbstractLevel } from 'abstract-level';
+
 
 export default class Cache<T> {
 
-  _store: Level;
-  constructor(store: Level) {
+  _store: AbstractLevel<any, any, any>;
+  constructor(store: AbstractLevel<any, any, any>) {
     this._store = store
   }
 

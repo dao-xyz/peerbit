@@ -10,7 +10,7 @@ import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { delay, waitFor } from '@dao-xyz/peerbit-time';
 import { fileURLToPath } from 'url';
 import { jest } from '@jest/globals';
-import path, { dirname } from 'path';
+import path from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -24,7 +24,6 @@ import {
   createStore
 } from '@dao-xyz/peerbit-test-utils'
 import { Level } from 'level'
-import { JSON_ENCODING } from '@dao-xyz/ipfs-log'
 
 
 Object.keys(testAPIs).forEach(API => {
@@ -72,12 +71,12 @@ Object.keys(testAPIs).forEach(API => {
       await cache2.clear();
       index1 = new SimpleIndex();
       index2 = new SimpleIndex();
-      store1 = new Store({ id: 'name' })
+      store1 = new Store({ storeIndex: 0 })
       await store1.init(ipfs, {
         ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { ...DefaultOptions, resolveCache: () => Promise.resolve(new Cache(cache1)), onUpdate: index1.updateIndex.bind(index1) });
-      store2 = new Store({ id: 'name' })
+      store2 = new Store({ storeIndex: 0 })
       await store2.init(ipfs, {
         ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))

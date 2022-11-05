@@ -1,14 +1,13 @@
 import { field, variant } from '@dao-xyz/borsh';
 import { SignKey } from "@dao-xyz/peerbit-crypto";
 import { QueryOptions, DQuery, CanRead, QueryTopicOption } from '@dao-xyz/peerbit-query';
-import { ComposableProgram } from '@dao-xyz/peerbit-program'
-import { Address } from '@dao-xyz/peerbit-store';
+import { AbstractProgram, Address, ComposableProgram } from '@dao-xyz/peerbit-program'
 import { MultipleQueriesType, QueryType } from './query-interface';
 import { Result, Results } from './result';
-import { StoreAddressMatchQuery } from './context';
+import { ProgramMatchQuery } from './context';
 
 
-export type SearchContext = { address: () => Address };
+export type SearchContext = (() => Address) | AbstractProgram;
 export type AnySearchInitializationOptions<T> = { canRead?: CanRead, context: SearchContext, queryHandler: (query: QueryType) => Promise<Result[]> };
 
 @variant([0, 2])
@@ -21,8 +20,8 @@ export class AnySearch<T> extends ComposableProgram {
     _context: SearchContext;
 
     _setup: boolean = false;
-    constructor(properties: { query: DQuery<QueryType, Results>, id?: string }) {
-        super(properties)
+    constructor(properties: { query: DQuery<QueryType, Results> }) {
+        super()
         if (properties) {
             this._query = properties.query;
         }
@@ -43,8 +42,9 @@ export class AnySearch<T> extends ComposableProgram {
         if (query instanceof MultipleQueriesType) {
             // Handle context queries
             for (const q of query.queries) {
-                if (q instanceof StoreAddressMatchQuery) {
-                    if (q.address != this._context.address().toString()) {
+                if (q instanceof ProgramMatchQuery) {
+                    const context = this._context instanceof AbstractProgram ? this._context.address : this._context();
+                    if (q.program !== context.toString()) {
                         // This query is not for me!
                         return;
                     }

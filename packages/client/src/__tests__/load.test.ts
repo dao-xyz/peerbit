@@ -3,7 +3,7 @@ import assert from 'assert'
 import mapSeries from 'p-map-series'
 import rmrf from 'rimraf'
 import path from 'path'
-import { Address } from '@dao-xyz/peerbit-store'
+import { Address } from '@dao-xyz/peerbit-program'
 import { Peerbit } from '../peer.js'
 import { EventStore } from './utils/stores/event-store.js'
 import { jest } from '@jest/globals';
@@ -68,7 +68,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
         entryArr.push(i)
 
       db = await orbitdb1.open(new EventStore<string>({}), uuid())
-      address = db.address.toString()
+      address = db.address!.toString()
       await mapSeries(entryArr, (i) => db.add('hello' + i))
       await db.close()
       db = null as any
@@ -166,7 +166,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
         replicationTopic: uuid(),
         onLoadProgress: (store, entry) => {
           count++
-          expect(address).toEqual(db.address.toString())
+          expect(address).toEqual(db.address!.toString())
 
           const { progress, max } = db.store.replicationStatus
           expect(max).toEqual(BigInt(entryCount))
@@ -190,7 +190,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
   describe('load from empty snapshot', function () {
     it('loads database from an empty snapshot', async () => {
       db = await orbitdb1.open(new EventStore<string>({}), uuid())
-      address = db.address.toString()
+      address = db.address!.toString()
       await db.store.saveSnapshot()
       await db.close()
 
@@ -209,7 +209,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
         entryArr.push(i)
 
       db = await orbitdb1.open(new EventStore<string>({}), uuid())
-      address = db.address.toString()
+      address = db.address!.toString()
       await mapSeries(entryArr, (i) => db.add('hello' + i))
       await db.store.saveSnapshot()
       await db.close()
@@ -256,7 +256,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       } catch (e: any) {
         err = e.toString()
       }
-      expect(err).toEqual(`Error: Snapshot for ${db.store.address} not found!`)
+      expect(err).toEqual(`Error: Snapshot for ${db.store.id} not found!`)
     })
 
     it('loading a database emits \'ready\' event', async () => {
@@ -282,7 +282,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
         replicationTopic: uuid(),
         onLoadProgress: (store, entry) => {
           count++
-          expect(address).toEqual(db.address.toString())
+          expect(address).toEqual(db.address!.toString())
           const { progress, max } = db.store.replicationStatus
           expect(max).toEqual(BigInt(entryCount))
           expect(progress).toEqual(BigInt(count))

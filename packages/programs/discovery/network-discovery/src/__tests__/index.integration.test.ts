@@ -56,7 +56,7 @@ describe('index', () => {
 
             await init(l0a, 0);
             await l0a.add(identity(1).publicKey);
-            let l0b: TrustedNetwork = await TrustedNetwork.load(session.peers[1].ipfs, l0a.address) as any
+            let l0b: TrustedNetwork = await TrustedNetwork.load(session.peers[1].ipfs, l0a.address!) as any
             await init(l0b, 1);
 
             await l0b.trustGraph.store.sync(l0a.trustGraph.store.oplog.heads);
@@ -73,7 +73,7 @@ describe('index', () => {
             await init(discovery, 3, { store: { replicate: true } });
 
             // now identity 2 should be able to append to discovery because it is trusted by the network
-            const discovery2 = (await NetworkDiscovery.load(session.peers[2].ipfs, discovery.address)) as NetworkDiscovery;
+            const discovery2 = (await NetworkDiscovery.load(session.peers[2].ipfs, discovery.address!)) as NetworkDiscovery;
             await init(discovery2, 2, { store: { replicate: true } });
 
             // should not be ok because peer 4 is not trusted

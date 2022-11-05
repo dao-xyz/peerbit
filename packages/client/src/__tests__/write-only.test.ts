@@ -99,7 +99,7 @@ describe(`orbit-db - Write-only`, function () {
     it('write 1 entry replicate false', async () => {
 
         await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
-        db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), { replicationTopic, directory: dbPath2, replicate: false })
+        db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address!), { replicationTopic, directory: dbPath2, replicate: false })
 
         await db1.add('hello');
         /*   await waitFor(() => db2._oplog.clock.time > 0); */
@@ -116,7 +116,7 @@ describe(`orbit-db - Write-only`, function () {
 
         await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
         const encryptionKey = await orbitdb1.keystore.createEd25519Key({ id: 'encryption key', group: replicationTopic });
-        db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), { replicationTopic, directory: dbPath2, replicate: false })
+        db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address!), { replicationTopic, directory: dbPath2, replicate: false })
 
         await db1.add('hello', {
             reciever: {
@@ -191,7 +191,7 @@ describe(`orbit-db - Write-only`, function () {
             }
 
         }
-        const store = new ProgramWithSubprogram(new Documents<EventStore<string>>({ id: 'replication-tests', index: new DocumentIndex({ indexBy: 'id', search: new AnySearch({ query: new DQuery({}) }) }) }));
+        const store = new ProgramWithSubprogram(new Documents<EventStore<string>>({ index: new DocumentIndex({ indexBy: 'id', search: new AnySearch({ query: new DQuery() }) }) }));
         await orbitdb2.subscribeToReplicationTopic(replicationTopic);
         const openedStore = await orbitdb1.open(store, { replicationTopic, replicate: false });
 

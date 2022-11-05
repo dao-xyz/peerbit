@@ -41,7 +41,7 @@ export const replicator = async (options: ReplicatorOptions) => {
         network = await node.openNetwork(network, { replicate: true })
 
         let t0 = +new Date;
-        console.log('Connnecting to network: ' + network.address.toString())
+        console.log('Connnecting to network: ' + network.address!.toString())
         let done = false;
         while (+new Date < t0 + 2 * 60 * 1000) {
             try {
@@ -60,10 +60,10 @@ export const replicator = async (options: ReplicatorOptions) => {
             await delay(5000);
         }
         if (!done) {
-            throw new Error("Failed to join network: " + network.address.toString());
+            throw new Error("Failed to join network: " + network.address!.toString());
         }
 
-        replicationTopic = network.address.toString();
+        replicationTopic = network.address!.toString();
     }
     else {
 

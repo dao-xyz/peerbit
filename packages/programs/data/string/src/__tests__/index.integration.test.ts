@@ -1,6 +1,6 @@
 
-import { StringResultSource, DString, STRING_STORE_TYPE } from '../string-store.js';
-import { ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate, RangeCoordinates, StoreAddressMatchQuery, AnySearch, Results } from '@dao-xyz/peerbit-anysearch';
+import { StringResultSource, DString } from '../string-store.js';
+import { ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinates, ProgramMatchQuery, Results } from '@dao-xyz/peerbit-anysearch';
 import { Range } from '../range.js';
 import { createStore, Session } from '@dao-xyz/peerbit-test-utils';
 import { IPFS } from 'ipfs-core-types';
@@ -54,7 +54,7 @@ describe('query', () => {
         const replicationTopic = uuid();
         await writeStore.init(writer, await createIdentity(), { replicationTopic, store: { ...DefaultOptions, encryption: { getAnyKeypair: (_) => Promise.resolve(undefined), getEncryptionKeypair: () => Ed25519Keypair.create() }, replicate: true, resolveCache: () => new Cache(cacheStore1) } });
 
-        observerStore = await DString.load(session.peers[1].ipfs, writeStore.address) as DString;
+        observerStore = await DString.load(session.peers[1].ipfs, writeStore.address!) as DString;
         observerStore.search._query.subscribeToQueries = false;
         await observerStore.init(observer, await createIdentity(), { replicationTopic, store: { ...DefaultOptions, resolveCache: () => new Cache(cacheStore2) } })
 
@@ -74,9 +74,7 @@ describe('query', () => {
 
         await mquery(observer, writeStore.search._query.queryTopic, new StringQueryRequest({
             queries: [
-                new StoreAddressMatchQuery({
-                    address: writeStore.address.toString()
-                })
+                new ProgramMatchQuery(writeStore)
             ]
         }), (r: Results) => {
             response = r;

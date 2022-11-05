@@ -18,7 +18,7 @@ import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { jest } from '@jest/globals';
 
 import { fileURLToPath } from 'url';
-import path, { dirname } from 'path';
+import path from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 
@@ -45,7 +45,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       index = new SimpleIndex();
 
       const options = Object.assign({}, DefaultOptions, { replicationConcurrency: 123, resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index) })
-      store = new Store({ id: 'name' })
+      store = new Store({ storeIndex: 0 })
       await store.init(ipfs, {
         ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))

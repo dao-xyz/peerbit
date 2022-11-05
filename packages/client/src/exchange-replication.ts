@@ -4,12 +4,13 @@ import { ProtocolMessage } from './message.js';
 import isNode from 'is-node';
 import { MaybeSigned, PublicSignKey } from '@dao-xyz/peerbit-crypto';
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
-import { Address, Store } from '@dao-xyz/peerbit-store';
+import { Address } from '@dao-xyz/peerbit-program';
 import { Peerbit } from './peer.js';
 import { StringSetSerializer } from '@dao-xyz/peerbit-borsh-utils';
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 import { Identity } from '@dao-xyz/ipfs-log'
+import { Store } from '@dao-xyz/peerbit-store';
 
 
 export const WAIT_FOR_PEERS_TIME = 5000;
@@ -24,8 +25,8 @@ export class ReplicatorInfo extends ProtocolMessage {
     @field({ type: 'string' })
     replicationTopic: string
 
-    @field({ type: 'string' })
-    store: string // address
+    @field({ type: 'u32' })
+    store: number // address
 
     @field({ type: option(StringSetSerializer) })
     heads?: Set<string> // address
@@ -38,7 +39,7 @@ export class ReplicatorInfo extends ProtocolMessage {
     constructor(props?: {
         fromId?: string;
         replicationTopic: string,
-        store: string,
+        store: number,
 /*         allowForks: boolean
  */        heads?: Set<string> | string[]
     }) {
@@ -165,7 +166,7 @@ export const exchangePeerInfo = async (fromId: string, replicationTopic: string,
         data: serialize(new ReplicatorInfo({
             fromId,
             replicationTopic,
-            store: store.address.toString(),
+            store: store._storeIndex,
             /*   allowForks: store.allowForks, */
             heads
         }))

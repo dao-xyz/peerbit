@@ -194,6 +194,9 @@ describe('index', () => {
             const key = (await Ed25519Keypair.create()).publicKey;
             const t1 = new TrustedNetwork({ id: 'x', rootTrust: key });
             const t2 = new TrustedNetwork({ id: 'x', rootTrust: key });
+            t1.setupIndices();
+            t2.setupIndices();
+
             expect(serialize(t1)).toEqual(serialize(t2));
 
         })
@@ -209,7 +212,7 @@ describe('index', () => {
 
             await l0a.add(identity(1).publicKey);
 
-            let l0b: TrustedNetwork = await TrustedNetwork.load(session.peers[1].ipfs, l0a.address) as any
+            let l0b: TrustedNetwork = await TrustedNetwork.load(session.peers[1].ipfs, l0a.address!) as any
             await init(l0b, 1, { replicationTopic });
 
             await l0b.trustGraph.store.sync(l0a.trustGraph.store.oplog.heads);
@@ -258,7 +261,7 @@ describe('index', () => {
             expect(await l0a.isTrusted(identity(2).publicKey)).toBeTrue();
 
             // check if peer3 is trusted from a peer that is not replicating
-            let l0observer: TrustedNetwork = await TrustedNetwork.load(session.peers[1].ipfs, l0a.address) as any
+            let l0observer: TrustedNetwork = await TrustedNetwork.load(session.peers[1].ipfs, l0a.address!) as any
             await init(l0observer, 1, { replicationTopic, store: { replicate: false } });
             expect(await l0observer.isTrusted(identity(2).publicKey)).toBeTrue();
             expect(await l0observer.isTrusted(identity(3).publicKey)).toBeFalse();
@@ -313,7 +316,7 @@ describe('index', () => {
 
             await init(l0a, 0, { replicationTopic });
 
-            let l0b: TrustedNetwork = await TrustedNetwork.load(session.peers[1].ipfs, l0a.address) as any
+            let l0b: TrustedNetwork = await TrustedNetwork.load(session.peers[1].ipfs, l0a.address!) as any
             await init(l0b, 1, { replicationTopic });
 
 

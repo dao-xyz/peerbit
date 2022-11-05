@@ -93,7 +93,7 @@ Object.keys(testAPIs).forEach(API => {
 
       options = Object.assign({}, options, { directory: dbPath2 })
       let done = false;
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address!), {
         replicationTopic,
         ...options, onReplicationComplete: async () => {
           expect(db2.iterator({ limit: -1 }).collect().length).toEqual(1)
@@ -130,7 +130,7 @@ Object.keys(testAPIs).forEach(API => {
       options = Object.assign({}, options, { directory: dbPath2 })
 
       let done = false
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address!), {
         replicationTopic,
         ...options, onReplicationComplete: () => {
           // Once db2 has finished replication, make sure it has all elements
@@ -177,7 +177,7 @@ Object.keys(testAPIs).forEach(API => {
 
       let done = false
 
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address!), {
         replicationTopic,
         ...options,
         onReplicationQueued: (store, entry) => {
@@ -268,7 +268,7 @@ Object.keys(testAPIs).forEach(API => {
       let replicatedEventCount = 0
       let done = false
 
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address!), {
         replicationTopic,
         ...options, onReplicationQueued: (store, entry) => {
           if (!replicateSet.has(entry.hash)) {
@@ -343,7 +343,7 @@ Object.keys(testAPIs).forEach(API => {
       const replicateSet = new Set()
       let done = false
 
-      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), {
+      db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address!), {
         replicationTopic,
         ...options, onReplicationComplete: (store) => {
           // Once db2 has finished replication, make sure it has all elements
@@ -359,7 +359,10 @@ Object.keys(testAPIs).forEach(API => {
           }
         }
       })
-      expect(db1.address.toString()).toEqual(db2.address.toString())
+
+      expect(db1.address).toBeDefined();
+      expect(db2.address).toBeDefined();
+      expect(db1.address!.toString()).toEqual(db2.address!.toString())
 
       await mapSeries(adds, add)
       await waitFor(() => done);

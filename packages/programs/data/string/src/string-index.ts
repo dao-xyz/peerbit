@@ -27,8 +27,8 @@ export const encoding = BORSH_ENCODING(StringOperation);
 export class StringIndex extends ComposableProgram {
 
   _string: string;
-  constructor(properties: { id?: string }) {
-    super(properties)
+  constructor() {
+    super()
     this._string = '';
   }
 

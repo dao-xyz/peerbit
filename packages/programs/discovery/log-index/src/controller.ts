@@ -99,11 +99,10 @@ export class LogIndex extends ComposableProgram {
 
     _store: Store<any>
     constructor(props?: {
-        id?: string,
         query?: DQuery<LogQueryRequest, HeadsMessage>
     }) {
-        super(props);
-        this.query = props?.query || new DQuery({ id: props?.id });
+        super();
+        this.query = props?.query || new DQuery();
 
     }
 

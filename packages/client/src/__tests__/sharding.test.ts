@@ -26,9 +26,10 @@ Object.keys(testAPIs).forEach(API => {
         let orbitdb1: Peerbit, orbitdb2: Peerbit, orbitdb3: Peerbit, db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>, replicationTopic: string;
 
         beforeEach(async () => {
-            rmrf.sync('./orbitdb')
             rmrf.sync(dbPath1)
             rmrf.sync(dbPath2)
+            rmrf.sync(dbPath3)
+
             session = await Session.connected(3);
 
             orbitdb1 = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath1 })
@@ -41,19 +42,19 @@ Object.keys(testAPIs).forEach(API => {
             // trust client 3
             await network.add(orbitdb2.id)
             await network.add(orbitdb2.identity.publicKey)
-            await orbitdb2.openNetwork(network.address);
+            await orbitdb2.openNetwork(network.address!);
             await network.add(orbitdb3.id)
             await network.add(orbitdb3.identity.publicKey)
-            await orbitdb3.openNetwork(network.address);
+            await orbitdb3.openNetwork(network.address!);
 
-            replicationTopic = network.address.toString();
+            replicationTopic = network.address!.toString();
 
             db1 = await orbitdb1.open(new EventStore<string>({ id: 'sharding-tests' })
                 , { replicationTopic })
 
-            db2 = await orbitdb2.open(db1.address, { replicationTopic }) as EventStore<string>
+            db2 = await orbitdb2.open(db1.address!, { replicationTopic }) as EventStore<string>
 
-            db3 = await orbitdb3.open(db1.address, { replicationTopic }) as EventStore<string>
+            db3 = await orbitdb3.open(db1.address!, { replicationTopic }) as EventStore<string>
 
         })
 

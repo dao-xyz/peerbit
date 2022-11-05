@@ -1,4 +1,5 @@
 import { field, variant } from "@dao-xyz/borsh";
+import { AbstractProgram } from "@dao-xyz/peerbit-program";
 import { Query } from "./query-interface.js";
 
 @variant(0)
@@ -7,17 +8,23 @@ export class ContextMatchQuery extends Query {
 }
 
 @variant(0)
-export class StoreAddressMatchQuery extends ContextMatchQuery {
+export class ProgramMatchQuery extends ContextMatchQuery {
 
     @field({ type: 'string' })
-    address: string
+    program: string;
 
     constructor(opts?: {
-        address: string
-    }) {
+        program: string
+    } | AbstractProgram) {
         super();
         if (opts) {
-            this.address = opts.address;
+            if (opts instanceof AbstractProgram) {
+                this.program = opts.address.toString();
+            }
+            else {
+                this.program = opts.program;
+            }
+
         }
     }
 }

@@ -50,7 +50,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       const cache = new Cache(cacheStore)
       index = new SimpleIndex();
       const options = Object.assign({}, DefaultOptions, { resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index) })
-      store = new Store({ id: 'name' })
+      store = new Store({ storeIndex: 0 })
       await store.init(ipfs, {
         ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))

@@ -76,13 +76,13 @@ Object.keys(testAPIs).forEach(API => {
 
         }), { replicationTopic, directory: dbPath1, })
         // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
-        db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), { replicationTopic, directory: dbPath2, })
+        db2 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address!), { replicationTopic, directory: dbPath2, })
       }
 
       beforeAll(async () => {
         await openDatabases()
 
-        expect(db1.address.toString()).toEqual(db2.address.toString())
+        expect(db1.address!.toString()).toEqual(db2.address!.toString())
 
         console.log("Waiting for peers...")
         await waitForPeers(ipfs1, [orbitdb2.id], replicationTopic)
