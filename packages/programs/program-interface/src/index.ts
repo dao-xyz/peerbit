@@ -465,6 +465,18 @@ export abstract class Program extends AbstractProgram implements Addressable, Sa
         return this;
     }
 
+    async saveSnapshot() {
+        await Promise.all(this.allStores.map(store => store.saveSnapshot()))
+    }
+
+    async loadFromSnapshot() {
+        await Promise.all(this.allStores.map(store => store.loadFromSnapshot()))
+    }
+
+    async load() {
+        await Promise.all(this.allStores.map(store => store.load()))
+    }
+
     async save(ipfs: IPFS, options?: {
         format?: string;
         pin?: boolean;
