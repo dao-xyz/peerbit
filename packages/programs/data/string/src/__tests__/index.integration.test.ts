@@ -167,7 +167,7 @@ describe('query', () => {
 
         await store.add('hello', new Range({ offset: 0n, length: 'hello'.length }), { reciever: { clock: undefined, signature: undefined, payload: [await X25519PublicKey.create()] } });
         await store.store.close();
-        await store.store.load();
+        await store.load();
         await waitFor(() => store.store.oplog.values.length === 1)
     })
 

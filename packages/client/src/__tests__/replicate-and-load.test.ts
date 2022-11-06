@@ -133,8 +133,8 @@ Object.keys(testAPIs).forEach(API => {
                 options = Object.assign({}, options, { directory: dbPath2, localOnly: true })
                 const db4 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), { replicationTopic, ...options }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
 
-                await db3.store.load()
-                await db4.store.load()
+                await db3.load()
+                await db4.load()
 
                 // Make sure we have all the entries in the databases
                 const result1 = db3.iterator({ limit: -1 }).collect()

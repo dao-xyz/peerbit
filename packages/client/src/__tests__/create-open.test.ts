@@ -159,7 +159,7 @@ describe(`orbit-db - Create & Open `, function () {
 
       const db2 = await orbitdb.open(await Program.load(orbitdb._ipfs, db.address!), { replicationTopic })
 
-      await db.store.load()
+      await db.load()
       const res = db.iterator({ limit: -1 }).collect()
 
       expect(res.length).toEqual(2)
@@ -192,7 +192,7 @@ describe(`orbit-db - Create & Open `, function () {
       const directory = path.join(dbPath, "custom-store")
       const db = await orbitdb.open(new EventStore({}), { replicationTopic, directory })
       await db.close()
-      await db.store.load()
+      await db.load()
       await db.close()
       expect(db.store._cache._store.status).toEqual('closed')
     })

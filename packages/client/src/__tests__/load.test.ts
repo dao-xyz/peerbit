@@ -80,7 +80,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
     it('loads database from local cache', async () => {
       db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
-      await db.store.load()
+      await db.load()
       const items = db.iterator({ limit: -1 }).collect()
       expect(items.length).toEqual(entryCount)
       expect(items[0].payload.getValue().value).toEqual('hello0')
@@ -102,7 +102,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       const amount = 8
       for (let i = 0; i < amount; i++) {
         db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
-        await db.store.load()
+        await db.load()
         const items = db.iterator({ limit: -1 }).collect()
         expect(items.length).toEqual(entryCount)
         expect(items[0].payload.getValue().value).toEqual('hello0')
@@ -116,7 +116,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       db = await orbitdb1.open(address, { type: EVENT_STORE_TYPE, replicationConcurrency: 1 })
       return new Promise(async (resolve, reject) => {
         // don't wait for load to finish
-        db.store.load()
+        db.load()
           .then(() => reject("Should not finish loading?"))
           .catch(e => {
             if (e.toString() !== 'ReadError: Database is not open') {
@@ -134,7 +134,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       const amount = 8
       for (let i = 0; i < amount; i++) {
         db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
-        await db.store.load()
+        await db.load()
         await db.add('hello' + (entryCount + i))
         const items = db.iterator({ limit: -1 }).collect()
         expect(items.length).toEqual(entryCount + i + 1)
@@ -155,7 +155,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
           done = true;
         }
       })
-      await db.store.load()
+      await db.load()
       await waitFor(() => done);
     })
 
@@ -182,7 +182,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
           }
         }
       })
-      await db.store.load()
+      await db.load()
       await waitFor(() => done)
     })
   })
@@ -191,11 +191,11 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
     it('loads database from an empty snapshot', async () => {
       db = await orbitdb1.open(new EventStore<string>({}), uuid())
       address = db.address!.toString()
-      await db.store.saveSnapshot()
+      await db.saveSnapshot()
       await db.close()
 
       db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
-      await db.store.loadFromSnapshot()
+      await db.loadFromSnapshot()
       const items = db.iterator({ limit: -1 }).collect()
       expect(items.length).toEqual(0)
     })
@@ -211,7 +211,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       db = await orbitdb1.open(new EventStore<string>({}), uuid())
       address = db.address!.toString()
       await mapSeries(entryArr, (i) => db.add('hello' + i))
-      await db.store.saveSnapshot()
+      await db.saveSnapshot()
       await db.close()
       db = null as any
     })
@@ -222,7 +222,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
     it('loads database from snapshot', async () => {
       db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
-      await db.store.loadFromSnapshot()
+      await db.loadFromSnapshot()
       const items = db.iterator({ limit: -1 }).collect()
       expect(items.length).toEqual(entryCount)
       expect(items[0].payload.getValue().value).toEqual('hello0')
@@ -233,13 +233,13 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       const amount = 4
       for (let i = 0; i < amount; i++) {
         db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
-        await db.store.loadFromSnapshot()
+        await db.loadFromSnapshot()
         await db.add('hello' + (entryCount + i))
         const items = db.iterator({ limit: -1 }).collect()
         expect(items.length).toEqual(entryCount + i + 1)
         expect(items[0].payload.getValue().value).toEqual('hello0')
         expect(items[items.length - 1].payload.getValue().value).toEqual('hello' + (entryCount + i))
-        await db.store.saveSnapshot()
+        await db.saveSnapshot()
         await db.close()
       }
     })
@@ -252,7 +252,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
       let err
       try {
-        await db.store.loadFromSnapshot()
+        await db.loadFromSnapshot()
       } catch (e: any) {
         err = e.toString()
       }
@@ -271,7 +271,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
           done = true
         }
       })
-      await db.store.loadFromSnapshot()
+      await db.loadFromSnapshot()
       await waitFor(() => done);
     })
 
@@ -294,7 +294,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
           }
         }
       })
-      await db.store.loadFromSnapshot()
+      await db.loadFromSnapshot()
       await waitFor(() => done);
     })
   })
