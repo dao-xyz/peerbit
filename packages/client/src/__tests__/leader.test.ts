@@ -18,6 +18,7 @@ import {
 } from '@dao-xyz/peerbit-test-utils'
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
 import { delay, waitFor } from '@dao-xyz/peerbit-time'
+import { PermissionedEventStore } from './utils/stores/test-store';
 
 const orbitdbPath1 = './orbitdb/tests/leader/1'
 const orbitdbPath2 = './orbitdb/tests/leader/2'
@@ -83,15 +84,18 @@ Object.keys(testAPIs).forEach(API => {
         })
 
         it('will use trusted network for filtering', async () => {
-            const network = await orbitdb1.openNetwork(new TrustedNetwork({ id: 'network', rootTrust: orbitdb1.identity.publicKey }), { directory: dbPath1 })
-            await orbitdb1.joinNetwork(network);
+
+
+            const network = new TrustedNetwork({ id: 'network-tests', rootTrust: orbitdb1.identity.publicKey });
+            const program = await orbitdb1.open(new PermissionedEventStore({ network }), { directory: dbPath1 })
+            await program.joinNetwork();
 
             // make client 2 trusted
             await network.add(orbitdb2.id);
             await network.add(orbitdb2.identity.publicKey);
-            await orbitdb2.openNetwork(network.address!, { directory: dbPath2 });
-            await waitFor(() => (orbitdb2.getNetwork(network.address!) as TrustedNetwork).trustGraph.index.size === 3);
-            await orbitdb2.joinNetwork(network);
+            const program2 = await orbitdb2.open<PermissionedEventStore>(program.address!, { directory: dbPath2 });
+            await waitFor(() => program2.network.trustGraph.index.size === 3);
+            await program2.joinNetwork();
 
             // but dont trust client 3
             // however open direct channels so client 3 could perhaps be a leader anyway (?)
@@ -100,11 +104,11 @@ Object.keys(testAPIs).forEach(API => {
             await waitFor(() => orbitdb1._directConnections.size === 2); // to 2 and 3
             await waitFor(() => orbitdb2._directConnections.size === 1); // to 1
             await waitFor(() => orbitdb3._directConnections.size === 1); // to 1
-            await waitFor(() => (orbitdb2.getNetwork(network.address!) as TrustedNetwork).trustGraph.index.size === 4) // 1. identiy -> peer id, 1. -> 2 identity, 1. -> 2. peer id and 2. identity -> peer id, 
+            await waitFor(() => program2.network.trustGraph.index.size === 4) // 1. identiy -> peer id, 1. -> 2 identity, 1. -> 2. peer id and 2. identity -> peer id, 
 
             // now find 3 leaders from the network with 2 trusted participants (should return 2 leaders if trust control works correctly)
-            const leadersFrom1 = await orbitdb1.findLeaders(network.address!.toString(), true, "", 3);
-            const leadersFrom2 = await orbitdb2.findLeaders(network.address!.toString(), true, "", 3);
+            const leadersFrom1 = await orbitdb1.findLeaders(program.address.toString(), network.address!.toString(), true, "", 3);
+            const leadersFrom2 = await orbitdb2.findLeaders(program.address.toString(), network.address!.toString(), true, "", 3);
             expect(leadersFrom1).toEqual(leadersFrom2);
             expect(leadersFrom1).toHaveLength(2);
             expect(leadersFrom1).toContainAllValues([orbitdb1.id.toString(), orbitdb2.id.toString()]);
@@ -120,9 +124,9 @@ Object.keys(testAPIs).forEach(API => {
             const replicationTopic = uuid();
             db1 = await orbitdb1.open(new EventStore<string>({ id: 'replication-tests' }), { replicationTopic: replicationTopic, directory: dbPath1 })
 
-            const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, 123, 1));
+            const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, db1.address!.toString(), true, 123, 1));
             expect(isLeaderAOneLeader);
-            const isLeaderATwoLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, 123, 2));
+            const isLeaderATwoLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, db1.address!.toString(), true, 123, 2));
             expect(isLeaderATwoLeader);
 
             db2 = await orbitdb2.open<EventStore<string>>(db1.address!, { replicationTopic, directory: dbPath2 })
@@ -133,13 +137,13 @@ Object.keys(testAPIs).forEach(API => {
             // leader rotation is kind of random, so we do a sequence of tests
             for (let slot = 0; slot < 3; slot++) {
                 // One leader
-                const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 1));
-                const isLeaderBOneLeader = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 1));
+                const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 1));
+                const isLeaderBOneLeader = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 1));
                 expect([isLeaderAOneLeader, isLeaderBOneLeader]).toContainAllValues([false, true])
 
                 // Two leaders
-                const isLeaderATwoLeaders = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 2));
-                const isLeaderBTwoLeaders = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 2));
+                const isLeaderATwoLeaders = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 2));
+                const isLeaderBTwoLeaders = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 2));
                 expect([isLeaderATwoLeaders, isLeaderBTwoLeaders]).toContainAllValues([true, true])
             }
         })
@@ -161,8 +165,8 @@ Object.keys(testAPIs).forEach(API => {
 
 
             // Two leaders, but only one will be leader since only one is replicating
-            const isLeaderA = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 2));
-            const isLeaderB = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 2));
+            const isLeaderA = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 2));
+            const isLeaderB = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 2));
             expect(!isLeaderA) // because replicate is false
             expect(isLeaderB)
 
@@ -192,9 +196,9 @@ Object.keys(testAPIs).forEach(API => {
 
 
             // Two leaders, but only one will be leader since only one is replicating
-            const isLeaderA = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 3));
-            const isLeaderB = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 3));
-            const isLeaderC = orbitdb3.isLeader(await orbitdb3.findLeaders(replicationTopic, true, slot, 3));
+            const isLeaderA = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 3));
+            const isLeaderB = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 3));
+            const isLeaderC = orbitdb3.isLeader(await orbitdb3.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 3));
 
             expect(!isLeaderA) // because replicate is false
             expect(isLeaderB)
@@ -225,21 +229,21 @@ Object.keys(testAPIs).forEach(API => {
             // One leader
             const slot = 0;
 
-            const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 1));
-            const isLeaderBOneLeader = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 1));
-            const isLeaderCOneLeader = orbitdb3.isLeader(await orbitdb3.findLeaders(replicationTopic, true, slot, 1));
+            const isLeaderAOneLeader = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 1));
+            const isLeaderBOneLeader = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 1));
+            const isLeaderCOneLeader = orbitdb3.isLeader(await orbitdb3.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 1));
             expect([isLeaderAOneLeader, isLeaderBOneLeader, isLeaderCOneLeader]).toContainValues([false, false, true])
 
             // Two leaders
-            const isLeaderATwoLeaders = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 2));
-            const isLeaderBTwoLeaders = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 2));
-            const isLeaderCTwoLeaders = orbitdb3.isLeader(await orbitdb3.findLeaders(replicationTopic, true, slot, 2));
+            const isLeaderATwoLeaders = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 2));
+            const isLeaderBTwoLeaders = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 2));
+            const isLeaderCTwoLeaders = orbitdb3.isLeader(await orbitdb3.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 2));
             expect([isLeaderATwoLeaders, isLeaderBTwoLeaders, isLeaderCTwoLeaders]).toContainValues([false, true, true])
 
             // Three leders
-            const isLeaderAThreeLeaders = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, true, slot, 3));
-            const isLeaderBThreeLeaders = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, true, slot, 3));
-            const isLeaderCThreeLeaders = orbitdb3.isLeader(await orbitdb3.findLeaders(replicationTopic, true, slot, 3));
+            const isLeaderAThreeLeaders = orbitdb1.isLeader(await orbitdb1.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 3));
+            const isLeaderBThreeLeaders = orbitdb2.isLeader(await orbitdb2.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 3));
+            const isLeaderCThreeLeaders = orbitdb3.isLeader(await orbitdb3.findLeaders(replicationTopic, db1.address!.toString(), true, slot, 3));
             expect([isLeaderAThreeLeaders, isLeaderBThreeLeaders, isLeaderCThreeLeaders]).toContainValues([true, true, true])
         })
 

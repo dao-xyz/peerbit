@@ -12,7 +12,7 @@
             "packages/ipfs/ipfs-log",
             "packages/client",
             "packages/node",
-            "packages/programs/acl/dynamic-access-controller",
+            "packages/programs/acl/identity-access-controller",
             "packages/programs/acl/trusted-network",
             "packages/programs/program-interface",
             "packages/utils/keystore",

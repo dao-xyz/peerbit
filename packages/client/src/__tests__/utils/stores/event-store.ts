@@ -29,7 +29,7 @@ export class EventIndex<T> {
     }
 }
 
-@variant([0, 252])
+@variant("eventstore")
 export class EventStore<T> extends Program {
 
     _index: EventIndex<T>;
@@ -37,7 +37,7 @@ export class EventStore<T> extends Program {
     @field({ type: Store })
     store: Store<Operation<T>>
 
-    constructor(properties: {
+    constructor(properties?: {
         id?: string
     }) {
         super(properties);

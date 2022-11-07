@@ -10,7 +10,7 @@ import { ProgramMatchQuery } from './context';
 export type SearchContext = (() => Address) | AbstractProgram;
 export type AnySearchInitializationOptions<T> = { canRead?: CanRead, context: SearchContext, queryHandler: (query: QueryType) => Promise<Result[]> };
 
-@variant([0, 2])
+@variant("anysearch")
 export class AnySearch<T> extends ComposableProgram {
 
     @field({ type: DQuery })

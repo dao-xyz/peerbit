@@ -100,7 +100,7 @@ export interface IndexedValue<T> {
 
 
 
-@variant([0, 9])
+@variant("documents_index")
 export class DocumentIndex<T extends BinaryPayload> extends ComposableProgram {
 
   @field({ type: AnySearch })

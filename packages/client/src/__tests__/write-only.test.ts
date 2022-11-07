@@ -165,7 +165,7 @@ describe(`orbit-db - Write-only`, function () {
 
         let cb: { entry: Entry<any> }[] = [];
 
-        @variant([0, 239])
+        @variant('program_with_subprogram')
         class ProgramWithSubprogram extends Program implements CanOpenSubPrograms {
 
             @field({ type: Documents })

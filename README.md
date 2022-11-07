@@ -51,7 +51,7 @@ import { Program } from '@dao-xyz/peerbit-program'
 import { SignKey } from '@dao-xyz/peerbit-crypto';
 import { Range, DString, StringOperation } from '@dao-xyz/peerbit-string';
 
-@variant([3,4]) // You have to give the program a variant/discriminator as a list of length 2 (for now)
+@variant("collaborative_text") // You have to give the program a unique name
 class CollaborativeText extends Program {
 
     @field({ type: DString })
@@ -123,7 +123,7 @@ program.doThings()
 ```
 
 ## [Programs](./packages/programs)
-Contains composable programs you can build your program with. For example distributed [document store](./packages/programs/data/document), [search](./packages/programs/discovery/any-search), [chain agnostic access controller](./packages/programs/acl/dynamic-access-controller) 
+Contains composable programs you can build your program with. For example distributed [document store](./packages/programs/data/document), [search](./packages/programs/discovery/any-search), [chain agnostic access controller](./packages/programs/acl/identity-access-controller) 
 
 A program lets you write control mechanism for Append-Only logs (which are represented as a [Store](./packages/store), example program
 
@@ -132,7 +132,7 @@ import { Store } from '@dao-xyz/peerbit-store'
 import { Program } from '@dao-xyz/peerbit-program' 
 import { field, variant } from '@dao-xyz/borst-ts' 
 
-@variant("My string store") // name it to ensure uniqueness
+@variant("string_store")
 class StringStore extends Program  // Needs to extend Program if you are going to store Store<any> in your class
 {
     @field({type: Store}) // decorate it for serialization purposes 

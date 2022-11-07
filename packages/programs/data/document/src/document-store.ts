@@ -18,7 +18,7 @@ export class OperationError extends Error {
     super(message);
   }
 }
-@variant([0, 8])
+@variant("documents")
 export class Documents<T extends BinaryPayload> extends ComposableProgram {
 
   @field({ type: Store })

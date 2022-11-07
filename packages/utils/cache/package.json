@@ -50,7 +50,6 @@
   },
   "devDependencies": {
     "@dao-xyz/peerbit-test-utils": "^0.0.12",
-    "jsondown": "^1.0.0",
     "localstorage-down": "^0.6.7",
     "memdown": "^6.1.1"
   },

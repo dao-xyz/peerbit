@@ -143,49 +143,6 @@ export const exchangeHeads = async (send: (message: Uint8Array) => Promise<void>
   });
   logger.debug(`Send latest heads of '${store._storeIndex}'`)
   if (heads && heads.length > 0) {
-
-    /*  const mapFromPeerToHead: Map<string, Entry<any>[]> = new Map();
-     heads.forEach((head) => {
-       const ls = leaders(head.gid);
-       store.oplog.setPeersByGid(head.gid, new Set(ls))
-       store.oplog.getPeersByGid(head.gid).forEach((peer) => {
-         let arr = mapFromPeerToHead.get(peer);
-         if (!arr) {
-           arr = [];
-           mapFromPeerToHead.set(peer, arr)
-         };
-         arr.push(head)
-       }) */
-    /*  if (head.next.length === 0) {
-       if (!head.peers) {
-         head.peers = new Set(leaders(head.gid));
-       }
-     }
-     if (head.peers.size === 0) {
-       throw new Error("Unexpected");
-     }
- 
-     head.peers.forEach((peer) => {
-       if (peer === id) {
-         return;
-       }
-       let hs: Entry<any>[] = mapFromPeerToHead.get(peer);
-       if (!hs) {
-         hs = [];
-         mapFromPeerToHead.set(peer, hs);
-       }
-       hs.push(head);
-     }) */
-
-    /*  });
-  */
-    /* const promises = [];
-    for (const [peer, headsToPeer] of mapFromPeerToHead) {
-     
-      promises.push()
-    }
-    await Promise.all(promises); */
-
     const message = new ExchangeHeadsMessage({ replicationTopic, storeIndex: store._storeIndex, programIndex: program._programIndex, programAddress: ((program.address || program.parentProgram.address)!).toString(), heads: headsWithRefs });
     const maybeSigned = new MaybeSigned({ data: serialize(message) });
     let signedMessage: MaybeSigned<any> = maybeSigned;

@@ -44,8 +44,6 @@
     "@dao-xyz/peerbit-test-utils": "^0.0.12",
     "@types/libsodium-wrappers": "^0.7.9",
     "is-node": "^1.0.2",
-    "json-loader": "~0.5.7",
-    "jsondown": "^1.0.0",
     "localstorage-down": "^0.6.7",
     "memdown": "^6.1.1"
   },

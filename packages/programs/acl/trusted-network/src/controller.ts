@@ -51,7 +51,7 @@ const canAppendByRelation = async (entry: Entry<Operation<Relation>>, isTrusted?
     }
 }
 
-@variant([0, 10])
+@variant("relations")
 export class RelationContract extends Program {
 
     @field({ type: Documents })
@@ -89,7 +89,7 @@ export class RelationContract extends Program {
  * Not shardeable since we can not query trusted relations, because this would lead to a recursive problem where we then need to determine whether the responder is trusted or not
  */
 
-@variant([0, 11])
+@variant("trusted_network")
 export class TrustedNetwork extends Program {
 
     @field({ type: PublicSignKey })

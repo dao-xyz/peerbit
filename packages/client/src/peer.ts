@@ -11,7 +11,7 @@ import { serialize, deserialize } from '@dao-xyz/borsh'
 import { ProtocolMessage } from './message.js'
 import type { Message as PubSubMessage, SignedMessage as SignedPubSubMessage } from '@libp2p/interface-pubsub';
 import { SharedChannel, SharedIPFSChannel } from './channel.js'
-import { exchangeKeys, KeyResponseMessage, KeyAccessCondition, recieveKeys, requestAndWaitForKeys, RequestKeyMessage, RequestKeyCondition, RequestKeysByKey, RequestKeysByReplicationTopic } from './exchange-keys.js'
+import { exchangeKeys, KeyResponseMessage, KeyAccessCondition, recieveKeys, requestAndWaitForKeys, RequestKeyMessage, RequestKeyCondition, RequestKeysByKey, RequestKeysByAddress } from './exchange-keys.js'
 import { AccessError, DecryptedThing, Ed25519Keypair, EncryptedThing, MaybeEncrypted, PublicKeyEncryptionResolver, SignatureWithKey, SignKey, X25519Keypair } from "@dao-xyz/peerbit-crypto"
 import { X25519PublicKey, IPFSAddress } from '@dao-xyz/peerbit-crypto'
 import LRU from 'lru-cache';
@@ -33,6 +33,7 @@ import { exchangeSwarmAddresses, ExchangeSwarmMessage } from './exchange-network
 import { setTimeout } from 'timers';
 // @ts-ignore
 import { logger as parentLogger } from './logger.js'
+import { IVPC, VPC } from './network.js';
 const logger = parentLogger.child({ module: 'peer' });
 // @ts-ignore
 
@@ -46,7 +47,7 @@ interface ProgramWithMetadata {
 
 export type StoreOperations = 'write' | 'all'
 export type Storage = { createStore: (string: string) => Level }
-export type OptionalCreateOptions = { limitSigning?: boolean, minReplicas?: number, waitForKeysTimout?: number, canOpenProgram?(replicationTopic: string, entryToReplicate?: Entry<any>): Promise<boolean> }
+export type OptionalCreateOptions = { limitSigning?: boolean, minReplicas?: number, waitForKeysTimout?: number, canOpenProgram?(address: string, replicationTopic?: string, entryToReplicate?: Entry<any>): Promise<boolean> }
 export type CreateOptions = { keystore: Keystore, identity: Identity, directory: string, peerId: PeerId, storage: Storage, cache: Cache<any>, localNetwork: boolean } & OptionalCreateOptions;
 export type CreateInstanceOptions = { storage?: Storage, directory?: string, keystore?: Keystore, peerId?: PeerId, identity?: Identity, cache?: Cache<any>, localNetwork?: boolean } & OptionalCreateOptions;
 export type OpenStoreOptions = {
@@ -95,7 +96,6 @@ export class Peerbit {
   //allPrograms: { [topic: string]: { [address: string]: Program } };
 
   localNetwork: boolean;
-  _trustedNetwork: Map<string, TrustedNetwork>
   /*  heapsizeLimitForForks: number = 1000 * 1000 * 1000; */
 
   _gidPeersHistory: Map<string, Set<string>> = new Map()
@@ -105,7 +105,7 @@ export class Peerbit {
   _peerInfoLRU: Map<string, PeerInfoWithMeta> = new Map();// LRU = new LRU({ max: 1000, ttl:  EMIT_HEALTHCHECK_INTERVAL * 4 });
   _supportedHashesLRU: LRUCounter = new LRUCounter(new LRU({ ttl: 60000 }))
   _peerInfoResponseCounter: LRUCounter = new LRUCounter(new LRU({ ttl: 100000 }))
-  _canOpenProgram: (replicationTopic: string, entryTopReplicate?: Entry<any>) => Promise<boolean>
+  _canOpenProgram: (address: string, replicationTopic?: string, entryTopReplicate?: Entry<any>) => Promise<boolean>
   _openProgramQueue: PQueue
   _disconnected: boolean = false;
   _disconnecting: boolean = false;
@@ -128,13 +128,11 @@ export class Peerbit {
     this.directory = options.directory || './orbitdb'
     this.storage = options.storage
     this._directConnections = new Map();
-    this._trustedNetwork = new Map();
     this.programs = {}
-    // this.allPrograms = { }
     this.caches = {}
     this._minReplicas = options.minReplicas || MIN_REPLICAS;
     this.limitSigning = options.limitSigning || false;
-    this._canOpenProgram = options.canOpenProgram || (async (replicationTopic, entryToReplicate) => !this.getNetwork(replicationTopic) ? Promise.resolve(true) : (this.isTrustedByNetwork(!entryToReplicate ? undefined : await entryToReplicate.getSignature().then(x => x.publicKey).catch(e => undefined), replicationTopic)))
+    this._canOpenProgram = options.canOpenProgram || (async (address, replicationTopic, entryToReplicate) => !this._getNetwork(address, replicationTopic) ? Promise.resolve(true) : (this.isTrustedByNetwork(!entryToReplicate ? undefined : await entryToReplicate.getSignature().then(x => x.publicKey).catch(e => undefined), address, replicationTopic)))
     this.localNetwork = options.localNetwork;
     this.caches[this.directory] = { cache: options.cache, handlers: new Set() }
     this.keystore = options.keystore
@@ -162,8 +160,8 @@ export class Peerbit {
     return encryptionWithRequestKey(this.identity, this.keystore)
   }
 
-  async requestAndWaitForKeys<T extends (Ed25519Keypair | X25519Keypair)>(replicationTopic: string, condition: RequestKeyCondition<T>): Promise<KeyWithMeta<T>[] | undefined> {
-    if (!this._trustedNetwork.get(replicationTopic)) {
+  async requestAndWaitForKeys<T extends (Ed25519Keypair | X25519Keypair)>(replicationTopic: string, address: string, condition: RequestKeyCondition<T>): Promise<KeyWithMeta<T>[] | undefined> {
+    if (!this._getNetwork(address)) {
       return;
     }
     const promiseKey = condition.hashcode;
@@ -238,13 +236,13 @@ export class Peerbit {
     } */
 
 
-  async getEncryptionKey(replicationTopic: string): Promise<KeyWithMeta<Ed25519Keypair | X25519Keypair> | undefined> {
+  async getEncryptionKey(replicationTopic: string, address: string): Promise<KeyWithMeta<Ed25519Keypair | X25519Keypair> | undefined> {
     // v0 take some recent
-    const keys = (await this.keystore.getKeys<Ed25519Keypair | X25519Keypair>(replicationTopic));
+    const keys = (await this.keystore.getKeys<Ed25519Keypair | X25519Keypair>(address));
     let key = keys?.[0];
     if (!key) {
-      const keys = this._waitForKeysTimeout ? await this.requestAndWaitForKeys(replicationTopic, new RequestKeysByReplicationTopic({
-        replicationTopic
+      const keys = this._waitForKeysTimeout ? await this.requestAndWaitForKeys(replicationTopic, address, new RequestKeysByAddress({
+        address
       })) : undefined;
       key = keys ? keys[0] : undefined;
     }
@@ -388,7 +386,7 @@ export class Peerbit {
       if (store.replicate) {
         // send to peers directly
         send = async (data: Uint8Array) => {
-          const replicators = await this.findReplicators(replicationTopic, store.replicate, entry.gid, this.programs[replicationTopic][programAddress].minReplicas.value);
+          const replicators = await this.findReplicators(replicationTopic, programAddress, store.replicate, entry.gid, this.programs[replicationTopic][programAddress].minReplicas.value);
           const channels: SharedChannel<DirectChannel>[] = [];
           for (const replicator of replicators) {
             if (replicator === this.id.toString()) {
@@ -412,11 +410,11 @@ export class Peerbit {
 
   }
 
-  async isTrustedByNetwork(identity: SignKey | undefined, replicationTopic: string): Promise<boolean> {
+  async isTrustedByNetwork(identity: SignKey | undefined, address: string, replicationTopic?: string): Promise<boolean> {
     if (!identity) {
       return false;
     }
-    let network = this.getNetwork(replicationTopic);
+    let network = this._getNetwork(address, replicationTopic);
     if (!network) {
       return false;
     }
@@ -443,17 +441,24 @@ export class Peerbit {
       await signedMessage.verify();
       const msg = signedMessage.getValue(ProtocolMessage);
       const sender: SignKey | undefined = signedMessage.signature?.publicKey;
-      const checkTrustedSender = async (replicationTopic: string, onlyNetworked: boolean): Promise<boolean> => {
+      const checkTrustedSender = async (address: string, onlyNetworked: boolean): Promise<boolean> => {
         let isTrusted = false;
         if (sender) {
-          let network = this.getNetwork(replicationTopic);
+          // find the progrma 
+          let network = this._getNetwork(address);
           if (!network) {
             if (onlyNetworked) {
               return false;
             }
             return true;
           }
-          isTrusted = !!(await network.isTrusted(sender))
+          else if (network instanceof TrustedNetwork) {
+            isTrusted = !!(await network.isTrusted(sender))
+
+          }
+          else {
+            throw new Error("Unexpected network type")
+          }
         }
         if (!isTrusted) {
           logger.info("Recieved message from untrusted peer")
@@ -482,7 +487,7 @@ export class Peerbit {
             await this._maybeOpenStorePromise;
             for (const [gid, entries] of groupByGid(heads)) {
               // Check if root, if so, we check if we should open the store
-              const leaders = await this.findLeaders(replicationTopic, isReplicating, gid, msg.minReplicas?.value || this._minReplicas); // Todo reuse calculations
+              const leaders = await this.findLeaders(replicationTopic, programAddress, isReplicating, gid, msg.minReplicas?.value || this._minReplicas); // Todo reuse calculations
               leaderCache.set(gid, leaders);
               if (leaders.find(x => x === this.id.toString())) {
                 try {
@@ -518,7 +523,7 @@ export class Peerbit {
 
           await programInfo.program.initializationPromise; // Make sure it is ready
           for (const [gid, value] of groupByGid(heads)) {
-            const leaders = leaderCache.get(gid) || await this.findLeaders(replicationTopic, isReplicating, gid, programInfo.minReplicas.value);
+            const leaders = leaderCache.get(gid) || await this.findLeaders(replicationTopic, programAddress, isReplicating, gid, programInfo.minReplicas.value);
             const isLeader = leaders.find((l) => l === this.id.toString());
             if (!isLeader) {
               continue;
@@ -582,10 +587,10 @@ export class Peerbit {
           return;
         }
 
-        if (!await checkTrustedSender(message.topic, false)) {
-          return;
-        }
-
+        /*    if (!await checkTrustedSender(message.address, false)) { TODO, how to make this DDOS resistant?
+             return;
+           }
+    */
         msg.info.forEach(async (info) => {
           if (info.id === this.id.toString()) {
             return;
@@ -606,11 +611,11 @@ export class Peerbit {
           return;
         }
 
-        if (msg.condition instanceof RequestKeysByReplicationTopic) {
-          if (!await checkTrustedSender(msg.condition.replicationTopic, true)) {
+        if (msg.condition instanceof RequestKeysByAddress) {
+          if (!await checkTrustedSender(msg.condition.address, true)) {
             return;
           }
-          const canExchangeKey: KeyAccessCondition = (key) => key.group === (msg.condition as RequestKeysByReplicationTopic<any>).replicationTopic;
+          const canExchangeKey: KeyAccessCondition = (key) => key.group === (msg.condition as RequestKeysByAddress<any>).address;
 
           /**
            * Someone is requesting X25519 Secret keys for me so that they can open encrypted messages (and encrypt)
@@ -636,46 +641,51 @@ export class Peerbit {
 
   async _onPeerConnected(replicationTopic: string, peer: string) {
     logger.debug(`New peer '${peer}' connected to '${replicationTopic}'`)
+    try {
 
 
-    // determine if we should open a channel (we are replicating a store on the topic + a weak check the peer is trusted)
-    const programs = this.programs[replicationTopic];
-    if (programs) {
+      // determine if we should open a channel (we are replicating a store on the topic + a weak check the peer is trusted)
+      const programs = this.programs[replicationTopic];
+      if (programs) {
 
-      // Should subscription to a replication be a proof of "REPLICATING?"
-      const entries = Object.entries(programs);
-      const initializeAsReplicator = async () => {
-        await exchangeSwarmAddresses((data) => this._ipfs.pubsub.publish(replicationTopic, data), this.identity, peer, await this._ipfs.swarm.peers(), this.getNetwork(replicationTopic), this.localNetwork)
-        await this.getChannel(peer, replicationTopic); // always open a channel, and drop channels if necessary (not trusted) (TODO)
-      }
-      if (entries.length === 0) {
-        // we are subscribed to replicationTopic, but we have not opened any store, this "means" 
-        // that we are intending to replicate data for this topic 
-        await initializeAsReplicator();
-        return;
-      }
-
-      for (const [_storeAddress, programAndStores] of Object.entries(programs)) {
-        for (const [_, store] of programAndStores.program.allStoresMap) {
-          if (store.replicate) {
-            // create a channel for sending/receiving messages
-
-            await initializeAsReplicator();
-            return;
-
-            // Creation of this channel here, will make sure it is created even though a head might not be exchangee
-
-          }
-          else {
-            // If replicate false, we are in write mode. Means we should exchange all heads 
-            // Because we dont know anything about whom are to store data, so we assume all peers might have responsibility
-            const send = (data: Uint8Array) => this._ipfs.pubsub.publish(DirectChannel.getTopic([peer.toString()]), data);
-            await exchangeHeads(send, store, programAndStores.program, store.oplog.heads, replicationTopic, false, this.limitSigning ? undefined : this.identity);
-
-          }
+        // Should subscription to a replication be a proof of "REPLICATING?"
+        const entries = Object.entries(programs);
+        const initializeAsReplicator = async () => {
+          await exchangeSwarmAddresses((data) => this._ipfs.pubsub.publish(replicationTopic, data), this.identity, peer, await this._ipfs.swarm.peers(), this._getNetwork(replicationTopic), this.localNetwork)
+          await this.getChannel(peer, replicationTopic); // always open a channel, and drop channels if necessary (not trusted) (TODO)
+        }
+        if (entries.length === 0) {
+          // we are subscribed to replicationTopic, but we have not opened any store, this "means" 
+          // that we are intending to replicate data for this topic 
+          await initializeAsReplicator();
+          return;
         }
 
+        for (const [_storeAddress, programAndStores] of Object.entries(programs)) {
+          for (const [_, store] of programAndStores.program.allStoresMap) {
+            if (store.replicate) {
+              // create a channel for sending/receiving messages
+
+              await initializeAsReplicator();
+              return;
+
+              // Creation of this channel here, will make sure it is created even though a head might not be exchangee
+
+            }
+            else {
+              // If replicate false, we are in write mode. Means we should exchange all heads 
+              // Because we dont know anything about whom are to store data, so we assume all peers might have responsibility
+              const send = (data: Uint8Array) => this._ipfs.pubsub.publish(DirectChannel.getTopic([peer.toString()]), data);
+              await exchangeHeads(send, store, programAndStores.program, store.oplog.heads, replicationTopic, false, this.limitSigning ? undefined : this.identity);
+
+            }
+          }
+
+        }
       }
+    } catch (error: any) {
+      logger.error("Unexpected error in _onPeerConnected callback: " + error.toString())
+      throw error;
     }
   }
 
@@ -732,7 +742,7 @@ export class Peerbit {
               /*     const oldPeers = this.findReplicators(store, gid, [channel.recieverId]);
                   const oldPeersSet = new Set(this.findReplicators(store, gid, [channel.recieverId])); */
               const oldPeersSet = this._gidPeersHistory.get(gid);
-              const newPeers = await this.findReplicators(replicationTopic, store.replicate, gid, programInfo.minReplicas.value);
+              const newPeers = await this.findReplicators(replicationTopic, programInfo.program.address.toString(), store.replicate, gid, programInfo.minReplicas.value);
               /* const index = oldPeers.findIndex(p => p === channel.recieverId); */
               for (const newPeer of newPeers) {
                 if (!oldPeersSet?.has(newPeer) && newPeer !== this.id.toString()) { // second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
@@ -947,7 +957,7 @@ export class Peerbit {
        minReplicas,
        program: subprogram
      };
-   }) */
+    }) */
     return p;
 
   }
@@ -973,66 +983,72 @@ export class Peerbit {
     return !!(leaders.find(id => id === this.id.toString()))
   }
 
-  findReplicators(replicationTopic: string, replicating: boolean, gid: string, minReplicas: number): Promise<string[]> {
-    return this.findLeaders(replicationTopic, replicating, gid, minReplicas);
+  findReplicators(replicationTopic: string, address: string, replicating: boolean, gid: string, minReplicas: number): Promise<string[]> {
+    return this.findLeaders(replicationTopic, address, replicating, gid, minReplicas);
   }
 
 
-  async findLeaders(replicationTopic: string, replicating: boolean, slot: { toString(): string }, numberOfLeaders: number/* , addPeers: string[] = [], removePeers: string[] = [] */): Promise<string[]> {
+  async findLeaders(replicationTopic: string, address: string, replicating: boolean, slot: { toString(): string }, numberOfLeaders: number/* , addPeers: string[] = [], removePeers: string[] = [] */): Promise<string[]> {
     // Hash the time, and find the closest peer id to this hash
-    const h = (h: string) => createHash('sha1').update(h).digest('hex');
-    const slotHash = h(slot.toString())
+    try {
+      const h = (h: string) => createHash('sha1').update(h).digest('hex');
+      const slotHash = h(slot.toString())
 
-    // Assumption: All peers wanting to replicate on topic has direct connections with me (Fully connected network)
-    let peers: string[] = this.getPeersOnTopic(replicationTopic);
+      // Assumption: All peers wanting to replicate on topic has direct connections with me (Fully connected network)
+      const allPeers: string[] = this.getPeersOnTopic(replicationTopic);
 
-    // Assumption: Network specification is accurate
-    // Replication topic is not an address we assume that the network allows all participants
-    const isTrusted = (peer: string | PeerId) => Address.isValid(replicationTopic) ? this.getNetwork(replicationTopic)?.isTrusted(new IPFSAddress({ address: peer.toString() })) : true
-    peers = await Promise.all(peers.map(isTrusted))
-      .then((results) => peers.filter((_v, index) => results[index]))
+      // Assumption: Network specification is accurate
+      // Replication topic is not an address we assume that the network allows all participants
+      const network = this._getNetwork(address, replicationTopic);
+      const isTrusted = (peer: string | PeerId) => network ? network.isTrusted(new IPFSAddress({ address: peer.toString() })) : true
+      const peers = await Promise.all(allPeers.map(isTrusted))
+        .then((results) => allPeers.filter((_v, index) => results[index]))
 
-    const hashToPeer: Map<string, string> = new Map();
-    const peerHashed: string[] = [];
+      const hashToPeer: Map<string, string> = new Map();
+      const peerHashed: string[] = [];
 
-    if (peers.length === 0) {
-      return [this.id.toString()];
-    }
-
-    // Add self
-    if (replicating) {
-      peers.push(this.id.toString())
-    }
-
-
-    // Hash step
-    peers.forEach((peer) => {
-      const peerHash = h(peer + slotHash); // we do peer + slotHash because we want peerHashed.sort() to be different for each slot, (so that uniformly random pick leaders). You can see this as seed
-      hashToPeer.set(peerHash, peer);
-      peerHashed.push(peerHash);
-    })
-    numberOfLeaders = Math.min(numberOfLeaders, peerHashed.length);
-    peerHashed.push(slotHash);
-
-    // Choice step
-
-    // TODO make more efficient
-    peerHashed.sort((a, b) => a.localeCompare(b)) // sort is needed, since "getPeers" order is not deterministic
-    let slotIndex = peerHashed.findIndex(x => x === slotHash);
-    // we only step forward 1 step (ignoring that step backward 1 could be 'closer')
-    // This does not matter, we only have to make sure all nodes running the code comes to somewhat the 
-    // same conclusion (are running the same leader selection algorithm)
-    const leaders: string[] = [];
-    let offset = 0;
-    for (let i = 0; i < numberOfLeaders; i++) {
-      let nextIndex = (slotIndex + 1 + i + offset) % peerHashed.length;
-      if (nextIndex === slotIndex) {
-        offset += 1;
-        nextIndex = (nextIndex + 1) % peerHashed.length;
+      if (peers.length === 0) {
+        return [this.id.toString()];
       }
-      leaders.push(hashToPeer.get(peerHashed[nextIndex]) as string);
+
+      // Add self
+      if (replicating) {
+        peers.push(this.id.toString())
+      }
+
+
+      // Hash step
+      peers.forEach((peer) => {
+        const peerHash = h(peer + slotHash); // we do peer + slotHash because we want peerHashed.sort() to be different for each slot, (so that uniformly random pick leaders). You can see this as seed
+        hashToPeer.set(peerHash, peer);
+        peerHashed.push(peerHash);
+      })
+      numberOfLeaders = Math.min(numberOfLeaders, peerHashed.length);
+      peerHashed.push(slotHash);
+
+      // Choice step
+
+      // TODO make more efficient
+      peerHashed.sort((a, b) => a.localeCompare(b)) // sort is needed, since "getPeers" order is not deterministic
+      let slotIndex = peerHashed.findIndex(x => x === slotHash);
+      // we only step forward 1 step (ignoring that step backward 1 could be 'closer')
+      // This does not matter, we only have to make sure all nodes running the code comes to somewhat the 
+      // same conclusion (are running the same leader selection algorithm)
+      const leaders: string[] = [];
+      let offset = 0;
+      for (let i = 0; i < numberOfLeaders; i++) {
+        let nextIndex = (slotIndex + 1 + i + offset) % peerHashed.length;
+        if (nextIndex === slotIndex) {
+          offset += 1;
+          nextIndex = (nextIndex + 1) % peerHashed.length;
+        }
+        leaders.push(hashToPeer.get(peerHashed[nextIndex]) as string);
+      }
+      return leaders;
+    } catch (error) {
+      const x = 132;
+      return undefined as any;
     }
-    return leaders;
   }
 
 
@@ -1117,19 +1133,13 @@ export class Peerbit {
     }
     const fn = async (): Promise<ProgramWithMetadata> => {
       // TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?
-      let programAddress: string | undefined;
-      if (storeOrAddress instanceof Address) {
-        programAddress = storeOrAddress.toString()
-      }
-      else if (typeof storeOrAddress === 'string') {
-        programAddress = storeOrAddress;
-      }
-      else {
-        programAddress = storeOrAddress._address?.toString();
-      }
 
-      if (typeof storeOrAddress === 'string') {
-        storeOrAddress = Address.parse(storeOrAddress);
+      if (typeof storeOrAddress === 'string' || storeOrAddress instanceof Address) {
+        storeOrAddress = storeOrAddress instanceof Address ? storeOrAddress : Address.parse(storeOrAddress);
+
+        if (storeOrAddress.path) {
+          throw new Error("Opening programs by subprogram addresses is currently unsupported")
+        }
       }
       let program = storeOrAddress as S;
 
@@ -1147,7 +1157,7 @@ export class Peerbit {
       }
 
       await program.save(this.ipfs);
-      programAddress = program.address?.toString()!;
+      let programAddress = program.address?.toString()!;
 
       let definedReplicationTopic: string = (options.replicationTopic || programAddress)!;
       if (!definedReplicationTopic) {
@@ -1160,21 +1170,18 @@ export class Peerbit {
         }
       }
 
-
-
-
       try {
 
         logger.debug('open()')
 
         let pstores = this.programs[definedReplicationTopic];
-        if (programAddress && (!pstores || !pstores[programAddress.toString()]) && options.verifyCanOpen) {
+        if (programAddress && (!pstores || !pstores[programAddress]) && options.verifyCanOpen) {
           // open store if is leader and sender is trusted
           let senderCanOpen: boolean = false;
 
           if (!program.owner) {
             // can open is is trusted by netwoek?
-            senderCanOpen = await this._canOpenProgram(definedReplicationTopic, options.entryToReplicate);
+            senderCanOpen = await this._canOpenProgram(programAddress, definedReplicationTopic, options.entryToReplicate);
           }
           else if (options.entryToReplicate) {
 
@@ -1208,7 +1215,7 @@ export class Peerbit {
 
 
         if (!options.encryption) {
-          options.encryption = encryptionWithRequestKey(this.identity, this.keystore, this._waitForKeysTimeout ? (key) => this.requestAndWaitForKeys(definedReplicationTopic, new RequestKeysByKey<(Ed25519Keypair | X25519Keypair)>({
+          options.encryption = encryptionWithRequestKey(this.identity, this.keystore, this._waitForKeysTimeout ? (key) => this.requestAndWaitForKeys(definedReplicationTopic, programAddress, new RequestKeysByKey<(Ed25519Keypair | X25519Keypair)>({
             key
           })) : undefined)
         }
@@ -1293,10 +1300,6 @@ export class Peerbit {
         }
         await resolveCache(program.address!);
 
-
-        if (program instanceof TrustedNetwork && !this._trustedNetwork.has(program.address!.toString())) {
-          this._trustedNetwork.set(program.address!.toString(), program)
-        }
         const pm = await this.addProgram(definedReplicationTopic, program, options.minReplicas || new AbsolutMinReplicas(this._minReplicas));
         await this.subscribeToReplicationTopic(definedReplicationTopic);
         return pm
@@ -1313,29 +1316,47 @@ export class Peerbit {
 
   }
 
-  getNetwork(address: string | Address): TrustedNetwork | undefined {
-    return this._trustedNetwork.get(typeof address === 'string' ? address : address.toString())
-  }
-
-  async openNetwork(addressOrNetwork: string | Address | TrustedNetwork, options?: OpenStoreOptions) {
-    let network: TrustedNetwork
-
-    if (addressOrNetwork instanceof TrustedNetwork) {
-      network = addressOrNetwork;
-    }
-    else {
-      const loaded = await TrustedNetwork.load<TrustedNetwork>(this._ipfs, Address.parse(addressOrNetwork.toString()))
-      if (loaded instanceof TrustedNetwork === false) {
-        throw new Error("Address does not point to a TrustedNetwork")
+  _getNetwork(address: string | Address, replicationTopic?: string): TrustedNetwork | undefined {
+    const a = typeof address === 'string' ? address : address.toString();
+    if (!replicationTopic)
+      for (const [k, v] of Object.entries(this.programs)) {
+        if (v[a]) {
+          replicationTopic = k;
+        }
       }
-      network = loaded;
+    if (!replicationTopic) {
+      return;
     }
-
-    const openNetwork = await this.open(network, options)
-    return openNetwork;
+    const parsedAddress = address instanceof Address ? address : Address.parse(address);
+    const asPermissioned = this.programs[replicationTopic]?.[parsedAddress.root().toString()]?.program as any as IVPC
+    if (!asPermissioned) {
+      return;
+    }
+    if (!asPermissioned._isPermissioned) {
+      return;
+    }
+    return asPermissioned.network;
   }
 
-  async joinNetwork(address: Address | string | TrustedNetwork) {
+  /*   async openNetwork(addressOrNetwork: string | Address | TrustedNetwork, options?: OpenStoreOptions) {
+      let network: TrustedNetwork
+  
+      if (addressOrNetwork instanceof TrustedNetwork) {
+        network = addressOrNetwork;
+      }
+      else {
+        const loaded = await TrustedNetwork.load<TrustedNetwork>(this._ipfs, Address.parse(addressOrNetwork.toString()))
+        if (loaded instanceof TrustedNetwork === false) {
+          throw new Error("Address does not point to a TrustedNetwork")
+        }
+        network = loaded;
+      }
+  
+      const openNetwork = await this.open(network, options)
+      return openNetwork;
+    } */
+
+  /* async joinNetwork(address: Address | string | TrustedNetwork) {
     let trustedNetwork = this._trustedNetwork.get(address instanceof TrustedNetwork ? address.address!.toString() : address.toString());
     if (!trustedNetwork) {
       throw new Error("TrustedNetwork is not open, please call `openNetwork` prior")
@@ -1343,7 +1364,7 @@ export class Peerbit {
     // Will be rejected by peers if my identity is not trusted
     // (this will sign our IPFS ID with our client Ed25519 key identity, if peers do not trust our identity, we will be rejected)
     await trustedNetwork.add(new IPFSAddress({ address: this.id.toString() }))
-  }
+  } */
 
   /**
    * Check if we have the database, or part of it, saved locally

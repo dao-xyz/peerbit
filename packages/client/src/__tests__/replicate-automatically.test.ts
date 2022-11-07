@@ -37,16 +37,6 @@ Object.keys(testAPIs).forEach(API => {
       session = await Session.connected(2, API);
       orbitdb1 = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath1 })
       orbitdb2 = await Peerbit.create(session.peers[1].ipfs, { directory: dbPath2 })
-      /*    ipfsd1 = await startIpfs(API, config.daemon1)
-         ipfsd2 = await startIpfs(API, config.daemon2)
-         ipfsd3 = await startIpfs(API, config.daemon2)
-         ipfsd4 = await startIpfs(API, config.daemon2)
-   
-         ipfs1 = ipfsd1.api
-         ipfs2 = ipfsd2.api
-         ipfs3 = ipfsd3.api
-         ipfs4 = ipfsd4.api */
-
 
     })
 

@@ -44,7 +44,7 @@ class Document extends CustomBinaryPayload {
   }
 }
 
-@variant([0, 244])
+@variant("test_documents")
 class DocumentDDoc extends Program {
 
   @field({ type: Documents })

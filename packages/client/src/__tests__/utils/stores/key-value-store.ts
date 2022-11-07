@@ -38,7 +38,8 @@ export class KeyValueIndex {
 }
 
 const encoding = JSON_ENCODING;
-@variant([0, 253])
+
+@variant("kvstore")
 export class KeyValueStore<T> extends Program {
     _index: KeyValueIndex;
 

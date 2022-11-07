@@ -91,7 +91,8 @@ export class QueryAddressSuffix extends QueryTopic {
         return address.toString() + '/' + this.suffix
     }
 }
-@variant([0, 1])
+
+@variant("dquery")
 export class DQuery<Q, R> extends ComposableProgram {
 
     queryRegion?: QueryTopic;

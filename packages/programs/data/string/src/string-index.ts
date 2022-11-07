@@ -23,7 +23,7 @@ export class StringOperation {
 export const encoding = BORSH_ENCODING(StringOperation);
 
 
-@variant([0, 6])
+@variant("string_index")
 export class StringIndex extends ComposableProgram {
 
   _string: string;

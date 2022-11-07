@@ -28,7 +28,7 @@ const findAllOccurrences = (str: string, substr: string): number[] => {
 
 export type StringStoreOptions = { canRead?: (key: SignatureWithKey) => Promise<boolean> };
 
-@variant([0, 5])
+@variant("dstring")
 export class DString extends Program {
 
   @field({ type: Store })

@@ -27,7 +27,7 @@ const createIdentity = async () => {
 }
 
 
-@variant([0, 242])
+@variant("identity_graph")
 class IdentityGraph extends Program {
 
     @field({ type: Documents })

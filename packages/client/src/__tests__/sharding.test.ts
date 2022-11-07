@@ -14,6 +14,7 @@ import {
 } from '@dao-xyz/peerbit-test-utils'
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
+import { PermissionedEventStore } from "./utils/stores/test-store";
 
 const dbPath1 = './orbitdb/tests/sharding/1'
 const dbPath2 = './orbitdb/tests/sharding/2'
@@ -23,7 +24,7 @@ Object.keys(testAPIs).forEach(API => {
         jest.setTimeout(config.timeout * 3)
 
         let session: Session;
-        let orbitdb1: Peerbit, orbitdb2: Peerbit, orbitdb3: Peerbit, db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>, replicationTopic: string;
+        let orbitdb1: Peerbit, orbitdb2: Peerbit, orbitdb3: Peerbit, db1: PermissionedEventStore, db2: PermissionedEventStore, db3: PermissionedEventStore, replicationTopic: string;
 
         beforeEach(async () => {
             rmrf.sync(dbPath1)
@@ -36,25 +37,27 @@ Object.keys(testAPIs).forEach(API => {
             orbitdb2 = await Peerbit.create(session.peers[1].ipfs, { directory: dbPath2 })
             orbitdb3 = await Peerbit.create(session.peers[2].ipfs, { directory: dbPath2 })
 
-            const network = await orbitdb1.openNetwork(new TrustedNetwork({ id: 'network-tests', rootTrust: orbitdb1.identity.publicKey }), { directory: dbPath1 })
-            await orbitdb1.joinNetwork(network);
+            const network = new TrustedNetwork({ id: 'network-tests', rootTrust: orbitdb1.identity.publicKey });
+            db1 = await orbitdb1.open<PermissionedEventStore>(new PermissionedEventStore({ network }), { directory: dbPath1 })
+
+            await db1.joinNetwork();
 
             // trust client 3
             await network.add(orbitdb2.id)
             await network.add(orbitdb2.identity.publicKey)
-            await orbitdb2.openNetwork(network.address!);
+            db2 = await orbitdb2.open<PermissionedEventStore>(db1.address!);
             await network.add(orbitdb3.id)
             await network.add(orbitdb3.identity.publicKey)
-            await orbitdb3.openNetwork(network.address!);
+            db3 = await orbitdb3.open<PermissionedEventStore>(db1.address!);
 
-            replicationTopic = network.address!.toString();
-
-            db1 = await orbitdb1.open(new EventStore<string>({ id: 'sharding-tests' })
-                , { replicationTopic })
-
-            db2 = await orbitdb2.open(db1.address!, { replicationTopic }) as EventStore<string>
-
-            db3 = await orbitdb3.open(db1.address!, { replicationTopic }) as EventStore<string>
+            /*   replicationTopic = network.address!.toString();
+  
+              db1 = await orbitdb1.open(new EventStore<string>({ id: 'sharding-tests' })
+                  , { replicationTopic })
+  
+              db2 = await orbitdb2.open(db1.address!, { replicationTopic }) as EventStore<string>
+  
+              db3 = await orbitdb3.open(db1.address!, { replicationTopic }) as EventStore<string> */
 
         })
 
@@ -85,15 +88,15 @@ Object.keys(testAPIs).forEach(API => {
             // expect min replicas 2 with 3 peers, this means that 66% of entries (ca) will be at peer 2 and 3, and peer1 will have all of them since 1 is the creator
             const promises: Promise<any>[] = [];
             for (let i = 0; i < entryCount; i++) {
-                promises.push(db1.add(i.toString(), { nexts: [] }));
+                promises.push(db1.store.add(i.toString(), { nexts: [] }));
             }
 
             await Promise.all(promises);
-            await waitFor(() => db1.store.oplog.values.length === entryCount)
+            await waitFor(() => db1.store.store.oplog.values.length === entryCount)
 
             // this could failed, if we are unlucky probability wise
-            await waitFor(() => db2.store.oplog.values.length > entryCount * 0.5 && db2.store.oplog.values.length < entryCount * 0.75)
-            await waitFor(() => db3.store.oplog.values.length > entryCount * 0.5 && db3.store.oplog.values.length < entryCount * 0.75)
+            await waitFor(() => db2.store.store.oplog.values.length > entryCount * 0.5 && db2.store.store.oplog.values.length < entryCount * 0.75)
+            await waitFor(() => db3.store.store.oplog.values.length > entryCount * 0.5 && db3.store.store.oplog.values.length < entryCount * 0.75)
 
 
             const checkConverged = async (db: EventStore<any>) => {
@@ -102,8 +105,8 @@ Object.keys(testAPIs).forEach(API => {
                 return a === db.store.oplog.values.length
             }
 
-            await waitForAsync(() => checkConverged(db2), { timeout: 20000, delayInterval: 5000 })
-            await waitForAsync(() => checkConverged(db3), { timeout: 20000, delayInterval: 5000 })
+            await waitForAsync(() => checkConverged(db2.store), { timeout: 20000, delayInterval: 5000 })
+            await waitForAsync(() => checkConverged(db3.store), { timeout: 20000, delayInterval: 5000 })
 
         })
 

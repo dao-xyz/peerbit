@@ -1,5 +1,5 @@
 {
-  "name": "@dao-xyz/peerbit-dynamic-access-controller",
+  "name": "@dao-xyz/peerbit-identity-access-controller",
   "version": "0.0.71",
   "description": "Access controller that operates on a DB",
   "type": "module",

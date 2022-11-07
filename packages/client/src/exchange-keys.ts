@@ -108,23 +108,23 @@ export class RequestKeyCondition<T extends Ed25519Keypair | X25519Keypair> {
 }
 
 @variant(0)
-export class RequestKeysByReplicationTopic<T extends (Ed25519Keypair | X25519Keypair)> extends RequestKeyCondition<T> {
+export class RequestKeysByAddress<T extends (Ed25519Keypair | X25519Keypair)> extends RequestKeyCondition<T> {
 
     @field({ type: 'string' })
-    replicationTopic: string;
+    address: string;
 
     constructor(props?: {
         type?: Constructor<T> | RequestKeyType
-        replicationTopic: string
+        address: string
     }) {
         super({ type: props?.type as Constructor<T> });
         if (props) {
-            this.replicationTopic = props.replicationTopic;
+            this.address = props.address;
         }
     }
 
     get hashcode() {
-        return this._type + this.replicationTopic
+        return this._type + this.address
     }
 
 }
@@ -200,11 +200,11 @@ export class KeyResponseMessage extends ProtocolMessage {
 
 export const requestAndWaitForKeys = async<T extends (Ed25519Keypair | X25519Keypair)>(condition: RequestKeyCondition<T>, send: (message: Uint8Array) => void | Promise<void>, keystore: Keystore, identity: Identity, timeout = 10000): Promise<KeyWithMeta<T>[] | undefined> => {
     await requestKeys(condition, send, keystore, identity);
-    if (condition instanceof RequestKeysByReplicationTopic) {
+    if (condition instanceof RequestKeysByAddress) {
         try {
             // timeout
             return await waitForAsync(async () => {
-                const keys = await keystore.getKeys<T>(condition.replicationTopic)
+                const keys = await keystore.getKeys<T>(condition.address)
                 if (keys && keys.length > 0) {
                     return keys;
                 }
@@ -282,8 +282,8 @@ export const exchangeKeys = async <T extends Ed25519Keypair | X25519Keypair>(
     // Validate signature
     let secretKeys: KeyWithMeta<T>[] = []
     let group: string;
-    if (request.condition instanceof RequestKeysByReplicationTopic) {
-        const keys = await keystore.getKeys<T>(request.condition.replicationTopic);
+    if (request.condition instanceof RequestKeysByAddress) {
+        const keys = await keystore.getKeys<T>(request.condition.address);
         if (!keys) {
             return;
         }

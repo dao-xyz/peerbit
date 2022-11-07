@@ -3,7 +3,7 @@ import { EventStore } from "./stores";
 import { Program } from "@dao-xyz/peerbit-program";
 
 
-@variant([0, 251])
+@variant("test_simple")
 export class SimpleStoreContract extends Program {
 
     @field({ type: EventStore })

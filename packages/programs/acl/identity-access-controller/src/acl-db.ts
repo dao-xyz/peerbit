@@ -10,8 +10,8 @@ import { AnySearch } from '@dao-xyz/peerbit-anysearch';
 import { Program } from '@dao-xyz/peerbit-program';
 import { DQuery } from '@dao-xyz/peerbit-query';
 
-@variant([0, 12])
-export class DynamicAccessController extends Program {
+@variant("identity_acl")
+export class IdentityAccessController extends Program {
 
     @field({ type: Documents })
     access: Documents<Access>;

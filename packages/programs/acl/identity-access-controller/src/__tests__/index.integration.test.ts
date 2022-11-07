@@ -15,7 +15,7 @@ import path from 'path';
 import Cache from '@dao-xyz/peerbit-cache';
 import { CanRead, DQuery } from "@dao-xyz/peerbit-query";
 import { Program } from "@dao-xyz/peerbit-program";
-import { DynamicAccessController } from "../acl-db";
+import { IdentityAccessController } from "../acl-db";
 import { v4 as uuid } from 'uuid';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -44,14 +44,14 @@ const createIdentity = async () => {
 }
 
 
-@variant([0, 251])
+@variant("test_store")
 class TestStore extends Program {
 
     @field({ type: Documents })
     store: Documents<Document>
 
-    @field({ type: DynamicAccessController })
-    accessController: DynamicAccessController
+    @field({ type: IdentityAccessController })
+    accessController: IdentityAccessController
 
     constructor(properties: { id?: string, identity: Identity, accessControllerName?: string }) {
         super(properties)
@@ -64,7 +64,7 @@ class TestStore extends Program {
                     })
                 })
             });
-            this.accessController = new DynamicAccessController({
+            this.accessController = new IdentityAccessController({
                 id: properties.accessControllerName || 'test-acl',
                 rootTrust: properties.identity?.publicKey
             })
@@ -102,8 +102,8 @@ describe('index', () => {
     it('can be deterministic', async () => {
 
         const key = (await Ed25519Keypair.create()).publicKey;
-        const t1 = new DynamicAccessController({ id: 'x', rootTrust: key });
-        const t2 = new DynamicAccessController({ id: 'x', rootTrust: key });
+        const t1 = new IdentityAccessController({ id: 'x', rootTrust: key });
+        const t2 = new IdentityAccessController({ id: 'x', rootTrust: key });
         t1.setupIndices();
         t2.setupIndices();
 

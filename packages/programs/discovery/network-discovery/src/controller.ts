@@ -1,15 +1,14 @@
 import { deserialize, field, variant } from "@dao-xyz/borsh";
 import { Documents, DeleteOperation, Operation, PutOperation } from "@dao-xyz/peerbit-document";
-import { BORSH_ENCODING, Entry, Identity } from "@dao-xyz/ipfs-log";
+import { Entry, Identity } from "@dao-xyz/ipfs-log";
 import { IPFS } from 'ipfs-core-types';
 import { createDiscoveryStore, NetworkInfo } from "./state";
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
 import { Program, ProgramInitializationOptions } from "@dao-xyz/peerbit-program";
 import { multiaddr } from '@multiformats/multiaddr';
 
-const encoding = BORSH_ENCODING(Operation);
 
-@variant([0, 20])
+@variant("network_discovery")
 export class NetworkDiscovery extends Program {
 
     @field({ type: Documents })

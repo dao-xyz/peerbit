@@ -23,7 +23,7 @@ class ExtendedEmbeddedStore extends EmbeddedStore {
         super(properties)
     }
 }
-@variant(1)
+@variant("p2")
 class P2 extends Program {
 
     @field({ type: vec(option(ExtendedEmbeddedStore)) })
@@ -99,7 +99,7 @@ describe('program', () => {
 
     it('will create indices', async () => {
 
-        @variant([0, 1])
+        @variant("pa")
         class ProgramA extends ComposableProgram {
 
             @field({ type: Store })
@@ -107,7 +107,7 @@ describe('program', () => {
 
         }
 
-        @variant([0, 2])
+        @variant("pb")
         class ProgramB extends ComposableProgram {
 
             @field({ type: Store })
@@ -117,7 +117,7 @@ describe('program', () => {
             programA = new ProgramA()
         }
 
-        @variant([0, 3])
+        @variant("pc")
         class ProgramC extends Program {
 
             @field({ type: ProgramA })

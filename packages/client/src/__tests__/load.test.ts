@@ -42,7 +42,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
   const entryCount = 10
 
-  let ipfsd: Controller, ipfs: IPFS, orbitdb1: Peerbit, db: EventStore<string>, address: string
+  let ipfsd: Controller, ipfs: IPFS, orbitdb1: Peerbit
 
   beforeAll(async () => {
     const options: any = Object.assign({}, test.orbitDBConfig)
@@ -61,6 +61,7 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
   })
 
   describe('load', function () {
+    let db: EventStore<string>, address: string
     beforeEach(async () => {
       const entryArr: number[] = []
 
@@ -71,7 +72,6 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       address = db.address!.toString()
       await mapSeries(entryArr, (i) => db.add('hello' + i))
       await db.close()
-      db = null as any
     })
 
     afterEach(async () => {
@@ -188,6 +188,11 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
   })
 
   describe('load from empty snapshot', function () {
+    let db: EventStore<string>, address: string
+
+    afterEach(async () => {
+      await db.drop();
+    })
     it('loads database from an empty snapshot', async () => {
       db = await orbitdb1.open(new EventStore<string>({}), uuid())
       address = db.address!.toString()
@@ -202,6 +207,8 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
   })
 
   describe('load from snapshot', function () {
+    let db: EventStore<string>, address: string
+
     beforeEach(async () => {
       const entryArr: number[] = []
 
@@ -213,7 +220,6 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       await mapSeries(entryArr, (i) => db.add('hello' + i))
       await db.saveSnapshot()
       await db.close()
-      db = null as any
     })
 
     afterEach(async () => {
