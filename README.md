@@ -132,7 +132,7 @@ import { Store } from '@dao-xyz/peerbit-store'
 import { Program } from '@dao-xyz/peerbit-program' 
 import { field, variant } from '@dao-xyz/borst-ts' 
 
-@variant("string_store")
+@variant("string_store") // Needs to have a variant name so the program is unique
 class StringStore extends Program  // Needs to extend Program if you are going to store Store<any> in your class
 {
     @field({type: Store}) // decorate it for serialization purposes 

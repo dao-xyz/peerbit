@@ -167,39 +167,6 @@ export const load = async <S extends Addressable>(ipfs: IPFS, address: Address, 
 
 
 export type ProgramInitializationOptions = { store: IInitializationOptions<any>, parent?: AbstractProgram, replicationTopic: string, onClose?: () => void, onDrop?: () => void };
-/* 
-@variant(0)
-export class ProgramReference {
-
-    @field({ type: 'string' })
-    address: string
-
-    @field({ type: option('u32') })
-    index?: number
-
-
-    constructor(properties?: {
-        address: Address | string,
-        index?: number
-    } | AbstractProgram) {
-        if (properties) {
-            if (properties instanceof AbstractProgram) {
-                this.address = ((properties instanceof Program ? properties.address : undefined) || properties.parentProgram.address!).toString();
-                this.index = properties.programIndex;
-            }
-            else {
-                this.address = properties.address.toString();
-                this.index = properties.index;
-            }
-        }
-    }
-
-    matches(other: ProgramReference | AbstractProgram) {
-        if (other instanceof ProgramReference)
-            return this.address === other.address && this.index === other.index;
-        return this.matches(new ProgramReference(other))
-    }
-} */
 
 
 @variant(1)
@@ -433,6 +400,10 @@ export abstract class Program extends AbstractProgram implements Addressable, Sa
         this._address = address;
     }
 
+    /**
+     * Will be called before program init(...)
+     * This function can be used to connect different modules
+     */
     abstract setup(): Promise<void>
 
     setupIndices(): void {
@@ -503,28 +474,6 @@ export abstract class Program extends AbstractProgram implements Addressable, Sa
     }): Promise<S> {
         return load(ipfs, address instanceof Address ? address : Address.parse(address), Program, options) as Promise<S>
     }
-
-
-    /*  _allProgramsMap: Map<string, AbstractProgram>
-     get allProgramsMap(): Map<string, AbstractProgram> {
-         if (this._allProgramsMap) {
-             return this._allProgramsMap;
-         }
-         const map = new Map<string, AbstractProgram>();
-         this.programs.map(s => map.set(s.address.toString(), s));
-         const nexts = this.programs;
-         for (const next of nexts) {
-             const submap = next.allProgramsMap;
-             submap.forEach((program, address) => {
-                 if (map.has(address)) {
-                     throw new Error("Store duplicates detected")
-                 }
-                 map.set(address, program);
-             })
-         }
-         this._allProgramsMap = map;
-         return this._allProgramsMap;
-     } */
 
 }
 
