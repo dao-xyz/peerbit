@@ -82,7 +82,5 @@ The hash function is seeded with the checksum of the content itself, so it chang
 When peers leave and join we need to redo leader selection for the heads of our content, this is because there might be replicators that no longer are online, or there might be new peers that should be replicators instead of someone else since the outcome of the algorithm is dependent on what peers participate in the replication process. 
 
 
-Similiarely graphps merge (like when the CAT and DOG became a DOG), this is functionally equivalent to that replicators of CAT stop to replicate and that DOG replicators start to replicate a larger log. 
-
-
+Similarly graphs merge (like when the CAT and DOG became a DOG), this is functionally equivalent to that replicators of CAT stop to replicate and that DOG replicators start to replicate a larger log.
 
