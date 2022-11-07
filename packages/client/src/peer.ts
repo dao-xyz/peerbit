@@ -29,11 +29,9 @@ import { IpfsPubsubPeerMonitor } from '@dao-xyz/ipfs-pubsub-peer-monitor';
 import type { PeerId } from '@libp2p/interface-peer-id';
 import { exchangeSwarmAddresses, ExchangeSwarmMessage } from './exchange-network.js';
 import { setTimeout } from 'timers';
-// @ts-ignore
 import { logger as parentLogger } from './logger.js'
-import { IVPC, VPC } from './network.js';
+import { IVPC } from './network.js';
 const logger = parentLogger.child({ module: 'peer' });
-// @ts-ignore
 
 
 const MIN_REPLICAS = 2;
