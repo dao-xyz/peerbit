@@ -30,7 +30,7 @@ When graphs merge (two independent states becomes dependent) the new graph will 
 Now this is important to background in order to understand how replicators/content leaders are chosen based on new changes. 
 
 ## The distribution algorithm
-Imagine the commit above is made, so that the merged graph gets the label "DOG", how can we choose replicators in a fully connected network in a simple random way? (By beeing a replicator you have the task of storing the log and potentially also make it searchable for peers)
+Imagine the commit above is made, so that the merged graph gets the label "DOG", how can we choose replicators in a fully connected network in a simple random way? (By being a replicator you have the task of storing the log and potentially also make it searchable for peers)
 
 <p align="center">
     <img width="400" src="./p1.png"  alt="p1">
