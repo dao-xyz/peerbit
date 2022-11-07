@@ -8,7 +8,6 @@ export abstract class IVPC {
     abstract joinNetwork(): Promise<void>
 }
 
-
 export function VPC<T extends abstract new (...args: any[]) => AbstractProgram>(c: T) {
     abstract class VPC extends c implements IVPC {
         _isPermissioned: true = true

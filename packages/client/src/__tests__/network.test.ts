@@ -4,7 +4,6 @@ import { Peerbit } from '../peer'
 
 import { EventStore } from './utils/stores/event-store'
 import { jest } from '@jest/globals';
-import { field, variant } from '@dao-xyz/borsh'
 
 // Include test utilities
 import {
@@ -12,10 +11,10 @@ import {
     testAPIs,
     Session
 } from '@dao-xyz/peerbit-test-utils'
+
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
 import { delay, waitFor } from '@dao-xyz/peerbit-time'
 import { AccessError, Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
-import { VPC } from '../network';
 import { PermissionedEventStore } from './utils/stores/test-store';
 
 const orbitdbPath1 = './orbitdb/tests/network/1'
