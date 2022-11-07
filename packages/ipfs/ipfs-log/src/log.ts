@@ -92,18 +92,7 @@ export class Log<T> extends GSet {
     if (!isDefined(identity)) {
       throw new Error('Identity is required')
     }
-    /* if (publicKey instanceof Ed25519PublicKey) {
-      publicKey = new Ed25519PublicKey({
-        publicKey
-      })
-    }
 
-    if (publicKey instanceof Ed25519PublicKey) {
-      publicKey = new Ed25519PublicKey({
-        publicKey
-      })
-    }
- */
     let { logId, entries, encoding, heads, sortFn, concurrency, prune, encryption } = options;
 
     if (isDefined(entries) && !Array.isArray(entries)) {
@@ -186,37 +175,6 @@ export class Log<T> extends GSet {
 
   }
 
-  /**
-   * Returns the ID of the log.
-   * @returns {string}
-   */
-  /*  get id() {
-     return this._id
-   } */
-
-  /*   async initRootGid() {
-      if (!this._rootGid) {
-        if (!this._id) {
-          throw new Error("Missing id")
-        }
-        this._rootGid = await Entry.createGid(this._id)
-      }
-      if (this._peersByGid.size === 0) {
-        this._peersByGid.set(this._rootGid, new Set([await getPeerID(this._storage)]));
-      }
-  
-    } */
-
-  /*  get rootGid() {
-     return this._rootGid;
-   } */
-  /**
-   * Returns the clock of the log.s
-   * @returns {string}
-   */
-  /*   get clock() {
-      return this._clock
-    } */
 
 
   /**
@@ -235,13 +193,6 @@ export class Log<T> extends GSet {
     return Object.values(this.traverse(this.heads)).reverse()
   }
 
-  /**
-   * Returns the values in the log.
-   * @returns {Array<T>}
-   */
-  /*  get payloadsDecoded(): { payload: T, entry: Entry<T>}[] {
-     return Object.values(this.traverse(this.heads)).reverse().map(entry => { return { Entry<T>, payload: this._encoding.decoder(entry.payload.value) } })
-   } */
 
   /**
    * Returns an array of heads.
@@ -276,9 +227,6 @@ export class Log<T> extends GSet {
    */
   setIdentity(identity: Identity) {
     this._identity = identity
-    // Find the latest clock from the heads
-    /*     const time = bigIntMax(this.clock.time, this.heads.reduce(maxClockTimeReducer, 0n))
-        this._clock = new Clock(new Uint8Array(serialize(this._publicKey)), time) */
   }
 
 
@@ -584,36 +532,9 @@ export class Log<T> extends GSet {
    * await log1.join(log2)
    */
   async join(log: Log<T>, size = -1) {
-    /*  await this.initRootGid(); */
-
-    /* if (this.id !== log.id) return this is wierd */
 
     // Get the difference of the logs
     const newItems = await Log.difference(log, this)
-
-    /*     const identityProvider = this._identity.provider
-     */    // Verify if entries are allowed to be added to the log and throws if
-    // there's an invalid entry
-    // assume sorted 
-
-    // Verify signature for each entry and throws if there's an invalid signature
-    /*   const verify = async (entry: Entry<T>) => {
-        const isValid = await Entry.verify(identityProvider, entry)
-        const identity = await entry.identity;
-        const signature = await entry.signature;
-        const publicKey = identity.publicKey
-        if (!isValid) throw new Error(`Could not validate signature "${signature}" for entry "${entry.hash}" and key "${publicKey}"`)
-      } */
-
-
-
-
-
-
-    // Update the internal next pointers index
-
-    //entriesToJoin.sort(this._sortFn); // sort is needed becuase addToNextsIndex will build peer dependency list and assumes order
-
     /* let prevPeers = undefined; */
     for (const e of Object.values(newItems)) {
       e.init({ encryption: this._encryption, encoding: this._encoding })
@@ -626,27 +547,6 @@ export class Log<T> extends GSet {
         this._entryIndex.set(e.hash, e);
         this._length++ /* istanbul ignore else */
       }
-      // this block might require that newItems are sorted
-      /*   if (!entry) {
-          const oneNext = e.next[0];
-          if (oneNext) {
-            const oneNextEntry = this.get(oneNext);
-            if (e.peers && e.peers !== prevPeers) {
-              e.peers.forEach((peer) => {
-                oneNextEntry.peers.add(peer);
-              });
-              prevPeers = e.peers;
-              e.peers = oneNextEntry.peers; // share reference
-            }
-          }
-          e.next.forEach((a) => {
-            const ae = this.get(a);
-            ae.peers.forEach((peer) => {
-              e.peers.add(peer);
-            })
-          })
-        } */
-
       e.next.forEach(a => {
         let nextIndexSet = this._nextsIndex[a];
         if (!nextIndexSet) {
@@ -670,21 +570,10 @@ export class Log<T> extends GSet {
 
     this._headsIndex = mergedHeads
 
-    /* log._peersByGid.forEach((peers, gid) => {
-      const set = this.peersByGid.get(gid);
-      peers.forEach((peer) => {
-        set.add(peer);
-      });
-    }); */
-
 
     if (size > -1) {
       this.prune(size);
     }
-
-    // Find the latest clock from the heads
-    /*   const maxClock = Object.values(this._headsIndex).reduce(maxClockTimeReducer, 0n)
-  this._clock = new Clock(this.clock.id, bigIntMax(this.clock.time, maxClock)) */
 
     return this
   }
@@ -730,15 +619,6 @@ export class Log<T> extends GSet {
     }
     return [...res].map(h => this.get(h));
   }
-
-  /*  tickClock() {
-     this.clock.time += 1n;
-   }
- 
-   mergeClock(clock: LamportClock): LamportClock {
-     this.clock.time = bigIntMax(this.clock.time, clock.time)
-     return new LamportClock(this.clock.id, this.clock.time)
-   } */
 
 
   /**
