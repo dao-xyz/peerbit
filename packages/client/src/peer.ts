@@ -930,7 +930,6 @@ export class Peerbit {
         },
         onLeave: (peer) => {
           logger.debug(`Peer ${peer} left ${topic}`)
-          /*    this._onPeerDisconnected(topic, peer); */
         },
         onError: (e) => {
           logger.error(e)
