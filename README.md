@@ -21,7 +21,12 @@
 ## What is this?
 Started originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS supporting, encryption, sharding and discoverability (searching). Peers have the possibility to organize themselves into "permissioned" regions. Within a region, secret information can be shared freely, this allows peers to create locally centralized database clusters with efficient replication, sharding, query yet still allowing cross trust region (low trust) activities, like relaying encrypted and signed messages. Data can be shared and encrypted on a granular level, you can decide exactly what parts of metadata should be public and not.
 
-### [How Peerbit differs from OrbitDB](./documentation/DIFFERENCE.md)
+### Some informational links are found below
+### [How Peerbit differs from OrbitDB](./documentation/difference.md)
+
+### [How Peerbit performs sharding](./documentation/sharding/sharding.md)
+
+### [Encryption scheme](./documentation/encryption.md)
 
 </br>
 </br>
