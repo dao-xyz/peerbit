@@ -12,9 +12,13 @@ Every commit that is made can be encrypted with public key encryption with multi
     - The encrypted ephemeral key for every receiver
     - Public keys are packed along side so that an receiver can find out whether they can decrypt a message (this will be optional in the future)
 
+See [this](./../packages/utils/crypto/src/encryption.ts) for implementation details. 
+
 ### Log entry fields that are encrypted (separately)
 - Lamport clock
 - Payload
 - Signature
 
 (Work is still under development whether DAGs links should also be encrypted, and whether Lamport clock encryption is really necessary. )
+
+See [this](./../packages/ipfs/ipfs-log/src/entry.ts) for implementation details. 
