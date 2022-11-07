@@ -689,33 +689,6 @@ export class Peerbit {
     }
   }
 
-  /* async _onPeerDisconnected(topic: string, peer: string) {
-
-    // get all topics for this peer
-    if (this._directConnections.has(peer)) {
-      for (const replicationTopic of this._directConnections.get(peer).dependencies) {
-        for (const store of Object.values(this.programs[replicationTopic])) {
-          const heads = await store.getHeads();
-          const groupedByGid = groupByGid(heads);
-          for (const [gid, entries] of groupedByGid) {
-            const peers = this.findReplicators(store, gid); // would not work if peer got disconnected?
-            const index = peers.findIndex(p => p === peer);
-            if (index !== -1) { //
-              // We lost an important peer,
-              if (peers[(index + 1) & peers.length] === this.id) {
-
-                // is should tell the others that we need one more replicator
-                //const
-              }
-            }
-          }
-        }
-      }
-    }
-
-  } */
-
-
   /**
    * When a peers join the networkk and want to participate the leaders for particular log subgraphs might change, hence some might start replicating, might some stop
    * This method will go through my owned entries, and see whether I should share them with a new leader, and/or I should stop care about specific entries
@@ -739,11 +712,10 @@ export class Peerbit {
               if (entries.length === 0) {
                 continue; // TODO maybe close store?
               }
-              /*     const oldPeers = this.findReplicators(store, gid, [channel.recieverId]);
-                  const oldPeersSet = new Set(this.findReplicators(store, gid, [channel.recieverId])); */
+
               const oldPeersSet = this._gidPeersHistory.get(gid);
               const newPeers = await this.findReplicators(replicationTopic, programInfo.program.address.toString(), store.replicate, gid, programInfo.minReplicas.value);
-              /* const index = oldPeers.findIndex(p => p === channel.recieverId); */
+
               for (const newPeer of newPeers) {
                 if (!oldPeersSet?.has(newPeer) && newPeer !== this.id.toString()) { // second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
 
@@ -769,16 +741,7 @@ export class Peerbit {
                 // TODO if length === 0 maybe close store? 
               }
               this._gidPeersHistory.set(gid, new Set(newPeers))
-            /* if (index !== -1)  */{ //
-                // We lost an replicating peer,
-                // find diff
 
-                /* if (peers[(index + 1) & peers.length] === this.id) { */
-
-                // is should tell the others that we need one more replicator
-                //const
-                /* } */
-              }
             }
           }
         }
@@ -788,16 +751,6 @@ export class Peerbit {
   }
 
 
-
-  /*   async getSigner() {
-      return async (bytes: Uint8Array) => {
-        return {
-          signature: await this.identity.sign(bytes),
-          publicKey: this.identity.publicKey
-        }
-      }
-    }
-   */
 
   async getChannel(peer: string, fromTopic: string): Promise<DirectChannel | undefined> {
 
@@ -1381,82 +1334,5 @@ export class Peerbit {
     const data = await cache.get(path.join(addr, '_manifest'))
     return data !== undefined && data !== null
   }
-
-  /* async getPeers(request: RequestReplicatorInfo, options: { ignoreCache?: boolean, waitForPeersTime?: number } = {}): Promise<PeerInfoWithMeta[]> {
-     const serializedRequest = serialize(request);
-     const hashKey = Buffer.from(serializedRequest).toString('base64');
-     if (!options.ignoreCache) {
-       const promise = this._getPeersLRU.get(hashKey);
-       if (promise) {
-         return promise;
-       }
-     }
- 
-     const promise = new Promise<PeerInfoWithMeta[]>(async (r, c) => {
-       await this.subscribeToReplicationTopic(request.replicationTopic);
-       await requestPeerInfo(serializedRequest, request.replicationTopic, (topic, message) => this._ipfs.pubsub.publish(topic, message), this.identity)
-       const directConnectionsOnTopic = this.getPeersOnTopic(request.replicationTopic).length
-       const timeout = options?.waitForPeersTime || WAIT_FOR_PEERS_TIME * 3;
-       if (directConnectionsOnTopic) {
-         // Assume that all peers are connected
-         // TODO What happens if directConnectionsOnTopic changes?
-         try {
-           await waitFor(() => this._peerInfoResponseCounter.get(request.id) as number >= directConnectionsOnTopic, { timeout, delayInterval: 400 })
-         } catch (error) {
-         }
-       }
-       else {
-         await delay(timeout);
-       }
- 
-       const peersSupportingAddress: PeerInfoWithMeta[] = [];
-       this._peerInfoLRU.forEach((v, k) => {
-         if (v.peerInfo.store === request.address) {
-           peersSupportingAddress.push(v)
-         }
-       })
-       r(peersSupportingAddress)
-     })
-     this._getPeersLRU.set(hashKey, promise);
-     return promise
-   } */
-
-
-  /*  _requestingReplicationPromise: Promise<void>;
-   async requestReplication(store: Store<any>, options: { heads?: Entry<any>[], replicationTopic?: string, waitForPeersTime?: number } = {}) {
-     const replicationTopic = options?.replicationTopic || store.replicationTopic;
-     if (!replicationTopic) {
-       throw new Error("Missing replication topic for replication");
-     }
-     await this._requestingReplicationPromise;
-     if (!store.address) {
-       await store.save(this._ipfs);
-     }
-     const currentPeersCountFn = async () => (await this.getPeers(replicationTopic, store.address, options)).length
-     const currentPeersCount = await currentPeersCountFn();
-     this._requestingReplicationPromise = new Promise(async (resolve, reject) => {
-       const signedThing = new DecryptedThing({
-         data: await serialize(await (new MaybeSigned({
-           data: serialize(new RequestReplication({
-             replicationTopic,
-             store,
-             heads: options?.heads,
-             resourceRequirements: [new HeapSizeRequirement({
-               heapSize: BigInt(STORE_MIN_HEAP_SIZE)
-             })]
-           }))
-         })).sign(await this.getSigner()))
-       }) /// TODO add encryption?
-   
-       await this._ipfs.pubsub.publish(replicationTopic, serialize(signedThing));
-       await waitForAsync(async () => await currentPeersCountFn() >= currentPeersCount + 1, {
-         timeout: (options?.waitForPeersTime || 5000) * 2,
-         delayInterval: 50
-       })
-       resolve();
-   
-     })
-     await this._requestingReplicationPromise;
-   } */
 
 }
