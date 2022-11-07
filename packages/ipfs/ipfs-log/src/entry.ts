@@ -88,10 +88,6 @@ export class Payload<T>
     }
   }
 
-  /*   init(encoding: Encoding<T>) {
-      this._encoding = encoding;
-      return this;
-    } */
 
   equals(other: Payload<T>): boolean {
     return Buffer.compare(Buffer.from(this.data), Buffer.from(other.data)) === 0;
@@ -103,16 +99,6 @@ export class Payload<T>
     }
     return encoding.decoder(this.data);
   }
-
-  /* 
-    _value?: T
-    get value(): T {
-      if (this._value)
-        return this._value;
-      const decoded = this._encoding.decoder(this._data)
-      this._value = decoded;
-      return this._value;
-    } */
 }
 
 export interface EntryEncryptionTemplate<A, B, C> {
@@ -221,15 +207,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
     }
   }
 
-  /*  get id(): string {
-     return this._id.decrypted.getValue(Id).id
-   }
- 
-   async getId(): Promise<string> {
-     await this._id.decrypt();
-     return this.id;
-   }
-  */
+
   get clock(): Clock {
     return this._clock.decrypted.getValue(Clock)
   }
@@ -366,9 +344,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
     }
 
     const clock = await maybeEncrypt(clockValue, properties.encryption?.reciever.clock);
-    /* const id = await maybeEncrypt(new Id({
-      id: properties.logId
-    }), properties.encryption?.reciever.id); */
+
     const payload = await maybeEncrypt(payloadToSave, properties.encryption?.reciever.payload);
 
 
@@ -449,23 +425,6 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
     return entry
   }
 
-  /**
-   * Verifies an entry signature.
-   *
-   * @param {IdentityProvider} identityProvider The identity provider to use
-   * @param {Entry} entry The entry being verified
-   * @return {Promise} A promise that resolves to a boolean value indicating if the signature is valid
-   */
-  /*   static async verify<T>(identityProvider: Identities, entry: Entry<T>) {
-      if (!identityProvider) throw new Error('Identity-provider is required, cannot verify entry')
-      if (!Entry.isEntry(entry)) throw new Error('Invalid Log entry')
-      const key = (await entry.getIdentity()).publicKey;
-      if (!key) throw new Error("Entry doesn't have a key")
-      const signature = (await entry.getSignature()).signature;
-      if (!signature) throw new Error("Entry doesn't have a signature")
-      const verified = identityProvider.verify(signature, key, await entry.createDataToSign())
-      return verified;
-    } */
 
 
   /**
