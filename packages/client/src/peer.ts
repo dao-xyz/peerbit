@@ -1291,33 +1291,6 @@ export class Peerbit {
     return asPermissioned.network;
   }
 
-  /*   async openNetwork(addressOrNetwork: string | Address | TrustedNetwork, options?: OpenStoreOptions) {
-      let network: TrustedNetwork
-  
-      if (addressOrNetwork instanceof TrustedNetwork) {
-        network = addressOrNetwork;
-      }
-      else {
-        const loaded = await TrustedNetwork.load<TrustedNetwork>(this._ipfs, Address.parse(addressOrNetwork.toString()))
-        if (loaded instanceof TrustedNetwork === false) {
-          throw new Error("Address does not point to a TrustedNetwork")
-        }
-        network = loaded;
-      }
-  
-      const openNetwork = await this.open(network, options)
-      return openNetwork;
-    } */
-
-  /* async joinNetwork(address: Address | string | TrustedNetwork) {
-    let trustedNetwork = this._trustedNetwork.get(address instanceof TrustedNetwork ? address.address!.toString() : address.toString());
-    if (!trustedNetwork) {
-      throw new Error("TrustedNetwork is not open, please call `openNetwork` prior")
-    }
-    // Will be rejected by peers if my identity is not trusted
-    // (this will sign our IPFS ID with our client Ed25519 key identity, if peers do not trust our identity, we will be rejected)
-    await trustedNetwork.add(new IPFSAddress({ address: this.id.toString() }))
-  } */
 
   /**
    * Check if we have the database, or part of it, saved locally
