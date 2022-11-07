@@ -84,3 +84,7 @@ When peers leave and join we need to redo leader selection for the heads of our 
 
 Similarly graphs merge (like when the CAT and DOG became a DOG), this is functionally equivalent to that replicators of CAT stop to replicate and that DOG replicators start to replicate a larger log.
 
+
+## Implementation
+
+The implementation can be found [here](./../../packages/client/src/peer.ts) (findLeaders method)
