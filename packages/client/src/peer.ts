@@ -799,31 +799,8 @@ export class Peerbit {
     }
   }
 
-  async _onDrop(db: Store<any>) {
-    /*    const address = db.address.toString()
-       const dir = db && db._options.directory ? db._options.directory : this.directory
-       await this._requestCache(address, dir, db._cache) */
-  }
+  async _onDrop(db: Store<any>) { }
 
-  /*  async _onLoad(db: Store<any>) {
-     const address = db.address.toString()
-     const dir = db && db._options.directory ? db._options.directory : this.directory
-     await this._requestCache(address, dir, db._cache)
-   } */
-
-
-
-  /*   _getProgramRoot(program: AbstractProgram, replicationTopic: string): Program | undefined {
-      let parent = program.ProgramReference
-      while (parent?.parentProgram || (parent as Program).parentProgamAddress) {
-        const parentAddress = parent?.parentProgram?.address || (parent as Program).parentProgamAddress
-        parent = this.programs[replicationTopic]?.[parentAddress.toString()]?.program;
-      }
-      if (program instanceof Program === false) {
-        throw new Error("Unexpected")
-      }
-      return parent as Program;
-    } */
 
   async addProgram(replicationTopic: string, program: Program, minReplicas: MinReplicas): Promise<ProgramWithMetadata> {
     if (!this.programs[replicationTopic]) {
@@ -846,12 +823,6 @@ export class Peerbit {
       minReplicas
     };
     this.programs[replicationTopic][programAddress] = p;
-    /*p.program.allPrograms.forEach((subprogram) => {
-     this.programs[replicationTopic][subprogram.address.toString()] = {
-       minReplicas,
-       program: subprogram
-     };
-    }) */
     return p;
 
   }
@@ -884,65 +855,61 @@ export class Peerbit {
 
   async findLeaders(replicationTopic: string, address: string, replicating: boolean, slot: { toString(): string }, numberOfLeaders: number/* , addPeers: string[] = [], removePeers: string[] = [] */): Promise<string[]> {
     // Hash the time, and find the closest peer id to this hash
-    try {
-      const h = (h: string) => createHash('sha1').update(h).digest('hex');
-      const slotHash = h(slot.toString())
+    const h = (h: string) => createHash('sha1').update(h).digest('hex');
+    const slotHash = h(slot.toString())
 
-      // Assumption: All peers wanting to replicate on topic has direct connections with me (Fully connected network)
-      const allPeers: string[] = this.getPeersOnTopic(replicationTopic);
+    // Assumption: All peers wanting to replicate on topic has direct connections with me (Fully connected network)
+    const allPeers: string[] = this.getPeersOnTopic(replicationTopic);
 
-      // Assumption: Network specification is accurate
-      // Replication topic is not an address we assume that the network allows all participants
-      const network = this._getNetwork(address, replicationTopic);
-      const isTrusted = (peer: string | PeerId) => network ? network.isTrusted(new IPFSAddress({ address: peer.toString() })) : true
-      const peers = await Promise.all(allPeers.map(isTrusted))
-        .then((results) => allPeers.filter((_v, index) => results[index]))
+    // Assumption: Network specification is accurate
+    // Replication topic is not an address we assume that the network allows all participants
+    const network = this._getNetwork(address, replicationTopic);
+    const isTrusted = (peer: string | PeerId) => network ? network.isTrusted(new IPFSAddress({ address: peer.toString() })) : true
+    const peers = await Promise.all(allPeers.map(isTrusted))
+      .then((results) => allPeers.filter((_v, index) => results[index]))
 
-      const hashToPeer: Map<string, string> = new Map();
-      const peerHashed: string[] = [];
+    const hashToPeer: Map<string, string> = new Map();
+    const peerHashed: string[] = [];
 
-      if (peers.length === 0) {
-        return [this.id.toString()];
-      }
-
-      // Add self
-      if (replicating) {
-        peers.push(this.id.toString())
-      }
-
-
-      // Hash step
-      peers.forEach((peer) => {
-        const peerHash = h(peer + slotHash); // we do peer + slotHash because we want peerHashed.sort() to be different for each slot, (so that uniformly random pick leaders). You can see this as seed
-        hashToPeer.set(peerHash, peer);
-        peerHashed.push(peerHash);
-      })
-      numberOfLeaders = Math.min(numberOfLeaders, peerHashed.length);
-      peerHashed.push(slotHash);
-
-      // Choice step
-
-      // TODO make more efficient
-      peerHashed.sort((a, b) => a.localeCompare(b)) // sort is needed, since "getPeers" order is not deterministic
-      let slotIndex = peerHashed.findIndex(x => x === slotHash);
-      // we only step forward 1 step (ignoring that step backward 1 could be 'closer')
-      // This does not matter, we only have to make sure all nodes running the code comes to somewhat the 
-      // same conclusion (are running the same leader selection algorithm)
-      const leaders: string[] = [];
-      let offset = 0;
-      for (let i = 0; i < numberOfLeaders; i++) {
-        let nextIndex = (slotIndex + 1 + i + offset) % peerHashed.length;
-        if (nextIndex === slotIndex) {
-          offset += 1;
-          nextIndex = (nextIndex + 1) % peerHashed.length;
-        }
-        leaders.push(hashToPeer.get(peerHashed[nextIndex]) as string);
-      }
-      return leaders;
-    } catch (error) {
-      const x = 132;
-      return undefined as any;
+    if (peers.length === 0) {
+      return [this.id.toString()];
     }
+
+    // Add self
+    if (replicating) {
+      peers.push(this.id.toString())
+    }
+
+
+    // Hash step
+    peers.forEach((peer) => {
+      const peerHash = h(peer + slotHash); // we do peer + slotHash because we want peerHashed.sort() to be different for each slot, (so that uniformly random pick leaders). You can see this as seed
+      hashToPeer.set(peerHash, peer);
+      peerHashed.push(peerHash);
+    })
+    numberOfLeaders = Math.min(numberOfLeaders, peerHashed.length);
+    peerHashed.push(slotHash);
+
+    // Choice step
+
+    // TODO make more efficient
+    peerHashed.sort((a, b) => a.localeCompare(b)) // sort is needed, since "getPeers" order is not deterministic
+    let slotIndex = peerHashed.findIndex(x => x === slotHash);
+    // we only step forward 1 step (ignoring that step backward 1 could be 'closer')
+    // This does not matter, we only have to make sure all nodes running the code comes to somewhat the 
+    // same conclusion (are running the same leader selection algorithm)
+    const leaders: string[] = [];
+    let offset = 0;
+    for (let i = 0; i < numberOfLeaders; i++) {
+      let nextIndex = (slotIndex + 1 + i + offset) % peerHashed.length;
+      if (nextIndex === slotIndex) {
+        offset += 1;
+        nextIndex = (nextIndex + 1) % peerHashed.length;
+      }
+      leaders.push(hashToPeer.get(peerHashed[nextIndex]) as string);
+    }
+    return leaders;
+
   }
 
 
