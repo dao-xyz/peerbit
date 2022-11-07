@@ -1,6 +1,6 @@
 # DDoc
 
-Decentralized document store.
+Distributed document store.
 
 This store is built on top of the base store. This store allows for type safe document store and retrieval accross peers. 
 
