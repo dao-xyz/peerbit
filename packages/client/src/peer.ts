@@ -6,7 +6,7 @@ import { Keystore, KeyWithMeta, StoreError } from '@dao-xyz/peerbit-keystore'
 import { isDefined } from './is-defined.js'
 import { Level } from 'level';
 import { exchangeHeads, ExchangeHeadsMessage, AbsolutMinReplicas, EntryWithRefs, MinReplicas } from './exchange-heads.js'
-import { Entry, Identity, Payload, toBase64 } from '@dao-xyz/ipfs-log'
+import { Entry, Identity } from '@dao-xyz/ipfs-log'
 import { serialize, deserialize } from '@dao-xyz/borsh'
 import { ProtocolMessage } from './message.js'
 import type { Message as PubSubMessage, SignedMessage as SignedPubSubMessage } from '@libp2p/interface-pubsub';
@@ -24,8 +24,6 @@ import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
 import { multiaddr } from '@multiformats/multiaddr'
 import { AbstractProgram, CanOpenSubPrograms, Program, Address } from '@dao-xyz/peerbit-program';
 import PQueue from 'p-queue';
-// @ts-ignore
-import { delay, waitFor } from '@dao-xyz/peerbit-time'
 import { LRUCounter } from './lru-counter.js'
 import { IpfsPubsubPeerMonitor } from '@dao-xyz/ipfs-pubsub-peer-monitor';
 import type { PeerId } from '@libp2p/interface-peer-id';
@@ -79,8 +77,6 @@ const groupByGid = <T extends (Entry<any> | EntryWithRefs<any>)>(entries: T[]) =
 export class Peerbit {
 
   _ipfs: IPFS;
-  /* 
-    _pubsub: PubSub; */
   _directConnections: Map<string, SharedChannel<DirectChannel>>;
   _replicationTopicSubscriptions: Map<string, SharedChannel<SharedIPFSChannel>>;
 
@@ -93,10 +89,7 @@ export class Peerbit {
   _minReplicas: number;
   programs: { [topic: string]: { [address: string]: ProgramWithMetadata } };
   limitSigning: boolean;
-  //allPrograms: { [topic: string]: { [address: string]: Program } };
-
   localNetwork: boolean;
-  /*  heapsizeLimitForForks: number = 1000 * 1000 * 1000; */
 
   _gidPeersHistory: Map<string, Set<string>> = new Map()
   _waitForKeysTimeout = 10000;
@@ -109,13 +102,6 @@ export class Peerbit {
   _openProgramQueue: PQueue
   _disconnected: boolean = false;
   _disconnecting: boolean = false;
-
-  //_peerInfoMap: Map<string, Map<string, Set<string>>> // peer -> store -> heads
-  /*   _replicationTopicJobs: Map<string, { controller: AbortController }> = new Map(); */
-
-
-  /*   canAccessKeys: KeyAccessCondition
-   */
 
   constructor(ipfs: IPFS, identity: Identity, options: CreateOptions) {
     if (!isDefined(ipfs)) { throw new Error('IPFS required') }
@@ -140,13 +126,8 @@ export class Peerbit {
       this._waitForKeysTimeout = options.waitForKeysTimout;
     }
     this._openProgramQueue = new PQueue({ concurrency: 1 })
-    /* this.heapsizeLimitForForks = options.heapsizeLimitForForks; */
     this._ipfs.pubsub.subscribe(DirectChannel.getTopic([this.id.toString()]), this._onMessage.bind(this));
 
-    // AccessControllers module can be passed in to enable
-    // testing with orbit-db-access-controller
-    /*     AccessControllersModule = options.AccessControllers || AccessControllers
-     */
     this._replicationTopicSubscriptions = new Map();
   }
 
@@ -260,10 +241,6 @@ export class Peerbit {
       }
     };
 
-
-    /* if (options.identity && options.identity.provider.keystore) {
-      options.keystore = options.identity.provider.keystore
-    } */
     const keystore: Keystore = options.keystore || new Keystore(await storage.createStore(path.join(directory, id.toString(), '/keystore')))
     let identity: Identity;
     if (options.identity) {
@@ -293,14 +270,6 @@ export class Peerbit {
 
       }
     }
-
-    /* const signKey = options.signKey || await options.keystore.createKey(Buffer.from(id), KeyWithMeta<Ed25519Keypair>); */
-    /* if (!options.identity) {
-      options.identity = await Identities.createIdentity({
-        id: new Uint8Array(Buffer.from(id)),
-        keystore: options.keystore
-      })
-    } */
 
     const cache = options.cache || new Cache(await storage.createStore(path.join(directory, id.toString(), '/cache')));
     const localNetwork = options.localNetwork || false;
@@ -492,10 +461,6 @@ export class Peerbit {
               if (leaders.find(x => x === this.id.toString())) {
                 try {
                   // Assumption: All entries should suffice as references 
-                  // Assumption: All entries should suffice as references 
-                  // Assumption: All entries should suffice as references 
-                  // Assumption: All entries should suffice as references 
-                  // Assumption: All entries should suffice as references 
                   // when passing to this.open as reasons/proof of validity of opening the store
                   const oneEntry = entries[0].entry;
 
@@ -542,33 +507,9 @@ export class Peerbit {
 
           }
         }
-
         logger.debug(`Received ${heads.length} heads for '${paddress}/${storeIndex}':\n`, JSON.stringify(heads.map(e => e.entry.hash), null, 2))
       }
-      /*  else if (msg instanceof RequestHeadsMessage) {
-          // I have recieved a message urging me to share my heads
-          // so that another peer can clone my log and join with theirs
-         const { replicationTopic, address } = msg
-         if (!(await checkTrustedSender(replicationTopic))) {
-           return;
-         }
-   
-         const stores = this.programs[replicationTopic];  // Send the heads if we have any
-         if (stores) {
-           for (const [storeAddress, store] of Object.entries(stores)) {
-             if (store.replicate) {
-               await exchangeHeads(async (peer, msg) => {
-                 const channel = await this.getChannel(peer, replicationTopic);
-                 return channel.send(Buffer.from(msg));
-               }, store, (hash) => this.findLeaders(replicationTopic, store.address.toString(), hash, this.minReplicas), await this.getSigner());
-             }
-             else {
-               // Ignore for now (dont share headss)
-             }
-           }
-         }
-         logger.debug(`Received exchange heades request for topic: ${replicationTopic}, address: ${address}`)
-       }*/
+
       else if (msg instanceof KeyResponseMessage) {
         await recieveKeys(msg, (keys) => {
           return Promise.all(keys.map((key) => this.keystore.saveKey(key)))
