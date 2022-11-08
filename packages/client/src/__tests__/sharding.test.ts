@@ -40,7 +40,7 @@ Object.keys(testAPIs).forEach(API => {
             const network = new TrustedNetwork({ id: 'network-tests', rootTrust: orbitdb1.identity.publicKey });
             db1 = await orbitdb1.open<PermissionedEventStore>(new PermissionedEventStore({ network }), { directory: dbPath1 })
 
-            await orbitdb1.joinNetwork(db1);
+            await orbitdb1.join(db1);
 
             // trust client 3
             await network.add(orbitdb2.id)

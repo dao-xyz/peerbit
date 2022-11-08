@@ -695,7 +695,7 @@ export class Peerbit {
     }
   }
 
-  async joinNetwork(program: VPC) {
+  async join(program: VPC) {
 
     // Will be rejected by peers if my identity is not trusted
     // (this will sign our IPFS ID with our client Ed25519 key identity, if peers do not trust our identity, we will be rejected)

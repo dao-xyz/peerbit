@@ -179,8 +179,8 @@ import { Program } from '@dao-xyz/peerbit-program'
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network' 
 import { field, variant } from '@dao-xyz/borst-ts' 
 
-@variant("string_store") // Needs to have a variant name so the program is unique
-class StringStore extends Program implements VPC // Needs to extend Program if you are going to store Store<any> in your class
+@variant("string_store") 
+class StringStore extends Program implements VPC 
 {
     networkType: 'VPC' = 'VPC' // add network type 
 

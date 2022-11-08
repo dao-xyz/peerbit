@@ -88,14 +88,14 @@ Object.keys(testAPIs).forEach(API => {
 
             const network = new TrustedNetwork({ id: 'network-tests', rootTrust: orbitdb1.identity.publicKey });
             const program = await orbitdb1.open(new PermissionedEventStore({ network }), { directory: dbPath1 })
-            await orbitdb1.joinNetwork(program);
+            await orbitdb1.join(program);
 
             // make client 2 trusted
             await network.add(orbitdb2.id);
             await network.add(orbitdb2.identity.publicKey);
             const program2 = await orbitdb2.open<PermissionedEventStore>(program.address!, { directory: dbPath2 });
             await waitFor(() => program2.network.trustGraph.index.size === 3);
-            await orbitdb2.joinNetwork(program2);
+            await orbitdb2.join(program2);
 
             // but dont trust client 3
             // however open direct channels so client 3 could perhaps be a leader anyway (?)

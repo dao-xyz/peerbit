@@ -86,7 +86,7 @@ Object.keys(testAPIs).forEach(API => {
 
             const network = new TrustedNetwork({ id: 'network-tests', rootTrust: orbitdb1.identity.publicKey });
             const program = await orbitdb1.open(new PermissionedEventStore({ network }), { directory: dbPath1 })
-            await orbitdb1.joinNetwork(program);
+            await orbitdb1.join(program);
 
             // trust client 3
             await program.network.add(orbitdb3.id) // we have to trust peer because else other party will not exchange heads
@@ -103,10 +103,10 @@ Object.keys(testAPIs).forEach(API => {
             await waitFor(() => (program3.network.trustGraph.index.size === 4))
 
             expect(program2.network.trustGraph.index.size).toEqual(0); // because peer id is not trusted so it will not recieve heads
-            await orbitdb3.joinNetwork(program3); // will add relation form client 3 to peer id 3 (it also exist another relation from client 1 to peer id 3 btw, but these are not the same)
+            await orbitdb3.join(program3); // will add relation form client 3 to peer id 3 (it also exist another relation from client 1 to peer id 3 btw, but these are not the same)
 
 
-            expect(() => orbitdb2.joinNetwork(program2)).rejects.toThrow(AccessError)
+            expect(() => orbitdb2.join(program2)).rejects.toThrow(AccessError)
 
 
             // Do two additional writes from trusted client 1 and 3

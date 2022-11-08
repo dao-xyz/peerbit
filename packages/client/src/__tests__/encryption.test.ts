@@ -76,7 +76,7 @@ Object.keys(testAPIs).forEach(API => {
       },)
 
       const program = await orbitdb1.open(new PermissionedEventStore({ network: new TrustedNetwork({ id: 'network-tests', rootTrust: orbitdb1.identity.publicKey }) }), { directory: dbPath1 })
-      await orbitdb1.joinNetwork(program);
+      await orbitdb1.join(program);
 
       // Trusted client 2
       orbitdb2 = await Peerbit.create(session.peers[1].ipfs, { directory: orbitdbPath2, waitForKeysTimout: 1000 })
@@ -157,7 +157,7 @@ Object.keys(testAPIs).forEach(API => {
       })
 
       await waitFor(() => db2.network?.trustGraph.index.size >= 3);
-      await orbitdb2.joinNetwork(db2)
+      await orbitdb2.join(db2)
 
       expect(await orbitdb1.keystore.hasKey(unknownKey.keypair.publicKey));
       const xKey = await X25519PublicKey.from(unknownKey.keypair.publicKey);
@@ -182,7 +182,7 @@ Object.keys(testAPIs).forEach(API => {
       options = Object.assign({}, options, { directory: dbPath2 })
       db2 = await orbitdb2.open<PermissionedEventStore>(db1.address!, { replicationTopic, ...options })
       await waitFor(() => db2.network?.trustGraph.index.size >= 3);
-      await orbitdb2.joinNetwork(db2)
+      await orbitdb2.join(db2)
       await waitFor(() => db1.network?.trustGraph.index.size >= 4);
 
       const reciever = await orbitdb2.getEncryptionKey(replicationTopic, db2.address.toString()) as KeyWithMeta<Ed25519Keypair>;
@@ -198,7 +198,7 @@ Object.keys(testAPIs).forEach(API => {
       db2 = await orbitdb2.open<PermissionedEventStore>(db1.address!, { replicationTopic, ...options })
 
       await waitFor(() => db2.network?.trustGraph.index.size >= 3);
-      await orbitdb2.joinNetwork(db2)
+      await orbitdb2.join(db2)
 
       const client3Key = await orbitdb3.keystore.createEd25519Key({ id: 'unknown' });
 
