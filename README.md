@@ -212,7 +212,7 @@ const peer2 = await Peerbit.create(IPFS CLIENT 2, {... options ...})
 const programPeer1 = await peer1.open(new StringStore({store: new Store(), network: new TrustedNetwork()}), ... options ...)
 
 // add trust to another peer
-await program.network.add(peer2.id) 
+await program.network.add(peer2.identity.publicKey) 
 
 
 // peer2 also has to "join" the network, in practice this that peer2 add a record telling that its Peer ID trusts its IPFS ID
