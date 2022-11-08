@@ -31,6 +31,8 @@ import { exchangeSwarmAddresses, ExchangeSwarmMessage } from './exchange-network
 import { setTimeout } from 'timers';
 import { logger as parentLogger } from './logger.js'
 import { IVPC } from './network.js';
+
+
 const logger = parentLogger.child({ module: 'peer' });
 
 
