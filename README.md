@@ -47,6 +47,7 @@ import { Peerbit } from '@dao-xyz/peerbit'
 import { Program } from '@dao-xyz/peerbit-program'
 import { SignKey } from '@dao-xyz/peerbit-crypto';
 import { Range, DString, StringOperation } from '@dao-xyz/peerbit-string';
+import { field, variant } from '@dao-xyz/borst-ts' 
 
 @variant("collaborative_text") // You have to give the program a unique name
 class CollaborativeText extends Program {
