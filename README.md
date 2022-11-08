@@ -168,7 +168,7 @@ program.store.addOperation( ... )
 See the [DString](./packages/programs/data/string) for a complete working example that also includes a string search index
 
 
-### Controlled replication in a with VPC
+## Networking and VPCs
 Distributing content among untrusted peers will be unreliable and not resiliant to malicious parties that takes over the network by participating with multiple nodes. To mitigate this you can launch you program in a "VPC", which is basically a network of nodes that trust each other. 
 
 To do this, you only have to implement the "VPC" interface: 
