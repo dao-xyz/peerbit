@@ -4,4 +4,4 @@ export * from './channel.js';
 
 // For convenience export common modules
 export type { Identity }
-export { VPC } from './network.js';
+export type { VPC } from './network.js';

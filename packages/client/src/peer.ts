@@ -30,7 +30,7 @@ import type { PeerId } from '@libp2p/interface-peer-id';
 import { exchangeSwarmAddresses, ExchangeSwarmMessage } from './exchange-network.js';
 import { setTimeout } from 'timers';
 import { logger as parentLogger } from './logger.js'
-import { IVPC } from './network.js';
+import { isVPC, VPC } from './network.js';
 
 
 const logger = parentLogger.child({ module: 'peer' });
@@ -695,7 +695,12 @@ export class Peerbit {
     }
   }
 
+  async join(program: VPC) {
 
+    // Will be rejected by peers if my identity is not trusted
+    // (this will sign our IPFS ID with our client Ed25519 key identity, if peers do not trust our identity, we will be rejected)
+    await program.network.add(new IPFSAddress({ address: (await this.ipfs.id()).id.toString() }))
+  }
 
   async getChannel(peer: string, fromTopic: string): Promise<DirectChannel | undefined> {
 
@@ -1192,11 +1197,8 @@ export class Peerbit {
       return;
     }
     const parsedAddress = address instanceof Address ? address : Address.parse(address);
-    const asPermissioned = this.programs.get(replicationTopic)?.get(parsedAddress.root().toString())?.program as any as IVPC
-    if (!asPermissioned) {
-      return;
-    }
-    if (!asPermissioned._isPermissioned) {
+    const asPermissioned = this.programs.get(replicationTopic)?.get(parsedAddress.root().toString())?.program
+    if (!asPermissioned || !isVPC(asPermissioned)) {
       return;
     }
     return asPermissioned.network;

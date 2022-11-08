@@ -6,8 +6,9 @@ import { VPC } from "../../../network";
 import { EventStore } from "./event-store";
 
 @variant('permissioned_program')
-export class PermissionedEventStore extends VPC(Program)
-{
+export class PermissionedEventStore extends Program implements VPC {
+
+    networkType: 'VPC' = 'VPC';
 
     @field({ type: EventStore })
     _store: EventStore<string>
