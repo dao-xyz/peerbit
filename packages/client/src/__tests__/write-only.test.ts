@@ -148,9 +148,9 @@ describe(`orbit-db - Write-only`, function () {
 
         expect(store.store.oplog.heads).toHaveLength(1);
 
-        await waitFor(() => Object.values(orbitdb2.programs[replicationTopic]).length > 0, { timeout: 20 * 1000, delayInterval: 50 });
+        await waitFor(() => orbitdb2.programs.get(replicationTopic)?.size || 0 > 0, { timeout: 20 * 1000, delayInterval: 50 });
 
-        const replicatedProgramAndStores = Object.values(orbitdb2.programs[replicationTopic])[0];
+        const replicatedProgramAndStores = orbitdb2.programs.get(replicationTopic)?.values().next().value
         const replicatedStore = replicatedProgramAndStores.program.stores[0]
         await waitFor(() => replicatedStore.oplog.values.length == 2);
         expect(replicatedStore).toBeDefined();
@@ -199,7 +199,7 @@ describe(`orbit-db - Write-only`, function () {
         const _eventStore2 = await store.eventStore.put(new EventStore({ id: 'store 2' }));
         expect(store.eventStore.store.oplog.heads).toHaveLength(2); // two independent documents
 
-        await waitFor(() => Object.values(orbitdb2.programs[replicationTopic]).length > 0, { timeout: 20 * 1000, delayInterval: 50 });
+        await waitFor(() => orbitdb2.programs.get(replicationTopic)?.size || 0 > 0, { timeout: 20 * 1000, delayInterval: 50 });
 
 
         const eventStoreString = ((await eventStore.payload.getValue()) as PutOperation<any>).value as EventStore<string>;

@@ -71,7 +71,7 @@ Object.keys(testAPIs).forEach(API => {
       eventStore = new EventStore<string>({});
       eventStore = await orbitdb1.open(eventStore, { replicationTopic })
       eventStore.add("hello");
-      await waitFor(() => (orbitdb2.programs[replicationTopic]?.[eventStore.address!.toString()]?.program as EventStore<string>)?.store?.oplog.values.length === 1)
+      await waitFor(() => (orbitdb2.programs.get(replicationTopic)?.get(eventStore.address!.toString())?.program as EventStore<string>)?.store?.oplog.values.length === 1)
     })
   })
 })
