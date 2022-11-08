@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit",
-  "version": "0.0.48",
+  "version": "0.0.49",
   "description": "Distributed p2p database on IPFS",
   "author": "Haad",
   "license": "MIT",
