@@ -40,7 +40,7 @@ Object.keys(testAPIs).forEach(API => {
             const network = new TrustedNetwork({ id: 'network-tests', rootTrust: orbitdb1.identity.publicKey });
             db1 = await orbitdb1.open<PermissionedEventStore>(new PermissionedEventStore({ network }), { directory: dbPath1 })
 
-            await db1.joinNetwork();
+            await orbitdb1.joinNetwork(db1);
 
             // trust client 3
             await network.add(orbitdb2.id)
@@ -107,9 +107,6 @@ Object.keys(testAPIs).forEach(API => {
 
             await waitForAsync(() => checkConverged(db2.store), { timeout: 20000, delayInterval: 5000 })
             await waitForAsync(() => checkConverged(db3.store), { timeout: 20000, delayInterval: 5000 })
-
         })
-
-
     })
 })

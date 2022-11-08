@@ -79,7 +79,7 @@ Object.keys(testAPIs).forEach(API => {
             const program = await orbitdb1.open(new PermissionedEventStore({
                 network: new TrustedNetwork({ id: 'network-tests', rootTrust: orbitdb1.identity.publicKey })
             }), { directory: dbPath1 })
-            await program.joinNetwork();
+            await orbitdb1.joinNetwork(program);
 
             // trust client 2
             await program.network.add(orbitdb2.id) // we have to trust peer because else other party will not exchange heads

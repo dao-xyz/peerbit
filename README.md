@@ -126,6 +126,7 @@ Contains composable programs you can build your program with. For example distri
 A program lets you write control mechanism for Append-Only logs (which are represented as a [Store](./packages/store), example program
 
 ```typescript 
+import { Peerbit } from '@dao-xyz/peerbit'
 import { Store } from '@dao-xyz/peerbit-store'
 import { Program } from '@dao-xyz/peerbit-program' 
 import { field, variant } from '@dao-xyz/borst-ts' 
@@ -156,7 +157,7 @@ class StringStore extends Program  // Needs to extend Program if you are going t
 
 const peer = await Peerbit.create(IPFS CLIENT, {... options ...})
 
-const program = await peer.open(new StringStore(), ... options ...)
+const program = await peer.open(new StringStore({store: new Store()}), ... options ...)
  
 console.log(program.address) // "peerbit/123xyz..." 
 
@@ -167,6 +168,60 @@ program.store.addOperation( ... )
 See the [DString](./packages/programs/data/string) for a complete working example that also includes a string search index
 
 
+### Controlled replication in a with VPC
+Distributing content among untrusted peers will be unreliable and not resiliant to malicious parties that takes over the network by participating with multiple nodes. To mitigate this you can launch you program in a "VPC", which is basically a network of nodes that trust each other. 
+
+To do this, you only have to implement the "VPC" interface: 
+```typescript
+import { Peerbit, VPC } from '@dao-xyz/peerbit'
+import { Store } from '@dao-xyz/peerbit-store'
+import { Program } from '@dao-xyz/peerbit-program' 
+import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network' 
+import { field, variant } from '@dao-xyz/borst-ts' 
+
+@variant("string_store") // Needs to have a variant name so the program is unique
+class StringStore extends Program implements VPC // Needs to extend Program if you are going to store Store<any> in your class
+{
+    networkType: 'VPC' = 'VPC' // add network type 
+
+    @field({type: Store})
+    store: Store<string>
+
+    @field({type: TrustedNetwork}) 
+    network: TrustedNetwork // this is a database storing all peers. Peers that are trusted can add new peers
+
+    constructor(properties?:{ store: Store<any>, network: TrustedNetwork }) {
+        if(properties)
+        {
+            this.store = properties.store
+        }
+    }
+
+    async setup() 
+    {
+        await store.setup({ encoding: ... , canAppend: ..., canRead: ...})
+        await trustedNetwork.setup()
+    }
+}
+
+
+// Later 
+const peer1 = await Peerbit.create(IPFS CLIENT, {... options ...})
+const peer2 = await Peerbit.create(IPFS CLIENT 2, {... options ...})
+
+const programPeer1 = await peer1.open(new StringStore({store: new Store(), network: new TrustedNetwork()}), ... options ...)
+
+// add trust to another peer
+await program.network.add(peer2.id) 
+
+
+// peer2 also has to "join" the network, in practice this that peer2 add a record telling that its Peer ID trusts its IPFS ID
+
+const programPeer2 = await peer2.open(programPeer1.address, ... options ...)
+await peer2.join(programPeer2) // This might fail if you do this too quickly after "open", because it has not yet recieved all data from the network changes from peer1
+```
+
+See [this test(s)](./packages/client/src/__tests__/network.test.ts) for working examples
 
 ## [Utils](./packages/utils/)
 Utility libraries that do not have their own category yet
