@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-trusted-network",
-  "version": "0.0.71",
+  "version": "0.0.72",
   "description": "Access controller that operates on a DB",
   "type": "module",
   "sideEffects": false,
