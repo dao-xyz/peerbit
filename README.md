@@ -241,9 +241,9 @@ const programPeer1 = await peer1.open(new StringStore({store: new Store(), netwo
 await program.network.add(peer2.identity.publicKey) 
 
 
-// peer2 also has to "join" the network, in practice this that peer2 add a record telling that its Peer ID trusts its IPFS ID
+// peer2 also has to "join" the network, in practice this means that peer2 adds a record telling that its Peer ID trusts its IPFS ID
 const programPeer2 = await peer2.open(programPeer1.address, {... options ...})
-await peer2.join(programPeer2) // This might fail if you do this too quickly after "open", because it has not yet recieved all data from the network changes from peer1
+await peer2.join(programPeer2) // This might fail with "AccessError" if you do this too quickly after "open", because it has not yet recieved the full trust graph from peer1 yet
 ```
 
 See [this test(s)](./packages/client/src/__tests__/network.test.ts) for working examples
