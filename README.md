@@ -195,7 +195,7 @@ See the [DString](./packages/programs/data/string) for a complete working exampl
 
 
 ## Networking and VPCs
-Distributing content among untrusted peers will be unreliable and not resiliant to malicious parties that takes over the network by participating with multiple nodes. To mitigate this you can launch you program in a "VPC", which is basically a network of nodes that trust each other. 
+Distributing content among untrusted peers will be unreliable and not resilient to malicious parties that take over the network by participating with large amount (>> min replicas) of nodes and shutting them down simultaneously (no way for the original peers recover all lost data). To mitigate this you can launch your program in a "VPC", which is basically a network of nodes that trust each other.
 
 To do this, you only have to implement the "VPC" interface: 
 ```typescript
