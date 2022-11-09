@@ -39,9 +39,9 @@ The goal of this project is to create a **cheaper** and **more private** way of 
 - 🚧 Documentation
 - 🚧 CLI for non browser nodes (SSL setup and network management)
 - Easy WebRTC setup for device to device networks
-- Performant indexation capabilities WASM search modules
+- Performant indexation capabilities with WASM search modules
 - Improved sharding algorithm that respects device capabilities
-- Trustless hosting 
+- "Trustless" hosting 
 
 
 ### Some informational links are found below
