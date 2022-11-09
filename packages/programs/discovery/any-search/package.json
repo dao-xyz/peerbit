@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-anysearch",
-  "version": "0.0.82",
+  "version": "0.0.83",
   "description": "Document Store for orbit-db with binary ser/der",
   "type": "module",
   "sideEffects": false,
