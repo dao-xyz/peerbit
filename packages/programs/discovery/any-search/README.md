@@ -4,3 +4,5 @@ This module contains a communication protocol for a generic search that can be u
 
 
 🚧 Documentation is WIP 🚧
+
+As of now you can learn how to use this module by reading how the [Document store module](./../../data//document) incorporates search capabilities.
