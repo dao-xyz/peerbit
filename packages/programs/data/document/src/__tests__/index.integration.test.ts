@@ -214,7 +214,6 @@ describe('index', () => {
 
       let response: Results = undefined as any;
 
-      //await otherPeer.node.swarm.connect((await creatorPeer.node.id()).addresses[0].toString());
       await stores[1].docs.index.search.query(new PageQueryRequest({
         queries: []
       }), (r: Results) => {
@@ -230,7 +229,6 @@ describe('index', () => {
 
       let response: Results = undefined as any;
 
-      //await otherPeer.node.swarm.connect((await creatorPeer.node.id()).addresses[0].toString());
       await stores[1].docs.index.search.query(new PageQueryRequest({
         queries: [new FieldStringMatchQuery({
           key: 'name',
@@ -250,7 +248,6 @@ describe('index', () => {
 
       let response: Results = undefined as any;
 
-      //await otherPeer.node.swarm.connect((await creatorPeer.node.id()).addresses[0].toString());
       await stores[1].docs.index.search.query(new PageQueryRequest({
         queries: [new FieldStringMatchQuery({
           key: 'name',
@@ -267,103 +264,7 @@ describe('index', () => {
       expect((((response.results[0]) as ResultWithSource).source as Document).id).toEqual('2');
     });
 
-    /*  describe('sort', () => {
-       it('sort offset ascending', async () => {
-         let doc = new Document({
-           id: '1',
-           id: 'hey',
-           number: 1n
-         });
- 
-         let doc2 = new Document({
-           id: '2',
-           id: 'hey',
-           number: 2n
- 
-         });
- 
-         let doc3 = new Document({
-           id: '3',
-           id: 'hey',
-           number: 3n
-         });
- 
-         await writeStore.docs.put(doc);
-         await writeStore.docs.put(doc2);
-         await writeStore.docs.put(doc3);
- 
-         let response: Results = undefined as any;
- 
-         //await otherPeer.node.swarm.connect((await creatorPeer.node.id()).addresses[0].toString());
-         await stores[1].docs.index.search.query(new PageQueryRequest({
-           queries: [new FieldStringMatchQuery({
-             key: 'name',
-             value: 'hey'
-           })],
-           offset: 1n,
-           sort: new FieldSort({
-             key: ['number'],
-             direction: SortDirection.Ascending
-           })
-         }), (r: Results) => {
-           response = r;
-         }, { waitForAmount: 1 })
-         expect(response.results).toHaveLength(2);
-         expect(((response.results[0] as ResultWithSource).source as Document).id).toEqual(doc2.id);
-         expect(((response.results[1] as ResultWithSource).source as Document).id).toEqual(doc3.id);
- 
- 
-       });
- 
- 
-       it('sort offset descending', async () => {
- 
-         let doc = new Document({
-           id: '1',
-           id: 'hey',
-           number: 1n
-         });
-         let doc2 = new Document({
-           id: '2',
-           id: 'hey',
-           number: 2n
- 
-         });
- 
-         let doc3 = new Document({
-           id: '3',
-           id: 'hey',
-           number: 3n
- 
-         });
- 
-         await writeStore.docs.put(doc);
-         await writeStore.docs.put(doc2);
-         await writeStore.docs.put(doc3);
- 
-         let response: Results = undefined as any;
- 
-         //await otherPeer.node.swarm.connect((await creatorPeer.node.id()).addresses[0].toString());
-         await stores[1].docs.index.search.query(new PageQueryRequest({
-           queries: [new FieldStringMatchQuery({
-             key: 'name',
-             value: 'hey'
-           })],
-           offset: 1n,
-           sort: new FieldSort({
-             key: ['number'],
-             direction: SortDirection.Descending
-           })
-         }), (r: Results) => {
-           response = r;
-         }, { waitForAmount: 1 })
-         expect(response.results).toHaveLength(2);
-         expect(((response.results[0] as ResultWithSource).source as Document).id).toEqual(doc2.id);
-         expect(((response.results[1] as ResultWithSource).source as Document).id).toEqual(doc.id);
- 
- 
-       });
-     }) */
+
     describe('number', () => {
       it('equal', async () => {
 
@@ -483,7 +384,6 @@ describe('index', () => {
 
         let response: Results = undefined as any;
 
-        //await otherPeer.node.swarm.connect((await creatorPeer.node.id()).addresses[0].toString());
         await stores[1].docs.index.search.query(new PageQueryRequest({
           queries: [new MemoryCompareQuery({
             compares: [new MemoryCompare({
