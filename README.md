@@ -208,7 +208,7 @@ import { field, variant } from '@dao-xyz/borst-ts'
 @variant("string_store") 
 class StringStore extends Program implements Network 
 {
-    inNetwork: true = true
+    inNetwork: true = true // This needs to be included for type safety reasons
 
     @field({type: Store})
     store: Store<string>
