@@ -41,7 +41,8 @@ The goal of this project is to create a **cheaper** and **more private** way of 
 - Easy WebRTC setup for device to device networks
 - Performant indexation capabilities with WASM search modules
 - Improved sharding algorithm that respects device capabilities
-- "Trustless" hosting 
+- E2EE forward secrecy
+- ~Trustless hosting 
 
 
 ### Some informational links are found below
