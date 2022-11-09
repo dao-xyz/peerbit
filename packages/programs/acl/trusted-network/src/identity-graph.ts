@@ -8,12 +8,12 @@ import { createHash } from "crypto";
 import { joinUint8Arrays, UInt8ArraySerializer } from '@dao-xyz/peerbit-borsh-utils'
 import { DQuery } from "@dao-xyz/peerbit-query";
 
-export type RelationResolver = { resolve: (key: PublicSignKey, db: Documents<Relation>) => Promise<Result[]>, next: (relation: AnyRelation) => PublicSignKey }
+export type RelationResolver = { resolve: (key: PublicSignKey, db: Documents<IdentityRelation>) => Promise<Result[]>, next: (relation: IdentityRelation) => PublicSignKey }
 export const PUBLIC_KEY_WIDTH = 72 // bytes reserved
 
-export const KEY_OFFSET = 3 + 4 + 1 + 28; // SystemBinaryPayload discriminator + Relation discriminator + AnyRelation discriminator + id length u32 + utf8 encoding + id chars
+export const KEY_OFFSET = 3 + 4 + 1 + 28; // SystemBinaryPayload discriminator + Relation discriminator + IdentityRelation discriminator + id length u32 + utf8 encoding + id chars
 export const getFromByTo: RelationResolver = {
-    resolve: async (to: PublicSignKey, db: Documents<Relation>) => {
+    resolve: async (to: PublicSignKey, db: Documents<IdentityRelation>) => {
         const ser = serialize(to);
         return await db.index.queryHandler(new PageQueryRequest({
             queries: [
@@ -32,7 +32,7 @@ export const getFromByTo: RelationResolver = {
 }
 
 export const getToByFrom: RelationResolver = {
-    resolve: async (from: PublicSignKey, db: Documents<Relation>) => {
+    resolve: async (from: PublicSignKey, db: Documents<IdentityRelation>) => {
         const ser = serialize(from);
         return await db.index.queryHandler(new PageQueryRequest({
             queries: [
@@ -57,7 +57,7 @@ export const getToByFrom: RelationResolver = {
 
 
 
-export async function* getPathGenerator(from: Key, db: Documents<Relation>, resolver: RelationResolver) {
+export async function* getPathGenerator(from: Key, db: Documents<IdentityRelation>, resolver: RelationResolver) {
     let iter = [from];
     const visited = new Set();
     while (iter.length > 0) {
@@ -66,7 +66,7 @@ export async function* getPathGenerator(from: Key, db: Documents<Relation>, reso
             const results = await resolver.resolve(value, db);
             for (const result of results) {
                 if (result instanceof ResultWithSource) {
-                    if (result.source instanceof AnyRelation) {
+                    if (result.source instanceof IdentityRelation) {
                         if (visited.has(result.source.id)) {
                             return;
                         }
@@ -90,7 +90,7 @@ export async function* getPathGenerator(from: Key, db: Documents<Relation>, reso
  * @param db 
  * @returns 
  */
-export const hasPathToTarget = async (start: Key, target: (key: Key) => boolean, db: Documents<Relation>, resolver: RelationResolver): Promise<boolean> => {
+export const hasPathToTarget = async (start: Key, target: (key: Key) => boolean, db: Documents<IdentityRelation>, resolver: RelationResolver): Promise<boolean> => {
 
     if (!db) {
         throw new Error("Not initalized")
@@ -112,7 +112,7 @@ export const hasPathToTarget = async (start: Key, target: (key: Key) => boolean,
 
 
 @variant(10)
-export class Relation extends SystemBinaryPayload {
+export abstract class AbstractRelation extends SystemBinaryPayload {
 
     @field({ type: 'string' })
     id: string;
@@ -121,7 +121,7 @@ export class Relation extends SystemBinaryPayload {
 
 
 @variant(0)
-export class AnyRelation extends Relation {
+export class IdentityRelation extends AbstractRelation {
 
     @field({ type: Key })
     from: Key
@@ -147,7 +147,7 @@ export class AnyRelation extends Relation {
     }
 
     initializeId() {
-        this.id = AnyRelation.id(this.to, this.from);
+        this.id = IdentityRelation.id(this.to, this.from);
     }
 
     static id(to: PublicSignKey, from: PublicSignKey) {
@@ -158,17 +158,17 @@ export class AnyRelation extends Relation {
 }
 
 
-export const hasPath = async (start: Key, end: Key, db: Documents<Relation>, resolver: RelationResolver): Promise<boolean> => {
+export const hasPath = async (start: Key, end: Key, db: Documents<IdentityRelation>, resolver: RelationResolver): Promise<boolean> => {
     return hasPathToTarget(start, (key) => end.equals(key), db, resolver)
 }
 
-export const getRelation = (from: Key, to: Key, db: Documents<Relation>): IndexedValue<Relation> | undefined => {
-    return db.index.get(new AnyRelation({ from, to }).id);
+export const getRelation = (from: Key, to: Key, db: Documents<IdentityRelation>): IndexedValue<IdentityRelation> | undefined => {
+    return db.index.get(new IdentityRelation({ from, to }).id);
 }
 
 
 
-export const createIdentityGraphStore = (props: { id: string, queryRegion?: string }) => new Documents<Relation>({
+export const createIdentityGraphStore = (props: { id: string, queryRegion?: string }) => new Documents<IdentityRelation>({
     index: new DocumentIndex({
         indexBy: 'id',
         search: new AnySearch({

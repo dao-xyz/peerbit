@@ -6,14 +6,14 @@ import { createHash } from "crypto";
 import { IPFSAddress, Key, OtherKey, PublicSignKey, SignKey } from "@dao-xyz/peerbit-crypto";
 import type { PeerId } from '@libp2p/interface-peer-id';
 import { DeleteOperation } from "@dao-xyz/peerbit-document";
-import { AnyRelation, createIdentityGraphStore, getPathGenerator, hasPath, Relation, getFromByTo, getToByFrom, getRelation } from "./identity-graph";
+import { IdentityRelation, createIdentityGraphStore, getPathGenerator, hasPath, getFromByTo, getToByFrom, getRelation } from "./identity-graph";
 import { BinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { Program } from '@dao-xyz/peerbit-program';
 import { CanRead, DQuery } from "@dao-xyz/peerbit-query";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { AddOperationOptions } from "@dao-xyz/peerbit-store";
 
-const canAppendByRelation = async (entry: Entry<Operation<Relation>>, isTrusted?: (key: PublicSignKey) => Promise<boolean>): Promise<boolean> => {
+const canAppendByRelation = async (entry: Entry<Operation<IdentityRelation>>, isTrusted?: (key: PublicSignKey) => Promise<boolean>): Promise<boolean> => {
 
     // verify the payload 
     const operation = await entry.getPayloadValue();
@@ -28,7 +28,7 @@ const canAppendByRelation = async (entry: Entry<Operation<Relation>>, isTrusted?
             const relation: BinaryPayload = operation._value || deserialize(operation.data, BinaryPayload);
             operation._value = relation;
 
-            if (relation instanceof AnyRelation) {
+            if (relation instanceof IdentityRelation) {
                 if (!relation.from.equals(key)) {
                     return false;
                 }
@@ -55,7 +55,7 @@ const canAppendByRelation = async (entry: Entry<Operation<Relation>>, isTrusted?
 export class RelationContract extends Program {
 
     @field({ type: Documents })
-    relationGraph: Documents<Relation>
+    relationGraph: Documents<IdentityRelation>
 
     constructor(props?: {
         id?: string
@@ -66,19 +66,19 @@ export class RelationContract extends Program {
         }
     }
 
-    async canAppend(entry: Entry<Operation<Relation>>): Promise<boolean> {
+    async canAppend(entry: Entry<Operation<IdentityRelation>>): Promise<boolean> {
         return canAppendByRelation(entry)
     }
 
 
     async setup(options?: { canRead?: CanRead }) {
-        await this.relationGraph.setup({ type: Relation, canAppend: this.canAppend.bind(this), canRead: options?.canRead }) // self referencing access controller
+        await this.relationGraph.setup({ type: IdentityRelation, canAppend: this.canAppend.bind(this), canRead: options?.canRead }) // self referencing access controller
     }
 
 
-    async addRelation(to: PublicSignKey, options?: AddOperationOptions<Operation<Relation>>) {
+    async addRelation(to: PublicSignKey, options?: AddOperationOptions<Operation<IdentityRelation>>) {
         /*  trustee = PublicKey.from(trustee); */
-        await this.relationGraph.put(new AnyRelation({
+        await this.relationGraph.put(new IdentityRelation({
             to: to,
             from: options?.identity?.publicKey || this.relationGraph.store.identity.publicKey
         }), options);
@@ -96,7 +96,7 @@ export class TrustedNetwork extends Program {
     rootTrust: PublicSignKey
 
     @field({ type: Documents })
-    trustGraph: Documents<Relation>
+    trustGraph: Documents<IdentityRelation>
 
     @field({ type: LogIndex })
     logIndex: LogIndex;
@@ -116,11 +116,11 @@ export class TrustedNetwork extends Program {
 
 
     async setup() {
-        await this.trustGraph.setup({ type: Relation, canAppend: this.canAppend.bind(this), canRead: this.canRead.bind(this) }) // self referencing access controller
+        await this.trustGraph.setup({ type: IdentityRelation, canAppend: this.canAppend.bind(this), canRead: this.canRead.bind(this) }) // self referencing access controller
         await this.logIndex.setup({ store: this.trustGraph.store })
     }
 
-    async canAppend(entry: Entry<Operation<Relation>>): Promise<boolean> {
+    async canAppend(entry: Entry<Operation<IdentityRelation>>): Promise<boolean> {
 
         return canAppendByRelation(entry, async (key) => await this.isTrusted(key))
     }
@@ -132,14 +132,16 @@ export class TrustedNetwork extends Program {
         return await this.isTrusted(key);
     }
 
-    async add(trustee: PublicSignKey | PeerId/*  | Identity | IdentitySerializable */) {
-        /*  trustee = PublicKey.from(trustee); */
+    async add(trustee: PublicSignKey | PeerId): Promise<IdentityRelation | undefined> {
         if (!this.hasRelation(trustee, this.trustGraph.store.identity.publicKey)) {
-            await this.trustGraph.put(new AnyRelation({
+            const relation = new IdentityRelation({
                 to: trustee instanceof Key ? trustee : new IPFSAddress({ address: trustee.toString() }),
                 from: this.trustGraph.store.identity.publicKey
-            }));
+            });
+            await this.trustGraph.put(relation);
+            return relation;
         }
+        return undefined;
     }
 
     hasRelation(trustee: PublicSignKey | PeerId, truster = this.rootTrust) {

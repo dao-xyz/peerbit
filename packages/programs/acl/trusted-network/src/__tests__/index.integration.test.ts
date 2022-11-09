@@ -1,5 +1,5 @@
 import { Session, waitForPeers } from '@dao-xyz/peerbit-test-utils'
-import { AnyRelation, createIdentityGraphStore, getFromByTo, getPathGenerator, getToByFrom, TrustedNetwork, KEY_OFFSET, PUBLIC_KEY_WIDTH, Relation } from '..';
+import { IdentityRelation, createIdentityGraphStore, getFromByTo, getPathGenerator, getToByFrom, TrustedNetwork, KEY_OFFSET, PUBLIC_KEY_WIDTH } from '..';
 import { waitFor } from '@dao-xyz/peerbit-time';
 import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { PageQueryRequest, Results, ResultWithSource } from '@dao-xyz/peerbit-anysearch';
@@ -31,16 +31,16 @@ const createIdentity = async () => {
 class IdentityGraph extends Program {
 
     @field({ type: Documents })
-    store: Documents<Relation>
+    store: Documents<IdentityRelation>
 
-    constructor(properties?: { store: Documents<Relation> }) {
+    constructor(properties?: { store: Documents<IdentityRelation> }) {
         super();
         if (properties) {
             this.store = properties.store;
         }
     }
     async setup(): Promise<void> {
-        await this.store.setup({ type: Relation })
+        await this.store.setup({ type: IdentityRelation })
     }
 
 }
@@ -69,7 +69,7 @@ describe('index', () => {
         it('serializes relation with right padding ed25519', async () => {
             const from = (await Ed25519Keypair.create()).publicKey;
             const to = (await Ed25519Keypair.create()).publicKey;
-            const relation = new AnyRelation({ from, to })
+            const relation = new IdentityRelation({ from, to })
             const serRelation = serialize(relation);
             const serFrom = serialize(from);
             const serTo = serialize(to);
@@ -83,7 +83,7 @@ describe('index', () => {
                 address: await Wallet.createRandom().getAddress()
             })
             const to = (await Ed25519Keypair.create()).publicKey;
-            const relation = new AnyRelation({ from, to })
+            const relation = new IdentityRelation({ from, to })
             const serRelation = serialize(relation);
             const serFrom = serialize(from);
             const serTo = serialize(to);
@@ -107,11 +107,11 @@ describe('index', () => {
             })
             await init(store, 0, { replicationTopic: uuid() });
 
-            const ab = new AnyRelation({
+            const ab = new IdentityRelation({
                 to: b,
                 from: a
             });
-            const bc = new AnyRelation({
+            const bc = new IdentityRelation({
                 to: c,
                 from: b
             })
@@ -121,23 +121,23 @@ describe('index', () => {
             // Get relations one by one
             const trustingC = await getFromByTo.resolve(c, store.store);
             expect(trustingC).toHaveLength(1);
-            expect(((trustingC[0] as ResultWithSource).source as AnyRelation).id).toEqual(bc.id);
+            expect(((trustingC[0] as ResultWithSource).source as IdentityRelation).id).toEqual(bc.id);
 
             const bIsTrusting = await getToByFrom.resolve(b, store.store);
             expect(bIsTrusting).toHaveLength(1);
-            expect(((bIsTrusting[0] as ResultWithSource).source as AnyRelation).id).toEqual(bc.id);
+            expect(((bIsTrusting[0] as ResultWithSource).source as IdentityRelation).id).toEqual(bc.id);
 
 
             const trustingB = await getFromByTo.resolve(b, store.store);
             expect(trustingB).toHaveLength(1);
-            expect(((trustingB[0] as ResultWithSource).source as AnyRelation).id).toEqual(ab.id);
+            expect(((trustingB[0] as ResultWithSource).source as IdentityRelation).id).toEqual(ab.id);
 
             const aIsTrusting = await getToByFrom.resolve(a, store.store);
             expect(aIsTrusting).toHaveLength(1);
-            expect(((aIsTrusting[0] as ResultWithSource).source as AnyRelation).id).toEqual(ab.id);
+            expect(((aIsTrusting[0] as ResultWithSource).source as IdentityRelation).id).toEqual(ab.id);
 
             // Test generator
-            const relationsFromGeneratorFromByTo: AnyRelation[] = [];
+            const relationsFromGeneratorFromByTo: IdentityRelation[] = [];
             for await (const relation of getPathGenerator(c, store.store, getFromByTo)) {
                 relationsFromGeneratorFromByTo.push(relation);
             }
@@ -146,7 +146,7 @@ describe('index', () => {
             expect(relationsFromGeneratorFromByTo[1].id).toEqual(ab.id);
 
 
-            const relationsFromGeneratorToByFrom: AnyRelation[] = [];
+            const relationsFromGeneratorToByFrom: IdentityRelation[] = [];
             for await (const relation of getPathGenerator(a, store.store, getToByFrom)) {
                 relationsFromGeneratorToByFrom.push(relation);
             }
@@ -169,7 +169,7 @@ describe('index', () => {
             const replicationTopic = uuid();
             await init(store, 0, { replicationTopic });
 
-            const ab = new AnyRelation({
+            const ab = new IdentityRelation({
                 to: b,
                 from: a
             });
@@ -178,7 +178,7 @@ describe('index', () => {
 
             let trustingB = await getFromByTo.resolve(b, store.store);
             expect(trustingB).toHaveLength(1);
-            expect(((trustingB[0] as ResultWithSource).source as AnyRelation).id).toEqual(ab.id);
+            expect(((trustingB[0] as ResultWithSource).source as IdentityRelation).id).toEqual(ab.id);
 
             await store.store.del(ab.id);
             trustingB = await getFromByTo.resolve(b, store.store);
@@ -293,7 +293,7 @@ describe('index', () => {
             });
             await init(l0a, 0, { replicationTopic: uuid() });
 
-            expect(l0a.trustGraph.put(new AnyRelation({
+            expect(l0a.trustGraph.put(new IdentityRelation({
                 to: new Secp256k1PublicKey({
                     address: await Wallet.createRandom().getAddress()
                 })
