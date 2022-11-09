@@ -35,7 +35,8 @@ The goal of this project is to create a **cheaper** and **more private** way of 
 - ✅ Composable programs 
 - ✅ Chain agnostic identities 
 - ✅ Permissioned content based sharding 
-- ✅ E2EE (no forward secrecy) 
+- ✅ E2EE (no forward secrecy)
+- ✅ Search protocol
 - 🚧 Documentation
 - 🚧 CLI for non browser nodes (SSL setup and network management)
 - 🚧 Benchmarks
