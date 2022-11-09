@@ -1,14 +1,11 @@
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network';
 
-export interface Networked {
-    networkType: string;
-}
 
-export interface VPC extends Networked {
-    networkType: 'VPC'
 
+export interface Network {
+    inNetwork: true,
     get network(): TrustedNetwork;
 }
-export const isVPC = (object: any): object is VPC => {
-    return object.networkType === 'VPC'
+export const inNetwork = (object: any): object is Network => {
+    return object.inNetwork === true
 }

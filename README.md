@@ -194,21 +194,21 @@ program.store.addOperation( ... )
 See the [DString](./packages/programs/data/string) for a complete working example that also includes a string search index
 
 
-## Networking and VPCs
-Distributing content among untrusted peers will be unreliable and not resilient to malicious parties that take over the network by participating with large amount (>> min replicas) of nodes and shutting them down simultaneously (no way for the original peers recover all lost data). To mitigate this you can launch your program in a "VPC", which is basically a network of nodes that trust each other.
+## Network
+Distributing content among untrusted peers will be unreliable and not resilient to malicious parties that starts to participate in the replication process with large amount (>> min replicas) of nodes and shutting them down simultaneously (no way for the original peers recover all lost data). To mitigate this you can launch your program in a "Network", which is basically a list of nodes that trust each other. Symbolically you could thing of this as a VPC.
 
-To do this, you only have to implement the "VPC" interface: 
+To do this, you only have to implement the "Network" interface: 
 ```typescript
-import { Peerbit, VPC } from '@dao-xyz/peerbit'
+import { Peerbit, Network } from '@dao-xyz/peerbit'
 import { Store } from '@dao-xyz/peerbit-store'
 import { Program } from '@dao-xyz/peerbit-program' 
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network' 
 import { field, variant } from '@dao-xyz/borst-ts' 
 
 @variant("string_store") 
-class StringStore extends Program implements VPC 
+class StringStore extends Program implements Network 
 {
-    networkType: 'VPC' = 'VPC' // add network type 
+    inNetwork: true = true
 
     @field({type: Store})
     store: Store<string>

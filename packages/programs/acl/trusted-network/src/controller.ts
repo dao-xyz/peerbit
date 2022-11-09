@@ -145,8 +145,8 @@ export class TrustedNetwork extends Program {
         return existingRelation.value;
     }
 
-    async hasRelation(trustee: PublicSignKey | PeerId, truster = this.rootTrust) {
-        return !!(await this.getRelation(trustee, truster))
+    hasRelation(trustee: PublicSignKey | PeerId, truster = this.rootTrust) {
+        return !!(this.getRelation(trustee, truster))
     }
     getRelation(trustee: PublicSignKey | PeerId, truster = this.rootTrust) {
         return getRelation(truster, trustee instanceof Key ? trustee : new IPFSAddress({ address: trustee.toString() }), this.trustGraph);

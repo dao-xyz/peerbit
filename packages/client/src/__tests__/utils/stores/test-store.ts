@@ -2,13 +2,13 @@
 import { field, variant } from '@dao-xyz/borsh'
 import { Program } from '@dao-xyz/peerbit-program';
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
-import { VPC } from "../../../network";
+import { Network } from "../../../network";
 import { EventStore } from "./event-store";
 
 @variant('permissioned_program')
-export class PermissionedEventStore extends Program implements VPC {
+export class PermissionedEventStore extends Program implements Network {
 
-    networkType: 'VPC' = 'VPC';
+    inNetwork: true = true;
 
     @field({ type: EventStore })
     _store: EventStore<string>
