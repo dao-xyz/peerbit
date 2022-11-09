@@ -133,7 +133,8 @@ export class TrustedNetwork extends Program {
     }
 
     async add(trustee: PublicSignKey | PeerId): Promise<IdentityRelation | undefined> {
-        if (!this.hasRelation(trustee, this.trustGraph.store.identity.publicKey)) {
+        const existingRelation = this.getRelation(trustee, this.trustGraph.store.identity.publicKey)
+        if (!existingRelation) {
             const relation = new IdentityRelation({
                 to: trustee instanceof Key ? trustee : new IPFSAddress({ address: trustee.toString() }),
                 from: this.trustGraph.store.identity.publicKey
@@ -141,13 +142,15 @@ export class TrustedNetwork extends Program {
             await this.trustGraph.put(relation);
             return relation;
         }
-        return undefined;
+        return existingRelation.value;
     }
 
-    hasRelation(trustee: PublicSignKey | PeerId, truster = this.rootTrust) {
-        return !!getRelation(truster, trustee instanceof Key ? trustee : new IPFSAddress({ address: trustee.toString() }), this.trustGraph);
+    async hasRelation(trustee: PublicSignKey | PeerId, truster = this.rootTrust) {
+        return !!(await this.getRelation(trustee, truster))
     }
-
+    getRelation(trustee: PublicSignKey | PeerId, truster = this.rootTrust) {
+        return getRelation(truster, trustee instanceof Key ? trustee : new IPFSAddress({ address: trustee.toString() }), this.trustGraph);
+    }
 
 
 
