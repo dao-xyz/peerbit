@@ -30,6 +30,20 @@ Data can be shared and encrypted on a granular level, you can decide exactly wha
 ### Goals
 The goal of this project is to create a **cheaper** and **more private** way of distributing and accessing data by utilizing consumer hardware and the latest advancements in networking technology. Additionally, we believe that creating a stateful application should and could be made much easier. It should not take longer than a weekend to get started to build your first distributed app!
 
+### Timeline and progress
+
+- ✅ Composable programs 
+- ✅ Chain agnostic identities 
+- ✅ Permissioned content based sharding 
+- ✅ E2EE (no forward secrecy) 
+- 🚧 Documentation
+- 🚧 CLI for non browser nodes (SSL setup and network management)
+- Easy WebRTC setup for device to device networks
+- Performant indexation capabilities WASM search modules
+- Improved sharding algorithm that respects device capabilities
+- Trustless hosting 
+
+
 ### Some informational links are found below
 [How Peerbit differs from OrbitDB](./documentation/difference.md)
 
