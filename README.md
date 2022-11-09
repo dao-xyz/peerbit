@@ -19,7 +19,16 @@
 
 
 ## What is this?
-Started originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS supporting, encryption, sharding and discoverability (searching). Peers have the possibility to organize themselves into "permissioned" regions. Within a region, secret information can be shared freely, this allows peers to create locally centralized database clusters with efficient replication, sharding, query yet still allowing cross trust region (low trust) activities, like relaying encrypted and signed messages. Data can be shared and encrypted on a granular level, you can decide exactly what parts of metadata should be public and not.
+Started originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS supporting encryption, sharding and discoverability (searching).
+ 
+Every peer has an identity which is simply their public key, this key can *currently* either be secp256k1 or a Ed25519 key. To prevent peers from manually sign messages, you can link identities together in a trust graph. This allows you to have a root identity that approves and revokes permissions to keys that can act on your behalf. Hence this allows you to build applications that allows users to act on multiple devices and chains seamlessly.
+ 
+Peers have the possibility to organize themselves into "permissioned" regions. Within a region you can be more confident that peers will respect the sharding distribution algorithm and replicate and index content. Additionally, secret information can be shared freely, this allows peers in the permissioned regions to help each other to decrypt messages in order to be able to index and understand content.
+ 
+Data can be shared and encrypted on a granular level, you can decide exactly what parts of metadata should be public and not. When you create a commit or a query, you can specify exactly who is going to be able to decrypt the message. If you want an end to end conversation between two identities, you just include the other peers' public key as a receiver and you would be certain that know one in the middle would be able to read your message.
+
+### Goals
+The goal of this project is to create a **cheaper** and **more private** way of distributing and accessing data by utilizing consumer hardware and the latest advancements in networking technology. Additionally, we believe that creating an application should and could be made much easier than what it is now with Peerbit. It should not take longer than a weekend to get started to build your first distributed app!
 
 ### Some informational links are found below
 [How Peerbit differs from OrbitDB](./documentation/difference.md)
@@ -206,18 +215,17 @@ class StringStore extends Program implements VPC
 
 
 // Later 
-const peer1 = await Peerbit.create(IPFS CLIENT, {... options ...})
-const peer2 = await Peerbit.create(IPFS CLIENT 2, {... options ...})
+const peer1 = await Peerbit.create(IPFS_CLIENT, {... options ...})
+const peer2 = await Peerbit.create(IPFS_CLIENT_2, {... options ...})
 
-const programPeer1 = await peer1.open(new StringStore({store: new Store(), network: new TrustedNetwork()}), ... options ...)
+const programPeer1 = await peer1.open(new StringStore({store: new Store(), network: new TrustedNetwork()}), {... options ...})
 
 // add trust to another peer
 await program.network.add(peer2.identity.publicKey) 
 
 
 // peer2 also has to "join" the network, in practice this that peer2 add a record telling that its Peer ID trusts its IPFS ID
-
-const programPeer2 = await peer2.open(programPeer1.address, ... options ...)
+const programPeer2 = await peer2.open(programPeer1.address, {... options ...})
 await peer2.join(programPeer2) // This might fail if you do this too quickly after "open", because it has not yet recieved all data from the network changes from peer1
 ```
 
