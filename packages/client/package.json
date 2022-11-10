@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit",
-  "version": "0.0.54",
+  "version": "0.0.55",
   "description": "Distributed p2p database on IPFS",
   "author": "Haad",
   "license": "MIT",
@@ -30,9 +30,9 @@
     "require": "./lib/cjs/index.js"
   },
   "dependencies": {
+    "@dao-xyz/borsh": "^3.4.2",
     "@dao-xyz/ipfs-pubsub-direct-channel": "^0.0.25",
     "@dao-xyz/ipfs-pubsub-peer-monitor": "^0.0.14",
-    "@dao-xyz/borsh": "^3.4.2",
     "@dao-xyz/peerbit-cache": "^0.4.17",
     "@dao-xyz/peerbit-crypto": "^0.0.14",
     "@dao-xyz/peerbit-io-utils": "^1.1.11",
@@ -44,9 +44,9 @@
     "level": "^8.0.0",
     "localstorage-down": "^0.6.7",
     "lru-cache": "^7.14.0",
+    "p-queue": "^7.3.0",
     "pino": "^8.7.0",
-    "wherearewe": "^2.0.1",
-    "p-queue": "^7.3.0"
+    "wherearewe": "^2.0.1"
   },
   "devDependencies": {
     "@dao-xyz/peerbit-document": "^0.0.117",
