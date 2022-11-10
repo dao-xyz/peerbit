@@ -1,7 +1,7 @@
 
 <br>
 <p align="center">
-    <img width="400" src="./peer.png"  alt="Peerbit icon Icon">
+    <img width="140" src="./logo512.png"  alt="Peerbit icon Icon">
 </p>
 
 <h1 align="center">
@@ -9,7 +9,6 @@
         Peerbit
    </strong>
 </h1>
-
 <h3 align="center">
     Develop for a distributed web with Peerbit
 </h3>
