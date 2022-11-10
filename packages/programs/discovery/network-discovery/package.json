@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit-network-discovery",
-  "version": "0.0.45",
+  "version": "0.0.46",
   "description": "Discovery DB",
   "type": "module",
   "sideEffects": false,
@@ -36,7 +36,7 @@
     "@dao-xyz/peerbit-anysearch": "^0.0.83",
     "@dao-xyz/peerbit-crypto": "^0.0.14",
     "@dao-xyz/peerbit-document": "^0.0.117",
-    "@dao-xyz/peerbit-trusted-network": "^0.0.72",
+    "@dao-xyz/peerbit-trusted-network": "^0.0.73",
     "p-map": "~1.1.1",
     "uuid": "^8.3.2"
   },

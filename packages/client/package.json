@@ -1,6 +1,6 @@
 {
   "name": "@dao-xyz/peerbit",
-  "version": "0.0.53",
+  "version": "0.0.54",
   "description": "Distributed p2p database on IPFS",
   "author": "Haad",
   "license": "MIT",
@@ -37,7 +37,7 @@
     "@dao-xyz/peerbit-keystore": "^0.0.25",
     "@dao-xyz/peerbit-program": "^0.0.38",
     "@dao-xyz/peerbit-store": "^0.0.53",
-    "@dao-xyz/peerbit-trusted-network": "^0.0.72",
+    "@dao-xyz/peerbit-trusted-network": "^0.0.73",
     "is-node": "^1.0.2",
     "level": "^8.0.0",
     "localstorage-down": "^0.6.7",
