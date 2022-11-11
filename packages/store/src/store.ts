@@ -20,6 +20,7 @@ import { joinUint8Arrays } from '@dao-xyz/peerbit-borsh-utils';
 import { SystemBinaryPayload } from '@dao-xyz/peerbit-bpayload'
 import { EntryWithRefs } from './entry-with-refs.js'
 import pino from 'pino'
+import { waitFor } from '@dao-xyz/peerbit-time'
 const logger = pino().child({ module: 'store' });
 
 
@@ -284,6 +285,11 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
       }
 
       const onReplicationProgress = async (entry: Entry<T>) => {
+        const log = this._oplog;
+        if (!log) {
+          logger.warn('Recieved replication event after close: ' + entry.hash);
+          return; // closed
+        }
         const previousProgress = this.replicationStatus.progress
         const previousMax = this.replicationStatus.max
 
@@ -294,7 +300,7 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
           this._recalculateReplicationStatus(0)
         }
 
-        if (this._oplog.length + 1 > this.replicationStatus.progress ||
+        if (log.length + 1 > this.replicationStatus.progress ||
           this.replicationStatus.progress > previousProgress ||
           this.replicationStatus.max > previousMax) {
           this._options.onReplicationProgress && this._options.onReplicationProgress(this, entry)
@@ -533,8 +539,6 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
    */
   async sync(heads: (EntryWithRefs<T> | Entry<T>)[]): Promise<boolean> {
 
-
-
     this._stats.syncRequestsReceieved += 1
     logger.debug(`Sync request #${this._stats.syncRequestsReceieved} ${heads.length}`)
     if (heads.length === 0) {
@@ -606,9 +610,9 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
 
     await this._cache.setBinary(this.snapshotPath, new CID({ hash: snapshot.cid.toString() }))
     await this._cache.setBinary(this.queuePath, new UnsfinishedReplication({ hashes: unfinished }))
+    await waitFor(() => this._cache.getBinary(this.snapshotPath, CID) !== undefined, { delayInterval: 200, timeout: 10 * 1000 });
 
     logger.debug(`Saved snapshot: ${snapshot.cid.toString()}, queue length: ${unfinished.length}`)
-
     return [snapshot]
   }
 

@@ -3,7 +3,7 @@ import assert from 'assert'
 import rmrf from 'rimraf'
 import { Entry } from '@dao-xyz/ipfs-log'
 import { Peerbit } from '../peer'
-import { EventStore, Operation } from './utils/stores/event-store'
+import { Operation } from './utils/stores/event-store'
 import { IStoreOptions } from '@dao-xyz/peerbit-store';
 import { Ed25519Keypair, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
 import { AccessError } from "@dao-xyz/peerbit-crypto"
@@ -52,18 +52,8 @@ Object.keys(testAPIs).forEach(API => {
     let options: IStoreOptions<any>
     let replicationTopic: string;
 
-
-    beforeAll(async () => {
-
-
-    })
-
-    afterAll(async () => {
-    })
-
     beforeEach(async () => {
-      session = await Session.connected(3);
-
+      session = await Session.connected(3, API);
       rmrf.sync(orbitdbPath1)
       rmrf.sync(orbitdbPath2)
       rmrf.sync(orbitdbPath3)
@@ -74,18 +64,17 @@ Object.keys(testAPIs).forEach(API => {
       orbitdb1 = await Peerbit.create(session.peers[0].ipfs, {
         directory: orbitdbPath1, waitForKeysTimout: 1000
       },)
-
-      const program = await orbitdb1.open(new PermissionedEventStore({ network: new TrustedNetwork({ id: 'network-tests', rootTrust: orbitdb1.identity.publicKey }) }), { directory: dbPath1 })
+      const program = await orbitdb1.open(new PermissionedEventStore({ network: new TrustedNetwork({ id: 'network-tests', rootTrust: orbitdb1.identity.publicKey }) }), { directory: dbPath1 + (+ new Date) })
       await orbitdb1.join(program);
 
       // Trusted client 2
-      orbitdb2 = await Peerbit.create(session.peers[1].ipfs, { directory: orbitdbPath2, waitForKeysTimout: 1000 })
+      orbitdb2 = await Peerbit.create(session.peers[1].ipfs, { directory: orbitdbPath2 + (+ new Date), waitForKeysTimout: 1000 })
       await program.network.add(orbitdb2.id)
       await program.network.add(orbitdb2.identity.publicKey)
       replicationTopic = program.address!.toString();
 
       // Untrusted client 3
-      orbitdb3 = await Peerbit.create(session.peers[2].ipfs, { directory: orbitdbPath3, waitForKeysTimout: 1000 })
+      orbitdb3 = await Peerbit.create(session.peers[2].ipfs, { directory: orbitdbPath3 + (+ new Date), waitForKeysTimout: 1000 })
 
       recieverKey = await orbitdb2.keystore.createEd25519Key();
 
@@ -105,14 +94,10 @@ Object.keys(testAPIs).forEach(API => {
       if (db3)
         await db3.drop()
 
-      if (orbitdb1)
-        await orbitdb1.disconnect()
+      if (orbitdb1) { await orbitdb1.disconnect() }
+      if (orbitdb2) { await orbitdb2.disconnect() }
+      if (orbitdb3) { await orbitdb3.disconnect() }
 
-      if (orbitdb2)
-        await orbitdb2.disconnect()
-
-      if (orbitdb3)
-        await orbitdb3.disconnect()
       await session.stop();
 
     })
@@ -168,6 +153,7 @@ Object.keys(testAPIs).forEach(API => {
       // ... so that append with reciever key, it the reciever will be able to decrypt
       await addHello(db1, unknownKey.keypair.publicKey);
       await waitFor(() => done);
+
     })
 
 

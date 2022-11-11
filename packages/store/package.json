@@ -52,8 +52,7 @@
     "ipfs": "^0.65.0",
     "ipfsd-ctl": "^12.2.2",
     "level": "^8.0.0",
-    "libsodium-wrappers": "^0.7.10",
-    "memdown": "^6.1.1"
+    "libsodium-wrappers": "^0.7.10"
   },
   "localMaintainers": [
     "dao.xyz"

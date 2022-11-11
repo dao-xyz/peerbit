@@ -28,11 +28,10 @@
     "type": "git",
     "url": "https://github.com/dao-xyz/peerbit"
   },
-  "author": "shamb0t <shams@haja.io>",
+  "author": "dao.xyz",
   "license": "MIT",
   "devDependencies": {
     "@dao-xyz/peerbit-time": "^0.0.17",
-    "c8": "^7.11.3",
     "go-ipfs": "^0.15.0",
     "ipfs": "^0.65.0",
     "ipfsd-ctl": "^12.2.2"

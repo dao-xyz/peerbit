@@ -207,7 +207,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
     describe('toString', () => {
       let log: Log<string>
-      const expectedData = 'five\n└─four\n  └─three\n    └─two\n      └─one'
+      const expectedData = '"five"\n└─"four"\n  └─"three"\n    └─"two"\n      └─"one"'
 
       beforeEach(async () => {
         log = new Log(ipfs, {
@@ -222,7 +222,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       it('returns a nicely formatted string', () => {
-        expect(log.toString()).toEqual(expectedData)
+        expect(log.toString((p) => Buffer.from(p.data).toString())).toEqual(expectedData)
       })
     })
 
@@ -239,7 +239,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       it('returns an Entry', () => {
         const entry = log.get(log.values[0].hash)
-        expect(entry.hash).toEqual('zdpuAo85UwyaYt4FnCF8Mze9CKZFd8KduU4v2kbHnHwC9x57t')
+        expect(entry.hash).toMatchSnapshot()
       })
 
       it('returns undefined when Entry is not in the log', () => {
@@ -274,35 +274,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     describe('has', () => {
-      let log: Log<string>, expectedData: Entry<string>
+      let log: Log<string>
 
       beforeAll(async () => {
         const clock = new Clock(signKey.keypair.publicKey.bytes, 1)
-        const clockDecrypted = new DecryptedThing<Clock>({ data: serialize(clock) });
-        const payload = new DecryptedThing<Payload<string>>({
-          data: serialize(new Payload<string>({
-            data: new Uint8Array(Buffer.from('one'))
-          }))
-        });
-        const gid = 'gid';
-
-        expectedData = new Entry<string>({
-          payload,
-          clock: clockDecrypted,
-          gid,
-          signature: new DecryptedThing({
-            data: serialize(new SignatureWithKey({
-              ...signKey.keypair,
-              signature: await signKey.keypair.sign(Entry.createDataToSign(gid, payload, clockDecrypted, [], [], 0, 0))
-            }))
-          }),
-          next: [],
-          forks: [],
-          maxChainLength: 1n,
-          reserved: 0,
-          state: 0
-        });
-        expectedData.hash = 'zdpuAozwfaZEdTCimGoLbXrz3hsJdCQZATpVgyVDMJLVrACqw'
 
       })
 
@@ -315,11 +290,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
       })
 
       it('returns true if it has an Entry', () => {
-        assert(log.has(expectedData))
+
+        assert(log.has(log.values[0].hash))
       })
 
       it('returns true if it has an Entry, hash lookup', () => {
-        assert(log.has(expectedData.hash))
+        assert(log.has(log.values[0].hash))
       })
 
       it('returns false if it doesn\'t have the Entry', () => {
@@ -328,17 +304,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
     })
 
     describe('serialize', () => {
-      let log: Log<string>
-      const expectedData = {
-        id: 'AAA',
-        heads: ['zdpuAuAhzweBU1bMh2L3zbAvK8eMhAboVzJ3KgXcqpwijfXTF']
-      }
+      let log: Log<string>, logId: string = 'AAA'
 
       beforeEach(async () => {
         log = new Log(ipfs, {
           ...signKey.keypair,
           sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
-        }, { logId: 'AAA' })
+        }, { logId })
         await log.append('one', { gidSeed: 'a' })
         await log.append('two', { gidSeed: 'a' })
         await log.append('three', { gidSeed: 'a' })
@@ -346,22 +318,21 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       describe('toJSON', () => {
         it('returns the log in JSON format', () => {
-          expect(JSON.stringify(log.toJSON())).toEqual(JSON.stringify(expectedData))
+          expect(JSON.stringify(log.toJSON())).toEqual(JSON.stringify({
+            id: logId,
+            heads: [log.values[2].hash]
+          }))
         })
       })
 
       describe('toSnapshot', () => {
-        const expectedData = {
-          id: 'AAA',
-          heads: ['zdpuAuAhzweBU1bMh2L3zbAvK8eMhAboVzJ3KgXcqpwijfXTF'],
-          values: [
-            'zdpuAoPjdySyxksiVoK72NbVrg498d4kSXD2inKpNehzoHNfx',
-            'zdpuArwikbBGXzxsbR9VpMoFnXjHCa1kdBZeemdkrdTXfw2CM',
-            'zdpuAuAhzweBU1bMh2L3zbAvK8eMhAboVzJ3KgXcqpwijfXTF'
-          ]
-        }
 
         it('returns the log snapshot', () => {
+          const expectedData = {
+            id: logId,
+            heads: [log.values[2].hash],
+            values: log.values.map(x => x.hash)
+          }
           const snapshot = log.toSnapshot()
           expect(snapshot.id).toEqual(expectedData.id)
           expect(snapshot.heads.length).toEqual(expectedData.heads.length)
@@ -375,38 +346,36 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       describe('toBuffer', () => {
         it('returns the log as a Buffer', () => {
-          assert.deepStrictEqual(log.toBuffer(), Buffer.from(JSON.stringify(expectedData)))
+          assert.deepStrictEqual(log.toBuffer(), Buffer.from(JSON.stringify({
+            id: logId,
+            heads: [log.values[2].hash]
+          })))
         })
       })
 
       describe('toMultihash - cbor', () => {
         it('returns the log as ipfs CID', async () => {
-          const expectedCid = 'zdpuAwKrgh6M8QCpYjnBA1ssWSEzbU1btg66dC2GjFvCnh7EU'
           const log = new Log(ipfs, {
             ...signKey.keypair,
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
           }, { logId: 'A' })
           await log.append('one', { gidSeed: 'a' })
           const hash = await log.toMultihash()
-          expect(hash).toEqual(expectedCid)
+          expect(hash).toMatchSnapshot()
         })
 
         it('log serialized to ipfs contains the correct data', async () => {
-          const expectedData = {
-            id: 'A',
-            heads: ['zdpuB1BLzntnfJFoMsxfi74ZUJZnbF235RffCR2JAD6oYQmmD']
-          }
-          const expectedCid = 'zdpuAwKrgh6M8QCpYjnBA1ssWSEzbU1btg66dC2GjFvCnh7EU'
+
           const log = new Log(ipfs, {
             ...signKey.keypair,
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
           }, { logId: 'A' })
           await log.append('one', { gidSeed: 'a' })
           const hash = await log.toMultihash()
-          expect(hash).toEqual(expectedCid)
+          expect(hash).toMatchSnapshot()
           const result = (await io.read(ipfs, hash)) as Log<any>
           const heads = result.heads.map(head => head.toString()) // base58btc
-          assert.deepStrictEqual(heads, expectedData.heads)
+          expect(heads).toMatchSnapshot()
         })
 
         it('throws an error if log items is empty', async () => {
@@ -424,32 +393,27 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       describe('toMultihash - pb', () => {
         it('returns the log as ipfs multihash', async () => {
-          const expectedMultihash = 'QmWiX59MBohZr8dtwvCrRxmrCLuBfQz74BNuCs534bSExx'
           const log = new Log(ipfs, {
             ...signKey.keypair,
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
           }, { logId: 'A' })
           await log.append('one', { gidSeed: 'a' })
           const multihash = await log.toMultihash({ format: 'dag-pb' })
-          expect(multihash).toEqual(expectedMultihash)
+          expect(multihash).toMatchSnapshot()
         })
 
         it('log serialized to ipfs contains the correct data', async () => {
-          const expectedData = {
-            id: 'A',
-            heads: ['zdpuB1BLzntnfJFoMsxfi74ZUJZnbF235RffCR2JAD6oYQmmD']
-          }
-          const expectedMultihash = 'QmQ2f7ukFw6nLLBKxDTwi3KmfXyLUpJ8Z7wV6cpeYMmCDN'
+
           const log = new Log(ipfs, {
             ...signKey.keypair,
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
           }, { logId: 'A' })
           await log.append('one', { gidSeed: 'a' })
           const multihash = await log.toMultihash({ format: 'dag-pb' })
-          expect(multihash).toEqual(expectedMultihash)
+          expect(multihash).toMatchSnapshot()
           const result = await ipfs.object.get(CID.parse(multihash))
           const res = JSON.parse(Buffer.from(result.Data as Uint8Array).toString())
-          assert.deepStrictEqual(res.heads, expectedData.heads)
+          expect(res.heads).toMatchSnapshot()
         })
 
         it('throws an error if log items is empty', async () => {
@@ -467,10 +431,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
       describe('fromMultihash', () => {
         it('creates a log from ipfs CID - one entry', async () => {
-          const expectedData = {
-            id: 'X',
-            heads: ['zdpuArTECy6cZLoSu5Ld7vAwgztcoyAVoM6KKoRyAv7jApRtT']
-          }
+
           const log = new Log(ipfs, {
             ...signKey.keypair,
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
@@ -481,11 +442,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
             ...signKey.keypair,
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
           }, hash, { length: -1 })
-          expect(JSON.stringify(res.toJSON())).toEqual(JSON.stringify(expectedData))
+          expect(JSON.stringify(res.toJSON())).toMatchSnapshot();
           expect(res.length).toEqual(1)
           expect(res.values[0].payload.getValue()).toEqual('one')
-          assert.deepStrictEqual(res.values[0].clock.id, signKey.keypair.publicKey)
-          expect(res.values[0].clock.time).toEqual(1)
+          expect(res.values[0].clock.id).toEqual(signKey.keypair.publicKey.bytes)
+          expect(res.values[0].clock.time).toEqual(0n)
         })
 
         it('creates a log from ipfs CID - three entries', async () => {
@@ -504,10 +465,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         })
 
         it('creates a log from ipfs multihash (backwards compat)', async () => {
-          const expectedData = {
-            id: 'X',
-            heads: ['zdpuAqoaQhciU1DkGQC568YcHRdZLauZFve24q84SPMX9wBXV']
-          }
+
           const log = new Log(ipfs, {
             ...signKey.keypair,
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
@@ -518,11 +476,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
             ...signKey.keypair,
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
           }, multihash, { length: -1 })
-          expect(JSON.stringify(res.toJSON())).toEqual(JSON.stringify(expectedData))
+          expect(JSON.stringify(res.toJSON())).toMatchSnapshot()
           expect(res.length).toEqual(1)
           expect(res.values[0].payload.getValue()).toEqual('one')
-          expect(res.values[0].clock.id).toEqual(signKey.keypair.publicKey)
-          expect(res.values[0].clock.time).toEqual(1)
+          expect(res.values[0].clock.id).toEqual(signKey.keypair.publicKey.bytes)
+          expect(res.values[0].clock.time).toEqual(0n)
         })
 
         it('has the right sequence number after creation and appending', async () => {
@@ -563,9 +521,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           }, hash, { length: -1 })
           expect(res.length).toEqual(3)
           expect(res.heads.length).toEqual(3)
-          expect(res.heads[2].payload.getValue()).toEqual('three')
-          expect(res.heads[1].payload.getValue()).toEqual('two') // order is determined by the identity's publicKey
-          expect(res.heads[0].payload.getValue()).toEqual('one')
+          expect(res.heads.map(x => x.payload.getValue())).toContainAllValues(['one', 'two', 'three'])
         })
 
         it('creates a log from ipfs CID that has three heads w/ custom tiebreaker', async () => {
@@ -694,9 +650,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
           // Make sure the onProgress callback was called for each entry
           expect(i).toEqual(amount)
           // Make sure the log entries are correct ones
-          expect(result.values[0].clock.time).toEqual(1)
+          expect(result.values[0].clock.time).toEqual(0n)
           expect(result.values[0].payload.getValue()).toEqual('0')
-          expect(result.values[result.length - 1].clock.time).toEqual(100)
+          expect(result.values[result.length - 1].clock.time).toEqual(99n)
           expect(result.values[result.length - 1].payload.getValue()).toEqual('99')
         })
       })
@@ -709,10 +665,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
              })
       */
         it('calls fromEntryHash', async () => {
-          const expectedData = {
-            id: 'X',
-            heads: ['zdpuAwNbitN5qJ6qxNWTxRssx1ai7M9TwFHAVaRa3uFgawZMk']
-          }
           const log = new Log(ipfs, {
             ...signKey.keypair,
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
@@ -721,9 +673,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
           const res = await Log.fromEntryHash(ipfs, {
             ...signKey.keypair,
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
-          }, expectedData.heads[0],
+          }, log.values[0].hash,
             { logId: log._id, length: -1 })
-          expect(JSON.stringify(res.toJSON())).toEqual(JSON.stringify(expectedData))
+          expect(JSON.stringify(res.toJSON())).toMatchSnapshot()
         })
       })
 
@@ -735,10 +687,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           }) */
 
         it('calls fromMultihash', async () => {
-          const expectedData = {
-            id: 'X',
-            heads: ['zdpuAmde4Jd11NnPZtDseeHmDbbXSgWV6VukgojZn4WmjUYtn']
-          }
+
           const log = new Log(ipfs, {
             ...signKey.keypair,
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
@@ -749,14 +698,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
             ...signKey.keypair,
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
           }, multihash, { length: -1 })
-          expect(JSON.stringify(res.toJSON())).toEqual(JSON.stringify(expectedData))
+          expect(JSON.stringify(res.toJSON())).toMatchSnapshot()
         })
 
         it('calls fromMultihash with custom tiebreaker', async () => {
-          const expectedData = {
-            id: 'X',
-            heads: ['zdpuAmde4Jd11NnPZtDseeHmDbbXSgWV6VukgojZn4WmjUYtn']
-          }
+
           const log = new Log(ipfs, {
             ...signKey.keypair,
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
@@ -768,7 +714,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
           }, multihash,
             { length: -1, sortFn: FirstWriteWins })
-          expect(JSON.stringify(res.toJSON())).toEqual(JSON.stringify(expectedData))
+          expect(JSON.stringify(res.toJSON())).toMatchSnapshot()
         })
       })
     })

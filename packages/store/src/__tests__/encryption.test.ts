@@ -20,7 +20,8 @@ import {
   nodeConfig as config,
   startIpfs,
   stopIpfs,
-  createStore
+  createStore,
+  Session
 } from '@dao-xyz/peerbit-test-utils'
 
 import { Level } from 'level'
@@ -29,7 +30,7 @@ import { delay, waitFor } from '@dao-xyz/peerbit-time'
 
 const API = 'js-ipfs'
 describe(`addOperation`, function () {
-  let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, keystore: Keystore, identityStore: Level, store: Store<any>, cacheStore: Level, senderKey: KeyWithMeta<Ed25519Keypair>, recieverKey: KeyWithMeta<Ed25519Keypair>, encryption: PublicKeyEncryptionResolver
+  let session: Session, signKey: KeyWithMeta<Ed25519Keypair>, keystore: Keystore, identityStore: Level, store: Store<any>, cacheStore: Level, senderKey: KeyWithMeta<Ed25519Keypair>, recieverKey: KeyWithMeta<Ed25519Keypair>, encryption: PublicKeyEncryptionResolver
   let index: SimpleIndex<string>
 
   jest.setTimeout(config.timeout);
@@ -44,8 +45,7 @@ describe(`addOperation`, function () {
     keystore = new Keystore(identityStore)
 
     signKey = await keystore.createEd25519Key()
-    ipfsd = await startIpfs(API, ipfsConfig.daemon1)
-    ipfs = ipfsd.api
+    session = await Session.connected(1);
     index = new SimpleIndex();
     senderKey = await keystore.createEd25519Key()
     recieverKey = await keystore.createEd25519Key()
@@ -74,7 +74,7 @@ describe(`addOperation`, function () {
 
   afterAll(async () => {
     await store?.close()
-    ipfsd && await stopIpfs(ipfsd)
+    await session?.stop();
     await identityStore?.close()
     await cacheStore?.close()
   })
@@ -116,7 +116,7 @@ describe(`addOperation`, function () {
     const cache = new Cache(cacheStore)
     const options: IInitializationOptions<any> = { ...DefaultOptions, resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index), encryption, onWrite }
     store = new Store({ storeIndex: 0 })
-    await store.init(ipfs, {
+    await store.init(session.peers[0].ipfs, {
       ...signKey.keypair,
       sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
     }, options);
@@ -157,6 +157,9 @@ describe(`addOperation`, function () {
           await localHeads.heads[0].getPayload();
           assert(false);
         } catch (error) {
+          if (error instanceof AccessError === false) {
+            console.error(error);
+          }
           expect(error).toBeInstanceOf(AccessError)
         }
         assert(localHeads.heads[0].equals(heads[0]))
@@ -169,7 +172,7 @@ describe(`addOperation`, function () {
     const cache = new Cache(cacheStore)
     const options: IInitializationOptions<any> = { ...DefaultOptions, resolveCache: () => Promise.resolve(cache), onUpdate: index.updateIndex.bind(index), encryption, onWrite }
     store = new Store({ storeIndex: 0 })
-    await store.init(ipfs, {
+    await store.init(session.peers[0].ipfs, {
       ...signKey.keypair,
       sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
     }, options);

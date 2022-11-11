@@ -12,8 +12,7 @@ import { ProtocolMessage } from './message.js'
 import type { Message as PubSubMessage, SignedMessage as SignedPubSubMessage } from '@libp2p/interface-pubsub';
 import { SharedChannel, SharedIPFSChannel } from './channel.js'
 import { exchangeKeys, KeyResponseMessage, KeyAccessCondition, recieveKeys, requestAndWaitForKeys, RequestKeyMessage, RequestKeyCondition, RequestKeysByKey, RequestKeysByAddress } from './exchange-keys.js'
-import { AccessError, DecryptedThing, Ed25519Keypair, EncryptedThing, MaybeEncrypted, PublicKeyEncryptionResolver, SignatureWithKey, SignKey, X25519Keypair } from "@dao-xyz/peerbit-crypto"
-import { X25519PublicKey, IPFSAddress } from '@dao-xyz/peerbit-crypto'
+import { X25519PublicKey, IPFSAddress, AccessError, DecryptedThing, Ed25519Keypair, EncryptedThing, MaybeEncrypted, PublicKeyEncryptionResolver, SignKey, X25519Keypair } from "@dao-xyz/peerbit-crypto"
 import LRU from 'lru-cache';
 import { DirectChannel } from '@dao-xyz/ipfs-pubsub-direct-channel'
 import { encryptionWithRequestKey } from './encryption.js'

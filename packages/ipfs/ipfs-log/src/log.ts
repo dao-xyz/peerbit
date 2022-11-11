@@ -16,10 +16,10 @@ import { LamportClock as Clock, LamportClock } from './lamport-clock.js'
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { serialize } from '@dao-xyz/borsh';
 
-
 import { Encoding, JSON_ENCODING } from "./encoding.js"
 import { Identity } from "./identity.js"
 import { logger as parentLogger } from './logger.js'
+import { Size } from "./size.js"
 const logger = parentLogger.child({ module: 'ipfs-log' });
 
 const { LastWriteWins, NoZeroes } = Sorting
@@ -245,7 +245,7 @@ export class Log<T> extends GSet {
    * @returns {boolean}
    */
   has(entry: Entry<string> | string) {
-    if (entry instanceof Entry && entry.hash) {
+    if (entry instanceof Entry && !entry.hash) {
       throw new Error("Expected entry hash to be defined");
     }
     return this._entryIndex.get(entry instanceof Entry ? entry.hash : entry) !== undefined
@@ -531,13 +531,18 @@ export class Log<T> extends GSet {
    * @example
    * await log1.join(log2)
    */
-  async join(log: Log<T>, size = -1) {
+  async join(log: Log<T>, options?: { size?: number, verifySignatures?: boolean }) {
 
     // Get the difference of the logs
     const newItems = await Log.difference(log, this)
     /* let prevPeers = undefined; */
-    for (const e of Object.values(newItems)) {
+    for (const e of newItems.values()) {
       e.init({ encryption: this._encryption, encoding: this._encoding })
+      if (options?.verifySignatures) {
+        if (!await e.verifySignature()) {
+          throw new Error("Invalid signature entry with hash \"" + e.hash + "\"");
+        }
+      }
       if (!isDefined(e.hash)) {
         throw new Error("Unexpected");
       }
@@ -571,8 +576,8 @@ export class Log<T> extends GSet {
     this._headsIndex = mergedHeads
 
 
-    if (size > -1) {
-      this.prune(size);
+    if (typeof options?.size === 'number') {
+      this.prune(options.size);
     }
 
     return this
@@ -901,10 +906,10 @@ export class Log<T> extends GSet {
     return entries.reduce(reduceTailHashes, [])
   }
 
-  static async difference<T>(a: Log<T>, b: Log<T>) {
+  static async difference<T>(a: Log<T>, b: Log<T>): Promise<Map<string, Entry<T>>> {
     const stack: string[] = Object.keys(a._headsIndex)
     const traversed: { [key: string]: boolean } = {}
-    const res: { [key: string]: Entry<T> } = {}
+    const res: Map<string, Entry<T>> = new Map();
 
     const pushToStack = (hash: string) => {
       if (!traversed[hash] && !b.get(hash)) {
@@ -920,7 +925,7 @@ export class Log<T> extends GSet {
       }
       const entry = a.get(hash)
       if (entry && !b.get(hash)) { // TODO do we need to do som GID checks?
-        res[entry.hash] = entry
+        res.set(entry.hash, entry)
         traversed[entry.hash] = true
         entry.next.forEach(pushToStack)
       }

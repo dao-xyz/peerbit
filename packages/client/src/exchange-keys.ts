@@ -2,7 +2,7 @@ import { variant, field, option, serialize, vec } from '@dao-xyz/borsh';
 import { ProtocolMessage } from './message.js';
 import { UInt8ArraySerializer } from '@dao-xyz/peerbit-borsh-utils';
 import { Ed25519Keypair, Ed25519PublicKey, K, PublicKeyEncryptionResolver, X25519Keypair, X25519PublicKey } from '@dao-xyz/peerbit-crypto'
-import { Keystore, KeyWithMeta } from '@dao-xyz/peerbit-keystore';
+import { Keystore, KeyWithMeta, StoreError } from '@dao-xyz/peerbit-keystore';
 import { MaybeSigned, SignatureWithKey } from '@dao-xyz/peerbit-crypto';
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { TimeoutError, waitForAsync } from '@dao-xyz/peerbit-time';
@@ -231,6 +231,9 @@ export const requestAndWaitForKeys = async<T extends (Ed25519Keypair | X25519Key
 
         } catch (error) {
             if (error instanceof TimeoutError) {
+                return;
+            }
+            if (error instanceof StoreError && (keystore._store.status === 'closed' || keystore._store.status === 'closing')) {
                 return;
             }
             throw error;

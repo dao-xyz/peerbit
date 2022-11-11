@@ -28,7 +28,6 @@ describe(`DirectChannel js-ipfs`, function () {
 
     afterEach(async () => {
         await session.stop();
-        rmrf.sync('./tmp/') // remove test data directory
     })
 
     describe('create a channel', function () {

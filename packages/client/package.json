@@ -2,7 +2,7 @@
   "name": "@dao-xyz/peerbit",
   "version": "0.0.55",
   "description": "Distributed p2p database on IPFS",
-  "author": "Haad",
+  "author": "dao.xyz",
   "license": "MIT",
   "type": "module",
   "repository": {
@@ -42,7 +42,6 @@
     "@dao-xyz/peerbit-trusted-network": "^0.0.73",
     "is-node": "^1.0.2",
     "level": "^8.0.0",
-    "localstorage-down": "^0.6.7",
     "lru-cache": "^7.14.0",
     "p-queue": "^7.3.0",
     "pino": "^8.7.0",

@@ -12,15 +12,12 @@ import { EventStore } from './utils/stores'
 // @ts-ignore 
 import { v4 as uuid } from 'uuid';
 import { jest } from '@jest/globals';
-import { Controller } from "ipfsd-ctl";
-import { IPFS } from "ipfs-core-types";
 
 
 // Include test utilities
 import {
   nodeConfig as config,
-  startIpfs,
-  stopIpfs
+  Session,
 } from '@dao-xyz/peerbit-test-utils'
 import { Program } from '@dao-xyz/peerbit-program'
 
@@ -30,17 +27,16 @@ describe(`orbit-db - Create & Open `, function () {
   jest.retryTimes(1) // windows...
   jest.setTimeout(config.timeout)
 
-  let ipfsd: Controller, ipfs: IPFS, orbitdb: Peerbit, address
+  let session: Session, orbitdb: Peerbit
   let localDataPath: string
   let replicationTopic: string
 
   beforeAll(async () => {
     rmrf.sync(dbPath)
-    ipfsd = await startIpfs('js-ipfs', config.daemon1)
-    ipfs = ipfsd.api
+    session = await Session.connected(1);
     replicationTopic = uuid();
 
-    orbitdb = await Peerbit.create(ipfs, { directory: dbPath })
+    orbitdb = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath + (+new Date) })
 
   })
 
@@ -49,8 +45,8 @@ describe(`orbit-db - Create & Open `, function () {
       await orbitdb.stop()
     }
 
-    if (ipfsd) {
-      await stopIpfs(ipfsd)
+    if (session) {
+      await session.stop()
     }
 
   })
@@ -60,8 +56,9 @@ describe(`orbit-db - Create & Open `, function () {
       let db: KeyValueStore<string>;
 
       beforeAll(async () => {
-        db = await orbitdb.open(new KeyValueStore<string>({ id: 'second' }), { replicationTopic: uuid(), replicate: false })
         localDataPath = path.join(dbPath, orbitdb.id.toString(), 'cache')
+
+        db = await orbitdb.open(new KeyValueStore<string>({ id: 'second' }), { replicationTopic: uuid(), directory: localDataPath, replicate: false })
         await db.close()
       })
 
@@ -82,7 +79,7 @@ describe(`orbit-db - Create & Open `, function () {
             }) */
 
       it('saves database manifest file locally', async () => {
-        const loaded = (await Program.load(ipfs, db.address!)) as KeyValueStore<string>;
+        const loaded = (await Program.load(session.peers[0].ipfs, db.address!)) as KeyValueStore<string>;
         expect(loaded).toBeDefined();
         expect(loaded.store).toBeDefined();
       })
@@ -152,12 +149,12 @@ describe(`orbit-db - Create & Open `, function () {
      }) */
 
     it('open the database and it has the added entries', async () => {
-      const db = await orbitdb.open(new EventStore({}), { replicationTopic })
+      const db = await orbitdb.open(new EventStore({ id: uuid() }))
       await db.add('hello1')
       await db.add('hello2')
       await db.close()
 
-      const db2 = await orbitdb.open(await Program.load(orbitdb._ipfs, db.address!), { replicationTopic })
+      const db2 = await orbitdb.open(await Program.load(orbitdb._ipfs, db.address!))
 
       await db.load()
       const res = db.iterator({ limit: -1 }).collect()

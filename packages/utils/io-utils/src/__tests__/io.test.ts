@@ -7,7 +7,7 @@ import {
   nodeConfig as config,
   testAPIs,
   startIpfs,
-  stopIpfs
+  stopIpfs,
 } from '@dao-xyz/peerbit-test-utils'
 import { IPFS } from 'ipfs-core-types'
 import { Controller } from 'ipfsd-ctl'
@@ -20,7 +20,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
     let ipfs: IPFS, ipfsd: Controller
 
     beforeAll(async () => {
-      ipfsd = await startIpfs('go-ipfs', config)
+      ipfsd = await startIpfs(IPFS, config)
       ipfs = ipfsd.api
     })
 

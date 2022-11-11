@@ -6,5 +6,5 @@
     "compilerOptions": {
         "noEmit": false,
         "outDir": "lib/esm"
-    }
+    },
 }

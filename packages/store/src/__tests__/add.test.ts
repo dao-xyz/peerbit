@@ -33,11 +33,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
     jest.setTimeout(config.timeout);
 
     const ipfsConfig = Object.assign({}, config, {
-      repo: 'repo-add' + __filenameBase + new Date().getTime()
+      repo: 'repo-add' + __filenameBase + new Date().getTime() + IPFS
     })
 
     beforeAll(async () => {
-      identityStore = await createStore(path.join(__filename, 'identity'))
+      identityStore = await createStore(path.join(__filename, 'identity' + IPFS))
 
       const keystore = new Keystore(identityStore)
 
@@ -45,7 +45,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
       ipfsd = await startIpfs(IPFS, ipfsConfig.daemon1)
       ipfs = ipfsd.api
 
-      cacheStore = await createStore(path.join(__filename, 'cache'))
+      cacheStore = await createStore(path.join(__filename, 'cache' + IPFS))
 
     })
 
@@ -118,6 +118,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
           expect(store.replicationStatus.progress).toEqual(BigInt(writes))
           expect(store.replicationStatus.max).toEqual(BigInt(writes))
           expect(index._index.length).toEqual(writes)
+          await delay(5000); // seems because write is async?
           store._cache.getBinary(store.localHeadsPath, HeadsCache).then((localHeads) => {
             if (!localHeads) {
               fail();

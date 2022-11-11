@@ -34,22 +34,19 @@
     "url": "git+https://github.com/dao-xyz/peerbit.git"
   },
   "keywords": [
-    "orbitdb",
-    "orbit-db"
+    "peerbit"
   ],
-  "author": "shamb0t",
+  "author": "dao.xyz",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/dao-xyz/peerbit/issues"
   },
   "homepage": "https://github.com/dao-xyz/peerbit#readme",
   "localMaintainers": [
-    "shamb0t <shams@haja.io>",
-    "hajamark <mark@haja.io>"
+    "dao.xyz"
   ],
   "devDependencies": {
-    "@dao-xyz/peerbit-test-utils": "^0.0.12",
-    "c8": "^7.12.0"
+    "@dao-xyz/peerbit-test-utils": "^0.0.12"
   },
   "peerDependencies": {
     "go-ipfs": "*",

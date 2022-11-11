@@ -18,7 +18,6 @@ import { deserialize, serialize } from '@dao-xyz/borsh';
 import { fixturePath } from './fixture.js';
 
 const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 const storagePath = path.join(__dirname, 'signing-keys')
 const tempKeyPath = path.join(__dirname, "keystore-test");
@@ -139,7 +138,7 @@ describe('keystore', () => {
         await closedKeysStore.createEd25519Key({ id })
       } catch (e: any) {
         expect(e).toBeInstanceOf(StoreError)
-        expect((e as StoreError).message).toEqual('Keystore not open')
+        expect((e as StoreError).message).toEqual('Keystore is closed or closing')
       }
     })
 
@@ -193,18 +192,6 @@ describe('hasKey', () => {
     expect(hasKey).toEqual(false)
 
   })
-
-
-  it('throws an error accessing a closed store', async () => {
-    const closedKeysStore = new Keystore({ status: 'closed' } as any);
-    try {
-      await closedKeysStore.hasKey('XXX')
-    } catch (e: any) {
-      expect(e).toBeInstanceOf(StoreError)
-      expect((e as StoreError).message).toEqual('Keystore not open')
-    }
-  })
-
   afterEach(async () => {
     // await keystore.close()
   })
@@ -221,6 +208,9 @@ describe('getKey', () => {
 
   })
 
+  afterAll(async () => {
+    await keystore.close()
+  })
   it('gets an existing key', async () => {
     const key = await keystore.getKey('ZZZ')
     expect(key?.keypair).toBeDefined();
@@ -252,13 +242,11 @@ describe('getKey', () => {
       await closedKeysStore.getKey('ZZZ')
     } catch (e: any) {
       expect(e).toBeInstanceOf(StoreError)
-      expect((e as StoreError).message).toEqual('Keystore not open')
+      expect((e as StoreError).message).toEqual('Keystore is closed or closing')
     }
   })
 
-  afterAll(async () => {
-    // keystore.close()
-  })
+
 })
 
 describe('getKeys', () => {

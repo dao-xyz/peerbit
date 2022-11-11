@@ -139,6 +139,11 @@ export const nodeConfig = {
                     Enabled: false
                 }
             }
+        },
+        libp2p: {
+            connectionManager: {
+                autoDial: false
+            }
         }
     },
     daemon1: {
@@ -160,6 +165,11 @@ export const nodeConfig = {
                     Enabled: false
                 }
             }
+        },
+        libp2p: {
+            connectionManager: {
+                autoDial: false
+            }
         }
     },
     daemon2: {
@@ -180,6 +190,11 @@ export const nodeConfig = {
                 webRTCStar: {
                     Enabled: false
                 }
+            }
+        },
+        libp2p: {
+            connectionManager: {
+                autoDial: false
             }
         }
     }

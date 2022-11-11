@@ -37,7 +37,7 @@ const last = (arr: any[]) => {
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe('Log - Join', function () {
-    jest.setTimeout(config.timeout)
+    jest.setTimeout(config.timeout * 4)
 
     const { signingKeyFixtures, signingKeysPath } = config
 
@@ -343,9 +343,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         expect(b2.clock.time).toEqual(1n)
 
         await log3.join(log1)
-        /*   assert.deepStrictEqual(log3.clock.id, signKey3.keypair.publicKey.bytes)
-          expect(log3.clock.time).toEqual(2n)
-    */
+
         await log3.append('helloC1')
         const c2 = await log3.append('helloC2')
         await log1.join(log3)
@@ -356,15 +354,15 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log4.join(log1)
         await log4.join(log3)
         const d3 = await log4.append('helloD3')
-        expect(d3.gid).toEqual([b2.gid, c2.gid, d2.gid].sort()[0]);
+        expect(d3.gid).toEqual(c2.gid); // because c2 is the longest
         await log4.append('helloD4')
         await log1.join(log4)
         await log4.join(log1)
         const d5 = await log4.append('helloD5')
-        expect(d5.gid).toEqual([d2.gid, b2.gid, c2.gid].sort()[0]);
+        expect(d5.gid).toEqual(c2.gid); // because c2 previously
 
         const a5 = await log1.append('helloA5')
-        expect(a5.gid).toEqual([d2.gid, b2.gid, c2.gid].sort()[0]);
+        expect(a5.gid).toEqual(c2.gid); // because log1 joined with lgo4 and log4 was c2 (and len log4 > log1)
 
         await log4.join(log1)
         const d6 = await log4.append('helloD6')
@@ -405,14 +403,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         await log1.join(log3)
         // Sometimes failes because of clock ids are random TODO Fix
-        expect(log1.heads[log1.heads.length - 1].gid).toEqual([b2.gid].sort()[0])
+        expect(log1.heads[log1.heads.length - 1].gid).toEqual(a1.gid)
         expect(a2.clock.id).toEqual(signKey.keypair.publicKey.bytes)
         expect(a2.clock.time).toEqual(1n)
 
         await log3.join(log1)
-        expect(log3.heads[log3.heads.length - 1].gid).toEqual([b2.gid].sort()[0])
-        /*   assert.deepStrictEqual(log3.clock.id, signKey3.keypair.publicKey.bytes)
-          expect(log3.clock.time).toEqual(2n) */
+        expect(log3.heads[log3.heads.length - 1].gid).toEqual(a1.gid) // because longest
 
         await log3.append('helloC1')
         await log3.append('helloC2')
@@ -504,7 +500,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         })
 
         it('joins only specified amount of entries - one entry', async () => {
-          await log1.join(log2, 1)
+          await log1.join(log2, { size: 1 })
 
           const expectedData = [
             'helloB2'
@@ -517,7 +513,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         })
 
         it('joins only specified amount of entries - two entries', async () => {
-          await log1.join(log2, 2)
+          await log1.join(log2, { size: 2 })
 
           const expectedData = [
             'helloA2', 'helloB2'
@@ -530,7 +526,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         })
 
         it('joins only specified amount of entries - three entries', async () => {
-          await log1.join(log2, 3)
+          await log1.join(log2, { size: 3 })
 
           const expectedData = [
             'helloB1', 'helloA2', 'helloB2'
@@ -543,7 +539,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         })
 
         it('joins only specified amount of entries - (all) four entries', async () => {
-          await log1.join(log2, 4)
+          await log1.join(log2, { size: 4 })
 
           const expectedData = [
             'helloA1', 'helloB1', 'helloA2', 'helloB2'

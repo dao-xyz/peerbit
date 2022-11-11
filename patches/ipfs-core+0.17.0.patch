@@ -1,0 +1,129 @@
+diff --git a/node_modules/ipfs-core/src/components/libp2p.js b/node_modules/ipfs-core/src/components/libp2p.js
+index 1c1b57c..114b9b7 100644
+--- a/node_modules/ipfs-core/src/components/libp2p.js
++++ b/node_modules/ipfs-core/src/components/libp2p.js
+@@ -48,7 +48,7 @@ const mergeOptions = mergeOpts.bind({ ignoreUndefined: true, concatArrays: true
+  * @param {KeychainConfig|undefined} config.keychainConfig
+  * @param {Partial<IPFSConfig>|undefined} config.config
+  */
+-export function createLibp2p ({
++export function createLibp2p({
+   options = {},
+   peerId,
+   multiaddrs = [],
+@@ -84,7 +84,7 @@ export function createLibp2p ({
+  * @param {Multiaddr[]} input.multiaddrs
+  * @returns {Libp2pOptions}
+  */
+-function getLibp2pOptions ({ options, config, datastore, keychainConfig, peerId, multiaddrs }) {
++function getLibp2pOptions({ options, config, datastore, keychainConfig, peerId, multiaddrs }) {
+   const getPubsubRouter = () => {
+     const router = get(config, 'Pubsub.Router') || 'gossipsub'
+ 
+@@ -123,7 +123,7 @@ function getLibp2pOptions ({ options, config, datastore, keychainConfig, peerId,
+     contentRouters: [],
+     peerRouters: [],
+     peerDiscovery: [],
+-    transports: [],
++    transports: get(options, 'transports', get(config, 'transports', [])),
+     streamMuxers: [
+       mplex({
+         maxInboundStreams: 256,
+@@ -219,7 +219,7 @@ function getLibp2pOptions ({ options, config, datastore, keychainConfig, peerId,
+           // @ts-expect-error not components
+           return d({})[Symbol.toStringTag] !== '@libp2p/mdns'
+         }
+-      } catch {}
++      } catch { }
+       return true
+     })
+   }
+@@ -234,7 +234,7 @@ function getLibp2pOptions ({ options, config, datastore, keychainConfig, peerId,
+       if (typeof t === 'function') {
+         return t({})[Symbol.toStringTag] === '@libp2p/websockets'
+       }
+-    } catch {}
++    } catch { }
+     return false
+   }) == null) {
+     libp2pFinalConfig.transports.push(webSockets())
+diff --git a/node_modules/ipfs-core/src/components/network.js b/node_modules/ipfs-core/src/components/network.js
+index bed24db..9320494 100644
+--- a/node_modules/ipfs-core/src/components/network.js
++++ b/node_modules/ipfs-core/src/components/network.js
+@@ -35,7 +35,7 @@ export class Network {
+    * @param {Repo} repo
+    * @param {BlockStorage} blockstore
+    */
+-  constructor (peerId, libp2p, bitswap, repo, blockstore) {
++  constructor(peerId, libp2p, bitswap, repo, blockstore) {
+     this.peerId = peerId
+     this.libp2p = libp2p
+     this.bitswap = bitswap
+@@ -46,7 +46,7 @@ export class Network {
+   /**
+    * @param {Options} options
+    */
+-  static async start ({ peerId, repo, print, hashers, options }) {
++  static async start({ peerId, repo, print, hashers, options }) {
+     // Need to ensure that repo is open as it could have been closed between
+     // `init` and `start`.
+     if (repo.closed) {
+@@ -57,7 +57,7 @@ export class Network {
+     const config = await repo.config.getAll()
+ 
+     const libp2p = await createLibp2p({
+-      options,
++      options: options.libp2p,
+       repo,
+       peerId,
+       multiaddrs: readAddrs(peerId, config),
+@@ -90,7 +90,7 @@ export class Network {
+   /**
+    * @param {Network} network
+    */
+-  static async stop (network) {
++  static async stop(network) {
+     network.repo.blocks = network.blockstore.unwrap()
+     // @ts-expect-error private field
+     network.repo.pins.blockstore = network.blockstore.unwrap()
+diff --git a/node_modules/ipfs-core/src/components/storage.js b/node_modules/ipfs-core/src/components/storage.js
+index 416e7b0..22890e5 100644
+--- a/node_modules/ipfs-core/src/components/storage.js
++++ b/node_modules/ipfs-core/src/components/storage.js
+@@ -38,7 +38,7 @@ export class Storage {
+    * @param {Print} print
+    * @param {boolean} isNew
+    */
+-  constructor (peerId, keychain, repo, print, isNew) {
++  constructor(peerId, keychain, repo, print, isNew) {
+     this.print = print
+     this.peerId = peerId
+     this.keychain = keychain
+@@ -52,7 +52,7 @@ export class Storage {
+    * @param {import('ipfs-core-utils/multicodecs').Multicodecs} codecs
+    * @param {IPFSOptions} options
+    */
+-  static async start (print, codecs, options) {
++  static async start(print, codecs, options) {
+     const { repoAutoMigrate, repo: inputRepo, onMigrationProgress } = options
+ 
+     const repo = (typeof inputRepo === 'string' || inputRepo == null)
+@@ -151,7 +151,7 @@ const initRepo = async (print, repo, options) => {
+ 
+   // Create libp2p for Keychain creation
+   const libp2p = await createLibp2p({
+-    options: undefined,
++    options: options.libp2p,
+     multiaddrs: undefined,
+     peerId,
+     repo,
+@@ -254,7 +254,7 @@ const configureRepo = async (repo, options) => {
+   const key = await unmarshalPrivateKey(buf)
+   const peerId = await peerIdFromKeys(key.public.bytes, key.bytes)
+   const libp2p = await createLibp2p({
+-    options: undefined,
++    options: options.libp2p,
+     multiaddrs: undefined,
+     peerId,
+     repo,

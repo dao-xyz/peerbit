@@ -49,9 +49,7 @@
     "pino": "^8.7.0"
   },
   "devDependencies": {
-    "@dao-xyz/peerbit-test-utils": "^0.0.12",
-    "localstorage-down": "^0.6.7",
-    "memdown": "^6.1.1"
+    "@dao-xyz/peerbit-test-utils": "^0.0.12"
   },
   "localMaintainers": [
     "dao.xyz"

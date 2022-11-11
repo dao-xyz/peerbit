@@ -1,11 +1,10 @@
 
 import { Session } from '../session.js'
-import waitForPeers from '../wait-for-peers.js';
-import { delay } from '@dao-xyz/peerbit-time';
+import TEST_APIS from '../test-apis';
 describe(`Session`, function () {
     let session: Session;
     beforeEach(async () => {
-        session = await Session.connected(3, 'go-ipfs');
+        session = await Session.connected(3, TEST_APIS[0]);
     })
     it('starts and stops two connected nodes', async () => {
         expect(session.peers).toHaveLength(3);
@@ -15,12 +14,6 @@ describe(`Session`, function () {
             expect(peer.ipfsd).toBeDefined();
             expect((await peer.ipfsd.api.swarm.peers()).length).toEqual(2)
         }
-
-        await waitForPeers(session.peers[1].ipfs, [session.peers[0].id], 'x')
-        await session.peers[1].ipfs.pubsub.publish('x', new Uint8Array([1, 2, 3]));
-        const x = await session.peers[1].ipfs.pubsub.peers('x');
-        await delay(10000);
-        const y = 123;
     })
 
     afterEach(async () => {

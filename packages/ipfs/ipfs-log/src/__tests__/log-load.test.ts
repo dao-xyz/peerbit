@@ -41,7 +41,7 @@ const last = <T>(arr: T[]): T => {
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe('Log - Load', function () {
-    jest.setTimeout(config.timeout)
+    jest.setTimeout(config.timeout * 4)
 
     const { signingKeyFixtures, signingKeysPath } = config
 
@@ -671,7 +671,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         await log.join(log3)
         await log.append('entryC0')
-        await log.join(logA, 16)
+        await log.join(logA)
 
         const expectedData = [
           'entryA1', 'entryB1', 'entryA2', 'entryB2',

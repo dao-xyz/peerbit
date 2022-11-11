@@ -15,6 +15,7 @@ import { v4 as uuid } from 'uuid';
 // Include test utilities
 import {
   nodeConfig as config,
+  Session,
   startIpfs,
   stopIpfs
 } from '@dao-xyz/peerbit-test-utils'
@@ -22,42 +23,27 @@ import { waitFor } from '@dao-xyz/peerbit-time'
 
 const dbPath = './orbitdb/tests/persistency'
 
-const tests = [
-  {
-    title: 'Persistency',
-    type: undefined,
-    orbitDBConfig: { directory: path.join(dbPath, '1') }
-  }/* ,
-  {
-    title: 'Persistency with custom cache',
-    type: "custom",
-    orbitDBConfig: { directory: path.join(dbPath, '2') }
-  } */
-]
-const API = 'js-ipfs';
-const test = tests[0];
 /* tests.forEach(test => {*/
 describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
   jest.setTimeout(config.timeout)
 
   const entryCount = 10
 
-  let ipfsd: Controller, ipfs: IPFS, orbitdb1: Peerbit
+  let session: Session, orbitdb1: Peerbit
 
-  beforeAll(async () => {
-    const options: any = Object.assign({}, test.orbitDBConfig)
-    rmrf.sync(dbPath)
-    ipfsd = await startIpfs(API, config.daemon1)
-    ipfs = ipfsd.api
-    orbitdb1 = await Peerbit.create(ipfs, options)
+  beforeEach(async () => {
+    session = await Session.connected(1);
+    orbitdb1 = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath + "/" + uuid() })
   })
 
   afterAll(async () => {
+    rmrf.sync(dbPath)
+
     if (orbitdb1)
       await orbitdb1.stop()
 
-    if (ipfsd)
-      await stopIpfs(ipfsd)
+    if (session)
+      await session.stop();
   })
 
   describe('load', function () {

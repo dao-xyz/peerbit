@@ -1,5 +1,44 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`Signed Log has the correct identity 1`] = `
+Ed25519PublicKey {
+  "publicKey": Uint8Array [
+    237,
+    255,
+    199,
+    21,
+    37,
+    52,
+    117,
+    154,
+    163,
+    27,
+    34,
+    243,
+    109,
+    216,
+    100,
+    217,
+    161,
+    17,
+    100,
+    190,
+    27,
+    204,
+    219,
+    60,
+    219,
+    254,
+    48,
+    130,
+    102,
+    246,
+    123,
+    175,
+  ],
+}
+`;
+
 exports[`Signed Log has the correct identity: identity 1`] = `
 IdentitySerializable {
   "id": Uint8Array [

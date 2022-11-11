@@ -9,6 +9,7 @@ import { max, toBase64 } from './utils.js';
 import sodium from 'libsodium-wrappers';
 import { Encoding, JSON_ENCODING } from './encoding';
 import { Identity } from './identity.js';
+import { verify } from '@dao-xyz/peerbit-crypto';
 
 export type MaybeEncryptionPublicKey = (X25519PublicKey | X25519PublicKey[] | Ed25519PublicKey | Ed25519PublicKey[] | undefined);
 
@@ -253,6 +254,11 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
     return this.signature;
   }
 
+
+  async verifySignature(): Promise<boolean> {
+    const signature = await this.getSignature();
+    return verify(signature.signature, signature.publicKey, await Entry.createDataToSign(this.gid, this._payload, this._clock, this.next, this._forks, this._state, this._reserved))
+  }
 
 
   static createDataToSign(gid: string, payload: MaybeEncrypted<Payload<any>>, clock: MaybeEncrypted<Clock>, next: string[], fork: string[], state: number, reserved: number,): Uint8Array { // TODO fix types

@@ -89,7 +89,15 @@ export const query = async (ipfs: IPFS, topic: string, query: QueryRequestV0, re
         await delay(options.maxAggregationTime);
 
     }
-    await ipfs.pubsub.unsubscribe(responseTopic, _responseHandler);
+    try {
+        await ipfs.pubsub.unsubscribe(responseTopic, _responseHandler);
+
+    } catch (error) {
+        if (error?.constructor?.name === 'NotStartedError') {
+            return;
+        }
+        throw error;
+    }
 }
 
 

@@ -308,7 +308,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log1.append('helloA2')
         await log2.append('helloB1')
         await log2.append('helloB2')
-        await log1.join(log2, 2)
+        await log1.join(log2, { size: 2 })
         expect(log1.tailHashes.length).toEqual(2)
       })
 

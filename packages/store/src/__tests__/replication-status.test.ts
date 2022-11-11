@@ -1,6 +1,6 @@
 
-import assert, { rejects } from 'assert'
-import { Store, DefaultOptions, HeadsCache } from '../store.js'
+import assert from 'assert'
+import { Store, DefaultOptions } from '../store.js'
 import { default as Cache } from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore"
 import { SimpleIndex } from './utils.js'
@@ -44,15 +44,15 @@ Object.keys(testAPIs).forEach(API => {
     })
 
     beforeAll(async () => {
-      identityStore = await createStore(path.join(__filename, 'identity'))
+      identityStore = await createStore(path.join(__filename, 'identity' + API + (+ new Date)))
 
       const keystore = new Keystore(identityStore)
       signKey = await keystore.createEd25519Key()
       ipfsd = await startIpfs('js-ipfs', ipfsConfig.daemon1)
       ipfs = ipfsd.api
 
-      cache1 = await createStore(path.join(__filename, 'cache1'))
-      cache2 = await createStore(path.join(__filename, 'cache2'))
+      cache1 = await createStore(path.join(__filename, 'cache1' + API + (+ new Date)))
+      cache2 = await createStore(path.join(__filename, 'cache2' + API + (+ new Date)))
 
     })
 
@@ -82,6 +82,7 @@ Object.keys(testAPIs).forEach(API => {
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { ...DefaultOptions, resolveCache: () => Promise.resolve(new Cache(cache2)), onUpdate: index2.updateIndex.bind(index2) });
     })
+
     it('has correct status', async () => {
       // init
       assert.deepEqual(store1.replicationStatus, { progress: 0, max: 0 })

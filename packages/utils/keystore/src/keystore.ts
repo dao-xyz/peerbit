@@ -253,6 +253,9 @@ export class Keystore {
     }
   }
   async waitForOpen() {
+    if (this._store.status === 'closed' || this._store.status === 'closing') {
+      throw new StoreError("Keystore is closed or closing")
+    }
     await waitFor(() => this.open)
   }
 

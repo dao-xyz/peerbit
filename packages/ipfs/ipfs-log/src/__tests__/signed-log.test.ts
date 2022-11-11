@@ -67,7 +67,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
         ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { logId: 'A' })
-      expect(log._identity.publicKey).toMatchSnapshot('publicKeyFromLog');
+      expect(log._identity.publicKey).toMatchSnapshot();
     })
 
     it('has the correct public key', () => {
@@ -104,7 +104,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
       assert.deepStrictEqual(await log.values[0].publicKey, signKey.keypair.publicKey)
     })
 
-    it('doesn\'t join logs with different IDs ', async () => {
+    // This test is not expected anymore (TODO what is the expected behaviour, enforce arbitrary conditions or put responibility on user)
+    /* it('doesn\'t join logs with different IDs ', async () => {
       const log1 = new Log<string>(ipfs, {
         ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
@@ -130,9 +131,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
       expect(log1.values.length).toEqual(1)
       expect(log1.values[0].payload.getValue()).toEqual('one')
     })
+ */
 
 
-
+    // We dont check signatues during join anymore
     it('throws an error if log is signed but the signature doesn\'t verify', async () => {
       const log1 = new Log<string>(ipfs, {
         ...signKey.keypair,
@@ -149,16 +151,18 @@ Object.keys(testAPIs).forEach((IPFS) => {
         await log2.append('two');
         let entry: Entry<string> = log2.values[0]
         entry._signature = await log1.values[0]._signature;
-        await log1.join(log2)
+        await log1.join(log2, { verifySignatures: true })
       } catch (e: any) {
         err = e.toString()
       }
 
       const entry = log2.values[0]
-      expect(err).toEqual(`Error: Could not validate signature "${await entry.signature}" for entry "${entry.hash}" and key "${(await entry.publicKey)}"`)
+      expect(err).toEqual(`Error: Invalid signature entry with hash "${entry.hash}"`)
       expect(log1.values.length).toEqual(1)
       expect(log1.values[0].payload.getValue()).toEqual('one')
     })
+
+
     /* 
     it('throws an error if entry doesn\'t have append access', async () => {
       const log1 = new Log<string>(ipfs, {

@@ -17,6 +17,7 @@ import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { Identity } from '../identity.js';
+import { toBase64 } from '../utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -76,13 +77,12 @@ describe('Entry', function () {
 
   describe('create', () => {
     it('creates a an empty entry', async () => {
-      const expectedHash = 'zdpuAodEgpKQpFjAgCtJPYLDFjLrYJ56j69MvhS7gdrvEVisW'
       const entry = await Entry.create({
         ipfs, identity: identityFromSignKey(signKey), gidSeed: 'A', data: 'hello'
       })
 
-      expect(entry.hash).toEqual(expectedHash)
-      expect(entry.gid).toEqual(await sodium.crypto_generichash(32, 'A'))
+      expect(entry.hash).toMatchSnapshot()
+      expect(entry.gid).toEqual(toBase64(await sodium.crypto_generichash(32, 'A')))
       assert.deepStrictEqual(entry.clock.id, new Ed25519PublicKey({
         publicKey: signKey.keypair.publicKey.publicKey
       }).bytes);
@@ -92,14 +92,13 @@ describe('Entry', function () {
     })
 
     it('creates a entry with payload', async () => {
-      const expectedHash = 'zdpuAotgKm27uJe3j1dJTHi29P9Kunt1oKNDdcutcjY4gWY8k'
       const payload = 'hello world'
       const entry = await Entry.create({
         ipfs, identity: identityFromSignKey(signKey), gidSeed: 'A', data: payload, next: []
       })
-      expect(entry.hash).toEqual(expectedHash)
+      expect(entry.hash).toMatchSnapshot()
       expect(entry.payload.getValue()).toEqual(payload)
-      expect(entry.gid).toEqual(await sodium.crypto_generichash(32, 'A'))
+      expect(entry.gid).toEqual(toBase64(await sodium.crypto_generichash(32, 'A')))
       assert.deepStrictEqual(entry.clock.id, new Ed25519PublicKey({
         publicKey: signKey.keypair.publicKey.publicKey
       }).bytes);
@@ -145,14 +144,13 @@ describe('Entry', function () {
       expect(entry.payload.getValue()).toEqual(payload);
 
       // We can not have a hash check because nonce of encryption will always change
-      expect(entry.gid).toEqual(await sodium.crypto_generichash(32, 'A'))
+      expect(entry.gid).toEqual(toBase64(await sodium.crypto_generichash(32, 'A')))
       assert.deepStrictEqual(entry.clock.id, (new Ed25519PublicKey({ publicKey: signKey.keypair.publicKey.publicKey })).bytes)
       expect(entry.clock.time).toEqual(0n)
       expect(entry.next.length).toEqual(0)
     })
 
     it('creates a entry with payload and next', async () => {
-      const expectedHash = 'zdpuAvEB1kk7M6ZhrhV5eG85pKEiArEbHV2EFgA37qcuk5w1p'
       const payload1 = 'hello world'
       const payload2 = 'hello again'
       const entry1 = await Entry.create({
@@ -172,7 +170,7 @@ describe('Entry', function () {
       expect(entry2.payload.getValue()).toEqual(payload2)
       expect(entry2.next.length).toEqual(1)
       expect(entry2.maxChainLength).toEqual(2n); // because 1 next
-      expect(entry2.hash).toEqual(expectedHash)
+      expect(entry2.hash).toMatchSnapshot()
       assert.deepStrictEqual(entry2.clock.id, new Ed25519PublicKey({
         publicKey: signKey.keypair.publicKey.publicKey
       }).bytes);
@@ -244,14 +242,14 @@ describe('Entry', function () {
     it('can calculate join gid from `next` gid comparison', async () => {
 
       const entry1A = await Entry.create({
-        ipfs, identity: identityFromSignKey(signKey), gidSeed: 'B', data: 'hello1', next: []
+        ipfs, identity: identityFromSignKey(signKey), gidSeed: 'A', data: 'hello1', next: []
       })
 
       const entry1B = await Entry.create({
-        ipfs, identity: identityFromSignKey(signKey), gidSeed: 'A', clock: entry1A.clock, data: 'hello1', next: []
+        ipfs, identity: identityFromSignKey(signKey), gidSeed: 'B', clock: entry1A.clock, data: 'hello1', next: []
       })
 
-      expect(entry1B.gid < entry1A.gid); // so that B is choosen because of gid
+      expect(entry1B.gid < entry1A.gid).toBeTrue(); // so that B is choosen because of gid
       expect(entry1A.maxChainLength).toEqual(entry1B.maxChainLength);
       expect(entry1A.clock.time).toEqual(entry1B.clock.time);
 
@@ -320,12 +318,11 @@ describe('Entry', function () {
   describe('toMultihash', () => {
 
     it('returns an ipfs multihash', async () => {
-      const expectedMultihash = 'zdpuAodEgpKQpFjAgCtJPYLDFjLrYJ56j69MvhS7gdrvEVisW'
       const entry = await Entry.create({
         ipfs, identity: identityFromSignKey(signKey), gidSeed: 'A', data: 'hello', next: []
       })
       const multihash = await Entry.toMultihash(ipfs, entry)
-      expect(multihash).toEqual(expectedMultihash)
+      expect(multihash).toMatchSnapshot()
     })
 
 
@@ -346,7 +343,6 @@ describe('Entry', function () {
 
   describe('fromMultihash', () => {
     it('creates a entry from ipfs hash', async () => {
-      const expectedHash = 'zdpuAvEB1kk7M6ZhrhV5eG85pKEiArEbHV2EFgA37qcuk5w1p'
       const payload1 = 'hello world'
       const payload2 = 'hello again'
       const entry1 = await Entry.create({
@@ -358,11 +354,11 @@ describe('Entry', function () {
       const final = await Entry.fromMultihash<string>(ipfs, entry2.hash)
       final.init(entry2);
       assert(final.equals(entry2));
-      expect(final.gid).toEqual((await sodium.crypto_generichash(32, 'A')))
+      expect(final.gid).toEqual(toBase64((await sodium.crypto_generichash(32, 'A'))))
       expect(final.payload.getValue()).toEqual(payload2)
       expect(final.next.length).toEqual(1)
       expect(final.next[0]).toEqual(entry1.hash)
-      expect(final.hash).toEqual(expectedHash)
+      expect(final.hash).toMatchSnapshot()
     })
   })
 
