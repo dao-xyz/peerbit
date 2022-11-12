@@ -114,7 +114,7 @@ export class Documents<T extends BinaryPayload> extends ComposableProgram {
           throw new Error("Expecting document to contained index field")
         }
         const existingDocument = this._index.get(key)
-        if (!!existingDocument) {
+        if (existingDocument) {
           if (!this.canEdit) {
             //Key already exist and this instance Documents can note overrite/edit'
             return false

@@ -20,5 +20,7 @@ module.exports = {
     ],
     "ignorePatterns": ["**/*.test.ts", "**/lib/**", "**/test-utils/**"],
     "rules": {
+        "@typescript-eslint/no-explicit-any": "off",
+        "@typescript-eslint/prefer-as-const": "off"
     },
 }

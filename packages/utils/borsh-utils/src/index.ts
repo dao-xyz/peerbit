@@ -20,7 +20,7 @@ export const UInt8ArraySerializer = {
 export const StringSetSerializer = {
     deserialize: (reader: BinaryReader) => {
         const len = reader.readU32();
-        let resp = new Set();
+        const resp = new Set();
         for (let i = 0; i < len; i++) {
             resp.add(reader.readString());
         }

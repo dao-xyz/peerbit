@@ -123,7 +123,7 @@ export class Replicator<T> {
       // should include based on the exclusion filter function
       const tasks: (() => Promise<void>)[] = [];
       for (const entry of entries) {
-        let hash = entryHash(entry);
+        const hash = entryHash(entry);
         const exclude = (h: string) => h && this._store._oplog && (this._store._oplog.has(h) || this._fetching[h] !== undefined || this._fetched[h])
         if (exclude(hash)) {
           continue;
@@ -162,7 +162,7 @@ export class Replicator<T> {
             })
           }
         })
-      };
+      }
       // Add the tasks to the processing queue
       if (tasks.length > 0) {
         this._q.addAll(tasks)

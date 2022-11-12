@@ -12,7 +12,7 @@ const difference = (set1: string[], set2: string[]): string[] => {
   return set1.filter(p => !set2.find(p2 => p2 === p))
 }
 
-interface Callbacks { onJoin?: (peer: string) => void, onLeave?: (peer: string) => void, onError?: (err: any) => void };
+interface Callbacks { onJoin?: (peer: string) => void, onLeave?: (peer: string) => void, onError?: (err: any) => void }
 export class IpfsPubsubPeerMonitor {
   _pubsub: PubSub;
   _topic: string;

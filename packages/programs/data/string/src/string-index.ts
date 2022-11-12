@@ -39,15 +39,11 @@ export class StringIndex extends ComposableProgram {
   async updateIndex(oplog: Log<StringOperation>) {
     this._string = await applyOperations('', oplog.values);
   }
-  async setup() { }
 }
 
 export const applyOperations = async (string: string, operations: Entry<StringOperation>[]): Promise<string> => {
-  try {
-    await Promise.all(operations.map(operation => operation.getPayload()))
-  } catch (error) {
-    throw error;
-  }
+  await Promise.all(operations.map(operation => operation.getPayload()))
+
   operations.reduce((handled: string[], item: Entry<StringOperation>, _) => {
     if (!handled.includes(item.hash)) {
       handled.push(item.hash)
@@ -60,7 +56,7 @@ export const applyOperations = async (string: string, operations: Entry<StringOp
 }
 export const applyOperation = (s: string, operation: StringOperation): string => {
   // TODO check bounds number
-  let to = Number(operation.index.offset) + Number(operation.index.length);
+  const to = Number(operation.index.offset) + Number(operation.index.length);
   if (operation.value != undefined) {
     s = s.padEnd(to);
     s = s.slice(0, Number(operation.index.offset)) + operation.value + s.slice(to)

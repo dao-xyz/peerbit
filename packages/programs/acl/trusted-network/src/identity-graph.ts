@@ -1,7 +1,6 @@
 import { field, serialize, serializeField, variant } from "@dao-xyz/borsh";
 import { Documents, DocumentIndex, IndexedValue } from "@dao-xyz/peerbit-document";
 import { Key, PlainKey, PublicSignKey } from "@dao-xyz/peerbit-crypto";
-// @ts-ignore
 import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { PageQueryRequest, AnySearch, MemoryCompare, MemoryCompareQuery, Result, ResultWithSource } from "@dao-xyz/peerbit-anysearch";
 import { createHash } from "crypto";
@@ -96,7 +95,7 @@ export const hasPathToTarget = async (start: Key, target: (key: Key) => boolean,
         throw new Error("Not initalized")
     }
 
-    let current = start;
+    const current = start;
     if (target(current)) {
         return true;
     }

@@ -99,7 +99,7 @@ export class Ed25519Keypair extends Keypair implements Signer {
 
 const sign = async (data: Uint8Array, privateKey: Ed25519PrivateKey, signedHash = false) => {
     await sodium.ready;
-    let signedData = signedHash ? await sodium.crypto_generichash(32, data) : data;
+    const signedData = signedHash ? await sodium.crypto_generichash(32, data) : data;
     const signature = await sodium.crypto_sign_detached(signedData, privateKey.privateKey);
     return signature;
 }
@@ -109,7 +109,7 @@ export const verifySignatureEd25519 = async (signature: Uint8Array, publicKey: E
     await sodium.ready;
     let res = false
     try {
-        let signedData = signedHash ? await sodium.crypto_generichash(32, data) : data;
+        const signedData = signedHash ? await sodium.crypto_generichash(32, data) : data;
         const verified = await sodium.crypto_sign_verify_detached(signature, signedData, publicKey instanceof Ed25519PublicKey ? publicKey.publicKey : publicKey);
         res = verified
     } catch (error) {

@@ -4,8 +4,6 @@ import { getPathGenerator, TrustedNetwork, getFromByTo, RelationContract } from 
 import { Access, AccessType } from './access';
 import { Entry } from '@dao-xyz/ipfs-log'
 import { PublicSignKey, SignKey } from '@dao-xyz/peerbit-crypto';
-
-// @ts-ignore
 import { AnySearch } from '@dao-xyz/peerbit-anysearch';
 import { Program } from '@dao-xyz/peerbit-program';
 import { DQuery } from '@dao-xyz/peerbit-query';

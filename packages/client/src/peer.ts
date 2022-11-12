@@ -100,8 +100,8 @@ export class Peerbit {
   _peerInfoResponseCounter: LRUCounter = new LRUCounter(new LRU({ ttl: 100000 }))
   _canOpenProgram: (address: string, replicationTopic?: string, entryTopReplicate?: Entry<any>) => Promise<boolean>
   _openProgramQueue: PQueue
-  _disconnected: boolean = false;
-  _disconnecting: boolean = false;
+  _disconnected = false;
+  _disconnecting = false;
 
   constructor(ipfs: IPFS, identity: Identity, options: CreateOptions) {
     if (!isDefined(ipfs)) { throw new Error('IPFS required') }
@@ -151,7 +151,7 @@ export class Peerbit {
       return existingPromise
     }
 
-    let lruCache = this._keyRequestsLRU.get(promiseKey);
+    const lruCache = this._keyRequestsLRU.get(promiseKey);
     if (lruCache !== undefined) {
       return lruCache as KeyWithMeta<T>[];
     }
@@ -232,7 +232,7 @@ export class Peerbit {
 
 
   static async create(ipfs: IPFS, options: CreateInstanceOptions = {}) {
-    let id: PeerId = (await ipfs.id()).id;
+    const id: PeerId = (await ipfs.id()).id;
     const directory = options.directory || './orbitdb'
 
     const storage = options.storage || {
@@ -366,7 +366,7 @@ export class Peerbit {
             if (replicator === this.id.toString()) {
               continue;
             }
-            let channel = this._directConnections.get(replicator);
+            const channel = this._directConnections.get(replicator);
             if (!channel) { // we are missing a channel, send to all instead as fallback
               return sendAll(data);
             }
@@ -388,7 +388,7 @@ export class Peerbit {
     if (!identity) {
       return false;
     }
-    let network = this._getNetwork(address, replicationTopic);
+    const network = this._getNetwork(address, replicationTopic);
     if (!network) {
       return false;
     }
@@ -422,7 +422,7 @@ export class Peerbit {
         let isTrusted = false;
         if (sender) {
           // find the progrma 
-          let network = this._getNetwork(address);
+          const network = this._getNetwork(address);
           if (!network) {
             if (onlyNetworked) {
               return false;
@@ -453,7 +453,7 @@ export class Peerbit {
         const { replicationTopic, storeIndex, programIndex, programAddress, heads } = msg
         // replication topic === trustedNetwork address
 
-        let pstores = this.programs.get(replicationTopic)
+        const pstores = this.programs.get(replicationTopic)
         const isReplicating = this._replicationTopicSubscriptions.has(replicationTopic); // TODO should be TrustedNetwork has my ipfs id
         const paddress = programAddress;
 
@@ -486,7 +486,7 @@ export class Peerbit {
           }
 
 
-          const programInfo = this.programs.get(replicationTopic)?.get(paddress)!;
+          const programInfo = this.programs.get(replicationTopic)!.get(paddress)!;
           const storeInfo = programInfo.program.allStoresMap.get(storeIndex);
           if (!storeInfo) {
             throw new Error("Missing store info, which was expected to exist for " + replicationTopic + ", " + paddress + ", " + storeIndex)
@@ -810,7 +810,9 @@ export class Peerbit {
     }
   }
 
-  async _onDrop(db: Store<any>) { }
+  async _onDrop(db: Store<any>) {
+    logger.info('Dropped store: ' + db.id);
+  }
 
 
   async addProgram(replicationTopic: string, program: Program, minReplicas: MinReplicas): Promise<ProgramWithMetadata> {
@@ -905,7 +907,7 @@ export class Peerbit {
 
     // TODO make more efficient
     peerHashed.sort((a, b) => a.localeCompare(b)) // sort is needed, since "getPeers" order is not deterministic
-    let slotIndex = peerHashed.findIndex(x => x === slotHash);
+    const slotIndex = peerHashed.findIndex(x => x === slotHash);
     // we only step forward 1 step (ignoring that step backward 1 could be 'closer')
     // This does not matter, we only have to make sure all nodes running the code comes to somewhat the 
     // same conclusion (are running the same leader selection algorithm)
@@ -958,7 +960,7 @@ export class Peerbit {
   hasSubscribedToReplicationTopic(topic: string): boolean {
     return this.programs.has(topic)
   }
-  unsubscribeToReplicationTopic(topic: string | TrustedNetwork, id: string = '_'): Promise<boolean> | undefined {
+  unsubscribeToReplicationTopic(topic: string | TrustedNetwork, id = '_'): Promise<boolean> | undefined {
     if (typeof topic !== 'string') {
       if (!topic.address) {
         throw new Error("Can not get network address from topic as TrustedNetwork")
@@ -1023,14 +1025,14 @@ export class Peerbit {
         } catch (error) {
           logger.error("Failed to load store with address: " + storeOrAddress.toString());
           throw error;
-          ;
+
         }
       }
 
       await program.save(this.ipfs);
-      let programAddress = program.address?.toString()!;
+      const programAddress = program.address!.toString()!;
 
-      let definedReplicationTopic: string = (options.replicationTopic || programAddress)!;
+      const definedReplicationTopic: string = (options.replicationTopic || programAddress)!;
       if (!definedReplicationTopic) {
         throw new Error("Replication topic is undefined")
       }
@@ -1041,142 +1043,140 @@ export class Peerbit {
         }
       }
 
-      try {
 
-        logger.debug('open()')
 
-        let pstores = this.programs.get(definedReplicationTopic);
-        if (programAddress && (!pstores || !pstores.has(programAddress)) && options.verifyCanOpen) {
-          // open store if is leader and sender is trusted
-          let senderCanOpen: boolean = false;
+      logger.debug('open()')
 
-          if (!program.owner) {
-            // can open is is trusted by netwoek?
-            senderCanOpen = await this._canOpenProgram(programAddress, definedReplicationTopic, options.entryToReplicate);
+      const pstores = this.programs.get(definedReplicationTopic);
+      if (programAddress && (!pstores || !pstores.has(programAddress)) && options.verifyCanOpen) {
+        // open store if is leader and sender is trusted
+        let senderCanOpen = false;
+
+        if (!program.owner) {
+          // can open is is trusted by netwoek?
+          senderCanOpen = await this._canOpenProgram(programAddress, definedReplicationTopic, options.entryToReplicate);
+        }
+        else if (options.entryToReplicate) {
+
+          const ownerAddress = Address.parse(program.owner);
+          const ownerProgramRootAddress = ownerAddress.root();
+          let ownerProgram: AbstractProgram | undefined = this.programs.get(definedReplicationTopic)?.get(ownerProgramRootAddress.toString())?.program;
+          if (ownerAddress.path) {
+            ownerProgram = ownerProgram?.subprogramsMap.get(ownerAddress.path.index)
           }
-          else if (options.entryToReplicate) {
-
-            let ownerAddress = Address.parse(program.owner);
-            let ownerProgramRootAddress = ownerAddress.root();
-            let ownerProgram: AbstractProgram | undefined = this.programs.get(definedReplicationTopic)?.get(ownerProgramRootAddress.toString())?.program;
-            if (ownerAddress.path) {
-              ownerProgram = ownerProgram?.subprogramsMap.get(ownerAddress.path.index)
-            }
-            if (!ownerProgram) {
-              throw new AccessError("Failed to find owner program")
-            }
-            // TOOD make typesafe
-            const csp = ((ownerProgram as Program) as any as CanOpenSubPrograms)
-            if (!csp.canOpen) {
-              senderCanOpen = false
-            }
-            else {
-              senderCanOpen = await csp.canOpen(program, options.entryToReplicate);
-            }
+          if (!ownerProgram) {
+            throw new AccessError("Failed to find owner program")
           }
-
-          if (!senderCanOpen) {
-            throw new AccessError('Failed to open program because request is not trusted');
+          // TOOD make typesafe
+          const csp = ((ownerProgram as Program) as any as CanOpenSubPrograms)
+          if (!csp.canOpen) {
+            senderCanOpen = false
+          }
+          else {
+            senderCanOpen = await csp.canOpen(program, options.entryToReplicate);
           }
         }
 
-
-        options = Object.assign({ localOnly: false, create: false }, options)
-        logger.debug(`Open database '${program.constructor.name}`)
-
-
-        if (!options.encryption) {
-          options.encryption = encryptionWithRequestKey(this.identity, this.keystore, this._waitForKeysTimeout ? (key) => this.requestAndWaitForKeys(definedReplicationTopic, programAddress, new RequestKeysByKey<(Ed25519Keypair | X25519Keypair)>({
-            key
-          })) : undefined)
+        if (!senderCanOpen) {
+          throw new AccessError('Failed to open program because request is not trusted');
         }
-
-        await program.init(this._ipfs, options.identity || this.identity, {
-          replicationTopic: definedReplicationTopic,
-          onClose: () => this._onProgamClose(program, definedReplicationTopic!),
-          onDrop: () => this._onProgamClose(program, definedReplicationTopic!),
-
-          store: {
-            replicate: true,
-            ...options,
-            resolveCache: (store) => {
-              const programAddress = program.address?.toString();
-              if (!programAddress) {
-                throw new Error("Unexpected");
-              }
-              return new Cache(this.cache._store.sublevel(path.join(programAddress, 'store', store.id)))
-            },
-            onClose: async (store) => {
-              await this._onClose(program, store, definedReplicationTopic)
-              if (options.onClose) {
-                return options.onClose(store);
-              }
-              return;
-            },
-            onDrop: async (store) => {
-              await this._onDrop(store)
-              if (options.onDrop) {
-                return options.onDrop(store);
-              }
-              return;
-            },
-            onLoad: async (store) => {
-              /*  await this._onLoad(store) */
-              if (options.onLoad) {
-                return options.onLoad(store);
-              }
-              return;
-            },
-            onWrite: async (store, entry) => {
-              await this.onWrite(program)(store, entry, definedReplicationTopic)
-              if (options.onWrite) {
-                return options.onWrite(store, entry);
-              }
-              return;
-            },
-            onReplicationComplete: async (store) => {
-              if (options.onReplicationComplete) {
-                options.onReplicationComplete(store);
-              }
-            },
-            onReplicationProgress: async (store, entry) => {
-              if (options.onReplicationProgress) {
-                options.onReplicationProgress(store, entry);
-              }
-            },
-            onReplicationQueued: async (store, entry) => {
-              if (options.onReplicationQueued) {
-                options.onReplicationQueued(store, entry);
-              }
-            },
-            onOpen: async (store) => {
-              if (options.onOpen) {
-                return options.onOpen(store);
-              }
-              return;
-            }
-
-          }
-        });
-
-        const resolveCache = async (address: Address) => {
-          const cache = await this._requestCache(address.toString(), options.directory || this.directory)
-          const haveDB = await this._haveLocalData(cache, address.toString())
-          logger.debug((haveDB ? 'Found' : 'Didn\'t find') + ` database '${address}'`)
-          if (options.localOnly && !haveDB) {
-            logger.warn(`Database '${address}' doesn't exist!`)
-            throw new Error(`Database '${address}' doesn't exist!`)
-          }
-          return cache;
-        }
-        await resolveCache(program.address!);
-
-        const pm = await this.addProgram(definedReplicationTopic, program, options.minReplicas || new AbsolutMinReplicas(this._minReplicas));
-        await this.subscribeToReplicationTopic(definedReplicationTopic);
-        return pm
-      } catch (error) {
-        throw error;
       }
+
+
+      options = Object.assign({ localOnly: false, create: false }, options)
+      logger.debug(`Open database '${program.constructor.name}`)
+
+
+      if (!options.encryption) {
+        options.encryption = encryptionWithRequestKey(this.identity, this.keystore, this._waitForKeysTimeout ? (key) => this.requestAndWaitForKeys(definedReplicationTopic, programAddress, new RequestKeysByKey<(Ed25519Keypair | X25519Keypair)>({
+          key
+        })) : undefined)
+      }
+
+      await program.init(this._ipfs, options.identity || this.identity, {
+        replicationTopic: definedReplicationTopic,
+        onClose: () => this._onProgamClose(program, definedReplicationTopic!),
+        onDrop: () => this._onProgamClose(program, definedReplicationTopic!),
+
+        store: {
+          replicate: true,
+          ...options,
+          resolveCache: (store) => {
+            const programAddress = program.address?.toString();
+            if (!programAddress) {
+              throw new Error("Unexpected");
+            }
+            return new Cache(this.cache._store.sublevel(path.join(programAddress, 'store', store.id)))
+          },
+          onClose: async (store) => {
+            await this._onClose(program, store, definedReplicationTopic)
+            if (options.onClose) {
+              return options.onClose(store);
+            }
+            return;
+          },
+          onDrop: async (store) => {
+            await this._onDrop(store)
+            if (options.onDrop) {
+              return options.onDrop(store);
+            }
+            return;
+          },
+          onLoad: async (store) => {
+            /*  await this._onLoad(store) */
+            if (options.onLoad) {
+              return options.onLoad(store);
+            }
+            return;
+          },
+          onWrite: async (store, entry) => {
+            await this.onWrite(program)(store, entry, definedReplicationTopic)
+            if (options.onWrite) {
+              return options.onWrite(store, entry);
+            }
+            return;
+          },
+          onReplicationComplete: async (store) => {
+            if (options.onReplicationComplete) {
+              options.onReplicationComplete(store);
+            }
+          },
+          onReplicationProgress: async (store, entry) => {
+            if (options.onReplicationProgress) {
+              options.onReplicationProgress(store, entry);
+            }
+          },
+          onReplicationQueued: async (store, entry) => {
+            if (options.onReplicationQueued) {
+              options.onReplicationQueued(store, entry);
+            }
+          },
+          onOpen: async (store) => {
+            if (options.onOpen) {
+              return options.onOpen(store);
+            }
+            return;
+          }
+
+        }
+      });
+
+      const resolveCache = async (address: Address) => {
+        const cache = await this._requestCache(address.toString(), options.directory || this.directory)
+        const haveDB = await this._haveLocalData(cache, address.toString())
+        logger.debug((haveDB ? 'Found' : 'Didn\'t find') + ` database '${address}'`)
+        if (options.localOnly && !haveDB) {
+          logger.warn(`Database '${address}' doesn't exist!`)
+          throw new Error(`Database '${address}' doesn't exist!`)
+        }
+        return cache;
+      }
+      await resolveCache(program.address!);
+
+      const pm = await this.addProgram(definedReplicationTopic, program, options.minReplicas || new AbsolutMinReplicas(this._minReplicas));
+      await this.subscribeToReplicationTopic(definedReplicationTopic);
+      return pm
+
     }
     const openStore = await this._openProgramQueue.add(fn);
     if (!openStore?.program.address) {

@@ -15,7 +15,7 @@ export const STRING_STORE_TYPE = 'string_store';
 const findAllOccurrences = (str: string, substr: string): number[] => {
   str = str.toLowerCase();
 
-  let result: number[] = [];
+  const result: number[] = [];
 
   let idx = str.indexOf(substr)
 
@@ -61,7 +61,6 @@ export class DString extends Program {
     }
 
     await this.search.setup({ ...options, context: () => this.address, canRead: options?.canRead, queryHandler: this.queryHandler.bind(this) })
-    await this._index.setup();
 
   }
 
@@ -120,7 +119,7 @@ export class DString extends Program {
         })
       })]
     }
-    let ranges = relaventQueries.map(query => {
+    const ranges = relaventQueries.map(query => {
       const occurances = findAllOccurrences(query.preprocess(content), query.preprocess(query.value));
       return occurances.map(ix => {
         return new RangeCoordinate({

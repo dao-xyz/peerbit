@@ -19,7 +19,7 @@ export class AnySearch<T> extends ComposableProgram {
     _queryHandler: (query: QueryType) => Promise<Result[]>
     _context: SearchContext;
 
-    _setup: boolean = false;
+    _setup = false;
     constructor(properties: { query: DQuery<QueryType, Results> }) {
         super()
         if (properties) {
@@ -56,7 +56,7 @@ export class AnySearch<T> extends ComposableProgram {
             if (!results || results.length == 0) {
                 return;
             }
-            let response = new Results({
+            const response = new Results({
                 results
             });
             return response;

@@ -1,6 +1,5 @@
 import { Peerbit } from "../../peer";
 import { EventStore } from "./stores";
-// @ts-ignore 
 import { v4 as uuid } from 'uuid';
 export const databases = [
     {

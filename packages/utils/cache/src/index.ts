@@ -1,10 +1,8 @@
-import pino from 'pino'
-const logger = pino().child({ module: 'cache' });
-
 import { serialize, deserialize, Constructor } from '@dao-xyz/borsh';
-import { Level } from 'level';
 import { AbstractLevel } from 'abstract-level';
+import pino from 'pino'
 
+const logger = pino().child({ module: 'cache' });
 
 export default class Cache<T> {
 
@@ -72,7 +70,7 @@ export default class Cache<T> {
           resolve(undefined)
           return;
         }
-        let buffer = Buffer.isBuffer(value) ? value : Buffer.from(value);
+        const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value);
         const der = value ? deserialize(buffer, clazz) : undefined
         resolve(der)
       })
@@ -85,9 +83,6 @@ export default class Cache<T> {
       valueEncoding: 'view'
     })
   }
-
-  load() { } // noop
-  destroy() { } // noop
 
   // Remove a value and key from the cache
   async del(key: string) {

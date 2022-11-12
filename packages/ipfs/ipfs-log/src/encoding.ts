@@ -1,5 +1,4 @@
 import { Constructor, deserialize, serialize } from "@dao-xyz/borsh"
-// @ts-ignore
 import stringify from 'json-stringify-deterministic';
 
 export interface Encoding<T> {

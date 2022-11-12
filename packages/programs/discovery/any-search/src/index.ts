@@ -1,4 +1,3 @@
-export * from './query.js';
 export * from './query-interface.js';
 export * from './state-query.js';
 export * from './query-interface.js';

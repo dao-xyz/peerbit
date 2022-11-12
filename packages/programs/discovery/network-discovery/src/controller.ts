@@ -26,7 +26,7 @@ export class NetworkDiscovery extends Program {
         this.info = createDiscoveryStore(props);
     }
 
-    async init(ipfs: IPFS<{}>, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
+    async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
         this._peerId = (await ipfs.id()).id.toString();
         this._options = options;
         return super.init(ipfs, identity, options);
@@ -64,7 +64,7 @@ export class NetworkDiscovery extends Program {
             const network: TrustedNetwork = await Program.load(this.info.store._ipfs, info.network)
 
             await network.init(this._ipfs, this._identity, { ...this._options, store: { ...this._options.store, replicate: false } })
-            let isTrusted: boolean = await network.isTrusted((await entry.getPublicKey()))
+            const isTrusted: boolean = await network.isTrusted((await entry.getPublicKey()))
 
 
             // Close open connections
@@ -87,7 +87,7 @@ export class NetworkDiscovery extends Program {
         const id = await this._ipfs.id();
         const isNotLocalhostAddress = (addr: string) => !addr.toString().includes('/127.0.0.1/')
         return this.info.put(new NetworkInfo({
-            network: network.address?.toString()!,
+            network: network.address?.toString(),
             peerId: id.id.toString(),
             addresses: id.addresses.map(x => x.toString()).filter(isNotLocalhostAddress)
         }))

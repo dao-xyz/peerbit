@@ -1,4 +1,3 @@
-
 import { field, variant } from '@dao-xyz/borsh'
 import { Program } from '@dao-xyz/peerbit-program';
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'

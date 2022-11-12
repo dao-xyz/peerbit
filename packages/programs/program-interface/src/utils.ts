@@ -4,7 +4,7 @@ export const getValuesWithType = <T>(from: any, type: Constructor<T> | AbstractT
     const schemas = getSchemasBottomUp(from.constructor);
     const values: T[] = [];
     for (const schema of schemas) {
-        for (let field of schema.schema.fields) {
+        for (const field of schema.schema.fields) {
             const value = from[field.key];
             if (!value) {
                 continue;

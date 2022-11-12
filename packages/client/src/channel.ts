@@ -5,7 +5,7 @@ import type { EventHandler } from '@libp2p/interfaces/events'
 import type { PeerId } from '@libp2p/interface-peer-id';
 
 
-interface Closable { close: () => Promise<void> };
+interface Closable { close: () => Promise<void> }
 export class SharedChannel<T extends Closable>
 {
     _channel: T

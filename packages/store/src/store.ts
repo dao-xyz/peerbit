@@ -10,8 +10,6 @@ import io from '@dao-xyz/peerbit-io-utils'
 import Cache from '@dao-xyz/peerbit-cache';
 import { variant, field, vec, Constructor } from '@dao-xyz/borsh';
 import { IPFS } from 'ipfs-core-types'
-
-// @ts-ignore
 import { serialize, deserialize } from '@dao-xyz/borsh';
 import { Snapshot } from './snapshot.js'
 import { AccessError, PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto"
@@ -340,37 +338,33 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
 
 
   updateStateFromLogs = async (logs: Log<T>[]) => {
-    try {
-      if (this._oplog && logs.length > 0) {
-        try {
-          for (const log of logs) {
-            await this._oplog.join(log)
-          }
-        } catch (error: any) {
-          if (error instanceof AccessError) {
-            logger.info(error.message);
-            return;
-          }
+    if (this._oplog && logs.length > 0) {
+      try {
+        for (const log of logs) {
+          await this._oplog.join(log)
         }
-
-        // only store heads that has been verified and merges
-        const heads = this._oplog.heads
-        await this._cache.setBinary(this.remoteHeadsPath, new HeadsCache({ heads }))
-        logger.debug(`Saved heads ${heads.length} [${heads.map(e => e.hash).join(', ')}]`)
-
-        // update the store's index after joining the logs
-        // and persisting the latest heads
-        await this._updateIndex()
-
-        if (this._oplog.length > this.replicationStatus.progress) {
-          this._recalculateReplicationStatus(this._oplog.length)
+      } catch (error: any) {
+        if (error instanceof AccessError) {
+          logger.info(error.message);
+          return;
         }
-        this._options.onReplicationComplete && this._options.onReplicationComplete(this)
-
+        throw error;
       }
-    } catch (e) {
 
-      throw e;
+      // only store heads that has been verified and merges
+      const heads = this._oplog.heads
+      await this._cache.setBinary(this.remoteHeadsPath, new HeadsCache({ heads }))
+      logger.debug(`Saved heads ${heads.length} [${heads.map(e => e.hash).join(', ')}]`)
+
+      // update the store's index after joining the logs
+      // and persisting the latest heads
+      await this._updateIndex()
+
+      if (this._oplog.length > this.replicationStatus.progress) {
+        this._recalculateReplicationStatus(this._oplog.length)
+      }
+      this._options.onReplicationComplete && this._options.onReplicationComplete(this)
+
     }
   }
 
@@ -428,7 +422,7 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
   async close() {
     if (!this.initialized) {
       return
-    };
+    }
 
     // Stop the Replicator
     await this._replicator?.stop()
@@ -555,7 +549,7 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
       await Promise.all(allEntries.map(async (head) => {
         const hash = await io.write(this._ipfs, 'dag-cbor', head.serialize(), { links: Entry.IPLD_LINKS })
         if (hash !== head.hash) {
-          throw new Error("Head hash didn\'t match the contents")
+          throw new Error("Head hash didn't match the contents")
         }
       }))
       return headToHandle
@@ -566,7 +560,7 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
       }
       return entry.entry.hash
     }
-    let newHeads = heads.filter(e => !hash(e) || !this.oplog.has(hash(e)));
+    const newHeads = heads.filter(e => !hash(e) || !this.oplog.has(hash(e)));
     if (newHeads.length === 0) {
       return false;
     }
