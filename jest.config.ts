@@ -3,7 +3,7 @@ import type { JestConfigWithTsJest } from 'ts-jest'
 const jestConfig: JestConfigWithTsJest = {
   preset: "ts-jest",
   testEnvironment: "node",
-  roots: ["./packages/utils/time", "./packages/utils/crypto", "./packages/ipfs/ipfs-pubsub-direct-channel", "./packages/ipfs/ipfs-pubsub-peer-monitor", "./packages/ipfs/ipfs-log", "packages/utils/keystore", "./packages/client", "./packages/utils/test-utils", "./packages/utils/cache", "./packages/utils/io-utils", "./packages/utils/borsh-utils", "./packages/programs/acl/trusted-network", "./packages/programs/discovery/log-index", "./packages/programs/discovery/network-discovery", "./packages/programs/acl/identity-access-controller",/*  "./packages/orbit-db-identity-provider", */ "./packages/store", "./packages/programs/discovery/any-search", "./packages/programs/data/string", "./packages/programs/data/document", "./packages/programs/program-interface"],
+  roots: ["./packages/"],
   transform: {
     '^.+\\.tsx?$': [
       'ts-jest',
@@ -24,6 +24,8 @@ const jestConfig: JestConfigWithTsJest = {
   moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
   testTimeout: 6600000,
   setupFilesAfterEnv: ['jest-extended/all'],
+  /*   coverageReporters: ["lcov"] */
+
 
 }
 export default jestConfig;

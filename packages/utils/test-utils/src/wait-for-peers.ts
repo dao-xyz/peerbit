@@ -13,7 +13,6 @@ const waitForPeers = (ipfs: IPFS, peersToWait: (PeerId | string)[], topic: strin
 
         // FIXME: Does not fail on timeout, not easily fixable
         if (hasAllPeers) {
-          console.log('Found peers!')
           clearInterval(interval)
           resolve()
         }

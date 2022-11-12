@@ -2,8 +2,6 @@
 
 exports[`Entry create creates a an empty entry 1`] = `"zdpuAsT7y9pztBP2ZSu8oYB6eFyYQP34JNqMMm9H4fypDrr3D"`;
 
-exports[`Entry create creates a an empty entry: creates a an empty entry 1`] = `"zdpuAsT7y9pztBP2ZSu8oYB6eFyYQP34JNqMMm9H4fypDrr3D"`;
-
 exports[`Entry create creates a entry with payload 1`] = `"zdpuAq5qSyrHMCaQhjqx6vryMY5xVtq76N3U5NYRxDv1fZaXR"`;
 
 exports[`Entry create creates a entry with payload and next 1`] = `"zdpuAs55TfKq8oisi5i9BJFW8qj94atq5f6hDmjkxPAafy8bm"`;

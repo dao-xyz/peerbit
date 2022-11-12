@@ -11,7 +11,7 @@ import { v4 as uuid } from 'uuid';
 // Include test utilities
 import {
   nodeConfig as config,
-  Session
+  Session, createStore
 } from '@dao-xyz/peerbit-test-utils'
 import { waitFor } from '@dao-xyz/peerbit-time'
 
@@ -19,7 +19,8 @@ const dbPath = './orbitdb/tests/persistency'
 
 /* tests.forEach(test => {*/
 describe(`orbit-db - load (js-ipfs)`, () => { //${test.title}
-  jest.setTimeout(config.timeout)
+  jest.setTimeout(config.timeout * 5)
+  jest.retryTimes(1) // TODO Side effects may cause failures
 
   const entryCount = 10
 
@@ -39,7 +40,7 @@ describe(`orbit-db - load (js-ipfs)`, () => { //${test.title}
     })
 
     beforeEach(async () => {
-      orbitdb1 = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath + "/" + uuid() })
+      orbitdb1 = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath + "/" + uuid(), storage: { createStore: (string: string) => createStore(string) }, }) // We do custom store to prevent sideeffects when writing to disc
 
 
       const entryArr: number[] = []
@@ -47,7 +48,7 @@ describe(`orbit-db - load (js-ipfs)`, () => { //${test.title}
       for (let i = 0; i < entryCount; i++)
         entryArr.push(i)
 
-      db = await orbitdb1.open(new EventStore<string>({}), { replicationTopic: uuid() })
+      db = await orbitdb1.open(new EventStore<string>({}), { replicationTopic: uuid(), })
       address = db.address!.toString()
       await mapSeries(entryArr, (i) => db.add('hello' + i))
       await db.close()
@@ -224,7 +225,7 @@ describe(`orbit-db - load (js-ipfs)`, () => { //${test.title}
     })
 
     beforeEach(async () => {
-      orbitdb1 = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath + "/" + uuid() })
+      orbitdb1 = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath + "/" + uuid(), storage: { createStore: (string: string) => createStore(string) }, })
 
       const entryArr: number[] = []
 
