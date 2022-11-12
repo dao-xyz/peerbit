@@ -1,7 +1,7 @@
 on: [push, pull_request]
 name: Check, Tests, Lints
 jobs:
-    unit-tests:
+    lint-unit-tests:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v2
@@ -9,13 +9,7 @@ jobs:
               with:
                   node-version: '16'
             - run: yarn install
+            - run: yarn lerna bootstrap
+            - run: yarn build
             - run: yarn test
-    prettier:
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v2
-            - uses: actions/setup-node@v2
-              with:
-                  node-version: '16'
-            - run: yarn install
             - run: yarn lint
