@@ -74,7 +74,7 @@ export class EventStore<T> extends Program {
     iterator(options?: any) {
         const messages = this._query(options)
         let currentIndex = 0
-        let iterator = {
+        const iterator = {
             [Symbol.iterator]() {
                 return this
             },

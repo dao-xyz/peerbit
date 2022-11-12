@@ -5,8 +5,7 @@ import { Log } from "@dao-xyz/ipfs-log";
 import { arraysEqual, UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
 import { ComposableProgram, Program } from "@dao-xyz/peerbit-program";
 import { Compare, AnySearch, FieldBigIntCompareQuery, FieldByteMatchQuery, FieldStringMatchQuery, MemoryCompareQuery, PageQueryRequest, Query, QueryType, Result, ResultWithSource, SortDirection, StateFieldQuery } from "@dao-xyz/peerbit-anysearch";
-// @ts-ignore
-import { AccessError, EncryptedThing, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
+import { AccessError } from '@dao-xyz/peerbit-crypto';
 import { BinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { CanRead, DQuery } from "@dao-xyz/peerbit-query";
 import pino from 'pino'
@@ -132,7 +131,7 @@ export class DocumentIndex<T extends BinaryPayload> extends ComposableProgram {
   }
 
   public get(key: Hashable): IndexedValue<T> | undefined {
-    let stringKey = asString(key);
+    const stringKey = asString(key);
     return this._index.get(stringKey)
   }
 
@@ -151,7 +150,7 @@ export class DocumentIndex<T extends BinaryPayload> extends ComposableProgram {
 
       try {
         const item = values[i];
-        let payload = await item.getPayloadValue();
+        const payload = await item.getPayloadValue();
         if (payload instanceof PutAllOperation) {
           for (const doc of payload.docs) {
             if (doc && handled[doc.key] !== true) {
@@ -219,7 +218,7 @@ export class DocumentIndex<T extends BinaryPayload> extends ComposableProgram {
 
   _queryDocuments(filter: ((doc: IndexedValue<T>) => boolean)): IndexedValue<T>[] {
     // Whether we return the full operation data or just the db value
-    let results: IndexedValue<T>[] = [];
+    const results: IndexedValue<T>[] = [];
     for (const value of this._index.values()) {
       if (filter(value)) {
         results.push(value)
@@ -230,7 +229,7 @@ export class DocumentIndex<T extends BinaryPayload> extends ComposableProgram {
 
   queryHandler(query: QueryType): Promise<Result[]> {
     if (query instanceof PageQueryRequest) {
-      let queries: Query[] = query.queries
+      const queries: Query[] = query.queries
       let results = this._queryDocuments(
         doc =>
           queries?.length > 0 ? queries.map(f => {
@@ -251,7 +250,7 @@ export class DocumentIndex<T extends BinaryPayload> extends ComposableProgram {
                 return arraysEqual(fv, f.value)
               }
               if (f instanceof FieldBigIntCompareQuery) {
-                let value: bigint | number = fv;
+                const value: bigint | number = fv;
 
                 if (typeof value !== 'bigint' && typeof value !== 'number') {
                   return false;

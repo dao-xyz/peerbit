@@ -212,9 +212,9 @@ export class TrustedNetwork extends Program {
     }
 
     async getTrusted(): Promise<PublicSignKey[]> {
-        let current = this.rootTrust;
+        const current = this.rootTrust;
         const participants: PublicSignKey[] = [current];
-        let generator = getPathGenerator(current, this.trustGraph, getToByFrom);
+        const generator = getPathGenerator(current, this.trustGraph, getToByFrom);
         for await (const next of generator) {
             participants.push(next.to);
         }

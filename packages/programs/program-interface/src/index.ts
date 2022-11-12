@@ -3,12 +3,9 @@ import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { Entry, Identity } from "@dao-xyz/ipfs-log";
 import { IPFS } from "ipfs-core-types";
 import { IInitializationOptions, Store } from '@dao-xyz/peerbit-store';
-
-// @ts-ignore
 import { v4 as uuid } from 'uuid';
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { getValuesWithType } from './utils.js';
-
 import io from '@dao-xyz/peerbit-io-utils';
 import { serialize, deserialize, Constructor, AbstractType } from '@dao-xyz/borsh';
 import path from 'path'
@@ -208,27 +205,23 @@ export abstract class AbstractProgram extends SystemBinaryPayload {
             throw new Error("Already initialized")
         }
 
-        this._initializationPromise = new Promise<void>(async (resolve, reject) => {
-            try {
-                this._ipfs = ipfs;
-                this._identity = identity;
-                this._encryption = options.store.encryption;
-                this._onClose = options.onClose;
-                this._onDrop = options.onDrop;
+        const fn = async () => {
+            this._ipfs = ipfs;
+            this._identity = identity;
+            this._encryption = options.store.encryption;
+            this._onClose = options.onClose;
+            this._onDrop = options.onDrop;
 
-                const nexts = this.programs;
-                for (const next of nexts) {
-                    await next.init(ipfs, identity, { ...options, parent: this });
-                }
-
-                await Promise.all(this.stores.map(s => s.init(ipfs, identity, options.store)))
-
-                this._initialized = true
-            } catch (error) {
-                reject(error)
+            const nexts = this.programs;
+            for (const next of nexts) {
+                await next.init(ipfs, identity, { ...options, parent: this });
             }
-            resolve()
-        })
+
+            await Promise.all(this.stores.map(s => s.init(ipfs, identity, options.store)))
+
+            this._initialized = true
+        }
+        this._initializationPromise = fn()
         await this._initializationPromise;
         return this;
 
@@ -419,7 +412,7 @@ export abstract class Program extends AbstractProgram implements Addressable, Sa
         }
     }
 
-    async init(ipfs: IPFS<{}>, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
+    async init(ipfs: IPFS, identity: Identity, options: ProgramInitializationOptions): Promise<this> {
 
 
         // TODO, determine whether setup should be called before or after save

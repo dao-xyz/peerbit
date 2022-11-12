@@ -5,8 +5,6 @@ import { IPFS } from 'ipfs-core-types'
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { max, min } from './utils';
 import { Encoding, JSON_ENCODING } from './encoding';
-
-//@ts-ignore
 import { logger as parentLogger } from './logger.js'
 const logger = parentLogger.child({ module: 'entry-io' });
 

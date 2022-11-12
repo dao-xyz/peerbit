@@ -97,39 +97,6 @@ describe(`Cache - level`, function () {
     const _sublevelCache = new Cache(sublevel)
   })
 
-  /* data.forEach(d => {
-    it(`sets and gets a ${d.key}`, async () => {
-      await cache.set(d.key, d.value)
-      const val = await cache.get(d.key)
-      assert.deepStrictEqual(val, d.value)
-      expect(typeof val).toEqual(d.type)
-    })
 
-    it('throws an error trying to get an unknown key', async () => {
-      try {
-        await cache.get('fooKey')
-      } catch (e: any) {
-        assert(true)
-      }
-    })
-
-    it('deletes properly', async () => {
-      await cache.set(d.key, JSON.stringify(d.value))
-      await cache.del(d.key)
-      try {
-        await store.get(d.key)
-      } catch (e: any) {
-        assert(true)
-      }
-    })
-
-    it('throws an error trying to delete an unknown key', async () => {
-      try {
-        await cache.delete('fooKey')
-      } catch (e: any) {
-        assert(true)
-      }
-    })
-  }) */
 })
 

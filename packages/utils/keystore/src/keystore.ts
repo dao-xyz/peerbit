@@ -1,13 +1,12 @@
 import { Level } from 'level';
 import LRU from 'lru-cache';
-import { variant, field, serialize, deserialize, option, Constructor } from '@dao-xyz/borsh';
+import { variant, field, serialize, deserialize } from '@dao-xyz/borsh';
 import { UInt8ArraySerializer, } from '@dao-xyz/peerbit-borsh-utils';
-import { X25519PublicKey, Ed25519PublicKey, X25519SecretKey, Ed25519PrivateKey, Keypair, X25519Keypair, Ed25519Keypair, PublicSignKey, PublicKeyEncryptionKey } from '@dao-xyz/peerbit-crypto';
+import { X25519PublicKey, Ed25519PublicKey, Keypair, X25519Keypair, Ed25519Keypair, PublicSignKey, PublicKeyEncryptionKey } from '@dao-xyz/peerbit-crypto';
 import { waitFor } from '@dao-xyz/peerbit-time';
-import { createHash, Sign } from 'crypto';
-import sodium, { KeyPair } from 'libsodium-wrappers';
+import { createHash } from 'crypto';
+import sodium from 'libsodium-wrappers';
 import { StoreError } from './errors';
-import { format } from 'path';
 
 export interface Type<T> extends Function {
   new(...args: any[]): T;
@@ -122,7 +121,7 @@ export class KeyWithMeta<T extends Keypair> {
     throw new Error("Unsupported")
   }
 
-  equals(other: KeyWithMeta<T>, ignoreMissingSecret: boolean = false) {
+  equals(other: KeyWithMeta<T>, ignoreMissingSecret = false) {
     return this.timestamp === other.timestamp && this.group === other.group && this.keypair.equals(other.keypair);
   }
 
@@ -357,7 +356,7 @@ export class Keystore {
 
       // Normalize group names
       const groupHash = getGroupKey(group);
-      let prefix = groupHash;
+      const prefix = groupHash;
 
       const iterator = this.groupStore.iterator<any, Uint8Array>({ gte: prefix, lte: prefix + "\xFF", valueEncoding: 'view' });
       const ret: KeyWithMeta<any>[] = [];

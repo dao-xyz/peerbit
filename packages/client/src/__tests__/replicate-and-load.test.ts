@@ -45,7 +45,6 @@ Object.keys(testAPIs).forEach(API => {
       // Connect the peers manually to speed up test times
       const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
       await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
-      console.log("Peers connected")
     })
 
     afterAll(async () => {
@@ -84,7 +83,6 @@ Object.keys(testAPIs).forEach(API => {
 
         expect(db1.address!.toString()).toEqual(db2.address!.toString())
 
-        console.log("Waiting for peers...")
         await waitForPeers(ipfs1, [orbitdb2.id], replicationTopic)
         await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic)
       })
@@ -107,9 +105,7 @@ Object.keys(testAPIs).forEach(API => {
         for (let i = 0; i < entryCount; i++)
           entryArr.push(i)
 
-        console.log("Writing to database...")
         await mapSeries(entryArr, (i) => db1.add('hello' + i))
-        console.log("Done")
 
         return new Promise((resolve, reject) => {
           timer = setInterval(async () => {

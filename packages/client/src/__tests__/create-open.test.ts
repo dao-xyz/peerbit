@@ -18,6 +18,7 @@ import { jest } from '@jest/globals';
 import {
   nodeConfig as config,
   Session,
+  createStore
 } from '@dao-xyz/peerbit-test-utils'
 import { Program } from '@dao-xyz/peerbit-program'
 import { delay, waitFor } from '@dao-xyz/peerbit-time'
@@ -25,7 +26,7 @@ import { delay, waitFor } from '@dao-xyz/peerbit-time'
 const dbPath = path.join('./peerbit', 'tests', 'create-open')
 
 describe(`orbit-db - Create & Open `, function () {
-  jest.retryTimes(1) // windows...
+  jest.retryTimes(1) // TODO Side effects may cause failures
   jest.setTimeout(config.timeout * 5)
 
   let session: Session
@@ -104,9 +105,10 @@ describe(`orbit-db - Create & Open `, function () {
 
   describe('Open', function () {
     let orbitdb: Peerbit
+    jest.retryTimes(1) // TODO Side effects may cause failures
 
     beforeAll(async () => {
-      orbitdb = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath + uuid() })
+      orbitdb = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath + uuid(), storage: { createStore: (string: string) => createStore(string) }, })
     })
     afterAll(async () => {
       if (orbitdb) {
@@ -170,13 +172,10 @@ describe(`orbit-db - Create & Open `, function () {
      }) */
 
     it('open the database and it has the added entries', async () => {
-      const db = await orbitdb.open(new EventStore({ id: uuid() }))
+      const db = await orbitdb.open(new EventStore({ id: uuid() }), { directory: dbPath + uuid() })
       await db.add('hello1')
       await db.add('hello2')
       await db.close()
-
-      const db2 = await orbitdb.open(await Program.load(orbitdb._ipfs, db.address!))
-
       await db.load()
       await waitFor(() => db.iterator({ limit: -1 }).collect().length == 2)
       const res = db.iterator({ limit: -1 }).collect()
@@ -184,7 +183,6 @@ describe(`orbit-db - Create & Open `, function () {
       expect(res[0].payload.getValue().value).toEqual('hello1')
       expect(res[1].payload.getValue().value).toEqual('hello2')
       await db.drop()
-      await db2.drop()
     })
   })
 

@@ -57,7 +57,6 @@ Object.keys(testAPIs).forEach(API => {
       await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
       await connectPeers(ipfs2, ipfs3, { filter: isLocalhostAddress })
 
-      console.log("Peers connected")
       orbitdb1 = await Peerbit.create(ipfs1, { directory: dbPath1 })
       orbitdb2 = await Peerbit.create(ipfs2, { directory: dbPath2 })
       orbitdb3 = await Peerbit.create(ipfs3, { directory: dbPath3 })
@@ -120,8 +119,6 @@ Object.keys(testAPIs).forEach(API => {
       await waitFor(() => orbitdb1._directConnections.size === 2)
       await waitFor(() => orbitdb2._directConnections.size === 2)
       await waitFor(() => orbitdb3._directConnections.size === 2)
-
-      console.log("Peers connected")
 
     })
 

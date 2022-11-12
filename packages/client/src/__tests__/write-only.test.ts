@@ -49,7 +49,6 @@ describe(`orbit-db - Write-only`, function () {
         // Connect the peers manually to speed up test times
         const isLocalhostAddress = (addr: string) => addr.toString().includes('127.0.0.1')
         await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress })
-        console.log("Peers connected")
     })
 
     afterAll(async () => {

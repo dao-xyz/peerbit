@@ -33,7 +33,7 @@ export class Secp256k1PublicKey extends PublicSignKey {
 
 export const verifySignatureSecp256k1 = async (signature: Uint8Array, publicKey: Secp256k1PublicKey, data: Uint8Array, signedHash = false): Promise<boolean> => {
     await sodium.ready;
-    let signedData = signedHash ? await sodium.crypto_generichash(32, Buffer.from(data)) : data;
+    const signedData = signedHash ? await sodium.crypto_generichash(32, Buffer.from(data)) : data;
     const signerAddress = verifyMessage(signedData, Buffer.from(signature).toString());
     return (Buffer.compare(Buffer.from(signerAddress.slice(2), 'hex'), Buffer.from(publicKey.address)) === 0)
 }

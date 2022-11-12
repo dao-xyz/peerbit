@@ -2,7 +2,6 @@
 import path from 'path'
 import * as ipfsModule from 'ipfs'
 import * as ipfsHttpModule from 'ipfs-http-client'
-// @ts-ignore
 import * as ipfsBin from 'go-ipfs'
 
 export const factoryConfig = {

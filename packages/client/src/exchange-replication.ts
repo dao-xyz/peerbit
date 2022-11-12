@@ -1,13 +1,10 @@
 import { variant, field, vec, option, serialize } from '@dao-xyz/borsh';
 import { ProtocolMessage } from './message.js';
-// @ts-ignore
-import isNode from 'is-node';
 import { MaybeSigned, PublicSignKey } from '@dao-xyz/peerbit-crypto';
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { Address } from '@dao-xyz/peerbit-program';
 import { Peerbit } from './peer.js';
 import { StringSetSerializer } from '@dao-xyz/peerbit-borsh-utils';
-// @ts-ignore
 import { v4 as uuid } from 'uuid';
 import { Identity } from '@dao-xyz/ipfs-log'
 import { Store } from '@dao-xyz/peerbit-store';

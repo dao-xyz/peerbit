@@ -29,7 +29,7 @@ export const query = async (ipfs: IPFS, topic: string, query: QueryRequestV0, re
 
 
     // send query and wait for replies in a generator like behaviour
-    let responseTopic = query.getResponseTopic(topic);
+    const responseTopic = query.getResponseTopic(topic);
     let results = 0;
     const _responseHandler = async (msg: Message) => {
 
@@ -72,7 +72,7 @@ export const query = async (ipfs: IPFS, topic: string, query: QueryRequestV0, re
         });
     }
 
-    let decryptedMessage = new DecryptedThing<MaybeSigned<Uint8Array>>({
+    const decryptedMessage = new DecryptedThing<MaybeSigned<Uint8Array>>({
         data: serialize(maybeSignedMessage)
     });
     let maybeEncryptedMessage: MaybeEncrypted<MaybeSigned<Uint8Array>> = decryptedMessage;
@@ -127,7 +127,7 @@ export const respond = async (ipfs: IPFS, topic: string, request: QueryRequestV0
         });
     }
 
-    let decryptedMessage = new DecryptedThing<MaybeSigned<Uint8Array>>({
+    const decryptedMessage = new DecryptedThing<MaybeSigned<Uint8Array>>({
         data: serialize(maybeSignedMessage)
     });
     let maybeEncryptedMessage: MaybeEncrypted<MaybeSigned<Uint8Array>> = decryptedMessage;

@@ -310,7 +310,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
     // Clean the next objects and convert to hashes
     const nexts = properties.next;
 
-    let payloadToSave = new Payload<T>({
+    const payloadToSave = new Payload<T>({
       data: properties.encoding.encoder(properties.data),
       value: properties.data
     });
@@ -357,7 +357,7 @@ export class Entry<T> implements EntryEncryptionTemplate<Clock, Payload<T>, Sign
     const nextHashes: string[] = [];
     let gid!: string;
     let maxChainLength = 0n;
-    let maxClock = 0n;
+    const maxClock = 0n;
     if (nexts?.length > 0) {
       // take min gid as our gid
       nexts.forEach((n) => {

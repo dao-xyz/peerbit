@@ -6,9 +6,6 @@ import * as LogError from './log-errors.js'
 import * as Sorting from './log-sorting.js'
 import { EntryFetchAllOptions, EntryFetchOptions, strictFetchOptions } from "./entry-io.js"
 import { IPFS } from "ipfs-core-types"
-/* import { CanAppendAccessController, DefaultAccessController } from "./default-access-controller.js"
-
- */
 import { isDefined } from './is-defined.js'
 import { findUniques } from "./find-uniques.js"
 import { EncryptionTemplateMaybeEncrypted, Entry, maxClockTimeReducer, Payload, CanAppend } from './entry.js';
@@ -92,8 +89,9 @@ export class Log<T> extends GSet {
     if (!isDefined(identity)) {
       throw new Error('Identity is required')
     }
-
-    let { logId, entries, encoding, heads, sortFn, concurrency, prune, encryption } = options;
+    // 
+    const { logId, encoding, concurrency, prune, encryption } = options;
+    let { sortFn, entries, heads } = options;
 
     if (isDefined(entries) && !Array.isArray(entries)) {
       throw new Error('\'entries\' argument must be an array of Entry instances')
@@ -251,7 +249,7 @@ export class Log<T> extends GSet {
     return this._entryIndex.get(entry instanceof Entry ? entry.hash : entry) !== undefined
   }
 
-  traverse(rootEntries: Entry<T>[], amount: number = -1, endHash?: string): { [key: string]: Entry<T> } {
+  traverse(rootEntries: Entry<T>[], amount = -1, endHash?: string): { [key: string]: Entry<T> } {
     // Sort the given given root entries and use as the starting stack
     let stack: Entry<T>[] = rootEntries.sort(this._sortFn).reverse()
 
@@ -338,9 +336,9 @@ export class Log<T> extends GSet {
   }
 
   getHeadsFromHashes(refs: string[]): Entry<T>[] {
-    let headsFromRefs = new Map<string, Entry<T>>();
+    const headsFromRefs = new Map<string, Entry<T>>();
     refs.forEach((ref) => {
-      let headsFromRef = this.getHeads(ref); // TODO allow forks
+      const headsFromRef = this.getHeads(ref); // TODO allow forks
       headsFromRef.forEach((head) => {
         headsFromRefs.set(head.hash, head);
       })
@@ -370,13 +368,11 @@ export class Log<T> extends GSet {
       options.nexts.forEach((n) => { if (!n.hash) throw new Error("Expecting nexts to already be saved. missing hash for one or more entries") })
     }
 
-
     const currentHeads: Entry<T>[] = Object.values(this.heads.reverse().reduce(uniqueEntriesReducer, {})); // TODO this invokes a double reverse
-    // let refs: string[] = options.refs || this.getPow2Refs(); // custom || or pick refs using getPow2Refs
-    let nexts: Entry<any>[] = options.nexts || currentHeads; // (options.refs ? this.getHeadsFromHashes(refs) : currentHeads.map(h => h.hash)); // custom || get nexts from all heads (merging activity)
+    const nexts: Entry<any>[] = options.nexts || currentHeads;
 
     // Some heads might not even be referenced by the refs, this will be merged into the headsIndex so we dont forget them
-    let keepHeads: Entry<T>[] = options.nexts ? currentHeads.filter(h => !nexts.find(e => e.hash === (h.hash))) : []; // TODO improve performance
+    const keepHeads: Entry<T>[] = options.nexts ? currentHeads.filter(h => !nexts.find(e => e.hash === (h.hash))) : []; // TODO improve performance
 
     // Calculate max time for log/graph
     const newTime = nexts?.length > 0 ? this.heads.concat(nexts).reduce(maxClockTimeReducer, 0n) + 1n : 0n; // this.getHeadsFromHashes(nexts.map(n => n.hash)).reduce(maxClockTimeReducer, 0n)
@@ -486,12 +482,14 @@ export class Log<T> extends GSet {
    *
    *
    */
-  iterator(options: { gt?: string, gte?: string, lt?: Entry<T>[] | string, lte?: Entry<T>[] | string, amount?: number }) {
+  iterator(options: { gt?: string, gte?: string, lt?: Entry<T>[] | string, lte?: Entry<T>[] | string, amount?: number }): IterableIterator<Entry<T>> {
     if (options.amount === undefined) {
       options.amount = -1;
     }
-    let { lt, lte, gt, gte, amount } = options;
-    if (amount === 0) return (function* () { })()
+    let { lt, lte } = options;
+    const { gt, gte, amount } = options
+
+    if (amount === 0) return [][Symbol.iterator]();
     if (typeof lte === 'string') lte = [this.get(lte)]
     if (typeof lt === 'string') lt = [this.get(this.get(lt).next[0])]
 
@@ -618,7 +616,7 @@ export class Log<T> extends GSet {
         traversed.add(hash)
       }
       else {
-        let shortCutLinks = this._nextsIndexToHead[hash];
+        const shortCutLinks = this._nextsIndexToHead[hash];
         (shortCutLinks || links).forEach(pushToStack);
       }
     }
@@ -641,7 +639,7 @@ export class Log<T> extends GSet {
   }
 
   removeAll(heads: Entry<any>[]) {
-    let stack: Entry<any>[] = [...heads];
+    const stack: Entry<any>[] = [...heads];
     while (stack.length > 0) {
       const next = stack.shift();
       if (!next) {
@@ -747,7 +745,6 @@ export class Log<T> extends GSet {
   static async fromMultihash<T>(ipfs: IPFS, identity: Identity, hash: string,
     options: { sortFn?: Sorting.ISortFunction } & EntryFetchAllOptions<T>) {
     // TODO: need to verify the entries with 'key'
-    // @ts-ignore
     const { logId, entries, heads } = await LogIO.fromMultihash(ipfs, hash, { length: options?.length, exclude: options?.exclude, shouldExclude: options?.shouldExclude, timeout: options?.timeout, onProgressCallback: options?.onProgressCallback, concurrency: options?.concurrency, sortFn: options?.sortFn })
     return new Log<T>(ipfs, identity, { encryption: options?.encryption, encoding: options?.encoding, logId, entries, heads, sortFn: options?.sortFn })
   }

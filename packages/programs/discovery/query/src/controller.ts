@@ -97,9 +97,9 @@ export class DQuery<Q, R> extends ComposableProgram {
 
     queryRegion?: QueryTopic;
 
-    subscribeToQueries: boolean = true;
+    subscribeToQueries = true;
 
-    _subscribed: boolean = false;
+    _subscribed = false;
     _onQueryMessageBinded: any = undefined;
     _responseHandler: ResponseHandler<Q, R>
     _queryType: Constructor<Q>
@@ -164,7 +164,7 @@ export class DQuery<Q, R> extends ComposableProgram {
 
         try {
             try {
-                let { result: query, from } = await decryptVerifyInto(msg.data, QueryRequestV0, this._encryption?.getAnyKeypair || (() => Promise.resolve(undefined)), {
+                const { result: query, from } = await decryptVerifyInto(msg.data, QueryRequestV0, this._encryption?.getAnyKeypair || (() => Promise.resolve(undefined)), {
                     isTrusted: (key) => this.canRead(key.signature?.publicKey)
                 })
                 const response = await this._responseHandler(deserialize(query.query, this._queryType), from);

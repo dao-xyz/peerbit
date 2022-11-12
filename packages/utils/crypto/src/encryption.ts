@@ -22,11 +22,6 @@ export type GetEncryptionKeypair = (() => (Promise<X25519Keypair | Ed25519Keypai
 @variant(0)
 export class MaybeEncrypted<T>  {
 
-
-    constructor() {
-
-    }
-
     /**
      * Will throw error if not decrypted
      */
@@ -301,16 +296,20 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
                 secretKey = await X25519SecretKey.from(key.keypair.privateKey);
             }
             const epheremalKey = await sodium.crypto_box_open_easy(k._encryptedKey.cipher, k._encryptedKey.nonce, this._envelope._senderPublicKey.publicKey, secretKey.secretKey);
-            let der: any = this;
-            let counter = 0;
-            while (der instanceof EncryptedThing) {
-                const decrypted = await sodium.crypto_secretbox_open_easy(this._encrypted, this._nonce, epheremalKey);
-                der = deserialize(decrypted, DecryptedThing)
-                counter += 1;
-                if (counter >= 10) {
-                    throw new Error("Unexpected decryption behaviour, data seems to always be in encrypted state")
-                }
-            }
+
+            // TODO: is nested decryption necessary?
+            /*  let der: any = this;
+             let counter = 0;
+             while (der instanceof EncryptedThing) {
+                 const decrypted = await sodium.crypto_secretbox_open_easy(this._encrypted, this._nonce, epheremalKey);
+                 der = deserialize(decrypted, DecryptedThing)
+                 counter += 1;
+                 if (counter >= 10) {
+                     throw new Error("Unexpected decryption behaviour, data seems to always be in encrypted state")
+                 }
+             } */
+
+            const der = deserialize(await sodium.crypto_secretbox_open_easy(this._encrypted, this._nonce, epheremalKey), DecryptedThing)
             this._decrypted = der as DecryptedThing<T>
         }
         else {

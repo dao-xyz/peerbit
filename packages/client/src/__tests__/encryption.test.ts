@@ -9,7 +9,7 @@ import { AccessError } from "@dao-xyz/peerbit-crypto"
 import { v4 as uuid } from 'uuid';
 import { jest } from '@jest/globals';
 import { KeyWithMeta } from '@dao-xyz/peerbit-keystore'
-import { delay, waitFor } from '@dao-xyz/peerbit-time'
+import { waitFor } from '@dao-xyz/peerbit-time'
 
 // Include test utilities
 import {
@@ -40,6 +40,7 @@ const checkHello = async (db: PermissionedEventStore) => {
 
 Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - encryption`, function () {
+    jest.retryTimes(1) // TODO Side effects may cause failures
     jest.setTimeout(config.timeout * 5)
 
     let session: Session;
