@@ -12,8 +12,11 @@ import { fileURLToPath } from 'url';
 import { waitFor } from '@dao-xyz/peerbit-time';
 import { DQuery } from '@dao-xyz/peerbit-query';
 import { Address } from '@dao-xyz/peerbit-program';
+import { jest } from '@jest/globals'
+
 const __filename = fileURLToPath(import.meta.url);
 
+jest.setTimeout(60 * 1000)
 
 describe('query', () => {
   let session: Session,

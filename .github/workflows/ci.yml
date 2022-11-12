@@ -11,5 +11,5 @@ jobs:
             - run: yarn install
             - run: yarn lerna bootstrap
             - run: yarn build
-            - run: yarn test
+            - run: yarn test --maxConcurrency=2
             - run: yarn lint
