@@ -32,6 +32,7 @@
   "author": "dao.xyz",
   "license": "MIT",
   "devDependencies": {
+    "@dao-xyz/peerbit-test-utils": "^0.0.12",
     "@types/libsodium-wrappers": "^0.7.9"
   },
   "dependencies": {
