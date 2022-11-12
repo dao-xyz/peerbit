@@ -7,7 +7,7 @@ import { PublicKeyEncryptionResolver, X25519PublicKey } from '@dao-xyz/peerbit-c
 import { AccessError } from "@dao-xyz/peerbit-crypto"
 import { SimpleIndex } from './utils.js'
 import { Controller } from 'ipfsd-ctl'
-import { IPFS } from 'ipfs-core-types'
+import { v4 as uuid } from 'uuid';
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
@@ -26,26 +26,24 @@ import {
 
 import { Level } from 'level'
 import { Entry } from '@dao-xyz/ipfs-log'
-import { delay, waitFor } from '@dao-xyz/peerbit-time'
+import { delay, waitFor, waitForAsync } from '@dao-xyz/peerbit-time'
 
-const API = 'js-ipfs'
 describe(`addOperation`, function () {
   let session: Session, signKey: KeyWithMeta<Ed25519Keypair>, keystore: Keystore, identityStore: Level, store: Store<any>, cacheStore: Level, senderKey: KeyWithMeta<Ed25519Keypair>, recieverKey: KeyWithMeta<Ed25519Keypair>, encryption: PublicKeyEncryptionResolver
   let index: SimpleIndex<string>
 
   jest.setTimeout(config.timeout);
 
-  const ipfsConfig = Object.assign({}, config, {
-    repo: 'repo-encryption' + __filenameBase + new Date().getTime()
-  })
 
   beforeAll(async () => {
-    identityStore = await createStore(path.join(__filename, 'identity'))
-    cacheStore = await createStore(path.join(__filename, 'cache'))
-    keystore = new Keystore(identityStore)
-
-    signKey = await keystore.createEd25519Key()
     session = await Session.connected(1);
+  })
+
+  beforeEach(async () => {
+    identityStore = await createStore(path.join(__filename, 'identity' + uuid()))
+    cacheStore = await createStore(path.join(__filename, 'cache' + uuid()))
+    keystore = new Keystore(identityStore)
+    signKey = await keystore.createEd25519Key()
     index = new SimpleIndex();
     senderKey = await keystore.createEd25519Key()
     recieverKey = await keystore.createEd25519Key()
@@ -68,15 +66,17 @@ describe(`addOperation`, function () {
         }
       }
     }
+  })
 
+  afterEach(async () => {
+    await store?.close()
+    await identityStore?.close()
+    await cacheStore?.close()
 
   })
 
   afterAll(async () => {
-    await store?.close()
     await session?.stop();
-    await identityStore?.close()
-    await cacheStore?.close()
   })
 
 
@@ -93,21 +93,22 @@ describe(`addOperation`, function () {
         expect(store.replicationStatus.max).toEqual(1n)
         assert.deepStrictEqual(index._index, heads)
         await delay(5000); // seems because write is async?
-        store._cache.getBinary(store.localHeadsPath, HeadsCache).then(async (localHeads) => {
-          if (!localHeads) {
-            fail()
-          }
-          localHeads.heads[0].init({
-            encryption: store.oplog._encryption,
-            encoding: store.oplog._encoding
-          });
-          await localHeads.heads[0].getPayload();
-          assert.deepStrictEqual(localHeads.heads[0].payload.getValue(), data)
-          assert(localHeads.heads[0].equals(heads[0]))
-          expect(heads.length).toEqual(1)
-          expect(localHeads.heads.length).toEqual(1)
-          done = true;
-        })
+        await waitForAsync(async () => (await store._cache.getBinary(store.localHeadsPath, HeadsCache)) !== undefined)
+        const localHeads = await store._cache.getBinary(store.localHeadsPath, HeadsCache);
+        if (!localHeads) {
+          fail()
+        }
+        localHeads.heads[0].init({
+          encryption: store.oplog._encryption,
+          encoding: store.oplog._encoding
+        });
+        await localHeads.heads[0].getPayload();
+        assert.deepStrictEqual(localHeads.heads[0].payload.getValue(), data)
+        assert(localHeads.heads[0].equals(heads[0]))
+        expect(heads.length).toEqual(1)
+        expect(localHeads.heads.length).toEqual(1)
+        done = true;
+
       } catch (error) {
         throw error;
       }
@@ -137,36 +138,37 @@ describe(`addOperation`, function () {
     const data = { data: 12345 }
     let done = false;
 
-    const onWrite = (store: Store<any>, entry: Entry<any>) => {
+    const onWrite = async (store: Store<any>, entry: Entry<any>) => {
       const heads = store.oplog.heads;
       expect(heads.length).toEqual(1)
       assert.deepStrictEqual(entry.payload.getValue(), data)
       expect(store.replicationStatus.progress).toEqual(1n)
       expect(store.replicationStatus.max).toEqual(1n)
       assert.deepStrictEqual(index._index, heads)
-      store._cache.getBinary(store.localHeadsPath, HeadsCache).then(async (localHeads) => {
-        if (!localHeads) {
-          fail();
-        }
+      await waitForAsync(async () => (await store._cache.getBinary(store.localHeadsPath, HeadsCache)) !== undefined)
+      const localHeads = await store._cache.getBinary(store.localHeadsPath, HeadsCache);
 
-        localHeads.heads[0].init({
-          encryption: store.oplog._encryption,
-          encoding: store.oplog._encoding
-        });
-        try {
-          await localHeads.heads[0].getPayload();
-          assert(false);
-        } catch (error) {
-          if (error instanceof AccessError === false) {
-            console.error(error);
-          }
-          expect(error).toBeInstanceOf(AccessError)
+      if (!localHeads) {
+        fail();
+      }
+
+      localHeads.heads[0].init({
+        encryption: store.oplog._encryption,
+        encoding: store.oplog._encoding
+      });
+      try {
+        await localHeads.heads[0].getPayload();
+        assert(false);
+      } catch (error) {
+        if (error instanceof AccessError === false) {
+          console.error(error);
         }
-        assert(localHeads.heads[0].equals(heads[0]))
-        expect(heads.length).toEqual(1)
-        expect(localHeads.heads.length).toEqual(1)
-        done = true
-      })
+        expect(error).toBeInstanceOf(AccessError)
+      }
+      assert(localHeads.heads[0].equals(heads[0]))
+      expect(heads.length).toEqual(1)
+      expect(localHeads.heads.length).toEqual(1)
+      done = true
     }
 
     const cache = new Cache(cacheStore)

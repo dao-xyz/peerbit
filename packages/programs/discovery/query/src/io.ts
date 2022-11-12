@@ -92,10 +92,11 @@ export const query = async (ipfs: IPFS, topic: string, query: QueryRequestV0, re
     try {
         await ipfs.pubsub.unsubscribe(responseTopic, _responseHandler);
 
-    } catch (error) {
-        if (error?.constructor?.name === 'NotStartedError') {
+    } catch (error: any) {
+        if (error?.constructor?.name === 'NotStartedError' || (typeof error?.message === 'string' && error?.message.indexOf('Pubsub is not started') !== -1)) {
             return;
         }
+        console.error('xxx', error);
         throw error;
     }
 }

@@ -1,72 +1,70 @@
 
 import assert from 'assert'
 import mapSeries from 'p-map-series'
-import rmrf from 'rimraf'
-import path from 'path'
 import { Address } from '@dao-xyz/peerbit-program'
 import { Peerbit } from '../peer.js'
 import { EventStore } from './utils/stores/event-store.js'
 import { jest } from '@jest/globals';
-import { Controller } from "ipfsd-ctl";
-import { IPFS } from "ipfs-core-types";
 // @ts-ignore
 import { v4 as uuid } from 'uuid';
 
 // Include test utilities
 import {
   nodeConfig as config,
-  Session,
-  startIpfs,
-  stopIpfs
+  Session
 } from '@dao-xyz/peerbit-test-utils'
 import { waitFor } from '@dao-xyz/peerbit-time'
 
 const dbPath = './orbitdb/tests/persistency'
 
 /* tests.forEach(test => {*/
-describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
+describe(`orbit-db - load (js-ipfs)`, () => { //${test.title}
   jest.setTimeout(config.timeout)
 
   const entryCount = 10
 
-  let session: Session, orbitdb1: Peerbit
 
-  beforeEach(async () => {
-    session = await Session.connected(1);
-    orbitdb1 = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath + "/" + uuid() })
-  })
-
-  afterAll(async () => {
-    rmrf.sync(dbPath)
-
-    if (orbitdb1)
-      await orbitdb1.stop()
-
-    if (session)
-      await session.stop();
-  })
 
   describe('load', function () {
-    let db: EventStore<string>, address: string
+    let db: EventStore<string>, address: string, orbitdb1: Peerbit
+    let session: Session
+
+    beforeAll(async () => {
+      session = await Session.connected(1);
+    })
+
+    afterAll(async () => {
+      if (session)
+        await session.stop();
+    })
+
     beforeEach(async () => {
+      orbitdb1 = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath + "/" + uuid() })
+
+
       const entryArr: number[] = []
 
       for (let i = 0; i < entryCount; i++)
         entryArr.push(i)
 
-      db = await orbitdb1.open(new EventStore<string>({}), uuid())
+      db = await orbitdb1.open(new EventStore<string>({}), { replicationTopic: uuid() })
       address = db.address!.toString()
       await mapSeries(entryArr, (i) => db.add('hello' + i))
       await db.close()
     })
 
     afterEach(async () => {
+
       await db?.drop()
+
+      if (orbitdb1)
+        await orbitdb1.stop()
     })
 
     it('loads database from local cache', async () => {
-      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
+      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), { replicationTopic: uuid() })
       await db.load()
+      await waitFor(() => db.iterator({ limit: -1 }).collect().length === entryCount)
       const items = db.iterator({ limit: -1 }).collect()
       expect(items.length).toEqual(entryCount)
       expect(items[0].payload.getValue().value).toEqual('hello0')
@@ -75,8 +73,9 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
     it('loads database partially', async () => {
       const amount = 3
-      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
+      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), { replicationTopic: uuid() })
       await db.store.load(amount)
+      await waitFor(() => db.iterator({ limit: -1 }).collect().length === amount)
       const items = db.iterator({ limit: -1 }).collect()
       expect(items.length).toEqual(amount)
       expect(items[0].payload.getValue().value).toEqual('hello' + (entryCount - amount))
@@ -87,8 +86,9 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
     it('load and close several times', async () => {
       const amount = 8
       for (let i = 0; i < amount; i++) {
-        db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
+        db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), { replicationTopic: uuid() })
         await db.load()
+        await waitFor(() => db.iterator({ limit: -1 }).collect().length === entryCount)
         const items = db.iterator({ limit: -1 }).collect()
         expect(items.length).toEqual(entryCount)
         expect(items[0].payload.getValue().value).toEqual('hello0')
@@ -119,9 +119,11 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
     it('load, add one, close - several times', async () => {
       const amount = 8
       for (let i = 0; i < amount; i++) {
-        db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
+        db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), { replicationTopic: uuid() })
         await db.load()
+        await waitFor(() => db.iterator({ limit: -1 }).collect().length === entryCount + i);
         await db.add('hello' + (entryCount + i))
+        await waitFor(() => db.iterator({ limit: -1 }).collect().length === entryCount + i + 1);
         const items = db.iterator({ limit: -1 }).collect()
         expect(items.length).toEqual(entryCount + i + 1)
         expect(items[items.length - 1].payload.getValue().value).toEqual('hello' + (entryCount + i))
@@ -133,7 +135,8 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
       let done = false;
       db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), {
         replicationTopic: uuid(),
-        onReady: (store) => {
+        onReady: async (store) => {
+          await waitFor(() => db.iterator({ limit: -1 }).collect().length === entryCount);
           const items = db.iterator({ limit: -1 }).collect()
           expect(items.length).toEqual(entryCount)
           expect(items[0].payload.getValue().value).toEqual('hello0')
@@ -174,18 +177,34 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
   })
 
   describe('load from empty snapshot', function () {
-    let db: EventStore<string>, address: string
+    let db: EventStore<string>, address: string, orbitdb1: Peerbit, session: Session
 
+    beforeAll(async () => {
+      session = await Session.connected(1);
+    })
+
+    afterAll(async () => {
+      if (session)
+        await session.stop();
+    })
+
+    beforeEach(async () => {
+      orbitdb1 = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath + "/" + uuid() })
+    })
     afterEach(async () => {
       await db.drop();
+      if (orbitdb1)
+        await orbitdb1.stop()
     })
+
     it('loads database from an empty snapshot', async () => {
-      db = await orbitdb1.open(new EventStore<string>({}), uuid())
+      const options = { replicationTopic: uuid() };
+      db = await orbitdb1.open(new EventStore<string>({}), options)
       address = db.address!.toString()
       await db.saveSnapshot()
       await db.close()
 
-      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
+      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), options)
       await db.loadFromSnapshot()
       const items = db.iterator({ limit: -1 }).collect()
       expect(items.length).toEqual(0)
@@ -193,15 +212,26 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
   })
 
   describe('load from snapshot', function () {
-    let db: EventStore<string>, address: string
+    let db: EventStore<string>, address: string, orbitdb1: Peerbit, session: Session
+
+    beforeAll(async () => {
+      session = await Session.connected(1);
+    })
+
+    afterAll(async () => {
+      if (session)
+        await session.stop();
+    })
 
     beforeEach(async () => {
+      orbitdb1 = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath + "/" + uuid() })
+
       const entryArr: number[] = []
 
       for (let i = 0; i < entryCount; i++)
         entryArr.push(i)
 
-      db = await orbitdb1.open(new EventStore<string>({}), uuid())
+      db = await orbitdb1.open(new EventStore<string>({}), { replicationTopic: uuid() })
       address = db.address!.toString()
       await mapSeries(entryArr, (i) => db.add('hello' + i))
       await db.saveSnapshot()
@@ -210,10 +240,14 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
 
     afterEach(async () => {
       await db?.drop()
+
+      if (orbitdb1)
+        await orbitdb1.stop()
+
     })
 
     it('loads database from snapshot', async () => {
-      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
+      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), { replicationTopic: uuid() })
       await db.loadFromSnapshot()
       const items = db.iterator({ limit: -1 }).collect()
       expect(items.length).toEqual(entryCount)
@@ -224,11 +258,13 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
     it('load, add one and save snapshot several times', async () => {
       const amount = 4
       for (let i = 0; i < amount; i++) {
-        db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
+        db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), { replicationTopic: uuid() })
         await db.loadFromSnapshot()
+        const expectedCount = entryCount + i
+        await waitFor(() => db.iterator({ limit: -1 }).collect().length === expectedCount);
         await db.add('hello' + (entryCount + i))
         const items = db.iterator({ limit: -1 }).collect()
-        expect(items.length).toEqual(entryCount + i + 1)
+        expect(items.length).toEqual(expectedCount + 1)
         expect(items[0].payload.getValue().value).toEqual('hello0')
         expect(items[items.length - 1].payload.getValue().value).toEqual('hello' + (entryCount + i))
         await db.saveSnapshot()
@@ -237,10 +273,11 @@ describe(`orbit-db - load (js-ipfs)`, function () { //${test.title}
     })
 
     it('throws an error when trying to load a missing snapshot', async () => {
-      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
+      const replicationTopic = { replicationTopic: uuid() };
+      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), replicationTopic)
       await db.drop()
       db = null as any
-      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), uuid())
+      db = await orbitdb1.open(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, Address.parse(address)), replicationTopic)
 
       let err
       try {

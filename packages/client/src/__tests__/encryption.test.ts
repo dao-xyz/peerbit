@@ -4,10 +4,9 @@ import rmrf from 'rimraf'
 import { Entry } from '@dao-xyz/ipfs-log'
 import { Peerbit } from '../peer'
 import { Operation } from './utils/stores/event-store'
-import { IStoreOptions } from '@dao-xyz/peerbit-store';
 import { Ed25519Keypair, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
 import { AccessError } from "@dao-xyz/peerbit-crypto"
-
+import { v4 as uuid } from 'uuid';
 import { jest } from '@jest/globals';
 import { KeyWithMeta } from '@dao-xyz/peerbit-keystore'
 import { delay, waitFor } from '@dao-xyz/peerbit-time'
@@ -25,10 +24,7 @@ import { PermissionedEventStore } from './utils/stores/test-store'
 const orbitdbPath1 = './orbitdb/tests/encryption/1'
 const orbitdbPath2 = './orbitdb/tests/encryption/2'
 const orbitdbPath3 = './orbitdb/tests/encryption/3'
-
-const dbPath1 = './orbitdb/tests/encryption/1/db1'
-const dbPath2 = './orbitdb/tests/encryption/2/db2'
-const dbPath3 = './orbitdb/tests/encryption/3/db3'
+const dbPath = './orbitdb/tests/encryption/'
 
 
 const addHello = async (db: PermissionedEventStore, receiver: X25519PublicKey) => {
@@ -44,27 +40,23 @@ const checkHello = async (db: PermissionedEventStore) => {
 
 Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - encryption`, function () {
-    jest.setTimeout(config.timeout * 2)
+    jest.setTimeout(config.timeout * 5)
 
     let session: Session;
     let orbitdb1: Peerbit, orbitdb2: Peerbit, orbitdb3: Peerbit, db1: PermissionedEventStore, db2: PermissionedEventStore, db3: PermissionedEventStore
     let recieverKey: KeyWithMeta<Ed25519Keypair>
-    let options: IStoreOptions<any>
     let replicationTopic: string;
 
-    beforeEach(async () => {
+    beforeAll(async () => {
       session = await Session.connected(3, API);
-      rmrf.sync(orbitdbPath1)
-      rmrf.sync(orbitdbPath2)
-      rmrf.sync(orbitdbPath3)
-      rmrf.sync(dbPath1)
-      rmrf.sync(dbPath2)
-      rmrf.sync(dbPath3)
+
+    })
+    beforeEach(async () => {
 
       orbitdb1 = await Peerbit.create(session.peers[0].ipfs, {
         directory: orbitdbPath1, waitForKeysTimout: 1000
       },)
-      const program = await orbitdb1.open(new PermissionedEventStore({ network: new TrustedNetwork({ id: 'network-tests', rootTrust: orbitdb1.identity.publicKey }) }), { directory: dbPath1 + (+ new Date) })
+      const program = await orbitdb1.open(new PermissionedEventStore({ network: new TrustedNetwork({ id: 'network-tests', rootTrust: orbitdb1.identity.publicKey }) }), { directory: dbPath + uuid() })
       await orbitdb1.join(program);
 
       // Trusted client 2
@@ -83,7 +75,6 @@ Object.keys(testAPIs).forEach(API => {
 
     afterEach(async () => {
 
-      options = {}
 
       if (db1)
         await db1.drop()
@@ -98,19 +89,21 @@ Object.keys(testAPIs).forEach(API => {
       if (orbitdb2) { await orbitdb2.disconnect() }
       if (orbitdb3) { await orbitdb3.disconnect() }
 
-      await session.stop();
 
+    })
+
+    afterAll(async () => {
+      await session.stop();
     })
 
     it('replicates database of 1 entry known keys', async () => {
 
-      options = Object.assign({}, options, { directory: dbPath2 })
       let done = false;
 
 
       db2 = await orbitdb2.open<PermissionedEventStore>(db1.address, {
         replicationTopic,
-        ...options, onReplicationComplete: async (_store) => {
+        directory: dbPath + uuid(), onReplicationComplete: async (_store) => {
           await checkHello(db1);
           done = true;
         }
@@ -125,7 +118,6 @@ Object.keys(testAPIs).forEach(API => {
     it('replicates database of 1 entry unknown keys', async () => {
       // TODO this test is flaky when running all tests at once
 
-      options = Object.assign({}, options, { directory: dbPath2 })
 
       const unknownKey = await orbitdb1.keystore.createEd25519Key({ id: 'unknown', group: replicationTopic });
 
@@ -133,7 +125,7 @@ Object.keys(testAPIs).forEach(API => {
       let done = false;
       db2 = await orbitdb2.open<PermissionedEventStore>(db1.address, {
         replicationTopic,
-        ...options, onReplicationComplete: async (store) => {
+        directory: dbPath + uuid(), onReplicationComplete: async (store) => {
           if (store === db2.store.store) {
             await checkHello(db1);
             done = true;
@@ -165,8 +157,7 @@ Object.keys(testAPIs).forEach(API => {
       const db1Key = await orbitdb1.keystore.createEd25519Key({ id: 'unknown', group: db1.address.toString() });
 
       // Open store from orbitdb2 so that both client 1 and 2 is listening to the replication topic
-      options = Object.assign({}, options, { directory: dbPath2 })
-      db2 = await orbitdb2.open<PermissionedEventStore>(db1.address!, { replicationTopic, ...options })
+      db2 = await orbitdb2.open<PermissionedEventStore>(db1.address!, { replicationTopic, directory: dbPath + uuid(), })
       await waitFor(() => db2.network?.trustGraph.index.size >= 3);
       await orbitdb2.join(db2)
       await waitFor(() => db1.network?.trustGraph.index.size >= 4);
@@ -180,8 +171,7 @@ Object.keys(testAPIs).forEach(API => {
 
       await waitForPeers(session.peers[2].ipfs, [orbitdb1.id], replicationTopic)
 
-      options = Object.assign({}, options, { directory: dbPath2 })
-      db2 = await orbitdb2.open<PermissionedEventStore>(db1.address!, { replicationTopic, ...options })
+      db2 = await orbitdb2.open<PermissionedEventStore>(db1.address!, { replicationTopic, directory: dbPath + uuid(), })
 
       await waitFor(() => db2.network?.trustGraph.index.size >= 3);
       await orbitdb2.join(db2)
@@ -210,10 +200,9 @@ Object.keys(testAPIs).forEach(API => {
 
       // Now close db2 and open db3 and make sure message are available
       await db2.drop();
-      options = Object.assign({}, options, { directory: dbPath3 })
       db3 = await orbitdb3.open<PermissionedEventStore>(db1.address, {
         replicationTopic,
-        ...options, onReplicationComplete: async (store) => {
+        directory: dbPath + uuid(), onReplicationComplete: async (store) => {
           const entriesRelay: Entry<Operation<string>>[] = db3.store.iterator({ limit: -1 }).collect()
           expect(entriesRelay.length).toEqual(1)
           await entriesRelay[0].getPayload(); // should pass since orbitdb3 got encryption key

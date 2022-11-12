@@ -43,12 +43,12 @@ describe('query', () => {
         session = await Session.connected(2)
         observer = session.peers[0].ipfs;
         writer = session.peers[1].ipfs;
-        cacheStore1 = await createStore(path.join(__filename, 'cache1'));
-        cacheStore2 = await createStore(path.join(__filename, 'cache2'));
+
     })
 
     beforeEach(async () => {
-
+        cacheStore1 = await createStore(path.join(__filename, 'cache1' + uuid()));
+        cacheStore2 = await createStore(path.join(__filename, 'cache2' + uuid()));
         // Create store
         writeStore = new DString({});
         const replicationTopic = uuid();
@@ -59,10 +59,13 @@ describe('query', () => {
         await observerStore.init(observer, await createIdentity(), { replicationTopic, store: { ...DefaultOptions, resolveCache: () => new Cache(cacheStore2) } })
 
     })
-
-    afterAll(async () => {
+    afterEach(async () => {
         await cacheStore1.close();
         await cacheStore2.close();
+    })
+
+    afterAll(async () => {
+
         await session.stop();
     })
 
@@ -166,7 +169,8 @@ describe('query', () => {
         await store.init(writer, await createIdentity(), { replicationTopic: uuid(), store: { ...DefaultOptions, encryption: { getAnyKeypair: (_) => Promise.resolve(undefined), getEncryptionKeypair: () => Ed25519Keypair.create() }, replicate: true, resolveCache: () => new Cache(cacheStore1) } });
 
         await store.add('hello', new Range({ offset: 0n, length: 'hello'.length }), { reciever: { clock: undefined, signature: undefined, payload: [await X25519PublicKey.create()] } });
-        await store.store.close();
+        await store.close();
+        await delay(3000); // TODO store is async?
         await store.load();
         await waitFor(() => store.store.oplog.values.length === 1)
     })

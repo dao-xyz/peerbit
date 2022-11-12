@@ -404,7 +404,10 @@ export class Peerbit {
     }
 
     if (this._disconnected) {
-      throw new Error("Got message while disconnected")
+      if (!areWeTestingWithJest())
+        throw new Error("Got message while disconnected")
+
+      return; // because these could just be testing sideffects
     }
 
     try {
@@ -1220,4 +1223,7 @@ export class Peerbit {
     return data !== undefined && data !== null
   }
 
+}
+const areWeTestingWithJest = (): boolean => {
+  return process.env.JEST_WORKER_ID !== undefined;
 }

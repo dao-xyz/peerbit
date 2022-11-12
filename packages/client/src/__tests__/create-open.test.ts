@@ -20,30 +20,22 @@ import {
   Session,
 } from '@dao-xyz/peerbit-test-utils'
 import { Program } from '@dao-xyz/peerbit-program'
+import { delay, waitFor } from '@dao-xyz/peerbit-time'
 
 const dbPath = path.join('./peerbit', 'tests', 'create-open')
 
 describe(`orbit-db - Create & Open `, function () {
   jest.retryTimes(1) // windows...
-  jest.setTimeout(config.timeout)
+  jest.setTimeout(config.timeout * 5)
 
-  let session: Session, orbitdb: Peerbit
-  let localDataPath: string
-  let replicationTopic: string
+  let session: Session
 
   beforeAll(async () => {
-    rmrf.sync(dbPath)
     session = await Session.connected(1);
-    replicationTopic = uuid();
-
-    orbitdb = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath + (+new Date) })
 
   })
 
   afterAll(async () => {
-    if (orbitdb) {
-      await orbitdb.stop()
-    }
 
     if (session) {
       await session.stop()
@@ -54,13 +46,28 @@ describe(`orbit-db - Create & Open `, function () {
   describe('Create', function () {
     describe('Success', function () {
       let db: KeyValueStore<string>;
+      let localDataPath: string, orbitdb: Peerbit
 
       beforeAll(async () => {
+        orbitdb = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath + uuid() })
+      })
+      afterAll(async () => {
+        if (orbitdb) {
+          await orbitdb.stop()
+        }
+      })
+
+
+      beforeEach(async () => {
         localDataPath = path.join(dbPath, orbitdb.id.toString(), 'cache')
 
         db = await orbitdb.open(new KeyValueStore<string>({ id: 'second' }), { replicationTopic: uuid(), directory: localDataPath, replicate: false })
         await db.close()
       })
+      afterEach(async () => {
+        await db.drop();
+      })
+
 
       it('creates a feed database', async () => {
         assert.notEqual(db, null)
@@ -96,8 +103,19 @@ describe(`orbit-db - Create & Open `, function () {
   })
 
   describe('Open', function () {
+    let orbitdb: Peerbit
+
+    beforeAll(async () => {
+      orbitdb = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath + uuid() })
+    })
+    afterAll(async () => {
+      if (orbitdb) {
+        await orbitdb.stop()
+      }
+    })
 
     it('opens a database - name only', async () => {
+      const replicationTopic = uuid();
       const db = await orbitdb.open(new EventStore({}), { replicationTopic })
       assert.equal(db.address!.toString().indexOf('/peerbit'), 0)
       assert.equal(db.address!.toString().indexOf('zd'), 9)
@@ -106,6 +124,7 @@ describe(`orbit-db - Create & Open `, function () {
 
     it('opens a database - with a different identity', async () => {
       const signKey = await orbitdb.keystore.createEd25519Key();
+      const replicationTopic = uuid();
       const db = await orbitdb.open(new EventStore({}), { replicationTopic, identity: { ...signKey.keypair, sign: (data) => signKey.keypair.sign(data) } })
       assert.equal(db.address!.toString().indexOf('/peerbit'), 0)
       assert.equal(db.address!.toString().indexOf('zd'), 9)
@@ -115,6 +134,7 @@ describe(`orbit-db - Create & Open `, function () {
 
     it('opens the same database - from an address', async () => {
       const signKey = await orbitdb.keystore.createEd25519Key();
+      const replicationTopic = uuid();
       const db = await orbitdb.open(new EventStore({}), { replicationTopic, identity: { ...signKey.keypair, sign: (data) => signKey.keypair.sign(data) } })
       const db2 = await orbitdb.open(await Program.load(orbitdb._ipfs, db.address!), { replicationTopic })
       assert.equal(db2.address!.toString().indexOf('/peerbit'), 0)
@@ -124,6 +144,7 @@ describe(`orbit-db - Create & Open `, function () {
     })
 
     it('doesn\'t open a database if we don\'t have it locally', async () => {
+      const replicationTopic = uuid();
       const db = await orbitdb.open(new EventStore({}), { replicationTopic })
       const address = new Address({ cid: db.address!.cid.slice(0, -1) + 'A' })
       await db.drop()
@@ -157,8 +178,8 @@ describe(`orbit-db - Create & Open `, function () {
       const db2 = await orbitdb.open(await Program.load(orbitdb._ipfs, db.address!))
 
       await db.load()
+      await waitFor(() => db.iterator({ limit: -1 }).collect().length == 2)
       const res = db.iterator({ limit: -1 }).collect()
-
       expect(res.length).toEqual(2)
       expect(res[0].payload.getValue().value).toEqual('hello1')
       expect(res[1].payload.getValue().value).toEqual('hello2')
@@ -169,8 +190,20 @@ describe(`orbit-db - Create & Open `, function () {
 
   describe("Close", function () {
 
+    let orbitdb: Peerbit
+
+    beforeAll(async () => {
+      orbitdb = await Peerbit.create(session.peers[0].ipfs, { directory: dbPath + uuid() })
+    })
+    afterAll(async () => {
+      if (orbitdb) {
+        await orbitdb.stop()
+      }
+    })
+
     it('closes a custom store', async () => {
       const directory = path.join(dbPath, "custom-store")
+      const replicationTopic = uuid();
       const db = await orbitdb.open(new EventStore({}), { replicationTopic, directory })
       try {
         await db.close()
@@ -199,7 +232,7 @@ describe(`orbit-db - Create & Open `, function () {
       const directory = path.join(dbPath, "custom-store")
       const directory2 = path.join(dbPath, "custom-store2")
 
-
+      const replicationTopic = uuid();
       const db1 = await orbitdb.open(new EventStore({ id: 'xyz1' }), { replicationTopic })
       const db2 = await orbitdb.open(new EventStore({ id: 'xyz2' }), { replicationTopic, directory })
       const db3 = await orbitdb.open(new EventStore({ id: 'xyz3' }), { replicationTopic, directory })

@@ -10,6 +10,8 @@ import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { delay, waitFor } from '@dao-xyz/peerbit-time';
 import { fileURLToPath } from 'url';
 import { jest } from '@jest/globals';
+import { v4 as uuid } from 'uuid';
+
 import path from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -21,7 +23,8 @@ import {
   testAPIs,
   startIpfs,
   stopIpfs,
-  createStore
+  createStore,
+  Session
 } from '@dao-xyz/peerbit-test-utils'
 import { Level } from 'level'
 
@@ -30,7 +33,7 @@ Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Replication Status (${API})`, function () {
     jest.setTimeout(config.timeout)
 
-    let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, identityStore: Level, cache1: Level, cache2: Level;
+    let session: Session, signKey: KeyWithMeta<Ed25519Keypair>, identityStore: Level, cache1: Level, cache2: Level;
 
     let store1: Store<any>
     let store2: Store<any>
@@ -39,27 +42,23 @@ Object.keys(testAPIs).forEach(API => {
 
     jest.setTimeout(config.timeout);
 
-    const ipfsConfig = Object.assign({}, config, {
-      repo: 'repo-add' + __filenameBase + new Date().getTime()
-    })
-
     beforeAll(async () => {
-      identityStore = await createStore(path.join(__filename, 'identity' + API + (+ new Date)))
+      session = await Session.connected(1);
+      identityStore = await createStore(path.join(__filename, 'identity' + uuid()))
 
       const keystore = new Keystore(identityStore)
       signKey = await keystore.createEd25519Key()
-      ipfsd = await startIpfs('js-ipfs', ipfsConfig.daemon1)
-      ipfs = ipfsd.api
 
-      cache1 = await createStore(path.join(__filename, 'cache1' + API + (+ new Date)))
-      cache2 = await createStore(path.join(__filename, 'cache2' + API + (+ new Date)))
+
+      cache1 = await createStore(path.join(__filename, 'cache1' + uuid()))
+      cache2 = await createStore(path.join(__filename, 'cache2' + uuid()))
 
     })
 
     afterAll(async () => {
       await store1?.close()
       await store2?.close()
-      ipfsd && await stopIpfs(ipfsd)
+      session.stop();
       await identityStore?.close()
       await cache1?.close()
       await cache2?.close()
@@ -72,12 +71,12 @@ Object.keys(testAPIs).forEach(API => {
       index1 = new SimpleIndex();
       index2 = new SimpleIndex();
       store1 = new Store({ storeIndex: 0 })
-      await store1.init(ipfs, {
+      await store1.init(session.peers[0].ipfs, {
         ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { ...DefaultOptions, resolveCache: () => Promise.resolve(new Cache(cache1)), onUpdate: index1.updateIndex.bind(index1) });
       store2 = new Store({ storeIndex: 0 })
-      await store2.init(ipfs, {
+      await store2.init(session.peers[0].ipfs, {
         ...signKey.keypair,
         sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
       }, { ...DefaultOptions, resolveCache: () => Promise.resolve(new Cache(cache2)), onUpdate: index2.updateIndex.bind(index2) });

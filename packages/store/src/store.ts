@@ -20,7 +20,7 @@ import { joinUint8Arrays } from '@dao-xyz/peerbit-borsh-utils';
 import { SystemBinaryPayload } from '@dao-xyz/peerbit-bpayload'
 import { EntryWithRefs } from './entry-with-refs.js'
 import pino from 'pino'
-import { waitFor } from '@dao-xyz/peerbit-time'
+import { waitFor, waitForAsync } from '@dao-xyz/peerbit-time'
 const logger = pino().child({ module: 'store' });
 
 
@@ -346,7 +346,7 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
           for (const log of logs) {
             await this._oplog.join(log)
           }
-        } catch (error) {
+        } catch (error: any) {
           if (error instanceof AccessError) {
             logger.info(error.message);
             return;
@@ -610,7 +610,7 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
 
     await this._cache.setBinary(this.snapshotPath, new CID({ hash: snapshot.cid.toString() }))
     await this._cache.setBinary(this.queuePath, new UnsfinishedReplication({ hashes: unfinished }))
-    await waitFor(() => this._cache.getBinary(this.snapshotPath, CID) !== undefined, { delayInterval: 200, timeout: 10 * 1000 });
+    await waitForAsync(async () => (await this._cache.getBinary(this.snapshotPath, CID)) !== undefined, { delayInterval: 200, timeout: 10 * 1000 });
 
     logger.debug(`Saved snapshot: ${snapshot.cid.toString()}, queue length: ${unfinished.length}`)
     return [snapshot]
@@ -630,7 +630,6 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
     }
 
     const snapshotCID = await this._cache.getBinary(this.snapshotPath, CID)
-
     if (snapshotCID) {
       const chunks: any[] = []
       for await (const chunk of this._ipfs.cat(snapshotCID.hash)) {
