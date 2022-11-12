@@ -5,7 +5,7 @@ export class TimeoutError extends Error {
 }
 export const delay = (ms: number, options?: { stopperCallback?: (stopper: () => void) => void }) => {
 
-    return new Promise<void>((res, rej) => {
+    return new Promise<void>((res) => {
         const timer = setTimeout(res, ms)
         if (options?.stopperCallback)
             options?.stopperCallback(() => { clearTimeout(timer); res(); });
@@ -15,7 +15,7 @@ export const delay = (ms: number, options?: { stopperCallback?: (stopper: () => 
 
 export const waitFor = async <T>(fn: () => T, options: { timeout: number, stopperCallback?: (stopper: () => void) => void, delayInterval: number } = { timeout: 10 * 1000, delayInterval: 50 }): Promise<T | undefined> => {
 
-    let startTime = +new Date;
+    const startTime = +new Date;
     let stop = false
     if (options.stopperCallback) {
         const stopper = () => { stop = true }
@@ -38,7 +38,7 @@ export const waitFor = async <T>(fn: () => T, options: { timeout: number, stoppe
 
 export const waitForAsync = async<T>(fn: () => Promise<T>, options: { timeout: number, stopperCallback?: (stopper: () => void) => void, delayInterval: number } = { timeout: 10 * 1000, delayInterval: 50 }): Promise<T | undefined> => {
 
-    let startTime = +new Date;
+    const startTime = +new Date;
     let stop = false
     if (options.stopperCallback) {
         const stopper = () => { stop = true }

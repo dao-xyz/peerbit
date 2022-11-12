@@ -22,14 +22,14 @@ describe('delay', () => {
 
 describe('waitFor', () => {
     it('waitFor', async () => {
-        let startTime = +new Date;
+        const startTime = +new Date;
         await delay(1000)
         expect(+new Date - startTime).toBeLessThan(1200);
 
     })
     it('stop early', async () => {
 
-        let startTime = +new Date;
+        const startTime = +new Date;
         await delay(5000, {
             stopperCallback: (stop) => {
                 setTimeout(() => {

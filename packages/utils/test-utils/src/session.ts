@@ -3,7 +3,6 @@ import type { PeerId } from "@libp2p/interface-peer-id";
 import { connectPeers, nodeConfig } from "./index.js";
 import { startIpfs } from "./start-ipfs.js";
 import getIpfsPeerId from "./get-ipfs-peer-id.js";
-// @ts-ignore
 import { v4 as uuid } from 'uuid';
 import { Controller } from "ipfsd-ctl";
 

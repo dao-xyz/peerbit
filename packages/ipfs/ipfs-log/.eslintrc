@@ -1,3 +1,0 @@
-{
-  "extends": ["@orbitdb/eslint-config-orbitdb"]
-}

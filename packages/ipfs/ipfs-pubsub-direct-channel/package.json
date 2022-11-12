@@ -39,7 +39,6 @@
     "@dao-xyz/peerbit-time": "^0.0.17",
     "@mapbox/node-pre-gyp": "^1.0.10",
     "assert": "^2.0.0",
-    "eslint": "^7.32.0",
     "fs-extra": "^10.0.0",
     "go-ipfs": "^0.16.0",
     "ipfs": "^0.65.0",

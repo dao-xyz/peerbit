@@ -7,7 +7,6 @@ import { waitFor } from '@dao-xyz/peerbit-time';
 import { createHash, Sign } from 'crypto';
 import sodium, { KeyPair } from 'libsodium-wrappers';
 import { StoreError } from './errors';
-import { format } from 'path';
 
 export interface Type<T> extends Function {
   new(...args: any[]): T;
