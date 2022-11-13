@@ -16,6 +16,7 @@
 <h3 align="center">🤫 E2EE &nbsp; &nbsp; 👯 P2P &nbsp; &nbsp; ⚖️ Auto-sharding  &nbsp; &nbsp;  🔍 Searchable</h3>
 <br>
 
+![tests](https://github.com/dao-xyz/peerbit/actions/workflows/ci.yml/badge.svg)
 
 ## What is this?
 Started originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS supporting encryption, sharding and discoverability (searching).
