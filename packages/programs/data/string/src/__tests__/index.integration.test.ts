@@ -21,8 +21,6 @@ import { v4 as uuid } from "uuid";
 import { jest } from "@jest/globals";
 import { fileURLToPath } from "url";
 
-
-
 const createIdentity = async () => {
     const ed = await Ed25519Keypair.create();
     return {
