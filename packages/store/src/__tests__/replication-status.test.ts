@@ -4,8 +4,6 @@ import { Store, DefaultOptions } from '../store.js'
 import { default as Cache } from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore"
 import { SimpleIndex } from './utils.js'
-import { Controller } from 'ipfsd-ctl'
-import { IPFS } from 'ipfs-core-types'
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { delay, waitFor } from '@dao-xyz/peerbit-time';
 import { fileURLToPath } from 'url';
@@ -21,19 +19,17 @@ const __filenameBase = path.parse(__filename).base;
 import {
   nodeConfig as config,
   testAPIs,
-  startIpfs,
-  stopIpfs,
   createStore,
   Session
 } from '@dao-xyz/peerbit-test-utils'
-import { Level } from 'level'
+import { AbstractLevel } from 'abstract-level'
 
 
 Object.keys(testAPIs).forEach(API => {
   describe(`orbit-db - Replication Status (${API})`, function () {
     jest.setTimeout(config.timeout)
 
-    let session: Session, signKey: KeyWithMeta<Ed25519Keypair>, identityStore: Level, cache1: Level, cache2: Level;
+    let session: Session, signKey: KeyWithMeta<Ed25519Keypair>, identityStore: AbstractLevel<any, string>, cache1: AbstractLevel<any, string>, cache2: AbstractLevel<any, string>;
 
     let store1: Store<any>
     let store2: Store<any>

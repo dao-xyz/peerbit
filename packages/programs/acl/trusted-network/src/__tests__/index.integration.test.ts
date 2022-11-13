@@ -7,7 +7,7 @@ import { Secp256k1PublicKey } from '@dao-xyz/peerbit-crypto';
 import { Wallet } from '@ethersproject/wallet'
 import { Identity } from '@dao-xyz/ipfs-log';
 import { createStore } from '@dao-xyz/peerbit-test-utils';
-import { Level } from 'level';
+import { AbstractLevel } from 'abstract-level';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { CachedValue, DefaultOptions, IStoreOptions } from '@dao-xyz/peerbit-store';
@@ -45,7 +45,7 @@ class IdentityGraph extends Program {
 
 }
 describe('index', () => {
-    let session: Session, identites: Identity[], cacheStore: Level[]
+    let session: Session, identites: Identity[], cacheStore: AbstractLevel<any, string>[]
 
     const identity = (i: number) => identites[i];
     const init = (store: Program, i: number, options: { replicationTopic: string, store?: IStoreOptions<any> }) => store.init && store.init(session.peers[i].ipfs, identites[i], { ...options, store: { ...DefaultOptions, replicate: true, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]), ...options.store } })

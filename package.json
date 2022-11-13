@@ -47,7 +47,7 @@
     },
     "scripts": {
         "clean": "lerna run clean",
-        "build": "lerna run build",
+        "build": "lerna run build --reject-cycles",
         "build-node": "cd ./packages/node/ && yarn build",
         "test": "node --experimental-vm-modules ./node_modules/.bin/jest test -c jest.config.unit.ts ",
         "test:integration": "node --experimental-vm-modules ./node_modules/.bin/jest test -c jest.config.integration.ts --forceExit  --detectOpenHandles",

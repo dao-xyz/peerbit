@@ -11,7 +11,7 @@ export const waitForPeers = async (ipfs: IPFS, peersToWait: string[], topic: str
     return Promise.resolve(false)
   }
 
-  return new Promise<boolean>(async (resolve, reject) => {
+  return new Promise<boolean>((resolve, reject) => {
     const interval = setInterval(async () => {
       try {
         if (isClosed()) {

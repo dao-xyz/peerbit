@@ -3,7 +3,7 @@ import assert, { rejects } from 'assert'
 import { Store, DefaultOptions, HeadsCache } from '../store.js'
 import { default as Cache } from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore"
-import { Entry, JSON_ENCODING } from '@dao-xyz/ipfs-log'
+import { Entry } from '@dao-xyz/ipfs-log'
 import { SimpleIndex } from './utils.js'
 import { Controller } from 'ipfsd-ctl'
 import { IPFS } from 'ipfs-core-types'
@@ -12,6 +12,7 @@ import { delay, waitFor } from '@dao-xyz/peerbit-time';
 import { fileURLToPath } from 'url';
 import { jest } from '@jest/globals';
 import path from 'path';
+import { AbstractLevel } from 'abstract-level';
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -27,7 +28,7 @@ import {
 import { Level } from 'level'
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`addOperation ${IPFS}`, function () {
-    let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, identityStore: Level, store: Store<any>, cacheStore: Level
+    let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, identityStore: AbstractLevel<any, string>, store: Store<any>, cacheStore: AbstractLevel<any, string>
     let index: SimpleIndex<string>
 
     jest.setTimeout(config.timeout);

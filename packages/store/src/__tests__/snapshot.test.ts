@@ -18,7 +18,7 @@ import {
 import { Controller } from 'ipfsd-ctl';
 import { IPFS } from 'ipfs';
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto';
-import { Level } from 'level';
+import { AbstractLevel } from 'abstract-level';
 import { fileURLToPath } from 'url';
 import path from 'path';
 const __filename = fileURLToPath(import.meta.url);
@@ -26,7 +26,7 @@ const __filenameBase = path.parse(__filename).base;
 
 Object.keys(testAPIs).forEach((IPFS) => {
   describe(`Snapshots ${IPFS}`, function () {
-    let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, identityStore: Level, store: Store<any>, cacheStore: Level
+    let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>, identityStore: AbstractLevel<any, string>, store: Store<any>, cacheStore: AbstractLevel<any, string>
     let index: SimpleIndex<string>
     jest.setTimeout(config.timeout)
 

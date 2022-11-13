@@ -2,7 +2,6 @@ import { default as Cache } from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore"
 
 import {
-    nodeConfig as config,
     testAPIs,
     Session,
     createStore
@@ -14,13 +13,12 @@ import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { jest } from '@jest/globals';
 
 import { fileURLToPath } from 'url';
-import path, { dirname } from 'path';
+import path from 'path';
 import { waitFor } from '@dao-xyz/peerbit-time'
-import { Level } from 'level'
-import { Entry, JSON_ENCODING } from '@dao-xyz/ipfs-log'
+import { AbstractLevel } from 'abstract-level'
+import { Entry } from '@dao-xyz/ipfs-log'
 
 const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
 
 // Tests timeout
 const timeout = 30000
@@ -30,7 +28,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         jest.setTimeout(timeout);
 
-        let session: Session, signKey: KeyWithMeta<Ed25519Keypair>, store: Store<any>, keystore: Keystore, cacheStore: Level
+        let session: Session, signKey: KeyWithMeta<Ed25519Keypair>, store: Store<any>, keystore: Keystore, cacheStore: AbstractLevel<any, string>
         let index: SimpleIndex<string>
 
         beforeAll(async () => {

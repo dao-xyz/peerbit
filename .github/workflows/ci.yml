@@ -15,6 +15,7 @@ jobs:
             - run: yarn install
             - run: yarn lerna bootstrap
             - run: yarn build
+            - run: yarn lint
 
     Test:
         needs: [buildAndLint]
@@ -32,4 +33,4 @@ jobs:
             - run: yarn install
             - run: yarn lerna bootstrap
             - run: yarn build
-            - run: yarn test --roots ["./packages/${{matrix.folder}}"]
+            - run: yarn test --roots "./packages/${{matrix.folder}}"

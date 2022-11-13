@@ -11,7 +11,7 @@ import {
 } from '@dao-xyz/peerbit-test-utils'
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { Controller } from 'ipfsd-ctl'
-import { Level } from 'level'
+import { AbstractLevel } from 'abstract-level'
 import { jest } from '@jest/globals';
 import { fileURLToPath } from 'url';
 import path from 'path';
@@ -20,7 +20,7 @@ const __filenameBase = path.parse(__filename).base;
 
 
 describe(`Constructor`, function () {
-  let ipfs: Controller, signKey: KeyWithMeta<Ed25519Keypair>, identityStore: Level, store: Store<any>, cacheStore: Level
+  let ipfs: Controller, signKey: KeyWithMeta<Ed25519Keypair>, identityStore: AbstractLevel<any, string>, store: Store<any>, cacheStore: AbstractLevel<any, string>
 
   jest.setTimeout(config.timeout);
 

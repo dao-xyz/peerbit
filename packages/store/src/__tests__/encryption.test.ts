@@ -6,30 +6,26 @@ import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore"
 import { PublicKeyEncryptionResolver, X25519PublicKey } from '@dao-xyz/peerbit-crypto'
 import { AccessError } from "@dao-xyz/peerbit-crypto"
 import { SimpleIndex } from './utils.js'
-import { Controller } from 'ipfsd-ctl'
 import { v4 as uuid } from 'uuid';
 import { Ed25519Keypair } from '@dao-xyz/peerbit-crypto'
 import { fileURLToPath } from 'url';
-import path, { dirname } from 'path';
+import path from 'path';
 import { jest } from '@jest/globals';
 const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
+import { AbstractLevel } from 'abstract-level';
 
 // Test utils
 import {
   nodeConfig as config,
-  startIpfs,
-  stopIpfs,
   createStore,
   Session
 } from '@dao-xyz/peerbit-test-utils'
 
-import { Level } from 'level'
 import { Entry } from '@dao-xyz/ipfs-log'
 import { delay, waitFor, waitForAsync } from '@dao-xyz/peerbit-time'
 
 describe(`addOperation`, function () {
-  let session: Session, signKey: KeyWithMeta<Ed25519Keypair>, keystore: Keystore, identityStore: Level, store: Store<any>, cacheStore: Level, senderKey: KeyWithMeta<Ed25519Keypair>, recieverKey: KeyWithMeta<Ed25519Keypair>, encryption: PublicKeyEncryptionResolver
+  let session: Session, signKey: KeyWithMeta<Ed25519Keypair>, keystore: Keystore, identityStore: AbstractLevel<any, string>, store: Store<any>, cacheStore: AbstractLevel<any, string>, senderKey: KeyWithMeta<Ed25519Keypair>, recieverKey: KeyWithMeta<Ed25519Keypair>, encryption: PublicKeyEncryptionResolver
   let index: SimpleIndex<string>
 
   jest.setTimeout(config.timeout);

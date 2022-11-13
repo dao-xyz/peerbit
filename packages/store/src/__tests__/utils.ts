@@ -1,9 +1,7 @@
 import { Entry } from "@dao-xyz/ipfs-log"
 import { Log } from "@dao-xyz/ipfs-log";
 
-
 export class SimpleIndex<T> {
-
 
     _index: Entry<T>[];
     id?: any;

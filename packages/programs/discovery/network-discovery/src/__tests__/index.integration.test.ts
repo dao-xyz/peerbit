@@ -3,7 +3,7 @@ import { waitFor } from '@dao-xyz/peerbit-time';
 import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { Identity } from '@dao-xyz/ipfs-log';
 import { createStore } from '@dao-xyz/peerbit-test-utils';
-import { Level } from 'level';
+import { AbstractLevel } from 'abstract-level';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { CachedValue, DefaultOptions, IStoreOptions } from '@dao-xyz/peerbit-store';
@@ -24,7 +24,7 @@ const createIdentity = async () => {
 }
 describe('index', () => {
     jest.setTimeout(360000);
-    let session: Session, identites: Identity[], cacheStore: Level[]
+    let session: Session, identites: Identity[], cacheStore: AbstractLevel<any, string>[]
 
     const identity = (i: number) => identites[i];
     const init = (store: Program, i: number, options: { store?: IStoreOptions<any> } = {}) => store.init && store.init(session.peers[i].ipfs, identites[i], { replicationTopic: '_', ...options, store: { ...options.store, ...DefaultOptions, replicate: true, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]) } })

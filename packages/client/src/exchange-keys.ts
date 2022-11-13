@@ -91,10 +91,10 @@ export class RequestKeyCondition<T extends Ed25519Keypair | X25519Keypair> {
             return;
         }
         if (this._type === 0) {
-            return KeyWithMeta<Ed25519Keypair> as any as Constructor<T>
+            return KeyWithMeta as any as Constructor<T>
         }
         else if (this._type === 1) {
-            return KeyWithMeta<X25519Keypair> as any as Constructor<T>
+            return KeyWithMeta as any as Constructor<T>
         }
         else {
             throw new Error("Unsupported")
