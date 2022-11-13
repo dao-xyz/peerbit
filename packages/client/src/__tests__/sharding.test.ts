@@ -97,8 +97,8 @@ Object.keys(testAPIs).forEach((API) => {
 
         it("can distribute evenly among peers", async () => {
             // TODO this test is flaky, because it sometimes timeouts because distribution of data among peers is random for small entry counts
+            const entryCount = 60;
 
-            const entryCount = 30;
             // expect min replicas 2 with 3 peers, this means that 66% of entries (ca) will be at peer 2 and 3, and peer1 will have all of them since 1 is the creator
             const promises: Promise<any>[] = [];
             for (let i = 0; i < entryCount; i++) {
@@ -114,12 +114,12 @@ Object.keys(testAPIs).forEach((API) => {
             await waitFor(
                 () =>
                     db2.store.store.oplog.values.length > entryCount * 0.5 &&
-                    db2.store.store.oplog.values.length < entryCount * 0.75
+                    db2.store.store.oplog.values.length < entryCount * 0.85
             );
             await waitFor(
                 () =>
                     db3.store.store.oplog.values.length > entryCount * 0.5 &&
-                    db3.store.store.oplog.values.length < entryCount * 0.75
+                    db3.store.store.oplog.values.length < entryCount * 0.85
             );
 
             const checkConverged = async (db: EventStore<any>) => {
