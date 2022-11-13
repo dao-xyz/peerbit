@@ -74,6 +74,6 @@ export class Session {
     }
 
     stop(): Promise<any> {
-        return Promise.all(this.peers.map(p => p.ipfsd.stop()))
+        return Promise.all(this.peers.map(async p => { await p.ipfsd.stop(); await p.ipfsd.cleanup() }))
     }
 }

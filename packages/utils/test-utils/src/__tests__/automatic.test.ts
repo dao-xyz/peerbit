@@ -6,6 +6,9 @@ describe(`Session`, function () {
     beforeEach(async () => {
         session = await Session.connected(3, TEST_APIS[0]);
     })
+    afterEach(async () => {
+        await session.stop()
+    })
     it('starts and stops two connected nodes', async () => {
         expect(session.peers).toHaveLength(3);
         for (const peer of session.peers) {
@@ -16,7 +19,5 @@ describe(`Session`, function () {
         }
     })
 
-    afterEach(async () => {
-        await session.stop()
-    })
+
 })

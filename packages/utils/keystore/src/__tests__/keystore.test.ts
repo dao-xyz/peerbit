@@ -4,7 +4,7 @@ import assert from 'assert';
 import LRU from 'lru-cache';
 import { createStore, Keystore, KeyWithMeta } from '../keystore';
 import rmrf from 'rimraf'
-import { Level } from 'level';
+import { AbstractLevel } from 'abstract-level';
 import { Ed25519Keypair, X25519Keypair, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
 import { jest } from '@jest/globals';
 import fs from 'fs-extra'
@@ -40,7 +40,7 @@ describe('keystore', () => {
   })
 
   describe('constructor', () => {
-    let store: Level;
+    let store: AbstractLevel<any, string>;
 
     beforeAll(async () => {
       store = store || await createStore(tempKeyPath + '/1') // storagePath
@@ -90,7 +90,7 @@ describe('keystore', () => {
 
   describe('createKey', () => {
     let keystore: Keystore
-    let store: Level;
+    let store: AbstractLevel<any, string>;
 
     beforeAll(async () => {
       store = store || await createStore(tempKeyPath + '/2') // storagePath
@@ -168,7 +168,7 @@ describe('keystore', () => {
 
 describe('hasKey', () => {
   let keystore: Keystore
-  let store: Level;
+  let store: AbstractLevel<any, string>;
 
 
   beforeAll(async () => {
@@ -198,7 +198,7 @@ describe('hasKey', () => {
 })
 
 describe('getKey', () => {
-  let store: Level;
+  let store: AbstractLevel<any, string>;
   let keystore: Keystore, createdKey: KeyWithMeta<Ed25519Keypair>, createdKeyInGroup: KeyWithMeta<Ed25519Keypair>
   beforeAll(async () => {
     store = store || await createStore(tempKeyPath + '/4') // storagePath
@@ -251,7 +251,7 @@ describe('getKey', () => {
 
 describe('getKeys', () => {
   let keystore: Keystore, aSignKey: KeyWithMeta<Ed25519Keypair>, aBoxKey: KeyWithMeta<X25519Keypair>, aBox2Key: KeyWithMeta<X25519Keypair>, bSignKey: KeyWithMeta<Ed25519Keypair>
-  let store: Level;
+  let store: AbstractLevel<any, string>;
 
   beforeAll(async () => {
 

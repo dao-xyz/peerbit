@@ -1,4 +1,4 @@
-import { Level } from 'level';
+import { AbstractLevel } from 'abstract-level';
 import LRU from 'lru-cache';
 import { variant, field, serialize, deserialize } from '@dao-xyz/borsh';
 import { UInt8ArraySerializer, } from '@dao-xyz/peerbit-borsh-utils';
@@ -7,6 +7,7 @@ import { waitFor } from '@dao-xyz/peerbit-time';
 import { createHash } from 'crypto';
 import sodium from 'libsodium-wrappers';
 import { StoreError } from './errors';
+import { Level } from 'level';
 
 export interface Type<T> extends Function {
   new(...args: any[]): T;
@@ -58,7 +59,7 @@ const publicKeyFromKeyPair = (keypair: Keypair) => {
  * @param path 
  * @returns 
  */
-export const createStore = async (path = './keystore'): Promise<Level> => {
+export const createStore = async (path = './keystore'): Promise<AbstractLevel<any, string>> => {
   const fs = await import('fs');
   if (fs && fs.mkdirSync) {
     fs.mkdirSync(path, { recursive: true })
@@ -143,10 +144,10 @@ export class KeyWithMeta<T extends Keypair> {
 
 export class Keystore {
 
-  _store: Level;
+  _store: AbstractLevel<any, string>;
   _cache: LRU<string, KeyWithMeta<any>>
 
-  constructor(store: Level, cache?: any) {
+  constructor(store: AbstractLevel<any, string>, cache?: any) {
     this._store = store;
     if (!this.open && !this.opening && this._store.open) {
       this._store.open()

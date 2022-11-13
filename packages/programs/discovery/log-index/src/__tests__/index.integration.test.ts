@@ -1,11 +1,9 @@
-// @ts-ignore
-
 import { createStore, Session } from '@dao-xyz/peerbit-test-utils';
 import { Ed25519Keypair, Ed25519PublicKey, EncryptedThing, X25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
 import { v4 as uuid } from 'uuid';
 import { DefaultOptions, Store } from '@dao-xyz/peerbit-store';
 import Cache from '@dao-xyz/peerbit-cache'
-import { Level } from 'level';
+import { AbstractLevel } from 'abstract-level';
 import path from 'path';
 import { HeadsMessage, LogEntryEncryptionQuery, LogIndex, LogQueryRequest } from '../controller';
 import { fileURLToPath } from 'url';
@@ -14,16 +12,15 @@ import { DQuery } from '@dao-xyz/peerbit-query';
 import { Address } from '@dao-xyz/peerbit-program';
 import { jest } from '@jest/globals'
 
-const __filename = fileURLToPath(import.meta.url);
-
-jest.setTimeout(60 * 1000)
-
 describe('query', () => {
   let session: Session,
-    cacheStores: Level[] = [],
+    cacheStores: AbstractLevel<any, string>[] = [],
     logIndices: LogIndex[] = [],
     headsCount = 3,
     peersCount = 3
+  jest.setTimeout(60 * 1000)
+
+  const __filename = fileURLToPath(import.meta.url);
 
 
   beforeAll(async () => {

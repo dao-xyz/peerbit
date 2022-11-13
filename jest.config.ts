@@ -12,6 +12,8 @@ const jestConfig: JestConfigWithTsJest = {
       },
     ],
   },
+  fakeTimers: {
+  },
   extensionsToTreatAsEsm: ['.ts'],
   forceExit: true,
   moduleNameMapper: {

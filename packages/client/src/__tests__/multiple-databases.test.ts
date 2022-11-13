@@ -84,13 +84,12 @@ Object.keys(testAPIs).forEach(API => {
 
       if (ipfsd3)
         await stopIpfs(ipfsd3)
+
     })
 
     beforeEach(async () => {
       // Set write access for both clients
 
-
-      console.log("Creating databases and waiting for peers to connect")
 
       // Open the databases on the first node
       const options = {}
@@ -145,7 +144,6 @@ Object.keys(testAPIs).forEach(API => {
         entryArr.push(i)
 
       // Write entries to each database
-      console.log("Writing to databases")
       for (let index = 0; index < dbCount; index++) {
         const db = localDatabases[index]
         entryArr.forEach((val) => db.add('hello-' + val))
@@ -158,7 +156,6 @@ Object.keys(testAPIs).forEach(API => {
 
 
 
-      console.log("Waiting for replication to finish")
 
       // check data
       await new Promise((resolve, reject) => {

@@ -1,4 +1,4 @@
-import { field, serialize, serializeField, variant } from "@dao-xyz/borsh";
+import { field, serialize, variant } from "@dao-xyz/borsh";
 import { Documents, DocumentIndex, IndexedValue } from "@dao-xyz/peerbit-document";
 import { Key, PlainKey, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";

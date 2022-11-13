@@ -14,6 +14,8 @@ export const startIpfs = async (type: 'js-ipfs' | 'go-ipfs' | string, config = {
     throw new Error(`Wanted API type ${JSON.stringify(type)} is unknown. Available types: ${Object.keys(testAPIs).join(', ')}`)
   }
   controllerConfig.ipfsOptions = config
+  controllerConfig.disposable = true;
+  controllerConfig.test = true;
 
   // Spawn an IPFS daemon (type defined in)
   try {

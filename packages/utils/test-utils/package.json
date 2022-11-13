@@ -37,7 +37,8 @@
     "@dao-xyz/peerbit-time": "^0.0.17",
     "go-ipfs": "^0.15.0",
     "ipfs": "^0.65.0",
-    "ipfsd-ctl": "^12.2.2"
+    "ipfsd-ctl": "^12.2.2",
+    "wtfnode": "^0.9.1"
   },
   "peerDependencies": {
     "go-ipfs": "*",
@@ -45,8 +46,7 @@
     "ipfsd-ctl": "*"
   },
   "localMaintainers": [
-    "shamb0t <shams@haja.io>",
-    "hajamark <mark@haja.io>"
+    "dao.xyz"
   ],
   "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
 }

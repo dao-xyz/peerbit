@@ -28,15 +28,15 @@ const dbPath3 = './orbitdb/tests/discovery/3/db3'
 Object.keys(testAPIs).forEach(API => {
     describe(`orbit-db - discovery`, function () {
 
-        jest.setTimeout(config.timeout * 2)
+        jest.setTimeout(config.timeout * 4)
 
         let session1: Session, session2: Session;
         let orbitdb1: Peerbit, orbitdb2: Peerbit, orbitdb3: Peerbit
 
 
         beforeAll(async () => {
-            session1 = await Session.connected(2);
-            session2 = await Session.connected(1);
+            session1 = await Session.connected(2, API);
+            session2 = await Session.connected(1, API);
         })
 
         afterAll(async () => {

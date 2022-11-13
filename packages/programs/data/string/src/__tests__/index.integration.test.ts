@@ -4,7 +4,7 @@ import { ResultWithSource, StringQueryRequest, StringMatchQuery, RangeCoordinate
 import { Range } from '../range.js';
 import { createStore, Session } from '@dao-xyz/peerbit-test-utils';
 import { IPFS } from 'ipfs-core-types';
-import { Level } from 'level';;
+import { AbstractLevel } from 'abstract-level';
 import Cache from '@dao-xyz/peerbit-cache';
 import { fileURLToPath } from 'url';
 import path from 'path';
@@ -37,7 +37,7 @@ const createIdentity = async () => {
 describe('query', () => {
 
 
-    let session: Session, observer: IPFS, writer: IPFS, writeStore: DString, observerStore: DString, cacheStore1: Level, cacheStore2: Level
+    let session: Session, observer: IPFS, writer: IPFS, writeStore: DString, observerStore: DString, cacheStore1: AbstractLevel<any, string>, cacheStore2: AbstractLevel<any, string>
 
     beforeAll(async () => {
         session = await Session.connected(2)

@@ -7,8 +7,8 @@ import { PageQueryRequest, AnySearch, FieldStringMatchQuery, Results } from "@da
 import { AccessError, Ed25519Keypair, MaybeEncrypted, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { CustomBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { Documents, DocumentIndex } from "@dao-xyz/peerbit-document";
-import type { CanAppend, Identity, Payload } from "@dao-xyz/ipfs-log";
-import { Level } from 'level';
+import type { CanAppend, Identity } from "@dao-xyz/ipfs-log";
+import { AbstractLevel } from 'abstract-level';
 import { CachedValue, DefaultOptions } from '@dao-xyz/peerbit-store';
 import { fileURLToPath } from 'url';
 import path from 'path';
@@ -18,8 +18,6 @@ import { Program } from "@dao-xyz/peerbit-program";
 import { IdentityAccessController } from "../acl-db";
 import { v4 as uuid } from 'uuid';
 
-const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
 
 @variant("document")
 class Document extends CustomBinaryPayload {
@@ -78,7 +76,7 @@ class TestStore extends Program {
 }
 describe('index', () => {
 
-    let session: Session, identites: Identity[], cacheStore: Level[]
+    let session: Session, identites: Identity[], cacheStore: AbstractLevel<any, string>[]
 
     const identity = (i: number) => identites[i];
     const init = <T extends Program>(store: T, i: number, options: { replicationTopic: string, store: { replicate: boolean }, canRead?: CanRead, canAppend?: CanAppend<T> }) => (store.init && store.init(session.peers[i].ipfs, identites[i], { ...options, store: { ...DefaultOptions, ...options.store, resolveCache: async () => new Cache<CachedValue>(cacheStore[i]) } })) as Promise<T>
@@ -87,6 +85,8 @@ describe('index', () => {
         session = await Session.connected(3);
         identites = [];
         cacheStore = [];
+        const __filename = fileURLToPath(import.meta.url);
+
         for (let i = 0; i < session.peers.length; i++) {
             identites.push(await createIdentity());
             cacheStore.push(await createStore(path.join(__filename, 'cache', i.toString())))

@@ -3,14 +3,12 @@ import { field, option, serialize, variant } from '@dao-xyz/borsh';
 import { Documents } from '../document-store';
 import { Compare, FieldBigIntCompareQuery, SortDirection, FieldStringMatchQuery, ResultWithSource, FieldSort, MemoryCompareQuery, MemoryCompare, Results, AnySearch, PageQueryRequest } from '@dao-xyz/peerbit-anysearch';
 import { CustomBinaryPayload } from '@dao-xyz/peerbit-bpayload';
-import { DQuery } from '@dao-xyz/peerbit-query';
 import { Session, createStore } from '@dao-xyz/peerbit-test-utils';
 import { DefaultOptions } from '@dao-xyz/peerbit-store';
 import { Identity } from '@dao-xyz/ipfs-log';
 import { Ed25519Keypair, EncryptedThing, X25519Keypair, X25519PublicKey } from '@dao-xyz/peerbit-crypto';
-import { IPFS } from 'ipfs-core-types';
 import Cache from '@dao-xyz/peerbit-cache';
-import { Level } from 'level';
+import { AbstractLevel } from 'abstract-level';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { v4 as uuid } from 'uuid';
@@ -70,7 +68,7 @@ describe('index', () => {
      */
     stores: DocumentDDoc[] = [],
     writeStore: DocumentDDoc,
-    cacheStores: Level[] = []
+    cacheStores: AbstractLevel<any, string>[] = []
 
   const createIdentity = async () => {
     const ed = await Ed25519Keypair.create();

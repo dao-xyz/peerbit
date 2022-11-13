@@ -1,15 +1,35 @@
 on: [push, pull_request]
 name: Check, Tests, Lints
 jobs:
-    lint-unit-tests:
+
+    buildAndLint:
+        timeout-minutes: 10
         runs-on: ubuntu-latest
+
+        strategy:
+            matrix:
+                node-version: [16.x]
+
         steps:
             - uses: actions/checkout@v2
-            - uses: actions/setup-node@v2
-              with:
-                  node-version: '16'
             - run: yarn install
             - run: yarn lerna bootstrap
             - run: yarn build
-            - run: yarn test --maxConcurrency=2
-            - run: yarn lint
+
+    Test:
+        needs: [buildAndLint]
+        timeout-minutes: 30
+        runs-on: ubuntu-latest
+
+        strategy:
+            matrix:
+                node-version: [16.x]
+                # Each app folder test will be run in parallel using the matrix
+                folder: [client, programs, utils]
+
+        steps:
+            - uses: actions/checkout@v2
+            - run: yarn install
+            - run: yarn lerna bootstrap
+            - run: yarn build
+            - run: yarn test --roots ["./packages/${{matrix.folder}}"]

@@ -4,6 +4,7 @@ import { IPFS } from 'ipfs-core-types';
 import Cache from '@dao-xyz/peerbit-cache'
 import { Keystore, KeyWithMeta, StoreError } from '@dao-xyz/peerbit-keystore'
 import { isDefined } from './is-defined.js'
+import { AbstractLevel } from 'abstract-level';
 import { Level } from 'level';
 import { exchangeHeads, ExchangeHeadsMessage, AbsolutMinReplicas, EntryWithRefs, MinReplicas } from './exchange-heads.js'
 import { Entry, Identity } from '@dao-xyz/ipfs-log'
@@ -34,7 +35,6 @@ import { inNetwork, Network } from './network.js';
 
 const logger = parentLogger.child({ module: 'peer' });
 
-
 const MIN_REPLICAS = 2;
 
 interface ProgramWithMetadata {
@@ -43,7 +43,7 @@ interface ProgramWithMetadata {
 }
 
 export type StoreOperations = 'write' | 'all'
-export type Storage = { createStore: (string: string) => Level }
+export type Storage = { createStore: (string: string) => AbstractLevel<any, string> }
 export type OptionalCreateOptions = { limitSigning?: boolean, minReplicas?: number, waitForKeysTimout?: number, canOpenProgram?(address: string, replicationTopic?: string, entryToReplicate?: Entry<any>): Promise<boolean> }
 export type CreateOptions = { keystore: Keystore, identity: Identity, directory: string, peerId: PeerId, storage: Storage, cache: Cache<any>, localNetwork: boolean } & OptionalCreateOptions;
 export type CreateInstanceOptions = { storage?: Storage, directory?: string, keystore?: Keystore, peerId?: PeerId, identity?: Identity, cache?: Cache<any>, localNetwork?: boolean } & OptionalCreateOptions;
@@ -236,7 +236,7 @@ export class Peerbit {
     const directory = options.directory || './orbitdb'
 
     const storage = options.storage || {
-      createStore: (path): Level => {
+      createStore: (path): AbstractLevel<any, string> => {
         return new Level(path)
       }
     };
