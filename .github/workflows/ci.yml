@@ -1,4 +1,12 @@
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    types: ['opened', 'edited', 'reopened']
+
 name: Check, Tests, Lints
 jobs:
 
