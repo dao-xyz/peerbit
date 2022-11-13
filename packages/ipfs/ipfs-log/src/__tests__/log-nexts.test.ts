@@ -16,49 +16,49 @@ const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 // Test utils
 import {
-  nodeConfig as config,
-  testAPIs,
-  startIpfs,
-  stopIpfs,
+    nodeConfig as config,
+    testAPIs,
+    startIpfs,
+    stopIpfs,
 } from "@dao-xyz/peerbit-test-utils";
 
 let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>;
 
 Object.keys(testAPIs).forEach((IPFS) => {
-  describe("Log - Nexts", function () {
-    jest.setTimeout(config.timeout * 4);
+    describe("Log - Nexts", function () {
+        jest.setTimeout(config.timeout * 4);
 
-    const { signingKeyFixtures, signingKeysPath } = config;
+        const { signingKeyFixtures, signingKeysPath } = config;
 
-    let keystore: Keystore;
+        let keystore: Keystore;
 
-    beforeAll(async () => {
-      rmrf.sync(signingKeysPath(__filenameBase));
+        beforeAll(async () => {
+            rmrf.sync(signingKeysPath(__filenameBase));
 
-      await fs.copy(
-        signingKeyFixtures(__dirname),
-        signingKeysPath(__filenameBase)
-      );
+            await fs.copy(
+                signingKeyFixtures(__dirname),
+                signingKeysPath(__filenameBase)
+            );
 
-      keystore = new Keystore(
-        await createStore(signingKeysPath(__filenameBase))
-      );
-      signKey = (await keystore.getKey(
-        new Uint8Array([0])
-      )) as KeyWithMeta<Ed25519Keypair>;
-      ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig);
-      ipfs = ipfsd.api;
-    });
+            keystore = new Keystore(
+                await createStore(signingKeysPath(__filenameBase))
+            );
+            signKey = (await keystore.getKey(
+                new Uint8Array([0])
+            )) as KeyWithMeta<Ed25519Keypair>;
+            ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig);
+            ipfs = ipfsd.api;
+        });
 
-    afterAll(async () => {
-      await stopIpfs(ipfsd);
+        afterAll(async () => {
+            await stopIpfs(ipfsd);
 
-      rmrf.sync(signingKeysPath(__filenameBase));
+            rmrf.sync(signingKeysPath(__filenameBase));
 
-      await keystore?.close();
-    });
-    describe("Custom next", () => {
-      /*   it('will filter refs from next', async () => {
+            await keystore?.close();
+        });
+        describe("Custom next", () => {
+            /*   it('will filter refs from next', async () => {
                   const log1 = new Log(ipfs, {
      ...signKey.keypair,
     sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
@@ -81,7 +81,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                   expect(log1.heads.length).toEqual(2) // 1a and 1b since nextsResolver is not including 1a (e0 has two branchs)
               }) */
 
-      /*   it('can get nexts by references', async () => {
+            /*   it('can get nexts by references', async () => {
          
                   const log1 = new Log(ipfs, {
      ...signKey.keypair,
@@ -116,55 +116,58 @@ Object.keys(testAPIs).forEach((IPFS) => {
                   expect(log1.heads.map(h => h.hash)).toContainValues([e3.hash, fork.hash])
               })
         */
-      it("can fork explicitly", async () => {
-        const log1 = new Log(
-          ipfs,
-          {
-            ...signKey.keypair,
-            sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-          },
-          { logId: "A" }
-        );
-        const e0 = await log1.append("0", { nexts: [] });
-        const e1 = await log1.append("1", { nexts: [e0] });
+            it("can fork explicitly", async () => {
+                const log1 = new Log(
+                    ipfs,
+                    {
+                        ...signKey.keypair,
+                        sign: async (data: Uint8Array) =>
+                            await signKey.keypair.sign(data),
+                    },
+                    { logId: "A" }
+                );
+                const e0 = await log1.append("0", { nexts: [] });
+                const e1 = await log1.append("1", { nexts: [e0] });
 
-        const e2a = await log1.append("2a", {
-          nexts: log1.getHeadsFromHashes([e0.hash]),
+                const e2a = await log1.append("2a", {
+                    nexts: log1.getHeadsFromHashes([e0.hash]),
+                });
+                expect(log1.values[0].next?.length).toEqual(0);
+                expect(log1.values[1].next).toEqual([e0.hash]);
+                expect(log1.values[2].next).toEqual([e1.hash]);
+                expect(log1.heads.map((h) => h.hash)).toContainAllValues([
+                    e2a.hash,
+                ]);
+                expect([...log1._nextsIndexToHead[e0.hash]]).toEqual([e1.hash]);
+
+                // fork at root
+                const e2ForkAtRoot = await log1.append("2b", { nexts: [] });
+                expect(log1.values[1]).toEqual(e2ForkAtRoot); // index is 1 since clock is reset as this is a root "fork"
+                expect(log1.values[3]).toEqual(e2a);
+                expect(log1.heads.map((h) => h.hash)).toContainAllValues([
+                    e2a.hash,
+                    e2ForkAtRoot.hash,
+                ]);
+
+                // fork at 0
+                const e2ForkAt0 = await log1.append("2c", { nexts: [e0] });
+                expect(log1.values[4].next).toEqual([e0.hash]);
+                expect(log1.heads.map((h) => h.hash)).toContainAllValues([
+                    e2a.hash,
+                    e2ForkAtRoot.hash,
+                    e2ForkAt0.hash,
+                ]);
+
+                // fork at 1
+                const e2ForkAt1 = await log1.append("2d", { nexts: [e1] });
+                expect(log1.values[5].next).toEqual([e1.hash]);
+                expect(log1.heads.map((h) => h.hash)).toContainAllValues([
+                    e2a.hash,
+                    e2ForkAtRoot.hash,
+                    e2ForkAt0.hash,
+                    e2ForkAt1.hash,
+                ]);
+            });
         });
-        expect(log1.values[0].next?.length).toEqual(0);
-        expect(log1.values[1].next).toEqual([e0.hash]);
-        expect(log1.values[2].next).toEqual([e1.hash]);
-        expect(log1.heads.map((h) => h.hash)).toContainAllValues([e2a.hash]);
-        expect([...log1._nextsIndexToHead[e0.hash]]).toEqual([e1.hash]);
-
-        // fork at root
-        const e2ForkAtRoot = await log1.append("2b", { nexts: [] });
-        expect(log1.values[1]).toEqual(e2ForkAtRoot); // index is 1 since clock is reset as this is a root "fork"
-        expect(log1.values[3]).toEqual(e2a);
-        expect(log1.heads.map((h) => h.hash)).toContainAllValues([
-          e2a.hash,
-          e2ForkAtRoot.hash,
-        ]);
-
-        // fork at 0
-        const e2ForkAt0 = await log1.append("2c", { nexts: [e0] });
-        expect(log1.values[4].next).toEqual([e0.hash]);
-        expect(log1.heads.map((h) => h.hash)).toContainAllValues([
-          e2a.hash,
-          e2ForkAtRoot.hash,
-          e2ForkAt0.hash,
-        ]);
-
-        // fork at 1
-        const e2ForkAt1 = await log1.append("2d", { nexts: [e1] });
-        expect(log1.values[5].next).toEqual([e1.hash]);
-        expect(log1.heads.map((h) => h.hash)).toContainAllValues([
-          e2a.hash,
-          e2ForkAtRoot.hash,
-          e2ForkAt0.hash,
-          e2ForkAt1.hash,
-        ]);
-      });
     });
-  });
 });

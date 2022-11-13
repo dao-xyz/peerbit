@@ -7,23 +7,23 @@ export class ContextMatchQuery extends Query {}
 
 @variant(0)
 export class ProgramMatchQuery extends ContextMatchQuery {
-  @field({ type: "string" })
-  program: string;
+    @field({ type: "string" })
+    program: string;
 
-  constructor(
-    opts?:
-      | {
-          program: string;
+    constructor(
+        opts?:
+            | {
+                  program: string;
+              }
+            | AbstractProgram
+    ) {
+        super();
+        if (opts) {
+            if (opts instanceof AbstractProgram) {
+                this.program = opts.address.toString();
+            } else {
+                this.program = opts.program;
+            }
         }
-      | AbstractProgram
-  ) {
-    super();
-    if (opts) {
-      if (opts instanceof AbstractProgram) {
-        this.program = opts.address.toString();
-      } else {
-        this.program = opts.program;
-      }
     }
-  }
 }

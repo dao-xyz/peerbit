@@ -8,34 +8,34 @@ export class Crypto extends SystemBinaryPayload {}
 
 @variant(0)
 export abstract class Key extends Crypto {
-  equals(other: Key): boolean {
-    throw new Error("Not implemented");
-  }
+    equals(other: Key): boolean {
+        throw new Error("Not implemented");
+    }
 
-  get bytes(): Uint8Array {
-    return serialize(this);
-  }
+    get bytes(): Uint8Array {
+        return serialize(this);
+    }
 
-  hashCode(): string {
-    return Buffer.from(this.bytes).toString("base64");
-  }
+    hashCode(): string {
+        return Buffer.from(this.bytes).toString("base64");
+    }
 
-  toString(): string {
-    throw new Error("Not implemented");
-  }
+    toString(): string {
+        throw new Error("Not implemented");
+    }
 }
 
 @variant(1)
 export abstract class Keypair extends Crypto {
-  publicKey: PublicSignKey | PublicKeyEncryptionKey;
+    publicKey: PublicSignKey | PublicKeyEncryptionKey;
 
-  static async create(): Promise<Keypair> {
-    throw new Error("Not implemented");
-  }
+    static async create(): Promise<Keypair> {
+        throw new Error("Not implemented");
+    }
 
-  equals(other: Keypair): boolean {
-    throw new Error("Not implemented");
-  }
+    equals(other: Keypair): boolean {
+        throw new Error("Not implemented");
+    }
 }
 
 // ---- SIGNATURE KEYS -----

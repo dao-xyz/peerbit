@@ -1,91 +1,91 @@
 {
-  "name": "@dao-xyz/ipfs-log",
-  "version": "5.5.43",
-  "description": "Append-only log CRDT on IPFS",
-  "author": "dao.xyz",
-  "license": "MIT",
-  "type": "module",
-  "main": "lib/cjs/index.js",
-  "module": "lib/esm/index.mjs",
-  "types": "lib/esm/index.d.ts",
-  "exports": {
-    "import": "./lib/esm/index.mjs",
-    "require": "./lib/cjs/index.js"
-  },
-  "files": [
-    "lib",
-    "src",
-    "!src/**/__tests__",
-    "!lib/**/__tests__",
-    "LICENSE"
-  ],
-  "publishConfig": {
-    "access": "public"
-  },
-  "engines": {
-    "node": ">=16.0"
-  },
-  "keywords": [
-    "ipfs",
-    "log",
-    "crdts",
-    "crdt"
-  ],
-  "dependencies": {
-    "@dao-xyz/borsh": "^3.4.2",
-    "@dao-xyz/peerbit-crypto": "^0.0.14",
-    "@dao-xyz/peerbit-io-utils": "^1.1.11",
-    "json-stringify-deterministic": "^1.0.7",
-    "multihashing-async": "^2.0.1",
-    "p-do-whilst": "^1.1.0",
-    "p-each-series": "^3.0.0",
-    "p-map": "^5.5.0",
-    "p-whilst": "^3.0.0",
-    "pino": "^8.7.0"
-  },
-  "devDependencies": {
-    "@dao-xyz/peerbit-keystore": "^0.0.25",
-    "@dao-xyz/peerbit-test-utils": "^0.0.12",
-    "@mapbox/node-pre-gyp": "^1.0.10",
-    "assert": "^2.0.0",
-    "fs-extra": "^10.0.0",
-    "go-ipfs": "^0.16.0",
-    "ipfs": "^0.65.0",
-    "ipfsd-ctl": "^12.2.2",
-    "is-node": "^1.0.2",
-    "node-pre-gyp": "^0.17.0",
-    "nyc": "^15.0.1",
-    "orbit-db-benchmark-runner": "^1.0.3",
-    "path-browserify": "^1.0.1",
-    "stream-browserify": "^3.0.0"
-  },
-  "contributors": [
-    "haadcode",
-    "aphelionz",
-    "shamb0t",
-    "thiagodelgado111",
-    "mistakia",
-    "satazor",
-    "RichardLitt",
-    "greenkeeperio-bot",
-    "chrisdostert",
-    "zachferland",
-    "kaibakker",
-    "dignifiedquire",
-    "adam-palazzo"
-  ],
-  "scripts": {
-    "clean": "shx rm -rf lib/*",
-    "build": "yarn clean && tsc -p tsconfig.json && tsc-esm -p tsconfig.json",
-    "postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
-    "test": "node --experimental-vm-modules ./../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
-    "test:unit": "node --experimental-vm-modules ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
-    "test:integration": "node --experimental-vm-modules ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit",
-    "benchmark": "nyc  --require ts-node/register benchmark-runner -r -b --baselineLimit 1000",
-    "benchmark:stress": "benchmark-runner -r --grep stress"
-  },
-  "localMaintainers": [
-    "dao.xyz"
-  ],
-  "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
+    "name": "@dao-xyz/ipfs-log",
+    "version": "5.5.43",
+    "description": "Append-only log CRDT on IPFS",
+    "author": "dao.xyz",
+    "license": "MIT",
+    "type": "module",
+    "main": "lib/cjs/index.js",
+    "module": "lib/esm/index.mjs",
+    "types": "lib/esm/index.d.ts",
+    "exports": {
+        "import": "./lib/esm/index.mjs",
+        "require": "./lib/cjs/index.js"
+    },
+    "files": [
+        "lib",
+        "src",
+        "!src/**/__tests__",
+        "!lib/**/__tests__",
+        "LICENSE"
+    ],
+    "publishConfig": {
+        "access": "public"
+    },
+    "engines": {
+        "node": ">=16.0"
+    },
+    "keywords": [
+        "ipfs",
+        "log",
+        "crdts",
+        "crdt"
+    ],
+    "dependencies": {
+        "@dao-xyz/borsh": "^3.4.2",
+        "@dao-xyz/peerbit-crypto": "^0.0.14",
+        "@dao-xyz/peerbit-io-utils": "^1.1.11",
+        "json-stringify-deterministic": "^1.0.7",
+        "multihashing-async": "^2.0.1",
+        "p-do-whilst": "^1.1.0",
+        "p-each-series": "^3.0.0",
+        "p-map": "^5.5.0",
+        "p-whilst": "^3.0.0",
+        "pino": "^8.7.0"
+    },
+    "devDependencies": {
+        "@dao-xyz/peerbit-keystore": "^0.0.25",
+        "@dao-xyz/peerbit-test-utils": "^0.0.12",
+        "@mapbox/node-pre-gyp": "^1.0.10",
+        "assert": "^2.0.0",
+        "fs-extra": "^10.0.0",
+        "go-ipfs": "^0.16.0",
+        "ipfs": "^0.65.0",
+        "ipfsd-ctl": "^12.2.2",
+        "is-node": "^1.0.2",
+        "node-pre-gyp": "^0.17.0",
+        "nyc": "^15.0.1",
+        "orbit-db-benchmark-runner": "^1.0.3",
+        "path-browserify": "^1.0.1",
+        "stream-browserify": "^3.0.0"
+    },
+    "contributors": [
+        "haadcode",
+        "aphelionz",
+        "shamb0t",
+        "thiagodelgado111",
+        "mistakia",
+        "satazor",
+        "RichardLitt",
+        "greenkeeperio-bot",
+        "chrisdostert",
+        "zachferland",
+        "kaibakker",
+        "dignifiedquire",
+        "adam-palazzo"
+    ],
+    "scripts": {
+        "clean": "shx rm -rf lib/*",
+        "build": "yarn clean && tsc -p tsconfig.json && tsc-esm -p tsconfig.json",
+        "postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
+        "test": "node --experimental-vm-modules ./../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
+        "test:unit": "node --experimental-vm-modules ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
+        "test:integration": "node --experimental-vm-modules ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit",
+        "benchmark": "nyc  --require ts-node/register benchmark-runner -r -b --baselineLimit 1000",
+        "benchmark:stress": "benchmark-runner -r --grep stress"
+    },
+    "localMaintainers": [
+        "dao.xyz"
+    ],
+    "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
 }

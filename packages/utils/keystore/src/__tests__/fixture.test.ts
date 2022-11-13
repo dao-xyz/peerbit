@@ -4,8 +4,8 @@ import { delay } from "@dao-xyz/peerbit-time";
 import { fixturePath } from "./fixture.js";
 
 describe("setup fixture", () => {
-  it("_", () => {});
-  /*  it('replace fixture 1->10 keys', async () => {
+    it("_", () => {});
+    /*  it('replace fixture 1->10 keys', async () => {
  
          const store = await createStore(fixturePath) // storagePath
  

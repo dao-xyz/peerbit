@@ -15,63 +15,63 @@ export class DiscoveryData extends SystemBinaryPayload {}
 
 @variant(0)
 export class NetworkInfo extends DiscoveryData {
-  @field({ type: "string" })
-  id: string;
+    @field({ type: "string" })
+    id: string;
 
-  @field({ type: "string" })
-  network: string; // address
+    @field({ type: "string" })
+    network: string; // address
 
-  @field({ type: "string" })
-  peerId: string;
-
-  @field({ type: vec("string") })
-  addresses: string[];
-
-  constructor(options?: {
-    network: string;
+    @field({ type: "string" })
     peerId: string;
+
+    @field({ type: vec("string") })
     addresses: string[];
-  }) {
-    super();
-    if (options) {
-      this.network = options.network;
-      this.peerId = options.peerId;
-      this.addresses = options.addresses;
-      this.initialize();
-    }
-  }
 
-  calculateId(): string {
-    if (!this.network || !this.peerId) {
-      throw new Error("Not initialized");
+    constructor(options?: {
+        network: string;
+        peerId: string;
+        addresses: string[];
+    }) {
+        super();
+        if (options) {
+            this.network = options.network;
+            this.peerId = options.peerId;
+            this.addresses = options.addresses;
+            this.initialize();
+        }
     }
-    const writer = new BinaryWriter();
-    writer.writeString(this.network.toString());
-    writer.writeString(this.peerId);
-    return createHash("sha1").update(writer.toArray()).digest("base64");
-  }
 
-  initialize(): NetworkInfo {
-    this.id = this.calculateId();
-    return this;
-  }
-
-  assertId() {
-    const calculatedId = this.calculateId();
-    if (this.id !== calculatedId) {
-      throw new Error(
-        `Invalid id, got ${this.id} but expected ${calculatedId}`
-      );
+    calculateId(): string {
+        if (!this.network || !this.peerId) {
+            throw new Error("Not initialized");
+        }
+        const writer = new BinaryWriter();
+        writer.writeString(this.network.toString());
+        writer.writeString(this.peerId);
+        return createHash("sha1").update(writer.toArray()).digest("base64");
     }
-  }
+
+    initialize(): NetworkInfo {
+        this.id = this.calculateId();
+        return this;
+    }
+
+    assertId() {
+        const calculatedId = this.calculateId();
+        if (this.id !== calculatedId) {
+            throw new Error(
+                `Invalid id, got ${this.id} but expected ${calculatedId}`
+            );
+        }
+    }
 }
 
 export const createDiscoveryStore = (props?: {
-  id?: string;
-  queryRegion?: string;
+    id?: string;
+    queryRegion?: string;
 }) =>
-  new Documents<NetworkInfo>({
-    index: new DocumentIndex({
-      indexBy: "id",
-    }),
-  });
+    new Documents<NetworkInfo>({
+        index: new DocumentIndex({
+            indexBy: "id",
+        }),
+    });

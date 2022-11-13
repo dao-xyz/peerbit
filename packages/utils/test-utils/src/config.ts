@@ -4,201 +4,205 @@ import * as ipfsHttpModule from "ipfs-http-client";
 import * as ipfsBin from "go-ipfs";
 
 export const factoryConfig = {
-  defaults: {
-    type: "proc",
-    test: true,
-    disposable: true,
-    ipfsModule: ipfsModule,
-    init: false,
-    start: false,
-    ipfsOptions: {
-      config: {
-        Addresses: {
-          API: "/ip4/127.0.0.1/tcp/0",
-          Swarm: ["/ip4/0.0.0.0/tcp/0"],
-          Gateway: "/ip4/0.0.0.0/tcp/0",
+    defaults: {
+        type: "proc",
+        test: true,
+        disposable: true,
+        ipfsModule: ipfsModule,
+        init: false,
+        start: false,
+        ipfsOptions: {
+            config: {
+                Addresses: {
+                    API: "/ip4/127.0.0.1/tcp/0",
+                    Swarm: ["/ip4/0.0.0.0/tcp/0"],
+                    Gateway: "/ip4/0.0.0.0/tcp/0",
+                },
+                Bootstrap: [],
+            },
         },
-        Bootstrap: [],
-      },
     },
-  },
-  overrides: {
-    go: {
-      test: false,
-      ipfsHttpModule: ipfsHttpModule,
-      ipfsBin: ipfsBin,
+    overrides: {
+        go: {
+            test: false,
+            ipfsHttpModule: ipfsHttpModule,
+            ipfsBin: ipfsBin,
+        },
     },
-  },
 };
 
 export const browserConfig = {
-  timeout: 30000,
-  identityKeyFixtures: (dir: string) =>
-    path.resolve(dir, "fixtures/keys/identity-keys"),
-  signingKeyFixtures: (dir: string) =>
-    path.resolve(dir, "fixtures/keys/signing-keys"),
-  signingKeysPath: (testFileName: string) =>
-    path.resolve("./orbitdb/keys/signing-keys", testFileName),
-  defaultIpfsConfig: {
-    preload: {
-      enabled: false,
-    },
-    EXPERIMENTAL: {
-      pubsub: true,
-    },
-    config: {
-      Addresses: {
-        API: "/ip4/127.0.0.1/tcp/0",
-        Swarm: [],
-        Gateway: "/ip4/0.0.0.0/tcp/0",
-      },
-      Bootstrap: [],
-      Discovery: {
-        MDNS: {
-          Enabled: true,
-          Interval: 0,
+    timeout: 30000,
+    identityKeyFixtures: (dir: string) =>
+        path.resolve(dir, "fixtures/keys/identity-keys"),
+    signingKeyFixtures: (dir: string) =>
+        path.resolve(dir, "fixtures/keys/signing-keys"),
+    signingKeysPath: (testFileName: string) =>
+        path.resolve("./orbitdb/keys/signing-keys", testFileName),
+    defaultIpfsConfig: {
+        preload: {
+            enabled: false,
         },
-        webRTCStar: {
-          Enabled: false,
+        EXPERIMENTAL: {
+            pubsub: true,
         },
-      },
-    },
-  },
-  daemon1: {
-    relay: { enabled: true, hop: { enabled: true, active: true } },
-    EXPERIMENTAL: {
-      pubsub: true,
-    },
-    config: {
-      Addresses: {
-        API: "/ip4/127.0.0.1/tcp/0",
-        Swarm: ["/dns4/wrtc-star1.par.dwebops.pub/tcp/443/wss/p2p-webrtc-star"],
-        Gateway: "/ip4/0.0.0.0/tcp/0",
-      },
-      Bootstrap: [],
-      Discovery: {
-        MDNS: {
-          Enabled: true,
-          Interval: 10,
+        config: {
+            Addresses: {
+                API: "/ip4/127.0.0.1/tcp/0",
+                Swarm: [],
+                Gateway: "/ip4/0.0.0.0/tcp/0",
+            },
+            Bootstrap: [],
+            Discovery: {
+                MDNS: {
+                    Enabled: true,
+                    Interval: 0,
+                },
+                webRTCStar: {
+                    Enabled: false,
+                },
+            },
         },
-        webRTCStar: {
-          Enabled: true,
-        },
-      },
     },
-  },
-  daemon2: {
-    relay: { enabled: true, hop: { enabled: true, active: true } },
-    EXPERIMENTAL: {
-      pubsub: true,
-    },
-    config: {
-      Addresses: {
-        API: "/ip4/127.0.0.1/tcp/0",
-        Swarm: ["/dns4/wrtc-star1.par.dwebops.pub/tcp/443/wss/p2p-webrtc-star"],
-        Gateway: "/ip4/0.0.0.0/tcp/0",
-      },
-      Bootstrap: [],
-      Discovery: {
-        MDNS: {
-          Enabled: true,
-          Interval: 10,
+    daemon1: {
+        relay: { enabled: true, hop: { enabled: true, active: true } },
+        EXPERIMENTAL: {
+            pubsub: true,
         },
-        webRTCStar: {
-          Enabled: true,
+        config: {
+            Addresses: {
+                API: "/ip4/127.0.0.1/tcp/0",
+                Swarm: [
+                    "/dns4/wrtc-star1.par.dwebops.pub/tcp/443/wss/p2p-webrtc-star",
+                ],
+                Gateway: "/ip4/0.0.0.0/tcp/0",
+            },
+            Bootstrap: [],
+            Discovery: {
+                MDNS: {
+                    Enabled: true,
+                    Interval: 10,
+                },
+                webRTCStar: {
+                    Enabled: true,
+                },
+            },
         },
-      },
     },
-  },
+    daemon2: {
+        relay: { enabled: true, hop: { enabled: true, active: true } },
+        EXPERIMENTAL: {
+            pubsub: true,
+        },
+        config: {
+            Addresses: {
+                API: "/ip4/127.0.0.1/tcp/0",
+                Swarm: [
+                    "/dns4/wrtc-star1.par.dwebops.pub/tcp/443/wss/p2p-webrtc-star",
+                ],
+                Gateway: "/ip4/0.0.0.0/tcp/0",
+            },
+            Bootstrap: [],
+            Discovery: {
+                MDNS: {
+                    Enabled: true,
+                    Interval: 10,
+                },
+                webRTCStar: {
+                    Enabled: true,
+                },
+            },
+        },
+    },
 };
 
 export const nodeConfig = {
-  timeout: 30000,
-  identityKeyFixtures: (dir: string) =>
-    path.resolve(dir, "fixtures/keys/identity-keys"),
-  signingKeyFixtures: (dir: string) =>
-    path.resolve(dir, "fixtures/keys/signing-keys"),
-  signingKeysPath: (testFileName: string) =>
-    path.resolve("./orbitdb/keys/signing-keys", testFileName),
-  defaultIpfsConfig: {
-    preload: {
-      enabled: false,
-    },
-    EXPERIMENTAL: {
-      pubsub: true,
-    },
-    config: {
-      Addresses: {
-        API: "/ip4/127.0.0.1/tcp/0",
-        Swarm: ["/ip4/0.0.0.0/tcp/0"],
-        Gateway: "/ip4/0.0.0.0/tcp/0",
-      },
-      Bootstrap: [],
-      Discovery: {
-        MDNS: {
-          Enabled: false, // we do this to make tests run faster
+    timeout: 30000,
+    identityKeyFixtures: (dir: string) =>
+        path.resolve(dir, "fixtures/keys/identity-keys"),
+    signingKeyFixtures: (dir: string) =>
+        path.resolve(dir, "fixtures/keys/signing-keys"),
+    signingKeysPath: (testFileName: string) =>
+        path.resolve("./orbitdb/keys/signing-keys", testFileName),
+    defaultIpfsConfig: {
+        preload: {
+            enabled: false,
         },
-        webRTCStar: {
-          Enabled: false,
+        EXPERIMENTAL: {
+            pubsub: true,
         },
-      },
-    },
-    libp2p: {
-      connectionManager: {
-        autoDial: false,
-      },
-    },
-  },
-  daemon1: {
-    EXPERIMENTAL: {
-      pubsub: true,
-    },
-    config: {
-      Addresses: {
-        API: "/ip4/127.0.0.1/tcp/0",
-        Swarm: ["/ip4/0.0.0.0/tcp/0"],
-        Gateway: "/ip4/0.0.0.0/tcp/0",
-      },
-      Bootstrap: [],
-      Discovery: {
-        MDNS: {
-          Enabled: false, // we do this to make tests run faster
+        config: {
+            Addresses: {
+                API: "/ip4/127.0.0.1/tcp/0",
+                Swarm: ["/ip4/0.0.0.0/tcp/0"],
+                Gateway: "/ip4/0.0.0.0/tcp/0",
+            },
+            Bootstrap: [],
+            Discovery: {
+                MDNS: {
+                    Enabled: false, // we do this to make tests run faster
+                },
+                webRTCStar: {
+                    Enabled: false,
+                },
+            },
         },
-        webRTCStar: {
-          Enabled: false,
+        libp2p: {
+            connectionManager: {
+                autoDial: false,
+            },
         },
-      },
     },
-    libp2p: {
-      connectionManager: {
-        autoDial: false,
-      },
-    },
-  },
-  daemon2: {
-    EXPERIMENTAL: {
-      pubsub: true,
-    },
-    config: {
-      Addresses: {
-        API: "/ip4/127.0.0.1/tcp/0",
-        Swarm: ["/ip4/0.0.0.0/tcp/0"],
-        Gateway: "/ip4/0.0.0.0/tcp/0",
-      },
-      Bootstrap: [],
-      Discovery: {
-        MDNS: {
-          Enabled: false, // we do this to make tests run faster
+    daemon1: {
+        EXPERIMENTAL: {
+            pubsub: true,
         },
-        webRTCStar: {
-          Enabled: false,
+        config: {
+            Addresses: {
+                API: "/ip4/127.0.0.1/tcp/0",
+                Swarm: ["/ip4/0.0.0.0/tcp/0"],
+                Gateway: "/ip4/0.0.0.0/tcp/0",
+            },
+            Bootstrap: [],
+            Discovery: {
+                MDNS: {
+                    Enabled: false, // we do this to make tests run faster
+                },
+                webRTCStar: {
+                    Enabled: false,
+                },
+            },
         },
-      },
+        libp2p: {
+            connectionManager: {
+                autoDial: false,
+            },
+        },
     },
-    libp2p: {
-      connectionManager: {
-        autoDial: false,
-      },
+    daemon2: {
+        EXPERIMENTAL: {
+            pubsub: true,
+        },
+        config: {
+            Addresses: {
+                API: "/ip4/127.0.0.1/tcp/0",
+                Swarm: ["/ip4/0.0.0.0/tcp/0"],
+                Gateway: "/ip4/0.0.0.0/tcp/0",
+            },
+            Bootstrap: [],
+            Discovery: {
+                MDNS: {
+                    Enabled: false, // we do this to make tests run faster
+                },
+                webRTCStar: {
+                    Enabled: false,
+                },
+            },
+        },
+        libp2p: {
+            connectionManager: {
+                autoDial: false,
+            },
+        },
     },
-  },
 };

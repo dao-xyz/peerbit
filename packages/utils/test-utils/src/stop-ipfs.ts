@@ -6,13 +6,13 @@ import { Controller } from "ipfsd-ctl";
  * @return {None}
  */
 const stopIpfs = async (ipfsd: Controller) => {
-  if (!ipfsd) {
-    return Promise.resolve();
-  }
+    if (!ipfsd) {
+        return Promise.resolve();
+    }
 
-  setTimeout(async () => {
-    await ipfsd.stop();
-  }, 0);
+    setTimeout(async () => {
+        await ipfsd.stop();
+    }, 0);
 };
 
 export default stopIpfs;

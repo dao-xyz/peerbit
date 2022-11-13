@@ -29,14 +29,14 @@ import { startIpfs } from "./start-ipfs.js";
 import { MemStore } from "./mem-store.js";
 export { createStore } from "./storage.js";
 export {
-  MemStore,
-  connectPeers,
-  getIpfsPeerId,
-  startIpfs,
-  stopIpfs,
-  testAPIs,
-  waitForPeers,
-  browserConfig,
-  factoryConfig,
-  nodeConfig,
+    MemStore,
+    connectPeers,
+    getIpfsPeerId,
+    startIpfs,
+    stopIpfs,
+    testAPIs,
+    waitForPeers,
+    browserConfig,
+    factoryConfig,
+    nodeConfig,
 };
