@@ -4,25 +4,23 @@ import { arraysCompare, arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
 
 @variant(0)
 export class LamportClock {
-
   @field(UInt8ArraySerializer)
   id: Uint8Array;
 
-  @field({ type: 'u64' })
+  @field({ type: "u64" })
   time: bigint;
 
   constructor(id: Uint8Array, time?: bigint | number) {
-    this.id = id
+    this.id = id;
     if (!time) {
       this.time = 0n;
-    }
-    else {
-      this.time = typeof time === 'number' ? BigInt(time) : time
+    } else {
+      this.time = typeof time === "number" ? BigInt(time) : time;
     }
   }
 
   clone() {
-    return new LamportClock(this.id, this.time)
+    return new LamportClock(this.id, this.time);
   }
 
   equals(other: LamportClock): boolean {
@@ -30,14 +28,12 @@ export class LamportClock {
   }
 
   advance() {
-    return new LamportClock(this.id, this.time + 1n)
-
+    return new LamportClock(this.id, this.time + 1n);
   }
-
 
   static compare(a: LamportClock, b: LamportClock) {
     // Calculate the "distance" based on the clock, ie. lower or greater
-    const dist = a.time - b.time
+    const dist = a.time - b.time;
     if (dist > 0) {
       return 1;
     }

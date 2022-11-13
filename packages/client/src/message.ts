@@ -1,1 +1,1 @@
-export class ProtocolMessage { }
+export class ProtocolMessage {}

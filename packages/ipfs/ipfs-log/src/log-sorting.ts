@@ -1,10 +1,14 @@
-import { Entry } from './entry'
-import { LamportClock as Clock } from './lamport-clock'
-import { arraysCompare } from '@dao-xyz/peerbit-borsh-utils';
+import { Entry } from "./entry";
+import { LamportClock as Clock } from "./lamport-clock";
+import { arraysCompare } from "@dao-xyz/peerbit-borsh-utils";
 
-const First = (a: any, b: any) => a
+const First = (a: any, b: any) => a;
 
-export type ISortFunction = <T> (a: Entry<T>, b: Entry<T>, resolveConflict?: (a: Entry<T>, b: Entry<T>) => number) => number;
+export type ISortFunction = <T>(
+  a: Entry<T>,
+  b: Entry<T>,
+  resolveConflict?: (a: Entry<T>, b: Entry<T>) => number
+) => number;
 /**
  * Sort two entries as Last-Write-Wins (LWW).
  *
@@ -18,13 +22,14 @@ export type ISortFunction = <T> (a: Entry<T>, b: Entry<T>, resolveConflict?: (a:
 export const LastWriteWins: ISortFunction = <T>(a: Entry<T>, b: Entry<T>) => {
   // Ultimate conflict resolution (take the first/left arg)
   // Sort two entries by their clock id, if the same always take the first
-  const sortById = (a: Entry<T>, b: Entry<T>) => SortByClockId(a, b, First)
+  const sortById = (a: Entry<T>, b: Entry<T>) => SortByClockId(a, b, First);
   // Sort two entries by their clock time, if concurrent,
   // determine sorting using provided conflict resolution function
-  const sortByEntryClocks = (a: Entry<T>, b: Entry<T>) => SortByClocks(a, b, sortById)
+  const sortByEntryClocks = (a: Entry<T>, b: Entry<T>) =>
+    SortByClocks(a, b, sortById);
   // Sort entries by clock time as the primary sort criteria
-  return sortByEntryClocks(a, b)
-}
+  return sortByEntryClocks(a, b);
+};
 
 /**
  * Sort two entries by their hash.
@@ -35,15 +40,18 @@ export const LastWriteWins: ISortFunction = <T>(a: Entry<T>, b: Entry<T>) => {
  */
 export const SortByEntryHash: ISortFunction = (a, b) => {
   // Ultimate conflict resolution (compare hashes)
-  const compareHash = (a: Entry<any>, b: Entry<any>) => a.hash < b.hash ? -1 : 1
+  const compareHash = (a: Entry<any>, b: Entry<any>) =>
+    a.hash < b.hash ? -1 : 1;
   // Sort two entries by their clock id, if the same then compare hashes
-  const sortById = (a: Entry<any>, b: Entry<any>) => SortByClockId(a, b, compareHash)
+  const sortById = (a: Entry<any>, b: Entry<any>) =>
+    SortByClockId(a, b, compareHash);
   // Sort two entries by their clock time, if concurrent,
   // determine sorting using provided conflict resolution function
-  const sortByEntryClocks = (a: Entry<any>, b: Entry<any>) => SortByClocks(a, b, sortById)
+  const sortByEntryClocks = (a: Entry<any>, b: Entry<any>) =>
+    SortByClocks(a, b, sortById);
   // Sort entries by clock time as the primary sort criteria
-  return sortByEntryClocks(a, b)
-}
+  return sortByEntryClocks(a, b);
+};
 
 /**
  * Sort two entries by their clock time.
@@ -52,13 +60,17 @@ export const SortByEntryHash: ISortFunction = (a, b) => {
  * @param {function(a, b)} resolveConflict A function to call if entries are concurrent (happened at the same time). The function should take in two entries and return 1 if the first entry should be chosen and -1 if the second entry should be chosen.
  * @returns {number} 1 if a is greater, -1 if b is greater
  */
-export const SortByClocks: ISortFunction = <T>(a: Entry<T>, b: Entry<T>, resolveConflict?: (a: Entry<any>, b: Entry<any>) => number) => {
+export const SortByClocks: ISortFunction = <T>(
+  a: Entry<T>,
+  b: Entry<T>,
+  resolveConflict?: (a: Entry<any>, b: Entry<any>) => number
+) => {
   // Compare the clocks
-  const diff = Clock.compare(a.clock, b.clock)
+  const diff = Clock.compare(a.clock, b.clock);
   // If the clocks are concurrent, use the provided
   // conflict resolution function to determine which comes first
-  return diff === 0 ? (resolveConflict || First)(a, b) : diff
-}
+  return diff === 0 ? (resolveConflict || First)(a, b) : diff;
+};
 
 /**
  * Sort two entries by their clock id.
@@ -71,10 +83,8 @@ export const SortByClockId: ISortFunction = (a, b, resolveConflict) => {
   // Sort by ID if clocks are concurrent,
   // take the entry with a "greater" clock id
   const clockCompare = arraysCompare(a.clock.id, b.clock.id);
-  return clockCompare === 0 ?
-    (resolveConflict || First)(a, b)
-    : clockCompare
-}
+  return clockCompare === 0 ? (resolveConflict || First)(a, b) : clockCompare;
+};
 
 /**
  * A wrapper function to throw an error if the results of a passed function return zero
@@ -83,14 +93,16 @@ export const SortByClockId: ISortFunction = (a, b, resolveConflict) => {
  * @throws {Error} if func ever returns 0
  */
 export const NoZeroes = (func: ISortFunction) => {
-  const msg = `Your log's tiebreaker function, ${func.name}, has returned zero and therefore cannot be`
+  const msg = `Your log's tiebreaker function, ${func.name}, has returned zero and therefore cannot be`;
 
   const comparator = <T>(a: Entry<T>, b: Entry<T>) => {
     // Validate by calling the function
-    const result = func(a, b, (a, b) => -1)
-    if (result === 0) { throw Error(msg) }
-    return result
-  }
+    const result = func(a, b, (a, b) => -1);
+    if (result === 0) {
+      throw Error(msg);
+    }
+    return result;
+  };
 
-  return comparator
-}
+  return comparator;
+};

@@ -32,4 +32,4 @@ export default `DONE
     └─1
                     └─entryC1
                       └─entryB1
-                        └─entryA1`
+                        └─entryA1`;

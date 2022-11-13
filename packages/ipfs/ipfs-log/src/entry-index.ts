@@ -1,30 +1,28 @@
-import { Entry } from './entry'
-import { LamportClock as Clock } from './lamport-clock'
+import { Entry } from "./entry";
+import { LamportClock as Clock } from "./lamport-clock";
 export class EntryIndex<T> {
-  _cache: { [key: string]: Entry<T> }
+  _cache: { [key: string]: Entry<T> };
   constructor(entries = {}) {
-    this._cache = entries
+    this._cache = entries;
   }
 
   set(k: string, v: Entry<T>) {
-
-    this._cache[k] = v
+    this._cache[k] = v;
   }
 
   get(k: string): Entry<T> {
-    return this._cache[k]
+    return this._cache[k];
   }
 
   delete(k: string) {
-    return delete this._cache[k]
+    return delete this._cache[k];
   }
 
   add(newItems: { [key: string]: Entry<T> }) {
-    this._cache = Object.assign(this._cache, newItems)
+    this._cache = Object.assign(this._cache, newItems);
   }
 
   get length(): number {
-    return Object.values(this._cache).length
+    return Object.values(this._cache).length;
   }
 }
-

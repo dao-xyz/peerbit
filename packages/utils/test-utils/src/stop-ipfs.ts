@@ -1,4 +1,4 @@
-import { Controller } from 'ipfsd-ctl'
+import { Controller } from "ipfsd-ctl";
 
 /**
  * Stop an IPFS or ipfsd-ctl instance
@@ -7,12 +7,12 @@ import { Controller } from 'ipfsd-ctl'
  */
 const stopIpfs = async (ipfsd: Controller) => {
   if (!ipfsd) {
-    return Promise.resolve()
+    return Promise.resolve();
   }
 
   setTimeout(async () => {
-    await ipfsd.stop()
-  }, 0)
-}
+    await ipfsd.stop();
+  }, 0);
+};
 
-export default stopIpfs
+export default stopIpfs;

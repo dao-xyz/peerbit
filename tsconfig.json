@@ -1,54 +1,49 @@
 {
-    "include": [
-        "packages/*/src",
-        "packages/*/*/src"
+  "include": ["packages/*/src", "packages/*/*/src"],
+  "exclude": [
+    "node_modules",
+    "packages/*/node_modules",
+    "packages/*/*/node_modules"
+  ],
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ES2020",
+    "lib": [
+      "ES2021",
+      "ES2021.Promise",
+      "ES2021.String",
+      "ES2020.BigInt",
+      "DOM"
     ],
-    "exclude": [
-        "node_modules",
-        "packages/*/node_modules",
-        "packages/*/*/node_modules"
+    "moduleResolution": "node",
+    "strict": true,
+    "strictPropertyInitialization": false,
+    "noUnusedLocals": false,
+    "strictFunctionTypes": true,
+    "esModuleInterop": true,
+    "noEmit": true,
+    "noEmitOnError": false,
+    "noImplicitAny": false,
+    "declaration": true,
+    "sourceMap": true,
+    "stripInternal": true,
+    "jsx": "react",
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "typeRoots": [
+      "node_modules/@types",
+      "node_modeles/@multiformats/multiaddrs/dist"
     ],
-    "compilerOptions": {
-        "target": "ES2020",
-        "module": "ES2020",
-        "lib": [
-            "ES2021",
-            "ES2021.Promise",
-            "ES2021.String",
-            "ES2020.BigInt",
-            "DOM"
-        ],
-        "moduleResolution": "node",
-        "strict": true,
-        "strictPropertyInitialization": false,
-        "noUnusedLocals": false,
-        "strictFunctionTypes": true,
-        "esModuleInterop": true,
-        "noEmit": true,
-        "noEmitOnError": false,
-        "noImplicitAny": false,
-        "declaration": true,
-        "sourceMap": true,
-        "stripInternal": true,
-        "jsx": "react",
-        "allowSyntheticDefaultImports": true,
-        "resolveJsonModule": true,
-        "isolatedModules": true,
-        "emitDecoratorMetadata": true,
-        "experimentalDecorators": true,
-        "typeRoots": [
-            "node_modules/@types",
-            "node_modeles/@multiformats/multiaddrs/dist"
-        ],
-        "skipLibCheck": true,
-    },
-    "typedocOptions": {
-        "entryPoints": ".",
-        "entryPointStrategy": "packages",
-        "out": "docs",
-        "readme": "README.md"
-    },
-    "files": [
-        "global.d.ts"
-    ]
+    "skipLibCheck": true
+  },
+  "typedocOptions": {
+    "entryPoints": ".",
+    "entryPointStrategy": "packages",
+    "out": "docs",
+    "readme": "README.md"
+  },
+  "files": ["global.d.ts"]
 }

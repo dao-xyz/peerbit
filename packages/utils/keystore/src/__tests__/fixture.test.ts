@@ -1,13 +1,11 @@
-import { createStore, Keystore } from "../keystore.js"
+import { createStore, Keystore } from "../keystore.js";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { delay } from "@dao-xyz/peerbit-time";
-import { fixturePath } from './fixture.js';
+import { fixturePath } from "./fixture.js";
 
-
-describe('setup fixture', () => {
-
-    it('_', () => { })
-    /*  it('replace fixture 1->10 keys', async () => {
+describe("setup fixture", () => {
+  it("_", () => {});
+  /*  it('replace fixture 1->10 keys', async () => {
  
          const store = await createStore(fixturePath) // storagePath
  
@@ -19,4 +17,4 @@ describe('setup fixture', () => {
          await store.close();
  
      }) */
-})
+});

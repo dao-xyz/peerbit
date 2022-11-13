@@ -1,92 +1,68 @@
 import { serialize, variant } from "@dao-xyz/borsh";
 import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 
-export type IdentityProviderType = 'orbitdb' | 'ethereum' | 'solana';
-
+export type IdentityProviderType = "orbitdb" | "ethereum" | "solana";
 
 @variant(2)
-export class Crypto extends SystemBinaryPayload {
-
-}
-
-
-
+export class Crypto extends SystemBinaryPayload {}
 
 @variant(0)
 export abstract class Key extends Crypto {
+  equals(other: Key): boolean {
+    throw new Error("Not implemented");
+  }
 
-    equals(other: Key): boolean {
-        throw new Error("Not implemented");
-    }
+  get bytes(): Uint8Array {
+    return serialize(this);
+  }
 
-    get bytes(): Uint8Array {
-        return serialize(this)
-    }
+  hashCode(): string {
+    return Buffer.from(this.bytes).toString("base64");
+  }
 
-    hashCode(): string {
-        return Buffer.from(this.bytes).toString('base64');
-    }
-
-    toString(): string {
-        throw new Error("Not implemented");
-    }
+  toString(): string {
+    throw new Error("Not implemented");
+  }
 }
 
 @variant(1)
 export abstract class Keypair extends Crypto {
+  publicKey: PublicSignKey | PublicKeyEncryptionKey;
 
-    publicKey: PublicSignKey | PublicKeyEncryptionKey
+  static async create(): Promise<Keypair> {
+    throw new Error("Not implemented");
+  }
 
-    static async create(): Promise<Keypair> {
-        throw new Error("Not implemented")
-    }
-
-    equals(other: Keypair): boolean {
-        throw new Error("Not implemented");
-    }
+  equals(other: Keypair): boolean {
+    throw new Error("Not implemented");
+  }
 }
-
-
 
 // ---- SIGNATURE KEYS -----
 
 @variant(0)
-export abstract class SignKey extends Key {
-
-}
+export abstract class SignKey extends Key {}
 @variant(0)
-export abstract class PublicSignKey extends SignKey {
-
-}
+export abstract class PublicSignKey extends SignKey {}
 
 @variant(1)
-export abstract class PrivateSignKey extends SignKey {
-
-}
-
+export abstract class PrivateSignKey extends SignKey {}
 
 // ---- PUBLIC KEY ENCRYPTION -----
 @variant(1)
-export abstract class PublicKeyEncryption extends Key {
-
-}
+export abstract class PublicKeyEncryption extends Key {}
 @variant(0)
-export abstract class PublicKeyEncryptionKey extends PublicKeyEncryption {
-
-}
+export abstract class PublicKeyEncryptionKey extends PublicKeyEncryption {}
 
 @variant(1)
-export abstract class PrivateEncryptionKey extends PublicKeyEncryption {
-
-}
+export abstract class PrivateEncryptionKey extends PublicKeyEncryption {}
 
 // ---- OTHER KEYS ----
 @variant(2)
-export abstract class OtherKey extends Key { }
+export abstract class OtherKey extends Key {}
 
 @variant(0)
-export abstract class PlainKey extends OtherKey { }
-
+export abstract class PlainKey extends OtherKey {}
 
 /* 
 @variant(1)
