@@ -12,38 +12,16 @@ import { createStore, Session } from "@dao-xyz/peerbit-test-utils";
 import { IPFS } from "ipfs-core-types";
 import { AbstractLevel } from "abstract-level";
 import Cache from "@dao-xyz/peerbit-cache";
-import { fileURLToPath } from "url";
 import path from "path";
 import { Identity } from "@dao-xyz/ipfs-log";
 import { Ed25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";
-import { deserialize, serialize } from "@dao-xyz/borsh";
-import { QueryRequestV0, QueryOptions, query } from "@dao-xyz/peerbit-query";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { v4 as uuid } from "uuid";
 import { jest } from "@jest/globals";
+import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url);
 
-const mquery = (
-    ipfs: IPFS,
-    topic: string,
-    request: StringQueryRequest,
-    responseHandler: (results: Results) => void,
-    options: QueryOptions | undefined
-) =>
-    query(
-        ipfs,
-        topic,
-        new QueryRequestV0({
-            query: serialize(request),
-        }),
-        (response) => {
-            const results = deserialize(response.response, Results);
-            responseHandler(results);
-        },
-        options
-    );
 
 const createIdentity = async () => {
     const ed = await Ed25519Keypair.create();
@@ -71,6 +49,8 @@ describe("query", () => {
     });
 
     beforeEach(async () => {
+        const __filename = fileURLToPath(import.meta.url);
+
         cacheStore1 = await createStore(
             path.join(__filename, "cache1" + uuid())
         );
@@ -130,16 +110,14 @@ describe("query", () => {
 
         let response: Results = undefined as any;
 
-        await mquery(
-            observer,
-            writeStore.search._query.queryTopic,
+        await observerStore.search.query(
             new StringQueryRequest({
                 queries: [new ProgramMatchQuery(writeStore)],
             }),
             (r: Results) => {
                 response = r;
             },
-            { waitForAmount: 1 }
+            { waitForAmount: 1, maxAggregationTime: 30 * 1000 }
         );
 
         expect(response.results).toHaveLength(1);
@@ -168,16 +146,14 @@ describe("query", () => {
 
         let response: Results = undefined as any;
 
-        await mquery(
-            observer,
-            writeStore.search._query.queryTopic,
+        await observerStore.search.query(
             new StringQueryRequest({
                 queries: [],
             }),
             (r: Results) => {
                 response = r;
             },
-            { waitForAmount: 1 }
+            { waitForAmount: 1, maxAggregationTime: 30 * 1000 }
         );
         expect(response.results).toHaveLength(1);
         expect(response.results[0] as ResultWithSource).toMatchObject(
@@ -205,9 +181,7 @@ describe("query", () => {
 
         let response: Results = undefined as any;
 
-        await mquery(
-            observer,
-            writeStore.search._query.queryTopic,
+        await observerStore.search.query(
             new StringQueryRequest({
                 queries: [
                     new StringMatchQuery({
