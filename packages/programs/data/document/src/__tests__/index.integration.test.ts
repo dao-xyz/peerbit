@@ -250,6 +250,74 @@ describe("index", () => {
             ]); // because delete is dependent on put
             expect(store.docs._index.size).toEqual(1);
         });
+
+        it("permanently delete", async () => {
+            const store = new DocumentDDoc({
+                docs: new Documents<Document>({
+                    index: new DocumentIndex({
+                        indexBy: "id",
+                    }),
+                    canEdit: true,
+                }),
+            });
+            const keypair = await X25519Keypair.create();
+            await store.init(session.peers[0].ipfs, await createIdentity(), {
+                replicationTopic: "topic",
+                store: {
+                    ...DefaultOptions,
+                    replicate: true,
+                    encryption: {
+                        getEncryptionKeypair: () =>
+                            Promise.resolve(
+                                keypair as Ed25519Keypair | X25519Keypair
+                            ),
+                        getAnyKeypair: async (
+                            publicKeys: X25519PublicKey[]
+                        ) => {
+                            for (let i = 0; i < publicKeys.length; i++) {
+                                if (
+                                    publicKeys[i].equals(
+                                        (keypair as X25519Keypair).publicKey
+                                    )
+                                ) {
+                                    return {
+                                        index: i,
+                                        keypair: keypair as
+                                            | Ed25519Keypair
+                                            | X25519Keypair,
+                                    };
+                                }
+                            }
+                        },
+                    },
+                    resolveCache: () => new Cache(cacheStores[0]),
+                },
+            });
+
+            let doc = new Document({
+                id: uuid(),
+                name: "Hello world",
+            });
+            let editDoc = new Document({
+                id: doc.id,
+                name: "Hello world 2",
+            });
+
+            const putOperation = await store.docs.put(doc);
+            expect(store.docs._index.size).toEqual(1);
+            const putOperation2 = await store.docs.put(editDoc);
+            expect(store.docs._index.size).toEqual(1);
+            expect(putOperation2.next).toHaveLength(1);
+
+            // delete 1
+            const deleteOperation = await store.docs.del(doc.id, {
+                permanent: true,
+            });
+            expect(store.docs._index.size).toEqual(0);
+            expect(store.docs.store.oplog.values.map((x) => x.hash)).toEqual([
+                deleteOperation.hash,
+            ]); // the delete operation
+        });
     });
 
     describe("query", () => {

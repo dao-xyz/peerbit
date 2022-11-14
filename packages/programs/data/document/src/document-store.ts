@@ -14,6 +14,7 @@ import {
     Encoding,
     EncryptionTemplateMaybeEncrypted,
     Entry,
+    Log,
 } from "@dao-xyz/ipfs-log";
 import {
     CanOpenSubPrograms,
@@ -86,7 +87,13 @@ export class Documents<T extends BinaryPayload> extends ComposableProgram {
         await this.store.setup({
             encoding: BORSH_ENCODING(Operation),
             canAppend: this.canAppend.bind(this),
-            onUpdate: this._index.updateIndex.bind(this._index),
+            onUpdate: async (
+                oplog: Log<Operation<T>>,
+                entries?: Entry<Operation<T>>[] | undefined
+            ) => {
+                await this.handleDeletions(oplog);
+                await this._index.updateIndex(oplog);
+            },
         });
         await this._logIndex.setup({
             store: this.store,
@@ -119,7 +126,7 @@ export class Documents<T extends BinaryPayload> extends ComposableProgram {
                 next !== current?.hash &&
                 current.next.length > 0
             ) {
-                current = this.store.oplog.get(current.next[0]);
+                current = this.store.oplog.get(current.next[0])!;
             }
             if (current?.hash === next) {
                 return true; // Ok, we are pointing this new edit to some exising point in time of the old document
@@ -214,28 +221,9 @@ export class Documents<T extends BinaryPayload> extends ComposableProgram {
         );
     }
 
-    /* public putAll(docs: T[], options = {}) {
-    if (!(Array.isArray(docs))) {
-      docs = [docs]
-    }
-    if (!(docs.every(d => (d as any)[this.indexBy]))) { throw new Error(`The provided document doesn't contain field '${this.indexBy}'`) }
-    return this.store._addOperation(new PutAllOperation({
-      docs: docs.map((value) => new PutOperation({
-        key: asString((value as any)[this.indexBy]),
-        data: serialize(value),
-        value
-      }))
-    }), { nexts: [], ...options })
-  } */
-
     del(
         key: string,
-        options?: {
-            skipCanAppendCheck?: boolean;
-            onProgressCallback?: (any: any) => void;
-            pin?: boolean;
-            reciever?: EncryptionTemplateMaybeEncrypted;
-        }
+        options?: AddOperationOptions<Operation<T>> & { permanent?: boolean }
     ) {
         const existing = this._index.get(key);
         if (!existing) {
@@ -245,8 +233,37 @@ export class Documents<T extends BinaryPayload> extends ComposableProgram {
         return this.store._addOperation(
             new DeleteOperation({
                 key: asString(key),
+                permanently: options?.permanent,
             }),
             { nexts: [existing.entry], ...options }
         );
+    }
+
+    async handleDeletions(log: Log<Operation<T>>): Promise<void> {
+        const heads = log.heads;
+        for (let i = heads.length - 1; i >= 0; i--) {
+            try {
+                const item = heads[i];
+                const payload = await item.getPayloadValue();
+                if (payload instanceof DeleteOperation) {
+                    if (payload.permanently) {
+                        // delete all nexts recursively (but dont delete the DELETE record (because we might want to share this with others))
+                        const nexts = item.next
+                            .map((n) => log.get(n))
+                            .filter((x) => !!x) as Entry<any>[];
+                        await Promise.all(
+                            nexts.map((n) => log.deleteRecursively(n))
+                        );
+                    }
+                } else {
+                    // Unknown operation
+                }
+            } catch (error) {
+                if (error instanceof AccessError) {
+                    continue;
+                }
+                throw error;
+            }
+        }
     }
 }

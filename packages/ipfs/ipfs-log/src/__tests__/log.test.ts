@@ -369,7 +369,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             });
 
             it("returns an Entry", () => {
-                const entry = log.get(log.values[0].hash);
+                const entry = log.get(log.values[0].hash)!;
                 expect(entry.hash).toMatchSnapshot();
             });
 

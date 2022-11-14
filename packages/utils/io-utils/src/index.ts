@@ -123,7 +123,27 @@ async function write(
     return cidString;
 }
 
+async function rm(ipfs: IPFS, hash: CID | string) {
+    try {
+        await ipfs.pin.rm(hash as any);
+    } catch (error) {
+        // not pinned // TODO add bettor error handling
+    }
+    for await (const result of ipfs.block.rm(
+        (hash instanceof CID ? hash : CID.parse(hash)) as any
+    )) {
+        if (result.error) {
+            throw new Error(
+                `Failed to remove block ${result.cid} due to ${result.error.message}`
+            );
+        } else {
+            console.log(`Removed block ${result.cid}`);
+        }
+    }
+}
+
 export default {
     read,
     write,
+    rm,
 };

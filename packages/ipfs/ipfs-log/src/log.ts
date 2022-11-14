@@ -1,5 +1,4 @@
 import { EntryIndex } from "./entry-index.js";
-import pMap from "p-map";
 import { GSet } from "./g-set.js";
 import { LogIO } from "./log-io.js";
 import * as LogError from "./log-errors.js";
@@ -26,7 +25,7 @@ import { serialize } from "@dao-xyz/borsh";
 import { Encoding, JSON_ENCODING } from "./encoding.js";
 import { Identity } from "./identity.js";
 import { logger as parentLogger } from "./logger.js";
-import { Size } from "./size.js";
+
 const logger = parentLogger.child({ module: "ipfs-log" });
 
 const { LastWriteWins, NoZeroes } = Sorting;
@@ -71,7 +70,7 @@ export type LogOptions<T> = {
 
 export class Log<T> extends GSet {
     _sortFn: Sorting.ISortFunction;
-    _storage: any;
+    _storage: IPFS;
     _id: string;
     /*   _rootGid: string; */
 
@@ -313,9 +312,10 @@ export class Log<T> extends GSet {
             if (endHash && endHash === entry.hash) break;
 
             // Add entry's next references to the stack
-            const entries = entry.next.map(getEntry);
-            const defined = entries.filter(isDefined);
-            defined.forEach(addToStack);
+            const entries = entry.next
+                .map(getEntry)
+                .filter((x) => !!x) as Entry<any>[];
+            entries.forEach(addToStack);
         }
 
         stack = [];
@@ -534,9 +534,11 @@ export class Log<T> extends GSet {
         let { lt, lte } = options;
         const { gt, gte, amount } = options;
 
+        // TODO make failsafe for missing log values
+
         if (amount === 0) return [][Symbol.iterator]();
-        if (typeof lte === "string") lte = [this.get(lte)];
-        if (typeof lt === "string") lt = [this.get(this.get(lt).next[0])];
+        if (typeof lte === "string") lte = [this.get(lte)!];
+        if (typeof lt === "string") lt = [this.get(this.get(lt)!.next[0])!];
 
         if (lte && !Array.isArray(lte))
             throw LogError.LtOrLteMustBeStringOrArray();
@@ -545,9 +547,9 @@ export class Log<T> extends GSet {
 
         const start = (lte || lt || this.heads).filter(isDefined);
         const endHash = gte
-            ? this.get(gte).hash
+            ? this.get(gte)!.hash
             : gt
-            ? this.get(gt).hash
+            ? this.get(gt)!.hash
             : undefined;
         const count = endHash ? -1 : amount || -1;
 
@@ -682,7 +684,24 @@ export class Log<T> extends GSet {
                 (shortCutLinks || links).forEach(pushToStack);
             }
         }
-        return [...res].map((h) => this.get(h));
+        return [...res]
+            .map((h) => this.get(h))
+            .filter((x) => !!x) as Entry<T>[];
+    }
+
+    async deleteRecursively(from: Entry<any>) {
+        const stack = [from];
+        while (stack.length > 0) {
+            const entry = stack.pop()!;
+            await entry.delete(this._storage);
+            this._entryIndex.delete(entry.hash);
+            for (const next of entry.next) {
+                const ne = this.get(next);
+                if (ne) {
+                    stack.push(ne);
+                }
+            }
+        }
     }
 
     /**

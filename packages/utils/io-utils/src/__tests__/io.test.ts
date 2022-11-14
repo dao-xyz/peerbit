@@ -12,6 +12,7 @@ import {
 import { IPFS } from "ipfs-core-types";
 import { Controller } from "ipfsd-ctl";
 import { jest } from "@jest/globals";
+import { delay } from "@dao-xyz/peerbit-time";
 
 Object.keys(testAPIs).forEach((IPFS) => {
     describe(`IO tests (${IPFS})`, function () {
@@ -87,6 +88,38 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
                 const obj = await io.read(ipfs, cid, {});
                 assert.deepStrictEqual(obj, data);
+            });
+        });
+
+        describe("rm", () => {
+            it("pinned", async () => {
+                const data: any = { test: "pinned" };
+                const cid1 = await io.write(ipfs, "dag-cbor", data, {
+                    pin: true,
+                });
+                let obj = await io.read(ipfs, cid1, {});
+                assert.deepStrictEqual(obj, data);
+
+                await io.rm(ipfs, cid1);
+                try {
+                    await io.read(ipfs, cid1, { timeout: 3000 });
+                    fail();
+                } catch (error) {}
+            });
+
+            it("unpinned", async () => {
+                const data: any = { test: "unpinned" };
+                const cid1 = await io.write(ipfs, "dag-cbor", data, {
+                    pin: false,
+                });
+                let obj = await io.read(ipfs, cid1, {});
+                assert.deepStrictEqual(obj, data);
+
+                await io.rm(ipfs, cid1);
+                try {
+                    await io.read(ipfs, cid1, { timeout: 3000 });
+                    fail();
+                } catch (error) {}
             });
         });
     });

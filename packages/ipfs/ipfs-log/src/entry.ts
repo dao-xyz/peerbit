@@ -364,6 +364,13 @@ export class Entry<T>
         ); // dont compare hashes because the hash is a function of the other properties
     }
 
+    async delete(ipfs: IPFS): Promise<void> {
+        if (!this.hash) {
+            throw new Error("Missing hash");
+        }
+        await io.rm(ipfs, this.hash);
+    }
+
     static async createGid(seed?: string): Promise<string> {
         await sodium.ready;
         return toBase64(

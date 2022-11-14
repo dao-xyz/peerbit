@@ -10,7 +10,7 @@ export class EntryIndex<T> {
         this._cache[k] = v;
     }
 
-    get(k: string): Entry<T> {
+    get(k: string): Entry<T> | undefined {
         return this._cache[k];
     }
 

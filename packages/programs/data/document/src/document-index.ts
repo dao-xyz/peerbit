@@ -86,10 +86,14 @@ export class DeleteOperation extends Operation<any> {
     @field({ type: "string" })
     key: string;
 
-    constructor(props?: { key: string }) {
+    @field({ type: "bool" })
+    permanently: boolean;
+
+    constructor(props?: { key: string; permanently?: boolean }) {
         super();
         if (props) {
             this.key = props.key;
+            this.permanently = props.permanently || false;
         }
     }
 }
