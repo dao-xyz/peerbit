@@ -16,10 +16,7 @@ import { Range } from "./range.js";
 import { field, variant } from "@dao-xyz/borsh";
 import { CustomBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { AddOperationOptions, Store } from "@dao-xyz/peerbit-store";
-import {
-    CanAppend,
-    Entry,
-} from "@dao-xyz/ipfs-log";
+import { CanAppend, Entry } from "@dao-xyz/ipfs-log";
 import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { Program } from "@dao-xyz/peerbit-program";
 import { QueryOptions, CanRead, DQuery } from "@dao-xyz/peerbit-query";

@@ -37,7 +37,7 @@ import { waitForAsync } from "@dao-xyz/peerbit-time";
 import pino from "pino";
 const logger = pino().child({ module: "store" });
 
-export class CachedValue { }
+export class CachedValue {}
 
 export type AddOperationOptions<T> = {
     skipCanAppendCheck?: boolean;
@@ -135,7 +135,7 @@ export interface IStoreOptions<T> {
 
 export interface IInitializationOptions<T>
     extends IStoreOptions<T>,
-    IInitializationOptionsDefault<T> {
+        IInitializationOptionsDefault<T> {
     resolveCache: (
         store: Store<any>
     ) => Promise<Cache<CachedValue>> | Cache<CachedValue>;
@@ -672,7 +672,8 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
         );
 
         logger.debug(
-            `Saved snapshot: ${snapshot.cid.toString()}, queue length: ${unfinished.length
+            `Saved snapshot: ${snapshot.cid.toString()}, queue length: ${
+                unfinished.length
             }`
         );
         return [snapshot];
