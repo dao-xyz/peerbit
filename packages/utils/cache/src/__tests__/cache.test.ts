@@ -3,27 +3,18 @@ import Cache from "../index.js";
 
 import assert from "assert";
 const timeout = 50000;
-import fs from "fs";
-import { Level } from "level";
-import { fileURLToPath } from "url";
-import path, { dirname } from "path";
+import {} from "level";
+import { MemoryLevel } from "memory-level";
 import { jest } from "@jest/globals";
 
-const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
-const __dirname = dirname(__filename);
-const prefixPath = path.resolve(__dirname, "tmp");
-export const createStore = (name = "keystore"): Level => {
-    if (fs && fs.mkdirSync) {
-        fs.mkdirSync(path.resolve(prefixPath, name), { recursive: true });
-    }
-    return new Level(path.resolve(prefixPath, name), { valueEncoding: "view" });
+export const createStore = (): MemoryLevel => {
+    return new MemoryLevel({ valueEncoding: "view" });
 };
 
 describe(`Cache - level`, function () {
     jest.setTimeout(timeout);
 
-    let cache: Cache<any>, storage: {}, store: Level;
+    let cache: Cache<any>, storage: {}, store: MemoryLevel;
 
     const data = [
         { type: typeof true, key: "boolean", value: true },
@@ -39,7 +30,7 @@ describe(`Cache - level`, function () {
 
     beforeAll(async () => {
         try {
-            store = await createStore("test");
+            store = await createStore();
         } catch (error) {
             const x = 123;
         }

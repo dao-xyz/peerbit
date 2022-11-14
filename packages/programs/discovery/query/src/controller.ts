@@ -196,6 +196,7 @@ export class DQuery<Q, R> extends ComposableProgram {
             this.queryTopic,
             this._onQueryMessageBinded
         );
+        await this._initializationPromise;
         this._subscribed = true;
     }
 
