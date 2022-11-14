@@ -45,7 +45,7 @@ export const getDiscriminatorApproximation = (
         } else {
             throw new Error(
                 "Can not resolve discriminator for variant with type: " +
-                typeof variant
+                    typeof variant
             );
         }
     }
@@ -139,8 +139,8 @@ export class DQuery<Q, R> extends ComposableProgram {
             if (
                 !!(options.queryTopic as { queryRegion }).queryRegion &&
                 !!(options.queryTopic as { queryRegion }).queryRegion ==
-                !!(options.queryTopic as { queryAddressSuffix })
-                    .queryAddressSuffix
+                    !!(options.queryTopic as { queryAddressSuffix })
+                        .queryAddressSuffix
             ) {
                 throw new Error(
                     "Expected either queryRegion or queryAddressSuffix or none"
@@ -207,7 +207,7 @@ export class DQuery<Q, R> extends ComposableProgram {
                     msg.data,
                     QueryRequestV0,
                     this._encryption?.getAnyKeypair ||
-                    (() => Promise.resolve(undefined)),
+                        (() => Promise.resolve(undefined)),
                     {
                         isTrusted: (key) =>
                             this.canRead(key.signature?.publicKey),
