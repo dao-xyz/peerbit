@@ -18,7 +18,7 @@ import {
     LogQueryRequest,
 } from "../controller";
 import { fileURLToPath } from "url";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { DQuery } from "@dao-xyz/peerbit-query";
 import { Address } from "@dao-xyz/peerbit-program";
 import { jest } from "@jest/globals";
@@ -105,6 +105,7 @@ describe("query", () => {
                 }
             );
         }
+        await delay(3000); // add delay because pubsub subscribe is not synchronous (for some reason, and it is not possible to check)
         expect(logIndices[0].query.queryTopic).toEqual(
             logIndices[1].query.queryTopic
         );
