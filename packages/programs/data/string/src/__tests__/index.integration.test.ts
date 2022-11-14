@@ -245,35 +245,35 @@ describe("query", () => {
         expect(callbackValues).toEqual(["hello world"]);
     });
 
-    /*    it("handles AccessError gracefully", async () => {
-           const store = new DString({});
-           await store.init(writer, await createIdentity(), {
-               replicationTopic: uuid(),
-               store: {
-                   ...DefaultOptions,
-                   encryption: {
-                       getAnyKeypair: (_) => Promise.resolve(undefined),
-                       getEncryptionKeypair: () => Ed25519Keypair.create(),
-                   },
-                   replicate: true,
-                   resolveCache: () => new Cache(cacheStore1),
-               },
-           });
-   
-           await store.add(
-               "hello",
-               new Range({ offset: 0n, length: "hello".length }),
-               {
-                   reciever: {
-                       clock: undefined,
-                       signature: undefined,
-                       payload: [await X25519PublicKey.create()],
-                   },
-               }
-           );
-           await store.close();
-           await delay(3000); // TODO store is async?
-           await store.load();
-           await waitFor(() => store.store.oplog.values.length === 1);
-       }); */
+    it("handles AccessError gracefully", async () => {
+        const store = new DString({});
+        await store.init(writer, await createIdentity(), {
+            replicationTopic: uuid(),
+            store: {
+                ...DefaultOptions,
+                encryption: {
+                    getAnyKeypair: (_) => Promise.resolve(undefined),
+                    getEncryptionKeypair: () => Ed25519Keypair.create(),
+                },
+                replicate: true,
+                resolveCache: () => new Cache(cacheStore1),
+            },
+        });
+
+        await store.add(
+            "hello",
+            new Range({ offset: 0n, length: "hello".length }),
+            {
+                reciever: {
+                    clock: undefined,
+                    signature: undefined,
+                    payload: [await X25519PublicKey.create()],
+                },
+            }
+        );
+        await store.close();
+        await delay(3000); // TODO store is async?
+        await store.load();
+        await waitFor(() => store.store.oplog.values.length === 1);
+    });
 });

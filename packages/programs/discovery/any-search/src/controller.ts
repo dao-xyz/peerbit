@@ -14,6 +14,9 @@ import {
 import { MultipleQueriesType, QueryType } from "./query-interface";
 import { Result, Results } from "./result";
 import { ProgramMatchQuery } from "./context";
+import pino from "pino";
+const logger = pino().child({ module: "anyearch" });
+logger.level = 'debug';
 
 export type SearchContext = (() => Address) | AbstractProgram;
 export type AnySearchInitializationOptions<T> = {
@@ -59,6 +62,7 @@ export class AnySearch<T> extends ComposableProgram {
         query: QueryType,
         from?: SignKey
     ): Promise<Results | undefined> {
+        logger.debug('Recieved a query message')
         if (!this._setup) {
             throw new Error(".setup(...) needs to be invoked before use");
         }
@@ -72,6 +76,7 @@ export class AnySearch<T> extends ComposableProgram {
                             : this._context();
                     if (q.program !== context.toString()) {
                         // This query is not for me!
+                        logger.debug('Recieved a query for another context')
                         return;
                     }
                 }
@@ -80,6 +85,7 @@ export class AnySearch<T> extends ComposableProgram {
             // Handle non context queries
             const results = await this._queryHandler(query);
             if (!results || results.length == 0) {
+                logger.debug('Recieved a query but returned emptry response')
                 return;
             }
             const response = new Results({

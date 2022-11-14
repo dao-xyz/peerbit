@@ -18,7 +18,6 @@ import { CustomBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { AddOperationOptions, Store } from "@dao-xyz/peerbit-store";
 import {
     CanAppend,
-    EncryptionTemplateMaybeEncrypted,
     Entry,
 } from "@dao-xyz/ipfs-log";
 import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
