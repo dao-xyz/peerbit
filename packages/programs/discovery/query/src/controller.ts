@@ -251,7 +251,7 @@ export class DQuery<Q, R> extends ComposableProgram {
         responseHandler: (response: R, from?: SignKey) => void,
         options?: QueryOptions
     ): Promise<void> {
-        logger.debug("query topic: " + this.queryTopic);
+        logger.debug("querying topic: " + this.queryTopic);
         return query(
             this._ipfs,
             this.queryTopic,

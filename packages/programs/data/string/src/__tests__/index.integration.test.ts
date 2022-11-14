@@ -83,6 +83,7 @@ describe("query", () => {
                 resolveCache: () => new Cache(cacheStore2),
             },
         });
+        await delay(3000); // add delay because pubsub subscribe is not synchronous (for some reason, and it is not possible to check)
     });
     afterEach(async () => {
         await cacheStore1.close();
