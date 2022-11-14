@@ -34,7 +34,7 @@ jobs:
             matrix:
                 node-version: [16.x]
                 # Each app folder test will be run in parallel using the matrix
-                folder: [client, programs, utils]
+                folder: [client, programs/data/string, utils]
 
         steps:
             - uses: actions/checkout@v3
