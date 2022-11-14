@@ -23,7 +23,6 @@ import { QueryOptions, CanRead, DQuery } from "@dao-xyz/peerbit-query";
 
 import pino from "pino";
 const logger = pino().child({ module: "string" });
-logger.level = "debug";
 
 export const STRING_STORE_TYPE = "string_store";
 const findAllOccurrences = (str: string, substr: string): number[] => {

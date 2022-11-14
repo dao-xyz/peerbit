@@ -16,7 +16,6 @@ import { Result, Results } from "./result";
 import { ProgramMatchQuery } from "./context";
 import pino from "pino";
 const logger = pino().child({ module: "anyearch" });
-logger.level = "debug";
 
 export type SearchContext = (() => Address) | AbstractProgram;
 export type AnySearchInitializationOptions<T> = {

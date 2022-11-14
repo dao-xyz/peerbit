@@ -23,7 +23,7 @@ import { IPFS } from "ipfs-core-types";
 import { Identity } from "@dao-xyz/ipfs-log";
 import pino from "pino";
 const logger = pino().child({ module: "anyearch" });
-logger.level = "debug";
+
 export const getDiscriminatorApproximation = (
     constructor: Constructor<any>
 ): Uint8Array => {
