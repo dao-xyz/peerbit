@@ -38,7 +38,8 @@
         "@dao-xyz/peerbit-program": "^0.0.38",
         "@dao-xyz/peerbit-store": "^0.0.53",
         "@dao-xyz/peerbit-time": "^0.0.17",
-        "uuid": "^8.3.2"
+        "uuid": "^8.3.2",
+        "pino": "^8.7.0"
     },
     "devDependencies": {
         "ipfs": "^0.65.0"

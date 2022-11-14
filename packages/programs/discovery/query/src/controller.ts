@@ -21,7 +21,9 @@ import {
 } from "@dao-xyz/peerbit-program";
 import { IPFS } from "ipfs-core-types";
 import { Identity } from "@dao-xyz/ipfs-log";
-
+import pino from "pino";
+const logger = pino().child({ module: "anyearch" });
+logger.level = "debug";
 export const getDiscriminatorApproximation = (
     constructor: Constructor<any>
 ): Uint8Array => {
@@ -197,6 +199,7 @@ export class DQuery<Q, R> extends ComposableProgram {
             this._onQueryMessageBinded
         );
         await this._initializationPromise;
+        logger.debug("subscribing to query topic: " + this.queryTopic);
         this._subscribed = true;
     }
 
@@ -248,6 +251,7 @@ export class DQuery<Q, R> extends ComposableProgram {
         responseHandler: (response: R, from?: SignKey) => void,
         options?: QueryOptions
     ): Promise<void> {
+        logger.debug("query topic: " + this.queryTopic);
         return query(
             this._ipfs,
             this.queryTopic,
