@@ -107,6 +107,7 @@ describe("query", () => {
         );
 
         let response: Results = undefined as any;
+        await delay(8000);
         await observerStore.search.query(
             new StringQueryRequest({
                 queries: [new ProgramMatchQuery(writeStore)],
