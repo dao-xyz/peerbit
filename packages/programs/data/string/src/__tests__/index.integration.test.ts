@@ -129,151 +129,151 @@ describe("query", () => {
         );
     });
 
-    it("match all", async () => {
-        await writeStore.add(
-            "hello",
-            new Range({ offset: 0n, length: "hello".length })
-        );
-        await writeStore.add(
-            "world",
-            new Range({
-                offset: BigInt("hello ".length),
-                length: "world".length,
-            })
-        );
-
-        let response: Results = undefined as any;
-
-        await observerStore.search.query(
-            new StringQueryRequest({
-                queries: [],
-            }),
-            (r: Results) => {
-                response = r;
-            },
-            { waitForAmount: 1, maxAggregationTime: 30 * 1000 }
-        );
-        expect(response.results).toHaveLength(1);
-        expect(response.results[0] as ResultWithSource).toMatchObject(
-            new ResultWithSource({
-                source: new StringResultSource({
-                    string: "hello world",
-                }),
-                coordinates: undefined, //  because we are matching without any specific query
-            })
-        );
-    });
-
-    it("match part", async () => {
-        await writeStore.add(
-            "hello",
-            new Range({ offset: 0n, length: "hello".length })
-        );
-        await writeStore.add(
-            "world",
-            new Range({
-                offset: BigInt("hello ".length),
-                length: "world".length,
-            })
-        );
-
-        let response: Results = undefined as any;
-
-        await observerStore.search.query(
-            new StringQueryRequest({
-                queries: [
-                    new StringMatchQuery({
-                        exactMatch: true,
-                        value: "o w",
-                    }),
-                    new StringMatchQuery({
-                        exactMatch: true,
-                        value: "orld",
-                    }),
-                ],
-            }),
-            (r: Results) => {
-                response = r;
-            },
-            { waitForAmount: 1 }
-        );
-        expect(response.results).toHaveLength(1);
-        let result = response.results[0] as ResultWithSource;
-        expect(result.source).toMatchObject(
-            new StringResultSource({
-                string: "hello world",
-            })
-        );
-        expect(
-            (result.coordinates as RangeCoordinates).coordinates
-        ).toHaveLength(2);
-        expect(
-            (result.coordinates as RangeCoordinates).coordinates[0].offset
-        ).toEqual(BigInt("hell".length));
-        expect(
-            (result.coordinates as RangeCoordinates).coordinates[0].length
-        ).toEqual(BigInt("w o".length));
-        expect(
-            (result.coordinates as RangeCoordinates).coordinates[1].offset
-        ).toEqual(BigInt("hello w".length));
-        expect(
-            (result.coordinates as RangeCoordinates).coordinates[1].length
-        ).toEqual(BigInt("orld".length));
-    });
-
-    it("toString remote", async () => {
-        await writeStore.add(
-            "hello",
-            new Range({ offset: 0n, length: "hello".length })
-        );
-        await writeStore.add(
-            "world",
-            new Range({
-                offset: BigInt("hello ".length),
-                length: "world".length,
-            })
-        );
-
-        let callbackValues: string[] = [];
-        const string = await observerStore.toString({
-            remote: {
-                callback: (s) => callbackValues.push(s),
-                queryOptions: { waitForAmount: 1 },
-            },
-        });
-        expect(string).toEqual("hello world");
-        expect(callbackValues).toEqual(["hello world"]);
-    });
-
-    it("handles AccessError gracefully", async () => {
-        const store = new DString({});
-        await store.init(writer, await createIdentity(), {
-            replicationTopic: uuid(),
-            store: {
-                ...DefaultOptions,
-                encryption: {
-                    getAnyKeypair: (_) => Promise.resolve(undefined),
-                    getEncryptionKeypair: () => Ed25519Keypair.create(),
-                },
-                replicate: true,
-                resolveCache: () => new Cache(cacheStore1),
-            },
-        });
-
-        await store.add(
-            "hello",
-            new Range({ offset: 0n, length: "hello".length }),
-            {
-                reciever: {
-                    clock: undefined,
-                    signature: undefined,
-                    payload: [await X25519PublicKey.create()],
-                },
-            }
-        );
-        await store.close();
-        await delay(3000); // TODO store is async?
-        await store.load();
-        await waitFor(() => store.store.oplog.values.length === 1);
-    });
+    /*  it("match all", async () => {
+         await writeStore.add(
+             "hello",
+             new Range({ offset: 0n, length: "hello".length })
+         );
+         await writeStore.add(
+             "world",
+             new Range({
+                 offset: BigInt("hello ".length),
+                 length: "world".length,
+             })
+         );
+ 
+         let response: Results = undefined as any;
+ 
+         await observerStore.search.query(
+             new StringQueryRequest({
+                 queries: [],
+             }),
+             (r: Results) => {
+                 response = r;
+             },
+             { waitForAmount: 1, maxAggregationTime: 30 * 1000 }
+         );
+         expect(response.results).toHaveLength(1);
+         expect(response.results[0] as ResultWithSource).toMatchObject(
+             new ResultWithSource({
+                 source: new StringResultSource({
+                     string: "hello world",
+                 }),
+                 coordinates: undefined, //  because we are matching without any specific query
+             })
+         );
+     });
+ 
+     it("match part", async () => {
+         await writeStore.add(
+             "hello",
+             new Range({ offset: 0n, length: "hello".length })
+         );
+         await writeStore.add(
+             "world",
+             new Range({
+                 offset: BigInt("hello ".length),
+                 length: "world".length,
+             })
+         );
+ 
+         let response: Results = undefined as any;
+ 
+         await observerStore.search.query(
+             new StringQueryRequest({
+                 queries: [
+                     new StringMatchQuery({
+                         exactMatch: true,
+                         value: "o w",
+                     }),
+                     new StringMatchQuery({
+                         exactMatch: true,
+                         value: "orld",
+                     }),
+                 ],
+             }),
+             (r: Results) => {
+                 response = r;
+             },
+             { waitForAmount: 1 }
+         );
+         expect(response.results).toHaveLength(1);
+         let result = response.results[0] as ResultWithSource;
+         expect(result.source).toMatchObject(
+             new StringResultSource({
+                 string: "hello world",
+             })
+         );
+         expect(
+             (result.coordinates as RangeCoordinates).coordinates
+         ).toHaveLength(2);
+         expect(
+             (result.coordinates as RangeCoordinates).coordinates[0].offset
+         ).toEqual(BigInt("hell".length));
+         expect(
+             (result.coordinates as RangeCoordinates).coordinates[0].length
+         ).toEqual(BigInt("w o".length));
+         expect(
+             (result.coordinates as RangeCoordinates).coordinates[1].offset
+         ).toEqual(BigInt("hello w".length));
+         expect(
+             (result.coordinates as RangeCoordinates).coordinates[1].length
+         ).toEqual(BigInt("orld".length));
+     });
+ 
+     it("toString remote", async () => {
+         await writeStore.add(
+             "hello",
+             new Range({ offset: 0n, length: "hello".length })
+         );
+         await writeStore.add(
+             "world",
+             new Range({
+                 offset: BigInt("hello ".length),
+                 length: "world".length,
+             })
+         );
+ 
+         let callbackValues: string[] = [];
+         const string = await observerStore.toString({
+             remote: {
+                 callback: (s) => callbackValues.push(s),
+                 queryOptions: { waitForAmount: 1 },
+             },
+         });
+         expect(string).toEqual("hello world");
+         expect(callbackValues).toEqual(["hello world"]);
+     });
+ 
+     it("handles AccessError gracefully", async () => {
+         const store = new DString({});
+         await store.init(writer, await createIdentity(), {
+             replicationTopic: uuid(),
+             store: {
+                 ...DefaultOptions,
+                 encryption: {
+                     getAnyKeypair: (_) => Promise.resolve(undefined),
+                     getEncryptionKeypair: () => Ed25519Keypair.create(),
+                 },
+                 replicate: true,
+                 resolveCache: () => new Cache(cacheStore1),
+             },
+         });
+ 
+         await store.add(
+             "hello",
+             new Range({ offset: 0n, length: "hello".length }),
+             {
+                 reciever: {
+                     clock: undefined,
+                     signature: undefined,
+                     payload: [await X25519PublicKey.create()],
+                 },
+             }
+         );
+         await store.close();
+         await delay(3000); // TODO store is async?
+         await store.load();
+         await waitFor(() => store.store.oplog.values.length === 1);
+     }); */
 });

@@ -21,6 +21,10 @@ import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { Program } from "@dao-xyz/peerbit-program";
 import { QueryOptions, CanRead, DQuery } from "@dao-xyz/peerbit-query";
 
+import pino from "pino";
+const logger = pino().child({ module: "string" });
+logger.level = "debug";
+
 export const STRING_STORE_TYPE = "string_store";
 const findAllOccurrences = (str: string, substr: string): number[] => {
     str = str.toLowerCase();
@@ -133,7 +137,9 @@ export class DString extends Program {
     }
 
     async queryHandler(query: QueryType): Promise<Result[]> {
+        logger.debug("Recieved query");
         if (query instanceof StringQueryRequest == false) {
+            logger.debug("Recieved query which is not a StringQueryRequest");
             return [];
         }
         const stringQuery = query as StringQueryRequest;
@@ -143,6 +149,7 @@ export class DString extends Program {
             (x) => x instanceof StringMatchQuery
         ) as StringMatchQuery[];
         if (relaventQueries.length == 0) {
+            logger.debug("Responding with all");
             return [
                 new ResultWithSource({
                     source: new StringResultSource({
@@ -167,6 +174,7 @@ export class DString extends Program {
             .flat(1);
 
         if (ranges.length == 0) {
+            logger.debug("Could not find any matches");
             return [];
         }
 
