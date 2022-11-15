@@ -4,8 +4,8 @@ import { ComposableProgram } from "@dao-xyz/peerbit-program";
 import {
     CanRead,
     DQuery,
-    DQueryInitializationOptions,
     QueryTopicOption,
+    SearchContext,
 } from "@dao-xyz/peerbit-query";
 import { Store } from "@dao-xyz/peerbit-store";
 import { EncryptedThing, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
@@ -113,14 +113,16 @@ export class LogIndex extends ComposableProgram {
         store: Store<any>;
         canRead?: CanRead;
         queryTopic?: QueryTopicOption;
+        context: SearchContext;
     }) {
         this._store = properties?.store;
         await this.query.setup({
+            context: properties.context,
             queryType: LogQueryRequest,
+            queryTopic: properties.queryTopic,
             responseType: HeadsMessage,
             responseHandler: this.responseHandler.bind(this),
             canRead: properties.canRead || (() => Promise.resolve(true)),
-            queryTopic: properties.queryTopic,
         });
     }
 

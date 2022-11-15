@@ -1,19 +1,13 @@
 import { field, option, serialize, variant } from "@dao-xyz/borsh";
 import { Documents } from "../document-store";
 import {
-    Compare,
     FieldBigIntCompareQuery,
-    SortDirection,
     FieldStringMatchQuery,
-    ResultWithSource,
-    FieldSort,
     MemoryCompareQuery,
     MemoryCompare,
+    DocumentQueryRequest,
     Results,
-    AnySearch,
-    PageQueryRequest,
-} from "@dao-xyz/peerbit-anysearch";
-import { CustomBinaryPayload } from "@dao-xyz/peerbit-bpayload";
+} from "../query.js";
 import { Session, createStore } from "@dao-xyz/peerbit-test-utils";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";
 import { Identity } from "@dao-xyz/ipfs-log";
@@ -36,11 +30,12 @@ import {
     LogEntryEncryptionQuery,
     LogQueryRequest,
 } from "@dao-xyz/peerbit-logindex";
+import { Compare } from "@dao-xyz/peerbit-query";
 
 const __filename = fileURLToPath(import.meta.url);
 
 @variant("document") //@variant([1, 0])
-class Document extends CustomBinaryPayload {
+class Document {
     @field({ type: "string" })
     id: string;
 
@@ -51,7 +46,6 @@ class Document extends CustomBinaryPayload {
     number?: bigint;
 
     constructor(opts?: Document) {
-        super();
         if (opts) {
             Object.assign(this, opts);
         }
@@ -322,13 +316,13 @@ describe("index", () => {
 
     describe("query", () => {
         it("match all", async () => {
-            let response: Results = undefined as any;
+            let response: Results<Document> = undefined as any;
 
-            await stores[1].docs.index.search.query(
-                new PageQueryRequest({
+            await stores[1].docs.index.query(
+                new DocumentQueryRequest({
                     queries: [],
                 }),
-                (r: Results) => {
+                (r: Results<Document>) => {
                     response = r;
                 },
                 { waitForAmount: 1 }
@@ -337,10 +331,10 @@ describe("index", () => {
         });
 
         it("string", async () => {
-            let response: Results = undefined as any;
+            let response: Results<Document> = undefined as any;
 
-            await stores[1].docs.index.search.query(
-                new PageQueryRequest({
+            await stores[1].docs.index.query(
+                new DocumentQueryRequest({
                     queries: [
                         new FieldStringMatchQuery({
                             key: "name",
@@ -348,24 +342,20 @@ describe("index", () => {
                         }),
                     ],
                 }),
-                (r: Results) => {
+                (r: Results<Document>) => {
                     response = r;
                 },
                 { waitForAmount: 1 }
             );
             expect(response.results).toHaveLength(2);
-            expect(
-                response.results.map(
-                    (x) => ((x as ResultWithSource).source as Document).id
-                )
-            ).toEqual(["1", "2"]);
+            expect(response.results.map((x) => x.value.id)).toEqual(["1", "2"]);
         });
 
         it("offset size", async () => {
-            let response: Results = undefined as any;
+            let response: Results<Document> = undefined as any;
 
-            await stores[1].docs.index.search.query(
-                new PageQueryRequest({
+            await stores[1].docs.index.query(
+                new DocumentQueryRequest({
                     queries: [
                         new FieldStringMatchQuery({
                             key: "name",
@@ -375,23 +365,20 @@ describe("index", () => {
                     size: 1n,
                     offset: 1n,
                 }),
-                (r: Results) => {
+                (r: Results<Document>) => {
                     response = r;
                 },
                 { waitForAmount: 1 }
             );
             expect(response.results).toHaveLength(1);
-            expect(
-                ((response.results[0] as ResultWithSource).source as Document)
-                    .id
-            ).toEqual("2");
+            expect(response.results[0].value.id).toEqual("2");
         });
 
         describe("number", () => {
             it("equal", async () => {
-                let response: Results = undefined as any;
-                await stores[1].docs.index.search.query(
-                    new PageQueryRequest({
+                let response: Results<Document> = undefined as any;
+                await stores[1].docs.index.query(
+                    new DocumentQueryRequest({
                         queries: [
                             new FieldBigIntCompareQuery({
                                 key: "number",
@@ -400,24 +387,19 @@ describe("index", () => {
                             }),
                         ],
                     }),
-                    (r: Results) => {
+                    (r: Results<Document>) => {
                         response = r;
                     },
                     { waitForAmount: 1 }
                 );
                 expect(response.results).toHaveLength(1);
-                expect(
-                    (
-                        (response.results[0] as ResultWithSource)
-                            .source as Document
-                    ).number
-                ).toEqual(2n);
+                expect(response.results[0].value.number).toEqual(2n);
             });
 
             it("gt", async () => {
-                let response: Results = undefined as any;
-                await stores[1].docs.index.search.query(
-                    new PageQueryRequest({
+                let response: Results<Document> = undefined as any;
+                await stores[1].docs.index.query(
+                    new DocumentQueryRequest({
                         queries: [
                             new FieldBigIntCompareQuery({
                                 key: "number",
@@ -426,24 +408,19 @@ describe("index", () => {
                             }),
                         ],
                     }),
-                    (r: Results) => {
+                    (r: Results<Document>) => {
                         response = r;
                     },
                     { waitForAmount: 1 }
                 );
                 expect(response.results).toHaveLength(1);
-                expect(
-                    (
-                        (response.results[0] as ResultWithSource)
-                            .source as Document
-                    ).number
-                ).toEqual(3n);
+                expect(response.results[0].value.number).toEqual(3n);
             });
 
             it("gte", async () => {
-                let response: Results = undefined as any;
-                await stores[1].docs.index.search.query(
-                    new PageQueryRequest({
+                let response: Results<Document> = undefined as any;
+                await stores[1].docs.index.query(
+                    new DocumentQueryRequest({
                         queries: [
                             new FieldBigIntCompareQuery({
                                 key: "number",
@@ -452,38 +429,26 @@ describe("index", () => {
                             }),
                         ],
                     }),
-                    (r: Results) => {
+                    (r: Results<Document>) => {
                         response = r;
                     },
                     { waitForAmount: 1 }
                 );
                 response.results.sort((a, b) =>
                     bigIntSort(
-                        ((a as ResultWithSource).source as Document)
-                            .number as bigint,
-                        ((b as ResultWithSource).source as Document)
-                            .number as bigint
+                        a.value.number as bigint,
+                        b.value.number as bigint
                     )
                 );
                 expect(response.results).toHaveLength(2);
-                expect(
-                    (
-                        (response.results[0] as ResultWithSource)
-                            .source as Document
-                    ).number
-                ).toEqual(2n);
-                expect(
-                    (
-                        (response.results[1] as ResultWithSource)
-                            .source as Document
-                    ).number
-                ).toEqual(3n);
+                expect(response.results[0].value.number).toEqual(2n);
+                expect(response.results[1].value.number).toEqual(3n);
             });
 
             it("lt", async () => {
-                let response: Results = undefined as any;
-                await stores[1].docs.index.search.query(
-                    new PageQueryRequest({
+                let response: Results<Document> = undefined as any;
+                await stores[1].docs.index.query(
+                    new DocumentQueryRequest({
                         queries: [
                             new FieldBigIntCompareQuery({
                                 key: "number",
@@ -492,24 +457,19 @@ describe("index", () => {
                             }),
                         ],
                     }),
-                    (r: Results) => {
+                    (r: Results<Document>) => {
                         response = r;
                     },
                     { waitForAmount: 1 }
                 );
                 expect(response.results).toHaveLength(1);
-                expect(
-                    (
-                        (response.results[0] as ResultWithSource)
-                            .source as Document
-                    ).number
-                ).toEqual(1n);
+                expect(response.results[0].value.number).toEqual(1n);
             });
 
             it("lte", async () => {
-                let response: Results = undefined as any;
-                await stores[1].docs.index.search.query(
-                    new PageQueryRequest({
+                let response: Results<Document> = undefined as any;
+                await stores[1].docs.index.query(
+                    new DocumentQueryRequest({
                         queries: [
                             new FieldBigIntCompareQuery({
                                 key: "number",
@@ -518,32 +478,20 @@ describe("index", () => {
                             }),
                         ],
                     }),
-                    (r: Results) => {
+                    (r: Results<Document>) => {
                         response = r;
                     },
                     { waitForAmount: 1 }
                 );
                 response.results.sort((a, b) =>
                     bigIntSort(
-                        ((a as ResultWithSource).source as Document)
-                            .number as bigint,
-                        ((b as ResultWithSource).source as Document)
-                            .number as bigint
+                        a.value.number as bigint,
+                        b.value.number as bigint
                     )
                 );
                 expect(response.results).toHaveLength(2);
-                expect(
-                    (
-                        (response.results[0] as ResultWithSource)
-                            .source as Document
-                    ).number
-                ).toEqual(1n);
-                expect(
-                    (
-                        (response.results[1] as ResultWithSource)
-                            .source as Document
-                    ).number
-                ).toEqual(2n);
+                expect(response.results[0].value.number).toEqual(1n);
+                expect(response.results[1].value.number).toEqual(2n);
             });
         });
 
@@ -564,15 +512,15 @@ describe("index", () => {
                 });
 
                 const bytes = serialize(doc3);
-                const numberOffset = 26;
+                const numberOffset = 24;
                 expect(bytes[numberOffset]).toEqual(numberToMatch);
                 await writeStore.docs.put(doc2);
                 await writeStore.docs.put(doc3);
 
-                let response: Results = undefined as any;
+                let response: Results<Document> = undefined as any;
 
-                await stores[1].docs.index.search.query(
-                    new PageQueryRequest({
+                await stores[1].docs.index.query(
+                    new DocumentQueryRequest({
                         queries: [
                             new MemoryCompareQuery({
                                 compares: [
@@ -584,24 +532,14 @@ describe("index", () => {
                             }),
                         ],
                     }),
-                    (r: Results) => {
+                    (r: Results<Document>) => {
                         response = r;
                     },
                     { waitForAmount: 1 }
                 );
                 expect(response.results).toHaveLength(2);
-                expect(
-                    (
-                        (response.results[0] as ResultWithSource)
-                            .source as Document
-                    ).id
-                ).toEqual(doc2.id);
-                expect(
-                    (
-                        (response.results[1] as ResultWithSource)
-                            .source as Document
-                    ).id
-                ).toEqual(doc3.id);
+                expect(response.results[0].value.id).toEqual(doc2.id);
+                expect(response.results[1].value.id).toEqual(doc3.id);
             });
         });
         describe("Encryption query", () => {

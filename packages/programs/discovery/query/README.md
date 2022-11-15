@@ -1,3 +1,3 @@
 # Query
 
-Abstract query program that you can use to build a distributed Request -> Response protocol on. See [LogIndex](./log-index) and [AnySearch](./any-search) as examples
+This module contains a communication protocol for a generic request and response query communication, this modules can be used as a component in other modules. See [LogIndex](./log-index), [DString](./../../data/string), [Documents](./../../data/document) for examples

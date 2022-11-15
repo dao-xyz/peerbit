@@ -16,7 +16,7 @@ import {
 } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from "ipfs-core-types";
 import { Identity } from "@dao-xyz/ipfs-log";
-import { QueryRequestV0, QueryResponseV0 } from "./query";
+import { QueryRequestV0, QueryResponseV0, U64Compare } from "./query";
 
 export type QueryOptions = {
     signer?: Identity;
@@ -29,6 +29,9 @@ export type QueryOptions = {
     maxAggregationTime?: number;
     isTrusted?: (publicKey: MaybeSigned<any>) => Promise<boolean>;
     responseRecievers?: X25519PublicKey[];
+    context?: string;
+    createdAt?: U64Compare[];
+    modifiedAt?: U64Compare[];
 };
 
 export const query = async (

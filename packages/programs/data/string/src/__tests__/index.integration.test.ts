@@ -1,14 +1,17 @@
-import { StringResultSource, DString } from "../string-store.js";
+import { DString } from "../string-store.js";
 import {
-    ResultWithSource,
     StringQueryRequest,
+    StringResult,
     StringMatchQuery,
     RangeCoordinates,
-    ProgramMatchQuery,
-    Results,
-} from "@dao-xyz/peerbit-anysearch";
+    RangeCoordinate,
+} from "../index.js";
 import { Range } from "../range.js";
-import { createStore, Session } from "@dao-xyz/peerbit-test-utils";
+import {
+    createStore,
+    Session,
+    waitForPeers,
+} from "@dao-xyz/peerbit-test-utils";
 import { IPFS } from "ipfs-core-types";
 import { AbstractLevel } from "abstract-level";
 import Cache from "@dao-xyz/peerbit-cache";
@@ -75,7 +78,7 @@ describe("query", () => {
             session.peers[1].ipfs,
             writeStore.address!
         )) as DString;
-        observerStore.search._query.subscribeToQueries = false;
+        observerStore.query.subscribeToQueries = false;
         await observerStore.init(observer, await createIdentity(), {
             replicationTopic,
             store: {
@@ -83,7 +86,12 @@ describe("query", () => {
                 resolveCache: () => new Cache(cacheStore2),
             },
         });
-        await delay(3000); // add delay because pubsub subscribe is not synchronous (for some reason, and it is not possible to check)
+
+        await waitForPeers(
+            session.peers[0].ipfs,
+            [session.peers[1].id],
+            writeStore.query.queryTopic
+        );
     });
     afterEach(async () => {
         await cacheStore1.close();
@@ -92,42 +100,6 @@ describe("query", () => {
 
     afterAll(async () => {
         await session.stop();
-    });
-
-    it("only context", async () => {
-        await writeStore.add(
-            "hello",
-            new Range({ offset: 0n, length: "hello".length })
-        );
-        await writeStore.add(
-            "world",
-            new Range({
-                offset: BigInt("hello ".length),
-                length: "world".length,
-            })
-        );
-
-        let response: Results = undefined as any;
-
-        await observerStore.search.query(
-            new StringQueryRequest({
-                queries: [new ProgramMatchQuery(writeStore)],
-            }),
-            (r: Results) => {
-                response = r;
-            },
-            { waitForAmount: 1, maxAggregationTime: 30 * 1000 }
-        );
-
-        expect(response.results).toHaveLength(1);
-        expect(response.results[0] as ResultWithSource).toMatchObject(
-            new ResultWithSource({
-                source: new StringResultSource({
-                    string: "hello world",
-                }),
-                coordinates: undefined, //  because we are matching without any specific query
-            })
-        );
     });
 
     it("match all", async () => {
@@ -143,23 +115,21 @@ describe("query", () => {
             })
         );
 
-        let response: Results = undefined as any;
+        let response: StringResult = undefined as any;
 
-        await observerStore.search.query(
+        await observerStore.query.query(
             new StringQueryRequest({
                 queries: [],
             }),
-            (r: Results) => {
+            (r) => {
                 response = r;
             },
-            { waitForAmount: 1, maxAggregationTime: 30 * 1000 }
+            { waitForAmount: 1 }
         );
-        expect(response.results).toHaveLength(1);
-        expect(response.results[0] as ResultWithSource).toMatchObject(
-            new ResultWithSource({
-                source: new StringResultSource({
-                    string: "hello world",
-                }),
+        expect(response).toBeDefined();
+        expect(response).toMatchObject(
+            new StringResult({
+                string: "hello world",
                 coordinates: undefined, //  because we are matching without any specific query
             })
         );
@@ -178,9 +148,9 @@ describe("query", () => {
             })
         );
 
-        let response: Results = undefined as any;
+        let response: StringResult = undefined as any;
 
-        await observerStore.search.query(
+        await observerStore.query.query(
             new StringQueryRequest({
                 queries: [
                     new StringMatchQuery({
@@ -193,33 +163,29 @@ describe("query", () => {
                     }),
                 ],
             }),
-            (r: Results) => {
+            (r) => {
                 response = r;
             },
             { waitForAmount: 1 }
         );
-        expect(response.results).toHaveLength(1);
-        let result = response.results[0] as ResultWithSource;
-        expect(result.source).toMatchObject(
-            new StringResultSource({
+        expect(response).toBeDefined();
+        expect(response).toMatchObject(
+            new StringResult({
                 string: "hello world",
+                coordinates: new RangeCoordinates({
+                    coordinates: [
+                        new RangeCoordinate({
+                            length: BigInt("o w".length),
+                            offset: BigInt("hell".length),
+                        }),
+                        new RangeCoordinate({
+                            length: BigInt("orld".length),
+                            offset: BigInt("hello w".length),
+                        }),
+                    ],
+                }),
             })
         );
-        expect(
-            (result.coordinates as RangeCoordinates).coordinates
-        ).toHaveLength(2);
-        expect(
-            (result.coordinates as RangeCoordinates).coordinates[0].offset
-        ).toEqual(BigInt("hell".length));
-        expect(
-            (result.coordinates as RangeCoordinates).coordinates[0].length
-        ).toEqual(BigInt("w o".length));
-        expect(
-            (result.coordinates as RangeCoordinates).coordinates[1].offset
-        ).toEqual(BigInt("hello w".length));
-        expect(
-            (result.coordinates as RangeCoordinates).coordinates[1].length
-        ).toEqual(BigInt("orld".length));
     });
 
     it("toString remote", async () => {

@@ -12,7 +12,6 @@
         "packages/programs/data/document",
         "packages/programs/data/string",
         "packages/programs/discovery/query",
-        "packages/programs/discovery/any-search",
         "packages/programs/discovery/network-discovery",
         "packages/programs/discovery/log-index",
         "packages/store",

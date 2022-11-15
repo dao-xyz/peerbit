@@ -1,20 +1,14 @@
 import { StringOperation, StringIndex, encoding } from "./string-index.js";
 import {
-    AnySearch,
-    QueryType,
-    ProgramMatchQuery,
-} from "@dao-xyz/peerbit-anysearch";
-import {
     RangeCoordinate,
     RangeCoordinates,
-    Result,
-    ResultWithSource,
     StringMatchQuery,
-} from "@dao-xyz/peerbit-anysearch";
-import { StringQueryRequest } from "@dao-xyz/peerbit-anysearch";
+    StringQueryRequest,
+    StringResult,
+} from "./query.js";
+
 import { Range } from "./range.js";
 import { field, variant } from "@dao-xyz/borsh";
-import { CustomBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { AddOperationOptions, Store } from "@dao-xyz/peerbit-store";
 import { CanAppend, Entry } from "@dao-xyz/ipfs-log";
 import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
@@ -48,19 +42,20 @@ export class DString extends Program {
     @field({ type: Store })
     store: Store<StringOperation>;
 
-    @field({ type: AnySearch })
-    search: AnySearch<StringOperation>;
+    @field({ type: DQuery })
+    query: DQuery<StringQueryRequest, StringResult>;
 
     @field({ type: StringIndex })
     _index: StringIndex;
 
     _optionCanAppend?: CanAppend<StringOperation>;
 
-    constructor(properties: { search?: AnySearch<StringOperation> }) {
+    constructor(properties: {
+        query?: DQuery<StringQueryRequest, StringResult>;
+    }) {
         super();
         if (properties) {
-            this.search =
-                properties.search || new AnySearch({ query: new DQuery() });
+            this.query = properties.query || new DQuery();
             this.store = new Store();
             this._index = new StringIndex();
         }
@@ -80,11 +75,13 @@ export class DString extends Program {
             this.store.canAppend = options.canAppend;
         }
 
-        await this.search.setup({
+        await this.query.setup({
             ...options,
             context: () => this.address,
             canRead: options?.canRead,
-            queryHandler: this.queryHandler.bind(this),
+            responseHandler: this.queryHandler.bind(this),
+            queryType: StringQueryRequest,
+            responseType: StringResult,
         });
     }
 
@@ -135,11 +132,13 @@ export class DString extends Program {
         });
     }
 
-    async queryHandler(query: QueryType): Promise<Result[]> {
+    async queryHandler(
+        query: StringQueryRequest
+    ): Promise<StringResult | undefined> {
         logger.debug("Recieved query");
         if (query instanceof StringQueryRequest == false) {
             logger.debug("Recieved query which is not a StringQueryRequest");
-            return [];
+            return;
         }
         const stringQuery = query as StringQueryRequest;
 
@@ -149,13 +148,9 @@ export class DString extends Program {
         ) as StringMatchQuery[];
         if (relaventQueries.length == 0) {
             logger.debug("Responding with all");
-            return [
-                new ResultWithSource({
-                    source: new StringResultSource({
-                        string: content,
-                    }),
-                }),
-            ];
+            return new StringResult({
+                string: content,
+            });
         }
         const ranges = relaventQueries
             .map((query) => {
@@ -174,19 +169,15 @@ export class DString extends Program {
 
         if (ranges.length == 0) {
             logger.debug("Could not find any matches");
-            return [];
+            return;
         }
 
-        return [
-            new ResultWithSource({
-                source: new StringResultSource({
-                    string: content,
-                }),
-                coordinates: new RangeCoordinates({
-                    coordinates: ranges,
-                }),
+        return new StringResult({
+            string: content,
+            coordinates: new RangeCoordinates({
+                coordinates: ranges,
             }),
-        ];
+        });
     }
 
     async toString(options?: {
@@ -197,22 +188,17 @@ export class DString extends Program {
     }): Promise<string | undefined> {
         if (options?.remote) {
             const counter: Map<string, number> = new Map();
-            await this.search.query(
+            await this.query.query(
                 new StringQueryRequest({
-                    queries: [
-                        new ProgramMatchQuery({
-                            program: this.address.toString(),
-                        }),
-                    ],
+                    queries: [],
                 }),
                 (response) => {
-                    const result = (
-                        (response.results[0] as ResultWithSource)
-                            .source as StringResultSource
-                    ).string;
                     options?.remote.callback &&
-                        options?.remote.callback(result);
-                    counter.set(result, (counter.get(result) || 0) + 1);
+                        options?.remote.callback(response.string);
+                    counter.set(
+                        response.string,
+                        (counter.get(response.string) || 0) + 1
+                    );
                 },
                 options.remote.queryOptions
             );
@@ -227,19 +213,6 @@ export class DString extends Program {
             return ret;
         } else {
             return this._index.string;
-        }
-    }
-}
-
-@variant("string")
-export class StringResultSource extends CustomBinaryPayload {
-    @field({ type: "string" })
-    string: string;
-
-    constructor(prop?: { string: string }) {
-        super();
-        if (prop) {
-            Object.assign(this, prop);
         }
     }
 }

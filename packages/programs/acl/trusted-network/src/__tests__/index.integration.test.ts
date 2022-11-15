@@ -11,14 +11,9 @@ import {
 } from "..";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import {
-    PageQueryRequest,
-    Results,
-    ResultWithSource,
-} from "@dao-xyz/peerbit-anysearch";
 import { Secp256k1PublicKey } from "@dao-xyz/peerbit-crypto";
-import { Wallet } from "@ethersproject/wallet";
 import { Identity } from "@dao-xyz/ipfs-log";
+import { Wallet } from "@ethersproject/wallet";
 import { createStore } from "@dao-xyz/peerbit-test-utils";
 import { AbstractLevel } from "abstract-level";
 import { fileURLToPath } from "url";
@@ -31,7 +26,11 @@ import {
 import Cache from "@dao-xyz/peerbit-cache";
 import { field, serialize, variant } from "@dao-xyz/borsh";
 import { Program } from "@dao-xyz/peerbit-program";
-import { Documents } from "@dao-xyz/peerbit-document";
+import {
+    Documents,
+    DocumentQueryRequest,
+    Results,
+} from "@dao-xyz/peerbit-document";
 import { v4 as uuid } from "uuid";
 const __filename = fileURLToPath(import.meta.url);
 
@@ -160,35 +159,19 @@ describe("index", () => {
             // Get relations one by one
             const trustingC = await getFromByTo.resolve(c, store.store);
             expect(trustingC).toHaveLength(1);
-            expect(
-                ((trustingC[0] as ResultWithSource).source as IdentityRelation)
-                    .id
-            ).toEqual(bc.id);
+            expect(trustingC[0].id).toEqual(bc.id);
 
             const bIsTrusting = await getToByFrom.resolve(b, store.store);
             expect(bIsTrusting).toHaveLength(1);
-            expect(
-                (
-                    (bIsTrusting[0] as ResultWithSource)
-                        .source as IdentityRelation
-                ).id
-            ).toEqual(bc.id);
+            expect(bIsTrusting[0].id).toEqual(bc.id);
 
             const trustingB = await getFromByTo.resolve(b, store.store);
             expect(trustingB).toHaveLength(1);
-            expect(
-                ((trustingB[0] as ResultWithSource).source as IdentityRelation)
-                    .id
-            ).toEqual(ab.id);
+            expect(trustingB[0].id).toEqual(ab.id);
 
             const aIsTrusting = await getToByFrom.resolve(a, store.store);
             expect(aIsTrusting).toHaveLength(1);
-            expect(
-                (
-                    (aIsTrusting[0] as ResultWithSource)
-                        .source as IdentityRelation
-                ).id
-            ).toEqual(ab.id);
+            expect(aIsTrusting[0].id).toEqual(ab.id);
 
             // Test generator
             const relationsFromGeneratorFromByTo: IdentityRelation[] = [];
@@ -239,10 +222,7 @@ describe("index", () => {
 
             let trustingB = await getFromByTo.resolve(b, store.store);
             expect(trustingB).toHaveLength(1);
-            expect(
-                ((trustingB[0] as ResultWithSource).source as IdentityRelation)
-                    .id
-            ).toEqual(ab.id);
+            expect(trustingB[0].id).toEqual(ab.id);
 
             await store.store.del(ab.id);
             trustingB = await getFromByTo.resolve(b, store.store);
@@ -291,13 +271,13 @@ describe("index", () => {
             await waitForPeers(
                 session.peers[2].ipfs,
                 [session.peers[0].id, session.peers[1].id],
-                l0b.trustGraph.index.search._query.queryTopic
+                l0b.trustGraph.index._query.queryTopic
             );
 
             // Try query with trusted
-            let responses: Results[] = [];
-            await l0b.trustGraph.index.search.query(
-                new PageQueryRequest({
+            let responses: Results<IdentityRelation>[] = [];
+            await l0b.trustGraph.index.query(
+                new DocumentQueryRequest({
                     queries: [],
                 }),
                 (response) => {
@@ -314,8 +294,8 @@ describe("index", () => {
 
             // Try query with untrusted
             let untrustedResponse: any = undefined;
-            await l0b.trustGraph.index.search.query(
-                new PageQueryRequest({
+            await l0b.trustGraph.index.query(
+                new DocumentQueryRequest({
                     queries: [],
                 }),
                 (response) => {

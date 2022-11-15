@@ -9,7 +9,6 @@ import {
 import { Access, AccessType } from "./access";
 import { Entry } from "@dao-xyz/ipfs-log";
 import { PublicSignKey, SignKey } from "@dao-xyz/peerbit-crypto";
-import { AnySearch } from "@dao-xyz/peerbit-anysearch";
 import { Program } from "@dao-xyz/peerbit-program";
 import { DQuery } from "@dao-xyz/peerbit-query";
 
@@ -37,9 +36,7 @@ export class IdentityAccessController extends Program {
             this.access = new Documents({
                 index: new DocumentIndex({
                     indexBy: "id",
-                    search: new AnySearch({
-                        query: new DQuery(),
-                    }),
+                    query: new DQuery(),
                 }),
             });
 

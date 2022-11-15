@@ -152,7 +152,10 @@ export class TrustedNetwork extends Program {
             canAppend: this.canAppend.bind(this),
             canRead: this.canRead.bind(this),
         }); // self referencing access controller
-        await this.logIndex.setup({ store: this.trustGraph.store });
+        await this.logIndex.setup({
+            store: this.trustGraph.store,
+            context: this,
+        });
     }
 
     async canAppend(
