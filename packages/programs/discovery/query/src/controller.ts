@@ -14,6 +14,7 @@ import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
 import { QueryRequestV0, QueryResponseV0 } from "./query.js";
 import { query, QueryOptions, respond } from "./io.js";
 import {
+    AbstractProgram,
     Address,
     ComposableProgram,
     Program,
@@ -23,6 +24,8 @@ import { IPFS } from "ipfs-core-types";
 import { Identity } from "@dao-xyz/ipfs-log";
 import pino from "pino";
 const logger = pino().child({ module: "anyearch" });
+
+export type SearchContext = (() => Address) | AbstractProgram | string;
 
 export const getDiscriminatorApproximation = (
     constructor: Constructor<any>
@@ -74,6 +77,7 @@ export type DQueryInitializationOptions<Q, R> = {
     queryType: Constructor<Q>;
     responseType: Constructor<R>;
     canRead?: CanRead;
+    context: SearchContext;
     responseHandler: ResponseHandler<Q, R>;
 };
 export type ResponseHandler<Q, R> = (
@@ -126,10 +130,12 @@ export class DQuery<Q, R> extends ComposableProgram {
 
     _subscribed = false;
     _onQueryMessageBinded: any = undefined;
-    _responseHandler: ResponseHandler<Q, R>;
+    _responseHandler: ResponseHandler<Q, (R | undefined) | R>;
     _queryType: Constructor<Q>;
     _responseType: Constructor<R>;
     _replicationTopic: string;
+    _context: SearchContext;
+
     canRead: CanRead;
 
     constructor() {
@@ -159,7 +165,7 @@ export class DQuery<Q, R> extends ComposableProgram {
                 });
             }
         }
-
+        this._context = options.context;
         this._responseHandler = options.responseHandler;
         this._queryType = options.queryType;
         this._responseType = options.responseType;
@@ -216,16 +222,28 @@ export class DQuery<Q, R> extends ComposableProgram {
                             this.canRead(key.signature?.publicKey),
                     }
                 );
+
+                if (query.context != undefined) {
+                    if (query.context != this.contextAddress) {
+                        logger.debug("Recieved a query for another context");
+                        return;
+                    }
+                }
+
                 const response = await this._responseHandler(
                     deserialize(query.query, this._queryType),
                     from
                 );
+
                 if (response) {
                     await respond(
                         this._ipfs,
                         this.queryTopic,
                         query,
-                        new QueryResponseV0({ response: serialize(response) }),
+                        new QueryResponseV0({
+                            response: serialize(response),
+                            context: this.contextAddress,
+                        }),
                         {
                             encryption: this._encryption,
                             signer: this._identity,
@@ -258,6 +276,7 @@ export class DQuery<Q, R> extends ComposableProgram {
             new QueryRequestV0({
                 query: serialize(queryRequest),
                 responseRecievers: options?.responseRecievers,
+                context: options?.context || this.contextAddress.toString(),
             }),
             (response, from) => {
                 responseHandler(
@@ -269,6 +288,14 @@ export class DQuery<Q, R> extends ComposableProgram {
         );
     }
 
+    get contextAddress(): string {
+        if (typeof this._context === "string") {
+            return this._context;
+        }
+        return this._context instanceof AbstractProgram
+            ? this._context.address.toString()
+            : this._context().toString();
+    }
     public get queryTopic(): string {
         if (!this.parentProgram.address) {
             throw new Error("Not initialized");

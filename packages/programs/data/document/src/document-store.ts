@@ -12,7 +12,6 @@ import {
     BORSH_ENCODING,
     CanAppend,
     Encoding,
-    EncryptionTemplateMaybeEncrypted,
     Entry,
     Log,
 } from "@dao-xyz/ipfs-log";
@@ -98,6 +97,7 @@ export class Documents<T extends BinaryPayload> extends ComposableProgram {
         await this._logIndex.setup({
             store: this.store,
             canRead: options.canRead || (() => Promise.resolve(true)),
+            context: this,
         });
         await this._index.setup({
             type: this._clazz,

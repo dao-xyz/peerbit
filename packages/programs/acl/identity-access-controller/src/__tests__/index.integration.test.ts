@@ -3,20 +3,15 @@ import { createStore, Session } from "@dao-xyz/peerbit-test-utils";
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
 import { waitFor } from "@dao-xyz/peerbit-time";
+
+import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import {
-    PageQueryRequest,
-    AnySearch,
+    Documents,
+    DocumentIndex,
+    DocumentQueryRequest,
     FieldStringMatchQuery,
     Results,
-} from "@dao-xyz/peerbit-anysearch";
-import {
-    AccessError,
-    Ed25519Keypair,
-    MaybeEncrypted,
-    SignatureWithKey,
-} from "@dao-xyz/peerbit-crypto";
-import { CustomBinaryPayload } from "@dao-xyz/peerbit-bpayload";
-import { Documents, DocumentIndex } from "@dao-xyz/peerbit-document";
+} from "@dao-xyz/peerbit-document";
 import type { CanAppend, Identity } from "@dao-xyz/ipfs-log";
 import { AbstractLevel } from "abstract-level";
 import { CachedValue, DefaultOptions } from "@dao-xyz/peerbit-store";
@@ -29,12 +24,11 @@ import { IdentityAccessController } from "../acl-db";
 import { v4 as uuid } from "uuid";
 
 @variant("document")
-class Document extends CustomBinaryPayload {
+class Document {
     @field({ type: "string" })
     id: string;
 
     constructor(props?: { id: string }) {
-        super();
         if (props) {
             this.id = props.id;
         }
@@ -67,9 +61,7 @@ class TestStore extends Program {
             this.store = new Documents({
                 index: new DocumentIndex({
                     indexBy: "id",
-                    search: new AnySearch({
-                        query: new DQuery(),
-                    }),
+                    query: new DQuery(),
                 }),
             });
             this.accessController = new IdentityAccessController({
@@ -403,10 +395,10 @@ describe("index", () => {
                 })
             );
 
-            const q = async (): Promise<Results> => {
-                let results: Results = undefined as any;
-                l0a.store.index.search.query(
-                    new PageQueryRequest({
+            const q = async (): Promise<Results<Document>> => {
+                let results: Results<Document> = undefined as any;
+                l0a.store.index.query(
+                    new DocumentQueryRequest({
                         queries: [
                             new FieldStringMatchQuery({
                                 key: "id",
@@ -495,9 +487,9 @@ describe("index", () => {
         await waitFor(() => l0a.accessController.access.index.size === 1);
         await waitFor(() => l0b.accessController.access.index.size === 1);
 
-        let results: Results = undefined as any;
-        l0a.accessController.access.index.search.query(
-            new PageQueryRequest({
+        let results: Results<Document> = undefined as any;
+        l0a.accessController.access.index.query(
+            new DocumentQueryRequest({
                 queries: [],
             }),
             (response) => {

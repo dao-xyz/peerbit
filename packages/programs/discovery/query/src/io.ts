@@ -29,6 +29,7 @@ export type QueryOptions = {
     maxAggregationTime?: number;
     isTrusted?: (publicKey: MaybeSigned<any>) => Promise<boolean>;
     responseRecievers?: X25519PublicKey[];
+    context?: string;
 };
 
 export const query = async (

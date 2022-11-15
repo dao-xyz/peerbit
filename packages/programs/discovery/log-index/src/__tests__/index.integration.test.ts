@@ -1,4 +1,8 @@
-import { createStore, Session } from "@dao-xyz/peerbit-test-utils";
+import {
+    createStore,
+    Session,
+    waitForPeers,
+} from "@dao-xyz/peerbit-test-utils";
 import {
     Ed25519Keypair,
     Ed25519PublicKey,
@@ -53,6 +57,7 @@ describe("query", () => {
             await logIndex.setup({
                 store,
                 queryTopic: { queryRegion: queryTopic },
+                context: "context",
             });
             logIndices.push(logIndex);
             const encryption = {
@@ -105,7 +110,12 @@ describe("query", () => {
                 }
             );
         }
-        await delay(3000); // add delay because pubsub subscribe is not synchronous (for some reason, and it is not possible to check)
+        await waitForPeers(
+            session.peers[1].ipfs,
+            [session.peers[0].id],
+            queryTopic
+        );
+
         expect(logIndices[0].query.queryTopic).toEqual(
             logIndices[1].query.queryTopic
         );

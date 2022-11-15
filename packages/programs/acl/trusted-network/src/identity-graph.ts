@@ -3,17 +3,13 @@ import {
     Documents,
     DocumentIndex,
     IndexedValue,
+    DocumentQueryRequest,
+    MemoryCompare,
+    MemoryCompareQuery,
+    ResultWithSource,
 } from "@dao-xyz/peerbit-document";
 import { Key, PlainKey, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
-import {
-    PageQueryRequest,
-    AnySearch,
-    MemoryCompare,
-    MemoryCompareQuery,
-    Result,
-    ResultWithSource,
-} from "@dao-xyz/peerbit-anysearch";
 import { createHash } from "crypto";
 import {
     joinUint8Arrays,
@@ -25,7 +21,7 @@ export type RelationResolver = {
     resolve: (
         key: PublicSignKey,
         db: Documents<IdentityRelation>
-    ) => Promise<Result[]>;
+    ) => Promise<IdentityRelation[]>;
     next: (relation: IdentityRelation) => PublicSignKey;
 };
 export const PUBLIC_KEY_WIDTH = 72; // bytes reserved
@@ -35,7 +31,7 @@ export const getFromByTo: RelationResolver = {
     resolve: async (to: PublicSignKey, db: Documents<IdentityRelation>) => {
         const ser = serialize(to);
         return await db.index.queryHandler(
-            new PageQueryRequest({
+            new DocumentQueryRequest({
                 queries: [
                     new MemoryCompareQuery({
                         compares: [
@@ -56,7 +52,7 @@ export const getToByFrom: RelationResolver = {
     resolve: async (from: PublicSignKey, db: Documents<IdentityRelation>) => {
         const ser = serialize(from);
         return await db.index.queryHandler(
-            new PageQueryRequest({
+            new DocumentQueryRequest({
                 queries: [
                     new MemoryCompareQuery({
                         compares: [
@@ -85,16 +81,14 @@ export async function* getPathGenerator(
         for (const value of iter) {
             const results = await resolver.resolve(value, db);
             for (const result of results) {
-                if (result instanceof ResultWithSource) {
-                    if (result.source instanceof IdentityRelation) {
-                        if (visited.has(result.source.id)) {
-                            return;
-                        }
-                        visited.add(result.source.id);
-                        yield result.source;
-
-                        newIter.push(resolver.next(result.source));
+                if (result instanceof IdentityRelation) {
+                    if (visited.has(result.id)) {
+                        return;
                     }
+                    visited.add(result.id);
+                    yield result;
+
+                    newIter.push(resolver.next(result));
                 }
             }
         }
@@ -202,8 +196,6 @@ export const createIdentityGraphStore = (props: {
     new Documents<IdentityRelation>({
         index: new DocumentIndex({
             indexBy: "id",
-            search: new AnySearch({
-                query: new DQuery(),
-            }),
+            query: new DQuery(),
         }),
     });

@@ -20,7 +20,6 @@
             "packages/programs/data/string",
             "packages/programs/discovery/query",
             "packages/programs/discovery/network-discovery",
-            "packages/programs/discovery/any-search",
             "packages/programs/discovery/log-index",
             "packages/store",
             "packages/utils/io-utils",

@@ -120,7 +120,7 @@ console.log(await document.string.toString({remote: {maxAggregationTime: 3000 }}
 ```
 
 ### Social media app
-A (under work) [social media application is developed by dao.xyz](https://github.com/dao-xyz/dao.xyz). Contains a frontend, CLI (for managing nodes) and frontend.
+A (under work) [social media application is developed by dao.xyz](https://github.com/dao-xyz/dao.xyz).
 
 
 Below are descriptions of some modules

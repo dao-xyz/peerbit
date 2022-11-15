@@ -136,8 +136,6 @@ async function rm(ipfs: IPFS, hash: CID | string) {
             throw new Error(
                 `Failed to remove block ${result.cid} due to ${result.error.message}`
             );
-        } else {
-            console.log(`Removed block ${result.cid}`);
         }
     }
 }
