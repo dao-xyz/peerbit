@@ -1,7 +1,6 @@
 import { field, option, serialize, variant } from "@dao-xyz/borsh";
 import { Documents } from "../document-store";
 import {
-    Compare,
     FieldBigIntCompareQuery,
     FieldStringMatchQuery,
     MemoryCompareQuery,
@@ -31,6 +30,7 @@ import {
     LogEntryEncryptionQuery,
     LogQueryRequest,
 } from "@dao-xyz/peerbit-logindex";
+import { Compare } from "@dao-xyz/peerbit-query";
 
 const __filename = fileURLToPath(import.meta.url);
 

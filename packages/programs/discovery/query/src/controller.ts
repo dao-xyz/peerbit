@@ -4,14 +4,13 @@ import {
     deserialize,
     field,
     getSchemasBottomUp,
-    option,
     serialize,
     variant,
 } from "@dao-xyz/borsh";
 import type { Message } from "@libp2p/interface-pubsub";
 import { SignKey } from "@dao-xyz/peerbit-crypto";
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
-import { QueryRequestV0, QueryResponseV0 } from "./query.js";
+import { QueryRequestV0, QueryResponseV0, U64Compare } from "./query.js";
 import { query, QueryOptions, respond } from "./io.js";
 import {
     AbstractProgram,
@@ -80,9 +79,15 @@ export type DQueryInitializationOptions<Q, R> = {
     context: SearchContext;
     responseHandler: ResponseHandler<Q, R>;
 };
+export type QueryContext = {
+    from?: SignKey;
+    address: string;
+    created?: U64Compare[];
+    modified?: U64Compare[];
+};
 export type ResponseHandler<Q, R> = (
     query: Q,
-    from?: SignKey
+    context: QueryContext
 ) => Promise<R | undefined> | R | undefined;
 
 export abstract class QueryTopic {
@@ -125,8 +130,8 @@ export class QueryAddressSuffix extends QueryTopic {
 @variant("dquery")
 export class DQuery<Q, R> extends ComposableProgram {
     queryRegion?: QueryTopic;
-
     subscribeToQueries = true;
+    canRead: CanRead;
 
     _subscribed = false;
     _onQueryMessageBinded: any = undefined;
@@ -135,12 +140,6 @@ export class DQuery<Q, R> extends ComposableProgram {
     _responseType: Constructor<R>;
     _replicationTopic: string;
     _context: SearchContext;
-
-    canRead: CanRead;
-
-    constructor() {
-        super();
-    }
 
     public async setup(options: DQueryInitializationOptions<Q, R>) {
         if (options.queryTopic) {
@@ -232,7 +231,12 @@ export class DQuery<Q, R> extends ComposableProgram {
 
                 const response = await this._responseHandler(
                     deserialize(query.query, this._queryType),
-                    from
+                    {
+                        address: this.contextAddress,
+                        created: query.created,
+                        modified: query.modified,
+                        from,
+                    }
                 );
 
                 if (response) {
@@ -277,6 +281,8 @@ export class DQuery<Q, R> extends ComposableProgram {
                 query: serialize(queryRequest),
                 responseRecievers: options?.responseRecievers,
                 context: options?.context || this.contextAddress.toString(),
+                created: options?.createdAt,
+                modified: options?.modifiedAt,
             }),
             (response, from) => {
                 responseHandler(

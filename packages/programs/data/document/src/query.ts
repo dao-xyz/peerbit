@@ -7,6 +7,7 @@ import {
     vec,
 } from "@dao-xyz/borsh";
 import { UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
+import { Compare } from "@dao-xyz/peerbit-query";
 
 /// ----- QUERY -----
 
@@ -97,13 +98,6 @@ export class FieldStringMatchQuery extends StateFieldQuery {
             this.value = props.value;
         }
     }
-}
-export enum Compare {
-    Equal = 0,
-    Greater = 1,
-    GreaterOrEqual = 2,
-    Less = 3,
-    LessOrEqual = 4,
 }
 
 @variant(3)

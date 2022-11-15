@@ -15,7 +15,6 @@ import {
 } from "@dao-xyz/peerbit-borsh-utils";
 import { ComposableProgram, Program } from "@dao-xyz/peerbit-program";
 import {
-    Compare,
     FieldBigIntCompareQuery,
     FieldByteMatchQuery,
     FieldStringMatchQuery,
@@ -27,7 +26,13 @@ import {
 } from "./query.js";
 import { AccessError, SignKey } from "@dao-xyz/peerbit-crypto";
 import { BinaryPayload } from "@dao-xyz/peerbit-bpayload";
-import { CanRead, DQuery, QueryOptions } from "@dao-xyz/peerbit-query";
+import {
+    CanRead,
+    compare,
+    DQuery,
+    QueryContext,
+    QueryOptions,
+} from "@dao-xyz/peerbit-query";
 import pino from "pino";
 import { Results } from "./query";
 
@@ -138,8 +143,8 @@ export class DocumentIndex<T extends BinaryPayload> extends ComposableProgram {
         await this._query.setup({
             context: this,
             canRead: properties.canRead,
-            responseHandler: async (query) => {
-                const results = await this.queryHandler(query);
+            responseHandler: async (query, context) => {
+                const results = await this.queryHandler(query, context);
                 if (results.length > 0) {
                     return new Results({
                         results: results.map(
@@ -250,7 +255,10 @@ export class DocumentIndex<T extends BinaryPayload> extends ComposableProgram {
         return results;
     }
 
-    queryHandler(query: DocumentQueryRequest): Promise<T[]> {
+    queryHandler(
+        query: DocumentQueryRequest,
+        context?: QueryContext
+    ): Promise<T[]> {
         const queries: Query[] = query.queries;
         let results = this._queryDocuments((doc) =>
             queries?.length > 0
@@ -284,21 +292,7 @@ export class DocumentIndex<T extends BinaryPayload> extends ComposableProgram {
                                       return false;
                                   }
 
-                                  switch (f.compare) {
-                                      case Compare.Equal:
-                                          return value == f.value; // == because with want bigint == number at some cases
-                                      case Compare.Greater:
-                                          return value > f.value;
-                                      case Compare.GreaterOrEqual:
-                                          return value >= f.value;
-                                      case Compare.Less:
-                                          return value < f.value;
-                                      case Compare.LessOrEqual:
-                                          return value <= f.value;
-                                      default:
-                                          console.warn("Unexpected compare");
-                                          return false;
-                                  }
+                                  return compare(value, f.compare, f.value);
                               }
                           } else if (f instanceof MemoryCompareQuery) {
                               const operation =
@@ -349,16 +343,7 @@ export class DocumentIndex<T extends BinaryPayload> extends ComposableProgram {
         if (query.size) {
             results = results.slice(0, Number(query.size));
         }
-        /* return Promise.resolve(
-            new Results({
-                results: results.map(
-                    (r) =>
-                        new ResultWithSource({
-                            source: serialize(r),
-                        })
-                ),
-            })
-        ); */
+
         return Promise.resolve(results);
     }
     public query(
