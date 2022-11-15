@@ -43,7 +43,7 @@ The goal of this project is to create a **cheaper** and **more private** way of 
 - 🚧 Documentation
 - 🚧 CLI for non browser nodes (SSL setup and network management)
 - 🚧 Benchmarks
-- Easy WebRTC setup for device to device networks
+- Easy Webtransport/WebRTC setup for device to device networks
 - Performant indexation capabilities with WASM search modules
 - Improved sharding algorithm that respects device capabilities
 - E2EE forward secrecy
