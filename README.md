@@ -39,13 +39,14 @@ The goal of this project is to create a **cheaper** and **more private** way of 
 - ✅ Permissioned content based sharding 
 - ✅ E2EE (no forward secrecy)
 - ✅ Search protocol
+- 🚧 Physical time with Hybrid Logical Clock
 - 🚧 Documentation
 - 🚧 CLI for non browser nodes (SSL setup and network management)
 - 🚧 Benchmarks
-- Easy WebRTC setup for device to device networks
+- Easy Webtransport/WebRTC setup for device to device networks
 - Performant indexation capabilities with WASM search modules
 - Improved sharding algorithm that respects device capabilities
-- E2EE forward secrecy
+- E2EE forward secrecy (or alternative security measures)
 - ~Trustless hosting 
 
 
