@@ -178,9 +178,6 @@ Object.keys(testAPIs).forEach((API) => {
                 }
             );
 
-            /*  await waitFor(() => orbitdb1._directConnections.size === 1);
-       await waitFor(() => orbitdb2._directConnections.size === 1); */
-
             const entryCount = 100;
             const entryArr: number[] = [];
 

@@ -8,14 +8,12 @@ import {
     LogOptions,
     Identity,
     max,
-    min,
     CanAppend,
     JSON_ENCODING,
 } from "@dao-xyz/ipfs-log";
 import { Encoding, EncryptionTemplateMaybeEncrypted } from "@dao-xyz/ipfs-log";
 import { Entry } from "@dao-xyz/ipfs-log";
 import { Replicator } from "./replicator.js";
-import { ReplicationInfo } from "./replication-info.js";
 import io from "@dao-xyz/peerbit-io-utils";
 import Cache from "@dao-xyz/peerbit-cache";
 import { variant, field, vec, Constructor } from "@dao-xyz/borsh";
@@ -27,7 +25,6 @@ import {
     PublicKeyEncryptionResolver,
 } from "@dao-xyz/peerbit-crypto";
 import { joinUint8Arrays } from "@dao-xyz/peerbit-borsh-utils";
-
 import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { EntryWithRefs } from "./entry-with-refs.js";
 import { waitForAsync } from "@dao-xyz/peerbit-time";
@@ -294,27 +291,8 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
                     );
                     return; // closed
                 }
-                /*   const previousProgress = this.replicationStatus.progress;
-                  const previousMax = this.replicationStatus.max;
-  
-                  // TODO below is not nice, do we really need replication status?
-                  try {
-                      this._recalculateReplicationStatus(
-                          log.heads, entry
-                      );
-                  } catch (error) {
-                      this._rresetReplicationStatus();
-                  }
-  
-                  if (
-                      log.length + 1 > this.replicationStatus.progress ||
-                      this.replicationStatus.progress > previousProgress ||
-                      this.replicationStatus.max > previousMax
-                  ) */
-                {
-                    this._options.onReplicationProgress &&
-                        this._options.onReplicationProgress(this, entry);
-                }
+                this._options.onReplicationProgress &&
+                    this._options.onReplicationProgress(this, entry);
             };
 
             // Create the replicator
@@ -595,6 +573,7 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
                     );
                     head.hash = headHash;
                     if (hash !== head.hash) {
+                        logger.error("Head hash didn't match the contents");
                         throw new Error("Head hash didn't match the contents");
                     }
                 })
@@ -829,45 +808,8 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
         return this._queue.add(addOperation.bind(this));
     }
 
-    /* Replication Status state updates */
-    /*  _recalculateReplicationProgress(entry: Entry<any> | bigint) {
-     this._replicationStatus.progress = max(
-           min(
-               this._replicationStatus.max - (typeof entry === 'bigint' ? entry : (entry.coordinate.maxChainLength - 1n)),
-               this._replicationStatus.max
-           ),
-           BigInt(this._oplog ? this._oplog.length : 0)
-       ); 
-   }*/
-
-    /*   _recalculateReplicationMax(value: bigint | number) {
-       const bigMax = BigInt(value);
-     this._replicationStatus.max = max(
-            this.replicationStatus.max,
-            BigInt(this._oplog ? this._oplog.length : 0),
-            bigMax || 0n
-        )
-   }
-; */
-    /*    _recalculateReplicationStatus(heads: Entry<any>[], current: Entry<any> | bigint) {
-           this._recalculateReplicationMax(max(heads.map(head => head.coordinate.maxChainLength))[0]);
-           this._recalculateReplicationProgress(current);
-       } */
-
-    /*  _rresetReplicationStatus() {
-      this._recalculateReplicationMax(0);
-    this._replicationStatus.progress = 0n;
-  } */
-
     /* Loading progress callback */
     _onLoadProgress(entry: Entry<any>) {
-        /*    if (this._oplog) {
-               this._recalculateReplicationStatus(this._oplog.heads, entry);
-           }
-           else {
-               this._recalculateReplicationProgress(entry);
-   
-           } */
         this._options.onLoadProgress &&
             this._options.onLoadProgress(this, entry);
     }
