@@ -344,7 +344,7 @@ export class Keystore {
         await this.waitForOpen();
         this.assertOpen();
 
-        let path: string;
+        let path: string | undefined = undefined;
         if (typeof id === "string" && isPath(id)) {
             path = id;
             if (group !== undefined) {
@@ -356,26 +356,36 @@ export class Keystore {
             group = getGroupKey(group || DEFAULT_KEY_GROUP);
             path = getPath(group, getIdKey(id));
         }
-        const cachedKey = this._cache.get(path);
 
+        const cachedKey = path ? this._cache.get(path) : undefined;
         let loadedKey: KeyWithMeta<T>;
         if (cachedKey) loadedKey = cachedKey;
         else {
             let buffer: Uint8Array;
             try {
-                buffer =
-                    id instanceof PublicSignKey
-                        ? await this.keyStore.get(id.hashCode(), {
-                              valueEncoding: "view",
-                          })
-                        : await this.groupStore.get(path, {
-                              valueEncoding: "view",
-                          });
+                if (
+                    id instanceof PublicSignKey ||
+                    id instanceof PublicKeyEncryptionKey
+                ) {
+                    buffer = await this.keyStore.get(id.hashCode(), {
+                        valueEncoding: "view",
+                    });
+                } else if (path) {
+                    buffer = await this.groupStore.get(path, {
+                        valueEncoding: "view",
+                    });
+                } else {
+                    return; // not found
+                }
             } catch (e: any) {
                 // not found
                 return;
             }
             loadedKey = deserialize(buffer, KeyWithMeta) as KeyWithMeta<T>;
+            path = getPath(
+                loadedKey.group,
+                getIdKey(loadedKey.keypair.publicKey)
+            );
         }
 
         if (!loadedKey) {
@@ -383,7 +393,7 @@ export class Keystore {
         }
 
         if (!cachedKey) {
-            this._cache.set(path, loadedKey);
+            this._cache.set(path!, loadedKey);
         }
 
         return loadedKey; // TODO fix types, we make assumptions here

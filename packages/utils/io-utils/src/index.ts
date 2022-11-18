@@ -1,7 +1,9 @@
+// TODO make imports dynamic/only load what is needed for the method below
 import * as Block from "multiformats/block";
 import { CID } from "multiformats/cid";
 import * as dagPb from "@ipld/dag-pb";
 import * as dagCbor from "@ipld/dag-cbor";
+import * as raw from "multiformats/codecs/raw";
 import { sha256 as hasher } from "multiformats/hashes/sha2";
 import { base58btc } from "multiformats/bases/base58";
 import { IPFS } from "ipfs-core-types";
@@ -42,11 +44,10 @@ const stringifyCid = (cid: any, options: any = {}): any => {
 const codecCodes = {
     [dagPb.code]: dagPb,
     [dagCbor.code]: dagCbor,
+    [raw.code]: raw,
 };
 const codecMap = {
-    // staying backward compatible
-    // old writeObj function was never raw codec; defaulted to cbor via ipfs.dag
-    raw: dagCbor,
+    raw: raw,
     "dag-pb": dagPb,
     "dag-cbor": dagCbor,
 };
@@ -59,7 +60,6 @@ async function read(
     cid = cidifyString(stringifyCid(cid));
 
     const codec = (codecCodes as any)[cid.code];
-    if (!codec) throw unsupportedCodecError();
 
     const bytes = await ipfs.block.get(cid, { timeout: options.timeout });
     const block = await Block.decode({ bytes, codec, hasher });
@@ -77,6 +77,10 @@ async function read(
         });
         return value;
     }
+    if (block.cid.code === raw.code) {
+        return block.value;
+    }
+    throw new Error("Unsupported");
 }
 
 async function write(
@@ -87,11 +91,9 @@ async function write(
         base?: any;
         pin?: boolean;
         timeout?: number;
-        format?: string;
         links?: string[];
     } = {}
 ) {
-    if (options.format === "dag-pb") format = options.format;
     const codec = (codecMap as any)[format];
     if (!codec) throw unsupportedCodecError();
 

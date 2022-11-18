@@ -7,13 +7,13 @@ import {
     vec,
 } from "@dao-xyz/borsh";
 import { asString, Hashable } from "./utils";
-import { BORSH_ENCODING, Encoding, Entry, Payload } from "@dao-xyz/ipfs-log";
+import { BORSH_ENCODING, Encoding, Entry } from "@dao-xyz/ipfs-log";
 import { Log } from "@dao-xyz/ipfs-log";
 import {
     arraysEqual,
     UInt8ArraySerializer,
 } from "@dao-xyz/peerbit-borsh-utils";
-import { ComposableProgram, Program } from "@dao-xyz/peerbit-program";
+import { ComposableProgram } from "@dao-xyz/peerbit-program";
 import {
     FieldBigIntCompareQuery,
     FieldByteMatchQuery,
@@ -25,7 +25,6 @@ import {
     StateFieldQuery,
 } from "./query.js";
 import { AccessError, SignKey } from "@dao-xyz/peerbit-crypto";
-import { BinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import {
     CanRead,
     compare,
@@ -115,7 +114,7 @@ export interface IndexedValue<T> {
 }
 
 @variant("documents_index")
-export class DocumentIndex<T extends BinaryPayload> extends ComposableProgram {
+export class DocumentIndex<T> extends ComposableProgram {
     @field({ type: DQuery })
     _query: DQuery<DocumentQueryRequest, Results<T>>;
 

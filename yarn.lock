@@ -4377,6 +4377,11 @@ browser-level@^1.0.1:
     module-error "^1.0.2"
     run-parallel-limit "^1.1.0"
 
+browser-process-hrtime@^1.0.0:
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/browser-process-hrtime/-/browser-process-hrtime-1.0.0.tgz#3c9b4b7d782c8121e56f10106d84c0d0ffc94626"
+  integrity sha512-9o5UecI3GhkpM6DrXr69PblIuWxPKk9Y0jHBRhdocZ2y7YECBFCsHm79Pr3OyR2AvjhDkabFJaDJMYRazHgsow==
+
 browser-readablestream-to-it@^2.0.0:
   version "2.0.0"
   resolved "https://registry.yarnpkg.com/browser-readablestream-to-it/-/browser-readablestream-to-it-2.0.0.tgz#9011df0e2be2ab4b83a108e039532e132d437962"
@@ -9726,6 +9731,11 @@ longbits@^1.1.0:
   dependencies:
     byte-access "^1.0.1"
     uint8arraylist "^2.0.0"
+
+longfn@^1.3.1:
+  version "1.3.1"
+  resolved "https://registry.yarnpkg.com/longfn/-/longfn-1.3.1.tgz#1655fef1034bcb9f7b7911a4afb493d4acc8751d"
+  integrity sha512-sFNpfHBvO+mK6bSMr//CGeeXCJX4nKaBJ9M7QsJkzZT8ez+z12lkzRlyZibjdtjLHlfYPv9rmwHGGuwJOglFFQ==
 
 lower-case@^2.0.2:
   version "2.0.2"

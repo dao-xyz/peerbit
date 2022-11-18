@@ -555,7 +555,8 @@ describe("index", () => {
                 const entry = await stores[1].docs.put(doc, {
                     reciever: {
                         payload: [someKey],
-                        clock: undefined,
+                        coordinate: undefined,
+                        next: undefined,
                         signature: undefined,
                     },
                 });
@@ -604,7 +605,8 @@ describe("index", () => {
                         queries: [
                             new LogEntryEncryptionQuery({
                                 payload: [someKey],
-                                clock: [],
+                                coordinate: [],
+                                next: [],
                                 signature: [],
                             }),
                         ],

@@ -138,7 +138,8 @@ describe(`orbit-db - Write-only`, function () {
 
         await db1.add("hello", {
             reciever: {
-                clock: encryptionKey.keypair.publicKey,
+                next: encryptionKey.keypair.publicKey,
+                coordinate: encryptionKey.keypair.publicKey,
                 payload: encryptionKey.keypair.publicKey,
                 signature: encryptionKey.keypair.publicKey,
             },

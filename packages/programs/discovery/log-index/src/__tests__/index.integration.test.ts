@@ -159,7 +159,8 @@ describe("query", () => {
                             logIndices[2].store.identity
                                 .publicKey as Ed25519PublicKey
                         ),
-                        clock: undefined,
+                        next: undefined,
+                        coordinate: undefined,
                         signature: undefined,
                     },
                 });
@@ -186,7 +187,8 @@ describe("query", () => {
                                         .publicKey as Ed25519PublicKey
                                 ),
                             ],
-                            clock: [],
+                            next: [],
+                            coordinate: [],
                             signature: [],
                         }),
                     ],

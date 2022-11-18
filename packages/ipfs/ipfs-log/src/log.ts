@@ -14,17 +14,22 @@ import { findUniques } from "./find-uniques.js";
 import {
     EncryptionTemplateMaybeEncrypted,
     Entry,
-    maxClockTimeReducer,
     Payload,
     CanAppend,
 } from "./entry.js";
-import { LamportClock as Clock, LamportClock } from "./lamport-clock.js";
+import {
+    HLC,
+    LamportClock as Clock,
+    LamportClock,
+    Timestamp,
+} from "./clock.js";
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { serialize } from "@dao-xyz/borsh";
 
 import { Encoding, JSON_ENCODING } from "./encoding.js";
 import { Identity } from "./identity.js";
 import { logger as parentLogger } from "./logger.js";
+import { HeadsIndex } from "./heads.js";
 
 const logger = parentLogger.child({ module: "ipfs-log" });
 
@@ -79,7 +84,7 @@ export class Log<T> extends GSet {
 
     // Add entries to the internal cache
     _entryIndex: EntryIndex<T>;
-    _headsIndex: { [key: string]: Entry<T> };
+    _headsIndex: HeadsIndex<T>;
 
     // Index of all next pointers in this log
     _nextsIndex: { [key: string]: Set<string> };
@@ -93,6 +98,7 @@ export class Log<T> extends GSet {
     _prune?: PruneOptions;
     _encryption?: PublicKeyEncryptionResolver;
     _encoding: Encoding<T>;
+    _hlc: HLC;
 
     joinConcurrency: number;
 
@@ -151,11 +157,17 @@ export class Log<T> extends GSet {
 
         // Set heads if not passed as an argument
         heads = heads || Log.findHeads(entries);
-        this._headsIndex = heads.reduce(uniqueEntriesReducer, {});
+        this._headsIndex = new HeadsIndex({
+            sortFn: this._sortFn,
+            entries: heads.reduce(uniqueEntriesReducer, {}),
+        });
 
         // Index of all next pointers in this log
         this._nextsIndex = {};
         this._nextsIndexToHead = {};
+
+        // Clock
+        this._hlc = new HLC();
 
         const addToNextsIndex = (e: Entry<T>) => {
             e.next.forEach((a) => {
@@ -206,7 +218,7 @@ export class Log<T> extends GSet {
      * @returns {Array<Entry<T>>}
      */
     get heads(): Entry<T>[] {
-        return Object.values(this._headsIndex).sort(this._sortFn).reverse();
+        return this._headsIndex.heads;
     }
 
     /**
@@ -378,6 +390,7 @@ export class Log<T> extends GSet {
             identity?: Identity;
             reciever?: EncryptionTemplateMaybeEncrypted;
             onGidsShadowed?: (gids: string[]) => void;
+            timestamp?: Timestamp;
         } = { pin: false }
     ) {
         if (options.reciever && !this._encryption) {
@@ -404,6 +417,7 @@ export class Log<T> extends GSet {
         const currentHeads: Entry<T>[] = Object.values(
             this.heads.reverse().reduce(uniqueEntriesReducer, {})
         ); // TODO this invokes a double reverse
+
         const nexts: Entry<any>[] = options.nexts || currentHeads;
 
         // Some heads might not even be referenced by the refs, this will be merged into the headsIndex so we dont forget them
@@ -412,14 +426,14 @@ export class Log<T> extends GSet {
             : []; // TODO improve performance
 
         // Calculate max time for log/graph
-        const newTime =
-            nexts?.length > 0
-                ? this.heads.concat(nexts).reduce(maxClockTimeReducer, 0n) + 1n
-                : 0n; // this.getHeadsFromHashes(nexts.map(n => n.hash)).reduce(maxClockTimeReducer, 0n)
-        const clock = new Clock(
-            new Uint8Array(serialize(this._identity.publicKey)),
-            newTime
-        ); // TODO privacy leak?
+        /*  const newTime = ; */
+        /*    nexts?.length > 0
+               ? this.heads.concat(nexts).reduce(maxClockTimeReducer, 0n) + 1n
+               : 0n; */
+        const clock = new Clock({
+            id: new Uint8Array(serialize(this._identity.publicKey)),
+            timestamp: options.timestamp || this._hlc.now(),
+        }); // TODO privacy leak?
 
         let gidsInHeds =
             options.onGidsShadowed && new Set(this.heads.map((h) => h.gid)); // could potentially be faster if we first groupBy
@@ -456,13 +470,9 @@ export class Log<T> extends GSet {
             }
             this._nextsIndex[e.hash].add(entry.hash);
         });
-        this._headsIndex = {};
-        this._headsIndex[entry.hash] = entry;
-        if (keepHeads) {
-            keepHeads.forEach((head) => {
-                this._headsIndex[head.hash] = head;
-            });
-        }
+
+        keepHeads.push(entry);
+        this._headsIndex.reset(keepHeads);
 
         // Update the length
         this._length++;
@@ -593,7 +603,6 @@ export class Log<T> extends GSet {
         const newItems = await Log.difference(log, this);
         /* let prevPeers = undefined; */
         for (const e of newItems.values()) {
-            e.init({ encryption: this._encryption, encoding: this._encoding });
             if (options?.verifySignatures) {
                 if (!(await e.verifySignature())) {
                     throw new Error(
@@ -618,6 +627,9 @@ export class Log<T> extends GSet {
                 }
                 this._nextsIndex[a].add(e.hash);
             });
+
+            const clock = await e.getClock();
+            this._hlc.update(clock.timestamp);
         }
 
         //    this._entryIndex.add(newItems)
@@ -629,14 +641,12 @@ export class Log<T> extends GSet {
         const notReferencedByNewItems = (e: Entry<any>) =>
             !nextsFromNewItems.find((a) => a === e.hash);
         const notInCurrentNexts = (e: Entry<any>) => !this._nextsIndex[e.hash];
-        const mergedHeads = Log.findHeads(
-            Object.values(Object.assign({}, this._headsIndex, log._headsIndex))
-        )
+        const mergedHeads = Log.findHeads([this, log])
             .filter(notReferencedByNewItems)
             .filter(notInCurrentNexts)
             .reduce(uniqueEntriesReducer, {});
 
-        this._headsIndex = mergedHeads;
+        this._headsIndex.reset(mergedHeads);
 
         if (typeof options?.size === "number") {
             this.prune(options.size);
@@ -713,7 +723,9 @@ export class Log<T> extends GSet {
         let tmp = this.values;
         tmp = tmp.slice(-size);
         this._entryIndex = new EntryIndex(tmp.reduce(uniqueEntriesReducer, {}));
-        this._headsIndex = Log.findHeads(tmp).reduce(uniqueEntriesReducer, {});
+        this._headsIndex.reset(
+            Log.findHeads(tmp).reduce(uniqueEntriesReducer, {})
+        );
         this._length = this._entryIndex.length;
     }
 
@@ -728,7 +740,7 @@ export class Log<T> extends GSet {
 
             this._entryIndex.delete(next.hash);
             delete this._nextsIndexToHead[next.hash];
-            delete this._headsIndex[next.hash];
+            this._headsIndex.del(next.hash);
             delete this._nextsIndex[next.hash];
             next.next.forEach((n) => {
                 const value = this.get(n);
@@ -782,7 +794,10 @@ export class Log<T> extends GSet {
      * └─one
      *   └─three
      */
-    toString(payloadMapper?: (payload: Payload<T>) => string) {
+    toString(
+        payloadMapper: (payload: Payload<T>) => string = (payload) =>
+            (payload.getValue() as any).toString()
+    ) {
         return this.values
             .slice()
             .reverse()
@@ -1001,7 +1016,18 @@ export class Log<T> extends GSet {
      * @param {Array<Entry<T>>} entries Entries to search heads from
      * @returns {Array<Entry<T>>}
      */
-    static findHeads<T>(entries: Entry<T>[]) {
+    static findHeads<T>(entriesOrLogs: (Entry<T> | Log<T>)[]) {
+        const entries: Entry<T>[] = [];
+        entriesOrLogs.forEach((entryOrLog) => {
+            if (entryOrLog instanceof Entry) {
+                entries.push(entryOrLog);
+            } else {
+                entryOrLog.heads.forEach((head) => {
+                    entries.push(head);
+                });
+            }
+        });
+
         const indexReducer = (
             res: { [key: string]: string },
             entry: Entry<any>,
@@ -1013,10 +1039,10 @@ export class Log<T> extends GSet {
         };
 
         const items = entries.reduce(indexReducer, {});
-
         const exists = (e: Entry<T>) => items[e.hash] === undefined;
         const compareIds = (a: Entry<T>, b: Entry<T>) =>
-            Clock.compare(a.clock, b.clock);
+            Clock.compare(a.coordinate.clock, b.coordinate.clock);
+
         return entries.filter(exists).sort(compareIds);
     }
 
@@ -1101,7 +1127,7 @@ export class Log<T> extends GSet {
         a: Log<T>,
         b: Log<T>
     ): Promise<Map<string, Entry<T>>> {
-        const stack: string[] = Object.keys(a._headsIndex);
+        const stack: string[] = [...a._headsIndex._index.keys()];
         const traversed: { [key: string]: boolean } = {};
         const res: Map<string, Entry<T>> = new Map();
 
@@ -1122,7 +1148,13 @@ export class Log<T> extends GSet {
                 // TODO do we need to do som GID checks?
                 res.set(entry.hash, entry);
                 traversed[entry.hash] = true;
-                entry.next.forEach(pushToStack);
+
+                // TODO init below is kind of flaky to do this here, but we dont want to iterate over all entries before the difference method is invoked in the join log method
+                entry.init({
+                    encryption: b._encryption,
+                    encoding: b._encoding,
+                });
+                (await entry.getNext()).forEach(pushToStack);
             }
         }
         return res;

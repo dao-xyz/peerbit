@@ -1,9 +1,7 @@
-import assert from "assert";
-
 import { default as Cache } from "@dao-xyz/peerbit-cache";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Store, DefaultOptions } from "../store.js";
-import { Entry, JSON_ENCODING } from "@dao-xyz/ipfs-log";
+import { Entry } from "@dao-xyz/ipfs-log";
 import { SimpleIndex } from "./utils.js";
 import { jest } from "@jest/globals";
 
@@ -88,7 +86,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             expect(snapshot[0].path.length).toEqual(46);
             expect(snapshot[0].cid.toString().length).toEqual(46);
             expect(snapshot[0].path).toEqual(snapshot[0].cid.toString());
-            assert.strictEqual(snapshot[0].size > writes * 200, true);
+            expect(snapshot[0].size > writes * 200).toEqual(true);
         });
 
         it("Successfully loads a saved snapshot", async () => {
@@ -103,10 +101,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
             expect(index._index.length).toEqual(10);
 
             for (let i = 0; i < writes; i++) {
-                assert.strictEqual(
-                    (index._index[i] as Entry<any>).payload.getValue().step,
-                    i
-                );
+                expect(
+                    (index._index[i] as Entry<any>).payload.getValue().step
+                ).toEqual(i);
             }
         });
 

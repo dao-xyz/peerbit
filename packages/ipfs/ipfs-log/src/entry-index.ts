@@ -1,5 +1,5 @@
 import { Entry } from "./entry";
-import { LamportClock as Clock } from "./lamport-clock";
+import { LamportClock as Clock } from "./clock";
 export class EntryIndex<T> {
     _cache: { [key: string]: Entry<T> };
     constructor(entries = {}) {

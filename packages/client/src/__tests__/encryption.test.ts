@@ -30,7 +30,12 @@ const addHello = async (
     receiver: X25519PublicKey
 ) => {
     await db.store.add("hello", {
-        reciever: { clock: receiver, payload: receiver, signature: receiver },
+        reciever: {
+            coordinate: receiver,
+            next: receiver,
+            payload: receiver,
+            signature: receiver,
+        },
     });
 };
 const checkHello = async (db: PermissionedEventStore) => {
@@ -79,7 +84,7 @@ Object.keys(testAPIs).forEach((API) => {
             // Trusted client 2
             orbitdb2 = await Peerbit.create(session.peers[1].ipfs, {
                 directory: orbitdbPath2 + +new Date(),
-                waitForKeysTimout: 1000,
+                waitForKeysTimout: 10000,
             });
             await program.network.add(orbitdb2.id);
             await program.network.add(orbitdb2.identity.publicKey);
@@ -88,7 +93,7 @@ Object.keys(testAPIs).forEach((API) => {
             // Untrusted client 3
             orbitdb3 = await Peerbit.create(session.peers[2].ipfs, {
                 directory: orbitdbPath3 + +new Date(),
-                waitForKeysTimout: 1000,
+                waitForKeysTimout: 10000,
             });
 
             recieverKey = await orbitdb2.keystore.createEd25519Key();
@@ -227,13 +232,15 @@ Object.keys(testAPIs).forEach((API) => {
 
             const client3Key = await orbitdb3.keystore.createEd25519Key({
                 id: "unknown",
+                group: db1.address.toString(),
             });
 
             await db2.store.add("hello", {
                 reciever: {
-                    clock: undefined,
+                    coordinate: undefined,
+                    next: undefined,
+                    signature: undefined,
                     payload: client3Key.keypair.publicKey,
-                    signature: client3Key.keypair.publicKey,
                 },
             });
 

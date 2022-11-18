@@ -48,8 +48,8 @@ export const encryptionWithRequestKey = (
                     }
                     for (const key of newKeys) {
                         if (
-                            key instanceof Ed25519Keypair ||
-                            key instanceof X25519Keypair
+                            key.keypair instanceof Ed25519Keypair ||
+                            key.keypair instanceof X25519Keypair
                         ) {
                             return {
                                 index: i,

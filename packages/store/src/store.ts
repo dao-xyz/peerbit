@@ -10,8 +10,6 @@ import {
     max,
     min,
     CanAppend,
-    Payload,
-    BORSH_ENCODING,
     JSON_ENCODING,
 } from "@dao-xyz/ipfs-log";
 import { Encoding, EncryptionTemplateMaybeEncrypted } from "@dao-xyz/ipfs-log";
@@ -197,7 +195,7 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
     _cache: Cache<CachedValue>;
     _oplog: Log<T>;
     _queue: PQueue<any, any>;
-    _replicationStatus: ReplicationInfo;
+    /*     _replicationStatus: ReplicationInfo; */
     _stats: any;
     _replicator: Replicator<T>;
     _loader: Replicator<T>;
@@ -258,8 +256,8 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
         this._queue = new PQueue({ concurrency: 1 });
 
         // Replication progress info
-        this._replicationStatus = new ReplicationInfo();
-
+        /*         this._replicationStatus = new ReplicationInfo();
+         */
         // Statistics
         this._stats = {
             snapshot: {
@@ -274,7 +272,7 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
                 const e = entry;
                 try {
                     await e.getClock();
-                    this._recalculateReplicationMax(e.clock.time + 1n);
+                    /* this._recalculateReplicationMax(e.coordinate.maxChainLength); */
                     this._options.onReplicationQueued &&
                         this._options.onReplicationQueued(this, e);
                 } catch (error) {
@@ -296,23 +294,24 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
                     );
                     return; // closed
                 }
-                const previousProgress = this.replicationStatus.progress;
-                const previousMax = this.replicationStatus.max;
-
-                // TODO below is not nice, do we really need replication status?
-                try {
-                    this._recalculateReplicationStatus(
-                        (await entry.getClock()).time + 1n
-                    );
-                } catch (error) {
-                    this._recalculateReplicationStatus(0);
-                }
-
-                if (
-                    log.length + 1 > this.replicationStatus.progress ||
-                    this.replicationStatus.progress > previousProgress ||
-                    this.replicationStatus.max > previousMax
-                ) {
+                /*   const previousProgress = this.replicationStatus.progress;
+                  const previousMax = this.replicationStatus.max;
+  
+                  // TODO below is not nice, do we really need replication status?
+                  try {
+                      this._recalculateReplicationStatus(
+                          log.heads, entry
+                      );
+                  } catch (error) {
+                      this._rresetReplicationStatus();
+                  }
+  
+                  if (
+                      log.length + 1 > this.replicationStatus.progress ||
+                      this.replicationStatus.progress > previousProgress ||
+                      this.replicationStatus.max > previousMax
+                  ) */
+                {
                     this._options.onReplicationProgress &&
                         this._options.onReplicationProgress(this, entry);
                 }
@@ -382,9 +381,9 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
             // and persisting the latest heads
             await this._updateIndex();
 
-            if (this._oplog.length > this.replicationStatus.progress) {
-                this._recalculateReplicationStatus(this._oplog.length);
-            }
+            /*   if (this._oplog.length > this.replicationStatus.progress) {
+                  this._recalculateReplicationStatus(heads, BigInt(this._oplog.length));
+              } */
             this._options.onReplicationComplete &&
                 this._options.onReplicationComplete(this);
         }
@@ -419,9 +418,9 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
      * Returns the database's current replication status information
      * @return {[Object]} [description]
      */
-    get replicationStatus() {
-        return this._replicationStatus;
-    }
+    /*     get replicationStatus() {
+            return this._replicationStatus;
+        } */
 
     setIdentity(identity: Identity) {
         this.identity = identity;
@@ -454,8 +453,8 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
         await this._queue?.onIdle();
 
         // Reset replication statistics
-        this._replicationStatus?.reset();
-
+        /*  this._replicationStatus?.reset();
+         */
         // Reset database statistics
         this._stats = {
             snapshot: {
@@ -523,10 +522,9 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
         const heads = localHeads.concat(remoteHeads);
 
         // Update the replication status from the heads
-        for (const head of heads) {
-            const time = (await head.clock).time;
-            this._recalculateReplicationMax(time + 1n);
-        }
+        /*    for (const head of heads) {
+               this._recalculateReplicationMax((await head.maxChainLength));
+           } */
 
         // Load the log
         const log = await Log.fromEntry(this._ipfs, this.identity, heads, {
@@ -588,12 +586,14 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
 
             await Promise.all(
                 allEntries.map(async (head) => {
+                    const headHash = head.hash;
+                    head.hash = undefined as any;
                     const hash = await io.write(
                         this._ipfs,
-                        "dag-cbor",
-                        head.serialize(),
-                        { links: Entry.IPLD_LINKS }
+                        "raw",
+                        serialize(head)
                     );
+                    head.hash = headHash;
                     if (hash !== head.hash) {
                         throw new Error("Head hash didn't match the contents");
                     }
@@ -684,8 +684,8 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
             await this._options.onLoad(this);
         }
 
-        const maxClock = (res: bigint, val: Entry<any>): bigint =>
-            max(res, val.clock.time);
+        const maxChainLength = (res: bigint, val: Entry<any>): bigint =>
+            max(res, val.coordinate.maxChainLength);
         await this.sync([]);
 
         const queue = (
@@ -705,9 +705,9 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
 
             // Fetch the entries
             // Timeout 1 sec to only load entries that are already fetched (in order to not get stuck at loading)
-            this._recalculateReplicationMax(
-                snapshotData.values.reduce(maxClock, 0n) + 1n
-            );
+            /*   this._recalculateReplicationMax(
+                  snapshotData.values.reduce(maxChainLength, 0n)
+              ); */
             if (snapshotData) {
                 this._oplog = await Log.fromEntry(
                     this._ipfs,
@@ -800,13 +800,14 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
             });
 
             // TODO below is not nice, do we really need replication status?
-            try {
-                this._recalculateReplicationStatus(
-                    (await entry.getClock()).time + 1n
-                );
-            } catch (error) {
-                this._recalculateReplicationStatus(0);
-            }
+            /*    try {
+                   this._recalculateReplicationStatus(
+                       this._oplog.heads,
+                       entry
+                   );
+               } catch (error) {
+                   this._rresetReplicationStatus();
+               } */
             await this._cache.setBinary(
                 this.localHeadsPath,
                 new HeadsCache({ heads: [entry] })
@@ -829,33 +830,44 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
     }
 
     /* Replication Status state updates */
-    _recalculateReplicationProgress() {
-        this._replicationStatus.progress = max(
-            min(
-                this._replicationStatus.progress + 1n,
-                this._replicationStatus.max
-            ),
-            BigInt(this._oplog ? this._oplog.length : 0)
-        );
-    }
+    /*  _recalculateReplicationProgress(entry: Entry<any> | bigint) {
+     this._replicationStatus.progress = max(
+           min(
+               this._replicationStatus.max - (typeof entry === 'bigint' ? entry : (entry.coordinate.maxChainLength - 1n)),
+               this._replicationStatus.max
+           ),
+           BigInt(this._oplog ? this._oplog.length : 0)
+       ); 
+   }*/
 
-    _recalculateReplicationMax(value: bigint | number) {
-        const bigMax = BigInt(value);
-        this._replicationStatus.max = max(
+    /*   _recalculateReplicationMax(value: bigint | number) {
+       const bigMax = BigInt(value);
+     this._replicationStatus.max = max(
             this.replicationStatus.max,
             BigInt(this._oplog ? this._oplog.length : 0),
             bigMax || 0n
-        );
-    }
+        )
+   }
+; */
+    /*    _recalculateReplicationStatus(heads: Entry<any>[], current: Entry<any> | bigint) {
+           this._recalculateReplicationMax(max(heads.map(head => head.coordinate.maxChainLength))[0]);
+           this._recalculateReplicationProgress(current);
+       } */
 
-    _recalculateReplicationStatus(maxTotal: bigint | number) {
-        this._recalculateReplicationMax(maxTotal);
-        this._recalculateReplicationProgress();
-    }
+    /*  _rresetReplicationStatus() {
+      this._recalculateReplicationMax(0);
+    this._replicationStatus.progress = 0n;
+  } */
 
     /* Loading progress callback */
     _onLoadProgress(entry: Entry<any>) {
-        this._recalculateReplicationStatus(entry.clock.time + 1n);
+        /*    if (this._oplog) {
+               this._recalculateReplicationStatus(this._oplog.heads, entry);
+           }
+           else {
+               this._recalculateReplicationProgress(entry);
+   
+           } */
         this._options.onLoadProgress &&
             this._options.onLoadProgress(this, entry);
     }

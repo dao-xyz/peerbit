@@ -111,8 +111,8 @@ describe(`addOperation`, function () {
                 const heads = store.oplog.heads;
                 expect(heads.length).toEqual(1);
                 assert.deepStrictEqual(entry.payload.getValue(), data);
-                expect(store.replicationStatus.progress).toEqual(1n);
-                expect(store.replicationStatus.max).toEqual(1n);
+                /*   expect(store.replicationStatus.progress).toEqual(1n);
+                  expect(store.replicationStatus.max).toEqual(1n); */
                 assert.deepStrictEqual(index._index, heads);
                 await delay(5000); // seems because write is async?
                 await waitForAsync(
@@ -168,7 +168,8 @@ describe(`addOperation`, function () {
 
         await store._addOperation(data, {
             reciever: {
-                clock: recieverKey.keypair.publicKey,
+                coordinate: undefined,
+                next: recieverKey.keypair.publicKey,
                 payload: recieverKey.keypair.publicKey,
                 signature: recieverKey.keypair.publicKey,
             },
@@ -185,8 +186,8 @@ describe(`addOperation`, function () {
             const heads = store.oplog.heads;
             expect(heads.length).toEqual(1);
             assert.deepStrictEqual(entry.payload.getValue(), data);
-            expect(store.replicationStatus.progress).toEqual(1n);
-            expect(store.replicationStatus.max).toEqual(1n);
+            /* expect(store.replicationStatus.progress).toEqual(1n);
+            expect(store.replicationStatus.max).toEqual(1n); */
             assert.deepStrictEqual(index._index, heads);
             await waitForAsync(
                 async () =>
@@ -245,7 +246,8 @@ describe(`addOperation`, function () {
         const reciever = await keystore.createEd25519Key();
         await store._addOperation(data, {
             reciever: {
-                clock: undefined,
+                coordinate: undefined,
+                next: reciever.keypair.publicKey,
                 payload: reciever.keypair.publicKey,
                 signature: reciever.keypair.publicKey,
             },

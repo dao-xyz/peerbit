@@ -163,7 +163,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 // associativity: a + (b + c) == (a + b) + c
                 expect(res1.length).toEqual(expectedElementsCount);
                 expect(res2.length).toEqual(expectedElementsCount);
-                assert.deepStrictEqual(res1, res2);
+                expect(res1.map((x) => x.payload.getValue())).toEqual(
+                    res2.map((x) => x.payload.getValue())
+                );
             });
 
             it("join is commutative", async () => {
@@ -208,7 +210,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 // commutativity: a + b == b + a
                 expect(res1.length).toEqual(expectedElementsCount);
                 expect(res2.length).toEqual(expectedElementsCount);
-                assert.deepStrictEqual(res1, res2);
+                expect(res1.map((x) => x.payload.getValue())).toEqual(
+                    res2.map((x) => x.payload.getValue())
+                );
             });
 
             it("multiple joins are commutative", async () => {

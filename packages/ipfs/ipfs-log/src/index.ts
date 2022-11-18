@@ -4,6 +4,6 @@ export * from "./log-errors.js";
 export * from "./log-io.js";
 export * from "./entry.js";
 export * from "./utils.js";
-export * from "./lamport-clock.js";
+export * from "./clock.js";
 export * from "./encoding.js";
 export * from "./identity.js";

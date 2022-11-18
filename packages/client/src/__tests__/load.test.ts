@@ -230,20 +230,10 @@ describe(`orbit-db - load (js-ipfs)`, () => {
                         count++;
                         expect(address).toEqual(db.address!.toString());
 
-                        const { progress, max } = db.store.replicationStatus;
-                        expect(max).toEqual(BigInt(entryCount));
-                        expect(progress).toEqual(BigInt(count));
-
                         assert.notEqual(entry.hash, null);
                         assert.notEqual(entry, null);
-
-                        if (
-                            progress === BigInt(entryCount) &&
-                            count === entryCount
-                        ) {
-                            setTimeout(() => {
-                                done = true;
-                            }, 200);
+                        if (count === entryCount) {
+                            done = true;
                         }
                     },
                 }
@@ -453,16 +443,10 @@ describe(`orbit-db - load (js-ipfs)`, () => {
                     onLoadProgress: (store, entry) => {
                         count++;
                         expect(address).toEqual(db.address!.toString());
-                        const { progress, max } = db.store.replicationStatus;
-                        expect(max).toEqual(BigInt(entryCount));
-                        expect(progress).toEqual(BigInt(count));
 
                         assert.notEqual(entry.hash, null);
                         assert.notEqual(entry, null);
-                        if (
-                            progress === BigInt(entryCount) &&
-                            count === entryCount
-                        ) {
+                        if (count === entryCount) {
                             done = true;
                         }
                     },
