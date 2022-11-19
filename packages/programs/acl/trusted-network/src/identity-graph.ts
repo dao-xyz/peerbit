@@ -30,20 +30,24 @@ export const KEY_OFFSET = 3 + 4 + 1 + 28; // SystemBinaryPayload discriminator +
 export const getFromByTo: RelationResolver = {
     resolve: async (to: PublicSignKey, db: Documents<IdentityRelation>) => {
         const ser = serialize(to);
-        return await db.index.queryHandler(
-            new DocumentQueryRequest({
-                queries: [
-                    new MemoryCompareQuery({
-                        compares: [
-                            new MemoryCompare({
-                                bytes: ser,
-                                offset: BigInt(KEY_OFFSET + PUBLIC_KEY_WIDTH),
-                            }),
-                        ],
-                    }),
-                ],
-            })
-        );
+        return (
+            await db.index.queryHandler(
+                new DocumentQueryRequest({
+                    queries: [
+                        new MemoryCompareQuery({
+                            compares: [
+                                new MemoryCompare({
+                                    bytes: ser,
+                                    offset: BigInt(
+                                        KEY_OFFSET + PUBLIC_KEY_WIDTH
+                                    ),
+                                }),
+                            ],
+                        }),
+                    ],
+                })
+            )
+        ).map((x) => x.value);
     },
     next: (relation) => relation.from,
 };
@@ -51,20 +55,22 @@ export const getFromByTo: RelationResolver = {
 export const getToByFrom: RelationResolver = {
     resolve: async (from: PublicSignKey, db: Documents<IdentityRelation>) => {
         const ser = serialize(from);
-        return await db.index.queryHandler(
-            new DocumentQueryRequest({
-                queries: [
-                    new MemoryCompareQuery({
-                        compares: [
-                            new MemoryCompare({
-                                bytes: ser,
-                                offset: BigInt(KEY_OFFSET),
-                            }),
-                        ],
-                    }),
-                ],
-            })
-        );
+        return (
+            await db.index.queryHandler(
+                new DocumentQueryRequest({
+                    queries: [
+                        new MemoryCompareQuery({
+                            compares: [
+                                new MemoryCompare({
+                                    bytes: ser,
+                                    offset: BigInt(KEY_OFFSET),
+                                }),
+                            ],
+                        }),
+                    ],
+                })
+            )
+        ).map((x) => x.value);
     },
     next: (relation) => relation.to,
 };

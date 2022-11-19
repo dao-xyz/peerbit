@@ -32,6 +32,7 @@ import {
     Results,
 } from "@dao-xyz/peerbit-document";
 import { v4 as uuid } from "uuid";
+
 const __filename = fileURLToPath(import.meta.url);
 
 const createIdentity = async () => {
