@@ -1,5 +1,5 @@
 import { Entry } from "./entry";
-import { LamportClock as Clock } from "./lamport-clock";
+import { LamportClock as Clock } from "./clock";
 import { arraysCompare } from "@dao-xyz/peerbit-borsh-utils";
 
 const First = (a: any, b: any) => a;
@@ -66,7 +66,7 @@ export const SortByClocks: ISortFunction = <T>(
     resolveConflict?: (a: Entry<any>, b: Entry<any>) => number
 ) => {
     // Compare the clocks
-    const diff = Clock.compare(a.clock, b.clock);
+    const diff = Clock.compare(a.coordinate.clock, b.coordinate.clock);
     // If the clocks are concurrent, use the provided
     // conflict resolution function to determine which comes first
     return diff === 0 ? (resolveConflict || First)(a, b) : diff;
@@ -82,7 +82,10 @@ export const SortByClocks: ISortFunction = <T>(
 export const SortByClockId: ISortFunction = (a, b, resolveConflict) => {
     // Sort by ID if clocks are concurrent,
     // take the entry with a "greater" clock id
-    const clockCompare = arraysCompare(a.clock.id, b.clock.id);
+    const clockCompare = arraysCompare(
+        a.coordinate.clock.id,
+        b.coordinate.clock.id
+    );
     return clockCompare === 0 ? (resolveConflict || First)(a, b) : clockCompare;
 };
 

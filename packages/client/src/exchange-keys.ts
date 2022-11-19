@@ -22,7 +22,7 @@ const logger = parentLogger.child({ module: "exchange-keys" });
 
 export type KeyAccessCondition = (
     keyToAccess: KeyWithMeta<Ed25519Keypair | X25519Keypair>
-) => boolean;
+) => Promise<boolean>;
 
 export class SignedX25519PublicKey {
     @field(UInt8ArraySerializer)
@@ -324,10 +324,10 @@ export const exchangeKeys = async <T extends Ed25519Keypair | X25519Keypair>(
     const mappedKeys = (
         await Promise.all(
             secretKeys.map(async (key) => {
-                return (await canAccessKey(key)) ? key : key.clone();
+                return (await canAccessKey(key)) ? key : undefined;
             })
         )
-    ).filter((x) => !!x);
+    ).filter((x) => !!x) as KeyWithMeta<T>[];
 
     if (mappedKeys.length === 0) {
         return;

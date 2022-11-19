@@ -20,6 +20,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 import { Identity } from "../identity.js";
 import { toBase64 } from "../utils.js";
+import { LamportClock, Timestamp } from "../clock.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -89,49 +90,48 @@ describe("Entry", function () {
 
     describe("create", () => {
         it("creates a an empty entry", async () => {
+            const clock = new LamportClock({
+                id: new Uint8Array([1, 2, 3]),
+                timestamp: new Timestamp({ wallTime: 2n, logical: 3 }),
+            });
+
             const entry = await Entry.create({
                 ipfs,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: "hello",
+                clock,
             });
-
             expect(entry.hash).toMatchSnapshot();
             expect(entry.gid).toEqual(
                 toBase64(await sodium.crypto_generichash(32, "A"))
             );
-            assert.deepStrictEqual(
-                entry.clock.id,
-                new Ed25519PublicKey({
-                    publicKey: signKey.keypair.publicKey.publicKey,
-                }).bytes
-            );
-            expect(entry.clock.time).toEqual(0n);
+            expect(entry.coordinate.clock.equals(clock)).toBeTrue();
+
             expect(entry.payload.getValue()).toEqual("hello");
             expect(entry.next.length).toEqual(0);
         });
 
         it("creates a entry with payload", async () => {
             const payload = "hello world";
+            const clock = new LamportClock({
+                id: new Uint8Array([1, 2, 3]),
+                timestamp: new Timestamp({ wallTime: 2n, logical: 3 }),
+            });
             const entry = await Entry.create({
                 ipfs,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload,
                 next: [],
+                clock,
             });
             expect(entry.hash).toMatchSnapshot();
             expect(entry.payload.getValue()).toEqual(payload);
             expect(entry.gid).toEqual(
                 toBase64(await sodium.crypto_generichash(32, "A"))
             );
-            assert.deepStrictEqual(
-                entry.clock.id,
-                new Ed25519PublicKey({
-                    publicKey: signKey.keypair.publicKey.publicKey,
-                }).bytes
-            );
-            expect(entry.clock.time).toEqual(0n);
+            expect(entry.coordinate.clock.equals(clock)).toBeTrue();
             expect(entry.next.length).toEqual(0);
         });
 
@@ -153,9 +153,10 @@ describe("Entry", function () {
                 next: [],
                 encryption: {
                     reciever: {
-                        clock: undefined,
+                        coordinate: undefined,
                         signature: undefined,
                         payload: receiverKey.keypair.publicKey,
+                        next: undefined,
                     },
                     options: {
                         getEncryptionKeypair: () =>
@@ -207,12 +208,12 @@ describe("Entry", function () {
                 toBase64(await sodium.crypto_generichash(32, "A"))
             );
             assert.deepStrictEqual(
-                entry.clock.id,
+                entry.coordinate.clock.id,
                 new Ed25519PublicKey({
                     publicKey: signKey.keypair.publicKey.publicKey,
                 }).bytes
             );
-            expect(entry.clock.time).toEqual(0n);
+            expect(entry.coordinate.clock.timestamp.logical).toEqual(0);
             expect(entry.next.length).toEqual(0);
         });
 
@@ -225,33 +226,26 @@ describe("Entry", function () {
                 gidSeed: "A",
                 data: payload1,
                 next: [],
+                clock: new LamportClock({
+                    id: new Uint8Array([0]),
+                    timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
+                }),
             });
-            const clock = entry1.clock;
-            /* entry1.metadata = new MetadataSecure({
-        metadata: new Metadata({
-          id: await entry1.metadata.id,
-          identity: await entry1.metadata.identity,
-          signature: await entry1.metadata.signature
-        })
-      }) */
             const entry2 = await Entry.create({
                 ipfs,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload2,
                 next: [entry1],
+                clock: new LamportClock({
+                    id: new Uint8Array([0]),
+                    timestamp: new Timestamp({ wallTime: 1n, logical: 0 }),
+                }),
             });
             expect(entry2.payload.getValue()).toEqual(payload2);
             expect(entry2.next.length).toEqual(1);
             expect(entry2.maxChainLength).toEqual(2n); // because 1 next
             expect(entry2.hash).toMatchSnapshot();
-            assert.deepStrictEqual(
-                entry2.clock.id,
-                new Ed25519PublicKey({
-                    publicKey: signKey.keypair.publicKey.publicKey,
-                }).bytes
-            );
-            expect(entry2.clock.time).toEqual(1n);
         });
 
         it("`next` parameter can be an array of strings", async () => {
@@ -311,13 +305,15 @@ describe("Entry", function () {
                 ipfs,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "B",
-                clock: entry1A.clock,
+                clock: entry1A.coordinate.clock,
                 data: "hello1",
                 next: [],
             });
 
             expect(entry1A.gid > entry1B.gid); // so that gid is not choosen because A has smaller gid
-            expect(entry1A.clock.time).toEqual(entry1B.clock.time);
+            expect(entry1A.coordinate.clock.timestamp.logical).toEqual(
+                entry1B.coordinate.clock.timestamp.logical
+            );
 
             const entry2 = await Entry.create({
                 ipfs,
@@ -342,14 +338,18 @@ describe("Entry", function () {
                 ipfs,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
-                clock: entry1A.clock.advance(),
+                clock: entry1A.coordinate.clock.advance(),
                 data: "hello1",
                 next: [],
             });
 
             expect(entry1B.gid > entry1A.gid); // so that gid is not choosen because B has smaller gid
             expect(entry1A.maxChainLength).toEqual(entry1B.maxChainLength);
-            expect(entry1A.clock.time).toEqual(entry1B.clock.time - 1n);
+            expect(
+                entry1B.coordinate.clock.timestamp.compare(
+                    entry1A.coordinate.clock.timestamp
+                )
+            ).toBeGreaterThan(0);
 
             const entry2 = await Entry.create({
                 ipfs,
@@ -374,14 +374,16 @@ describe("Entry", function () {
                 ipfs,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "B",
-                clock: entry1A.clock,
+                clock: entry1A.coordinate.clock,
                 data: "hello1",
                 next: [],
             });
 
             expect(entry1B.gid < entry1A.gid).toBeTrue(); // so that B is choosen because of gid
             expect(entry1A.maxChainLength).toEqual(entry1B.maxChainLength);
-            expect(entry1A.clock.time).toEqual(entry1B.clock.time);
+            expect(entry1A.coordinate.clock.timestamp.logical).toEqual(
+                entry1B.coordinate.clock.timestamp.logical
+            );
 
             const entry2 = await Entry.create({
                 ipfs,
@@ -481,8 +483,15 @@ describe("Entry", function () {
                 gidSeed: "A",
                 data: "hello",
                 next: [],
+                clock: new LamportClock({
+                    id: new Uint8Array([1, 2, 3]),
+                    timestamp: new Timestamp({ wallTime: 2n, logical: 3 }),
+                }),
             });
+            const hash = entry.hash;
+            entry.hash = undefined as any;
             const multihash = await Entry.toMultihash(ipfs, entry);
+            expect(multihash).toEqual(hash);
             expect(multihash).toMatchSnapshot();
         });
 
@@ -511,6 +520,10 @@ describe("Entry", function () {
                 gidSeed: "A",
                 data: payload1,
                 next: [],
+                clock: new LamportClock({
+                    id: new Uint8Array([1, 2, 3]),
+                    timestamp: new Timestamp({ wallTime: 2n, logical: 3 }),
+                }),
             });
             const entry2 = await Entry.create({
                 ipfs,
@@ -518,6 +531,10 @@ describe("Entry", function () {
                 gidSeed: "A",
                 data: payload2,
                 next: [entry1],
+                clock: new LamportClock({
+                    id: new Uint8Array([1, 2, 3]),
+                    timestamp: new Timestamp({ wallTime: 3n, logical: 3 }),
+                }),
             });
             const final = await Entry.fromMultihash<string>(ipfs, entry2.hash);
             final.init(entry2);
@@ -591,6 +608,10 @@ describe("Entry", function () {
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload1,
+                clock: new LamportClock({
+                    id: new Uint8Array([1]),
+                    timestamp: new Timestamp({ wallTime: 3n, logical: 2 }),
+                }),
                 next: [],
             });
             const entry2 = await Entry.create({
@@ -598,6 +619,10 @@ describe("Entry", function () {
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload1,
+                clock: new LamportClock({
+                    id: new Uint8Array([1]),
+                    timestamp: new Timestamp({ wallTime: 3n, logical: 2 }),
+                }),
                 next: [],
             });
             expect(Entry.isEqual(entry1, entry2)).toEqual(true);
@@ -621,67 +646,6 @@ describe("Entry", function () {
                 next: [],
             });
             expect(Entry.isEqual(entry1, entry2)).toEqual(false);
-        });
-    });
-
-    describe("isEntry", () => {
-        it("is an Entry", async () => {
-            const entry = await Entry.create({
-                ipfs,
-                identity: identityFromSignKey(signKey),
-                gidSeed: "A",
-                data: "hello",
-                next: [],
-            });
-            expect(Entry.isEntry(entry)).toEqual(true);
-        });
-
-        it("is not an Entry - no id", async () => {
-            const fakeEntry = {
-                data: { v: 1, hash: "Foo", payload: 123, seq: 0 },
-                next: [],
-            };
-            expect(Entry.isEntry(fakeEntry as any)).toEqual(false);
-        });
-
-        it("is not an Entry - no seq", async () => {
-            const fakeEntry = {
-                data: { v: 1, hash: "Foo", payload: 123 },
-                next: [],
-            };
-            expect(Entry.isEntry(fakeEntry as any)).toEqual(false);
-        });
-
-        it("is not an Entry - no next", async () => {
-            const fakeEntry = {
-                data: { id: "A", v: 1, hash: "Foo", seq: 0 },
-                payload: 123,
-            };
-            expect(Entry.isEntry(fakeEntry as any)).toEqual(false);
-        });
-
-        it("is not an Entry - no version", async () => {
-            const fakeEntry = {
-                data: { id: "A", payload: 123, seq: 0 },
-                next: [],
-            };
-            expect(Entry.isEntry(fakeEntry as any)).toEqual(false);
-        });
-
-        it("is not an Entry - no hash", async () => {
-            const fakeEntry = {
-                data: { id: "A", v: 1, payload: 123, seq: 0 },
-                next: [],
-            };
-            expect(Entry.isEntry(fakeEntry as any)).toEqual(false);
-        });
-
-        it("is not an Entry - no payload", async () => {
-            const fakeEntry = {
-                data: { id: "A", v: 1, hash: "Foo", seq: 0 },
-                next: [],
-            };
-            expect(Entry.isEntry(fakeEntry as any)).toEqual(false);
         });
     });
 });

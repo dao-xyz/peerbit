@@ -85,6 +85,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             });
 
             it("joins consistently", async () => {
+                // joins consistently
                 for (let i = 0; i < 10; i++) {
                     await log1.append("hello1-" + i);
                     await log2.append("hello2-" + i);
@@ -102,8 +103,24 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     log1.values.map((e) => e.payload.getValue()),
                     log2.values.map((e) => e.payload.getValue())
                 );
+
+                // Joining after concurrently appending same payload joins entry once
+                for (let i = 10; i < 20; i++) {
+                    await log1.append("hello1-" + i);
+                    await log2.append("hello2-" + i);
+                }
+
+                await log1.join(log2);
+                await log2.join(log1);
+
+                expect(log1.length).toEqual(log2.length);
+                expect(log1.length).toEqual(40);
+                expect(log1.values.map((e) => e.payload.getValue())).toEqual(
+                    log2.values.map((e) => e.payload.getValue())
+                );
             });
 
+            /*  Below test is not true any more since we are using HLC
             it("Concurrently appending same payload after join results in same state", async () => {
                 for (let i = 10; i < 20; i++) {
                     await log1.append("hello1-" + i);
@@ -126,19 +143,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     log1.values.map((e) => e.payload.getValue()),
                     log2.values.map((e) => e.payload.getValue())
                 );
-            });
+            }); */
 
-            it("Joining after concurrently appending same payload joins entry once", async () => {
-                await log1.join(log2);
-                await log2.join(log1);
-
-                expect(log1.length).toEqual(log2.length);
-                expect(log1.length).toEqual(41);
-                assert.deepStrictEqual(
-                    log1.values.map((e) => e.payload.getValue()),
-                    log2.values.map((e) => e.payload.getValue())
-                );
-            });
+            /*  it("Joining after concurrently appending same payload joins entry once", async () => {
+ 
+             }); */
         });
     });
 });

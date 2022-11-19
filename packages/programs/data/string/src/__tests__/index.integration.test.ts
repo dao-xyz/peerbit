@@ -232,8 +232,9 @@ describe("query", () => {
             new Range({ offset: 0n, length: "hello".length }),
             {
                 reciever: {
-                    clock: undefined,
+                    coordinate: undefined,
                     signature: undefined,
+                    next: undefined,
                     payload: [await X25519PublicKey.create()],
                 },
             }

@@ -150,39 +150,43 @@ Object.keys(testAPIs).forEach((IPFS) => {
             it("join encrypted identities only with knowledge of id and clock", async () => {
                 await log1.append("helloA1", {
                     reciever: {
-                        clock: undefined,
+                        coordinate: undefined,
                         signature: recieverKey.keypair.publicKey,
                         payload: recieverKey.keypair.publicKey,
+                        next: recieverKey.keypair.publicKey,
                     },
                 });
                 await log1.append("helloA2", {
                     reciever: {
-                        clock: undefined,
+                        coordinate: undefined,
                         signature: recieverKey.keypair.publicKey,
                         payload: recieverKey.keypair.publicKey,
+                        next: recieverKey.keypair.publicKey,
                     },
                 });
                 await log2.append("helloB1", {
                     reciever: {
-                        clock: undefined,
+                        coordinate: undefined,
                         signature: recieverKey.keypair.publicKey,
                         payload: recieverKey.keypair.publicKey,
+                        next: recieverKey.keypair.publicKey,
                     },
                 });
                 await log2.append("helloB2", {
                     reciever: {
-                        clock: undefined,
+                        coordinate: undefined,
                         signature: recieverKey.keypair.publicKey,
                         payload: recieverKey.keypair.publicKey,
+                        next: recieverKey.keypair.publicKey,
                     },
                 });
 
                 // Remove decrypted caches of the log2 values
                 log2.values.forEach((value) => {
-                    value._clock.clear();
+                    value._coordinate.clear();
                     value._payload.clear();
-                    value._signature.clear();
-                    value._clock.clear();
+                    value._signature!.clear();
+                    value._next.clear();
                 });
 
                 await log1.join(log2);

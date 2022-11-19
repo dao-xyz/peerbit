@@ -3,7 +3,7 @@ import rmrf from "rimraf";
 import { CID } from "multiformats/cid";
 import { base58btc } from "multiformats/bases/base58";
 import { Entry, Payload } from "../entry.js";
-import { LamportClock as Clock } from "../lamport-clock.js";
+import { LamportClock as Clock, Timestamp } from "../clock.js";
 import { Log } from "../log.js";
 import { createStore, Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import fs from "fs-extra";
@@ -151,7 +151,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     gidSeed: "A",
                     data: "entryA",
                     next: [],
-                    clock: new Clock(new Uint8Array([0]), 0),
+                    clock: new Clock({ id: new Uint8Array([0]), timestamp: 0 }),
                 });
                 const two = await Entry.create({
                     ipfs,
@@ -162,7 +162,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     gidSeed: "A",
                     data: "entryB",
                     next: [],
-                    clock: new Clock(new Uint8Array([1]), 0),
+                    clock: new Clock({ id: new Uint8Array([1]), timestamp: 0 }),
                 });
                 const three = await Entry.create({
                     ipfs,
@@ -173,7 +173,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     gidSeed: "A",
                     data: "entryC",
                     next: [],
-                    clock: new Clock(new Uint8Array([2]), 0),
+                    clock: new Clock({ id: new Uint8Array([2]), timestamp: 0 }),
                 });
                 const log = new Log<string>(
                     ipfs,
@@ -365,7 +365,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     },
                     { logId: "AAA" }
                 );
-                await log.append("one", { gidSeed: "a" });
+                await log.append("one", {
+                    gidSeed: "a",
+                    timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
+                });
             });
 
             it("returns an Entry", () => {
@@ -397,39 +400,32 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
             it("changes identity", async () => {
                 assert.deepStrictEqual(
-                    log.values[0].clock.id,
+                    log.values[0].coordinate.clock.id,
                     signKey.keypair.publicKey.bytes
                 );
-                expect(log.values[0].clock.time).toEqual(0n);
                 log.setIdentity({
                     ...signKey2.keypair,
                     sign: signKey2.keypair.sign,
                 });
                 await log.append("two", { gidSeed: "a" });
                 assert.deepStrictEqual(
-                    log.values[1].clock.id,
+                    log.values[1].coordinate.clock.id,
                     signKey2.keypair.publicKey.bytes
                 );
-                expect(log.values[1].clock.time).toEqual(1n);
                 log.setIdentity({
                     ...signKey3.keypair,
                     sign: signKey3.keypair.sign,
                 });
                 await log.append("three", { gidSeed: "a" });
                 assert.deepStrictEqual(
-                    log.values[2].clock.id,
+                    log.values[2].coordinate.clock.id,
                     signKey3.keypair.publicKey.bytes
                 );
-                expect(log.values[2].clock.time).toEqual(2n);
             });
         });
 
         describe("has", () => {
             let log: Log<string>;
-
-            beforeAll(async () => {
-                const clock = new Clock(signKey.keypair.publicKey.bytes, 1);
-            });
 
             beforeEach(async () => {
                 log = new Log(
@@ -542,7 +538,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
                         },
                         { logId: "A" }
                     );
-                    await log.append("one", { gidSeed: "a" });
+                    await log.append("one", {
+                        gidSeed: "a",
+                        timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
+                    });
                     const hash = await log.toMultihash();
                     expect(hash).toMatchSnapshot();
                 });
@@ -557,7 +556,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
                         },
                         { logId: "A" }
                     );
-                    await log.append("one", { gidSeed: "a" });
+                    await log.append("one", {
+                        gidSeed: "a",
+                        timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
+                    });
                     const hash = await log.toMultihash();
                     expect(hash).toMatchSnapshot();
                     const result = (await io.read(ipfs, hash)) as Log<any>;
@@ -592,7 +594,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
                         },
                         { logId: "A" }
                     );
-                    await log.append("one", { gidSeed: "a" });
+                    await log.append("one", {
+                        gidSeed: "a",
+                        timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
+                    });
                     const multihash = await log.toMultihash({
                         format: "dag-pb",
                     });
@@ -609,7 +614,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
                         },
                         { logId: "A" }
                     );
-                    await log.append("one", { gidSeed: "a" });
+                    await log.append("one", {
+                        gidSeed: "a",
+                        timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
+                    });
                     const multihash = await log.toMultihash({
                         format: "dag-pb",
                     });
@@ -648,7 +656,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
                         },
                         { logId: "X" }
                     );
-                    await log.append("one", { gidSeed: "a" });
+                    await log.append("one", {
+                        gidSeed: "a",
+                        timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
+                    });
                     const hash = await log.toMultihash();
                     const res = await Log.fromMultihash<string>(
                         ipfs,
@@ -663,10 +674,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     expect(JSON.stringify(res.toJSON())).toMatchSnapshot();
                     expect(res.length).toEqual(1);
                     expect(res.values[0].payload.getValue()).toEqual("one");
-                    expect(res.values[0].clock.id).toEqual(
+                    expect(res.values[0].coordinate.clock.id).toEqual(
                         signKey.keypair.publicKey.bytes
                     );
-                    expect(res.values[0].clock.time).toEqual(0n);
+                    expect(
+                        res.values[0].coordinate.clock.timestamp.logical
+                    ).toEqual(0);
                 });
 
                 it("creates a log from ipfs CID - three entries", async () => {
@@ -683,11 +696,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     );
                     expect(res.length).toEqual(3);
                     expect(res.values[0].payload.getValue()).toEqual("one");
-                    expect(res.values[0].clock.time).toEqual(0n);
                     expect(res.values[1].payload.getValue()).toEqual("two");
-                    expect(res.values[1].clock.time).toEqual(1n);
                     expect(res.values[2].payload.getValue()).toEqual("three");
-                    expect(res.values[2].clock.time).toEqual(2n);
                 });
 
                 it("creates a log from ipfs multihash (backwards compat)", async () => {
@@ -700,7 +710,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
                         },
                         { logId: "X" }
                     );
-                    await log.append("one", { gidSeed: "a" });
+                    await log.append("one", {
+                        gidSeed: "a",
+                        timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
+                    });
                     const multihash = await log.toMultihash();
                     const res = await Log.fromMultihash<string>(
                         ipfs,
@@ -715,10 +728,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     expect(JSON.stringify(res.toJSON())).toMatchSnapshot();
                     expect(res.length).toEqual(1);
                     expect(res.values[0].payload.getValue()).toEqual("one");
-                    expect(res.values[0].clock.id).toEqual(
+                    expect(res.values[0].coordinate.clock.id).toEqual(
                         signKey.keypair.publicKey.bytes
                     );
-                    expect(res.values[0].clock.time).toEqual(0n);
+                    expect(
+                        res.values[0].coordinate.clock.timestamp.logical
+                    ).toEqual(0);
                 });
 
                 it("has the right sequence number after creation and appending", async () => {
@@ -737,7 +752,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     await res.append("four");
                     expect(res.length).toEqual(4);
                     expect(res.values[3].payload.getValue()).toEqual("four");
-                    expect(res.values[3].clock.time).toEqual(3n);
                 });
 
                 it("creates a log from ipfs CID that has three heads", async () => {
@@ -855,7 +869,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
                         { logId: "A" }
                     );
                     for (let i = 0; i < amount; i++) {
-                        await log.append(i.toString());
+                        await log.append(i.toString(), {
+                            timestamp: new Timestamp({
+                                wallTime: 0n,
+                                logical: i,
+                            }),
+                        });
                     }
                     const hash = await log.toMultihash();
                     const res = await Log.fromMultihash(
@@ -994,11 +1013,17 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     // Make sure the onProgress callback was called for each entry
                     expect(i).toEqual(amount);
                     // Make sure the log entries are correct ones
-                    expect(result.values[0].clock.time).toEqual(0n);
+                    expect(
+                        result.values[0].coordinate.clock.timestamp.logical
+                    ).toEqual(0);
                     expect(result.values[0].payload.getValue()).toEqual("0");
-                    expect(result.values[result.length - 1].clock.time).toEqual(
-                        99n
-                    );
+                    expect(
+                        Timestamp.compare(
+                            result.values[result.length - 1].coordinate.clock
+                                .timestamp,
+                            result.values[0].coordinate.clock.timestamp
+                        )
+                    ).toBeGreaterThan(0);
                     expect(
                         result.values[result.length - 1].payload.getValue()
                     ).toEqual("99");
@@ -1006,12 +1031,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
             });
 
             describe("fromEntryHash", () => {
-                /*      afterEach(() => {
-               if (Log.fromEntryHash["restore"]) {
-                 Log.fromEntryHash["restore"]()
-               }
-             })
-      */
                 it("calls fromEntryHash", async () => {
                     const log = new Log(
                         ipfs,
@@ -1022,7 +1041,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
                         },
                         { logId: "X" }
                     );
-                    await log.append("one", { gidSeed: "a" });
+                    await log.append("one", {
+                        gidSeed: "a",
+                        timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
+                    });
                     const res = await Log.fromEntryHash(
                         ipfs,
                         {
@@ -1038,12 +1060,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
             });
 
             describe("fromMultihash", () => {
-                /*   afterEach(() => {
-            if (Log.fromMultihash["restore"]) {
-              Log.fromMultihash["restore"]()
-            }
-          }) */
-
                 it("calls fromMultihash", async () => {
                     const log = new Log(
                         ipfs,
@@ -1054,7 +1070,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
                         },
                         { logId: "X" }
                     );
-                    await log.append("one", { gidSeed: "a" });
+                    await log.append("one", {
+                        gidSeed: "a",
+                        timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
+                    });
                     const multihash = await log.toMultihash();
                     const res = await Log.fromMultihash(
                         ipfs,
@@ -1079,7 +1098,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
                         },
                         { logId: "X" }
                     );
-                    await log.append("one", { gidSeed: "a" });
+                    await log.append("one", {
+                        gidSeed: "a",
+                        timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
+                    });
                     const multihash = await log.toMultihash();
                     const res = await Log.fromMultihash(
                         ipfs,

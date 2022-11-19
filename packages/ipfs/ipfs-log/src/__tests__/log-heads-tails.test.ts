@@ -296,8 +296,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
                 const heads = log1.heads;
                 expect(heads.length).toEqual(2);
-                expect(heads[0].hash).toEqual(expectedHead1.hash);
-                expect(heads[1].hash).toEqual(expectedHead2.hash);
+                expect(heads[1].hash).toEqual(expectedHead1.hash);
+                expect(heads[0].hash).toEqual(expectedHead2.hash);
             });
 
             it("finds three heads after three joins", async () => {
@@ -347,9 +347,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
                 const heads = log1.heads;
                 expect(heads.length).toEqual(3);
-                assert.deepStrictEqual(heads[0].hash, expectedHead1.hash);
+                assert.deepStrictEqual(heads[2].hash, expectedHead1.hash);
                 assert.deepStrictEqual(heads[1].hash, expectedHead2.hash);
-                assert.deepStrictEqual(heads[2].hash, expectedHead3.hash);
+                assert.deepStrictEqual(heads[0].hash, expectedHead3.hash);
             });
         });
 
@@ -379,7 +379,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     { logId: "A" }
                 );
                 await log1.append("helloA1");
-                expect(Entry.isEntry(log1.tails[0])).toEqual(true);
             });
 
             it("returns tail entries", async () => {
@@ -405,8 +404,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 await log2.append("helloB1");
                 await log1.join(log2);
                 expect(log1.tails.length).toEqual(2);
-                expect(Entry.isEntry(log1.tails[0])).toEqual(true);
-                expect(Entry.isEntry(log1.tails[1])).toEqual(true);
             });
 
             it("returns tail hashes", async () => {
@@ -428,12 +425,17 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     },
                     { logId: "A" }
                 );
-                await log1.append("helloA1");
-                await log1.append("helloA2");
-                await log2.append("helloB1");
-                await log2.append("helloB2");
+                const a1 = await log1.append("helloA1");
+                const b1 = await log2.append("helloB1");
+                const a2 = await log1.append("helloA2");
+                const b2 = await log2.append("helloB2");
                 await log1.join(log2, { size: 2 });
-                expect(log1.tailHashes.length).toEqual(2);
+                // the joined log will only contain the last two entries a2, b2
+                expect(log1.values.map((x) => x.hash)).toContainAllValues([
+                    a2.hash,
+                    b2.hash,
+                ]);
+                expect(log1.tailHashes).toContainAllValues([a1.hash, b1.hash]);
             });
 
             it("returns no tail hashes if all entries point to empty nexts", async () => {
@@ -546,13 +548,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 await log4.join(log3);
                 expect(log4.tails.length).toEqual(3);
 
-                expect(log4.tails[0].clock.id).toEqual(
+                expect(log4.tails[0].coordinate.clock.id).toEqual(
                     signKey.keypair.publicKey.bytes
                 );
-                expect(log4.tails[1].clock.id).toEqual(
+                expect(log4.tails[1].coordinate.clock.id).toEqual(
                     signKey2.keypair.publicKey.bytes
                 );
-                expect(log4.tails[2].clock.id).toEqual(
+                expect(log4.tails[2].coordinate.clock.id).toEqual(
                     signKey3.keypair.publicKey.bytes
                 );
             });

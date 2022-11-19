@@ -6,6 +6,7 @@ import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { max, min } from "./utils";
 import { Encoding, JSON_ENCODING } from "./encoding";
 import { logger as parentLogger } from "./logger.js";
+import { Timestamp } from "./clock";
 const logger = parentLogger.child({ module: "entry-io" });
 
 const hasItems = (arr: any[]) => arr && arr.length > 0;
@@ -121,8 +122,8 @@ export class EntryIO {
         const loadingQueue: { [key: number | string]: string[] } =
             Array.isArray(hashes) ? { 0: hashes.slice() } : { 0: [hashes] };
         let running = 0; // keep track of how many entries are being fetched at any time
-        let maxClock = 0; // keep track of the latest clock time during load
-        let minClock = 0; // keep track of the minimum clock time during load
+        let maxClock = new Timestamp({ wallTime: 0n, logical: 0 }); // keep track of the latest clock time during load
+        let minClock = new Timestamp({ wallTime: 0n, logical: 0 }); // keep track of the minimum clock time during load
         const shouldExclude = options.shouldExclude || (() => false); // default fn returns false to not exclude any hash
 
         // Does the loading queue have more to process?
@@ -130,7 +131,17 @@ export class EntryIO {
             Object.values(loadingQueue).find(hasItems) !== undefined;
 
         // Add a multihash to the loading queue
-        const addToLoadingQueue = (e: Entry<T> | string, idx: number) => {
+        const addToLoadingQueue = (
+            e: Entry<T> | string,
+            idxLike: number | bigint
+        ) => {
+            let idx: number;
+            if (typeof idxLike === "bigint") {
+                idx = Number(idxLike / BigInt(1e6));
+            } else {
+                idx = idxLike;
+            }
+
             const hash = e instanceof Entry ? e.hash : e;
             if (!loadingCache[hash] && !shouldExclude(hash)) {
                 if (!loadingQueue[idx]) {
@@ -196,24 +207,23 @@ export class EntryIO {
                         });
 
                         // Todo check bigint conversions
-                        const ts = Number((await entry.getClock()).time);
+                        const ts = (await entry.getClock()).timestamp;
 
                         // Update min/max clocks'
-                        maxClock = Number(max(maxClock, ts));
-                        minClock = Number(
+                        maxClock = Timestamp.bigger(maxClock, ts);
+                        minClock =
                             result.length > 0
-                                ? min<bigint | number>(
-                                      (await result[result.length - 1].clock)
-                                          .time,
+                                ? Timestamp.bigger(
+                                      (
+                                          await result[result.length - 1]
+                                              .coordinate
+                                      ).clock.timestamp,
                                       minClock
                                   )
-                                : maxClock
-                        );
+                                : maxClock;
 
                         const isLater =
                             result.length >= options.length && ts >= minClock;
-                        const calculateIndex = (idx: number) =>
-                            maxClock - ts + (idx + 1) * idx;
 
                         // Add the entry to the results if
                         // 1) we're fetching all entries
@@ -248,8 +258,12 @@ export class EntryIO {
                                     !cache[entry.hash] &&
                                     !shouldExclude(entry.hash))
                             ) {
-                                entry.next.forEach((e) =>
-                                    addToLoadingQueue(e, calculateIndex(0))
+                                entry.next.forEach(
+                                    (e) =>
+                                        addToLoadingQueue(
+                                            e,
+                                            maxClock.wallTime - ts.wallTime
+                                        ) // approximation, we ignore logical
                                 );
                             }
                         }

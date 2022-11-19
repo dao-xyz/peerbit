@@ -10,7 +10,7 @@ import {
 import type { Message } from "@libp2p/interface-pubsub";
 import { SignKey } from "@dao-xyz/peerbit-crypto";
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
-import { QueryRequestV0, QueryResponseV0, U64Compare } from "./query.js";
+import { QueryRequestV0, QueryResponseV0 } from "./query.js";
 import { query, QueryOptions, respond } from "./io.js";
 import {
     AbstractProgram,
@@ -22,7 +22,8 @@ import {
 import { IPFS } from "ipfs-core-types";
 import { Identity } from "@dao-xyz/ipfs-log";
 import pino from "pino";
-const logger = pino().child({ module: "anyearch" });
+
+const logger = pino().child({ module: "query" });
 
 export type SearchContext = (() => Address) | AbstractProgram | string;
 
@@ -82,8 +83,6 @@ export type DQueryInitializationOptions<Q, R> = {
 export type QueryContext = {
     from?: SignKey;
     address: string;
-    created?: U64Compare[];
-    modified?: U64Compare[];
 };
 export type ResponseHandler<Q, R> = (
     query: Q,
@@ -233,8 +232,6 @@ export class DQuery<Q, R> extends ComposableProgram {
                     deserialize(query.query, this._queryType),
                     {
                         address: this.contextAddress,
-                        created: query.created,
-                        modified: query.modified,
                         from,
                     }
                 );
@@ -254,10 +251,14 @@ export class DQuery<Q, R> extends ComposableProgram {
                         }
                     );
                 }
-            } catch (error) {
+            } catch (error: any) {
                 if (error instanceof AccessError) {
                     return;
                 }
+                logger.error(
+                    "Error handling query: " +
+                        (error?.message ? error?.message?.toString() : error)
+                );
                 throw error;
             }
         } catch (error: any) {
@@ -281,8 +282,6 @@ export class DQuery<Q, R> extends ComposableProgram {
                 query: serialize(queryRequest),
                 responseRecievers: options?.responseRecievers,
                 context: options?.context || this.contextAddress.toString(),
-                created: options?.createdAt,
-                modified: options?.modifiedAt,
             }),
             (response, from) => {
                 responseHandler(

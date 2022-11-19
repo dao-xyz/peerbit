@@ -73,21 +73,15 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
         describe("raw", () => {
             let cid;
-            const data = { test: "object" };
+            const data = new Uint8Array([1, 2, 3]);
 
             it("writes", async () => {
                 cid = await io.write(ipfs, "raw", data, { pin: true });
                 expect(cid).toEqual(
-                    "zdpuAwHevBbd7V9QXeP8zC1pdb3HmugJ7zgzKnyiWxJG3p2Y4"
+                    "zb2rhWtC5SY6zV1y2SVN119ofpxsbEtpwiqSoK77bWVzHqeWU"
                 );
-
-                cid = await io.write(ipfs, "raw", data, { format: "dag-pb" });
-                expect(cid).toEqual(
-                    "QmaPXy3wcj4ds9baLreBGWf94zzwAUM41AiNG1eN51C9uM"
-                );
-
                 const obj = await io.read(ipfs, cid, {});
-                assert.deepStrictEqual(obj, data);
+                expect(obj).toEqual(data);
             });
         });
 

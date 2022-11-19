@@ -2,6 +2,7 @@ import { KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from "ipfs-core-types";
 import { Log } from "../../log.js";
+import { Timestamp } from "../../clock.js";
 
 export class LogCreator {
     static async createLogWithSixteenEntries(
@@ -63,17 +64,23 @@ export class LogCreator {
 
             for (let i = 1; i <= 5; i++) {
                 await logA.append("entryA" + i);
-            }
-            for (let i = 1; i <= 5; i++) {
                 await logB.append("entryB" + i);
             }
+
             await log3.join(logA);
             await log3.join(logB);
             for (let i = 6; i <= 10; i++) {
                 await logA.append("entryA" + i);
             }
             await log.join(log3);
-            await log.append("entryC0");
+            await log.append("entryC0", {
+                timestamp: new Timestamp({
+                    wallTime:
+                        logA.values[5].coordinate.clock.timestamp.wallTime,
+                    logical:
+                        logA.values[5].coordinate.clock.timestamp.logical + 1,
+                }),
+            });
             await log.join(logA);
             expect(log.values.map((h) => h.payload.getValue())).toStrictEqual(
                 expectedData

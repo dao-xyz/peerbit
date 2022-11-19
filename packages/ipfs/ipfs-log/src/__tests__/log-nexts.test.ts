@@ -142,8 +142,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
                 // fork at root
                 const e2ForkAtRoot = await log1.append("2b", { nexts: [] });
-                expect(log1.values[1]).toEqual(e2ForkAtRoot); // index is 1 since clock is reset as this is a root "fork"
-                expect(log1.values[3]).toEqual(e2a);
+                expect(log1.values[3]).toEqual(e2ForkAtRoot); // Due to clock  // If we only use logical clok then it should be index 1 since clock is reset as this is a root "fork"
+                expect(log1.values[2]).toEqual(e2a);
                 expect(log1.heads.map((h) => h.hash)).toContainAllValues([
                     e2a.hash,
                     e2ForkAtRoot.hash,

@@ -8,7 +8,10 @@ import { findUniques } from "./find-uniques";
 import { difference } from "./difference";
 import { Log } from "./log";
 import { IPFS } from "ipfs-core-types";
+import { JSON_ENCODING } from "./encoding";
+
 const IPLD_LINKS = ["heads"];
+
 const last = (arr: any[], n: number) =>
     arr.slice(arr.length - Math.min(arr.length, n), arr.length);
 
@@ -166,11 +169,15 @@ export class LogIO {
 
         // Make sure we pass hashes instead of objects to the fetcher function
         let hashes: string[] = [];
-        sourceEntries.forEach((e) => {
-            e.next.forEach((n) => {
+        for (const e of sourceEntries) {
+            e.init({
+                encryption: options.encryption,
+                encoding: options.encoding || JSON_ENCODING,
+            });
+            (await e.getNext()).forEach((n) => {
                 hashes.push(n);
             });
-        });
+        }
 
         if (options.shouldExclude) {
             hashes = hashes.filter(

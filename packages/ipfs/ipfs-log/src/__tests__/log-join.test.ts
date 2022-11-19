@@ -5,7 +5,7 @@ import { Entry } from "../entry.js";
 import { Log } from "../log.js";
 import { createStore, Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { arraysCompare } from "@dao-xyz/peerbit-borsh-utils";
-import { LamportClock as Clock } from "../lamport-clock.js";
+import { LamportClock as Clock } from "../clock.js";
 import { jest } from "@jest/globals";
 
 // Test utils
@@ -233,8 +233,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
             it("joins only unique items", async () => {
                 await log1.append("helloA1");
-                await log1.append("helloA2");
                 await log2.append("helloB1");
+                await log1.append("helloA2");
                 await log2.append("helloB2");
                 await log1.join(log2);
                 await log1.join(log2);
@@ -247,8 +247,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 ];
 
                 expect(log1.length).toEqual(4);
-                assert.deepStrictEqual(
-                    log1.values.map((e) => e.payload.getValue()),
+                expect(log1.values.map((e) => e.payload.getValue())).toEqual(
                     expectedData
                 );
 
@@ -258,8 +257,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
             it("joins logs two ways", async () => {
                 const a1 = await log1.append("helloA1");
-                const a2 = await log1.append("helloA2");
                 const b1 = await log2.append("helloB1");
+                const a2 = await log1.append("helloA2");
                 const b2 = await log2.append("helloB2");
                 await log1.join(log2);
                 await log2.join(log1);
@@ -276,16 +275,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 expect(a2.next).toContainValues([a1.hash]);
                 expect(b2.next).toContainValues([b1.hash]);
 
-                assert.deepStrictEqual(
-                    log1.values.map((e) => e.hash),
+                expect(log1.values.map((e) => e.hash)).toEqual(
                     log2.values.map((e) => e.hash)
                 );
-                assert.deepStrictEqual(
-                    log1.values.map((e) => e.payload.getValue()),
+                expect(log1.values.map((e) => e.payload.getValue())).toEqual(
                     expectedData
                 );
-                assert.deepStrictEqual(
-                    log2.values.map((e) => e.payload.getValue()),
+                expect(log2.values.map((e) => e.payload.getValue())).toEqual(
                     expectedData
                 );
             });
@@ -372,15 +368,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
             it("joins 4 logs to one", async () => {
                 // order determined by identity's publicKey
                 await log1.append("helloA1");
-                await log1.append("helloA2");
-
                 await log2.append("helloB1");
-                await log2.append("helloB2");
-
                 await log3.append("helloC1");
-                await log3.append("helloC2");
-
                 await log4.append("helloD1");
+                await log1.append("helloA2");
+                await log2.append("helloB2");
+                await log3.append("helloC2");
                 await log4.append("helloD2");
                 await log1.join(log2);
                 await log1.join(log3);
@@ -398,8 +391,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 ];
 
                 expect(log1.length).toEqual(8);
-                assert.deepStrictEqual(
-                    log1.values.map((e) => e.payload.getValue()),
+                expect(log1.values.map((e) => e.payload.getValue())).toEqual(
                     expectedData
                 );
             });
@@ -434,10 +426,22 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 const a2 = await log1.append("helloA2");
                 const b2 = await log2.append("helloB2");
 
-                expect(a2.clock.id).toEqual(signKey.keypair.publicKey.bytes);
-                expect(b2.clock.id).toEqual(signKey2.keypair.publicKey.bytes);
-                expect(a2.clock.time).toEqual(1n);
-                expect(b2.clock.time).toEqual(1n);
+                expect(a2.coordinate.clock.id).toEqual(
+                    signKey.keypair.publicKey.bytes
+                );
+                expect(b2.coordinate.clock.id).toEqual(
+                    signKey2.keypair.publicKey.bytes
+                );
+                expect(
+                    a2.coordinate.clock.timestamp.compare(
+                        a1.coordinate.clock.timestamp
+                    )
+                ).toBeGreaterThan(0);
+                expect(
+                    b2.coordinate.clock.timestamp.compare(
+                        b1.coordinate.clock.timestamp
+                    )
+                ).toBeGreaterThan(0);
 
                 await log3.join(log1);
 
@@ -470,67 +474,55 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     {
                         payload: "helloA1",
                         gid: a1.gid,
-                        clock: new Clock(signKey.keypair.publicKey.bytes, 0),
                     },
                     {
                         payload: "helloB1",
                         gid: b1.gid,
-                        clock: new Clock(signKey2.keypair.publicKey.bytes, 0),
                     },
-                    {
-                        payload: "helloD1",
-                        gid: d2.gid,
-                        clock: new Clock(signKey4.keypair.publicKey.bytes, 0),
-                    },
+
                     {
                         payload: "helloA2",
                         gid: a2.gid,
-                        clock: new Clock(signKey.keypair.publicKey.bytes, 1),
                     },
                     {
                         payload: "helloB2",
                         gid: b2.gid,
-                        clock: new Clock(signKey2.keypair.publicKey.bytes, 1),
-                    },
-                    {
-                        payload: "helloD2",
-                        gid: d2.gid,
-                        clock: new Clock(signKey4.keypair.publicKey.bytes, 1),
                     },
                     {
                         payload: "helloC1",
                         gid: a1.gid,
-                        clock: new Clock(signKey3.keypair.publicKey.bytes, 2),
                     },
                     {
                         payload: "helloC2",
                         gid: c2.gid,
-                        clock: new Clock(signKey3.keypair.publicKey.bytes, 3),
+                    },
+                    {
+                        payload: "helloD1",
+                        gid: d2.gid,
+                    },
+                    {
+                        payload: "helloD2",
+                        gid: d2.gid,
                     },
                     {
                         payload: "helloD3",
                         gid: d3.gid,
-                        clock: new Clock(signKey4.keypair.publicKey.bytes, 4),
                     },
                     {
                         payload: "helloD4",
                         gid: d3.gid,
-                        clock: new Clock(signKey4.keypair.publicKey.bytes, 5),
-                    },
-                    {
-                        payload: "helloA5",
-                        gid: a5.gid,
-                        clock: new Clock(signKey.keypair.publicKey.bytes, 6),
                     },
                     {
                         payload: "helloD5",
                         gid: d5.gid,
-                        clock: new Clock(signKey4.keypair.publicKey.bytes, 6),
+                    },
+                    {
+                        payload: "helloA5",
+                        gid: a5.gid,
                     },
                     {
                         payload: "helloD6",
                         gid: d6.gid,
-                        clock: new Clock(signKey4.keypair.publicKey.bytes, 7),
                     },
                 ];
 
@@ -538,12 +530,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     return {
                         payload: e.payload.getValue(),
                         gid: e.gid,
-                        clock: e.clock,
                     };
                 });
 
                 expect(log4.length).toEqual(13);
-                assert.deepStrictEqual(transformed, expectedData);
+                expect(transformed).toEqual(expectedData);
             });
 
             it("joins logs from 4 logs", async () => {
@@ -557,8 +548,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 await log1.join(log3);
                 // Sometimes failes because of clock ids are random TODO Fix
                 expect(log1.heads[log1.heads.length - 1].gid).toEqual(a1.gid);
-                expect(a2.clock.id).toEqual(signKey.keypair.publicKey.bytes);
-                expect(a2.clock.time).toEqual(1n);
+                expect(a2.coordinate.clock.id).toEqual(
+                    signKey.keypair.publicKey.bytes
+                );
+                expect(
+                    a2.coordinate.clock.timestamp.compare(
+                        a1.coordinate.clock.timestamp
+                    )
+                ).toBeGreaterThan(0);
 
                 await log3.join(log1);
                 expect(log3.heads[log3.heads.length - 1].gid).toEqual(a1.gid); // because longest
@@ -575,18 +572,19 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 await log4.append("helloD3");
                 const d4 = await log4.append("helloD4");
 
-                expect(d4.clock.id).toEqual(signKey4.keypair.publicKey.bytes);
-                expect(d4.clock.time).toEqual(5n);
+                expect(d4.coordinate.clock.id).toEqual(
+                    signKey4.keypair.publicKey.bytes
+                );
 
                 const expectedData = [
                     "helloA1",
                     "helloB1",
-                    "helloD1",
                     "helloA2",
                     "helloB2",
-                    "helloD2",
                     "helloC1",
                     "helloC2",
+                    "helloD1",
+                    "helloD2",
                     "helloD3",
                     "helloD4",
                 ];
@@ -601,14 +599,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
             describe("gid shadow callback", () => {
                 it("it emits callback when gid is shadowed, triangle shape", async () => {
                     /*  
-           Either A or B shaded
-           ┌─┐┌─┐  
-           │a││b│  
-           └┬┘└┬┘  
-           ┌▽──▽──┐
-           │a or b│
-           └──────┘
-           */
+                    Either A or B shaded
+                    ┌─┐┌─┐  
+                    │a││b│  
+                    └┬┘└┬┘  
+                    ┌▽──▽──┐
+                    │a or b│
+                    └──────┘
+                    */
 
                     const a1 = await log1.append("helloA1", { nexts: [] });
                     const b1 = await log1.append("helloB1", { nexts: [] });
@@ -625,17 +623,17 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
                 it("it emits callback when gid is shadowed, N shape", async () => {
                     /*  
-           No shadows
-            ┌──┐┌───┐ 
-            │a0││b1 │ 
-            └┬─┘└┬─┬┘ 
-            ┌▽─┐ │┌▽─┐
-            │a1│ ││b2│
-            └┬─┘ │└──┘
-            ┌▽───▽┐   
-            │a2   │   
-            └─────┘   
-           */
+                        No shadows
+                        ┌──┐┌───┐ 
+                        │a0││b1 │ 
+                        └┬─┘└┬─┬┘ 
+                        ┌▽─┐ │┌▽─┐
+                        │a1│ ││b2│
+                        └┬─┘ │└──┘
+                        ┌▽───▽┐   
+                        │a2   │   
+                        └─────┘   
+                    */
 
                     const a0 = await log1.append("helloA0", { nexts: [] });
                     const a1 = await log1.append("helloA1", { nexts: [a0] });
@@ -655,8 +653,8 @@ Object.keys(testAPIs).forEach((IPFS) => {
             describe("takes length as an argument", () => {
                 beforeEach(async () => {
                     await log1.append("helloA1");
-                    await log1.append("helloA2");
                     await log2.append("helloB1");
+                    await log1.append("helloA2");
                     await log2.append("helloB2");
                 });
 
@@ -681,10 +679,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     const lastEntry = last(log1.values);
 
                     expect(log1.length).toEqual(2);
-                    assert.deepStrictEqual(
-                        log1.values.map((e) => e.payload.getValue()),
-                        expectedData
-                    );
+                    expect(
+                        log1.values.map((e) => e.payload.getValue())
+                    ).toEqual(expectedData);
                     expect(lastEntry.next.length).toEqual(1);
                 });
 
@@ -695,10 +692,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     const lastEntry = last(log1.values);
 
                     expect(log1.length).toEqual(3);
-                    assert.deepStrictEqual(
-                        log1.values.map((e) => e.payload.getValue()),
-                        expectedData
-                    );
+                    expect(
+                        log1.values.map((e) => e.payload.getValue())
+                    ).toEqual(expectedData);
                     expect(lastEntry.next.length).toEqual(1);
                 });
 
@@ -714,10 +710,9 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     const lastEntry = last(log1.values);
 
                     expect(log1.length).toEqual(4);
-                    assert.deepStrictEqual(
-                        log1.values.map((e) => e.payload.getValue()),
-                        expectedData
-                    );
+                    expect(
+                        log1.values.map((e) => e.payload.getValue())
+                    ).toEqual(expectedData);
                     expect(lastEntry.next.length).toEqual(1);
                 });
             });

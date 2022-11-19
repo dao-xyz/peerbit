@@ -91,33 +91,50 @@ describe("keystore", () => {
             keystore = new Keystore(store);
         });
 
-        it("creates a new key ed25519 ", async () => {
+        it("creates a new key ed25519 without group ", async () => {
             const id = new Uint8Array([1, 2, 4]);
             const key = await keystore.createEd25519Key({ id });
-            const kwm = serialize(key);
-            const dkwm = deserialize(kwm, KeyWithMeta);
-
-            expect(await keystore.hasKey(id));
-            expect(await keystore.hasKey(key.keypair.publicKey));
-            expect(await keystore.getKey(id));
+            expect(await keystore.hasKey(id)).toBeTrue();
+            expect(await keystore.getKey(id)).toBeDefined();
+            expect(await keystore.hasKey(key.keypair.publicKey)).toBeTrue();
 
             // Also its conversion
             expect(
                 await keystore.hasKey(
                     await X25519PublicKey.from(key.keypair.publicKey)
                 )
-            );
+            ).toBeTrue();
             expect(
                 await keystore.getKey(
                     await X25519PublicKey.from(key.keypair.publicKey)
                 )
-            );
+            ).toBeDefined();
+        });
+        it("creates a new key ed25519 in group", async () => {
+            const id = new Uint8Array([6, 5, 4]);
+            const group = "group";
+            const key = await keystore.createEd25519Key({ id, group });
+            expect(await keystore.hasKey(id, group)).toBeTrue();
+            expect(await keystore.getKey(id, group)).toBeDefined();
+            expect(await keystore.hasKey(key.keypair.publicKey)).toBeTrue();
+
+            // Also its conversion
+            expect(
+                await keystore.hasKey(
+                    await X25519PublicKey.from(key.keypair.publicKey)
+                )
+            ).toBeTrue();
+            expect(
+                await keystore.getKey(
+                    await X25519PublicKey.from(key.keypair.publicKey)
+                )
+            ).toBeDefined();
         });
 
         it("creates id from key", async () => {
             const key = await keystore.createEd25519Key();
-            expect(await keystore.getKey(key.keypair.publicKey));
-            expect(await keystore.hasKey(key.keypair.publicKey));
+            expect(await keystore.getKey(key.keypair.publicKey)).toBeDefined();
+            expect(await keystore.hasKey(key.keypair.publicKey)).toBeTrue();
         });
 
         it("throws an error if key already exist", async () => {

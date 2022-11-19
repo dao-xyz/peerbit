@@ -178,9 +178,6 @@ Object.keys(testAPIs).forEach((API) => {
                 }
             );
 
-            /*  await waitFor(() => orbitdb1._directConnections.size === 1);
-       await waitFor(() => orbitdb2._directConnections.size === 1); */
-
             const entryCount = 100;
             const entryArr: number[] = [];
 
@@ -210,7 +207,7 @@ Object.keys(testAPIs).forEach((API) => {
 
             // Verify that progress count increases monotonically by saving
             // each event's current progress into an array
-            const progressEvents: bigint[] = [];
+            let progressEvents: number = 0;
             const progressEventsEntries: any[] = [];
 
             let done = false;
@@ -238,9 +235,7 @@ Object.keys(testAPIs).forEach((API) => {
                         }
                     },
                     onReplicationProgress: (store, entry) => {
-                        progressEvents.push(
-                            db2.store.replicationStatus.progress
-                        );
+                        progressEvents += 1;
                         progressEventsEntries.push(entry);
                     },
 
@@ -272,15 +267,8 @@ Object.keys(testAPIs).forEach((API) => {
                 entryCount
             );
             // progress events should increase monotonically
-            expect(progressEvents.length).toEqual(entryCount);
-            for (const [idx, e] of progressEvents.entries()) {
-                expect(e).toEqual(BigInt(idx + 1));
-            }
-            // Verify replication status
-            expect(db2.store.replicationStatus.progress).toEqual(
-                BigInt(entryCount)
-            );
-            expect(db2.store.replicationStatus.max).toEqual(BigInt(entryCount));
+            expect(progressEvents).toEqual(entryCount);
+
             // Verify replicator state
             expect(db2.store._replicator.tasksRunning).toEqual(0);
             expect(db2.store._replicator.tasksQueued).toEqual(0);
@@ -320,7 +308,7 @@ Object.keys(testAPIs).forEach((API) => {
 
             // Verify that progress count increases monotonically by saving
             // each event's current progress into an array
-            const progressEvents: bigint[] = [];
+            let progressEvents: number = 0;
 
             let replicatedEventCount = 0;
             let done = false;
@@ -346,9 +334,7 @@ Object.keys(testAPIs).forEach((API) => {
                         }
                     },
                     onReplicationProgress: (store, entry) => {
-                        progressEvents.push(
-                            db2.store.replicationStatus.progress
-                        );
+                        progressEvents += 1;
                     },
                     onReplicationComplete: (store) => {
                         replicatedEventCount++;
@@ -372,16 +358,8 @@ Object.keys(testAPIs).forEach((API) => {
             expect(replicatedEventCount).toEqual(1);
 
             // progress events should (increase monotonically)
-            expect(progressEvents.length).toEqual(entryCount);
+            expect(progressEvents).toEqual(entryCount);
 
-            for (const [idx, e] of progressEvents.entries()) {
-                expect(e).toEqual(BigInt(idx + 1));
-            }
-            // Verify replication status
-            expect(db2.store.replicationStatus.progress).toEqual(
-                BigInt(entryCount)
-            );
-            expect(db2.store.replicationStatus.max).toEqual(BigInt(entryCount));
             // Verify replicator state
             expect(db2.store._replicator.tasksRunning).toEqual(0);
             expect(db2.store._replicator.tasksQueued).toEqual(0);
@@ -477,13 +455,7 @@ Object.keys(testAPIs).forEach((API) => {
             // All entries should be in the database
             expect(values1.length).toEqual(entryCount * 2);
             expect(values2.length).toEqual(entryCount * 2);
-            // Verify replication status
-            expect(db2.store.replicationStatus.progress).toEqual(
-                BigInt(entryCount * 2)
-            );
-            expect(db2.store.replicationStatus.max).toEqual(
-                BigInt(entryCount * 2)
-            );
+
             // Verify replicator state
             expect(db2.store._replicator.tasksRunning).toEqual(0);
             expect(db2.store._replicator.tasksQueued).toEqual(0);

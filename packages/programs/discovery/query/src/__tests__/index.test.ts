@@ -1,6 +1,6 @@
 import { v4 as uuid } from "uuid";
 import type { Message } from "@libp2p/interface-pubsub";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import { Session, waitForPeers } from "@dao-xyz/peerbit-test-utils";
 import {
     decryptVerifyInto,
@@ -14,7 +14,6 @@ import { Ed25519Identity } from "@dao-xyz/ipfs-log";
 import { Program } from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
-import { throws } from "assert";
 
 const createIdentity = async () => {
     const ed = await Ed25519Keypair.create();

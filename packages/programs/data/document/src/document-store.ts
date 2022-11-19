@@ -6,7 +6,6 @@ import {
 } from "./document-index";
 import { Constructor, field, serialize, variant } from "@dao-xyz/borsh";
 import { asString } from "./utils.js";
-import { BinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { AddOperationOptions, Store } from "@dao-xyz/peerbit-store";
 import {
     BORSH_ENCODING,
@@ -34,7 +33,7 @@ export class OperationError extends Error {
     }
 }
 @variant("documents")
-export class Documents<T extends BinaryPayload> extends ComposableProgram {
+export class Documents<T> extends ComposableProgram {
     @field({ type: Store })
     store: Store<Operation<T>>;
 

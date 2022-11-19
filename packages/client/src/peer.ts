@@ -792,6 +792,10 @@ export class Peerbit {
                     );
                 });
             } else if (msg instanceof RequestKeyMessage) {
+                /**
+                 * Someone is requesting X25519 Secret keys for me so that they can open encrypted messages (and encrypt)
+                 *
+                 */
                 if (!peer) {
                     logger.error("Execting a sigmed pubsub message");
                     return;
@@ -801,37 +805,40 @@ export class Peerbit {
                     logger.info("Expecing sender when recieving key info");
                     return;
                 }
-
+                let canExchangeKey: KeyAccessCondition;
                 if (msg.condition instanceof RequestKeysByAddress) {
                     if (
                         !(await checkTrustedSender(msg.condition.address, true))
                     ) {
                         return;
                     }
-                    const canExchangeKey: KeyAccessCondition = (key) =>
-                        key.group ===
-                        (msg.condition as RequestKeysByAddress<any>).address;
-
-                    /**
-                     * Someone is requesting X25519 Secret keys for me so that they can open encrypted messages (and encrypt)
-                     *
-                     */
-
-                    const send = (data: Uint8Array) =>
-                        this._ipfs.pubsub.publish(
-                            DirectChannel.getTopic([peer.toString()]),
-                            data
+                    canExchangeKey = (key) =>
+                        Promise.resolve(
+                            key.group ===
+                                (msg.condition as RequestKeysByAddress<any>)
+                                    .address
                         );
-                    await exchangeKeys(
-                        send,
-                        msg,
-                        canExchangeKey,
-                        this.keystore,
-                        this.identity,
-                        this.encryption
-                    );
-                    logger.debug(`Exchanged keys`);
+                } else if (msg.condition instanceof RequestKeysByKey) {
+                    canExchangeKey = (key) =>
+                        checkTrustedSender(key.group, true);
+                } else {
+                    throw new Error("Unexpected message");
                 }
+
+                const send = (data: Uint8Array) =>
+                    this._ipfs.pubsub.publish(
+                        DirectChannel.getTopic([peer.toString()]),
+                        data
+                    );
+                await exchangeKeys(
+                    send,
+                    msg,
+                    canExchangeKey,
+                    this.keystore,
+                    this.identity,
+                    this.encryption
+                );
+                logger.debug(`Exchanged keys`);
             } else {
                 throw new Error("Unexpected message");
             }
