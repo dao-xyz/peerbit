@@ -119,59 +119,39 @@ export class EntryIO {
         const result: Entry<T>[] = [];
         const cache: { [key: string]: any } = {};
         const loadingCache: { [key: string]: any } = {};
-        const loadingQueue: { [key: number | string]: string[] } =
-            Array.isArray(hashes) ? { 0: hashes.slice() } : { 0: [hashes] };
+        const loadingQueue: { ts: bigint; hash: string }[] =
+            []; /* { [key: number | string]: string[] } =
+            Array.isArray(hashes) ? { 0: hashes.slice() } : { 0: [hashes] } */
         let running = 0; // keep track of how many entries are being fetched at any time
         let maxClock = new Timestamp({ wallTime: 0n, logical: 0 }); // keep track of the latest clock time during load
         let minClock = new Timestamp({ wallTime: 0n, logical: 0 }); // keep track of the minimum clock time during load
         const shouldExclude = options.shouldExclude || (() => false); // default fn returns false to not exclude any hash
 
         // Does the loading queue have more to process?
-        const loadingQueueHasMore = () =>
-            Object.values(loadingQueue).find(hasItems) !== undefined;
+        const loadingQueueHasMore = () => loadingQueue.length > 0;
+        //Object.values(loadingQueue).find(hasItems) !== undefined;
 
         // Add a multihash to the loading queue
-        const addToLoadingQueue = (
-            e: Entry<T> | string,
-            idxLike: number | bigint
-        ) => {
-            let idx: number;
-            if (typeof idxLike === "bigint") {
-                idx = Number(idxLike / BigInt(1e6));
-            } else {
-                idx = idxLike;
-            }
-
+        const addToLoadingQueue = (e: Entry<T> | string, ts: bigint) => {
             const hash = e instanceof Entry ? e.hash : e;
             if (!loadingCache[hash] && !shouldExclude(hash)) {
-                if (!loadingQueue[idx]) {
-                    loadingQueue[idx] = [];
-                }
-                if (!loadingQueue[idx].includes(hash)) {
-                    loadingQueue[idx].push(hash);
-                }
+                loadingQueue.push({ hash, ts });
+                loadingQueue.sort((a, b) =>
+                    a.ts > b.ts ? -1 : a.ts === b.ts ? 0 : 1
+                ); // ascending
                 loadingCache[hash] = true;
             }
         };
 
+        (Array.isArray(hashes) ? [...hashes] : [hashes]).forEach((hash) => {
+            addToLoadingQueue(hash, 0n);
+        });
+
         // Get the next items to process from the loading queue
         const getNextFromQueue = (length = 1) => {
-            const getNext = (res: string[], key: string, idx: number) => {
-                const nextItems = loadingQueue[key];
-                while (nextItems.length > 0 && res.length < length) {
-                    const hash = nextItems.shift();
-                    if (!hash) {
-                        logger.error("Missing hash while getNext");
-                        continue;
-                    }
-                    res.push(hash);
-                }
-                if (nextItems.length === 0) {
-                    delete loadingQueue[key];
-                }
-                return res;
-            };
-            return Object.keys(loadingQueue).reduce(getNext, []);
+            return loadingQueue
+                .splice(0, Math.min(length, loadingQueue.length))
+                .map((x) => x.hash);
         };
 
         // Add entries that we don't need to fetch to the "cache"
@@ -243,26 +223,30 @@ export class EntryIO {
                                 options.onProgressCallback(entry);
                             }
                         }
-
+                        const nextSorted = [...entry.next].sort();
                         if (options.length < 0) {
                             // If we're fetching all entries (length === -1), adds nexts and refs to the queue
-                            entry.next.forEach(addToLoadingQueue);
+                            nextSorted.forEach((e) =>
+                                addToLoadingQueue(e, ts.wallTime)
+                            );
                         } else {
                             // If we're fetching entries up to certain length,
                             // fetch the next if result is filled up, to make sure we "check"
                             // the next entry if its clock is later than what we have in the result
                             if (
                                 result.length < options.length ||
-                                ts > minClock ||
-                                (ts === minClock &&
+                                ts.compare(minClock) > 0 ||
+                                (ts.compare(minClock) === 0 &&
                                     !cache[entry.hash] &&
                                     !shouldExclude(entry.hash))
                             ) {
-                                entry.next.forEach(
+                                nextSorted.forEach(
                                     (e) =>
                                         addToLoadingQueue(
                                             e,
-                                            maxClock.wallTime - ts.wallTime
+                                            ts.wallTime
+                                            /* ,
+                                            maxClock.wallTime - ts.wallTime */
                                         ) // approximation, we ignore logical
                                 );
                             }

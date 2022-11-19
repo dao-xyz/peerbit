@@ -87,9 +87,15 @@ export class NetworkDiscovery extends Program {
                 ...this._options,
                 store: { ...this._options.store, replicate: false },
             });
-            const isTrusted: boolean = await network.isTrusted(
-                await entry.getPublicKey()
-            );
+            const keys = await entry.getPublicKeys();
+
+            let isTrusted = false;
+            for (const key of keys) {
+                isTrusted = await network.isTrusted(key);
+                if (isTrusted) {
+                    break;
+                }
+            }
 
             // Close open connections
             if (isNotMe) {

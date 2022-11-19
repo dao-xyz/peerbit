@@ -655,7 +655,7 @@ describe("index", () => {
                         payload: [someKey],
                         coordinate: undefined,
                         next: undefined,
-                        signature: undefined,
+                        signatures: undefined,
                     },
                 });
                 expect(
@@ -705,7 +705,7 @@ describe("index", () => {
                                 payload: [someKey],
                                 coordinate: [],
                                 next: [],
-                                signature: [],
+                                signatures: [],
                             }),
                         ],
                     }),

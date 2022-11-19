@@ -141,7 +141,7 @@ describe(`orbit-db - Write-only`, function () {
                 next: encryptionKey.keypair.publicKey,
                 coordinate: encryptionKey.keypair.publicKey,
                 payload: encryptionKey.keypair.publicKey,
-                signature: encryptionKey.keypair.publicKey,
+                signatures: encryptionKey.keypair.publicKey,
             },
         });
 
@@ -262,7 +262,7 @@ describe(`orbit-db - Write-only`, function () {
         await eventStoreString.add("hello"); // This will exchange an head that will make client 1 open the store
         await waitFor(() => cb.length === 1); // one for checking 'can open store'
         expect(
-            (await cb[0].entry.getPublicKey()).equals(
+            (await cb[0].entry.getPublicKeys())[0].equals(
                 orbitdb1.identity.publicKey
             )
         );

@@ -233,7 +233,7 @@ describe("query", () => {
             {
                 reciever: {
                     coordinate: undefined,
-                    signature: undefined,
+                    signatures: undefined,
                     next: undefined,
                     payload: [await X25519PublicKey.create()],
                 },

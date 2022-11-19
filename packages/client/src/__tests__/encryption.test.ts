@@ -34,7 +34,7 @@ const addHello = async (
             coordinate: receiver,
             next: receiver,
             payload: receiver,
-            signature: receiver,
+            signatures: receiver,
         },
     });
 };
@@ -239,7 +239,7 @@ Object.keys(testAPIs).forEach((API) => {
                 reciever: {
                     coordinate: undefined,
                     next: undefined,
-                    signature: undefined,
+                    signatures: undefined,
                     payload: client3Key.keypair.publicKey,
                 },
             });

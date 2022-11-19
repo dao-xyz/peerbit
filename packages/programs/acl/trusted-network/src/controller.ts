@@ -39,30 +39,39 @@ const canAppendByRelation = async (
     ) {
         /*  const relation: Relation = operation.value || deserialize(operation.data, Relation); */
 
-        const key = await entry.getPublicKey();
-        if (operation instanceof PutOperation) {
-            // TODO, this clause is only applicable when we modify the identityGraph, but it does not make sense that the canAppend method does not know what the payload will
-            // be, upon deserialization. There should be known in the `canAppend` method whether we are appending to the identityGraph.
+        const keys = await entry.getPublicKeys();
+        const checkKey = async (key: PublicSignKey): Promise<boolean> => {
+            if (operation instanceof PutOperation) {
+                // TODO, this clause is only applicable when we modify the identityGraph, but it does not make sense that the canAppend method does not know what the payload will
+                // be, upon deserialization. There should be known in the `canAppend` method whether we are appending to the identityGraph.
 
-            const relation: BinaryPayload =
-                operation._value || deserialize(operation.data, BinaryPayload);
-            operation._value = relation;
+                const relation: BinaryPayload =
+                    operation._value ||
+                    deserialize(operation.data, BinaryPayload);
+                operation._value = relation;
 
-            if (relation instanceof IdentityRelation) {
-                if (!relation.from.equals(key)) {
-                    return false;
+                if (relation instanceof IdentityRelation) {
+                    if (!relation.from.equals(key)) {
+                        return false;
+                    }
                 }
+
+                // else assume the payload is accepted
             }
-
-            // else assume the payload is accepted
+            if (isTrusted) {
+                const trusted = await isTrusted(key);
+                return trusted;
+            } else {
+                return true;
+            }
+        };
+        for (const key of keys) {
+            const result = await checkKey(key);
+            if (result) {
+                return true;
+            }
         }
-
-        if (isTrusted) {
-            const trusted = await isTrusted(key);
-            return trusted;
-        } else {
-            return true;
-        }
+        return false;
     } else {
         return false;
     }

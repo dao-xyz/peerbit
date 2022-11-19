@@ -202,19 +202,33 @@ export class Peerbit {
         this.limitSigning = options.limitSigning || false;
         this._canOpenProgram =
             options.canOpenProgram ||
-            (async (address, replicationTopic, entryToReplicate) =>
-                !this._getNetwork(address, replicationTopic)
-                    ? Promise.resolve(true)
-                    : this.isTrustedByNetwork(
-                          !entryToReplicate
-                              ? undefined
-                              : await entryToReplicate
-                                    .getSignature()
-                                    .then((x) => x.publicKey)
-                                    .catch((e) => undefined),
-                          address,
-                          replicationTopic
-                      ));
+            (async (address, replicationTopic, entryToReplicate) => {
+                const network = this._getNetwork(address, replicationTopic);
+                if (!network) {
+                    return Promise.resolve(true);
+                }
+
+                if (!entryToReplicate) {
+                    return this.isTrustedByNetwork(
+                        undefined,
+                        address,
+                        replicationTopic
+                    );
+                }
+
+                for (const signature of await entryToReplicate.getSignatures()) {
+                    const trusted = await this.isTrustedByNetwork(
+                        signature.publicKey,
+                        address,
+                        replicationTopic
+                    );
+                    if (trusted) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+
         this.localNetwork = options.localNetwork;
         this.caches[this.directory] = {
             cache: options.cache,

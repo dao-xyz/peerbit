@@ -161,7 +161,7 @@ describe("query", () => {
                         ),
                         next: undefined,
                         coordinate: undefined,
-                        signature: undefined,
+                        signatures: undefined,
                     },
                 });
             }
@@ -189,7 +189,7 @@ describe("query", () => {
                             ],
                             next: [],
                             coordinate: [],
-                            signature: [],
+                            signatures: [],
                         }),
                     ],
                 }),
