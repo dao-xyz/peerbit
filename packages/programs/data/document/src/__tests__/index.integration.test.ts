@@ -7,6 +7,10 @@ import {
     MemoryCompare,
     DocumentQueryRequest,
     Results,
+    CreatedAtQuery,
+    U64Compare,
+    Compare,
+    ModifiedAtQuery,
 } from "../query.js";
 import { Session, createStore } from "@dao-xyz/peerbit-test-utils";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";
@@ -30,7 +34,6 @@ import {
     LogEntryEncryptionQuery,
     LogQueryRequest,
 } from "@dao-xyz/peerbit-logindex";
-import { Compare } from "@dao-xyz/peerbit-query";
 
 const __filename = fileURLToPath(import.meta.url);
 
@@ -351,7 +354,7 @@ describe("index", () => {
             expect(response.results.map((x) => x.value.id)).toEqual(["1", "2"]);
         });
 
-        it("offset size", async () => {
+        /* it("offset size", async () => {
             let response: Results<Document> = undefined as any;
 
             await stores[1].docs.index.query(
@@ -372,6 +375,101 @@ describe("index", () => {
             );
             expect(response.results).toHaveLength(1);
             expect(response.results[0].value.id).toEqual("2");
+        });
+         */
+        describe("time", () => {
+            it("created before", async () => {
+                let response: Results<Document> = undefined as any;
+
+                const allDocs = writeStore.docs.store.oplog.values;
+                await stores[1].docs.index.query(
+                    new DocumentQueryRequest({
+                        queries: [
+                            new CreatedAtQuery({
+                                created: [
+                                    new U64Compare({
+                                        compare: Compare.Less,
+                                        value: allDocs[1].coordinate.clock
+                                            .timestamp.wallTime,
+                                    }),
+                                ],
+                            }),
+                        ],
+                    }),
+                    (r: Results<Document>) => {
+                        response = r;
+                    },
+                    { waitForAmount: 1 }
+                );
+                expect(
+                    response.results.map((x) => x.context.head)
+                ).toContainAllValues([allDocs[0].hash]);
+            });
+            it("created between", async () => {
+                let response: Results<Document> = undefined as any;
+
+                const allDocs = writeStore.docs.store.oplog.values;
+                await stores[1].docs.index.query(
+                    new DocumentQueryRequest({
+                        queries: [
+                            new CreatedAtQuery({
+                                created: [
+                                    new U64Compare({
+                                        compare: Compare.Greater,
+                                        value: allDocs[1].coordinate.clock
+                                            .timestamp.wallTime,
+                                    }),
+                                    new U64Compare({
+                                        compare: Compare.LessOrEqual,
+                                        value: allDocs[2].coordinate.clock
+                                            .timestamp.wallTime,
+                                    }),
+                                ],
+                            }),
+                        ],
+                    }),
+                    (r: Results<Document>) => {
+                        response = r;
+                    },
+                    { waitForAmount: 1 }
+                );
+                expect(
+                    response.results.map((x) => x.context.head)
+                ).toContainAllValues([allDocs[2].hash]);
+            });
+
+            it("modified between", async () => {
+                let response: Results<Document> = undefined as any;
+
+                const allDocs = writeStore.docs.store.oplog.values;
+                await stores[1].docs.index.query(
+                    new DocumentQueryRequest({
+                        queries: [
+                            new ModifiedAtQuery({
+                                modified: [
+                                    new U64Compare({
+                                        compare: Compare.GreaterOrEqual,
+                                        value: allDocs[1].coordinate.clock
+                                            .timestamp.wallTime,
+                                    }),
+                                    new U64Compare({
+                                        compare: Compare.Less,
+                                        value: allDocs[2].coordinate.clock
+                                            .timestamp.wallTime,
+                                    }),
+                                ],
+                            }),
+                        ],
+                    }),
+                    (r: Results<Document>) => {
+                        response = r;
+                    },
+                    { waitForAmount: 1 }
+                );
+                expect(
+                    response.results.map((x) => x.context.head)
+                ).toContainAllValues([allDocs[1].hash]);
+            });
         });
 
         describe("number", () => {

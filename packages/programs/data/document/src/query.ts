@@ -1,21 +1,57 @@
-import {
-    AbstractType,
-    deserialize,
-    field,
-    option,
-    variant,
-    vec,
-} from "@dao-xyz/borsh";
+import { AbstractType, deserialize, field, variant, vec } from "@dao-xyz/borsh";
 import { UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
-import { Compare } from "@dao-xyz/peerbit-query";
+
+export enum Compare {
+    Equal = 0,
+    Greater = 1,
+    GreaterOrEqual = 2,
+    Less = 3,
+    LessOrEqual = 4,
+}
+export const compare = (
+    test: bigint | number,
+    compare: Compare,
+    value: bigint | number
+) => {
+    switch (compare) {
+        case Compare.Equal:
+            return test == value; // == because with want bigint == number at some cases
+        case Compare.Greater:
+            return test > value;
+        case Compare.GreaterOrEqual:
+            return test >= value;
+        case Compare.Less:
+            return test < value;
+        case Compare.LessOrEqual:
+            return test <= value;
+        default:
+            console.warn("Unexpected compare");
+            return false;
+    }
+};
+
+@variant(0)
+export class U64Compare {
+    @field({ type: "u8" })
+    compare: Compare;
+
+    @field({ type: "u64" })
+    value: bigint;
+
+    constructor(props?: { value: bigint; compare: Compare }) {
+        if (props) {
+            this.compare = props.compare;
+            this.value = props.value;
+        }
+    }
+}
 
 /// ----- QUERY -----
 
-@variant(0)
-export class Query {}
+export abstract class Query {}
 
 @variant(0)
-export class MultipleQueries {
+export class DocumentQueryRequest {
     @field({ type: vec(Query) })
     queries!: Query[];
 
@@ -26,40 +62,37 @@ export class MultipleQueries {
     }
 }
 
-export enum SortDirection {
-    Ascending = 0,
-    Descending = 1,
-}
+@variant(1)
+export abstract class ContextQuery extends Query {}
 
 @variant(0)
-export class DocumentQueryRequest extends MultipleQueries {
-    @field({ type: option("u64") })
-    offset: bigint | undefined;
+export class CreatedAtQuery extends ContextQuery {
+    @field({ type: vec(U64Compare) })
+    created: U64Compare[];
 
-    @field({ type: option("u64") })
-    size: bigint | undefined;
-
-    @field({ type: "u8" })
-    sort: 0 = 0;
-
-    constructor(props?: { offset?: bigint; size?: bigint; queries: Query[] }) {
-        super(
-            props
-                ? {
-                      queries: props.queries,
-                  }
-                : undefined
-        );
-
+    constructor(props?: { created: U64Compare[] }) {
+        super();
         if (props) {
-            this.offset = props.offset;
-            this.size = props.size;
+            this.created = props.created;
+        }
+    }
+}
+
+@variant(1)
+export class ModifiedAtQuery extends ContextQuery {
+    @field({ type: vec(U64Compare) })
+    modified: U64Compare[];
+
+    constructor(props?: { modified: U64Compare[] }) {
+        super();
+        if (props) {
+            this.modified = props.modified;
         }
     }
 }
 
 @variant(2)
-export class StateQuery extends Query {}
+export abstract class StateQuery extends Query {}
 
 @variant(1)
 export class StateFieldQuery extends StateQuery {
@@ -152,19 +185,42 @@ export class MemoryCompareQuery extends Query {
 
 /// ----- RESULTS -----
 
-export class ResultContext {}
-export class Result {}
+export abstract class Result {}
+
+@variant(0)
+export class Context {
+    @field({ type: "u64" })
+    created: bigint;
+
+    @field({ type: "u64" })
+    modified: bigint;
+
+    @field({ type: "string" })
+    head: string;
+
+    constructor(properties?: {
+        created: bigint;
+        modified: bigint;
+        head: string;
+    }) {
+        if (properties) {
+            this.created = properties.created;
+            this.modified = properties.modified;
+            this.head = properties.head;
+        }
+    }
+}
 
 @variant(0)
 export class ResultWithSource<T> extends Result {
     @field(UInt8ArraySerializer)
     _source: Uint8Array;
 
-    @field({ type: option(ResultContext) })
-    context: ResultContext | undefined;
+    @field({ type: Context })
+    context: Context;
 
     _type: AbstractType<T>;
-    constructor(opts?: { source: Uint8Array; context?: ResultContext }) {
+    constructor(opts?: { source: Uint8Array; context: Context }) {
         super();
         if (opts) {
             this._source = opts.source;

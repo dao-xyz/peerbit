@@ -23,11 +23,14 @@ import {
     Query,
     ResultWithSource,
     StateFieldQuery,
+    CreatedAtQuery,
+    ModifiedAtQuery,
+    compare,
+    Context,
 } from "./query.js";
 import { AccessError, SignKey } from "@dao-xyz/peerbit-crypto";
 import {
     CanRead,
-    compare,
     DQuery,
     QueryContext,
     QueryOptions,
@@ -111,6 +114,7 @@ export interface IndexedValue<T> {
     key: string;
     value: T; // decrypted, decoded
     entry: Entry<Operation<T>>;
+    context: Context;
 }
 
 @variant("documents_index")
@@ -149,7 +153,8 @@ export class DocumentIndex<T> extends ComposableProgram {
                         results: results.map(
                             (r) =>
                                 new ResultWithSource({
-                                    source: serialize(r),
+                                    source: serialize(r.value),
+                                    context: r.context,
                                 })
                         ),
                     });
@@ -189,6 +194,17 @@ export class DocumentIndex<T> extends ComposableProgram {
                                 key: asString(doc.key),
                                 value: this.deserializeOrPass(doc),
                                 entry: item,
+                                context: new Context({
+                                    created:
+                                        this._index.get(doc.key)?.context
+                                            .created ||
+                                        item.coordinate.clock.timestamp
+                                            .wallTime,
+                                    modified:
+                                        item.coordinate.clock.timestamp
+                                            .wallTime,
+                                    head: item.hash,
+                                }),
                             });
                         }
                     }
@@ -200,6 +216,14 @@ export class DocumentIndex<T> extends ComposableProgram {
                             entry: item,
                             key: payload.key,
                             value: this.deserializeOrPass(payload),
+                            context: new Context({
+                                created:
+                                    this._index.get(key)?.context.created ||
+                                    item.coordinate.clock.timestamp.wallTime,
+                                modified:
+                                    item.coordinate.clock.timestamp.wallTime,
+                                head: item.hash,
+                            }),
                         });
                     }
                 } else if (payload instanceof DeleteOperation) {
@@ -229,17 +253,18 @@ export class DocumentIndex<T> extends ComposableProgram {
         }
     }
 
-    deserializeOrItem(
-        entry: Entry<Operation<T>>,
-        operation: PutOperation<T>
-    ): IndexedValue<T> {
-        const item: IndexedValue<T> = {
-            entry,
-            key: operation.key,
-            value: this.deserializeOrPass(operation),
-        };
-        return item;
-    }
+    /*   deserializeOrItem(
+          entry: Entry<Operation<T>>,
+          operation: PutOperation<T>
+      ): IndexedValue<T> {
+          const item: IndexedValue<T> = {
+              entry,
+              key: operation.key,
+              value: this.deserializeOrPass(operation),
+              context: 
+          };
+          return item;
+      } */
 
     _queryDocuments(
         filter: (doc: IndexedValue<T>) => boolean
@@ -257,9 +282,9 @@ export class DocumentIndex<T> extends ComposableProgram {
     queryHandler(
         query: DocumentQueryRequest,
         context?: QueryContext
-    ): Promise<T[]> {
+    ): Promise<IndexedValue<T>[]> {
         const queries: Query[] = query.queries;
-        let results = this._queryDocuments((doc) =>
+        const results = this._queryDocuments((doc) =>
             queries?.length > 0
                 ? queries
                       .map((f) => {
@@ -324,7 +349,34 @@ export class DocumentIndex<T> extends ComposableProgram {
                                   return false;
                               }
                               return true;
+                          } else if (f instanceof CreatedAtQuery) {
+                              for (const created of f.created) {
+                                  if (
+                                      !compare(
+                                          doc.context.created,
+                                          created.compare,
+                                          created.value
+                                      )
+                                  ) {
+                                      return false;
+                                  }
+                              }
+                              return true;
+                          } else if (f instanceof ModifiedAtQuery) {
+                              for (const modified of f.modified) {
+                                  if (
+                                      !compare(
+                                          doc.context.modified,
+                                          modified.compare,
+                                          modified.value
+                                      )
+                                  ) {
+                                      return false;
+                                  }
+                              }
+                              return true;
                           }
+
                           logger.info(
                               "Unsupported query type: " + f.constructor.name
                           );
@@ -332,16 +384,16 @@ export class DocumentIndex<T> extends ComposableProgram {
                       })
                       .reduce((prev, current) => prev && current)
                 : true
-        ).map((x) => x.value);
+        );
 
-        // TODO check conversions
-        if (query.offset) {
-            results = results.slice(Number(query.offset));
-        }
-
-        if (query.size) {
-            results = results.slice(0, Number(query.size));
-        }
+        // TODO remove this, because not applicable
+        /*   if (query.offset) {
+              results = results.slice(Number(query.offset));
+          }
+  
+          if (query.size) {
+              results = results.slice(0, Number(query.size));
+          } */
 
         return Promise.resolve(results);
     }
