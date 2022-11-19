@@ -45,7 +45,7 @@ The goal of this project is to create a **cheaper** and **more private** way of 
 - Easy Webtransport/WebRTC setup for device to device networks
 - Performant indexation capabilities with WASM search modules
 - Improved sharding algorithm that respects device capabilities
-- [ZK group access controller](https://vitalik.ca/general/2022/03/14/trustedsetup.html)
+- [ZK group access controller](https://vitalik.ca/general/2022/06/15/using_snarks.html)
 - E2EE forward secrecy (or alternative security measures)
 - ~Trustless hosting 
 
