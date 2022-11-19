@@ -34,18 +34,18 @@ The goal of this project is to create a **cheaper** and **more private** way of 
 
 ### Timeline and progress
 
-- ✅ Composable programs 
 - ✅ Chain agnostic identities 
 - ✅ Permissioned content based sharding 
 - ✅ E2EE (no forward secrecy)
-- ✅ Search protocol
-- 🚧 Physical time with Hybrid Logical Clock
-- 🚧 Documentation
+- ✅ Query protocol
+- ✅ Physical time with Hybrid Logical Clock
+- 🚧 Documentation and examples
 - 🚧 CLI for non browser nodes (SSL setup and network management)
 - 🚧 Benchmarks
 - Easy Webtransport/WebRTC setup for device to device networks
 - Performant indexation capabilities with WASM search modules
 - Improved sharding algorithm that respects device capabilities
+- [ZK group access controller](https://vitalik.ca/general/2022/03/14/trustedsetup.html)
 - E2EE forward secrecy (or alternative security measures)
 - ~Trustless hosting 
 
@@ -126,10 +126,8 @@ A (under work) [social media application is developed by dao.xyz](https://github
 
 ## [Peerbit](./packages/client)
 The peer client
-- Open/close stores (databases)
-- Exchange keys
-- Exchange replication info. Healthcheck/Redundancy diagnostics. 
-- Leader and leader rotation routines for building functionality around leaders
+- Open/close programs (databases)
+- Subscribe to replication topics
 
 ### Installation 
 ```sh
