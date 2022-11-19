@@ -22,7 +22,8 @@ import {
 import { IPFS } from "ipfs-core-types";
 import { Identity } from "@dao-xyz/ipfs-log";
 import pino from "pino";
-const logger = pino().child({ module: "anyearch" });
+
+const logger = pino().child({ module: "query" });
 
 export type SearchContext = (() => Address) | AbstractProgram | string;
 
