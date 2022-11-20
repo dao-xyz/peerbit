@@ -7,11 +7,13 @@ import {
     deserialize,
     option,
     vec,
+    fixedArray,
 } from "@dao-xyz/borsh";
 import io from "@dao-xyz/peerbit-io-utils";
 import { IPFS } from "ipfs-core-types";
 import {
     arraysCompare,
+    arraysEqual,
     UInt8ArraySerializer,
 } from "@dao-xyz/peerbit-borsh-utils";
 import {
@@ -24,12 +26,12 @@ import {
     AccessError,
     Ed25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
-import { max, toBase64 } from "./utils.js";
+import { toBase64 } from "./utils.js";
 import sodium from "libsodium-wrappers";
 import { Encoding, JSON_ENCODING } from "./encoding";
 import { Identity } from "./identity.js";
 import { verify } from "@dao-xyz/peerbit-crypto";
-import { BigIntObject, StringArray } from "./types";
+import { StringArray } from "./types";
 
 export type MaybeEncryptionPublicKey =
     | X25519PublicKey
@@ -117,14 +119,22 @@ export interface EntryEncryptionTemplate<A, B, C, D> {
 
 @variant(0)
 export class Coordinate {
+    @field({ type: "string" })
+    gid: string; // graph id
+
     @field({ type: Clock })
     clock: Clock;
 
     @field({ type: "u64" })
     maxChainLength: bigint; // longest chain/merkle tree path frmo this node. maxChainLength := max ( maxChainLength(this.next) , 1)
 
-    constructor(properties?: { clock: Clock; maxChainLength: bigint }) {
+    constructor(properties?: {
+        gid: string;
+        clock: Clock;
+        maxChainLength: bigint;
+    }) {
         if (properties) {
+            this.gid = properties.gid;
             this.clock = properties.clock;
             this.maxChainLength = properties.maxChainLength;
         }
@@ -153,9 +163,6 @@ export class Entry<T>
             Array<string>
         >
 {
-    @field({ type: "string" })
-    gid: string; // graph id
-
     @field({ type: MaybeEncrypted })
     _coordinate: MaybeEncrypted<Coordinate>;
 
@@ -168,11 +175,8 @@ export class Entry<T>
     @field({ type: MaybeEncrypted })
     _fork: MaybeEncrypted<StringArray>;
 
-    @field({ type: "u8" })
-    _state: 0; // reserved for states
-
-    @field({ type: "u8" })
-    _reserved: 0; // reserved for future changes
+    @field({ type: fixedArray("u8", 4) })
+    _reserved: number[];
 
     @field({ type: option(MaybeEncrypted) })
     _signatures?: MaybeEncrypted<Signatures>;
@@ -184,18 +188,15 @@ export class Entry<T>
     _encoding?: Encoding<T>;
 
     constructor(obj?: {
-        gid: string;
         payload: MaybeEncrypted<Payload<T>>;
         signatures?: MaybeEncrypted<Signatures>;
         coordinate: MaybeEncrypted<Coordinate>;
         next: MaybeEncrypted<StringArray>;
         fork?: MaybeEncrypted<StringArray>; //  (not used)
-        state: 0; // intentational type 0 (not used)
-        reserved: 0; // intentational type 0  (not used)h
+        reserved?: number[]; // intentational type 0  (not used)h
         hash?: string;
     }) {
         if (obj) {
-            this.gid = obj.gid;
             this._coordinate = obj.coordinate;
             this._payload = obj.payload;
             this._signatures = obj.signatures;
@@ -205,8 +206,7 @@ export class Entry<T>
                 new DecryptedThing({
                     data: serialize(new StringArray({ arr: [] })),
                 });
-            this._reserved = obj.reserved;
-            this._state = obj.state;
+            this._reserved = obj.reserved || [0, 0, 0, 0];
         }
     }
 
@@ -237,12 +237,23 @@ export class Entry<T>
         return this._coordinate.decrypted.getValue(Coordinate);
     }
 
-    async getClock(): Promise<Clock> {
+    async getCoordinate(): Promise<Coordinate> {
         await this._coordinate.decrypt(
             this._encryption?.getAnyKeypair ||
                 (() => Promise.resolve(undefined))
         );
-        return this.coordinate.clock;
+        return this.coordinate;
+    }
+
+    get gid(): string {
+        return this.coordinate.gid;
+    }
+    async getGid(): Promise<string> {
+        return (await this.getCoordinate()).gid;
+    }
+
+    async getClock(): Promise<Clock> {
+        return (await this.getCoordinate()).clock;
     }
 
     get maxChainLength(): bigint {
@@ -250,11 +261,7 @@ export class Entry<T>
     }
 
     async getMaxChainLength(): Promise<bigint> {
-        await this._coordinate.decrypt(
-            this._encryption?.getAnyKeypair ||
-                (() => Promise.resolve(undefined))
-        );
-        return this.maxChainLength;
+        return (await this.getCoordinate()).maxChainLength;
     }
 
     get payload(): Payload<T> {
@@ -328,11 +335,9 @@ export class Entry<T>
         // TODO fix types
         const trimmed = new Entry({
             coordinate: entry._coordinate,
-            gid: entry.gid,
             next: entry._next,
             payload: entry._payload,
             reserved: entry._reserved,
-            state: entry._state,
             fork: entry._fork,
             signatures: undefined,
             hash: undefined,
@@ -353,9 +358,7 @@ export class Entry<T>
 
     equals(other: Entry<T>) {
         return (
-            this.gid === other.gid &&
-            this._reserved === other._reserved &&
-            this._state === other._state &&
+            arraysEqual(this._reserved, other._reserved) &&
             this._coordinate.equals(other._coordinate) &&
             this._signatures!.equals(other._signatures!) &&
             this._next.equals(other._next) &&
@@ -516,7 +519,7 @@ export class Entry<T>
                 ) {
                     maxChainLength = n.maxChainLength;
                     if (!gid) {
-                        gid = n.gid;
+                        gid = n.coordinate.gid;
                         return;
                     }
                     // replace gid if next is from alonger chain, or from a later time, or same time but "smaller" gid
@@ -532,9 +535,9 @@ export class Entry<T>
                             n.coordinate.clock.timestamp,
                             maxClock
                         ) == 0 &&
-                            n.gid < gid)
+                            n.coordinate.gid < gid)
                     ) {
-                        gid = n.gid;
+                        gid = n.coordinate.gid;
                     }
                 }
             });
@@ -551,6 +554,7 @@ export class Entry<T>
             new Coordinate({
                 maxChainLength,
                 clock,
+                gid,
             }),
             properties.encryption?.reciever.coordinate
         );
@@ -572,17 +576,13 @@ export class Entry<T>
         const forks = new DecryptedThing<StringArray>({
             data: serialize(new StringArray({ arr: [] })),
         });
-        const state = 0;
-        const reserved = 0;
+
         // Sign id, encrypted payload, clock, nexts, refs
         const entry: Entry<T> = new Entry<T>({
             payload,
             coordinate: coordinateEncrypted,
-            gid,
             signatures: undefined,
             fork: forks,
-            state,
-            reserved,
             next: nextEncrypted, // Array of hashes
             /* refs: properties.refs, */
         });

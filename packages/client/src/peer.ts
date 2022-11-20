@@ -124,12 +124,14 @@ export type OpenStoreOptions = {
     replicationTopic?: string;
 } & IStoreOptions<any>;
 
-const groupByGid = <T extends Entry<any> | EntryWithRefs<any>>(
+const groupByGid = async <T extends Entry<any> | EntryWithRefs<any>>(
     entries: T[]
-) => {
+): Promise<Map<string, T[]>> => {
     const groupByGid: Map<string, T[]> = new Map();
     for (const head of entries) {
-        const gid = head instanceof Entry ? head.gid : head.entry.gid;
+        const gid = await (head instanceof Entry
+            ? head.getGid()
+            : head.entry.getGid());
         let value = groupByGid.get(gid);
         if (!value) {
             value = [];
@@ -677,7 +679,7 @@ export class Peerbit {
                     const leaderCache: Map<string, string[]> = new Map();
                     if (!pstores?.has(programAddress)) {
                         await this._maybeOpenStorePromise;
-                        for (const [gid, entries] of groupByGid(heads)) {
+                        for (const [gid, entries] of await groupByGid(heads)) {
                             // Check if root, if so, we check if we should open the store
                             const leaders = await this.findLeaders(
                                 replicationTopic,
@@ -730,7 +732,15 @@ export class Peerbit {
                     const toMerge: EntryWithRefs<any>[] = [];
 
                     await programInfo.program.initializationPromise; // Make sure it is ready
-                    for (const [gid, value] of groupByGid(heads)) {
+
+                    heads.forEach((head) =>
+                        head.entry.init({
+                            encryption: storeInfo.oplog._encryption,
+                            encoding: storeInfo.oplog._encoding,
+                        })
+                    ); // we need to init because we perhaps need to decrypt gid
+
+                    for (const [gid, value] of await groupByGid(heads)) {
                         const leaders =
                             leaderCache.get(gid) ||
                             (await this.findLeaders(
@@ -953,7 +963,7 @@ export class Peerbit {
                 for (const programInfo of programs.values()) {
                     for (const [_, store] of programInfo.program.allStoresMap) {
                         const heads = store.oplog.heads;
-                        const groupedByGid = groupByGid(heads);
+                        const groupedByGid = await groupByGid(heads);
                         for (const [gid, entries] of groupedByGid) {
                             if (entries.length === 0) {
                                 continue; // TODO maybe close store?
