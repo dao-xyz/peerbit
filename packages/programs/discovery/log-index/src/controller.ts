@@ -3,10 +3,10 @@ import { Entry, EntryEncryptionTemplate } from "@dao-xyz/ipfs-log";
 import { ComposableProgram } from "@dao-xyz/peerbit-program";
 import {
     CanRead,
-    DQuery,
-    QueryTopicOption,
+    RPC,
+    RPCTopicOption,
     SearchContext,
-} from "@dao-xyz/peerbit-query";
+} from "@dao-xyz/peerbit-rpc";
 import { Store } from "@dao-xyz/peerbit-store";
 import { EncryptedThing, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
 import pino from "pino";
@@ -102,13 +102,13 @@ export class LogQueryRequest {
  */
 @variant("logindex")
 export class LogIndex extends ComposableProgram {
-    @field({ type: DQuery })
-    query: DQuery<LogQueryRequest, HeadsMessage>;
+    @field({ type: RPC })
+    query: RPC<LogQueryRequest, HeadsMessage>;
 
     _store: Store<any>;
-    constructor(props?: { query?: DQuery<LogQueryRequest, HeadsMessage> }) {
+    constructor(props?: { query?: RPC<LogQueryRequest, HeadsMessage> }) {
         super();
-        this.query = props?.query || new DQuery();
+        this.query = props?.query || new RPC();
     }
 
     get store(): Store<any> {
@@ -118,14 +118,14 @@ export class LogIndex extends ComposableProgram {
     async setup(properties: {
         store: Store<any>;
         canRead?: CanRead;
-        queryTopic?: QueryTopicOption;
+        rpcTopic?: RPCTopicOption;
         context: SearchContext;
     }) {
         this._store = properties?.store;
         await this.query.setup({
             context: properties.context,
             queryType: LogQueryRequest,
-            queryTopic: properties.queryTopic,
+            rpcTopic: properties.rpcTopic,
             responseType: HeadsMessage,
             responseHandler: this.responseHandler.bind(this),
             canRead: properties.canRead || (() => Promise.resolve(true)),

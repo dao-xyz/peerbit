@@ -23,7 +23,7 @@ import {
 } from "./identity-graph";
 import { BinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { Program } from "@dao-xyz/peerbit-program";
-import { CanRead, DQuery } from "@dao-xyz/peerbit-query";
+import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { AddOperationOptions } from "@dao-xyz/peerbit-store";
 
@@ -151,7 +151,7 @@ export class TrustedNetwork extends Program {
             });
             this.rootTrust = props.rootTrust;
             this.logIndex =
-                props.logIndex || new LogIndex({ query: new DQuery() });
+                props.logIndex || new LogIndex({ query: new RPC() });
         }
     }
 
@@ -238,7 +238,7 @@ export class TrustedNetwork extends Program {
             return this._isTrustedLocal(trustee, truster);
         } else {
             let trusted = false;
-            this.logIndex.query.query(
+            this.logIndex.query.send(
                 new LogQueryRequest({ queries: [] }),
                 async (heads, from) => {
                     if (!from) {

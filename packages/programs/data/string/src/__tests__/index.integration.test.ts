@@ -90,7 +90,7 @@ describe("query", () => {
         await waitForPeers(
             session.peers[0].ipfs,
             [session.peers[1].id],
-            writeStore.query.queryTopic
+            writeStore.query.rpcTopic
         );
     });
     afterEach(async () => {
@@ -117,7 +117,7 @@ describe("query", () => {
 
         let response: StringResult = undefined as any;
 
-        await observerStore.query.query(
+        await observerStore.query.send(
             new StringQueryRequest({
                 queries: [],
             }),
@@ -150,7 +150,7 @@ describe("query", () => {
 
         let response: StringResult = undefined as any;
 
-        await observerStore.query.query(
+        await observerStore.query.send(
             new StringQueryRequest({
                 queries: [
                     new StringMatchQuery({

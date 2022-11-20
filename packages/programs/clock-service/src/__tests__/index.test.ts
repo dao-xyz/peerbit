@@ -65,7 +65,7 @@ describe("clock", () => {
         await waitForPeers(
             session.peers[1].ipfs,
             [session.peers[0].id],
-            responder.clock._remoteSigner.queryTopic
+            responder.clock._remoteSigner.rpcTopic
         );
     });
     afterAll(async () => {

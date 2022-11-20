@@ -1,5 +1,5 @@
 import { variant } from "@dao-xyz/borsh";
-import { DQuery, QueryOptions } from "@dao-xyz/peerbit-query";
+import { RPC, RPCOptions } from "@dao-xyz/peerbit-rpc";
 import { Program } from "@dao-xyz/peerbit-program";
 import pino from "pino";
 import {
@@ -17,8 +17,8 @@ const abs = (n) => (n < 0n ? -n : n);
 
 @variant("clock_service")
 export class ClockService extends Program {
-    @field({ type: DQuery })
-    _remoteSigner: DQuery<Uint8Array, SignatureWithKey>;
+    @field({ type: RPC })
+    _remoteSigner: RPC<Uint8Array, SignatureWithKey>;
 
     @field({ type: TrustedNetwork })
     _trustedNetwork: TrustedNetwork;
@@ -28,11 +28,11 @@ export class ClockService extends Program {
 
     constructor(properties?: {
         trustedNetwork: TrustedNetwork;
-        remoteSigner?: DQuery<Uint8Array, SignatureWithKey>;
+        remoteSigner?: RPC<Uint8Array, SignatureWithKey>;
     }) {
         super();
         if (properties) {
-            this._remoteSigner = properties.remoteSigner || new DQuery();
+            this._remoteSigner = properties.remoteSigner || new RPC();
             this._trustedNetwork = properties.trustedNetwork;
         }
     }
@@ -68,7 +68,7 @@ export class ClockService extends Program {
 
     async sign(data: Uint8Array): Promise<SignatureWithKey> {
         const signatures: SignatureWithKey[] = [];
-        const remoteSignature = await this._remoteSigner.query(
+        await this._remoteSigner.send(
             data,
             (response) => {
                 signatures.push(response);

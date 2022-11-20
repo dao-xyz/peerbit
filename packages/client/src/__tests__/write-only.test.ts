@@ -26,7 +26,7 @@ import {
     waitForPeers,
 } from "@dao-xyz/peerbit-test-utils";
 import { CanOpenSubPrograms, Program } from "@dao-xyz/peerbit-program";
-import { DQuery } from "@dao-xyz/peerbit-query";
+import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Entry } from "@dao-xyz/ipfs-log";
 
 const orbitdbPath1 = "./orbitdb/tests/write-only/1";
@@ -228,7 +228,7 @@ describe(`orbit-db - Write-only`, function () {
             new Documents<EventStore<string>>({
                 index: new DocumentIndex({
                     indexBy: "id",
-                    query: new DQuery(),
+                    query: new RPC(),
                 }),
             })
         );

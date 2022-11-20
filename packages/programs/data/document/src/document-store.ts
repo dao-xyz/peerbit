@@ -19,7 +19,7 @@ import {
     ComposableProgram,
     Program,
 } from "@dao-xyz/peerbit-program";
-import { CanRead } from "@dao-xyz/peerbit-query";
+import { CanRead } from "@dao-xyz/peerbit-rpc";
 import { LogIndex } from "@dao-xyz/peerbit-logindex";
 
 import { AccessError } from "@dao-xyz/peerbit-crypto";

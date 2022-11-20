@@ -13,7 +13,7 @@ import { AddOperationOptions, Store } from "@dao-xyz/peerbit-store";
 import { CanAppend, Entry } from "@dao-xyz/ipfs-log";
 import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { Program } from "@dao-xyz/peerbit-program";
-import { QueryOptions, CanRead, DQuery } from "@dao-xyz/peerbit-query";
+import { RPCOptions, CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 
 import pino from "pino";
 const logger = pino().child({ module: "string" });
@@ -42,20 +42,18 @@ export class DString extends Program {
     @field({ type: Store })
     store: Store<StringOperation>;
 
-    @field({ type: DQuery })
-    query: DQuery<StringQueryRequest, StringResult>;
+    @field({ type: RPC })
+    query: RPC<StringQueryRequest, StringResult>;
 
     @field({ type: StringIndex })
     _index: StringIndex;
 
     _optionCanAppend?: CanAppend<StringOperation>;
 
-    constructor(properties: {
-        query?: DQuery<StringQueryRequest, StringResult>;
-    }) {
+    constructor(properties: { query?: RPC<StringQueryRequest, StringResult> }) {
         super();
         if (properties) {
-            this.query = properties.query || new DQuery();
+            this.query = properties.query || new RPC();
             this.store = new Store();
             this._index = new StringIndex();
         }
@@ -183,12 +181,12 @@ export class DString extends Program {
     async toString(options?: {
         remote: {
             callback: (string: string) => any;
-            queryOptions: QueryOptions;
+            queryOptions: RPCOptions;
         };
     }): Promise<string | undefined> {
         if (options?.remote) {
             const counter: Map<string, number> = new Map();
-            await this.query.query(
+            await this.query.send(
                 new StringQueryRequest({
                     queries: [],
                 }),

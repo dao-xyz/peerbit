@@ -23,7 +23,7 @@ import {
 } from "../controller";
 import { fileURLToPath } from "url";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
-import { DQuery } from "@dao-xyz/peerbit-query";
+import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Address } from "@dao-xyz/peerbit-program";
 import { jest } from "@jest/globals";
 
@@ -45,18 +45,18 @@ describe("query", () => {
             );
         }
 
-        const queryTopic = uuid();
+        const rpcTopic = uuid();
         for (let i = 0; i < peersCount; i++) {
             const store = new Store({ storeIndex: 0 });
             const signKey = await Ed25519Keypair.create();
             const cache = new Cache(cacheStores[i]);
-            const logIndex = new LogIndex({ query: new DQuery() });
+            const logIndex = new LogIndex({ query: new RPC() });
             logIndex.query.parentProgram = {
                 address: new Address({ cid: "1" }),
             } as any; // because query topic needs a parent with address
             await logIndex.setup({
                 store,
-                queryTopic: { queryRegion: queryTopic },
+                rpcTopic: { rpcRegion: rpcTopic },
                 context: "context",
             });
             logIndices.push(logIndex);
@@ -113,11 +113,11 @@ describe("query", () => {
         await waitForPeers(
             session.peers[1].ipfs,
             [session.peers[0].id],
-            queryTopic
+            rpcTopic
         );
 
-        expect(logIndices[0].query.queryTopic).toEqual(
-            logIndices[1].query.queryTopic
+        expect(logIndices[0].query.rpcTopic).toEqual(
+            logIndices[1].query.rpcTopic
         );
     });
 
@@ -134,7 +134,7 @@ describe("query", () => {
                 await logIndices[0].store._addOperation(i, { nexts: [] });
             }
             const responses: HeadsMessage[] = [];
-            await logIndices[1].query.query(
+            await logIndices[1].query.send(
                 new LogQueryRequest({
                     queries: [],
                 }),
@@ -177,7 +177,7 @@ describe("query", () => {
 
             // read from observer 1
             const responses: HeadsMessage[] = [];
-            await logIndices[2].query.query(
+            await logIndices[2].query.send(
                 new LogQueryRequest({
                     queries: [
                         new LogEntryEncryptionQuery({

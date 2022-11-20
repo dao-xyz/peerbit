@@ -10,7 +10,7 @@ import { Access, AccessType } from "./access";
 import { Entry } from "@dao-xyz/ipfs-log";
 import { PublicSignKey, SignKey } from "@dao-xyz/peerbit-crypto";
 import { Program } from "@dao-xyz/peerbit-program";
-import { DQuery } from "@dao-xyz/peerbit-query";
+import { RPC } from "@dao-xyz/peerbit-rpc";
 
 @variant("identity_acl")
 export class IdentityAccessController extends Program {
@@ -36,7 +36,7 @@ export class IdentityAccessController extends Program {
             this.access = new Documents({
                 index: new DocumentIndex({
                     indexBy: "id",
-                    query: new DQuery(),
+                    query: new RPC(),
                 }),
             });
 

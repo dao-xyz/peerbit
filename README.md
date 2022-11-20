@@ -27,7 +27,7 @@ Every peer has an identity which is simply their public key, this key can *curre
  
 Peers have the possibility to organize themselves into "permissioned" regions. Within a region you can be more confident that peers will respect the sharding distribution algorithm and replicate and index content. Additionally, secret information can be shared freely, this allows peers in the permissioned regions to help each other to decrypt messages in order to be able to index and understand content.
  
-Data can be shared and encrypted on a granular level, you can decide exactly what parts of metadata should be public and not. When you create a commit or a query, you can specify exactly who is going to be able to decrypt the message. If you want an end to end conversation between two identities, you just include the other peers' public key as a receiver and you would be certain that know one in the middle would be able to read your message.
+Data can be shared and encrypted on a granular level, you can decide exactly what parts of metadata should be public and not. When you create a commit or a query request, you can specify exactly who is going to be able to decrypt the message. If you want an end to end conversation between two identities, you just include the other peers' public key as a receiver and you would be certain that know one in the middle would be able to read your message.
 
 ### Goals
 The goal of this project is to create a **cheaper** and **more private** way of distributing and accessing data by utilizing consumer hardware and the latest advancements in networking technology. Additionally, we believe that creating a stateful application should and could be made easier if you are approaching it with a P2P database framework like this since there are no "servers" and "clients", just peers. It should not take longer than a weekend to get started to build your first distributed app!
@@ -37,7 +37,6 @@ The goal of this project is to create a **cheaper** and **more private** way of 
 - ✅ Chain agnostic identities 
 - ✅ Permissioned content based sharding 
 - ✅ E2EE (no forward secrecy)
-- ✅ Query protocol
 - ✅ Physical time with Hybrid Logical Clock
 - 🚧 Documentation and examples
 - 🚧 CLI for non browser nodes (SSL setup and network management)

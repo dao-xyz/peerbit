@@ -698,7 +698,7 @@ describe("index", () => {
                 let response: HeadsMessage = undefined as any;
 
                 // read from observer 2
-                await stores[2].docs.logIndex.query.query(
+                await stores[2].docs.logIndex.query.send(
                     new LogQueryRequest({
                         queries: [
                             new LogEntryEncryptionQuery({

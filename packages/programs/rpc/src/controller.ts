@@ -10,8 +10,8 @@ import {
 import type { Message } from "@libp2p/interface-pubsub";
 import { SignKey } from "@dao-xyz/peerbit-crypto";
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
-import { QueryRequestV0, QueryResponseV0 } from "./query.js";
-import { query, QueryOptions, respond } from "./io.js";
+import { RequestV0, ReponseV0 } from "./encoding.js";
+import { query, RPCOptions, respond } from "./io.js";
 import {
     AbstractProgram,
     Address,
@@ -58,10 +58,7 @@ export const getDiscriminatorApproximation = (
     return writer.toArray();
 };
 
-export const getQueryTopic = (
-    parentProgram: Program,
-    region: string
-): string => {
+export const getRPCTopic = (parentProgram: Program, region: string): string => {
     const disriminator = getDiscriminatorApproximation(
         parentProgram.constructor as Constructor<any>
     );
@@ -69,11 +66,11 @@ export const getQueryTopic = (
 };
 
 export type CanRead = (key?: SignKey) => Promise<boolean>;
-export type QueryTopicOption =
+export type RPCTopicOption =
     | { queryAddressSuffix: string }
-    | { queryRegion: string };
-export type DQueryInitializationOptions<Q, R> = {
-    queryTopic?: QueryTopicOption;
+    | { rpcRegion: string };
+export type RPCInitializationOptions<Q, R> = {
+    rpcTopic?: RPCTopicOption;
     queryType: Constructor<Q>;
     responseType: Constructor<R>;
     canRead?: CanRead;
@@ -89,12 +86,12 @@ export type ResponseHandler<Q, R> = (
     context: QueryContext
 ) => Promise<R | undefined> | R | undefined;
 
-export abstract class QueryTopic {
+export abstract class RPCTopic {
     abstract from(address: Address): string;
 }
 
 @variant(0)
-export class QueryRegion extends QueryTopic {
+export class RPCRegion extends RPCTopic {
     @field({ type: "string" })
     id: string;
 
@@ -111,7 +108,7 @@ export class QueryRegion extends QueryTopic {
 }
 
 @variant(1)
-export class QueryAddressSuffix extends QueryTopic {
+export class RPCAddressSuffix extends RPCTopic {
     @field({ type: "string" })
     suffix: string;
     constructor(properties?: { suffix: string }) {
@@ -126,46 +123,46 @@ export class QueryAddressSuffix extends QueryTopic {
     }
 }
 
-@variant("dquery")
-export class DQuery<Q, R> extends ComposableProgram {
-    queryRegion?: QueryTopic;
+@variant("rpc")
+export class RPC<Q, R> extends ComposableProgram {
+    rpcRegion?: RPCTopic;
     subscribeToQueries = true;
     canRead: CanRead;
 
     _subscribed = false;
-    _onQueryMessageBinded: any = undefined;
+    _onMessageBinded: any = undefined;
     _responseHandler: ResponseHandler<Q, (R | undefined) | R>;
-    _queryType: Constructor<Q>;
+    _requestType: Constructor<Q>;
     _responseType: Constructor<R>;
     _replicationTopic: string;
     _context: SearchContext;
 
-    public async setup(options: DQueryInitializationOptions<Q, R>) {
-        if (options.queryTopic) {
+    public async setup(options: RPCInitializationOptions<Q, R>) {
+        if (options.rpcTopic) {
             if (
-                !!(options.queryTopic as { queryRegion }).queryRegion &&
-                !!(options.queryTopic as { queryRegion }).queryRegion ==
-                    !!(options.queryTopic as { queryAddressSuffix })
+                !!(options.rpcTopic as { rpcRegion }).rpcRegion &&
+                !!(options.rpcTopic as { rpcRegion }).rpcRegion ==
+                    !!(options.rpcTopic as { queryAddressSuffix })
                         .queryAddressSuffix
             ) {
                 throw new Error(
-                    "Expected either queryRegion or queryAddressSuffix or none"
+                    "Expected either rpcRegion or queryAddressSuffix or none"
                 );
             }
-            if ((options.queryTopic as { queryRegion }).queryRegion) {
-                this.queryRegion = new QueryRegion({
-                    id: (options.queryTopic as { queryRegion }).queryRegion,
+            if ((options.rpcTopic as { rpcRegion }).rpcRegion) {
+                this.rpcRegion = new RPCRegion({
+                    id: (options.rpcTopic as { rpcRegion }).rpcRegion,
                 });
-            } else if (options.queryTopic as { queryAddressSuffix }) {
-                this.queryRegion = new QueryAddressSuffix({
-                    suffix: (options.queryTopic as { queryAddressSuffix })
+            } else if (options.rpcTopic as { queryAddressSuffix }) {
+                this.rpcRegion = new RPCAddressSuffix({
+                    suffix: (options.rpcTopic as { queryAddressSuffix })
                         .queryAddressSuffix,
                 });
             }
         }
         this._context = options.context;
         this._responseHandler = options.responseHandler;
-        this._queryType = options.queryType;
+        this._requestType = options.queryType;
         this._responseType = options.responseType;
         this.canRead = options.canRead || (() => Promise.resolve(true));
     }
@@ -186,8 +183,8 @@ export class DQuery<Q, R> extends ComposableProgram {
     public async close(): Promise<void> {
         await this._initializationPromise;
         await this._ipfs.pubsub.unsubscribe(
-            this.queryTopic,
-            this._onQueryMessageBinded
+            this.rpcTopic,
+            this._onMessageBinded
         );
         this._subscribed = false;
     }
@@ -197,22 +194,22 @@ export class DQuery<Q, R> extends ComposableProgram {
             return;
         }
 
-        this._onQueryMessageBinded = this._onQueryMessage.bind(this);
+        this._onMessageBinded = this._onMessage.bind(this);
         this._initializationPromise = this._ipfs.pubsub.subscribe(
-            this.queryTopic,
-            this._onQueryMessageBinded
+            this.rpcTopic,
+            this._onMessageBinded
         );
         await this._initializationPromise;
-        logger.debug("subscribing to query topic: " + this.queryTopic);
+        logger.debug("subscribing to query topic: " + this.rpcTopic);
         this._subscribed = true;
     }
 
-    async _onQueryMessage(msg: Message): Promise<void> {
+    async _onMessage(msg: Message): Promise<void> {
         try {
             try {
-                const { result: query, from } = await decryptVerifyInto(
+                const { result: request, from } = await decryptVerifyInto(
                     msg.data,
-                    QueryRequestV0,
+                    RequestV0,
                     this._encryption?.getAnyKeypair ||
                         (() => Promise.resolve(undefined)),
                     {
@@ -221,17 +218,17 @@ export class DQuery<Q, R> extends ComposableProgram {
                     }
                 );
 
-                if (query.context != undefined) {
-                    if (query.context != this.contextAddress) {
-                        logger.debug("Recieved a query for another context");
+                if (request.context != undefined) {
+                    if (request.context != this.contextAddress) {
+                        logger.debug("Recieved a request for another context");
                         return;
                     }
                 }
 
                 const response = await this._responseHandler(
-                    (this._queryType as any) === Uint8Array
-                        ? (query.query as Q)
-                        : deserialize(query.query, this._queryType),
+                    (this._requestType as any) === Uint8Array
+                        ? (request.request as Q)
+                        : deserialize(request.request, this._requestType),
                     {
                         address: this.contextAddress,
                         from,
@@ -241,9 +238,9 @@ export class DQuery<Q, R> extends ComposableProgram {
                 if (response) {
                     await respond(
                         this._ipfs,
-                        this.queryTopic,
-                        query,
-                        new QueryResponseV0({
+                        this.rpcTopic,
+                        request,
+                        new ReponseV0({
                             response: serialize(response),
                             context: this.contextAddress,
                         }),
@@ -271,20 +268,20 @@ export class DQuery<Q, R> extends ComposableProgram {
         }
     }
 
-    public query(
-        queryRequest: Q,
+    public send(
+        request: Q,
         responseHandler: (response: R, from?: SignKey) => void,
-        options?: QueryOptions
+        options?: RPCOptions
     ): Promise<void> {
-        logger.debug("querying topic: " + this.queryTopic);
+        logger.debug("querying topic: " + this.rpcTopic);
         return query(
             this._ipfs,
-            this.queryTopic,
-            new QueryRequestV0({
-                query:
-                    (this._queryType as any) === Uint8Array
-                        ? (queryRequest as Uint8Array)
-                        : serialize(queryRequest),
+            this.rpcTopic,
+            new RequestV0({
+                request:
+                    (this._requestType as any) === Uint8Array
+                        ? (request as Uint8Array)
+                        : serialize(request),
                 responseRecievers: options?.responseRecievers,
                 context: options?.context || this.contextAddress.toString(),
             }),
@@ -306,13 +303,14 @@ export class DQuery<Q, R> extends ComposableProgram {
             ? this._context.address.toString()
             : this._context().toString();
     }
-    public get queryTopic(): string {
+
+    public get rpcTopic(): string {
         if (!this.parentProgram.address) {
             throw new Error("Not initialized");
         }
-        const queryTopic = this.queryRegion
-            ? this.queryRegion.from(this.parentProgram.address)
-            : getQueryTopic(this.parentProgram, this._replicationTopic);
-        return queryTopic;
+        const rpcTopic = this.rpcRegion
+            ? this.rpcRegion.from(this.parentProgram.address)
+            : getRPCTopic(this.parentProgram, this._replicationTopic);
+        return rpcTopic;
     }
 }

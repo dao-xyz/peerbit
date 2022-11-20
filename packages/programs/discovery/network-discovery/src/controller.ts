@@ -23,7 +23,7 @@ export class NetworkDiscovery extends Program {
     _peerId: string;
     _options: ProgramInitializationOptions;
 
-    constructor(props?: { id?: string; queryRegion?: string }) {
+    constructor(props?: { id?: string; rpcRegion?: string }) {
         super(props);
         this.info = createDiscoveryStore(props);
     }

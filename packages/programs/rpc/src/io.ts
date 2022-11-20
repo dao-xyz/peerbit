@@ -16,9 +16,9 @@ import {
 } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from "ipfs-core-types";
 import { Identity } from "@dao-xyz/ipfs-log";
-import { QueryRequestV0, QueryResponseV0 } from "./query";
+import { RequestV0, ReponseV0 } from "./encoding";
 
-export type QueryOptions = {
+export type RPCOptions = {
     signer?: Identity;
     keyResolver?: GetAnyKeypair;
     encryption?: {
@@ -35,9 +35,9 @@ export type QueryOptions = {
 export const query = async (
     ipfs: IPFS,
     topic: string,
-    query: QueryRequestV0,
-    responseHandler: (response: QueryResponseV0, from?: SignKey) => void,
-    options: QueryOptions = {}
+    query: RequestV0,
+    responseHandler: (response: ReponseV0, from?: SignKey) => void,
+    options: RPCOptions = {}
 ) => {
     if (typeof options.maxAggregationTime !== "number") {
         options.maxAggregationTime = 30 * 1000;
@@ -50,7 +50,7 @@ export const query = async (
         try {
             const { result, from } = await decryptVerifyInto(
                 msg.data,
-                QueryResponseV0,
+                ReponseV0,
                 options.keyResolver || (() => Promise.resolve(undefined)),
                 {
                     isTrusted: options?.isTrusted,
@@ -134,8 +134,8 @@ export const query = async (
 export const respond = async (
     ipfs: IPFS,
     topic: string,
-    request: QueryRequestV0,
-    response: QueryResponseV0,
+    request: RequestV0,
+    response: ReponseV0,
     options: {
         signer?: Identity;
         encryption?: {

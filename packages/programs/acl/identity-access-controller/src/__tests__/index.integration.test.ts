@@ -18,7 +18,7 @@ import { CachedValue, DefaultOptions } from "@dao-xyz/peerbit-store";
 import { fileURLToPath } from "url";
 import path from "path";
 import Cache from "@dao-xyz/peerbit-cache";
-import { CanRead, DQuery } from "@dao-xyz/peerbit-query";
+import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 import { Program } from "@dao-xyz/peerbit-program";
 import { IdentityAccessController } from "../acl-db";
 import { v4 as uuid } from "uuid";
@@ -61,7 +61,7 @@ class TestStore extends Program {
             this.store = new Documents({
                 index: new DocumentIndex({
                     indexBy: "id",
-                    query: new DQuery(),
+                    query: new RPC(),
                 }),
             });
             this.accessController = new IdentityAccessController({

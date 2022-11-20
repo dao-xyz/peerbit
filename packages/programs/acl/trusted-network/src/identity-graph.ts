@@ -15,7 +15,7 @@ import {
     joinUint8Arrays,
     UInt8ArraySerializer,
 } from "@dao-xyz/peerbit-borsh-utils";
-import { DQuery } from "@dao-xyz/peerbit-query";
+import { RPC } from "@dao-xyz/peerbit-rpc";
 
 export type RelationResolver = {
     resolve: (
@@ -197,11 +197,11 @@ export const getRelation = (
 
 export const createIdentityGraphStore = (props: {
     id: string;
-    queryRegion?: string;
+    rpcRegion?: string;
 }) =>
     new Documents<IdentityRelation>({
         index: new DocumentIndex({
             indexBy: "id",
-            query: new DQuery(),
+            query: new RPC(),
         }),
     });
