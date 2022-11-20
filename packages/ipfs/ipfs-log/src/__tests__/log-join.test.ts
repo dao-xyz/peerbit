@@ -5,7 +5,6 @@ import { Entry } from "../entry.js";
 import { Log } from "../log.js";
 import { createStore, Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { arraysCompare } from "@dao-xyz/peerbit-borsh-utils";
-import { LamportClock as Clock } from "../clock.js";
 import { jest } from "@jest/globals";
 
 // Test utils
@@ -426,20 +425,20 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 const a2 = await log1.append("helloA2");
                 const b2 = await log2.append("helloB2");
 
-                expect(a2.coordinate.clock.id).toEqual(
+                expect(a2.metadata.clock.id).toEqual(
                     signKey.keypair.publicKey.bytes
                 );
-                expect(b2.coordinate.clock.id).toEqual(
+                expect(b2.metadata.clock.id).toEqual(
                     signKey2.keypair.publicKey.bytes
                 );
                 expect(
-                    a2.coordinate.clock.timestamp.compare(
-                        a1.coordinate.clock.timestamp
+                    a2.metadata.clock.timestamp.compare(
+                        a1.metadata.clock.timestamp
                     )
                 ).toBeGreaterThan(0);
                 expect(
-                    b2.coordinate.clock.timestamp.compare(
-                        b1.coordinate.clock.timestamp
+                    b2.metadata.clock.timestamp.compare(
+                        b1.metadata.clock.timestamp
                     )
                 ).toBeGreaterThan(0);
 
@@ -548,12 +547,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 await log1.join(log3);
                 // Sometimes failes because of clock ids are random TODO Fix
                 expect(log1.heads[log1.heads.length - 1].gid).toEqual(a1.gid);
-                expect(a2.coordinate.clock.id).toEqual(
+                expect(a2.metadata.clock.id).toEqual(
                     signKey.keypair.publicKey.bytes
                 );
                 expect(
-                    a2.coordinate.clock.timestamp.compare(
-                        a1.coordinate.clock.timestamp
+                    a2.metadata.clock.timestamp.compare(
+                        a1.metadata.clock.timestamp
                     )
                 ).toBeGreaterThan(0);
 
@@ -572,7 +571,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 await log4.append("helloD3");
                 const d4 = await log4.append("helloD4");
 
-                expect(d4.coordinate.clock.id).toEqual(
+                expect(d4.metadata.clock.id).toEqual(
                     signKey4.keypair.publicKey.bytes
                 );
 

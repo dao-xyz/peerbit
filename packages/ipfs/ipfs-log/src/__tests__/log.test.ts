@@ -400,7 +400,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
             it("changes identity", async () => {
                 assert.deepStrictEqual(
-                    log.values[0].coordinate.clock.id,
+                    log.values[0].metadata.clock.id,
                     signKey.keypair.publicKey.bytes
                 );
                 log.setIdentity({
@@ -409,7 +409,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 });
                 await log.append("two", { gidSeed: "a" });
                 assert.deepStrictEqual(
-                    log.values[1].coordinate.clock.id,
+                    log.values[1].metadata.clock.id,
                     signKey2.keypair.publicKey.bytes
                 );
                 log.setIdentity({
@@ -418,7 +418,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 });
                 await log.append("three", { gidSeed: "a" });
                 assert.deepStrictEqual(
-                    log.values[2].coordinate.clock.id,
+                    log.values[2].metadata.clock.id,
                     signKey3.keypair.publicKey.bytes
                 );
             });
@@ -674,11 +674,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     expect(JSON.stringify(res.toJSON())).toMatchSnapshot();
                     expect(res.length).toEqual(1);
                     expect(res.values[0].payload.getValue()).toEqual("one");
-                    expect(res.values[0].coordinate.clock.id).toEqual(
+                    expect(res.values[0].metadata.clock.id).toEqual(
                         signKey.keypair.publicKey.bytes
                     );
                     expect(
-                        res.values[0].coordinate.clock.timestamp.logical
+                        res.values[0].metadata.clock.timestamp.logical
                     ).toEqual(0);
                 });
 
@@ -728,11 +728,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     expect(JSON.stringify(res.toJSON())).toMatchSnapshot();
                     expect(res.length).toEqual(1);
                     expect(res.values[0].payload.getValue()).toEqual("one");
-                    expect(res.values[0].coordinate.clock.id).toEqual(
+                    expect(res.values[0].metadata.clock.id).toEqual(
                         signKey.keypair.publicKey.bytes
                     );
                     expect(
-                        res.values[0].coordinate.clock.timestamp.logical
+                        res.values[0].metadata.clock.timestamp.logical
                     ).toEqual(0);
                 });
 
@@ -1014,14 +1014,14 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     expect(i).toEqual(amount);
                     // Make sure the log entries are correct ones
                     expect(
-                        result.values[0].coordinate.clock.timestamp.logical
+                        result.values[0].metadata.clock.timestamp.logical
                     ).toEqual(0);
                     expect(result.values[0].payload.getValue()).toEqual("0");
                     expect(
                         Timestamp.compare(
-                            result.values[result.length - 1].coordinate.clock
+                            result.values[result.length - 1].metadata.clock
                                 .timestamp,
-                            result.values[0].coordinate.clock.timestamp
+                            result.values[0].metadata.clock.timestamp
                         )
                     ).toBeGreaterThan(0);
                     expect(

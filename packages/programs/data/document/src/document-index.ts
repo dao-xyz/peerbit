@@ -193,11 +193,9 @@ export class DocumentIndex<T> extends ComposableProgram {
                                     created:
                                         this._index.get(doc.key)?.context
                                             .created ||
-                                        item.coordinate.clock.timestamp
-                                            .wallTime,
+                                        item.metadata.clock.timestamp.wallTime,
                                     modified:
-                                        item.coordinate.clock.timestamp
-                                            .wallTime,
+                                        item.metadata.clock.timestamp.wallTime,
                                     head: item.hash,
                                 }),
                             });
@@ -214,9 +212,9 @@ export class DocumentIndex<T> extends ComposableProgram {
                             context: new Context({
                                 created:
                                     this._index.get(key)?.context.created ||
-                                    item.coordinate.clock.timestamp.wallTime,
+                                    item.metadata.clock.timestamp.wallTime,
                                 modified:
-                                    item.coordinate.clock.timestamp.wallTime,
+                                    item.metadata.clock.timestamp.wallTime,
                                 head: item.hash,
                             }),
                         });

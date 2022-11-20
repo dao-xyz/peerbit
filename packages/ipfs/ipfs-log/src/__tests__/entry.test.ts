@@ -106,7 +106,7 @@ describe("Entry", function () {
             expect(entry.gid).toEqual(
                 toBase64(await sodium.crypto_generichash(32, "A"))
             );
-            expect(entry.coordinate.clock.equals(clock)).toBeTrue();
+            expect(entry.metadata.clock.equals(clock)).toBeTrue();
 
             expect(entry.payload.getValue()).toEqual("hello");
             expect(entry.next.length).toEqual(0);
@@ -131,7 +131,7 @@ describe("Entry", function () {
             expect(entry.gid).toEqual(
                 toBase64(await sodium.crypto_generichash(32, "A"))
             );
-            expect(entry.coordinate.clock.equals(clock)).toBeTrue();
+            expect(entry.metadata.clock.equals(clock)).toBeTrue();
             expect(entry.next.length).toEqual(0);
         });
 
@@ -153,7 +153,7 @@ describe("Entry", function () {
                 next: [],
                 encryption: {
                     reciever: {
-                        coordinate: undefined,
+                        metadata: undefined,
                         signatures: undefined,
                         payload: receiverKey.keypair.publicKey,
                         next: undefined,
@@ -208,12 +208,12 @@ describe("Entry", function () {
                 toBase64(await sodium.crypto_generichash(32, "A"))
             );
             assert.deepStrictEqual(
-                entry.coordinate.clock.id,
+                entry.metadata.clock.id,
                 new Ed25519PublicKey({
                     publicKey: signKey.keypair.publicKey.publicKey,
                 }).bytes
             );
-            expect(entry.coordinate.clock.timestamp.logical).toEqual(0);
+            expect(entry.metadata.clock.timestamp.logical).toEqual(0);
             expect(entry.next.length).toEqual(0);
         });
 
@@ -305,14 +305,14 @@ describe("Entry", function () {
                 ipfs,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "B",
-                clock: entry1A.coordinate.clock,
+                clock: entry1A.metadata.clock,
                 data: "hello1",
                 next: [],
             });
 
             expect(entry1A.gid > entry1B.gid); // so that gid is not choosen because A has smaller gid
-            expect(entry1A.coordinate.clock.timestamp.logical).toEqual(
-                entry1B.coordinate.clock.timestamp.logical
+            expect(entry1A.metadata.clock.timestamp.logical).toEqual(
+                entry1B.metadata.clock.timestamp.logical
             );
 
             const entry2 = await Entry.create({
@@ -338,7 +338,7 @@ describe("Entry", function () {
                 ipfs,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
-                clock: entry1A.coordinate.clock.advance(),
+                clock: entry1A.metadata.clock.advance(),
                 data: "hello1",
                 next: [],
             });
@@ -346,8 +346,8 @@ describe("Entry", function () {
             expect(entry1B.gid > entry1A.gid); // so that gid is not choosen because B has smaller gid
             expect(entry1A.maxChainLength).toEqual(entry1B.maxChainLength);
             expect(
-                entry1B.coordinate.clock.timestamp.compare(
-                    entry1A.coordinate.clock.timestamp
+                entry1B.metadata.clock.timestamp.compare(
+                    entry1A.metadata.clock.timestamp
                 )
             ).toBeGreaterThan(0);
 
@@ -374,15 +374,15 @@ describe("Entry", function () {
                 ipfs,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "B",
-                clock: entry1A.coordinate.clock,
+                clock: entry1A.metadata.clock,
                 data: "hello1",
                 next: [],
             });
 
             expect(entry1B.gid < entry1A.gid).toBeTrue(); // so that B is choosen because of gid
             expect(entry1A.maxChainLength).toEqual(entry1B.maxChainLength);
-            expect(entry1A.coordinate.clock.timestamp.logical).toEqual(
-                entry1B.coordinate.clock.timestamp.logical
+            expect(entry1A.metadata.clock.timestamp.logical).toEqual(
+                entry1B.metadata.clock.timestamp.logical
             );
 
             const entry2 = await Entry.create({

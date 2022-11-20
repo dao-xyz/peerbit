@@ -548,13 +548,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 await log4.join(log3);
                 expect(log4.tails.length).toEqual(3);
 
-                expect(log4.tails[0].coordinate.clock.id).toEqual(
+                expect(log4.tails[0].metadata.clock.id).toEqual(
                     signKey.keypair.publicKey.bytes
                 );
-                expect(log4.tails[1].coordinate.clock.id).toEqual(
+                expect(log4.tails[1].metadata.clock.id).toEqual(
                     signKey2.keypair.publicKey.bytes
                 );
-                expect(log4.tails[2].coordinate.clock.id).toEqual(
+                expect(log4.tails[2].metadata.clock.id).toEqual(
                     signKey3.keypair.publicKey.bytes
                 );
             });

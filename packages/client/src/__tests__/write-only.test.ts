@@ -139,7 +139,7 @@ describe(`orbit-db - Write-only`, function () {
         await db1.add("hello", {
             reciever: {
                 next: encryptionKey.keypair.publicKey,
-                coordinate: encryptionKey.keypair.publicKey,
+                metadata: encryptionKey.keypair.publicKey,
                 payload: encryptionKey.keypair.publicKey,
                 signatures: encryptionKey.keypair.publicKey,
             },

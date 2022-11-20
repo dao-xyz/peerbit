@@ -269,7 +269,7 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
                 const e = entry;
                 try {
                     await e.getClock();
-                    /* this._recalculateReplicationMax(e.coordinate.maxChainLength); */
+                    /* this._recalculateReplicationMax(e.metadata.maxChainLength); */
                     this._options.onReplicationQueued &&
                         this._options.onReplicationQueued(this, e);
                 } catch (error) {
@@ -664,7 +664,7 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
         }
 
         const maxChainLength = (res: bigint, val: Entry<any>): bigint =>
-            max(res, val.coordinate.maxChainLength);
+            max(res, val.metadata.maxChainLength);
         await this.sync([]);
 
         const queue = (

@@ -366,7 +366,7 @@ describe("index", () => {
                                 created: [
                                     new U64Compare({
                                         compare: Compare.Less,
-                                        value: allDocs[1].coordinate.clock
+                                        value: allDocs[1].metadata.clock
                                             .timestamp.wallTime,
                                     }),
                                 ],
@@ -393,12 +393,12 @@ describe("index", () => {
                                 created: [
                                     new U64Compare({
                                         compare: Compare.Greater,
-                                        value: allDocs[1].coordinate.clock
+                                        value: allDocs[1].metadata.clock
                                             .timestamp.wallTime,
                                     }),
                                     new U64Compare({
                                         compare: Compare.LessOrEqual,
-                                        value: allDocs[2].coordinate.clock
+                                        value: allDocs[2].metadata.clock
                                             .timestamp.wallTime,
                                     }),
                                 ],
@@ -426,12 +426,12 @@ describe("index", () => {
                                 modified: [
                                     new U64Compare({
                                         compare: Compare.GreaterOrEqual,
-                                        value: allDocs[1].coordinate.clock
+                                        value: allDocs[1].metadata.clock
                                             .timestamp.wallTime,
                                     }),
                                     new U64Compare({
                                         compare: Compare.Less,
-                                        value: allDocs[2].coordinate.clock
+                                        value: allDocs[2].metadata.clock
                                             .timestamp.wallTime,
                                     }),
                                 ],
@@ -630,7 +630,7 @@ describe("index", () => {
                 const entry = await stores[1].docs.put(doc, {
                     reciever: {
                         payload: [someKey],
-                        coordinate: undefined,
+                        metadata: undefined,
                         next: undefined,
                         signatures: undefined,
                     },
@@ -680,7 +680,7 @@ describe("index", () => {
                         queries: [
                             new LogEntryEncryptionQuery({
                                 payload: [someKey],
-                                coordinate: [],
+                                metadata: [],
                                 next: [],
                                 signatures: [],
                             }),

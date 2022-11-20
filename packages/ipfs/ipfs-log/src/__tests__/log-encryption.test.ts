@@ -5,6 +5,7 @@ import { createStore, Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import {
     Ed25519Keypair,
     PublicKeyEncryptionResolver,
+    SignatureWithKey,
     X25519Keypair,
     X25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
@@ -33,7 +34,7 @@ let ipfsd: Controller,
     signKey3: KeyWithMeta<Ed25519Keypair>,
     signKey4: KeyWithMeta<Ed25519Keypair>;
 
-const last = (arr: any[]) => {
+const last = <T>(arr: T[]): T => {
     return arr[arr.length - 1];
 };
 
@@ -147,10 +148,77 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 );
             });
 
-            it("join encrypted identities only with knowledge of id and clock", async () => {
+            it("can encrypt signatures with particular reciever", async () => {
+                // dummy signer
+                const extraSigner = await Ed25519Keypair.create();
+                const extraSigner2 = await Ed25519Keypair.create();
+
+                await log2.append("helloA1", {
+                    reciever: {
+                        metadata: undefined,
+                        signatures: {
+                            [log2._identity.publicKey.hashCode()]:
+                                recieverKey.keypair.publicKey, // reciever 1
+                            [extraSigner.publicKey.hashCode()]: [
+                                recieverKey.keypair.publicKey,
+                                (await X25519Keypair.create()).publicKey,
+                            ], // reciever 1 again and 1 unknown reciever
+                            [extraSigner2.publicKey.hashCode()]: (
+                                await X25519Keypair.create()
+                            ).publicKey, // unknown reciever
+                        },
+                        payload: recieverKey.keypair.publicKey,
+                        next: recieverKey.keypair.publicKey,
+                    },
+                    signers: [
+                        async (data) =>
+                            new SignatureWithKey({
+                                publicKey: log2._identity.publicKey,
+                                signature: await log2._identity.sign(data),
+                            }),
+                        async (data) => {
+                            return new SignatureWithKey({
+                                publicKey: extraSigner.publicKey,
+                                signature: await extraSigner.sign(data),
+                            });
+                        },
+                        async (data) => {
+                            return new SignatureWithKey({
+                                publicKey: extraSigner2.publicKey,
+                                signature: await extraSigner2.sign(data),
+                            });
+                        },
+                    ],
+                });
+
+                // Remove decrypted caches of the log2 values
+                log2.values.forEach((value) => {
+                    value._metadata.clear();
+                    value._payload.clear();
+                    value._signatures!.signatures.forEach((signature) =>
+                        signature.clear()
+                    );
+                    value._next.clear();
+                });
+
+                await log1.join(log2);
+                expect(log1.length).toEqual(1);
+                const item = last(log1.values);
+                expect(item.next.length).toEqual(0);
+                expect(
+                    (await item.getSignatures()).map((x) =>
+                        x.publicKey.hashCode()
+                    )
+                ).toContainAllValues([
+                    extraSigner.publicKey.hashCode(),
+                    log2._identity.publicKey.hashCode(),
+                ]);
+            });
+
+            it("joins encrypted identities only with knowledge of id and clock", async () => {
                 await log1.append("helloA1", {
                     reciever: {
-                        coordinate: undefined,
+                        metadata: undefined,
                         signatures: recieverKey.keypair.publicKey,
                         payload: recieverKey.keypair.publicKey,
                         next: recieverKey.keypair.publicKey,
@@ -158,7 +226,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 });
                 await log1.append("helloA2", {
                     reciever: {
-                        coordinate: undefined,
+                        metadata: undefined,
                         signatures: recieverKey.keypair.publicKey,
                         payload: recieverKey.keypair.publicKey,
                         next: recieverKey.keypair.publicKey,
@@ -166,7 +234,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 });
                 await log2.append("helloB1", {
                     reciever: {
-                        coordinate: undefined,
+                        metadata: undefined,
                         signatures: recieverKey.keypair.publicKey,
                         payload: recieverKey.keypair.publicKey,
                         next: recieverKey.keypair.publicKey,
@@ -174,7 +242,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 });
                 await log2.append("helloB2", {
                     reciever: {
-                        coordinate: undefined,
+                        metadata: undefined,
                         signatures: recieverKey.keypair.publicKey,
                         payload: recieverKey.keypair.publicKey,
                         next: recieverKey.keypair.publicKey,
@@ -183,9 +251,11 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
                 // Remove decrypted caches of the log2 values
                 log2.values.forEach((value) => {
-                    value._coordinate.clear();
+                    value._metadata.clear();
                     value._payload.clear();
-                    value._signatures!.clear();
+                    value._signatures!.signatures.forEach((signature) =>
+                        signature.clear()
+                    );
                     value._next.clear();
                 });
 

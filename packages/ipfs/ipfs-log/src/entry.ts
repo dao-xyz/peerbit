@@ -7,11 +7,13 @@ import {
     deserialize,
     option,
     vec,
+    fixedArray,
 } from "@dao-xyz/borsh";
 import io from "@dao-xyz/peerbit-io-utils";
 import { IPFS } from "ipfs-core-types";
 import {
     arraysCompare,
+    arraysEqual,
     UInt8ArraySerializer,
 } from "@dao-xyz/peerbit-borsh-utils";
 import {
@@ -24,12 +26,13 @@ import {
     AccessError,
     Ed25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
-import { max, toBase64 } from "./utils.js";
+import { toBase64 } from "./utils.js";
 import sodium from "libsodium-wrappers";
 import { Encoding, JSON_ENCODING } from "./encoding";
 import { Identity } from "./identity.js";
 import { verify } from "@dao-xyz/peerbit-crypto";
-import { BigIntObject, StringArray } from "./types";
+import { StringArray } from "./types";
+import { logger } from "./logger";
 
 export type MaybeEncryptionPublicKey =
     | X25519PublicKey
@@ -38,10 +41,23 @@ export type MaybeEncryptionPublicKey =
     | Ed25519PublicKey[]
     | undefined;
 
+const isMaybeEryptionPublicKey = (o: any) => {
+    if (!o) {
+        return true;
+    }
+    if (o instanceof X25519PublicKey || o instanceof Ed25519PublicKey) {
+        return true;
+    }
+    if (Array.isArray(o)) {
+        return true; // assume entries are either X25519PublicKey or Ed25519PublicKey
+    }
+    return false;
+};
+
 export type EncryptionTemplateMaybeEncrypted = EntryEncryptionTemplate<
     MaybeEncryptionPublicKey,
     MaybeEncryptionPublicKey,
-    MaybeEncryptionPublicKey,
+    MaybeEncryptionPublicKey | { [key: string]: MaybeEncryptionPublicKey }, // signature either all signature encrypted by same key, or each individually
     MaybeEncryptionPublicKey
 >;
 export interface EntryEncryption {
@@ -109,22 +125,30 @@ export class Payload<T> {
 }
 
 export interface EntryEncryptionTemplate<A, B, C, D> {
-    coordinate: A;
+    metadata: A;
     payload: B;
     signatures: C;
     next: D;
 }
 
 @variant(0)
-export class Coordinate {
+export class Metadata {
+    @field({ type: "string" })
+    gid: string; // graph id
+
     @field({ type: Clock })
     clock: Clock;
 
     @field({ type: "u64" })
     maxChainLength: bigint; // longest chain/merkle tree path frmo this node. maxChainLength := max ( maxChainLength(this.next) , 1)
 
-    constructor(properties?: { clock: Clock; maxChainLength: bigint }) {
+    constructor(properties?: {
+        gid: string;
+        clock: Clock;
+        maxChainLength: bigint;
+    }) {
         if (properties) {
+            this.gid = properties.gid;
             this.clock = properties.clock;
             this.maxChainLength = properties.maxChainLength;
         }
@@ -133,13 +157,27 @@ export class Coordinate {
 
 @variant(0)
 export class Signatures {
-    @field({ type: vec(SignatureWithKey) })
-    signatures: SignatureWithKey[];
+    @field({ type: vec(MaybeEncrypted) })
+    signatures: MaybeEncrypted<SignatureWithKey>[];
 
-    constructor(properties?: { signatures: SignatureWithKey[] }) {
+    constructor(properties?: {
+        signatures: MaybeEncrypted<SignatureWithKey>[];
+    }) {
         if (properties) {
             this.signatures = properties.signatures;
         }
+    }
+
+    equals(other: Signatures) {
+        if (this.signatures.length !== other.signatures.length) {
+            return false;
+        }
+        for (let i = 0; i < this.signatures.length; i++) {
+            if (!this.signatures[i].equals(other.signatures[i])) {
+                return false;
+            }
+        }
+        return true;
     }
 }
 
@@ -147,17 +185,14 @@ export class Signatures {
 export class Entry<T>
     implements
         EntryEncryptionTemplate<
-            Coordinate,
+            Metadata,
             Payload<T>,
             SignatureWithKey[],
             Array<string>
         >
 {
-    @field({ type: "string" })
-    gid: string; // graph id
-
     @field({ type: MaybeEncrypted })
-    _coordinate: MaybeEncrypted<Coordinate>;
+    _metadata: MaybeEncrypted<Metadata>;
 
     @field({ type: MaybeEncrypted })
     _payload: MaybeEncrypted<Payload<T>>;
@@ -168,14 +203,11 @@ export class Entry<T>
     @field({ type: MaybeEncrypted })
     _fork: MaybeEncrypted<StringArray>;
 
-    @field({ type: "u8" })
-    _state: 0; // reserved for states
+    @field({ type: fixedArray("u8", 4) })
+    _reserved: number[];
 
-    @field({ type: "u8" })
-    _reserved: 0; // reserved for future changes
-
-    @field({ type: option(MaybeEncrypted) })
-    _signatures?: MaybeEncrypted<Signatures>;
+    @field({ type: option(Signatures) })
+    _signatures?: Signatures;
 
     @field({ type: option("string") }) // we do option because we serialize and store this in a block without the hash, to recieve the hash, which we later set
     hash: string; // "zd...Foo", we'll set the hash after persisting the entry
@@ -184,19 +216,16 @@ export class Entry<T>
     _encoding?: Encoding<T>;
 
     constructor(obj?: {
-        gid: string;
         payload: MaybeEncrypted<Payload<T>>;
-        signatures?: MaybeEncrypted<Signatures>;
-        coordinate: MaybeEncrypted<Coordinate>;
+        signatures?: Signatures;
+        metadata: MaybeEncrypted<Metadata>;
         next: MaybeEncrypted<StringArray>;
         fork?: MaybeEncrypted<StringArray>; //  (not used)
-        state: 0; // intentational type 0 (not used)
-        reserved: 0; // intentational type 0  (not used)h
+        reserved?: number[]; // intentational type 0  (not used)h
         hash?: string;
     }) {
         if (obj) {
-            this.gid = obj.gid;
-            this._coordinate = obj.coordinate;
+            this._metadata = obj.metadata;
             this._payload = obj.payload;
             this._signatures = obj.signatures;
             this._next = obj.next;
@@ -205,8 +234,7 @@ export class Entry<T>
                 new DecryptedThing({
                     data: serialize(new StringArray({ arr: [] })),
                 });
-            this._reserved = obj.reserved;
-            this._state = obj.state;
+            this._reserved = obj.reserved || [0, 0, 0, 0];
         }
     }
 
@@ -233,28 +261,35 @@ export class Entry<T>
         return this._encoding;
     }
 
-    get coordinate(): Coordinate {
-        return this._coordinate.decrypted.getValue(Coordinate);
+    get metadata(): Metadata {
+        return this._metadata.decrypted.getValue(Metadata);
+    }
+
+    async getMetadata(): Promise<Metadata> {
+        await this._metadata.decrypt(
+            this._encryption?.getAnyKeypair ||
+                (() => Promise.resolve(undefined))
+        );
+        return this.metadata;
+    }
+
+    get gid(): string {
+        return this.metadata.gid;
+    }
+    async getGid(): Promise<string> {
+        return (await this.getMetadata()).gid;
     }
 
     async getClock(): Promise<Clock> {
-        await this._coordinate.decrypt(
-            this._encryption?.getAnyKeypair ||
-                (() => Promise.resolve(undefined))
-        );
-        return this.coordinate.clock;
+        return (await this.getMetadata()).clock;
     }
 
     get maxChainLength(): bigint {
-        return this._coordinate.decrypted.getValue(Coordinate).maxChainLength;
+        return this._metadata.decrypted.getValue(Metadata).maxChainLength;
     }
 
     async getMaxChainLength(): Promise<bigint> {
-        await this._coordinate.decrypt(
-            this._encryption?.getAnyKeypair ||
-                (() => Promise.resolve(undefined))
-        );
-        return this.maxChainLength;
+        return (await this.getMetadata()).maxChainLength;
     }
 
     get payload(): Payload<T> {
@@ -296,20 +331,62 @@ export class Entry<T>
         return this.next;
     }
 
+    /**
+     * Will only return signatures I can decrypt
+     * @returns signatures
+     */
     get signatures(): SignatureWithKey[] {
-        return this._signatures!.decrypted.getValue(Signatures).signatures;
+        const signatures = this._signatures!.signatures.filter((x) => {
+            try {
+                x.decrypted;
+                return true;
+            } catch (error) {
+                return false;
+            }
+        }).map((x) => x.decrypted.getValue(SignatureWithKey));
+        if (signatures.length === 0) {
+            this._signatures?.signatures.forEach((x) => x.clear());
+            throw new Error("Failed to resolve any signature");
+        }
+        return signatures;
     }
-
+    /**
+     * Will only return signatures I can decrypt
+     * @returns signatures
+     */
     async getSignatures(): Promise<SignatureWithKey[]> {
-        await this._signatures!.decrypt(
-            this._encryption?.getAnyKeypair ||
-                (() => Promise.resolve(undefined))
+        const results = await Promise.allSettled(
+            this._signatures!.signatures.map((x) =>
+                x.decrypt(
+                    this._encryption?.getAnyKeypair ||
+                        (() => Promise.resolve(undefined))
+                )
+            )
         );
+
+        if (logger.level === "debug" || logger.level === "trace") {
+            for (const [i, result] of results.entries()) {
+                if (result.status === "rejected") {
+                    logger.debug(
+                        "Failed to decrypt signature with index: " + i
+                    );
+                }
+            }
+        }
         return this.signatures;
     }
 
+    /**
+     * Will only verify signatures I can decrypt
+     * @returns true if all are verified
+     */
     async verifySignatures(): Promise<boolean> {
         const signatures = await this.getSignatures();
+
+        if (signatures.length === 0) {
+            return false;
+        }
+
         for (const signature of signatures) {
             if (
                 !(await verify(
@@ -327,12 +404,10 @@ export class Entry<T>
     static toSignable(entry: Entry<any>): Uint8Array {
         // TODO fix types
         const trimmed = new Entry({
-            coordinate: entry._coordinate,
-            gid: entry.gid,
+            metadata: entry._metadata,
             next: entry._next,
             payload: entry._payload,
             reserved: entry._reserved,
-            state: entry._state,
             fork: entry._fork,
             signatures: undefined,
             hash: undefined,
@@ -353,10 +428,8 @@ export class Entry<T>
 
     equals(other: Entry<T>) {
         return (
-            this.gid === other.gid &&
-            this._reserved === other._reserved &&
-            this._state === other._state &&
-            this._coordinate.equals(other._coordinate) &&
+            arraysEqual(this._reserved, other._reserved) &&
+            this._metadata.equals(other._metadata) &&
             this._signatures!.equals(other._signatures!) &&
             this._next.equals(other._next) &&
             this._fork.equals(other._fork) &&
@@ -457,12 +530,12 @@ export class Entry<T>
                      : new HLC().now(); */
             const hlc = new HLC();
             nexts.forEach((next) => {
-                hlc.update(next.coordinate.clock.timestamp);
+                hlc.update(next.metadata.clock.timestamp);
             });
 
             if (
                 properties.encryption?.reciever.signatures &&
-                properties.encryption?.reciever.coordinate
+                properties.encryption?.reciever.metadata
             ) {
                 throw new Error(
                     "Signature is to be encrypted yet the clock is not, which contains the publicKey as id. Either provide a custom Clock value that is not sensitive or set the reciever (encryption target) for the clock"
@@ -478,13 +551,13 @@ export class Entry<T>
             nexts.forEach((n) => {
                 if (
                     Timestamp.compare(
-                        n.coordinate.clock.timestamp,
+                        n.metadata.clock.timestamp,
                         cv.timestamp
                     ) >= 0
                 ) {
                     throw new Error(
                         "Expecting next(s) to happen before entry, got: " +
-                            n.coordinate.clock.timestamp +
+                            n.metadata.clock.timestamp +
                             " > " +
                             cv.timestamp
                     );
@@ -516,7 +589,7 @@ export class Entry<T>
                 ) {
                     maxChainLength = n.maxChainLength;
                     if (!gid) {
-                        gid = n.gid;
+                        gid = n.metadata.gid;
                         return;
                     }
                     // replace gid if next is from alonger chain, or from a later time, or same time but "smaller" gid
@@ -525,16 +598,16 @@ export class Entry<T>
                           maxClock < n.clock.logical ||
                           (maxClock == n.clock.logical && n.gid < gid) */ // Longest chain
                         Timestamp.compare(
-                            n.coordinate.clock.timestamp,
+                            n.metadata.clock.timestamp,
                             maxClock
                         ) > 0 ||
                         (Timestamp.compare(
-                            n.coordinate.clock.timestamp,
+                            n.metadata.clock.timestamp,
                             maxClock
                         ) == 0 &&
-                            n.gid < gid)
+                            n.metadata.gid < gid)
                     ) {
-                        gid = n.gid;
+                        gid = n.metadata.gid;
                     }
                 }
             });
@@ -547,12 +620,13 @@ export class Entry<T>
 
         maxChainLength += 1n; // include this
 
-        const coordinateEncrypted = await maybeEncrypt(
-            new Coordinate({
+        const metadataEncrypted = await maybeEncrypt(
+            new Metadata({
                 maxChainLength,
                 clock,
+                gid,
             }),
-            properties.encryption?.reciever.coordinate
+            properties.encryption?.reciever.metadata
         );
 
         const next = nextHashes;
@@ -572,17 +646,13 @@ export class Entry<T>
         const forks = new DecryptedThing<StringArray>({
             data: serialize(new StringArray({ arr: [] })),
         });
-        const state = 0;
-        const reserved = 0;
+
         // Sign id, encrypted payload, clock, nexts, refs
         const entry: Entry<T> = new Entry<T>({
             payload,
-            coordinate: coordinateEncrypted,
-            gid,
+            metadata: metadataEncrypted,
             signatures: undefined,
             fork: forks,
-            state,
-            reserved,
             next: nextEncrypted, // Array of hashes
             /* refs: properties.refs, */
         });
@@ -602,14 +672,27 @@ export class Entry<T>
             arraysCompare(a.signature, b.signature)
         );
 
-        const signatureEncrypted = await maybeEncrypt(
-            new Signatures({
-                signatures,
-            }),
-            properties.encryption?.reciever.signatures
+        const encryptedSignatures: MaybeEncrypted<SignatureWithKey>[] = [];
+        const encryptAllSignaturesWithSameKey = isMaybeEryptionPublicKey(
+            properties.encryption?.reciever?.signatures
         );
+        for (const signature of signatures) {
+            const encryption = encryptAllSignaturesWithSameKey
+                ? properties.encryption?.reciever?.signatures
+                : properties.encryption?.reciever?.signatures?.[
+                      signature.publicKey.hashCode()
+                  ];
+            const signatureEncrypted = await maybeEncrypt(
+                signature,
+                encryption
+            );
+            encryptedSignatures.push(signatureEncrypted);
+        }
 
-        entry._signatures = signatureEncrypted;
+        entry._signatures = new Signatures({
+            signatures: encryptedSignatures,
+        });
+
         entry.init({
             encryption: properties.encryption?.options,
             encoding: properties.encoding,
@@ -687,8 +770,8 @@ export class Entry<T>
      * @returns {number} 1 if a is greater, -1 is b is greater
      */
     static compare<T>(a: Entry<T>, b: Entry<T>) {
-        const aClock = a.coordinate.clock;
-        const bClock = b.coordinate.clock;
+        const aClock = a.metadata.clock;
+        const bClock = b.metadata.clock;
         const distance = Clock.compare(aClock, bClock);
         if (distance === 0) return aClock.id < bClock.id ? -1 : 1;
         return distance;
@@ -734,7 +817,7 @@ export class Entry<T>
             parent = values.find((e) => Entry.isDirectParent(prev, e));
         }
         stack = stack.sort((a, b) =>
-            Clock.compare(a.coordinate.clock, b.coordinate.clock)
+            Clock.compare(a.metadata.clock, b.metadata.clock)
         );
         return stack;
     }

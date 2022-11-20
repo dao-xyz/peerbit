@@ -43,7 +43,7 @@ export class LogEntryEncryptionQuery
         >
 {
     @field({ type: vec(X25519PublicKey) })
-    coordinate: X25519PublicKey[];
+    metadata: X25519PublicKey[];
 
     @field({ type: vec(X25519PublicKey) })
     payload: X25519PublicKey[];
@@ -55,14 +55,14 @@ export class LogEntryEncryptionQuery
     signatures: X25519PublicKey[];
 
     constructor(properties?: {
-        coordinate: X25519PublicKey[];
+        metadata: X25519PublicKey[];
         next: X25519PublicKey[];
         payload: X25519PublicKey[];
         signatures: X25519PublicKey[];
     }) {
         super();
         if (properties) {
-            this.coordinate = properties.coordinate;
+            this.metadata = properties.metadata;
             this.payload = properties.payload;
             this.next = properties.next;
             this.signatures = properties.signatures;
@@ -162,11 +162,11 @@ export class LogIndex extends ComposableProgram {
                             return false;
                         };
 
-                        if (q.coordinate.length > 0) {
+                        if (q.metadata.length > 0) {
                             if (
                                 !check(
                                     entry._payload as EncryptedThing<any>,
-                                    q.coordinate
+                                    q.metadata
                                 )
                             ) {
                                 return false;
@@ -209,7 +209,7 @@ export class LogIndex extends ComposableProgram {
                         return (
                             q.signatures.length == 0 &&
                             q.payload.length == 0 &&
-                            q.coordinate.length == 0 &&
+                            q.metadata.length == 0 &&
                             q.next.length == 0
                         );
                     }
