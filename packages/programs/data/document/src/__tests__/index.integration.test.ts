@@ -354,29 +354,6 @@ describe("index", () => {
             expect(response.results.map((x) => x.value.id)).toEqual(["1", "2"]);
         });
 
-        /* it("offset size", async () => {
-            let response: Results<Document> = undefined as any;
-
-            await stores[1].docs.index.query(
-                new DocumentQueryRequest({
-                    queries: [
-                        new FieldStringMatchQuery({
-                            key: "name",
-                            value: "hello",
-                        }),
-                    ],
-                    size: 1n,
-                    offset: 1n,
-                }),
-                (r: Results<Document>) => {
-                    response = r;
-                },
-                { waitForAmount: 1 }
-            );
-            expect(response.results).toHaveLength(1);
-            expect(response.results[0].value.id).toEqual("2");
-        });
-         */
         describe("time", () => {
             it("created before", async () => {
                 let response: Results<Document> = undefined as any;

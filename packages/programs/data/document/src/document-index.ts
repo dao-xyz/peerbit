@@ -248,19 +248,6 @@ export class DocumentIndex<T> extends ComposableProgram {
         }
     }
 
-    /*   deserializeOrItem(
-          entry: Entry<Operation<T>>,
-          operation: PutOperation<T>
-      ): IndexedValue<T> {
-          const item: IndexedValue<T> = {
-              entry,
-              key: operation.key,
-              value: this.deserializeOrPass(operation),
-              context: 
-          };
-          return item;
-      } */
-
     _queryDocuments(
         filter: (doc: IndexedValue<T>) => boolean
     ): IndexedValue<T>[] {
@@ -380,15 +367,6 @@ export class DocumentIndex<T> extends ComposableProgram {
                       .reduce((prev, current) => prev && current)
                 : true
         );
-
-        // TODO remove this, because not applicable
-        /*   if (query.offset) {
-              results = results.slice(Number(query.offset));
-          }
-  
-          if (query.size) {
-              results = results.slice(0, Number(query.size));
-          } */
 
         return Promise.resolve(results);
     }
