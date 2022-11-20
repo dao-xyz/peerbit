@@ -1,7 +1,7 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh";
 
 @variant(0)
-export class RangeCoordinate {
+export class RangeMetadata {
     @field({ type: "u64" })
     offset: bigint;
 
@@ -16,13 +16,13 @@ export class RangeCoordinate {
 }
 
 @variant(0)
-export class RangeCoordinates {
-    @field({ type: vec(RangeCoordinate) })
-    coordinates: RangeCoordinate[];
+export class RangeMetadatas {
+    @field({ type: vec(RangeMetadata) })
+    metadatas: RangeMetadata[];
 
-    constructor(opts?: { coordinates: RangeCoordinate[] }) {
+    constructor(opts?: { metadatas: RangeMetadata[] }) {
         if (opts) {
-            this.coordinates = opts.coordinates;
+            this.metadatas = opts.metadatas;
         }
     }
 }
@@ -68,16 +68,13 @@ export class StringResult {
     @field({ type: "string" })
     string: string;
 
-    @field({ type: option(RangeCoordinates) })
-    coordinates?: RangeCoordinates;
+    @field({ type: option(RangeMetadatas) })
+    metadatas?: RangeMetadatas;
 
-    constructor(properties?: {
-        string: string;
-        coordinates?: RangeCoordinates;
-    }) {
+    constructor(properties?: { string: string; metadatas?: RangeMetadatas }) {
         if (properties) {
             this.string = properties.string;
-            this.coordinates = properties.coordinates;
+            this.metadatas = properties.metadatas;
         }
     }
 }

@@ -160,7 +160,7 @@ describe("query", () => {
                                 .publicKey as Ed25519PublicKey
                         ),
                         next: undefined,
-                        coordinate: undefined,
+                        metadata: undefined,
                         signatures: undefined,
                     },
                 });
@@ -188,7 +188,7 @@ describe("query", () => {
                                 ),
                             ],
                             next: [],
-                            coordinate: [],
+                            metadata: [],
                             signatures: [],
                         }),
                     ],

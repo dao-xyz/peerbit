@@ -3,8 +3,8 @@ import {
     StringQueryRequest,
     StringResult,
     StringMatchQuery,
-    RangeCoordinates,
-    RangeCoordinate,
+    RangeMetadatas,
+    RangeMetadata,
 } from "../index.js";
 import { Range } from "../range.js";
 import {
@@ -129,7 +129,7 @@ describe("query", () => {
         expect(response).toMatchObject(
             new StringResult({
                 string: "hello world",
-                coordinates: undefined, //  because we are matching without any specific query
+                metadatas: undefined, //  because we are matching without any specific query
             })
         );
     });
@@ -171,13 +171,13 @@ describe("query", () => {
         expect(response).toMatchObject(
             new StringResult({
                 string: "hello world",
-                coordinates: new RangeCoordinates({
-                    coordinates: [
-                        new RangeCoordinate({
+                metadatas: new RangeMetadatas({
+                    metadatas: [
+                        new RangeMetadata({
                             length: BigInt("o w".length),
                             offset: BigInt("hell".length),
                         }),
-                        new RangeCoordinate({
+                        new RangeMetadata({
                             length: BigInt("orld".length),
                             offset: BigInt("hello w".length),
                         }),
@@ -231,7 +231,7 @@ describe("query", () => {
             new Range({ offset: 0n, length: "hello".length }),
             {
                 reciever: {
-                    coordinate: undefined,
+                    metadata: undefined,
                     signatures: undefined,
                     next: undefined,
                     payload: [await X25519PublicKey.create()],

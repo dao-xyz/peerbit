@@ -808,7 +808,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                             items1.length > 0
                                 ? items1[
                                       items1.length - 1
-                                  ].coordinate.clock.advance()
+                                  ].metadata.clock.advance()
                                 : undefined,
                     });
                     const n2 = await Entry.create({
@@ -821,7 +821,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                             items2.length > 0
                                 ? items2[
                                       items2.length - 1
-                                  ].coordinate.clock.advance()
+                                  ].metadata.clock.advance()
                                 : undefined,
                     });
                     const n3 = await Entry.create({
@@ -834,7 +834,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                             items3.length > 0
                                 ? items3[
                                       items3.length - 1
-                                  ].coordinate.clock.advance()
+                                  ].metadata.clock.advance()
                                 : undefined,
                     });
                     /*        log1.mergeClock(log2.clock)
@@ -1742,7 +1742,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                                 items1.length > 0
                                     ? items1[
                                           items1.length - 1
-                                      ].coordinate.clock.advance()
+                                      ].metadata.clock.advance()
                                     : undefined,
                         });
                         const n2 = await Entry.create({
@@ -1755,7 +1755,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                                 items2.length > 0
                                     ? items2[
                                           items2.length - 1
-                                      ].coordinate.clock.advance()
+                                      ].metadata.clock.advance()
                                     : undefined,
                         });
                         const n3 = await Entry.create({
@@ -1768,7 +1768,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                                 items3.length > 0
                                     ? items3[
                                           items3.length - 1
-                                      ].coordinate.clock.advance()
+                                      ].metadata.clock.advance()
                                     : undefined,
                         });
 

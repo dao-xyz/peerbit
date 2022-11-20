@@ -75,10 +75,9 @@ export class LogCreator {
             await log.join(log3);
             await log.append("entryC0", {
                 timestamp: new Timestamp({
-                    wallTime:
-                        logA.values[5].coordinate.clock.timestamp.wallTime,
+                    wallTime: logA.values[5].metadata.clock.timestamp.wallTime,
                     logical:
-                        logA.values[5].coordinate.clock.timestamp.logical + 1,
+                        logA.values[5].metadata.clock.timestamp.logical + 1,
                 }),
             });
             await log.join(logA);

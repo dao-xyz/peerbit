@@ -168,7 +168,7 @@ describe(`addOperation`, function () {
 
         await store._addOperation(data, {
             reciever: {
-                coordinate: undefined,
+                metadata: undefined,
                 next: recieverKey.keypair.publicKey,
                 payload: recieverKey.keypair.publicKey,
                 signatures: recieverKey.keypair.publicKey,
@@ -246,7 +246,7 @@ describe(`addOperation`, function () {
         const reciever = await keystore.createEd25519Key();
         await store._addOperation(data, {
             reciever: {
-                coordinate: undefined,
+                metadata: undefined,
                 next: reciever.keypair.publicKey,
                 payload: reciever.keypair.publicKey,
                 signatures: reciever.keypair.publicKey,

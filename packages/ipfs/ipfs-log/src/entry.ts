@@ -111,14 +111,14 @@ export class Payload<T> {
 }
 
 export interface EntryEncryptionTemplate<A, B, C, D> {
-    coordinate: A;
+    metadata: A;
     payload: B;
     signatures: C;
     next: D;
 }
 
 @variant(0)
-export class Coordinate {
+export class Metadata {
     @field({ type: "string" })
     gid: string; // graph id
 
@@ -157,14 +157,14 @@ export class Signatures {
 export class Entry<T>
     implements
         EntryEncryptionTemplate<
-            Coordinate,
+            Metadata,
             Payload<T>,
             SignatureWithKey[],
             Array<string>
         >
 {
     @field({ type: MaybeEncrypted })
-    _coordinate: MaybeEncrypted<Coordinate>;
+    _metadata: MaybeEncrypted<Metadata>;
 
     @field({ type: MaybeEncrypted })
     _payload: MaybeEncrypted<Payload<T>>;
@@ -190,14 +190,14 @@ export class Entry<T>
     constructor(obj?: {
         payload: MaybeEncrypted<Payload<T>>;
         signatures?: MaybeEncrypted<Signatures>;
-        coordinate: MaybeEncrypted<Coordinate>;
+        metadata: MaybeEncrypted<Metadata>;
         next: MaybeEncrypted<StringArray>;
         fork?: MaybeEncrypted<StringArray>; //  (not used)
         reserved?: number[]; // intentational type 0  (not used)h
         hash?: string;
     }) {
         if (obj) {
-            this._coordinate = obj.coordinate;
+            this._metadata = obj.metadata;
             this._payload = obj.payload;
             this._signatures = obj.signatures;
             this._next = obj.next;
@@ -233,35 +233,35 @@ export class Entry<T>
         return this._encoding;
     }
 
-    get coordinate(): Coordinate {
-        return this._coordinate.decrypted.getValue(Coordinate);
+    get metadata(): Metadata {
+        return this._metadata.decrypted.getValue(Metadata);
     }
 
-    async getCoordinate(): Promise<Coordinate> {
-        await this._coordinate.decrypt(
+    async getMetadata(): Promise<Metadata> {
+        await this._metadata.decrypt(
             this._encryption?.getAnyKeypair ||
                 (() => Promise.resolve(undefined))
         );
-        return this.coordinate;
+        return this.metadata;
     }
 
     get gid(): string {
-        return this.coordinate.gid;
+        return this.metadata.gid;
     }
     async getGid(): Promise<string> {
-        return (await this.getCoordinate()).gid;
+        return (await this.getMetadata()).gid;
     }
 
     async getClock(): Promise<Clock> {
-        return (await this.getCoordinate()).clock;
+        return (await this.getMetadata()).clock;
     }
 
     get maxChainLength(): bigint {
-        return this._coordinate.decrypted.getValue(Coordinate).maxChainLength;
+        return this._metadata.decrypted.getValue(Metadata).maxChainLength;
     }
 
     async getMaxChainLength(): Promise<bigint> {
-        return (await this.getCoordinate()).maxChainLength;
+        return (await this.getMetadata()).maxChainLength;
     }
 
     get payload(): Payload<T> {
@@ -334,7 +334,7 @@ export class Entry<T>
     static toSignable(entry: Entry<any>): Uint8Array {
         // TODO fix types
         const trimmed = new Entry({
-            coordinate: entry._coordinate,
+            metadata: entry._metadata,
             next: entry._next,
             payload: entry._payload,
             reserved: entry._reserved,
@@ -359,7 +359,7 @@ export class Entry<T>
     equals(other: Entry<T>) {
         return (
             arraysEqual(this._reserved, other._reserved) &&
-            this._coordinate.equals(other._coordinate) &&
+            this._metadata.equals(other._metadata) &&
             this._signatures!.equals(other._signatures!) &&
             this._next.equals(other._next) &&
             this._fork.equals(other._fork) &&
@@ -460,12 +460,12 @@ export class Entry<T>
                      : new HLC().now(); */
             const hlc = new HLC();
             nexts.forEach((next) => {
-                hlc.update(next.coordinate.clock.timestamp);
+                hlc.update(next.metadata.clock.timestamp);
             });
 
             if (
                 properties.encryption?.reciever.signatures &&
-                properties.encryption?.reciever.coordinate
+                properties.encryption?.reciever.metadata
             ) {
                 throw new Error(
                     "Signature is to be encrypted yet the clock is not, which contains the publicKey as id. Either provide a custom Clock value that is not sensitive or set the reciever (encryption target) for the clock"
@@ -481,13 +481,13 @@ export class Entry<T>
             nexts.forEach((n) => {
                 if (
                     Timestamp.compare(
-                        n.coordinate.clock.timestamp,
+                        n.metadata.clock.timestamp,
                         cv.timestamp
                     ) >= 0
                 ) {
                     throw new Error(
                         "Expecting next(s) to happen before entry, got: " +
-                            n.coordinate.clock.timestamp +
+                            n.metadata.clock.timestamp +
                             " > " +
                             cv.timestamp
                     );
@@ -519,7 +519,7 @@ export class Entry<T>
                 ) {
                     maxChainLength = n.maxChainLength;
                     if (!gid) {
-                        gid = n.coordinate.gid;
+                        gid = n.metadata.gid;
                         return;
                     }
                     // replace gid if next is from alonger chain, or from a later time, or same time but "smaller" gid
@@ -528,16 +528,16 @@ export class Entry<T>
                           maxClock < n.clock.logical ||
                           (maxClock == n.clock.logical && n.gid < gid) */ // Longest chain
                         Timestamp.compare(
-                            n.coordinate.clock.timestamp,
+                            n.metadata.clock.timestamp,
                             maxClock
                         ) > 0 ||
                         (Timestamp.compare(
-                            n.coordinate.clock.timestamp,
+                            n.metadata.clock.timestamp,
                             maxClock
                         ) == 0 &&
-                            n.coordinate.gid < gid)
+                            n.metadata.gid < gid)
                     ) {
-                        gid = n.coordinate.gid;
+                        gid = n.metadata.gid;
                     }
                 }
             });
@@ -550,13 +550,13 @@ export class Entry<T>
 
         maxChainLength += 1n; // include this
 
-        const coordinateEncrypted = await maybeEncrypt(
-            new Coordinate({
+        const metadataEncrypted = await maybeEncrypt(
+            new Metadata({
                 maxChainLength,
                 clock,
                 gid,
             }),
-            properties.encryption?.reciever.coordinate
+            properties.encryption?.reciever.metadata
         );
 
         const next = nextHashes;
@@ -580,7 +580,7 @@ export class Entry<T>
         // Sign id, encrypted payload, clock, nexts, refs
         const entry: Entry<T> = new Entry<T>({
             payload,
-            coordinate: coordinateEncrypted,
+            metadata: metadataEncrypted,
             signatures: undefined,
             fork: forks,
             next: nextEncrypted, // Array of hashes
@@ -687,8 +687,8 @@ export class Entry<T>
      * @returns {number} 1 if a is greater, -1 is b is greater
      */
     static compare<T>(a: Entry<T>, b: Entry<T>) {
-        const aClock = a.coordinate.clock;
-        const bClock = b.coordinate.clock;
+        const aClock = a.metadata.clock;
+        const bClock = b.metadata.clock;
         const distance = Clock.compare(aClock, bClock);
         if (distance === 0) return aClock.id < bClock.id ? -1 : 1;
         return distance;
@@ -734,7 +734,7 @@ export class Entry<T>
             parent = values.find((e) => Entry.isDirectParent(prev, e));
         }
         stack = stack.sort((a, b) =>
-            Clock.compare(a.coordinate.clock, b.coordinate.clock)
+            Clock.compare(a.metadata.clock, b.metadata.clock)
         );
         return stack;
     }

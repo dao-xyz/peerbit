@@ -31,7 +31,7 @@ const addHello = async (
 ) => {
     await db.store.add("hello", {
         reciever: {
-            coordinate: receiver,
+            metadata: receiver,
             next: receiver,
             payload: receiver,
             signatures: receiver,
@@ -237,7 +237,7 @@ Object.keys(testAPIs).forEach((API) => {
 
             await db2.store.add("hello", {
                 reciever: {
-                    coordinate: undefined,
+                    metadata: undefined,
                     next: undefined,
                     signatures: undefined,
                     payload: client3Key.keypair.publicKey,

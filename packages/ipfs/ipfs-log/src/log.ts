@@ -1048,7 +1048,7 @@ export class Log<T> extends GSet {
         const items = entries.reduce(indexReducer, {});
         const exists = (e: Entry<T>) => items[e.hash] === undefined;
         const compareIds = (a: Entry<T>, b: Entry<T>) =>
-            Clock.compare(a.coordinate.clock, b.coordinate.clock);
+            Clock.compare(a.metadata.clock, b.metadata.clock);
 
         return entries.filter(exists).sort(compareIds);
     }

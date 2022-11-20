@@ -1,7 +1,7 @@
 import { StringOperation, StringIndex, encoding } from "./string-index.js";
 import {
-    RangeCoordinate,
-    RangeCoordinates,
+    RangeMetadata,
+    RangeMetadatas,
     StringMatchQuery,
     StringQueryRequest,
     StringResult,
@@ -157,7 +157,7 @@ export class DString extends Program {
                     query.preprocess(query.value)
                 );
                 return occurances.map((ix) => {
-                    return new RangeCoordinate({
+                    return new RangeMetadata({
                         offset: BigInt(ix),
                         length: BigInt(query.value.length),
                     });
@@ -172,8 +172,8 @@ export class DString extends Program {
 
         return new StringResult({
             string: content,
-            coordinates: new RangeCoordinates({
-                coordinates: ranges,
+            metadatas: new RangeMetadatas({
+                metadatas: ranges,
             }),
         });
     }

@@ -194,10 +194,8 @@ export class EntryIO {
                         minClock =
                             result.length > 0
                                 ? Timestamp.bigger(
-                                      (
-                                          await result[result.length - 1]
-                                              .coordinate
-                                      ).clock.timestamp,
+                                      (await result[result.length - 1].metadata)
+                                          .clock.timestamp,
                                       minClock
                                   )
                                 : maxClock;

@@ -150,7 +150,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
             it("join encrypted identities only with knowledge of id and clock", async () => {
                 await log1.append("helloA1", {
                     reciever: {
-                        coordinate: undefined,
+                        metadata: undefined,
                         signatures: recieverKey.keypair.publicKey,
                         payload: recieverKey.keypair.publicKey,
                         next: recieverKey.keypair.publicKey,
@@ -158,7 +158,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 });
                 await log1.append("helloA2", {
                     reciever: {
-                        coordinate: undefined,
+                        metadata: undefined,
                         signatures: recieverKey.keypair.publicKey,
                         payload: recieverKey.keypair.publicKey,
                         next: recieverKey.keypair.publicKey,
@@ -166,7 +166,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 });
                 await log2.append("helloB1", {
                     reciever: {
-                        coordinate: undefined,
+                        metadata: undefined,
                         signatures: recieverKey.keypair.publicKey,
                         payload: recieverKey.keypair.publicKey,
                         next: recieverKey.keypair.publicKey,
@@ -174,7 +174,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 });
                 await log2.append("helloB2", {
                     reciever: {
-                        coordinate: undefined,
+                        metadata: undefined,
                         signatures: recieverKey.keypair.publicKey,
                         payload: recieverKey.keypair.publicKey,
                         next: recieverKey.keypair.publicKey,
@@ -183,7 +183,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
                 // Remove decrypted caches of the log2 values
                 log2.values.forEach((value) => {
-                    value._coordinate.clear();
+                    value._metadata.clear();
                     value._payload.clear();
                     value._signatures!.clear();
                     value._next.clear();

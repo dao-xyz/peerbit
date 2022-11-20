@@ -98,10 +98,10 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
             it("updated the clocks correctly", async () => {
                 log.values.forEach((entry) => {
-                    expect(entry.coordinate.clock.id).toEqual(
+                    expect(entry.metadata.clock.id).toEqual(
                         signKey.keypair.publicKey.bytes
                     );
-                    expect(entry.coordinate.clock.timestamp.logical).toEqual(0);
+                    expect(entry.metadata.clock.timestamp.logical).toEqual(0);
                 });
             });
         });
@@ -151,12 +151,12 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 log.values.forEach((entry, index) => {
                     if (index > 0) {
                         expect(
-                            entry.coordinate.clock.timestamp.compare(
-                                log.values[index - 1].coordinate.clock.timestamp
+                            entry.metadata.clock.timestamp.compare(
+                                log.values[index - 1].metadata.clock.timestamp
                             )
                         ).toBeGreaterThan(0);
                     }
-                    expect(entry.coordinate.clock.id).toEqual(
+                    expect(entry.metadata.clock.id).toEqual(
                         signKey.keypair.publicKey.bytes
                     );
                 });
