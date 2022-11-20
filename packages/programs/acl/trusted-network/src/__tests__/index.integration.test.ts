@@ -272,7 +272,7 @@ describe("index", () => {
             await waitForPeers(
                 session.peers[2].ipfs,
                 [session.peers[0].id, session.peers[1].id],
-                l0b.trustGraph.index._query.queryTopic
+                l0b.trustGraph.index._query.rpcTopic
             );
 
             // Try query with trusted

@@ -655,7 +655,7 @@ describe("index", () => {
                         payload: [someKey],
                         coordinate: undefined,
                         next: undefined,
-                        signature: undefined,
+                        signatures: undefined,
                     },
                 });
                 expect(
@@ -698,14 +698,14 @@ describe("index", () => {
                 let response: HeadsMessage = undefined as any;
 
                 // read from observer 2
-                await stores[2].docs.logIndex.query.query(
+                await stores[2].docs.logIndex.query.send(
                     new LogQueryRequest({
                         queries: [
                             new LogEntryEncryptionQuery({
                                 payload: [someKey],
                                 coordinate: [],
                                 next: [],
-                                signature: [],
+                                signatures: [],
                             }),
                         ],
                     }),

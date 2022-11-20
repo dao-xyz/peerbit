@@ -2,7 +2,8 @@ import { field, variant } from "@dao-xyz/borsh";
 import { PrivateSignKey, PublicSignKey, SignKey, Keypair } from "./key.js";
 import { arraysCompare, fixedUint8Array } from "@dao-xyz/peerbit-borsh-utils";
 import sodium from "libsodium-wrappers";
-import { Signer } from "./signer.js";
+import { Signer, SignWithKey } from "./signer.js";
+import { SignatureWithKey } from "./signature.js";
 
 @variant(0)
 export class Ed25519PublicKey extends PublicSignKey {
@@ -83,6 +84,15 @@ export class Ed25519Keypair extends Keypair implements Signer {
     }
     async sign(data: Uint8Array): Promise<Uint8Array> {
         return sign(data, this.privateKey);
+    }
+
+    signer(): SignWithKey {
+        return async (data: Uint8Array) => {
+            return new SignatureWithKey({
+                publicKey: this.publicKey,
+                signature: await this.sign(data),
+            });
+        };
     }
 
     equals(other: Keypair) {

@@ -29,12 +29,7 @@ import {
     Context,
 } from "./query.js";
 import { AccessError, SignKey } from "@dao-xyz/peerbit-crypto";
-import {
-    CanRead,
-    DQuery,
-    QueryContext,
-    QueryOptions,
-} from "@dao-xyz/peerbit-query";
+import { CanRead, RPC, QueryContext, RPCOptions } from "@dao-xyz/peerbit-rpc";
 import pino from "pino";
 import { Results } from "./query";
 
@@ -119,8 +114,8 @@ export interface IndexedValue<T> {
 
 @variant("documents_index")
 export class DocumentIndex<T> extends ComposableProgram {
-    @field({ type: DQuery })
-    _query: DQuery<DocumentQueryRequest, Results<T>>;
+    @field({ type: RPC })
+    _query: RPC<DocumentQueryRequest, Results<T>>;
 
     @field({ type: "string" })
     indexBy: string;
@@ -130,12 +125,12 @@ export class DocumentIndex<T> extends ComposableProgram {
     type: Constructor<T>;
 
     constructor(properties?: {
-        query?: DQuery<DocumentQueryRequest, Results<T>>;
+        query?: RPC<DocumentQueryRequest, Results<T>>;
         indexBy: string;
     }) {
         super();
         if (properties) {
-            this._query = properties.query || new DQuery();
+            this._query = properties.query || new RPC();
             this.indexBy = properties.indexBy;
         }
         this._index = new Map();
@@ -400,12 +395,12 @@ export class DocumentIndex<T> extends ComposableProgram {
     public query(
         queryRequest: DocumentQueryRequest,
         responseHandler: (response: Results<T>, from?: SignKey) => void,
-        options?: QueryOptions
+        options?: RPCOptions
     ): Promise<void> {
         const handler = (response: Results<T>, from?: SignKey) => {
             response.results.forEach((r) => r.init(this.type));
             responseHandler(response, from);
         };
-        return this._query.query(queryRequest, handler, options);
+        return this._query.send(queryRequest, handler, options);
     }
 }

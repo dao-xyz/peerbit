@@ -9,7 +9,7 @@ import {
     X25519Keypair,
     X25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
-import { QueryRequestV0, QueryResponseV0, query, respond, DQuery } from "../";
+import { RequestV0, ReponseV0, send, respond, RPC } from "../";
 import { Ed25519Identity } from "@dao-xyz/ipfs-log";
 import { Program } from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
@@ -36,8 +36,8 @@ class Body {
 }
 @variant("query-test")
 class Queryable extends Program {
-    @field({ type: DQuery })
-    query: DQuery<Body, Body>;
+    @field({ type: RPC })
+    query: RPC<Body, Body>;
 
     async setup(): Promise<void> {
         await this.query.setup({
@@ -58,7 +58,7 @@ describe("query", () => {
         session = await Session.connected(3);
 
         responder = new Queryable();
-        responder.query = new DQuery();
+        responder.query = new RPC();
         await responder.init(session.peers[0].ipfs, await createIdentity(), {
             store: { replicate: true } as any,
         } as any);
@@ -70,7 +70,7 @@ describe("query", () => {
         await waitForPeers(
             session.peers[1].ipfs,
             [session.peers[0].id],
-            responder.query.queryTopic
+            responder.query.rpcTopic
         );
     });
     afterAll(async () => {
@@ -79,7 +79,7 @@ describe("query", () => {
 
     it("any", async () => {
         let results: Body[] = [];
-        await reader.query.query(
+        await reader.query.send(
             new Body({
                 arr: new Uint8Array([0, 1, 2]),
             }),
@@ -96,7 +96,7 @@ describe("query", () => {
         let results: Body[] = [];
 
         // Unknown context (expect no results)
-        await reader.query.query(
+        await reader.query.send(
             new Body({
                 arr: new Uint8Array([0, 1, 2]),
             }),
@@ -107,7 +107,7 @@ describe("query", () => {
         );
 
         // Explicit
-        await reader.query.query(
+        await reader.query.send(
             new Body({
                 arr: new Uint8Array([0, 1, 2]),
             }),
@@ -119,7 +119,7 @@ describe("query", () => {
         expect(results).toHaveLength(1);
 
         // Implicit
-        await reader.query.query(
+        await reader.query.send(
             new Body({
                 arr: new Uint8Array([0, 1, 2]),
             }),
@@ -136,7 +136,7 @@ describe("query", () => {
 
         let results: Body[] = [];
         const t0 = +new Date();
-        await reader.query.query(
+        await reader.query.send(
             new Body({
                 arr: new Uint8Array([0, 1, 2]),
             }),
@@ -163,14 +163,14 @@ describe("query", () => {
                 async (msg: Message) => {
                     let { result: request } = await decryptVerifyInto(
                         msg.data,
-                        QueryRequestV0,
+                        RequestV0,
                         () => Promise.resolve(undefined)
                     );
                     await respond(
                         session.peers[i].ipfs,
                         topic,
                         request,
-                        new QueryResponseV0({
+                        new ReponseV0({
                             response: serialize(
                                 new Body({ arr: new Uint8Array([0, 1, 2]) })
                             ),
@@ -188,11 +188,13 @@ describe("query", () => {
         );
 
         let results: Uint8Array[] = [];
-        await query(
+        await send(
             session.peers[0].ipfs,
             topic,
-            new QueryRequestV0({
-                query: serialize(new Body({ arr: new Uint8Array([0, 1, 2]) })),
+            new RequestV0({
+                request: serialize(
+                    new Body({ arr: new Uint8Array([0, 1, 2]) })
+                ),
             }),
             (resp) => {
                 results.push(resp.response);
@@ -219,7 +221,7 @@ describe("query", () => {
             async (msg: Message) => {
                 let { result: request, from } = await decryptVerifyInto(
                     msg.data,
-                    QueryRequestV0,
+                    RequestV0,
                     () => Promise.resolve(undefined)
                 );
 
@@ -233,7 +235,7 @@ describe("query", () => {
                     session.peers[1].ipfs,
                     topic,
                     request,
-                    new QueryResponseV0({
+                    new ReponseV0({
                         response: new Uint8Array([0, 1, 2]),
                         context: "context",
                     }),
@@ -245,11 +247,11 @@ describe("query", () => {
         await waitForPeers(session.peers[0].ipfs, [session.peers[1].id], topic);
 
         let results: Uint8Array[] = [];
-        await query(
+        await send(
             session.peers[0].ipfs,
             topic,
-            new QueryRequestV0({
-                query: new Uint8Array([0, 1, 2]),
+            new RequestV0({
+                request: new Uint8Array([0, 1, 2]),
             }),
             (resp, from) => {
                 // Check that it was signed by the responder
@@ -283,7 +285,7 @@ describe("query", () => {
             async (msg: Message) => {
                 let { result: request } = await decryptVerifyInto(
                     msg.data,
-                    QueryRequestV0,
+                    RequestV0,
                     async (keys) => {
                         return {
                             index: 0,
@@ -297,7 +299,7 @@ describe("query", () => {
                     session.peers[1].ipfs,
                     topic,
                     request,
-                    new QueryResponseV0({
+                    new ReponseV0({
                         response: new Uint8Array([0, 1, 2]),
                         context: "context",
                     })
@@ -307,11 +309,11 @@ describe("query", () => {
         await waitForPeers(session.peers[0].ipfs, [session.peers[1].id], topic);
 
         let results: Uint8Array[] = [];
-        await query(
+        await send(
             session.peers[0].ipfs,
             topic,
-            new QueryRequestV0({
-                query: new Uint8Array([0, 1, 2]),
+            new RequestV0({
+                request: new Uint8Array([0, 1, 2]),
                 responseRecievers: [
                     await X25519PublicKey.from(requester.publicKey),
                 ],

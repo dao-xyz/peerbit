@@ -15,6 +15,7 @@ import { AbstractLevel } from "abstract-level";
 import { jest } from "@jest/globals";
 import { fileURLToPath } from "url";
 import path from "path";
+
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 

@@ -1,9 +1,19 @@
 import { HLC, LamportClock as Clock, Timestamp } from "./clock";
 import { isDefined } from "./is-defined";
-import { variant, field, serialize, deserialize, option } from "@dao-xyz/borsh";
+import {
+    variant,
+    field,
+    serialize,
+    deserialize,
+    option,
+    vec,
+} from "@dao-xyz/borsh";
 import io from "@dao-xyz/peerbit-io-utils";
 import { IPFS } from "ipfs-core-types";
-import { UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
+import {
+    arraysCompare,
+    UInt8ArraySerializer,
+} from "@dao-xyz/peerbit-borsh-utils";
 import {
     DecryptedThing,
     MaybeEncrypted,
@@ -101,7 +111,7 @@ export class Payload<T> {
 export interface EntryEncryptionTemplate<A, B, C, D> {
     coordinate: A;
     payload: B;
-    signature: C;
+    signatures: C;
     next: D;
 }
 
@@ -122,12 +132,24 @@ export class Coordinate {
 }
 
 @variant(0)
+export class Signatures {
+    @field({ type: vec(SignatureWithKey) })
+    signatures: SignatureWithKey[];
+
+    constructor(properties?: { signatures: SignatureWithKey[] }) {
+        if (properties) {
+            this.signatures = properties.signatures;
+        }
+    }
+}
+
+@variant(0)
 export class Entry<T>
     implements
         EntryEncryptionTemplate<
             Coordinate,
             Payload<T>,
-            SignatureWithKey,
+            SignatureWithKey[],
             Array<string>
         >
 {
@@ -153,7 +175,7 @@ export class Entry<T>
     _reserved: 0; // reserved for future changes
 
     @field({ type: option(MaybeEncrypted) })
-    _signature?: MaybeEncrypted<SignatureWithKey>;
+    _signatures?: MaybeEncrypted<Signatures>;
 
     @field({ type: option("string") }) // we do option because we serialize and store this in a block without the hash, to recieve the hash, which we later set
     hash: string; // "zd...Foo", we'll set the hash after persisting the entry
@@ -164,7 +186,7 @@ export class Entry<T>
     constructor(obj?: {
         gid: string;
         payload: MaybeEncrypted<Payload<T>>;
-        signature?: MaybeEncrypted<SignatureWithKey>;
+        signatures?: MaybeEncrypted<Signatures>;
         coordinate: MaybeEncrypted<Coordinate>;
         next: MaybeEncrypted<StringArray>;
         fork?: MaybeEncrypted<StringArray>; //  (not used)
@@ -176,7 +198,7 @@ export class Entry<T>
             this.gid = obj.gid;
             this._coordinate = obj.coordinate;
             this._payload = obj.payload;
-            this._signature = obj.signature;
+            this._signatures = obj.signatures;
             this._next = obj.next;
             this._fork =
                 obj.fork ||
@@ -253,13 +275,13 @@ export class Entry<T>
         return payload.getValue(this.encoding);
     }
 
-    get publicKey(): PublicSignKey {
-        return this.signature.publicKey;
+    get publicKeys(): PublicSignKey[] {
+        return this.signatures.map((x) => x.publicKey);
     }
 
-    async getPublicKey(): Promise<PublicSignKey> {
-        await this.getSignature();
-        return this.signature.publicKey;
+    async getPublicKeys(): Promise<PublicSignKey[]> {
+        await this.getSignatures();
+        return this.publicKeys;
     }
 
     get next(): string[] {
@@ -274,25 +296,32 @@ export class Entry<T>
         return this.next;
     }
 
-    get signature(): SignatureWithKey {
-        return this._signature!.decrypted.getValue(SignatureWithKey);
+    get signatures(): SignatureWithKey[] {
+        return this._signatures!.decrypted.getValue(Signatures).signatures;
     }
 
-    async getSignature(): Promise<SignatureWithKey> {
-        await this._signature!.decrypt(
+    async getSignatures(): Promise<SignatureWithKey[]> {
+        await this._signatures!.decrypt(
             this._encryption?.getAnyKeypair ||
                 (() => Promise.resolve(undefined))
         );
-        return this.signature;
+        return this.signatures;
     }
 
-    async verifySignature(): Promise<boolean> {
-        const signature = await this.getSignature();
-        return verify(
-            signature.signature,
-            signature.publicKey,
-            Entry.toSignable(this)
-        );
+    async verifySignatures(): Promise<boolean> {
+        const signatures = await this.getSignatures();
+        for (const signature of signatures) {
+            if (
+                !(await verify(
+                    signature.signature,
+                    signature.publicKey,
+                    Entry.toSignable(this)
+                ))
+            ) {
+                return false;
+            }
+        }
+        return true;
     }
 
     static toSignable(entry: Entry<any>): Uint8Array {
@@ -305,15 +334,15 @@ export class Entry<T>
             reserved: entry._reserved,
             state: entry._state,
             fork: entry._fork,
-            signature: undefined,
+            signatures: undefined,
             hash: undefined,
         });
         return serialize(trimmed);
     }
 
     toSignable(): Uint8Array {
-        if (this._signature) {
-            throw new Error("Expected signature to be undefined");
+        if (this._signatures) {
+            throw new Error("Expected signatures to be undefined");
         }
 
         if (this.hash) {
@@ -328,7 +357,7 @@ export class Entry<T>
             this._reserved === other._reserved &&
             this._state === other._state &&
             this._coordinate.equals(other._coordinate) &&
-            this._signature!.equals(other._signature!) &&
+            this._signatures!.equals(other._signatures!) &&
             this._next.equals(other._next) &&
             this._fork.equals(other._fork) &&
             this._payload.equals(other._payload)
@@ -364,6 +393,7 @@ export class Entry<T>
         pin?: boolean;
         encryption?: EntryEncryption;
         identity: Identity;
+        signers?: ((data: Uint8Array) => Promise<SignatureWithKey>)[];
     }): Promise<Entry<T>> {
         if (!properties.encoding || !properties.next) {
             properties = {
@@ -431,7 +461,7 @@ export class Entry<T>
             });
 
             if (
-                properties.encryption?.reciever.signature &&
+                properties.encryption?.reciever.signatures &&
                 properties.encryption?.reciever.coordinate
             ) {
                 throw new Error(
@@ -522,7 +552,7 @@ export class Entry<T>
                 maxChainLength,
                 clock,
             }),
-            properties.encryption?.reciever.signature
+            properties.encryption?.reciever.coordinate
         );
 
         const next = nextHashes;
@@ -549,7 +579,7 @@ export class Entry<T>
             payload,
             coordinate: coordinateEncrypted,
             gid,
-            signature: undefined,
+            signatures: undefined,
             fork: forks,
             state,
             reserved,
@@ -557,17 +587,29 @@ export class Entry<T>
             /* refs: properties.refs, */
         });
 
-        const signature = await properties.identity.sign(entry.toSignable());
-
-        const signatureEncrypted = await maybeEncrypt(
-            new SignatureWithKey({
-                publicKey: properties.identity.publicKey,
-                signature,
-            }),
-            properties.encryption?.reciever.signature
+        const signers = properties.signers || [
+            async (data: Uint8Array) =>
+                new SignatureWithKey({
+                    signature: await properties.identity.sign(data),
+                    publicKey: properties.identity.publicKey,
+                }),
+        ];
+        const signable = entry.toSignable();
+        let signatures = await Promise.all(
+            signers.map((signer) => signer(signable))
+        );
+        signatures = signatures.sort((a, b) =>
+            arraysCompare(a.signature, b.signature)
         );
 
-        entry._signature = signatureEncrypted;
+        const signatureEncrypted = await maybeEncrypt(
+            new Signatures({
+                signatures,
+            }),
+            properties.encryption?.reciever.signatures
+        );
+
+        entry._signatures = signatureEncrypted;
         entry.init({
             encryption: properties.encryption?.options,
             encoding: properties.encoding,

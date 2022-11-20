@@ -15,7 +15,7 @@ import {
 
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
-import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
+import { Ed25519Keypair, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import { jest } from "@jest/globals";
@@ -25,14 +25,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 
-let ipfsd: Controller,
-    ipfs: IPFS,
-    signKey: KeyWithMeta<Ed25519Keypair>,
-    signKey2: KeyWithMeta<Ed25519Keypair>;
+jest.setTimeout(config.timeout);
 
 Object.keys(testAPIs).forEach((IPFS) => {
     describe("Signed Log", function () {
-        jest.setTimeout(config.timeout);
+        let ipfsd: Controller,
+            ipfs: IPFS,
+            signKey: KeyWithMeta<Ed25519Keypair>,
+            signKey2: KeyWithMeta<Ed25519Keypair>;
 
         let { signingKeyFixtures, signingKeysPath } = config;
         let keystore: Keystore;
@@ -49,10 +49,13 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 await createStore(signingKeysPath(__filenameBase))
             );
 
-            // @ts-ignore
-            signKey = await keystore.getKey(new Uint8Array([0]));
-            // @ts-ignore
-            signKey2 = await keystore.getKey(new Uint8Array([1]));
+            signKey = (await keystore.getKey(
+                new Uint8Array([0])
+            )) as KeyWithMeta<Ed25519Keypair>;
+            signKey2 = (await keystore.getKey(
+                new Uint8Array([1])
+            )) as KeyWithMeta<Ed25519Keypair>;
+
             ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig);
             ipfs = ipfsd.api;
         });
@@ -127,11 +130,43 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 { logId: "A" }
             );
             await log.append("one");
-            assert.notStrictEqual(await log.values[0].signature, null);
+            assert.notStrictEqual(await log.values[0].signatures, null);
             assert.deepStrictEqual(
-                await log.values[0].publicKey,
+                await log.values[0].signatures[0].publicKey,
                 signKey.keypair.publicKey
             );
+        });
+
+        it("can sign with multiple identities", async () => {
+            const log = new Log(
+                ipfs,
+                {
+                    ...signKey.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey.keypair.sign(data),
+                },
+                { logId: "A" }
+            );
+            const signers = [
+                async (data: Uint8Array) =>
+                    new SignatureWithKey({
+                        publicKey: signKey.keypair.publicKey,
+                        signature: await signKey.keypair.sign(data),
+                    }),
+                async (data: Uint8Array) =>
+                    new SignatureWithKey({
+                        publicKey: signKey2.keypair.publicKey,
+                        signature: await signKey2.keypair.sign(data),
+                    }),
+            ];
+
+            await log.append("one", { signers });
+            expect(
+                log.values[0].signatures.map((x) => x.publicKey.hashCode())
+            ).toContainAllValues([
+                signKey.keypair.publicKey.hashCode(),
+                signKey2.keypair.publicKey.hashCode(),
+            ]);
         });
 
         // This test is not expected anymore (TODO what is the expected behaviour, enforce arbitrary conditions or put responibility on user)
@@ -189,7 +224,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 await log1.append("one");
                 await log2.append("two");
                 let entry: Entry<string> = log2.values[0];
-                entry._signature = await log1.values[0]._signature;
+                entry._signatures = await log1.values[0]._signatures;
                 await log1.join(log2, { verifySignatures: true });
             } catch (e: any) {
                 err = e.toString();

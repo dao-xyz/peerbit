@@ -23,7 +23,10 @@ import {
     LamportClock,
     Timestamp,
 } from "./clock.js";
-import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
+import {
+    PublicKeyEncryptionResolver,
+    SignatureWithKey,
+} from "@dao-xyz/peerbit-crypto";
 import { serialize } from "@dao-xyz/borsh";
 
 import { Encoding, JSON_ENCODING } from "./encoding.js";
@@ -388,6 +391,7 @@ export class Log<T> extends GSet {
             nexts?: Entry<any>[];
             pin?: boolean;
             identity?: Identity;
+            signers?: ((data: Uint8Array) => Promise<SignatureWithKey>)[];
             reciever?: EncryptionTemplateMaybeEncrypted;
             onGidsShadowed?: (gids: string[]) => void;
             timestamp?: Timestamp;
@@ -435,11 +439,14 @@ export class Log<T> extends GSet {
             timestamp: options.timestamp || this._hlc.now(),
         }); // TODO privacy leak?
 
+        const identity = options.identity || this._identity;
         let gidsInHeds =
             options.onGidsShadowed && new Set(this.heads.map((h) => h.gid)); // could potentially be faster if we first groupBy
+
         const entry = await Entry.create<T>({
             ipfs: this._storage,
-            identity: options.identity || this._identity,
+            identity: identity,
+            signers: options.signers,
             data,
             clock,
             encoding: this._encoding,
@@ -604,7 +611,7 @@ export class Log<T> extends GSet {
         /* let prevPeers = undefined; */
         for (const e of newItems.values()) {
             if (options?.verifySignatures) {
-                if (!(await e.verifySignature())) {
+                if (!(await e.verifySignatures())) {
                     throw new Error(
                         'Invalid signature entry with hash "' + e.hash + '"'
                     );

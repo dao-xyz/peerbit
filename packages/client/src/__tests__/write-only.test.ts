@@ -26,7 +26,7 @@ import {
     waitForPeers,
 } from "@dao-xyz/peerbit-test-utils";
 import { CanOpenSubPrograms, Program } from "@dao-xyz/peerbit-program";
-import { DQuery } from "@dao-xyz/peerbit-query";
+import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Entry } from "@dao-xyz/ipfs-log";
 
 const orbitdbPath1 = "./orbitdb/tests/write-only/1";
@@ -141,7 +141,7 @@ describe(`orbit-db - Write-only`, function () {
                 next: encryptionKey.keypair.publicKey,
                 coordinate: encryptionKey.keypair.publicKey,
                 payload: encryptionKey.keypair.publicKey,
-                signature: encryptionKey.keypair.publicKey,
+                signatures: encryptionKey.keypair.publicKey,
             },
         });
 
@@ -228,7 +228,7 @@ describe(`orbit-db - Write-only`, function () {
             new Documents<EventStore<string>>({
                 index: new DocumentIndex({
                     indexBy: "id",
-                    query: new DQuery(),
+                    query: new RPC(),
                 }),
             })
         );
@@ -262,7 +262,7 @@ describe(`orbit-db - Write-only`, function () {
         await eventStoreString.add("hello"); // This will exchange an head that will make client 1 open the store
         await waitFor(() => cb.length === 1); // one for checking 'can open store'
         expect(
-            (await cb[0].entry.getPublicKey()).equals(
+            (await cb[0].entry.getPublicKeys())[0].equals(
                 orbitdb1.identity.publicKey
             )
         );

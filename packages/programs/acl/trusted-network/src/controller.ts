@@ -23,7 +23,7 @@ import {
 } from "./identity-graph";
 import { BinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { Program } from "@dao-xyz/peerbit-program";
-import { CanRead, DQuery } from "@dao-xyz/peerbit-query";
+import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { AddOperationOptions } from "@dao-xyz/peerbit-store";
 
@@ -39,30 +39,39 @@ const canAppendByRelation = async (
     ) {
         /*  const relation: Relation = operation.value || deserialize(operation.data, Relation); */
 
-        const key = await entry.getPublicKey();
-        if (operation instanceof PutOperation) {
-            // TODO, this clause is only applicable when we modify the identityGraph, but it does not make sense that the canAppend method does not know what the payload will
-            // be, upon deserialization. There should be known in the `canAppend` method whether we are appending to the identityGraph.
+        const keys = await entry.getPublicKeys();
+        const checkKey = async (key: PublicSignKey): Promise<boolean> => {
+            if (operation instanceof PutOperation) {
+                // TODO, this clause is only applicable when we modify the identityGraph, but it does not make sense that the canAppend method does not know what the payload will
+                // be, upon deserialization. There should be known in the `canAppend` method whether we are appending to the identityGraph.
 
-            const relation: BinaryPayload =
-                operation._value || deserialize(operation.data, BinaryPayload);
-            operation._value = relation;
+                const relation: BinaryPayload =
+                    operation._value ||
+                    deserialize(operation.data, BinaryPayload);
+                operation._value = relation;
 
-            if (relation instanceof IdentityRelation) {
-                if (!relation.from.equals(key)) {
-                    return false;
+                if (relation instanceof IdentityRelation) {
+                    if (!relation.from.equals(key)) {
+                        return false;
+                    }
                 }
+
+                // else assume the payload is accepted
             }
-
-            // else assume the payload is accepted
+            if (isTrusted) {
+                const trusted = await isTrusted(key);
+                return trusted;
+            } else {
+                return true;
+            }
+        };
+        for (const key of keys) {
+            const result = await checkKey(key);
+            if (result) {
+                return true;
+            }
         }
-
-        if (isTrusted) {
-            const trusted = await isTrusted(key);
-            return trusted;
-        } else {
-            return true;
-        }
+        return false;
     } else {
         return false;
     }
@@ -142,7 +151,7 @@ export class TrustedNetwork extends Program {
             });
             this.rootTrust = props.rootTrust;
             this.logIndex =
-                props.logIndex || new LogIndex({ query: new DQuery() });
+                props.logIndex || new LogIndex({ query: new RPC() });
         }
     }
 
@@ -229,7 +238,7 @@ export class TrustedNetwork extends Program {
             return this._isTrustedLocal(trustee, truster);
         } else {
             let trusted = false;
-            this.logIndex.query.query(
+            this.logIndex.query.send(
                 new LogQueryRequest({ queries: [] }),
                 async (heads, from) => {
                     if (!from) {

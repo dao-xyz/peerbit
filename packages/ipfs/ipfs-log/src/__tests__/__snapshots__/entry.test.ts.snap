@@ -1,11 +1,11 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`Entry create creates a an empty entry 1`] = `"zb2rhoAE1yKQhNxuUytaMN2D1kMGaYXVQCmpu6PiZfmsFo6PR"`;
+exports[`Entry create creates a an empty entry 1`] = `"zb2rhmTwuE9jaWAThCUGwZqiboVixehSBec3wfh6yj1eexhGt"`;
 
-exports[`Entry create creates a entry with payload 1`] = `"zb2rheoYTrZCX5PiJbqAFYT9fSNLGDR1Y9oEn42uSRV5U7L5A"`;
+exports[`Entry create creates a entry with payload 1`] = `"zb2rhfXrqxPy5fZ7dhCR3WntJk3qzqcezg9hd3kmB44EfiKG5"`;
 
-exports[`Entry create creates a entry with payload and next 1`] = `"zb2rhXHEt9FdqQ81EcQ2WXnQ6BMqRXXvz98umwxiVZw995vXT"`;
+exports[`Entry create creates a entry with payload and next 1`] = `"zb2rhkm7F7U4Xhsrv4GZSpovM883M6Gn6WGGtLpJj4ScfJKfD"`;
 
-exports[`Entry fromMultihash creates a entry from ipfs hash 1`] = `"zb2rhnoM32vP8ZXhvTVHhVCEKBMwqwYEuUiPKhzZZA2t8qsfU"`;
+exports[`Entry fromMultihash creates a entry from ipfs hash 1`] = `"zb2rhf1RJrCYvsx3diBaNrvMJNumEt5RmHv5xzSv6nibDAfb5"`;
 
-exports[`Entry toMultihash returns an ipfs multihash 1`] = `"zb2rhoAE1yKQhNxuUytaMN2D1kMGaYXVQCmpu6PiZfmsFo6PR"`;
+exports[`Entry toMultihash returns an ipfs multihash 1`] = `"zb2rhmTwuE9jaWAThCUGwZqiboVixehSBec3wfh6yj1eexhGt"`;

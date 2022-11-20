@@ -32,6 +32,7 @@ import {
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
+import { Timestamp } from "../clock.js";
 
 let ipfsd: Controller,
     ipfs: IPFS,
@@ -1384,19 +1385,43 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 );
 
                 for (let i = 1; i <= 5; i++) {
-                    await logA.append("entryA" + i, { nexts: logA.heads });
-                    await logB.append("entryB" + i, { nexts: logB.heads });
+                    await logA.append("entryA" + i, {
+                        nexts: logA.heads,
+                        timestamp: new Timestamp({
+                            wallTime: BigInt(i),
+                            logical: 0,
+                        }),
+                    });
+                    await logB.append("entryB" + i, {
+                        nexts: logB.heads,
+                        timestamp: new Timestamp({
+                            wallTime: BigInt(i),
+                            logical: 1,
+                        }),
+                    });
                 }
 
                 await log3.join(logA);
                 await log3.join(logB);
 
                 for (let i = 6; i <= 10; i++) {
-                    await logA.append("entryA" + i, { nexts: logA.heads });
+                    await logA.append("entryA" + i, {
+                        nexts: logA.heads,
+                        timestamp: new Timestamp({
+                            wallTime: BigInt(i),
+                            logical: 0,
+                        }),
+                    });
                 }
 
                 await log.join(log3);
-                await log.append("entryC0", { nexts: logB.heads });
+                await log.append("entryC0", {
+                    nexts: logB.heads,
+                    timestamp: new Timestamp({
+                        wallTime: BigInt(11),
+                        logical: 0,
+                    }),
+                });
 
                 await log.join(logA);
 
@@ -1533,18 +1558,42 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 );
 
                 for (let i = 1; i <= 5; i++) {
-                    await logA.append("entryA" + i, { nexts: logA.heads });
-                    await logB.append("entryB" + i, { nexts: logB.heads });
+                    await logA.append("entryA" + i, {
+                        nexts: logA.heads,
+                        timestamp: new Timestamp({
+                            wallTime: BigInt(i),
+                            logical: 0,
+                        }),
+                    });
+                    await logB.append("entryB" + i, {
+                        nexts: logB.heads,
+                        timestamp: new Timestamp({
+                            wallTime: BigInt(i),
+                            logical: 1,
+                        }),
+                    });
                 }
                 await log3.join(logA);
                 await log3.join(logB);
 
                 for (let i = 6; i <= 10; i++) {
-                    await logA.append("entryA" + i, { nexts: logA.heads });
+                    await logA.append("entryA" + i, {
+                        nexts: logA.heads,
+                        timestamp: new Timestamp({
+                            wallTime: BigInt(i),
+                            logical: 0,
+                        }),
+                    });
                 }
 
                 await log.join(log3);
-                await log.append("entryC0", { nexts: logB.heads });
+                await log.append("entryC0", {
+                    nexts: logB.heads,
+                    timestamp: new Timestamp({
+                        wallTime: BigInt(11),
+                        logical: 0,
+                    }),
+                });
 
                 await log.join(logA);
 
@@ -1564,7 +1613,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
 
                 // TODO, make sure partial load is deterministic (ordered by time)
                 const first5 = [
-                    "entryB5", // "entryA7",
+                    "entryB5",
                     "entryA8",
                     "entryA9",
                     "entryA10",

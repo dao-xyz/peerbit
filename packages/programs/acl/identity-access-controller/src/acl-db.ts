@@ -10,7 +10,7 @@ import { Access, AccessType } from "./access";
 import { Entry } from "@dao-xyz/ipfs-log";
 import { PublicSignKey, SignKey } from "@dao-xyz/peerbit-crypto";
 import { Program } from "@dao-xyz/peerbit-program";
-import { DQuery } from "@dao-xyz/peerbit-query";
+import { RPC } from "@dao-xyz/peerbit-rpc";
 
 @variant("identity_acl")
 export class IdentityAccessController extends Program {
@@ -36,7 +36,7 @@ export class IdentityAccessController extends Program {
             this.access = new Documents({
                 index: new DocumentIndex({
                     indexBy: "id",
-                    query: new DQuery(),
+                    query: new RPC(),
                 }),
             });
 
@@ -111,43 +111,52 @@ export class IdentityAccessController extends Program {
         // TODO, improve, caching etc
 
         // Check whether it is trusted by trust web
-        const key = await entry.getPublicKey();
-        if (await this.trustedNetwork.isTrusted(key)) {
-            return true;
-        }
-        // Else check whether its trusted by this access controller
-        const canWriteCheck = async (key: PublicSignKey) => {
-            for (const value of this.access.index._index.values()) {
-                const access = value.value;
-                if (access instanceof Access) {
-                    if (
-                        access.accessTypes.find(
-                            (x) =>
-                                x === AccessType.Any || x === AccessType.Write
-                        ) !== undefined
-                    ) {
-                        // check condition
-                        if (await access.accessCondition.allowed(key)) {
-                            return true;
+        const canAppendByKey = async (key: PublicSignKey): Promise<boolean> => {
+            if (await this.trustedNetwork.isTrusted(key)) {
+                return true;
+            }
+            // Else check whether its trusted by this access controller
+            const canWriteCheck = async (key: PublicSignKey) => {
+                for (const value of this.access.index._index.values()) {
+                    const access = value.value;
+                    if (access instanceof Access) {
+                        if (
+                            access.accessTypes.find(
+                                (x) =>
+                                    x === AccessType.Any ||
+                                    x === AccessType.Write
+                            ) !== undefined
+                        ) {
+                            // check condition
+                            if (await access.accessCondition.allowed(key)) {
+                                return true;
+                            }
+                            continue;
                         }
-                        continue;
                     }
                 }
+            };
+            if (await canWriteCheck(key)) {
+                return true;
             }
+            for await (const trustedByKey of getPathGenerator(
+                key,
+                this.identityGraphController.relationGraph,
+                getFromByTo
+            )) {
+                if (await canWriteCheck(trustedByKey.from)) {
+                    return true;
+                }
+            }
+
+            return false;
         };
-        if (await canWriteCheck(key)) {
-            return true;
-        }
-        for await (const trustedByKey of getPathGenerator(
-            key,
-            this.identityGraphController.relationGraph,
-            getFromByTo
-        )) {
-            if (await canWriteCheck(trustedByKey.from)) {
+
+        for (const key of await entry.getPublicKeys()) {
+            if (await canAppendByKey(key)) {
                 return true;
             }
         }
-
         return false;
     }
 

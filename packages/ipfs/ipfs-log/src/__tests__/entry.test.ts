@@ -154,7 +154,7 @@ describe("Entry", function () {
                 encryption: {
                     reciever: {
                         coordinate: undefined,
-                        signature: undefined,
+                        signatures: undefined,
                         payload: receiverKey.keypair.publicKey,
                         next: undefined,
                     },

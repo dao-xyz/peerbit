@@ -151,7 +151,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 await log1.append("helloA1", {
                     reciever: {
                         coordinate: undefined,
-                        signature: recieverKey.keypair.publicKey,
+                        signatures: recieverKey.keypair.publicKey,
                         payload: recieverKey.keypair.publicKey,
                         next: recieverKey.keypair.publicKey,
                     },
@@ -159,7 +159,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 await log1.append("helloA2", {
                     reciever: {
                         coordinate: undefined,
-                        signature: recieverKey.keypair.publicKey,
+                        signatures: recieverKey.keypair.publicKey,
                         payload: recieverKey.keypair.publicKey,
                         next: recieverKey.keypair.publicKey,
                     },
@@ -167,7 +167,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 await log2.append("helloB1", {
                     reciever: {
                         coordinate: undefined,
-                        signature: recieverKey.keypair.publicKey,
+                        signatures: recieverKey.keypair.publicKey,
                         payload: recieverKey.keypair.publicKey,
                         next: recieverKey.keypair.publicKey,
                     },
@@ -175,7 +175,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 await log2.append("helloB2", {
                     reciever: {
                         coordinate: undefined,
-                        signature: recieverKey.keypair.publicKey,
+                        signatures: recieverKey.keypair.publicKey,
                         payload: recieverKey.keypair.publicKey,
                         next: recieverKey.keypair.publicKey,
                     },
@@ -185,7 +185,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 log2.values.forEach((value) => {
                     value._coordinate.clear();
                     value._payload.clear();
-                    value._signature!.clear();
+                    value._signatures!.clear();
                     value._next.clear();
                 });
 

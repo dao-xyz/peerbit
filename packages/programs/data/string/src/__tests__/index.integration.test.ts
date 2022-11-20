@@ -78,7 +78,6 @@ describe("query", () => {
             session.peers[1].ipfs,
             writeStore.address!
         )) as DString;
-        observerStore.query.subscribeToQueries = false;
         await observerStore.init(observer, await createIdentity(), {
             replicationTopic,
             store: {
@@ -90,7 +89,7 @@ describe("query", () => {
         await waitForPeers(
             session.peers[0].ipfs,
             [session.peers[1].id],
-            writeStore.query.queryTopic
+            writeStore.query.rpcTopic
         );
     });
     afterEach(async () => {
@@ -117,7 +116,7 @@ describe("query", () => {
 
         let response: StringResult = undefined as any;
 
-        await observerStore.query.query(
+        await observerStore.query.send(
             new StringQueryRequest({
                 queries: [],
             }),
@@ -150,7 +149,7 @@ describe("query", () => {
 
         let response: StringResult = undefined as any;
 
-        await observerStore.query.query(
+        await observerStore.query.send(
             new StringQueryRequest({
                 queries: [
                     new StringMatchQuery({
@@ -233,7 +232,7 @@ describe("query", () => {
             {
                 reciever: {
                     coordinate: undefined,
-                    signature: undefined,
+                    signatures: undefined,
                     next: undefined,
                     payload: [await X25519PublicKey.create()],
                 },

@@ -171,7 +171,7 @@ describe(`addOperation`, function () {
                 coordinate: undefined,
                 next: recieverKey.keypair.publicKey,
                 payload: recieverKey.keypair.publicKey,
-                signature: recieverKey.keypair.publicKey,
+                signatures: recieverKey.keypair.publicKey,
             },
         });
 
@@ -249,7 +249,7 @@ describe(`addOperation`, function () {
                 coordinate: undefined,
                 next: reciever.keypair.publicKey,
                 payload: reciever.keypair.publicKey,
-                signature: reciever.keypair.publicKey,
+                signatures: reciever.keypair.publicKey,
             },
         });
 
