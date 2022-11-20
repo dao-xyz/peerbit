@@ -13,7 +13,7 @@ import {
 import { PublicSignKey, SignKey } from "./index.js";
 import { Ed25519PublicKey, verifySignatureEd25519 } from "./ed25519";
 import { Secp256k1PublicKey, verifySignatureSecp256k1 } from "./sepc256k1.js";
-import { Signer, SignerWithKey } from "./signer.js";
+import { SignWithKey } from "./signer.js";
 
 @variant(0)
 export class SignatureWithKey {
@@ -98,9 +98,7 @@ export class MaybeSigned<T> {
      * @param signer
      */
     async sign(
-        signer: (
-            data: Uint8Array
-        ) => Promise<{ signature: Uint8Array; publicKey: PublicSignKey }>
+        signer: SignWithKey
     ): Promise<MaybeSigned<T>> {
         const signatureResult = await signer(this.data);
         this.signature = new SignatureWithKey({
