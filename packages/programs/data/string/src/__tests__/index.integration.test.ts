@@ -78,7 +78,6 @@ describe("query", () => {
             session.peers[1].ipfs,
             writeStore.address!
         )) as DString;
-        observerStore.query.subscribeToQueries = false;
         await observerStore.init(observer, await createIdentity(), {
             replicationTopic,
             store: {
