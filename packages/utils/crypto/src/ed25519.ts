@@ -87,12 +87,12 @@ export class Ed25519Keypair extends Keypair implements Signer {
     }
 
     signer(): SignWithKey {
-        return (async (data: Uint8Array) => {
+        return async (data: Uint8Array) => {
             return new SignatureWithKey({
                 publicKey: this.publicKey,
-                signature: await this.sign(data)
-            })
-        })
+                signature: await this.sign(data),
+            });
+        };
     }
 
     equals(other: Keypair) {
@@ -104,7 +104,6 @@ export class Ed25519Keypair extends Keypair implements Signer {
         }
         return false;
     }
-
 }
 
 const sign = async (

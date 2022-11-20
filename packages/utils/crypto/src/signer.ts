@@ -6,4 +6,4 @@ export interface Signer {
 
 export type SignWithKey = (
     bytes: Uint8Array
-) => Promise<{ signature: Uint8Array; publicKey: PublicSignKey }>
+) => Promise<{ signature: Uint8Array; publicKey: PublicSignKey }>;

@@ -97,9 +97,7 @@ export class MaybeSigned<T> {
      * In place
      * @param signer
      */
-    async sign(
-        signer: SignWithKey
-    ): Promise<MaybeSigned<T>> {
+    async sign(signer: SignWithKey): Promise<MaybeSigned<T>> {
         const signatureResult = await signer(this.data);
         this.signature = new SignatureWithKey({
             publicKey: signatureResult.publicKey,
