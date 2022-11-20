@@ -1,4 +1,4 @@
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { Session, waitForPeers } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { Ed25519Identity, Entry } from "@dao-xyz/ipfs-log";
@@ -18,6 +18,7 @@ const createIdentity = async () => {
     } as Ed25519Identity;
 };
 
+const maxTimeError = 3000;
 @variant("clock-test")
 class P extends Program {
     @field({ type: ClockService })
@@ -31,7 +32,7 @@ class P extends Program {
     }
 
     async setup(): Promise<void> {
-        await this.clock.setup();
+        await this.clock.setup({ maxTimeError });
     }
 }
 
@@ -54,6 +55,9 @@ describe("clock", () => {
                 replicate: true,
             } as any,
         } as any);
+
+        responder.clock._maxError = BigInt(maxTimeError * 1e6);
+
         reader = deserialize(serialize(responder), P);
         await reader.init(session.peers[1].ipfs, await createIdentity(), {
             store: {
@@ -93,5 +97,28 @@ describe("clock", () => {
             responder.identity.publicKey.hashCode(),
         ]);
         expect(await reader.clock.verify(entry)).toBeTrue();
+    });
+
+    it("reject old entry", async () => {
+        await expect(
+            Entry.create({
+                data: "hello world",
+                identity: reader.identity,
+                ipfs: reader.ipfs,
+                signers: [
+                    async (data: Uint8Array) =>
+                        new SignatureWithKey({
+                            publicKey: reader.identity.publicKey,
+                            signature: await reader.identity.sign(data),
+                        }),
+                    async (data: Uint8Array) => {
+                        await delay(maxTimeError + 1000);
+                        return reader.clock.sign(data);
+                    },
+                ],
+            })
+        ).rejects.toThrowError(
+            new Error("Recieved an entry with an invalid timestamp")
+        );
     });
 });

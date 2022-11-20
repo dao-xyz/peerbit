@@ -1,5 +1,6 @@
 # ClockService
 
+## 🚧 Experimental state 🚧
 This module can sign entries to verify that their timestamp are set correctly 
 
 See the [test](./src/__tests__/index.test.ts) for examples
