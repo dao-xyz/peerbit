@@ -38,6 +38,7 @@ The goal of this project is to create a **cheaper** and **more private** way of 
 - ✅ Permissioned content based sharding 
 - ✅ E2EE (no forward secrecy)
 - ✅ Physical time with Hybrid Logical Clock
+- ✅ Generic search capabilities across networks
 - 🚧 Documentation and examples
 - 🚧 CLI for non browser nodes (SSL setup and network management)
 - 🚧 Benchmarks
