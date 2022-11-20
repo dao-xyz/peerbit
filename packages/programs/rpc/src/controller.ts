@@ -1,4 +1,5 @@
 import {
+    AbstractType,
     BinaryWriter,
     Constructor,
     deserialize,
@@ -11,7 +12,7 @@ import type { Message } from "@libp2p/interface-pubsub";
 import { SignKey } from "@dao-xyz/peerbit-crypto";
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
 import { RequestV0, ReponseV0 } from "./encoding.js";
-import { query, RPCOptions, respond } from "./io.js";
+import { send, RPCOptions, respond } from "./io.js";
 import {
     AbstractProgram,
     Address,
@@ -71,8 +72,8 @@ export type RPCTopicOption =
     | { rpcRegion: string };
 export type RPCInitializationOptions<Q, R> = {
     rpcTopic?: RPCTopicOption;
-    queryType: Constructor<Q>;
-    responseType: Constructor<R>;
+    queryType: AbstractType<Q>;
+    responseType: AbstractType<R>;
     canRead?: CanRead;
     context: SearchContext;
     responseHandler: ResponseHandler<Q, R>;
@@ -126,14 +127,13 @@ export class RPCAddressSuffix extends RPCTopic {
 @variant("rpc")
 export class RPC<Q, R> extends ComposableProgram {
     rpcRegion?: RPCTopic;
-    subscribeToQueries = true;
     canRead: CanRead;
 
     _subscribed = false;
     _onMessageBinded: any = undefined;
     _responseHandler: ResponseHandler<Q, (R | undefined) | R>;
-    _requestType: Constructor<Q>;
-    _responseType: Constructor<R>;
+    _requestType: AbstractType<Q>;
+    _responseType: AbstractType<R>;
     _replicationTopic: string;
     _context: SearchContext;
 
@@ -175,7 +175,7 @@ export class RPC<Q, R> extends ComposableProgram {
         await super.init(ipfs, identity, options);
         this._replicationTopic = options.replicationTopic;
         if (options.store.replicate) {
-            await this._subscribeToQueries();
+            await this._subscribe();
         }
         return this;
     }
@@ -189,7 +189,7 @@ export class RPC<Q, R> extends ComposableProgram {
         this._subscribed = false;
     }
 
-    async _subscribeToQueries(): Promise<void> {
+    async _subscribe(): Promise<void> {
         if (this._subscribed) {
             return;
         }
@@ -274,7 +274,7 @@ export class RPC<Q, R> extends ComposableProgram {
         options?: RPCOptions
     ): Promise<void> {
         logger.debug("querying topic: " + this.rpcTopic);
-        return query(
+        return send(
             this._ipfs,
             this.rpcTopic,
             new RequestV0({

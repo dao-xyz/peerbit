@@ -32,7 +32,7 @@ export type RPCOptions = {
     context?: string;
 };
 
-export const query = async (
+export const send = async (
     ipfs: IPFS,
     topic: string,
     query: RequestV0,

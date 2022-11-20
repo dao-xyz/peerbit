@@ -9,7 +9,7 @@ import {
     X25519Keypair,
     X25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
-import { RequestV0, ReponseV0, query, respond, RPC } from "../";
+import { RequestV0, ReponseV0, send, respond, RPC } from "../";
 import { Ed25519Identity } from "@dao-xyz/ipfs-log";
 import { Program } from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
@@ -188,7 +188,7 @@ describe("query", () => {
         );
 
         let results: Uint8Array[] = [];
-        await query(
+        await send(
             session.peers[0].ipfs,
             topic,
             new RequestV0({
@@ -247,7 +247,7 @@ describe("query", () => {
         await waitForPeers(session.peers[0].ipfs, [session.peers[1].id], topic);
 
         let results: Uint8Array[] = [];
-        await query(
+        await send(
             session.peers[0].ipfs,
             topic,
             new RequestV0({
@@ -309,7 +309,7 @@ describe("query", () => {
         await waitForPeers(session.peers[0].ipfs, [session.peers[1].id], topic);
 
         let results: Uint8Array[] = [];
-        await query(
+        await send(
             session.peers[0].ipfs,
             topic,
             new RequestV0({
