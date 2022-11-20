@@ -32,6 +32,7 @@ import { Encoding, JSON_ENCODING } from "./encoding";
 import { Identity } from "./identity.js";
 import { verify } from "@dao-xyz/peerbit-crypto";
 import { StringArray } from "./types";
+import { logger } from "./logger";
 
 export type MaybeEncryptionPublicKey =
     | X25519PublicKey
@@ -40,10 +41,23 @@ export type MaybeEncryptionPublicKey =
     | Ed25519PublicKey[]
     | undefined;
 
+const isMaybeEryptionPublicKey = (o: any) => {
+    if (!o) {
+        return true;
+    }
+    if (o instanceof X25519PublicKey || o instanceof Ed25519PublicKey) {
+        return true;
+    }
+    if (Array.isArray(o)) {
+        return true; // assume entries are either X25519PublicKey or Ed25519PublicKey
+    }
+    return false;
+};
+
 export type EncryptionTemplateMaybeEncrypted = EntryEncryptionTemplate<
     MaybeEncryptionPublicKey,
     MaybeEncryptionPublicKey,
-    MaybeEncryptionPublicKey,
+    MaybeEncryptionPublicKey | { [key: string]: MaybeEncryptionPublicKey }, // signature either all signature encrypted by same key, or each individually
     MaybeEncryptionPublicKey
 >;
 export interface EntryEncryption {
@@ -143,13 +157,27 @@ export class Metadata {
 
 @variant(0)
 export class Signatures {
-    @field({ type: vec(SignatureWithKey) })
-    signatures: SignatureWithKey[];
+    @field({ type: vec(MaybeEncrypted) })
+    signatures: MaybeEncrypted<SignatureWithKey>[];
 
-    constructor(properties?: { signatures: SignatureWithKey[] }) {
+    constructor(properties?: {
+        signatures: MaybeEncrypted<SignatureWithKey>[];
+    }) {
         if (properties) {
             this.signatures = properties.signatures;
         }
+    }
+
+    equals(other: Signatures) {
+        if (this.signatures.length !== other.signatures.length) {
+            return false;
+        }
+        for (let i = 0; i < this.signatures.length; i++) {
+            if (!this.signatures[i].equals(other.signatures[i])) {
+                return false;
+            }
+        }
+        return true;
     }
 }
 
@@ -178,8 +206,8 @@ export class Entry<T>
     @field({ type: fixedArray("u8", 4) })
     _reserved: number[];
 
-    @field({ type: option(MaybeEncrypted) })
-    _signatures?: MaybeEncrypted<Signatures>;
+    @field({ type: option(Signatures) })
+    _signatures?: Signatures;
 
     @field({ type: option("string") }) // we do option because we serialize and store this in a block without the hash, to recieve the hash, which we later set
     hash: string; // "zd...Foo", we'll set the hash after persisting the entry
@@ -189,7 +217,7 @@ export class Entry<T>
 
     constructor(obj?: {
         payload: MaybeEncrypted<Payload<T>>;
-        signatures?: MaybeEncrypted<Signatures>;
+        signatures?: Signatures;
         metadata: MaybeEncrypted<Metadata>;
         next: MaybeEncrypted<StringArray>;
         fork?: MaybeEncrypted<StringArray>; //  (not used)
@@ -303,20 +331,62 @@ export class Entry<T>
         return this.next;
     }
 
+    /**
+     * Will only return signatures I can decrypt
+     * @returns signatures
+     */
     get signatures(): SignatureWithKey[] {
-        return this._signatures!.decrypted.getValue(Signatures).signatures;
+        const signatures = this._signatures!.signatures.filter((x) => {
+            try {
+                x.decrypted;
+                return true;
+            } catch (error) {
+                return false;
+            }
+        }).map((x) => x.decrypted.getValue(SignatureWithKey));
+        if (signatures.length === 0) {
+            this._signatures?.signatures.forEach((x) => x.clear());
+            throw new Error("Failed to resolve any signature");
+        }
+        return signatures;
     }
-
+    /**
+     * Will only return signatures I can decrypt
+     * @returns signatures
+     */
     async getSignatures(): Promise<SignatureWithKey[]> {
-        await this._signatures!.decrypt(
-            this._encryption?.getAnyKeypair ||
-                (() => Promise.resolve(undefined))
+        const results = await Promise.allSettled(
+            this._signatures!.signatures.map((x) =>
+                x.decrypt(
+                    this._encryption?.getAnyKeypair ||
+                        (() => Promise.resolve(undefined))
+                )
+            )
         );
+
+        if (logger.level === "debug" || logger.level === "trace") {
+            for (const [i, result] of results.entries()) {
+                if (result.status === "rejected") {
+                    logger.debug(
+                        "Failed to decrypt signature with index: " + i
+                    );
+                }
+            }
+        }
         return this.signatures;
     }
 
+    /**
+     * Will only verify signatures I can decrypt
+     * @returns true if all are verified
+     */
     async verifySignatures(): Promise<boolean> {
         const signatures = await this.getSignatures();
+
+        if (signatures.length === 0) {
+            return false;
+        }
+
         for (const signature of signatures) {
             if (
                 !(await verify(
@@ -602,14 +672,27 @@ export class Entry<T>
             arraysCompare(a.signature, b.signature)
         );
 
-        const signatureEncrypted = await maybeEncrypt(
-            new Signatures({
-                signatures,
-            }),
-            properties.encryption?.reciever.signatures
+        const encryptedSignatures: MaybeEncrypted<SignatureWithKey>[] = [];
+        const encryptAllSignaturesWithSameKey = isMaybeEryptionPublicKey(
+            properties.encryption?.reciever?.signatures
         );
+        for (const signature of signatures) {
+            const encryption = encryptAllSignaturesWithSameKey
+                ? properties.encryption?.reciever?.signatures
+                : properties.encryption?.reciever?.signatures?.[
+                      signature.publicKey.hashCode()
+                  ];
+            const signatureEncrypted = await maybeEncrypt(
+                signature,
+                encryption
+            );
+            encryptedSignatures.push(signatureEncrypted);
+        }
 
-        entry._signatures = signatureEncrypted;
+        entry._signatures = new Signatures({
+            signatures: encryptedSignatures,
+        });
+
         entry.init({
             encryption: properties.encryption?.options,
             encoding: properties.encoding,

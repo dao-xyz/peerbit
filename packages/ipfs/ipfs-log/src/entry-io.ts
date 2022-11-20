@@ -3,13 +3,8 @@ import pDoWhilst from "p-do-whilst";
 import { Entry } from "./entry";
 import { IPFS } from "ipfs-core-types";
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
-import { max, min } from "./utils";
 import { Encoding, JSON_ENCODING } from "./encoding";
-import { logger as parentLogger } from "./logger.js";
 import { Timestamp } from "./clock";
-const logger = parentLogger.child({ module: "entry-io" });
-
-const hasItems = (arr: any[]) => arr && arr.length > 0;
 
 export interface EntryFetchOptions<T> {
     length?: number;
