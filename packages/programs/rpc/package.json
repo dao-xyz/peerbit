@@ -16,6 +16,7 @@
         "src",
         "!src/**/__tests__",
         "!lib/**/__tests__",
+        "!documentation",
         "LICENSE"
     ],
     "publishConfig": {

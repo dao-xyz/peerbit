@@ -34,8 +34,9 @@ class Body {
         }
     }
 }
-@variant("query-test")
-class Queryable extends Program {
+
+@variant("rpc-test")
+class RPCTest extends Program {
     @field({ type: RPC })
     query: RPC<Body, Body>;
 
@@ -53,16 +54,16 @@ class Queryable extends Program {
 }
 
 describe("query", () => {
-    let session: Session, responder: Queryable, reader: Queryable;
+    let session: Session, responder: RPCTest, reader: RPCTest;
     beforeAll(async () => {
         session = await Session.connected(3);
 
-        responder = new Queryable();
+        responder = new RPCTest();
         responder.query = new RPC();
         await responder.init(session.peers[0].ipfs, await createIdentity(), {
             store: { replicate: true } as any,
         } as any);
-        reader = deserialize(serialize(responder), Queryable);
+        reader = deserialize(serialize(responder), RPCTest);
         await reader.init(session.peers[1].ipfs, await createIdentity(), {
             store: {} as any,
         } as any);

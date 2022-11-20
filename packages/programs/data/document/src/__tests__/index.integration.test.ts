@@ -37,7 +37,7 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 
-@variant("document") //@variant([1, 0])
+@variant("document")
 class Document {
     @field({ type: "string" })
     id: string;
@@ -56,7 +56,7 @@ class Document {
 }
 
 @variant("test_documents")
-class DocumentDDoc extends Program {
+class TestStore extends Program {
     @field({ type: Documents })
     docs: Documents<Document>;
 
@@ -79,8 +79,8 @@ describe("index", () => {
         peersCount = 3,
         /*     writerStoreKeypair: X25519Keypair, observer2Keypair: X25519Keypair,
          */
-        stores: DocumentDDoc[] = [],
-        writeStore: DocumentDDoc,
+        stores: TestStore[] = [],
+        writeStore: TestStore,
         cacheStores: AbstractLevel<any, string>[] = [];
 
     const createIdentity = async () => {
@@ -103,11 +103,11 @@ describe("index", () => {
         for (let i = 0; i < peersCount; i++) {
             const store =
                 i > 0
-                    ? await DocumentDDoc.load<DocumentDDoc>(
+                    ? await TestStore.load<TestStore>(
                           session.peers[i].ipfs,
                           stores[0].address!
                       )
-                    : new DocumentDDoc({
+                    : new TestStore({
                           docs: new Documents<Document>({
                               index: new DocumentIndex({
                                   indexBy: "id",
@@ -184,7 +184,7 @@ describe("index", () => {
 
     describe("operations", () => {
         it("can add and delete", async () => {
-            const store = new DocumentDDoc({
+            const store = new TestStore({
                 docs: new Documents<Document>({
                     index: new DocumentIndex({
                         indexBy: "id",
@@ -249,7 +249,7 @@ describe("index", () => {
         });
 
         it("permanently delete", async () => {
-            const store = new DocumentDDoc({
+            const store = new TestStore({
                 docs: new Documents<Document>({
                     index: new DocumentIndex({
                         indexBy: "id",
