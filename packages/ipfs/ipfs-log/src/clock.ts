@@ -27,7 +27,6 @@ import { field, variant } from "@dao-xyz/borsh";
 import { UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
 import { arraysCompare, arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
 import hrtime from "browser-process-hrtime";
-import { toBigInt } from "longfn";
 
 const hrtimeBigint = () => {
     const time = hrtime();
@@ -52,12 +51,8 @@ export function fromBits(low, high, unsigned, target?) {
     return target;
 }
 
-const MAX_UNSIGNED_VALUE = Object.freeze(
-    fromBits(0xffffffff, 0xffffffff, true)
-);
-
 const n1e6 = BigInt(1e6);
-const UINT64_MAX = toBigInt(MAX_UNSIGNED_VALUE); // 18446744073709551615 ?
+const UINT64_MAX = 18446744073709551615n;
 const UINT32_MAX = 0xffffffff;
 
 function bigIntCoerce(input, fallback) {
