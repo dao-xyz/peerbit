@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/ipfs-pubsub-direct-channel",
-    "version": "0.0.25",
+    "version": "0.0.26",
     "description": "1-to-1 communication channel over IPFS Pubsub between two peers",
     "license": "MIT",
     "type": "module",
@@ -30,13 +30,13 @@
     ],
     "dependencies": {
         "@dao-xyz/borsh": "^3.4.2",
-        "@dao-xyz/ipfs-pubsub-peer-monitor": "^0.0.14",
-        "@dao-xyz/peerbit-borsh-utils": "^0.0.8",
-        "@dao-xyz/peerbit-test-utils": "^0.0.12",
+        "@dao-xyz/ipfs-pubsub-peer-monitor": "^0.0.15",
+        "@dao-xyz/peerbit-borsh-utils": "^0.0.9",
+        "@dao-xyz/peerbit-test-utils": "^0.0.13",
         "pino": "^8.7.0"
     },
     "devDependencies": {
-        "@dao-xyz/peerbit-time": "^0.0.17",
+        "@dao-xyz/peerbit-time": "^0.0.18",
         "@mapbox/node-pre-gyp": "^1.0.10",
         "assert": "^2.0.0",
         "fs-extra": "^10.0.0",

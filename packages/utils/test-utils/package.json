@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-test-utils",
-    "version": "0.0.12",
+    "version": "0.0.13",
     "description": "Test utils for Peerbit",
     "type": "module",
     "sideEffects": false,
@@ -34,7 +34,7 @@
         "memory-level": "^1.0.0"
     },
     "devDependencies": {
-        "@dao-xyz/peerbit-time": "^0.0.17",
+        "@dao-xyz/peerbit-time": "^0.0.18",
         "go-ipfs": "^0.15.0",
         "ipfs": "^0.65.0",
         "ipfsd-ctl": "^12.2.2",

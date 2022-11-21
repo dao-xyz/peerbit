@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/ipfs-pubsub-peer-monitor",
-    "version": "0.0.14",
+    "version": "0.0.15",
     "description": "Peer monitor",
     "type": "module",
     "license": "MIT",
@@ -27,7 +27,7 @@
         "p-forever": "^3.0.1"
     },
     "devDependencies": {
-        "@dao-xyz/peerbit-time": "^0.0.17"
+        "@dao-xyz/peerbit-time": "^0.0.18"
     },
     "scripts": {
         "clean": "shx rm -rf lib/*",
