@@ -62,13 +62,6 @@ function bigIntCoerce(input, fallback) {
     return fallback;
 }
 
-function bigIntJSON(bigInt) {
-    if (bigInt < Number.MAX_SAFE_INTEGER) {
-        return Number(bigInt);
-    }
-    return "0x" + bigInt.toString(16);
-}
-
 @variant(0)
 export class Timestamp {
     @field({ type: "u64" })
