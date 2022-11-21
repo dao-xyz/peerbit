@@ -87,4 +87,4 @@ Similarly graphs merge (like when the CAT and DOG became a DOG), this is functio
 
 ## Implementation
 
-The implementation can be found [here](https://github.com/dao-xyz/peerbit/blob/2041b18bd955d7ca029c5a1e35a0892b06f89230/packages/client/src/peer.ts#L1236) (findLeaders method)
+The implementation can be found [here](https://github.com/dao-xyz/peerbit/blob/2041b18bd955d7ca029c5a1e35a0892b06f89230/packages/client/src/peer.ts#L1252) (findLeaders method)
