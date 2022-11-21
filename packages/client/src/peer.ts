@@ -1254,7 +1254,7 @@ export class Peerbit {
         address: string,
         replicating: boolean,
         slot: { toString(): string },
-        numberOfLeaders: number /* , addPeers: string[] = [], removePeers: string[] = [] */
+        numberOfLeaders: number
     ): Promise<string[]> {
         // Hash the time, and find the closest peer id to this hash
         const h = (h: string) => createHash("sha1").update(h).digest("hex");
