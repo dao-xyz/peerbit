@@ -19,7 +19,7 @@ import { databases } from "./utils";
 
 const dbPath = "./orbitdb/tests/customKeystore";
 
-describe(`orbit-db - Use a Custom Cache`, function () {
+describe(`Use a Custom Cache`, function () {
     jest.setTimeout(20000);
 
     let ipfsd: Controller, ipfs: IPFS, orbitdb1: Peerbit, store;

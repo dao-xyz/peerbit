@@ -22,7 +22,7 @@ const dbPath3 = "./orbitdb/tests/replicate-automatically/3";
 const dbPath4 = "./orbitdb/tests/replicate-automatically/4";
 
 Object.keys(testAPIs).forEach((API) => {
-    describe(`orbit-db - Automatic Replication (${API})`, function () {
+    describe(`Automatic Replication (${API})`, function () {
         jest.setTimeout(config.timeout * 14);
 
         /*  let ipfsd1: Controller, ipfsd2: Controller, ipfsd3: Controller, ipfsd4: Controller, ipfs1: IPFS, ipfs2: IPFS, ipfs3: IPFS, ipfs4: IPFS */

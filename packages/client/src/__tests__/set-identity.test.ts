@@ -30,7 +30,7 @@ export const createStore = (path = "./keystore"): Level => {
 };
 
 Object.keys(testAPIs).forEach((API) => {
-    describe(`orbit-db - Set identities (${API})`, function () {
+    describe(`Set identities (${API})`, function () {
         jest.setTimeout(config.timeout);
 
         let ipfsd: Controller,

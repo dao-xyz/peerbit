@@ -22,7 +22,7 @@ import {
 import { AbstractLevel } from "abstract-level";
 
 Object.keys(testAPIs).forEach((API) => {
-    describe(`orbit-db - Replication Status (${API})`, function () {
+    describe(`Replication Status (${API})`, function () {
         jest.setTimeout(config.timeout);
 
         let session: Session,

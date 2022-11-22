@@ -18,7 +18,7 @@ import { waitFor } from "@dao-xyz/peerbit-time";
 const dbPath = "./orbitdb/tests/persistency";
 
 /* tests.forEach(test => {*/
-describe(`orbit-db - load (js-ipfs)`, () => {
+describe(`load (js-ipfs)`, () => {
     //${test.title}
     jest.setTimeout(config.timeout * 5);
     jest.retryTimes(1); // TODO Side effects may cause failures

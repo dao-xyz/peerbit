@@ -48,7 +48,7 @@ const checkHello = async (db: PermissionedEventStore) => {
 };
 
 Object.keys(testAPIs).forEach((API) => {
-    describe(`orbit-db - encryption`, function () {
+    describe(`encryption`, function () {
         jest.retryTimes(1); // TODO Side effects may cause failures
         jest.setTimeout(config.timeout * 5);
 

@@ -28,7 +28,7 @@ const dbPath2 = "./orbitdb/tests/leader/2/db2";
 const dbPath3 = "./orbitdb/tests/leader/3/db3";
 
 Object.keys(testAPIs).forEach((API) => {
-    describe(`orbit-db - leaders`, function () {
+    describe(`leaders`, function () {
         jest.setTimeout(config.timeout * 2);
 
         let session: Session;

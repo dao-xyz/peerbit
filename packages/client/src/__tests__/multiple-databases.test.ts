@@ -24,7 +24,7 @@ const dbPath2 = "./orbitdb/tests/multiple-databases/2";
 const dbPath3 = "./orbitdb/tests/multiple-databases/3";
 
 Object.keys(testAPIs).forEach((API) => {
-    describe(`orbit-db - Multiple Databases`, function () {
+    describe(`Multiple Databases`, function () {
         jest.setTimeout(60000);
 
         let ipfsd1: Controller,

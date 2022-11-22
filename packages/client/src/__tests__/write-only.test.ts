@@ -34,7 +34,7 @@ const orbitdbPath2 = "./orbitdb/tests/write-only/2";
 const dbPath1 = "./orbitdb/tests/write-only/1/db1";
 const dbPath2 = "./orbitdb/tests/write-only/2/db2";
 
-describe(`orbit-db - Write-only`, function () {
+describe(`Write-only`, function () {
     jest.setTimeout(config.timeout * 2);
 
     let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS;
@@ -192,8 +192,7 @@ describe(`orbit-db - Write-only`, function () {
         @variant("program_with_subprogram")
         class ProgramWithSubprogram
             extends Program
-            implements CanOpenSubPrograms
-        {
+            implements CanOpenSubPrograms {
             @field({ type: Documents })
             eventStore: Documents<EventStore<string>>;
 
