@@ -44,15 +44,7 @@ export const cli = async (args?: string[]) => {
                     module: { disposable: args.disposable },
                 });
                 const peer = await Peerbit.create(controller.api);
-                const server = await startServer(
-                    peer /*  args.authority.map(x => {
-                const parsed = parsePublicKey(x);
-                if (!parsed) {
-                    throw new Error("Failed to parse public key: " + x)
-                }
-                return parsed;
-            }) */
-                );
+                const server = await startServer(peer);
 
                 const printNodeInfo = async () => {
                     console.log("Starting node with address(es): ");
@@ -413,7 +405,9 @@ export const cli = async (args?: string[]) => {
                     },
                     handler: async (args) => {
                         for (const lib of args.library) {
-                            const importedLib = await import(lib);
+                            const importedLib = await import(
+                                /* webpackIgnore: true */ lib
+                            );
                             console.log("imported lib:", importedLib);
                         }
                     },
