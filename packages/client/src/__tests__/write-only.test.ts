@@ -192,7 +192,8 @@ describe(`Write-only`, function () {
         @variant("program_with_subprogram")
         class ProgramWithSubprogram
             extends Program
-            implements CanOpenSubPrograms {
+            implements CanOpenSubPrograms
+        {
             @field({ type: Documents })
             eventStore: Documents<EventStore<string>>;
 

@@ -227,9 +227,9 @@ Object.keys(testAPIs).forEach((API) => {
                             fail(
                                 new Error(
                                     "Shouldn't have started replication twice for entry " +
-                                    entry.hash +
-                                    "\n" +
-                                    entry.payload.getValue().value
+                                        entry.hash +
+                                        "\n" +
+                                        entry.payload.getValue().value
                                 )
                             );
                         }
@@ -328,7 +328,7 @@ Object.keys(testAPIs).forEach((API) => {
                             fail(
                                 new Error(
                                     "Shouldn't have started replication twice for entry " +
-                                    entry.hash
+                                        entry.hash
                                 )
                             );
                         }
@@ -424,7 +424,7 @@ Object.keys(testAPIs).forEach((API) => {
                             fail(
                                 new Error(
                                     "Shouldn't have started replication twice for entry " +
-                                    entry.hash
+                                        entry.hash
                                 )
                             );
                         }
