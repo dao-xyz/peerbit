@@ -50,7 +50,7 @@
         "@mapbox/node-pre-gyp": "^1.0.10",
         "assert": "^2.0.0",
         "fs-extra": "^10.0.0",
-        "go-ipfs": "^0.16.0",
+        "go-ipfs": "^0.17.0",
         "ipfs": "^0.65.0",
         "ipfsd-ctl": "^12.2.2",
         "is-node": "^1.0.2",
