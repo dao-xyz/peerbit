@@ -393,13 +393,19 @@ export class Peerbit {
             },
         };
 
-        const keystore: Keystore =
-            options.keystore ||
-            new Keystore(
-                await storage.createStore(
-                    path.join(directory, id.toString(), "/keystore")
-                )
+        let keystore: Keystore;
+        if (options.keystore) {
+            keystore = options.keystore;
+        } else {
+            const keyStorePath = path.join(
+                directory,
+                id.toString(),
+                "/keystore"
             );
+            logger.info("Creating keystore at path: " + keyStorePath);
+            keystore = new Keystore(await storage.createStore(keyStorePath));
+        }
+
         let identity: Identity;
         if (options.identity) {
             identity = options.identity;
