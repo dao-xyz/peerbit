@@ -1,4 +1,5 @@
 module.exports = {
+    "root": true,
     "env": {
         "browser": true,
         "es2021": true,
@@ -7,8 +8,6 @@ module.exports = {
     "extends": [
         "eslint:recommended",
         "plugin:@typescript-eslint/recommended"
-    ],
-    "overrides": [
     ],
     "parser": "@typescript-eslint/parser",
     "parserOptions": {
