@@ -26,7 +26,7 @@ SOFTWARE.
 import { field, variant } from "@dao-xyz/borsh";
 import { UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
 import { arraysCompare, arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
-import hrtime from "browser-process-hrtime";
+import hrtime from "browser-hrtime";
 
 const hrtimeBigint = () => {
     const time = hrtime();
