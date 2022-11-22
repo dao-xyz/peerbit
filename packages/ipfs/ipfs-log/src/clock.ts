@@ -26,9 +26,10 @@ SOFTWARE.
 import { field, variant } from "@dao-xyz/borsh";
 import { UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
 import { arraysCompare, arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
-import hrtime from "browser-hrtime";
+import hrtime from "./hrtime.js";
 
-const startTime = BigInt(Date.now()) * BigInt(1e6) - hrtime.bigint();
+const hrTimeNow = hrtime.bigint();
+const startTime = BigInt(Date.now()) * BigInt(1e6) - hrTimeNow;
 const bigintTime = () => startTime + hrtime.bigint();
 
 export function fromBits(low, high, unsigned, target?) {
