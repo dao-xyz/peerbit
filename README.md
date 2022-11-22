@@ -146,7 +146,7 @@ program.doThings()
 ```
 
 ## [Programs](./packages/programs)
-Contains composable programs you can build your program with. For example distributed [document store](./packages/programs/data/document), [search](./packages/programs/discovery/any-search), [chain agnostic access controller](./packages/programs/acl/identity-access-controller) 
+Contains composable programs you can build your program with. For example distributed [document store](./packages/programs/data/document), [clock service](./packages/programs/clock-service), [chain agnostic access controller](./packages/programs/acl/identity-access-controller) 
 
 A program lets you write control mechanism for Append-Only logs (which are represented as a [Store](./packages/store), example program
 
