@@ -78,7 +78,7 @@ const canAppendByRelation = async (
 };
 
 @variant("relations")
-export class RelationContract extends Program {
+export class IdentityGraph extends Program {
     @field({ type: Documents })
     relationGraph: Documents<IdentityRelation>;
 

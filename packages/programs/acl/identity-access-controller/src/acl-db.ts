@@ -4,7 +4,7 @@ import {
     getPathGenerator,
     TrustedNetwork,
     getFromByTo,
-    RelationContract,
+    IdentityGraph,
 } from "@dao-xyz/peerbit-trusted-network";
 import { Access, AccessType } from "./access";
 import { Entry } from "@dao-xyz/ipfs-log";
@@ -17,8 +17,8 @@ export class IdentityAccessController extends Program {
     @field({ type: Documents })
     access: Documents<Access>;
 
-    @field({ type: RelationContract })
-    identityGraphController: RelationContract;
+    @field({ type: IdentityGraph })
+    identityGraphController: IdentityGraph;
 
     @field({ type: TrustedNetwork })
     trustedNetwork: TrustedNetwork;
@@ -43,10 +43,10 @@ export class IdentityAccessController extends Program {
             this.trustedNetwork = opts.trustedNetwork
                 ? opts.trustedNetwork
                 : new TrustedNetwork({
-                      id: this.id,
-                      rootTrust: opts.rootTrust as PublicSignKey,
-                  });
-            this.identityGraphController = new RelationContract({
+                    id: this.id,
+                    rootTrust: opts.rootTrust as PublicSignKey,
+                });
+            this.identityGraphController = new IdentityGraph({
                 id: this.id,
             });
         }
