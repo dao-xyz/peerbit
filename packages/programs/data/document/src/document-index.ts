@@ -32,7 +32,6 @@ import { AccessError, SignKey } from "@dao-xyz/peerbit-crypto";
 import { CanRead, RPC, QueryContext, RPCOptions } from "@dao-xyz/peerbit-rpc";
 import pino from "pino";
 import { Results } from "./query";
-
 const logger = pino().child({ module: "document-index" });
 
 @variant(0)
@@ -121,6 +120,7 @@ export class DocumentIndex<T> extends ComposableProgram {
     indexBy: string;
 
     _index: Map<string, IndexedValue<T>>;
+    _sync: (result: Results<T>) => Promise<void>;
 
     type: Constructor<T>;
 
@@ -136,8 +136,13 @@ export class DocumentIndex<T> extends ComposableProgram {
         this._index = new Map();
     }
 
-    async setup(properties: { type: Constructor<T>; canRead: CanRead }) {
+    async setup(properties: {
+        type: Constructor<T>;
+        canRead: CanRead;
+        sync: (result: Results<T>) => Promise<void>;
+    }) {
         this.type = properties.type;
+        this._sync = properties.sync;
         await this._query.setup({
             context: this,
             canRead: properties.canRead,
@@ -371,10 +376,13 @@ export class DocumentIndex<T> extends ComposableProgram {
     public query(
         queryRequest: DocumentQueryRequest,
         responseHandler: (response: Results<T>, from?: SignKey) => void,
-        options?: RPCOptions
+        options?: RPCOptions & { sync?: boolean }
     ): Promise<void> {
-        const handler = (response: Results<T>, from?: SignKey) => {
+        const handler = async (response: Results<T>, from?: SignKey) => {
             response.results.forEach((r) => r.init(this.type));
+            if (options?.sync) {
+                await this._sync(response);
+            }
             responseHandler(response, from);
         };
         return this._query.send(queryRequest, handler, options);

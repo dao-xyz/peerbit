@@ -4,7 +4,13 @@ import {
     Operation,
     PutOperation,
 } from "./document-index";
-import { Constructor, field, serialize, variant } from "@dao-xyz/borsh";
+import {
+    Constructor,
+    deserialize,
+    field,
+    serialize,
+    variant,
+} from "@dao-xyz/borsh";
 import { asString } from "./utils.js";
 import { AddOperationOptions, Store } from "@dao-xyz/peerbit-store";
 import {
@@ -25,6 +31,9 @@ import { LogIndex } from "@dao-xyz/peerbit-logindex";
 import { AccessError } from "@dao-xyz/peerbit-crypto";
 
 import pino from "pino";
+import { Results } from "./query";
+import io from "@dao-xyz/peerbit-io-utils";
+
 const logger = pino().child({ module: "document-store" });
 
 export class OperationError extends Error {
@@ -101,6 +110,37 @@ export class Documents<T> extends ComposableProgram {
         await this._index.setup({
             type: this._clazz,
             canRead: options.canRead || (() => Promise.resolve(true)),
+            sync: async (result: Results<T>) => {
+                const entries = (
+                    await Promise.all(
+                        result.results.map((result) => {
+                            return io
+                                .read(
+                                    this.store.oplog._storage,
+                                    result.context.head
+                                )
+                                .then((bytes) => {
+                                    const entry = deserialize(bytes, Entry);
+                                    return this.canAppend(entry)
+                                        .then((r) => {
+                                            if (r) {
+                                                return entry;
+                                            }
+                                            return undefined;
+                                        })
+                                        .catch((e: any) => {
+                                            logger.info(
+                                                "canAppend resulted in error: " +
+                                                    e.message
+                                            );
+                                            return undefined;
+                                        });
+                                });
+                        })
+                    )
+                ).filter((x) => !!x) as Entry<any>[];
+                await this.store.sync(entries);
+            },
         });
     }
     async canAppend(entry: Entry<Operation<T>>): Promise<boolean> {
@@ -134,6 +174,10 @@ export class Documents<T> extends ComposableProgram {
         };
 
         try {
+            entry.init({
+                encoding: this.store._oplog._encoding,
+                encryption: this.store._oplog._encryption,
+            });
             const operation = await entry.getPayloadValue();
             if (operation instanceof PutOperation) {
                 // check nexts

@@ -332,6 +332,19 @@ describe("index", () => {
             );
             expect(response.results).toHaveLength(3);
         });
+        it("can match sync", async () => {
+            expect(stores[1].docs.index.size).toEqual(0);
+            await stores[1].docs.index.query(
+                new DocumentQueryRequest({
+                    queries: [],
+                }),
+                (r: Results<Document>) => {
+                    // dont do anything
+                },
+                { waitForAmount: 1, sync: true }
+            );
+            await waitFor(() => stores[1].docs.index.size === 3);
+        });
 
         it("string", async () => {
             let response: Results<Document> = undefined as any;
