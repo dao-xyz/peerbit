@@ -15,10 +15,9 @@ Every commit that is made can be encrypted with public key encryption with multi
 See [this](./../packages/utils/crypto/src/encryption.ts) for implementation details. 
 
 ### Log entry fields that are encrypted (separately)
-- Lamport clock
+- Commit metadata
 - Payload
 - Signature
-
-(Work is still under development whether DAGs links should also be encrypted, and whether Lamport clock encryption is really necessary. )
+- Links (references to other commits)
 
 See [this](./../packages/ipfs/ipfs-log/src/entry.ts) for implementation details. 
