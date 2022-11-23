@@ -256,8 +256,3 @@ The most important module here is
 
 ## Running a server node 
 See the [CLI](./packages/server-node)
-
-Documentation
-```
-peerbit --help
-```
