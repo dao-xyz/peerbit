@@ -15,6 +15,7 @@ const jestConfig: JestConfigWithTsJest = {
     fakeTimers: {},
     extensionsToTreatAsEsm: [".ts"],
     moduleNameMapper: {
+        uuid: require.resolve("uuid"),
         "^(\\.{1,2}/.*)\\.js$": "$1",
     },
     transformIgnorePatterns: [],

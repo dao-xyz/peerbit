@@ -21,7 +21,7 @@ const orbitdbPath2 = "./orbitdb/tests/reuse-store/2";
 const dbPath1 = "./orbitdb/tests/reuse-store/1/db1";
 const dbPath2 = "./orbitdb/tests/reuse-store/2/db2";
 
-describe(`orbit-db - shared`, function () {
+describe(`shared`, function () {
     jest.setTimeout(config.timeout * 2);
 
     let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS;

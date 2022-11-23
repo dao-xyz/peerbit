@@ -1,4 +1,5 @@
 module.exports = {
+    "root": true,
     "env": {
         "browser": true,
         "es2021": true,
@@ -8,8 +9,6 @@ module.exports = {
         "eslint:recommended",
         "plugin:@typescript-eslint/recommended"
     ],
-    "overrides": [
-    ],
     "parser": "@typescript-eslint/parser",
     "parserOptions": {
         "ecmaVersion": "latest",
@@ -18,7 +17,7 @@ module.exports = {
     "plugins": [
         "@typescript-eslint"
     ],
-    "ignorePatterns": ["**/*.test.ts", "/**/lib/", "/**/test-utils/"],
+    "ignorePatterns": ["**/*.test.ts", "/**/lib/", "/**/frontend/build", "/**/test-utils/"],
     "rules": {
         "@typescript-eslint/no-explicit-any": "off",
         "@typescript-eslint/prefer-as-const": "off"

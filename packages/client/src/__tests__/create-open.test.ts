@@ -24,7 +24,7 @@ import { delay, waitFor } from "@dao-xyz/peerbit-time";
 
 const dbPath = path.join("./peerbit", "tests", "create-open");
 
-describe(`orbit-db - Create & Open `, function () {
+describe(`Create & Open `, function () {
     jest.retryTimes(1); // TODO Side effects may cause failures
     jest.setTimeout(config.timeout * 5);
 

@@ -19,8 +19,9 @@ const dbPath1 = "./orbitdb/tests/sharding/1";
 const dbPath2 = "./orbitdb/tests/sharding/2";
 const dbPath3 = "./orbitdb/tests/sharding/3";
 Object.keys(testAPIs).forEach((API) => {
-    describe(`orbit-db - Automatic Replication (${API})`, function () {
+    describe(`sharding (${API})`, function () {
         jest.setTimeout(config.timeout * 3);
+        jest.retryTimes(3); // TODO this test is FLAKY
 
         let session: Session;
         let orbitdb1: Peerbit,

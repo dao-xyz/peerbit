@@ -28,7 +28,7 @@ const dbPath1 = "./orbitdb/tests/replication/1/db1";
 const dbPath2 = "./orbitdb/tests/replication/2/db2";
 
 Object.keys(testAPIs).forEach((API) => {
-    describe(`orbit-db - Replication (${API})`, function () {
+    describe(`Replication (${API})`, function () {
         jest.setTimeout(config.timeout * 2);
 
         let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS;

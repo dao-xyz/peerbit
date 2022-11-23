@@ -34,11 +34,11 @@ jobs:
             matrix:
                 node-version: [16.x]
                 # Each app folder test will be run in parallel using the matrix
-                folder: [client, programs, utils]
+                folder: [./packages/client, ./packages/programs,./packages/utils ./packages/server-node]
 
         steps:
             - uses: actions/checkout@v3
             - run: yarn install
             - run: yarn lerna bootstrap
             - run: yarn build
-            - run: yarn test --roots "./packages/${{matrix.folder}}"
+            - run: yarn test --roots ${{matrix.folder}}  --w 2
