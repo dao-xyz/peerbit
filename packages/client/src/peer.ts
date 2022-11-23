@@ -1511,6 +1511,7 @@ export class Peerbit {
                         );
                     }
                     if (!ownerProgram) {
+                        logger.info("Failed to find owner program");
                         throw new AccessError("Failed to find owner program");
                     }
                     // TOOD make typesafe
@@ -1527,6 +1528,9 @@ export class Peerbit {
                 }
 
                 if (!senderCanOpen) {
+                    logger.info(
+                        "Failed to open program because request is not trusted"
+                    );
                     throw new AccessError(
                         "Failed to open program because request is not trusted"
                     );
