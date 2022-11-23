@@ -101,86 +101,89 @@ describe(`Write-only`, function () {
         if (orbitdb2) await orbitdb2.stop();
     });
 
-    it("write 1 entry replicate false", async () => {
-        await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic);
-        db2 = await orbitdb2.open<EventStore<string>>(
-            await EventStore.load<EventStore<string>>(
-                orbitdb2._ipfs,
-                db1.address!
-            ),
-            { replicationTopic, directory: dbPath2, replicate: false }
-        );
+    @variant("program_with_subprogram")
+    class ProgramWithSubprogram extends Program implements CanOpenSubPrograms {
+        @field({ type: Documents })
+        eventStore: Documents<EventStore<string>>;
 
-        await db1.add("hello");
-        /*   await waitFor(() => db2._oplog.clock.time > 0); */
-        await db2.add("world");
+        accessRequests: { entry: Entry<any> }[] = [];
 
-        await waitFor(() => db1.store.oplog.values.length === 2);
-        expect(
-            db1.store.oplog.values.map((x) => x.payload.getValue().value)
-        ).toContainAllValues(["hello", "world"]);
-        expect(db2.store.oplog.values.length).toEqual(1);
-    });
+        constructor(eventStore: Documents<EventStore<string>>) {
+            super();
+            this.eventStore = eventStore;
+        }
 
-    it("encrypted clock sync write 1 entry replicate false", async () => {
-        await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic);
-        const encryptionKey = await orbitdb1.keystore.createEd25519Key({
-            id: "encryption key",
-            group: replicationTopic,
-        });
-        db2 = await orbitdb2.open<EventStore<string>>(
-            await EventStore.load<EventStore<string>>(
-                orbitdb2._ipfs,
-                db1.address!
-            ),
-            { replicationTopic, directory: dbPath2, replicate: false }
-        );
+        async canAppend(entry: Entry<any>): Promise<boolean> {
+            this.accessRequests.push({ entry }); // this is what we are testing, are we going here when opening a subprogram?
+            return true;
+        }
 
-        await db1.add("hello", {
-            reciever: {
-                next: encryptionKey.keypair.publicKey,
-                metadata: encryptionKey.keypair.publicKey,
-                payload: encryptionKey.keypair.publicKey,
-                signatures: encryptionKey.keypair.publicKey,
-            },
-        });
+        setup(): Promise<void> {
+            return this.eventStore.setup({
+                type: EventStore,
+                canAppend: this.canAppend.bind(this),
+            });
+        }
 
-        /*   await waitFor(() => db2._oplog.clock.time > 0); */
+        async canOpen(
+            program: Program,
+            fromEntry: Entry<any>
+        ): Promise<boolean> {
+            return (
+                program.constructor === EventStore && this.canAppend(fromEntry)
+            );
+        }
+    }
 
-        // Now the db2 will request sync clocks even though it does not replicate any content
-        await db2.add("world");
-
-        await waitFor(() => db1.store.oplog.values.length === 2);
-        expect(
-            db1.store.oplog.values.map((x) => x.payload.getValue().value)
-        ).toContainAllValues(["hello", "world"]);
-        expect(db2.store.oplog.values.length).toEqual(1);
-    });
-
-    it("will open store on exchange heads message", async () => {
+    it("can open store on exchange heads message when trusted", async () => {
         const replicationTopic = "x";
-        const store = new EventStore<string>({ id: "replication-tests" });
+
+        const store = new ProgramWithSubprogram(
+            new Documents<EventStore<string>>({
+                index: new DocumentIndex({
+                    indexBy: "id",
+                    query: new RPC(),
+                }),
+            })
+        );
         await orbitdb2.subscribeToReplicationTopic(replicationTopic);
-        await orbitdb1.open(store, { replicationTopic, replicate: false });
 
-        const hello = await store.add("hello", { nexts: [] });
-        const world = await store.add("world", { nexts: [hello] });
+        await orbitdb1.open(store, {
+            replicationTopic,
+            replicate: false,
+        });
 
-        expect(store.store.oplog.heads).toHaveLength(1);
+        const eventStore = await store.eventStore.put(
+            new EventStore({ id: "store 1" })
+        );
+        const _eventStore2 = await store.eventStore.put(
+            new EventStore({ id: "store 2" })
+        );
+        expect(store.eventStore.store.oplog.heads).toHaveLength(2); // two independent documents
 
         await waitFor(
             () => orbitdb2.programs.get(replicationTopic)?.size || 0 > 0,
             { timeout: 20 * 1000, delayInterval: 50 }
         );
 
-        const replicatedProgramAndStores = orbitdb2.programs
-            .get(replicationTopic)
-            ?.values()
-            .next().value;
-        const replicatedStore = replicatedProgramAndStores.program.stores[0];
-        await waitFor(() => replicatedStore.oplog.values.length == 2);
-        expect(replicatedStore).toBeDefined();
-        expect(replicatedStore.oplog.heads).toHaveLength(1);
-        expect(replicatedStore.oplog.heads[0].hash).toEqual(world.hash);
+        const eventStoreString = (
+            (await eventStore.payload.getValue()) as PutOperation<any>
+        ).value as EventStore<string>;
+        await orbitdb1.open(eventStoreString, {
+            replicationTopic,
+            replicate: false,
+        });
+
+        const programFromReplicator = [
+            ...orbitdb2.programs.get(replicationTopic)?.values()!,
+        ][0].program as ProgramWithSubprogram;
+        programFromReplicator.accessRequests = [];
+        await eventStoreString.add("hello"); // This will exchange an head that will make client 1 open the store
+        await waitFor(() => programFromReplicator.accessRequests.length === 1); // one for checking 'can open store'
+        expect(
+            (
+                await programFromReplicator.accessRequests[0].entry.getPublicKeys()
+            )[0].equals(orbitdb1.identity.publicKey)
+        );
     });
 });
