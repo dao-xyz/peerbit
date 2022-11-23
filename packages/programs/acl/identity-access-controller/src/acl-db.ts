@@ -43,9 +43,9 @@ export class IdentityAccessController extends Program {
             this.trustedNetwork = opts.trustedNetwork
                 ? opts.trustedNetwork
                 : new TrustedNetwork({
-                    id: this.id,
-                    rootTrust: opts.rootTrust as PublicSignKey,
-                });
+                      id: this.id,
+                      rootTrust: opts.rootTrust as PublicSignKey,
+                  });
             this.identityGraphController = new IdentityGraph({
                 id: this.id,
             });

@@ -190,8 +190,8 @@ export class Documents<T> extends ComposableProgram {
             if (!(this.parentProgram as any as CanOpenSubPrograms).canOpen) {
                 throw new Error(
                     "Class " +
-                    this.parentProgram.constructor.name +
-                    " needs to implement CanOpenSubPrograms for this Documents store to progams"
+                        this.parentProgram.constructor.name +
+                        " needs to implement CanOpenSubPrograms for this Documents store to progams"
                 );
             }
             doc.owner = this.parentProgram.address.toString();

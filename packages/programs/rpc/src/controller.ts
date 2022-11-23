@@ -51,7 +51,7 @@ export const getDiscriminatorApproximation = (
         } else {
             throw new Error(
                 "Can not resolve discriminator for variant with type: " +
-                typeof variant
+                    typeof variant
             );
         }
     }
@@ -142,8 +142,8 @@ export class RPC<Q, R> extends ComposableProgram {
             if (
                 !!(options.rpcTopic as { rpcRegion }).rpcRegion &&
                 !!(options.rpcTopic as { rpcRegion }).rpcRegion ==
-                !!(options.rpcTopic as { queryAddressSuffix })
-                    .queryAddressSuffix
+                    !!(options.rpcTopic as { queryAddressSuffix })
+                        .queryAddressSuffix
             ) {
                 throw new Error(
                     "Expected either rpcRegion or queryAddressSuffix or none"
@@ -211,7 +211,7 @@ export class RPC<Q, R> extends ComposableProgram {
                     msg.data,
                     RequestV0,
                     this._encryption?.getAnyKeypair ||
-                    (() => Promise.resolve(undefined)),
+                        (() => Promise.resolve(undefined)),
                     {
                         isTrusted: async (key) =>
                             this.canRead(key.signature?.publicKey),
@@ -256,7 +256,7 @@ export class RPC<Q, R> extends ComposableProgram {
                 }
                 logger.error(
                     "Error handling query: " +
-                    (error?.message ? error?.message?.toString() : error)
+                        (error?.message ? error?.message?.toString() : error)
                 );
                 throw error;
             }
