@@ -529,7 +529,10 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
      * @param heads
      * @returns true, synchronization resolved in new entries
      */
-    async sync(heads: (EntryWithRefs<T> | Entry<T>)[]): Promise<boolean> {
+    async sync(
+        heads: (EntryWithRefs<T> | Entry<T>)[],
+        options: { save: boolean } = { save: true }
+    ): Promise<boolean> {
         this._stats.syncRequestsReceieved += 1;
         logger.debug(
             `Sync request #${this._stats.syncRequestsReceieved} ${heads.length}`
@@ -561,23 +564,29 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
             ) {
                 return Promise.resolve(null);
             }
+            if (options.save) {
+                await Promise.all(
+                    allEntries.map(async (head) => {
+                        const headHash = head.hash;
+                        head.hash = undefined as any;
+                        const hash = await io.write(
+                            this._ipfs,
+                            "raw",
+                            serialize(head)
+                        );
+                        head.hash = headHash;
+                        if (head.hash === undefined) {
+                            head.hash = hash; // can happen if you sync entries that you load directly from ipfs
+                        } else if (hash !== head.hash) {
+                            logger.error("Head hash didn't match the contents");
+                            throw new Error(
+                                "Head hash didn't match the contents"
+                            );
+                        }
+                    })
+                );
+            }
 
-            await Promise.all(
-                allEntries.map(async (head) => {
-                    const headHash = head.hash;
-                    head.hash = undefined as any;
-                    const hash = await io.write(
-                        this._ipfs,
-                        "raw",
-                        serialize(head)
-                    );
-                    head.hash = headHash;
-                    if (hash !== head.hash) {
-                        logger.error("Head hash didn't match the contents");
-                        throw new Error("Head hash didn't match the contents");
-                    }
-                })
-            );
             return headToHandle;
         };
         const hash = (entry: EntryWithRefs<T> | Entry<T>) => {
