@@ -254,12 +254,8 @@ The most important module here is
 ```@dao-xyz/peerbit-crypto``` that is defining all different key types for signing and encrypting messages.
 
 
-## CLI 
-Peerbit has a CLI for running a non browser node. Tested with Node with version > 16.x
-
-```sh
-npm install -g @dao-xyz/peerbit-node
-```
+## Running a server node 
+See the [CLI](./packages/server-node)
 
 Documentation
 ```
