@@ -42,7 +42,7 @@
     "dependencies": {
         "@dao-xyz/peerbit-string": "*",
         "@dao-xyz/peerbit-trusted-network": "*",
-        "@dao-xyz/peerbit": "^0.0.59",
+        "@dao-xyz/peerbit": "*",
         "ipfsd-ctl": "^12.2.2",
         "is-node": "^1.0.2"
     }
