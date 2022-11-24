@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/ipfs-log",
-    "version": "5.5.48",
+    "version": "5.5.49",
     "description": "Append-only log CRDT on IPFS",
     "author": "dao.xyz",
     "license": "MIT",
@@ -33,7 +33,7 @@
     ],
     "dependencies": {
         "@dao-xyz/borsh": "^3.4.3",
-        "@dao-xyz/peerbit-crypto": "^0.0.15",
+        "@dao-xyz/peerbit-crypto": "^0.0.16",
         "@dao-xyz/peerbit-io-utils": "^1.1.12",
         "json-stringify-deterministic": "^1.0.7",
         "multihashing-async": "^2.0.1",
@@ -44,7 +44,7 @@
         "pino": "^8.7.0"
     },
     "devDependencies": {
-        "@dao-xyz/peerbit-keystore": "^0.0.26",
+        "@dao-xyz/peerbit-keystore": "^0.0.27",
         "@dao-xyz/peerbit-test-utils": "^0.0.13",
         "@mapbox/node-pre-gyp": "^1.0.10",
         "assert": "^2.0.0",

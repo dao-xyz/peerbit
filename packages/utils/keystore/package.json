@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-keystore",
-    "version": "0.0.26",
+    "version": "0.0.27",
     "description": "A local key manager for OrbitDB",
     "sideEffects": false,
     "main": "lib/cjs/index.js",
@@ -32,8 +32,8 @@
     "license": "MIT",
     "dependencies": {
         "@dao-xyz/borsh": "^3.4.3",
-        "@dao-xyz/peerbit-borsh-utils": "^0.0.9",
-        "@dao-xyz/peerbit-crypto": "^0.0.15",
+        "@dao-xyz/peerbit-borsh-utils": "^0.0.10",
+        "@dao-xyz/peerbit-crypto": "^0.0.16",
         "@dao-xyz/peerbit-time": "^0.0.18",
         "level": "^8.0.0",
         "lru-cache": "^7.14.0",
