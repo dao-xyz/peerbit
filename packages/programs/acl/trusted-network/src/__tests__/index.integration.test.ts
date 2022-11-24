@@ -7,10 +7,14 @@ import {
     getToByFrom,
     TrustedNetwork,
     KEY_OFFSET,
-    PUBLIC_KEY_WIDTH,
+    OFFSET_TO_KEY,
 } from "..";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
+import {
+    AccessError,
+    Ed25519Keypair,
+    IPFSAddress,
+} from "@dao-xyz/peerbit-crypto";
 import { Secp256k1PublicKey } from "@dao-xyz/peerbit-crypto";
 import { Identity } from "@dao-xyz/ipfs-log";
 import { Wallet } from "@ethersproject/wallet";
@@ -109,7 +113,7 @@ describe("index", () => {
             expect(
                 serRelation.slice(KEY_OFFSET, KEY_OFFSET + serFrom.length)
             ).toEqual(serFrom); // From key has a fixed offset from 0
-            expect(serRelation.slice(KEY_OFFSET + PUBLIC_KEY_WIDTH)).toEqual(
+            expect(serRelation.slice(KEY_OFFSET + OFFSET_TO_KEY)).toEqual(
                 serTo
             ); // To key has a fixed offset from 0
         });
@@ -127,7 +131,25 @@ describe("index", () => {
             expect(
                 serRelation.slice(KEY_OFFSET, KEY_OFFSET + serFrom.length)
             ).toEqual(serFrom); // From key has a fixed offset from 0
-            expect(serRelation.slice(KEY_OFFSET + PUBLIC_KEY_WIDTH)).toEqual(
+            expect(serRelation.slice(KEY_OFFSET + OFFSET_TO_KEY)).toEqual(
+                serTo
+            ); // To key has a fixed offset from 0
+        });
+
+        it("serializes relation with right padding ipfs address", async () => {
+            const from = new Secp256k1PublicKey({
+                address: await Wallet.createRandom().getAddress(),
+            });
+            const to = new IPFSAddress({ address: "abc123" });
+            const relation = new IdentityRelation({ from, to });
+            const serRelation = serialize(relation);
+            const serFrom = serialize(from);
+            const serTo = serialize(to);
+
+            expect(
+                serRelation.slice(KEY_OFFSET, KEY_OFFSET + serFrom.length)
+            ).toEqual(serFrom); // From key has a fixed offset from 0
+            expect(serRelation.slice(KEY_OFFSET + OFFSET_TO_KEY)).toEqual(
                 serTo
             ); // To key has a fixed offset from 0
         });

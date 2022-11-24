@@ -3,14 +3,7 @@ import { Documents, Operation, PutOperation } from "@dao-xyz/peerbit-document";
 import { Entry } from "@dao-xyz/ipfs-log";
 import { LogIndex, LogQueryRequest } from "@dao-xyz/peerbit-logindex";
 import { createHash } from "crypto";
-import {
-    IPFSAddress,
-    Key,
-    OtherKey,
-    PublicSignKey,
-    SignKey,
-} from "@dao-xyz/peerbit-crypto";
-import type { PeerId } from "@libp2p/interface-peer-id";
+import { IPFSAddress, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { DeleteOperation } from "@dao-xyz/peerbit-document";
 import {
     IdentityRelation,
@@ -20,8 +13,9 @@ import {
     getFromByTo,
     getToByFrom,
     getRelation,
+    AbstractRelation,
 } from "./identity-graph";
-import { BinaryPayload } from "@dao-xyz/peerbit-bpayload";
+import type { PeerId } from "@libp2p/interface-peer-id";
 import { Program } from "@dao-xyz/peerbit-program";
 import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 import { waitFor } from "@dao-xyz/peerbit-time";
@@ -45,9 +39,9 @@ const canAppendByRelation = async (
                 // TODO, this clause is only applicable when we modify the identityGraph, but it does not make sense that the canAppend method does not know what the payload will
                 // be, upon deserialization. There should be known in the `canAppend` method whether we are appending to the identityGraph.
 
-                const relation: BinaryPayload =
+                const relation: AbstractRelation =
                     operation._value ||
-                    deserialize(operation.data, BinaryPayload);
+                    deserialize(operation.data, AbstractRelation);
                 operation._value = relation;
 
                 if (relation instanceof IdentityRelation) {
@@ -176,7 +170,7 @@ export class TrustedNetwork extends Program {
         );
     }
 
-    async canRead(key?: SignKey): Promise<boolean> {
+    async canRead(key?: PublicSignKey): Promise<boolean> {
         if (!key) {
             return false;
         }
@@ -184,18 +178,25 @@ export class TrustedNetwork extends Program {
     }
 
     async add(
-        trustee: PublicSignKey | PeerId
+        trustee: PublicSignKey | IPFSAddress | PeerId
     ): Promise<IdentityRelation | undefined> {
+        let key: PublicSignKey | IPFSAddress;
+        if (
+            trustee instanceof PublicSignKey === false &&
+            trustee instanceof IPFSAddress === false
+        ) {
+            key = new IPFSAddress({ address: trustee.toString() });
+        } else {
+            key = trustee as PublicSignKey | IPFSAddress;
+        }
+
         const existingRelation = this.getRelation(
-            trustee,
+            key,
             this.trustGraph.store.identity.publicKey
         );
         if (!existingRelation) {
             const relation = new IdentityRelation({
-                to:
-                    trustee instanceof Key
-                        ? trustee
-                        : new IPFSAddress({ address: trustee.toString() }),
+                to: key,
                 from: this.trustGraph.store.identity.publicKey,
             });
             await this.trustGraph.put(relation);
@@ -204,13 +205,16 @@ export class TrustedNetwork extends Program {
         return existingRelation.value;
     }
 
-    hasRelation(trustee: PublicSignKey | PeerId, truster = this.rootTrust) {
+    hasRelation(trustee: PublicSignKey, truster = this.rootTrust) {
         return !!this.getRelation(trustee, truster);
     }
-    getRelation(trustee: PublicSignKey | PeerId, truster = this.rootTrust) {
+    getRelation(
+        trustee: PublicSignKey | IPFSAddress,
+        truster = this.rootTrust
+    ) {
         return getRelation(
             truster,
-            trustee instanceof Key
+            trustee instanceof PublicSignKey
                 ? trustee
                 : new IPFSAddress({ address: trustee.toString() }),
             this.trustGraph
@@ -228,7 +232,7 @@ export class TrustedNetwork extends Program {
      * @returns true, if trusted
      */
     async isTrusted(
-        trustee: PublicSignKey | OtherKey,
+        trustee: PublicSignKey | IPFSAddress,
         truster: PublicSignKey = this.rootTrust
     ): Promise<boolean> {
         if (trustee.equals(this.rootTrust)) {
@@ -281,7 +285,7 @@ export class TrustedNetwork extends Program {
     }
 
     async _isTrustedLocal(
-        trustee: PublicSignKey | OtherKey,
+        trustee: PublicSignKey | IPFSAddress,
         truster: PublicSignKey = this.rootTrust
     ): Promise<boolean> {
         const trustPath = await hasPath(

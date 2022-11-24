@@ -12,6 +12,7 @@ import {
     Ed25519PublicKey,
     Ed25519PrivateKey,
 } from "./ed25519.js";
+import { toHexString } from "./utils.js";
 
 @variant(0)
 export class X25519PublicKey extends PublicKeyEncryptionKey {
@@ -32,7 +33,7 @@ export class X25519PublicKey extends PublicKeyEncryptionKey {
         return false;
     }
     toString(): string {
-        return "x25519public/" + Buffer.from(this.publicKey).toString("hex");
+        return "x25519p/" + toHexString(this.publicKey);
     }
 
     static async from(
@@ -73,7 +74,7 @@ export class X25519SecretKey extends PrivateEncryptionKey {
         return false;
     }
     toString(): string {
-        return "x25519secret" + Buffer.from(this.secretKey).toString("hex");
+        return "x25519s" + toHexString(this.secretKey);
     }
 
     async publicKey(): Promise<X25519PublicKey> {
@@ -141,93 +142,3 @@ export class X25519Keypair extends Keypair {
         return false;
     }
 }
-
-/* 
-
-export const verifySignature = async (signature: Uint8Array, publicKey: PublicKey, data: Uint8Array, signedHash = false) => {
-    let res = false
-    const crypto = await _crypto;
-    try {
-        const signedData = await crypto.crypto_sign_open(Buffer.from(signature), publicKey);
-        const verified = Buffer.compare(signedData, signedHash ? await crypto.crypto_generichash(Buffer.from(data)) : Buffer.from(data)) === 0;
-        res = verified
-    } catch (error) {
-        return false;
-    }
-    return res
-}
-
-*/
-
-/* @variant(0)
-export class MaybeSigned<T>  {
-
-    async open(opener: (bytes: Uint8Array, key: Ed25519PublicKey) => Promise<Uint8Array>, constructor: Constructor<T> | Uint8ArrayConstructor): Promise<T> {
-        throw new Error("Not implemented")
-    }
-
-    equals(other: MaybeEncrypted<T>): boolean {
-        throw new Error("Not implemented")
-    }
-
-
-} */
-
-/* @variant(0)
-export class UnsignedMessage<T> extends MaybeSigned<T> {
-
-    @field(UInt8ArraySerializer)
-    data: Uint8Array
-
-    constructor(props?: {
-        data: Uint8Array
-    }) {
-        super();
-        if (props) {
-            this.data = props.data;
-        }
-    }
-
-    async sign(signer: (bytes: Uint8Array) => Promise<{ signature: Uint8Array, publicKey: Ed25519PublicKey }>): Promise<SignedMessage<T>> {
-        const signatureResult = await signer(this.data)
-        return new SignedMessage({
-            key: signatureResult.publicKey,
-            signature: signatureResult.signature
-        });
-    }
-
-
-    async open(_opener: (bytes: Uint8Array, key: Ed25519PublicKey) => Promise<Uint8Array>, constructor: Constructor<T>): Promise<T> {
-        return deserialize(this.data, constructor)
-    }
-}
-
-
-@variant(1)
-export class SignedMessage<T> extends MaybeSigned<T> {
-
-    @field(UInt8ArraySerializer)
-    signature: Uint8Array
-
-    @field(bufferSerializer(Ed25519PublicKey))
-    key: Ed25519PublicKey
-
-    constructor(props?: {
-        signature?: Uint8Array,
-        key: Ed25519PublicKey
-    }) {
-        super();
-        if (props) {
-            this.signature = props.signature;
-            this.key = props.key;
-        }
-    }
-
-    async open(opener: (bytes: Uint8Array, key: Ed25519PublicKey) => Promise<Uint8Array>, constructor: Constructor<T> | Uint8ArrayConstructor): Promise<T> {
-        const data = Buffer.from(await opener(this.signature, this.key));
-        if (constructor === Uint8Array) {
-            return data as any as T
-        }
-        return deserialize(data, constructor as Constructor<T>);
-    }
-} */

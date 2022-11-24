@@ -68,7 +68,7 @@ export default class Cache<T> {
             this._store.get(
                 key,
                 { valueEncoding: "view" },
-                (err: any, value: string | undefined) => {
+                (err: any, value: Uint8Array | undefined) => {
                     if (err) {
                         if (err["status"] !== 404) {
                             return reject(err);
@@ -78,10 +78,7 @@ export default class Cache<T> {
                         resolve(undefined);
                         return;
                     }
-                    const buffer = Buffer.isBuffer(value)
-                        ? value
-                        : Buffer.from(value);
-                    const der = value ? deserialize(buffer, clazz) : undefined;
+                    const der = value ? deserialize(value, clazz) : undefined;
                     resolve(der);
                 }
             );

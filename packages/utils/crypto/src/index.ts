@@ -7,3 +7,4 @@ export * from "./x25519.js";
 export * from "./encryption.js";
 export * from "./mix.js";
 export * from "./ipfs.js";
+export * from "./utils.js";

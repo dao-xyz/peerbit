@@ -6,6 +6,7 @@ import { serialize } from "@dao-xyz/borsh";
 import { client, startServer } from "./api.js";
 import { parsePublicKey } from "./utils.js";
 import { createRecord } from "./aws.js";
+import { toBase64 } from "@dao-xyz/peerbit-crypto";
 
 const KEY_EXAMPLE =
     'E.g. [CHAIN TYPE]/[PUBLICKEY]. e.g. if ethereum: "ethereum/0x4e54fD83..."';
@@ -356,11 +357,7 @@ export const cli = async (args?: string[]) => {
                         if (!program) {
                             console.log("Program does not exist");
                         } else {
-                            console.log(
-                                Buffer.from(serialize(program)).toString(
-                                    "base64"
-                                )
-                            );
+                            console.log(toBase64(serialize(program)));
                         }
                     },
                 })

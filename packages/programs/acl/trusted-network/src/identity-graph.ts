@@ -6,16 +6,83 @@ import {
     DocumentQueryRequest,
     MemoryCompare,
     MemoryCompareQuery,
-    ResultWithSource,
 } from "@dao-xyz/peerbit-document";
-import { Key, PlainKey, PublicSignKey } from "@dao-xyz/peerbit-crypto";
-import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
+import { IPFSAddress, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { createHash } from "crypto";
 import {
     joinUint8Arrays,
     UInt8ArraySerializer,
 } from "@dao-xyz/peerbit-borsh-utils";
 import { RPC } from "@dao-xyz/peerbit-rpc";
+
+abstract class KeyEnum {
+    equals(other: KeyEnum): boolean {
+        throw new Error("Not implemented");
+    }
+
+    hashCode(): string {
+        throw new Error("Not implemented");
+    }
+
+    get key(): PublicSignKey | IPFSAddress {
+        throw new Error("Not implemented");
+    }
+}
+
+@variant(0)
+export class PK extends KeyEnum {
+    @field({ type: PublicSignKey })
+    _publicKey: PublicSignKey;
+
+    constructor(properties: { publicKey: PublicSignKey } | PublicSignKey) {
+        super();
+        if (properties) {
+            if (properties instanceof PublicSignKey) {
+                this._publicKey = properties;
+            } else {
+                this._publicKey = properties.publicKey;
+            }
+        }
+    }
+
+    equals(other: KeyEnum): boolean {
+        if (other instanceof PK) {
+            return other.key.equals(this.key);
+        }
+        return false;
+    }
+    get key() {
+        return this._publicKey;
+    }
+}
+
+@variant(1)
+export class IPFSId extends KeyEnum {
+    @field({ type: IPFSAddress })
+    _id: IPFSAddress;
+
+    constructor(properties: { id: IPFSAddress } | IPFSAddress) {
+        super();
+        if (properties) {
+            if (properties instanceof IPFSAddress) {
+                this._id = properties;
+            } else {
+                this._id = properties.id;
+            }
+        }
+    }
+
+    equals(other: KeyEnum): boolean {
+        if (other instanceof IPFSId) {
+            return other.key.equals(this.key);
+        }
+        return false;
+    }
+
+    get key() {
+        return this._id;
+    }
+}
 
 export type RelationResolver = {
     resolve: (
@@ -24,9 +91,9 @@ export type RelationResolver = {
     ) => Promise<IdentityRelation[]>;
     next: (relation: IdentityRelation) => PublicSignKey;
 };
-export const PUBLIC_KEY_WIDTH = 72; // bytes reserved
 
-export const KEY_OFFSET = 3 + 4 + 1 + 28; // SystemBinaryPayload discriminator + Relation discriminator + IdentityRelation discriminator + id length u32 + utf8 encoding + id chars
+export const OFFSET_TO_KEY = 73 + 1;
+export const KEY_OFFSET = 7 + 28; // Relation discriminator + IdentityRelation discriminator + id length u32 + utf8 encoding + id chars
 export const getFromByTo: RelationResolver = {
     resolve: async (to: PublicSignKey, db: Documents<IdentityRelation>) => {
         const ser = serialize(to);
@@ -38,9 +105,7 @@ export const getFromByTo: RelationResolver = {
                             compares: [
                                 new MemoryCompare({
                                     bytes: ser,
-                                    offset: BigInt(
-                                        KEY_OFFSET + PUBLIC_KEY_WIDTH
-                                    ),
+                                    offset: BigInt(KEY_OFFSET + OFFSET_TO_KEY),
                                 }),
                             ],
                         }),
@@ -76,7 +141,7 @@ export const getToByFrom: RelationResolver = {
 };
 
 export async function* getPathGenerator(
-    from: Key,
+    from: PublicSignKey | IPFSAddress,
     db: Documents<IdentityRelation>,
     resolver: RelationResolver
 ) {
@@ -110,8 +175,8 @@ export async function* getPathGenerator(
  * @returns
  */
 export const hasPathToTarget = async (
-    start: Key,
-    target: (key: Key) => boolean,
+    start: PublicSignKey | IPFSAddress,
+    target: (key: PublicSignKey | IPFSAddress) => boolean,
     db: Documents<IdentityRelation>,
     resolver: RelationResolver
 ): Promise<boolean> => {
@@ -133,37 +198,49 @@ export const hasPathToTarget = async (
     return false;
 };
 
-@variant(10)
-export abstract class AbstractRelation extends SystemBinaryPayload {
+@variant(0)
+export abstract class AbstractRelation {
     @field({ type: "string" })
     id: string;
 }
 
 @variant(0)
 export class IdentityRelation extends AbstractRelation {
-    @field({ type: Key })
-    from: Key;
+    @field({ type: KeyEnum })
+    _from: KeyEnum;
 
     @field(UInt8ArraySerializer)
     padding: Uint8Array;
 
-    @field({ type: Key })
-    to: Key;
+    @field({ type: KeyEnum })
+    _to: KeyEnum;
 
     constructor(properties?: {
-        to: PublicSignKey | PlainKey; // signed by truster
-        from: PublicSignKey;
+        to: PublicSignKey | IPFSAddress; // signed by truster
+        from: PublicSignKey | IPFSAddress;
     }) {
         super();
         if (properties) {
-            this.from = properties.from;
-            this.to = properties.to;
-            const serFrom = serialize(this.from);
-            this.padding = new Uint8Array(
-                PUBLIC_KEY_WIDTH - serFrom.length - 4
-            ); // -4 comes from u32 describing length the padding array
+            this._from =
+                properties.from instanceof PublicSignKey
+                    ? new PK({ publicKey: properties.from })
+                    : new IPFSId({ id: properties.from });
+            this._to =
+                properties.to instanceof PublicSignKey
+                    ? new PK({ publicKey: properties.to })
+                    : new IPFSId({ id: properties.to });
+            const serFrom = serialize(this._from);
+            this.padding = new Uint8Array(OFFSET_TO_KEY - serFrom.length - 4); // -4 comes from u32 describing length the padding array
             this.initializeId();
         }
+    }
+
+    get from(): PublicSignKey | IPFSAddress {
+        return this._from.key;
+    }
+
+    get to(): PublicSignKey | IPFSAddress {
+        return this._to.key;
     }
 
     initializeId() {
@@ -179,8 +256,8 @@ export class IdentityRelation extends AbstractRelation {
 }
 
 export const hasPath = async (
-    start: Key,
-    end: Key,
+    start: PublicSignKey | IPFSAddress,
+    end: PublicSignKey | IPFSAddress,
     db: Documents<IdentityRelation>,
     resolver: RelationResolver
 ): Promise<boolean> => {
@@ -188,8 +265,8 @@ export const hasPath = async (
 };
 
 export const getRelation = (
-    from: Key,
-    to: Key,
+    from: PublicSignKey | IPFSAddress,
+    to: PublicSignKey | IPFSAddress,
     db: Documents<IdentityRelation>
 ): IndexedValue<IdentityRelation> | undefined => {
     return db.index.get(new IdentityRelation({ from, to }).id);

@@ -10,8 +10,8 @@ import {
     arraysEqual,
     UInt8ArraySerializer,
 } from "@dao-xyz/peerbit-borsh-utils";
-import { PublicSignKey, SignKey } from "./index.js";
 import { Ed25519PublicKey, verifySignatureEd25519 } from "./ed25519";
+import { PublicSignKey } from "./key";
 import { Secp256k1PublicKey, verifySignatureSecp256k1 } from "./sepc256k1.js";
 import { SignWithKey } from "./signer.js";
 
@@ -20,10 +20,10 @@ export class SignatureWithKey {
     @field(UInt8ArraySerializer)
     signature: Uint8Array;
 
-    @field({ type: SignKey })
-    publicKey: SignKey;
+    @field({ type: PublicSignKey })
+    publicKey: PublicSignKey;
 
-    constructor(props?: { signature: Uint8Array; publicKey: SignKey }) {
+    constructor(props?: { signature: Uint8Array; publicKey: PublicSignKey }) {
         if (props) {
             this.signature = props.signature;
             this.publicKey = props.publicKey;
@@ -109,7 +109,7 @@ export class MaybeSigned<T> {
 
 export const verify = async (
     signature: Uint8Array,
-    publicKey: SignKey,
+    publicKey: PublicSignKey,
     data: Uint8Array
 ) => {
     if (!signature) {

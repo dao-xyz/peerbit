@@ -20,6 +20,7 @@ module.exports = {
     "ignorePatterns": ["**/*.test.ts", "/**/lib/", "/**/frontend/build", "/**/test-utils/"],
     "rules": {
         "@typescript-eslint/no-explicit-any": "off",
-        "@typescript-eslint/prefer-as-const": "off"
+        "@typescript-eslint/prefer-as-const": "off",
+        "@typescript-eslint/no-empty-interface": "off"
     },
 }

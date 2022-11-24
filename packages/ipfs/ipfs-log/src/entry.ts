@@ -26,11 +26,10 @@ import {
     AccessError,
     Ed25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
-import { toBase64 } from "./utils.js";
 import sodium from "libsodium-wrappers";
 import { Encoding, JSON_ENCODING } from "./encoding";
 import { Identity } from "./identity.js";
-import { verify } from "@dao-xyz/peerbit-crypto";
+import { verify, toBase64 } from "@dao-xyz/peerbit-crypto";
 import { StringArray } from "./types";
 import { logger } from "./logger";
 
@@ -110,10 +109,7 @@ export class Payload<T> {
     }
 
     equals(other: Payload<T>): boolean {
-        return (
-            Buffer.compare(Buffer.from(this.data), Buffer.from(other.data)) ===
-            0
-        );
+        return arraysEqual(this.data, other.data);
     }
 
     getValue(encoding: Encoding<T> = JSON_ENCODING): T {
@@ -710,15 +706,6 @@ export class Entry<T>
             properties.pin
         );
         return entry;
-    }
-
-    /**
-     * Transforms an entry into a Buffer.
-     * @param {Entry} entry The entry
-     * @return {Buffer} The buffer
-     */
-    static toBuffer<T>(entry: Entry<T>) {
-        return Buffer.from(serialize(entry));
     }
 
     /**

@@ -513,20 +513,6 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 });
             });
 
-            describe("toBuffer", () => {
-                it("returns the log as a Buffer", () => {
-                    assert.deepStrictEqual(
-                        log.toBuffer(),
-                        Buffer.from(
-                            JSON.stringify({
-                                id: logId,
-                                heads: [log.values[2].hash],
-                            })
-                        )
-                    );
-                });
-            });
-
             describe("toMultihash - cbor", () => {
                 it("returns the log as ipfs CID", async () => {
                     const log = new Log(

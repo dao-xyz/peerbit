@@ -9,6 +9,7 @@ import {
     Ed25519PublicKey,
     X25519Keypair,
     X25519PublicKey,
+    toBase64,
 } from "@dao-xyz/peerbit-crypto";
 import sodium from "libsodium-wrappers";
 // Test utils
@@ -19,7 +20,6 @@ import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
 import { Identity } from "../identity.js";
-import { toBase64 } from "../utils.js";
 import { LamportClock, Timestamp } from "../clock.js";
 
 const __filename = fileURLToPath(import.meta.url);

@@ -28,7 +28,7 @@ import {
     compare,
     Context,
 } from "./query.js";
-import { AccessError, SignKey } from "@dao-xyz/peerbit-crypto";
+import { AccessError, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { CanRead, RPC, QueryContext, RPCOptions } from "@dao-xyz/peerbit-rpc";
 import pino from "pino";
 import { Results } from "./query";
@@ -375,10 +375,10 @@ export class DocumentIndex<T> extends ComposableProgram {
     }
     public query(
         queryRequest: DocumentQueryRequest,
-        responseHandler: (response: Results<T>, from?: SignKey) => void,
+        responseHandler: (response: Results<T>, from?: PublicSignKey) => void,
         options?: RPCOptions & { sync?: boolean }
     ): Promise<void> {
-        const handler = async (response: Results<T>, from?: SignKey) => {
+        const handler = async (response: Results<T>, from?: PublicSignKey) => {
             response.results.forEach((r) => r.init(this.type));
             if (options?.sync) {
                 await this._sync(response);

@@ -1,9 +1,10 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { PrivateSignKey, PublicSignKey, SignKey, Keypair } from "./key.js";
+import { PrivateSignKey, PublicSignKey, Keypair } from "./key.js";
 import { arraysCompare, fixedUint8Array } from "@dao-xyz/peerbit-borsh-utils";
 import sodium from "libsodium-wrappers";
 import { Signer, SignWithKey } from "./signer.js";
 import { SignatureWithKey } from "./signature.js";
+import { toHexString } from "./utils.js";
 
 @variant(0)
 export class Ed25519PublicKey extends PublicSignKey {
@@ -17,14 +18,14 @@ export class Ed25519PublicKey extends PublicSignKey {
         }
     }
 
-    equals(other: SignKey): boolean {
+    equals(other: PublicSignKey): boolean {
         if (other instanceof Ed25519PublicKey) {
             return arraysCompare(this.publicKey, other.publicKey) === 0;
         }
         return false;
     }
     toString(): string {
-        return "ed25119/" + Buffer.from(this.publicKey).toString("hex");
+        return "ed25119p/" + toHexString(this.publicKey);
     }
 }
 
@@ -40,14 +41,14 @@ export class Ed25519PrivateKey extends PrivateSignKey {
         }
     }
 
-    equals(other: SignKey): boolean {
+    equals(other: PublicSignKey): boolean {
         if (other instanceof Ed25519PrivateKey) {
             return arraysCompare(this.privateKey, other.privateKey) === 0;
         }
         return false;
     }
     toString(): string {
-        return "ed25119/" + Buffer.from(this.privateKey).toString("hex");
+        return "ed25119s/" + toHexString(this.privateKey);
     }
 }
 

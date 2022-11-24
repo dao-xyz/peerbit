@@ -5,7 +5,9 @@ import {
     Ed25519Keypair,
     Ed25519PublicKey,
     K,
+    PublicKeyEncryptionKey,
     PublicKeyEncryptionResolver,
+    toBase64,
     X25519Keypair,
     X25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
@@ -13,7 +15,7 @@ import { Keystore, KeyWithMeta, StoreError } from "@dao-xyz/peerbit-keystore";
 import { MaybeSigned, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { TimeoutError, waitForAsync } from "@dao-xyz/peerbit-time";
-import { Key } from "@dao-xyz/peerbit-crypto";
+import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { Constructor } from "@dao-xyz/borsh";
 
 import { Identity } from "@dao-xyz/ipfs-log";
@@ -54,114 +56,111 @@ export class PublicKeyMessage {
     }
 }
 
-export enum RequestKeyType {
-    Sign = 0,
-    Encryption = 1,
+export abstract class RequestKeyType {
+    publicKey: PublicSignKey | PublicKeyEncryptionKey;
 }
 
 @variant(0)
-export class RequestKeyCondition<T extends Ed25519Keypair | X25519Keypair> {
-    @field({ type: option("u8") })
-    _type?: RequestKeyType;
-
-    constructor(props?: { type?: Constructor<T> | RequestKeyType }) {
-        if (props) {
-            if (props.type === undefined) {
-                return;
-            }
-
-            if ((props.type as number) in RequestKeyType) {
-                this._type = props.type as RequestKeyType;
-            } else {
-                if (props.type === (Ed25519Keypair as any)) {
-                    // TODO fix types
-                    this._type = 0;
-                } else if (props.type === (X25519Keypair as any)) {
-                    // TODO fix types
-                    this._type = 1;
-                }
-            }
+export class RequestSignKeyType extends RequestKeyType {
+    @field({ type: PublicSignKey })
+    publicKey: PublicSignKey;
+    constructor(properties?: { publicKey: PublicSignKey }) {
+        super();
+        if (properties) {
+            this.publicKey = properties.publicKey;
         }
     }
+}
 
-    get type(): Constructor<T> | undefined {
-        if (this._type === undefined) {
-            return;
-        }
-        if (this._type === 0) {
-            return KeyWithMeta as any as Constructor<T>;
-        } else if (this._type === 1) {
-            return KeyWithMeta as any as Constructor<T>;
-        } else {
-            throw new Error("Unsupported");
+@variant(1)
+export class RequestEncrpytionKeyType extends RequestKeyType {
+    @field({ type: PublicKeyEncryptionKey })
+    publicKey: PublicKeyEncryptionKey;
+    constructor(properties?: { publicKey: PublicKeyEncryptionKey }) {
+        super();
+        if (properties) {
+            this.publicKey = properties.publicKey;
         }
     }
+}
 
+export abstract class RequestKeyCondition {
     get hashcode(): string {
-        throw new Error("Unsupported");
+        throw new Error("Not implemented");
     }
 }
 
 @variant(0)
-export class RequestKeysByAddress<
-    T extends Ed25519Keypair | X25519Keypair
-> extends RequestKeyCondition<T> {
+export class RequestKeysByAddress extends RequestKeyCondition {
+    @field({ type: "u8" })
+    keyType: number; // 0 sign key, 1 encryption key
     @field({ type: "string" })
     address: string;
 
-    constructor(props?: {
-        type?: Constructor<T> | RequestKeyType;
-        address: string;
-    }) {
-        super({ type: props?.type as Constructor<T> });
+    constructor(props?: { type: "sign" | "encryption"; address: string }) {
+        super();
         if (props) {
+            if (props.type === "sign") {
+                this.keyType = 0;
+            } else if (props.type === "encryption") {
+                this.keyType = 1;
+            } else {
+                throw new Error("Unexpected");
+            }
+
             this.address = props.address;
         }
     }
 
     get hashcode() {
-        return this._type + this.address;
+        return this.keyType + this.address;
     }
 }
 
 @variant(1)
-export class RequestKeysByKey<
-    T extends Ed25519Keypair | X25519Keypair
-> extends RequestKeyCondition<T> {
-    @field({ type: Key })
-    _key: Key;
+export class RequestKeysByKey extends RequestKeyCondition {
+    @field({ type: RequestKeyType })
+    _key: RequestKeyType; // publci key
 
     constructor(props?: { key: X25519PublicKey | Ed25519PublicKey }) {
-        super({});
+        super();
         if (props) {
-            this._key = props.key;
+            if (props.key instanceof X25519PublicKey) {
+                this._key = new RequestEncrpytionKeyType({
+                    publicKey: props.key,
+                });
+            } else if (props.key instanceof Ed25519PublicKey) {
+                this._key = new RequestSignKeyType({
+                    publicKey: props.key,
+                });
+            } else {
+                throw new Error("Unexpected");
+            }
         }
     }
 
-    get key(): X25519PublicKey | Ed25519PublicKey {
-        return this._key as X25519PublicKey | Ed25519PublicKey;
+    get key(): RequestKeyType {
+        return this._key;
     }
 
     get hashcode() {
-        return this.key.hashCode();
+        return this._key.publicKey.toString();
     }
 }
 
 @variant([1, 0])
-export class RequestKeyMessage<
-    T extends Ed25519Keypair | X25519Keypair
-> extends ProtocolMessage {
-    @field({ type: Key })
-    _encryptionKey: Key;
+export class RequestKeyMessage extends ProtocolMessage {
+    @field({ type: PublicKeyEncryptionKey })
+    _encryptionKey: PublicKeyEncryptionKey;
 
     @field({ type: RequestKeyCondition })
-    condition: RequestKeyCondition<T>;
+    condition: RequestKeyCondition;
 
     // TODO peer info for sending repsonse directly
 
     constructor(props?: {
-        encryptionKey: X25519PublicKey | Ed25519PublicKey;
-        condition: RequestKeyCondition<T>;
+        encryptionKey: X25519PublicKey;
+        condition: RequestKeyCondition;
     }) {
         super();
         if (props) {
@@ -170,8 +169,8 @@ export class RequestKeyMessage<
         }
     }
 
-    get encryptionKey(): X25519PublicKey | Ed25519PublicKey {
-        return this._encryptionKey as X25519PublicKey | Ed25519PublicKey;
+    get encryptionKey(): X25519PublicKey {
+        return this._encryptionKey as X25519PublicKey;
     }
 }
 
@@ -193,7 +192,7 @@ export class KeyResponseMessage extends ProtocolMessage {
 export const requestAndWaitForKeys = async <
     T extends Ed25519Keypair | X25519Keypair
 >(
-    condition: RequestKeyCondition<T>,
+    condition: RequestKeyCondition,
     send: (message: Uint8Array) => void | Promise<void>,
     keystore: Keystore,
     identity: Identity,
@@ -225,7 +224,7 @@ export const requestAndWaitForKeys = async <
     } else if (condition instanceof RequestKeysByKey) {
         try {
             const key = await waitForAsync(
-                () => keystore.getKey<T>(condition.key),
+                () => keystore.getKey<T>(condition.key.publicKey),
                 {
                     timeout,
                     delayInterval: 50,
@@ -248,8 +247,8 @@ export const requestAndWaitForKeys = async <
     }
 };
 
-export const requestKeys = async <T extends X25519Keypair | Ed25519Keypair>(
-    condition: RequestKeyCondition<T>,
+export const requestKeys = async (
+    condition: RequestKeyCondition,
     send: (message: Uint8Array) => void | Promise<void>,
     keystore: Keystore,
     identity: Identity
@@ -272,12 +271,15 @@ export const requestKeys = async <T extends X25519Keypair | Ed25519Keypair>(
         );
         return;
     }
-    const signedMessage = await new MaybeSigned<RequestKeyMessage<T>>({
+    const pk = (key.keypair as Ed25519Keypair | X25519Keypair).publicKey;
+    const signedMessage = await new MaybeSigned<RequestKeyMessage>({
         data: serialize(
-            new RequestKeyMessage<T>({
+            new RequestKeyMessage({
                 condition,
-                encryptionKey: (key.keypair as Ed25519Keypair | X25519Keypair)
-                    .publicKey,
+                encryptionKey:
+                    pk instanceof Ed25519PublicKey
+                        ? await X25519PublicKey.from(pk)
+                        : pk,
             })
         ),
     }).sign(async (bytes) => {
@@ -294,7 +296,7 @@ export const requestKeys = async <T extends X25519Keypair | Ed25519Keypair>(
 
 export const exchangeKeys = async <T extends Ed25519Keypair | X25519Keypair>(
     send: (data: Uint8Array) => Promise<void>,
-    request: RequestKeyMessage<T>,
+    request: RequestKeyMessage,
     canAccessKey: KeyAccessCondition,
     keystore: Keystore,
     identity: Identity,
@@ -312,7 +314,7 @@ export const exchangeKeys = async <T extends Ed25519Keypair | X25519Keypair>(
         }
         secretKeys = keys;
     } else if (request.condition instanceof RequestKeysByKey) {
-        const key = await keystore.getKey<T>(request.condition.key);
+        const key = await keystore.getKey<T>(request.condition.key.publicKey);
         if (key) {
             group = key.group;
         }

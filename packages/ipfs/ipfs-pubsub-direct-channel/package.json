@@ -29,7 +29,7 @@
         "crdt"
     ],
     "dependencies": {
-        "@dao-xyz/borsh": "^3.4.2",
+        "@dao-xyz/borsh": "^3.4.3",
         "@dao-xyz/ipfs-pubsub-peer-monitor": "^0.0.15",
         "@dao-xyz/peerbit-borsh-utils": "^0.0.9",
         "@dao-xyz/peerbit-test-utils": "^0.0.13",

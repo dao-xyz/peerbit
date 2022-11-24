@@ -12,7 +12,7 @@ import {
     X25519Keypair,
     GetEncryptionKeypair,
     GetAnyKeypair,
-    SignKey,
+    PublicSignKey,
 } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from "ipfs-core-types";
 import { Identity } from "@dao-xyz/ipfs-log";
@@ -36,7 +36,7 @@ export const send = async (
     ipfs: IPFS,
     topic: string,
     query: RequestV0,
-    responseHandler: (response: ReponseV0, from?: SignKey) => void,
+    responseHandler: (response: ReponseV0, from?: PublicSignKey) => void,
     options: RPCOptions = {}
 ) => {
     if (typeof options.maxAggregationTime !== "number") {

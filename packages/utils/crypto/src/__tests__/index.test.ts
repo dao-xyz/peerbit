@@ -47,6 +47,13 @@ describe("Ed25519", () => {
             data
         );
         expect(isVerified).toBeTrue();
+
+        const isNotVerified = await verifySignatureEd25519(
+            signature,
+            keypair.publicKey,
+            data.reverse()
+        );
+        expect(isNotVerified).toBeFalse();
     });
 });
 
@@ -71,12 +78,20 @@ describe("Sepck2561k1", () => {
             address: await wallet.getAddress(),
         });
         const signature = await wallet.signMessage(data);
+        let signatureBytes = new Uint8Array(Buffer.from(signature));
         const isVerified = await verifySignatureSecp256k1(
-            new Uint8Array(Buffer.from(signature)),
+            signatureBytes,
             pk,
             data
         );
         expect(isVerified).toBeTrue();
+
+        const isNotVerified = await verifySignatureSecp256k1(
+            new Uint8Array(Buffer.from(signature)),
+            pk,
+            data.reverse()
+        );
+        expect(isNotVerified).toBeFalse();
     });
 
     it("ser/der", async () => {
@@ -87,13 +102,6 @@ describe("Sepck2561k1", () => {
         const derser = deserialize(serialize(pk), Secp256k1PublicKey);
         expect(derser.address).toEqual(pk.address);
     });
-
-    /*  it('size', async () => {
-         expect(serialize(new Secp256k1PublicKey({
-             address: await Wallet.createRandom().getAddress()
-         })
-         )).toHaveLength(PUBLIC_KEY_WIDTH);
-     }) */
 });
 
 describe("IPFS", () => {

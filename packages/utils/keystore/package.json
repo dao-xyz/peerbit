@@ -31,7 +31,7 @@
     "author": "dao.xyz",
     "license": "MIT",
     "dependencies": {
-        "@dao-xyz/borsh": "^3.4.2",
+        "@dao-xyz/borsh": "^3.4.3",
         "@dao-xyz/peerbit-borsh-utils": "^0.0.9",
         "@dao-xyz/peerbit-crypto": "^0.0.15",
         "@dao-xyz/peerbit-time": "^0.0.18",
