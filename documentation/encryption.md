@@ -21,3 +21,26 @@ See [this](./../packages/utils/crypto/src/encryption.ts) for implementation deta
 - Links (references to other commits)
 
 See [this](./../packages/ipfs/ipfs-log/src/entry.ts) for implementation details. 
+
+
+In practice, this is how it looks when you are inserting a document into a Document Store
+```typescript
+
+let doc = new Document({
+    id: "123",
+    name: "this document is not for everyone",
+});
+
+const someKey = await X25519PublicKey.create(); // a random reciever
+
+// save document and send it to peers
+const entry = await db.docs.put(doc, {
+    reciever: {
+        payload: [someKey],
+        metadata: undefined,
+        next: undefined,
+        signatures: undefined,
+    },
+});
+
+```
