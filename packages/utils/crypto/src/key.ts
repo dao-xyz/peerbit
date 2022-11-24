@@ -1,4 +1,5 @@
 import { serialize } from "@dao-xyz/borsh";
+import { toBase64 } from "./utils";
 
 export type IdentityProviderType = "orbitdb" | "ethereum" | "solana";
 
@@ -29,7 +30,7 @@ export abstract class PublicSignKey implements Key {
     }
 
     hashCode(): string {
-        return Buffer.from(this.bytes).toString("base64");
+        return toBase64(this.bytes);
     }
 }
 
@@ -40,7 +41,7 @@ export abstract class PrivateSignKey implements Key {
     }
 
     hashCode(): string {
-        return Buffer.from(this.bytes).toString("base64");
+        return toBase64(this.bytes);
     }
 }
 
@@ -52,7 +53,7 @@ export abstract class PublicKeyEncryptionKey implements Key {
     }
 
     hashCode(): string {
-        return Buffer.from(this.bytes).toString("base64");
+        return toBase64(this.bytes);
     }
 }
 export interface PrivateEncryptionKey extends Key {}
@@ -62,7 +63,7 @@ export abstract class PrivateEncryptionKey implements Key {
     }
 
     hashCode(): string {
-        return Buffer.from(this.bytes).toString("base64");
+        return toBase64(this.bytes);
     }
 }
 
@@ -74,6 +75,6 @@ export abstract class PlainKey implements Key {
     }
 
     hashCode(): string {
-        return Buffer.from(this.bytes).toString("base64");
+        return toBase64(this.bytes);
     }
 }
