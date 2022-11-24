@@ -16,6 +16,7 @@ import { createHash } from "crypto";
 import sodium from "libsodium-wrappers";
 import { StoreError } from "./errors";
 import { Level } from "level";
+import { toBase64 } from "@dao-xyz/peerbit-crypto";
 
 export interface Type<T> extends Function {
     new (...args: any[]): T;
@@ -26,15 +27,13 @@ const getGroupKey = (group: string) =>
     group === DEFAULT_KEY_GROUP
         ? DEFAULT_KEY_GROUP
         : createHash("sha1").update(group).digest("base64");
-const getIdKey = (id: string | Buffer | Uint8Array | PublicSignKey): string => {
+const getIdKey = (id: string | Uint8Array | PublicSignKey): string => {
     if (id instanceof PublicSignKey || id instanceof PublicKeyEncryptionKey) {
         return id.hashCode();
     }
 
     if (typeof id !== "string") {
-        id = Buffer.isBuffer(id)
-            ? id.toString("base64")
-            : Buffer.from(id).toString("base64");
+        id = toBase64(id);
     } else {
         if (isPath(id)) {
             throw new Error("Ids can not contain path key: " + PATH_KEY);
@@ -126,7 +125,7 @@ export class KeyWithMeta<T extends Keypair> {
         throw new Error("Unsupported");
     }
 
-    equals(other: KeyWithMeta<T>, ignoreMissingSecret = false) {
+    equals(other: KeyWithMeta<T>) {
         return (
             this.timestamp === other.timestamp &&
             this.group === other.group &&
@@ -316,10 +315,10 @@ export class Keystore {
 
         const ser = serialize(key);
         const publicKeyString = publicKeyFromKeyPair(key.keypair).hashCode();
-        await this.groupStore.put(path, Buffer.from(ser), {
+        await this.groupStore.put(path, ser, {
             valueEncoding: "view",
         }); // TODO fix types, are just wrong
-        await this.keyStore.put(publicKeyString, Buffer.from(ser), {
+        await this.keyStore.put(publicKeyString, ser, {
             valueEncoding: "view",
         }); // TODO fix types, are just wrong
         this._cache.set(path, key);

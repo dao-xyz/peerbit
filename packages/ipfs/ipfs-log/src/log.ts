@@ -786,14 +786,6 @@ export class Log<T> extends GSet {
     }
 
     /**
-     * Get the log as a Buffer.
-     * @returns {Buffer}
-     */
-    toBuffer() {
-        return Buffer.from(JSON.stringify(this.toJSON()));
-    }
-
-    /**
      * Returns the log entries as a formatted string.
      * @returns {string}
      * @example

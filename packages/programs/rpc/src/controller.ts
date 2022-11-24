@@ -9,7 +9,7 @@ import {
     variant,
 } from "@dao-xyz/borsh";
 import type { Message } from "@libp2p/interface-pubsub";
-import { SignKey } from "@dao-xyz/peerbit-crypto";
+import { PublicSignKey, toBase64 } from "@dao-xyz/peerbit-crypto";
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
 import { RequestV0, ReponseV0 } from "./encoding.js";
 import { send, RPCOptions, respond } from "./io.js";
@@ -63,10 +63,10 @@ export const getRPCTopic = (parentProgram: Program, region: string): string => {
     const disriminator = getDiscriminatorApproximation(
         parentProgram.constructor as Constructor<any>
     );
-    return region + "/" + Buffer.from(disriminator).toString("base64") + "/?";
+    return region + "/" + toBase64(disriminator) + "/?";
 };
 
-export type CanRead = (key?: SignKey) => Promise<boolean> | boolean;
+export type CanRead = (key?: PublicSignKey) => Promise<boolean> | boolean;
 export type RPCTopicOption =
     | { queryAddressSuffix: string }
     | { rpcRegion: string };
@@ -79,7 +79,7 @@ export type RPCInitializationOptions<Q, R> = {
     responseHandler: ResponseHandler<Q, R>;
 };
 export type QueryContext = {
-    from?: SignKey;
+    from?: PublicSignKey;
     address: string;
 };
 export type ResponseHandler<Q, R> = (
@@ -270,7 +270,7 @@ export class RPC<Q, R> extends ComposableProgram {
 
     public send(
         request: Q,
-        responseHandler: (response: R, from?: SignKey) => void,
+        responseHandler: (response: R, from?: PublicSignKey) => void,
         options?: RPCOptions
     ): Promise<void> {
         logger.debug("querying topic: " + this.rpcTopic);

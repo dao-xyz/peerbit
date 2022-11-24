@@ -49,7 +49,7 @@ const checkHello = async (db: PermissionedEventStore) => {
 
 Object.keys(testAPIs).forEach((API) => {
     describe(`encryption`, function () {
-        jest.retryTimes(1); // TODO Side effects may cause failures
+        jest.retryTimes(1); // TODO Side effects may cause failures (or something else? Like missing await somewhere which makes this test fail if multiple tests are running and slowing down the system)
         jest.setTimeout(config.timeout * 5);
 
         let session: Session;
@@ -68,7 +68,7 @@ Object.keys(testAPIs).forEach((API) => {
         beforeEach(async () => {
             orbitdb1 = await Peerbit.create(session.peers[0].ipfs, {
                 directory: orbitdbPath1,
-                waitForKeysTimout: 1000,
+                waitForKeysTimout: 10000,
             });
             const program = await orbitdb1.open(
                 new PermissionedEventStore({

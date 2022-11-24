@@ -1,6 +1,5 @@
 import { field, BinaryWriter, vec, variant } from "@dao-xyz/borsh";
 import { Documents, DocumentIndex } from "@dao-xyz/peerbit-document";
-import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { createHash } from "crypto";
 
 // bootstrap info
@@ -10,8 +9,8 @@ import { createHash } from "crypto";
 // and open the network, then ask network if user is trusted
 // then save
 
-@variant(5)
-export class DiscoveryData extends SystemBinaryPayload {}
+@variant(0)
+export class DiscoveryData {}
 
 @variant(0)
 export class NetworkInfo extends DiscoveryData {

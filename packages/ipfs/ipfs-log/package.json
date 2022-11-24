@@ -32,7 +32,7 @@
         "crdt"
     ],
     "dependencies": {
-        "@dao-xyz/borsh": "^3.4.2",
+        "@dao-xyz/borsh": "^3.4.3",
         "@dao-xyz/peerbit-crypto": "^0.0.15",
         "@dao-xyz/peerbit-io-utils": "^1.1.12",
         "json-stringify-deterministic": "^1.0.7",

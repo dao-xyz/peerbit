@@ -41,7 +41,7 @@ import {
     EncryptedThing,
     MaybeEncrypted,
     PublicKeyEncryptionResolver,
-    SignKey,
+    PublicSignKey,
     X25519Keypair,
 } from "@dao-xyz/peerbit-crypto";
 import LRU from "lru-cache";
@@ -264,7 +264,7 @@ export class Peerbit {
     async requestAndWaitForKeys<T extends Ed25519Keypair | X25519Keypair>(
         replicationTopic: string,
         address: string,
-        condition: RequestKeyCondition<T>
+        condition: RequestKeyCondition
     ): Promise<KeyWithMeta<T>[] | undefined> {
         if (!this._getNetwork(address)) {
             return;
@@ -293,7 +293,7 @@ export class Peerbit {
                 )
                     .then((results) => {
                         if (results && results?.length > 0) {
-                            resolve(results);
+                            resolve(results as KeyWithMeta<T>[] | undefined); // TODO fix type safety
                         } else {
                             resolve(undefined);
                         }
@@ -315,8 +315,8 @@ export class Peerbit {
                 if (this._disconnected) {
                     return undefined;
                 }
-                throw error;
             }
+            throw error;
         }
     }
 
@@ -375,6 +375,7 @@ export class Peerbit {
                       address,
                       new RequestKeysByAddress({
                           address,
+                          type: "encryption",
                       })
                   )
                 : undefined;
@@ -589,7 +590,7 @@ export class Peerbit {
     }
 
     async isTrustedByNetwork(
-        identity: SignKey | undefined,
+        identity: PublicSignKey | undefined,
         address: string,
         replicationTopic?: string
     ): Promise<boolean> {
@@ -633,7 +634,7 @@ export class Peerbit {
             const signedMessage = decrypted.getValue(MaybeSigned);
             await signedMessage.verify();
             const msg = signedMessage.getValue(ProtocolMessage);
-            const sender: SignKey | undefined =
+            const sender: PublicSignKey | undefined =
                 signedMessage.signature?.publicKey;
             const checkTrustedSender = async (
                 address: string,
@@ -845,8 +846,7 @@ export class Peerbit {
                     canExchangeKey = (key) =>
                         Promise.resolve(
                             key.group ===
-                                (msg.condition as RequestKeysByAddress<any>)
-                                    .address
+                                (msg.condition as RequestKeysByAddress).address
                         );
                 } else if (msg.condition instanceof RequestKeysByKey) {
                     canExchangeKey = (key) =>
@@ -1552,9 +1552,7 @@ export class Peerbit {
                               this.requestAndWaitForKeys(
                                   definedReplicationTopic,
                                   programAddress,
-                                  new RequestKeysByKey<
-                                      Ed25519Keypair | X25519Keypair
-                                  >({
+                                  new RequestKeysByKey({
                                       key,
                                   })
                               )

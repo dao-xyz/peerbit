@@ -1,5 +1,5 @@
 import http from "http";
-import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import { PublicSignKey, toBase64, fromBase64 } from "@dao-xyz/peerbit-crypto";
 import { Peerbit, inNetwork } from "@dao-xyz/peerbit";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { Program, Address } from "@dao-xyz/peerbit-program";
@@ -231,11 +231,7 @@ export const startServer = async (
                                 const program = getProgramFromPath(req, 1);
                                 if (program) {
                                     res.writeHead(200);
-                                    res.write(
-                                        Buffer.from(
-                                            serialize(program)
-                                        ).toString("base64")
-                                    );
+                                    res.write(toBase64(serialize(program)));
                                     res.end();
                                 } else {
                                     res.writeHead(404);
@@ -256,9 +252,7 @@ export const startServer = async (
                                 } else {
                                     try {
                                         const parsed = deserialize(
-                                            new Uint8Array(
-                                                Buffer.from(body, "base64")
-                                            ),
+                                            fromBase64(body),
                                             Program
                                         );
                                         client
@@ -337,9 +331,7 @@ export const startServer = async (
                                                 [
                                                     ...program.network.trustGraph._index._index.values(),
                                                 ].map((x) =>
-                                                    Buffer.from(
-                                                        serialize(x.value)
-                                                    ).toString("base64")
+                                                    toBase64(serialize(x.value))
                                                 )
                                             )
                                         );
@@ -374,12 +366,7 @@ export const startServer = async (
                                         if (inNetwork(program)) {
                                             try {
                                                 const reciever = deserialize(
-                                                    new Uint8Array(
-                                                        Buffer.from(
-                                                            body,
-                                                            "base64"
-                                                        )
-                                                    ),
+                                                    fromBase64(body),
                                                     PublicSignKey
                                                 );
                                                 program.network
@@ -387,9 +374,9 @@ export const startServer = async (
                                                     .then((r) => {
                                                         res.writeHead(200);
                                                         res.end(
-                                                            Buffer.from(
+                                                            toBase64(
                                                                 serialize(r)
-                                                            ).toString("base64")
+                                                            )
                                                         );
                                                     })
                                                     .catch((error?: any) => {
@@ -546,10 +533,7 @@ export const client = async (
                 );
                 return !result
                     ? undefined
-                    : deserialize(
-                          new Uint8Array(Buffer.from(result, "base64")),
-                          Program
-                      );
+                    : deserialize(fromBase64(result), Program);
             },
 
             /**
@@ -563,7 +547,7 @@ export const client = async (
             ): Promise<Address> => {
                 const base64 =
                     program instanceof Program
-                        ? Buffer.from(serialize(program)).toString("base64")
+                        ? toBase64(serialize(program))
                         : program;
                 const resp = throwIfNot200(
                     await axios.put(
@@ -606,10 +590,7 @@ export const client = async (
                     return !result
                         ? undefined
                         : (result as string[]).map((r) =>
-                              deserialize(
-                                  Buffer.from(r, "base64"),
-                                  IdentityRelation
-                              )
+                              deserialize(fromBase64(r), IdentityRelation)
                           );
                 },
             },
@@ -618,9 +599,7 @@ export const client = async (
                     address: Address | string,
                     publicKey: PublicSignKey
                 ): Promise<IdentityRelation> => {
-                    const base64 = Buffer.from(serialize(publicKey)).toString(
-                        "base64"
-                    );
+                    const base64 = toBase64(serialize(publicKey));
                     const resp = throwIfNot200(
                         await axios.put(
                             endpoint +
@@ -631,10 +610,7 @@ export const client = async (
                             { validateStatus, headers: await getHeaders() }
                         )
                     );
-                    return deserialize(
-                        Buffer.from(resp.data, "base64"),
-                        IdentityRelation
-                    );
+                    return deserialize(fromBase64(resp.data), IdentityRelation);
                 },
             },
         },

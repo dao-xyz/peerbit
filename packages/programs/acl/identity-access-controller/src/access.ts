@@ -1,7 +1,7 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh";
 import { serialize } from "@dao-xyz/borsh";
 import { AccessCondition } from "./condition";
-import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
+import { toBase64 } from "@dao-xyz/peerbit-crypto";
 
 export enum AccessType {
     Any = 0,
@@ -9,8 +9,8 @@ export enum AccessType {
     Write = 2,
 }
 
-@variant(11)
-export class AccessData extends SystemBinaryPayload {}
+@variant(0)
+export class AccessData {}
 
 @variant(0)
 export class Access extends AccessData {
@@ -42,7 +42,7 @@ export class Access extends AccessData {
         const a = new Access();
         a.accessCondition = this.accessCondition;
         a.accessTypes = this.accessTypes;
-        return Buffer.from(serialize(a)).toString("base64");
+        return toBase64(serialize(a));
     }
 
     initialize(): Access {

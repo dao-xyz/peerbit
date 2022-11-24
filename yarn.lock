@@ -2115,10 +2115,10 @@
   resolved "https://registry.yarnpkg.com/@csstools/selector-specificity/-/selector-specificity-2.0.2.tgz#1bfafe4b7ed0f3e4105837e056e0a89b108ebe36"
   integrity sha512-IkpVW/ehM1hWKln4fCA3NzJU8KwD+kIOvPZA4cqxoJHtE21CCzjyp+Kxbu0i5I4tBNOlXPL9mjwnWlL0VEG4Fg==
 
-"@dao-xyz/borsh@^3.4.2":
-  version "3.4.2"
-  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-3.4.2.tgz#a2d15f39e1835a3ecf7e538be64ce7b2f9e73e94"
-  integrity sha512-3b69fmJUv1bAkRiYKIeIp1Q2gnh7XZ6OKENi2+BycgWD02GbkOs7ZInF3wv9yTSjWmhq8RBNpdbBgQj3vP1nSA==
+"@dao-xyz/borsh@^3.4.3":
+  version "3.4.3"
+  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-3.4.3.tgz#81f70696bc556ee5dbef678bea8035e968806e1f"
+  integrity sha512-NebvqR6dtq6r70bX+dZ6yN8rwEvr6qzPBlX6PSC9o/55WlACc0GGoKvjET78ysYsxOcahceAEuhU+T7/yVX6dg==
   dependencies:
     text-encoding-utf-8 "^1.0.2"
 

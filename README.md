@@ -77,7 +77,7 @@ Below is a short example how you can create a collaborative text document:
 import { DString, Range } from '@dao-xyz/peerbit-string'
 import { Peerbit } from '@dao-xyz/peerbit'
 import { Program } from '@dao-xyz/peerbit-program'
-import { SignKey } from '@dao-xyz/peerbit-crypto';
+import { PublicSignKey } from '@dao-xyz/peerbit-crypto';
 import { Range, DString, StringOperation } from '@dao-xyz/peerbit-string';
 import { field, variant } from '@dao-xyz/borsh-ts' 
 
@@ -101,7 +101,7 @@ class CollaborativeText extends Program {
         // .. acl logic writers
     }
 
-    async canRead(identity?: SignKey): Promise<boolean> {
+    async canRead(identity?: PublicSignKey): Promise<boolean> {
         // .. acl logic for readers
     }
 

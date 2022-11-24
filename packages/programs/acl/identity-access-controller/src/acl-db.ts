@@ -8,7 +8,7 @@ import {
 } from "@dao-xyz/peerbit-trusted-network";
 import { Access, AccessType } from "./access";
 import { Entry } from "@dao-xyz/ipfs-log";
-import { PublicSignKey, SignKey } from "@dao-xyz/peerbit-crypto";
+import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { Program } from "@dao-xyz/peerbit-program";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 
@@ -59,7 +59,7 @@ export class IdentityAccessController extends Program {
 
     // custom can append
 
-    async canRead(s: SignKey | undefined): Promise<boolean> {
+    async canRead(s: PublicSignKey | undefined): Promise<boolean> {
         // TODO, improve, caching etc
 
         if (!s) {

@@ -25,7 +25,6 @@ import {
     PublicKeyEncryptionResolver,
 } from "@dao-xyz/peerbit-crypto";
 import { joinUint8Arrays } from "@dao-xyz/peerbit-borsh-utils";
-import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { EntryWithRefs } from "./entry-with-refs.js";
 import { waitForAsync } from "@dao-xyz/peerbit-time";
 
@@ -160,7 +159,7 @@ export interface Initiable<T> {
 }
 
 @variant(0)
-export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
+export class Store<T> implements Initiable<T> {
     @field({ type: "u32" })
     _storeIndex: number; // how to ensure unqiueness
 
@@ -199,7 +198,6 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
     _key: string;
 
     constructor(properties?: { storeIndex: number }) {
-        super();
         if (properties) {
             this._storeIndex = properties?.storeIndex;
         }
@@ -631,15 +629,13 @@ export class Store<T> extends SystemBinaryPayload implements Initiable<T> {
     async saveSnapshot() {
         const unfinished = this._replicator.unfinished;
         const snapshotData = this._oplog.toSnapshot();
-        const buf = Buffer.from(
-            serialize(
-                new Snapshot({
-                    id: snapshotData.id,
-                    heads: snapshotData.heads,
-                    size: BigInt(snapshotData.values.length),
-                    values: snapshotData.values,
-                })
-            )
+        const buf = serialize(
+            new Snapshot({
+                id: snapshotData.id,
+                heads: snapshotData.heads,
+                size: BigInt(snapshotData.values.length),
+                values: snapshotData.values,
+            })
         );
 
         const snapshot = await this._ipfs.add(buf);

@@ -23,18 +23,17 @@ import {
     startIpfs,
     stopIpfs,
     connectPeers,
-    waitForPeers,
 } from "@dao-xyz/peerbit-test-utils";
 import { CanOpenSubPrograms, Program } from "@dao-xyz/peerbit-program";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Entry } from "@dao-xyz/ipfs-log";
 
-const orbitdbPath1 = "./orbitdb/tests/write-only/1";
-const orbitdbPath2 = "./orbitdb/tests/write-only/2";
-const dbPath1 = "./orbitdb/tests/write-only/1/db1";
-const dbPath2 = "./orbitdb/tests/write-only/2/db2";
+const orbitdbPath1 = "./orbitdb/tests/subprogram/1";
+const orbitdbPath2 = "./orbitdb/tests/subprogram/2";
+const dbPath1 = "./orbitdb/tests/subprogram/1/db1";
+const dbPath2 = "./orbitdb/tests/subprogram/2/db2";
 
-describe(`Write-only`, function () {
+describe(`Subprogram`, function () {
     jest.setTimeout(config.timeout * 2);
 
     let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS;

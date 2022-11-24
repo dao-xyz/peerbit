@@ -1,5 +1,4 @@
 import { field, option, variant } from "@dao-xyz/borsh";
-import { SystemBinaryPayload } from "@dao-xyz/peerbit-bpayload";
 import { Entry, Identity } from "@dao-xyz/ipfs-log";
 import { IPFS } from "ipfs-core-types";
 import { IInitializationOptions, Store } from "@dao-xyz/peerbit-store";
@@ -212,8 +211,8 @@ export type ProgramInitializationOptions = {
     onDrop?: () => void;
 };
 
-@variant(1)
-export abstract class AbstractProgram extends SystemBinaryPayload {
+@variant(0)
+export abstract class AbstractProgram {
     @field({ type: option("u32") })
     _programIndex?: number; // Prevent duplicates for subprograms
 

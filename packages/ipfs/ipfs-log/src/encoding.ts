@@ -1,5 +1,7 @@
 import { Constructor, deserialize, serialize } from "@dao-xyz/borsh";
 import stringify from "json-stringify-deterministic";
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 export interface Encoding<T> {
     encoder: (data: T) => Uint8Array;
@@ -7,10 +9,10 @@ export interface Encoding<T> {
 }
 export const JSON_ENCODING: Encoding<any> = {
     encoder: (obj: any) => {
-        return new Uint8Array(Buffer.from(stringify(obj)));
+        return new Uint8Array(encoder.encode(stringify(obj)));
     },
     decoder: (bytes: Uint8Array) => {
-        return JSON.parse(Buffer.from(bytes).toString());
+        return JSON.parse(decoder.decode(bytes).toString());
     },
 };
 

@@ -28,7 +28,6 @@
             "packages/store",
             "packages/utils/io-utils",
             "packages/utils/test-utils",
-            "packages/utils/bpayload",
             "packages/utils/cache",
             "packages/utils/borsh-utils",
             "packages/utils/time"
