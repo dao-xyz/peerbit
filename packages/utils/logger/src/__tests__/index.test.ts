@@ -1,6 +1,6 @@
 import { logger } from "..";
 
-describe("delay", () => {
+describe("logger", () => {
     let reset: string | undefined;
     beforeEach(() => {
         reset = process.env.LOG_LEVEL;
