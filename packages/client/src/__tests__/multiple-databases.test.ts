@@ -90,11 +90,11 @@ Object.keys(testAPIs).forEach((API) => {
             const options = {};
 
             // Open the databases on the first node
-            const replicationTopic = uuid();
+            const topic = uuid();
             for (let i = 0; i < dbCount; i++) {
                 const db = await orbitdb1.open(
                     new EventStore<string>({ id: "local-" + i }),
-                    { ...options, replicationTopic }
+                    { ...options, topic: topic }
                 );
                 localDatabases.push(db);
             }
@@ -104,7 +104,7 @@ Object.keys(testAPIs).forEach((API) => {
                         orbitdb2._ipfs,
                         localDatabases[i].address!
                     ),
-                    { replicationTopic, directory: dbPath2, ...options }
+                    { topic: topic, directory: dbPath2, ...options }
                 );
                 remoteDatabasesA.push(db);
             }
@@ -115,7 +115,7 @@ Object.keys(testAPIs).forEach((API) => {
                         orbitdb3._ipfs,
                         localDatabases[i].address!
                     ),
-                    { replicationTopic, directory: dbPath3, ...options }
+                    { topic: topic, directory: dbPath3, ...options }
                 );
                 remoteDatabasesB.push(db);
             }
@@ -124,17 +124,17 @@ Object.keys(testAPIs).forEach((API) => {
             await waitForPeers(
                 ipfs1,
                 [orbitdb2.id],
-                getReplicationTopic(replicationTopic)
+                getReplicationTopic(topic)
             );
             await waitForPeers(
                 ipfs2,
                 [orbitdb1.id],
-                getReplicationTopic(replicationTopic)
+                getReplicationTopic(topic)
             );
             await waitForPeers(
                 ipfs3,
                 [orbitdb1.id],
-                getReplicationTopic(replicationTopic)
+                getReplicationTopic(topic)
             );
 
             await waitFor(() => orbitdb1._directConnections.size === 2);

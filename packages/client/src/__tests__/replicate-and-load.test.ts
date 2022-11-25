@@ -62,18 +62,16 @@ Object.keys(testAPIs).forEach((API) => {
         });
 
         describe("two peers", function () {
-            let db1: EventStore<string>,
-                db2: EventStore<string>,
-                replicationTopic: string;
+            let db1: EventStore<string>, db2: EventStore<string>, topic: string;
 
             const openDatabases = async () => {
                 // Set write access for both clients
-                replicationTopic = uuid();
+                topic = uuid();
                 db1 = await orbitdb1.open(
                     new EventStore<string>({
                         id: "events",
                     }),
-                    { replicationTopic, directory: dbPath1 }
+                    { topic: topic, directory: dbPath1 }
                 );
                 // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
                 db2 = await orbitdb2.open<EventStore<string>>(
@@ -81,7 +79,7 @@ Object.keys(testAPIs).forEach((API) => {
                         orbitdb2._ipfs,
                         db1.address!
                     ),
-                    { replicationTopic, directory: dbPath2 }
+                    { topic: topic, directory: dbPath2 }
                 );
             };
 
@@ -95,12 +93,12 @@ Object.keys(testAPIs).forEach((API) => {
                 await waitForPeers(
                     ipfs1,
                     [orbitdb2.id],
-                    getReplicationTopic(replicationTopic)
+                    getReplicationTopic(topic)
                 );
                 await waitForPeers(
                     ipfs2,
                     [orbitdb1.id],
-                    getReplicationTopic(replicationTopic)
+                    getReplicationTopic(topic)
                 );
             });
 
@@ -141,24 +139,24 @@ Object.keys(testAPIs).forEach((API) => {
                                 // Get the previous address to make sure nothing mutates it
                                 /* TODO, since new changes, below might not be applicable 
 
-                // Open the database again (this time from the disk)
-                options = Object.assign({}, options, { directory: dbPath1, create: false })
-                const db3 = await orbitdb1.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, db1.address), { replicationTopic, ...options }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
-                // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
-                options = Object.assign({}, options, { directory: dbPath2, localOnly: true })
-                const db4 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), { replicationTopic, ...options }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
+                                    // Open the database again (this time from the disk)
+                                    options = Object.assign({}, options, { directory: dbPath1, create: false })
+                                    const db3 = await orbitdb1.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb1._ipfs, db1.address), { replicationTopic, ...options }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
+                                    // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
+                                    options = Object.assign({}, options, { directory: dbPath2, localOnly: true })
+                                    const db4 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2._ipfs, db1.address), { replicationTopic, ...options }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
 
-                await db3.load()
-                await db4.load()
+                                    await db3.load()
+                                    await db4.load()
 
-                // Make sure we have all the entries in the databases
-                const result1 = db3.iterator({ limit: -1 }).collect()
-                const result2 = db4.iterator({ limit: -1 }).collect()
-                expect(result1.length).toEqual(entryCount)
-                expect(result2.length).toEqual(entryCount)
+                                    // Make sure we have all the entries in the databases
+                                    const result1 = db3.iterator({ limit: -1 }).collect()
+                                    const result2 = db4.iterator({ limit: -1 }).collect()
+                                    expect(result1.length).toEqual(entryCount)
+                                    expect(result2.length).toEqual(entryCount)
 
-                await db3.drop()
-                await db4.drop() */
+                                    await db3.drop()
+                                    await db4.drop() */
                             } catch (e: any) {
                                 reject(e);
                             }

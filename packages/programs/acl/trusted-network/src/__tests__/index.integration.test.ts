@@ -71,7 +71,7 @@ describe("index", () => {
     const init = (
         store: Program,
         i: number,
-        options: { replicationTopic: string; store?: IStoreOptions<any> }
+        options: { topic: string; store?: IStoreOptions<any> }
     ) =>
         store.init &&
         store.init(session.peers[i].ipfs, identites[i], {
@@ -166,7 +166,7 @@ describe("index", () => {
                     id: session.peers[0].id.toString(),
                 }),
             });
-            await init(store, 0, { replicationTopic: uuid() });
+            await init(store, 0, { topic: uuid() });
 
             const ab = new IdentityRelation({
                 to: b,
@@ -233,8 +233,8 @@ describe("index", () => {
                     id: session.peers[0].id.toString(),
                 }),
             });
-            const replicationTopic = uuid();
-            await init(store, 0, { replicationTopic });
+            const topic = uuid();
+            await init(store, 0, { topic });
 
             const ab = new IdentityRelation({
                 to: b,
@@ -268,9 +268,9 @@ describe("index", () => {
                 rootTrust: identity(0).publicKey,
             });
 
-            const replicationTopic = uuid();
+            const topic = uuid();
 
-            await init(l0a, 0, { replicationTopic });
+            await init(l0a, 0, { topic });
 
             await l0a.add(identity(1).publicKey);
 
@@ -278,7 +278,7 @@ describe("index", () => {
                 session.peers[1].ipfs,
                 l0a.address!
             )) as any;
-            await init(l0b, 1, { replicationTopic });
+            await init(l0b, 1, { topic });
 
             await l0b.trustGraph.store.sync(l0a.trustGraph.store.oplog.heads);
 
@@ -341,7 +341,7 @@ describe("index", () => {
                 l0a.address!
             )) as any;
             await init(l0observer, 1, {
-                replicationTopic,
+                topic,
                 store: { replicate: false },
             });
             expect(
@@ -364,7 +364,7 @@ describe("index", () => {
                 rootTrust: identity(0).publicKey,
             });
 
-            await init(l0a, 0, { replicationTopic: uuid() });
+            await init(l0a, 0, { topic: uuid() });
 
             await l0a.add(identity(1).publicKey);
             expect(
@@ -379,7 +379,7 @@ describe("index", () => {
             let l0a = new TrustedNetwork({
                 rootTrust: identity(0).publicKey,
             });
-            await init(l0a, 0, { replicationTopic: uuid() });
+            await init(l0a, 0, { topic: uuid() });
 
             expect(
                 l0a.trustGraph.put(
@@ -399,15 +399,15 @@ describe("index", () => {
             let l0a = new TrustedNetwork({
                 rootTrust: identity(0).publicKey,
             });
-            const replicationTopic = uuid();
+            const topic = uuid();
 
-            await init(l0a, 0, { replicationTopic });
+            await init(l0a, 0, { topic });
 
             let l0b: TrustedNetwork = (await TrustedNetwork.load(
                 session.peers[1].ipfs,
                 l0a.address!
             )) as any;
-            await init(l0b, 1, { replicationTopic });
+            await init(l0b, 1, { topic });
 
             // Can not append peer3Key since its not trusted by the root
             await expect(l0b.add(identity(2).publicKey)).rejects.toBeInstanceOf(

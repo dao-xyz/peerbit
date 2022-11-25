@@ -36,12 +36,12 @@ describe(`browser`, function () {
         orbitdb2: Peerbit,
         db1: EventStore<string>,
         db2: EventStore<string>;
-    let replicationTopic: string;
+    let topic: string;
     let timer: any;
 
     beforeAll(async () => {
         session = await Session.connected(2);
-        replicationTopic = uuid();
+        topic = uuid();
     });
 
     afterAll(async () => {
@@ -84,7 +84,7 @@ describe(`browser`, function () {
             new EventStore<string>({
                 id: "observe",
             }),
-            { replicationTopic, directory: dbPath1, replicate: true }
+            { topic: topic, directory: dbPath1, replicate: true }
         );
 
         db2 = await orbitdb2.open<EventStore<string>>(
@@ -92,28 +92,28 @@ describe(`browser`, function () {
                 orbitdb2._ipfs,
                 db1.address!
             ),
-            { replicationTopic, directory: dbPath2, replicate: true }
+            { topic: topic, directory: dbPath2, replicate: true }
         );
 
         await waitForPeers(
             session.peers[1].ipfs,
             [orbitdb1.id],
-            getObserverTopic(replicationTopic)
+            getObserverTopic(topic)
         );
         await waitForPeers(
             session.peers[0].ipfs,
             [orbitdb2.id],
-            getObserverTopic(replicationTopic)
+            getObserverTopic(topic)
         );
         await waitForPeers(
             session.peers[1].ipfs,
             [orbitdb1.id],
-            getReplicationTopic(replicationTopic)
+            getReplicationTopic(topic)
         );
         await waitForPeers(
             session.peers[0].ipfs,
             [orbitdb2.id],
-            getReplicationTopic(replicationTopic)
+            getReplicationTopic(topic)
         );
         expect(orbitdb1._directConnections.size).toEqual(0); // since browser
         expect(orbitdb2._directConnections.size).toEqual(0); // since browser
@@ -134,7 +134,7 @@ describe(`browser`, function () {
             new EventStore<string>({
                 id: "observe",
             }),
-            { replicationTopic, directory: dbPath1, replicate: true }
+            { topic: topic, directory: dbPath1, replicate: true }
         );
 
         await db1.add("hello");
@@ -145,28 +145,28 @@ describe(`browser`, function () {
                 orbitdb2._ipfs,
                 db1.address!
             ),
-            { replicationTopic, directory: dbPath2, replicate: true }
+            { topic: topic, directory: dbPath2, replicate: true }
         );
 
         await waitForPeers(
             session.peers[1].ipfs,
             [orbitdb1.id],
-            getObserverTopic(replicationTopic)
+            getObserverTopic(topic)
         );
         await waitForPeers(
             session.peers[0].ipfs,
             [orbitdb2.id],
-            getObserverTopic(replicationTopic)
+            getObserverTopic(topic)
         );
         await waitForPeers(
             session.peers[1].ipfs,
             [orbitdb1.id],
-            getReplicationTopic(replicationTopic)
+            getReplicationTopic(topic)
         );
         await waitForPeers(
             session.peers[0].ipfs,
             [orbitdb2.id],
-            getReplicationTopic(replicationTopic)
+            getReplicationTopic(topic)
         );
         expect(orbitdb1._directConnections.size).toEqual(0); // since browser
         expect(orbitdb2._directConnections.size).toEqual(0); // since browser
@@ -184,7 +184,7 @@ describe(`browser`, function () {
             new EventStore<string>({
                 id: "observe",
             }),
-            { replicationTopic, directory: dbPath1, replicate: false }
+            { topic: topic, directory: dbPath1, replicate: false }
         );
 
         await db1.add("hello");
@@ -195,28 +195,26 @@ describe(`browser`, function () {
                 orbitdb2._ipfs,
                 db1.address!
             ),
-            { replicationTopic, directory: dbPath2, replicate: true }
+            { topic: topic, directory: dbPath2, replicate: true }
         );
 
         await waitForPeers(
             session.peers[1].ipfs,
             [orbitdb1.id],
-            getObserverTopic(replicationTopic)
+            getObserverTopic(topic)
         );
         await waitForPeers(
             session.peers[0].ipfs,
             [orbitdb2.id],
-            getObserverTopic(replicationTopic)
+            getObserverTopic(topic)
         );
         await waitForPeers(
             session.peers[0].ipfs,
             [orbitdb2.id],
-            getReplicationTopic(replicationTopic)
+            getReplicationTopic(topic)
         );
         expect(
-            orbitdb1._replicationTopicSubscriptions.has(
-                getReplicationTopic(replicationTopic)
-            )
+            orbitdb1._topicSubscriptions.has(getReplicationTopic(topic))
         ).toEqual(false);
         expect(orbitdb1._directConnections.size).toEqual(0); // since browser
         expect(orbitdb2._directConnections.size).toEqual(0); // since browser

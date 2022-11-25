@@ -41,7 +41,7 @@ describe(`Subprogram`, function () {
         orbitdb2: Peerbit,
         db1: EventStore<string>,
         db2: EventStore<string>;
-    let replicationTopic: string;
+    let topic: string;
     let timer: any;
 
     beforeAll(async () => {
@@ -49,7 +49,7 @@ describe(`Subprogram`, function () {
         ipfsd2 = await startIpfs("js-ipfs", config.daemon2);
         ipfs1 = ipfsd1.api;
         ipfs2 = ipfsd2.api;
-        replicationTopic = uuid();
+        topic = uuid();
         // Connect the peers manually to speed up test times
         const isLocalhostAddress = (addr: string) =>
             addr.toString().includes("127.0.0.1");
@@ -84,7 +84,7 @@ describe(`Subprogram`, function () {
             new EventStore<string>({
                 id: "abc",
             }),
-            { replicationTopic, directory: dbPath1 }
+            { topic: topic, directory: dbPath1 }
         );
     });
 
@@ -135,7 +135,7 @@ describe(`Subprogram`, function () {
     }
 
     it("can open store on exchange heads message when trusted", async () => {
-        const replicationTopic = "x";
+        const topic = "x";
 
         const store = new ProgramWithSubprogram(
             new Documents<EventStore<string>>({
@@ -145,10 +145,10 @@ describe(`Subprogram`, function () {
                 }),
             })
         );
-        await orbitdb2.subscribeToReplicationTopic(replicationTopic, true);
+        await orbitdb2.subscribeToTopic(topic, true);
 
         await orbitdb1.open(store, {
-            replicationTopic,
+            topic: topic,
             replicate: false,
         });
 
@@ -160,21 +160,21 @@ describe(`Subprogram`, function () {
         );
         expect(store.eventStore.store.oplog.heads).toHaveLength(2); // two independent documents
 
-        await waitFor(
-            () => orbitdb2.programs.get(replicationTopic)?.size || 0 > 0,
-            { timeout: 20 * 1000, delayInterval: 50 }
-        );
+        await waitFor(() => orbitdb2.programs.get(topic)?.size || 0 > 0, {
+            timeout: 20 * 1000,
+            delayInterval: 50,
+        });
 
         const eventStoreString = (
             (await eventStore.payload.getValue()) as PutOperation<any>
         ).value as EventStore<string>;
         await orbitdb1.open(eventStoreString, {
-            replicationTopic,
+            topic: topic,
             replicate: false,
         });
 
         const programFromReplicator = [
-            ...orbitdb2.programs.get(replicationTopic)?.values()!,
+            ...orbitdb2.programs.get(topic)?.values()!,
         ][0].program as ProgramWithSubprogram;
         programFromReplicator.accessRequests = [];
         await eventStoreString.add("hello"); // This will exchange an head that will make client 1 open the store

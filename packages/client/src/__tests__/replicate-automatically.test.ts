@@ -70,11 +70,11 @@ Object.keys(testAPIs).forEach((API) => {
             const entryCount = 33;
             const entryArr: number[] = [];
 
-            const replicationTopic = uuid();
+            const topic = uuid();
 
             const db1 = await orbitdb1.open(
                 new EventStore<string>({ id: "replicate-automatically-tests" }),
-                { replicationTopic }
+                { topic: topic }
             );
 
             const db3 = await orbitdb1.open(
@@ -82,7 +82,7 @@ Object.keys(testAPIs).forEach((API) => {
                     id: "replicate-automatically-tests-kv",
                 }),
                 {
-                    replicationTopic,
+                    topic: topic,
                     onReplicationComplete: (_) => {
                         fail();
                     },
@@ -104,7 +104,7 @@ Object.keys(testAPIs).forEach((API) => {
                     db1.address!
                 ),
                 {
-                    replicationTopic,
+                    topic: topic,
                     onReplicationComplete: (_) => {
                         // Listen for the 'replicated' events and check that all the entries
                         // were replicated to the second database
@@ -128,7 +128,7 @@ Object.keys(testAPIs).forEach((API) => {
                     db3.address!
                 ),
                 {
-                    replicationTopic,
+                    topic: topic,
                     onReplicationComplete: (_) => {
                         fail();
                     },
@@ -142,11 +142,11 @@ Object.keys(testAPIs).forEach((API) => {
             const entryCount = 1;
             const entryArr: number[] = [];
 
-            const replicationTopic = uuid();
+            const topic = uuid();
 
             const db1 = await orbitdb1.open(
                 new EventStore<string>({ id: "replicate-automatically-tests" }),
-                { replicationTopic, replicate: false }
+                { topic: topic, replicate: false }
             );
 
             // Create the entries in the first database
@@ -164,7 +164,7 @@ Object.keys(testAPIs).forEach((API) => {
                     db1.address!
                 ),
                 {
-                    replicationTopic,
+                    topic: topic,
                     onReplicationComplete: (_) => {
                         // Listen for the 'replicated' events and check that all the entries
                         // were replicated to the second database

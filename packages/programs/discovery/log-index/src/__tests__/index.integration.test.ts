@@ -100,7 +100,7 @@ describe("query", () => {
                     sign: async (data: Uint8Array) => await signKey.sign(data),
                 },
                 {
-                    replicationTopic: "_",
+                    topic: "_",
                     store: {
                         ...DefaultOptions,
                         encryption,

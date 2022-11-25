@@ -60,9 +60,9 @@ describe("query", () => {
         );
         // Create store
         writeStore = new DString({});
-        const replicationTopic = uuid();
+        const topic = uuid();
         await writeStore.init(writer, await createIdentity(), {
-            replicationTopic,
+            topic,
             store: {
                 ...DefaultOptions,
                 encryption: {
@@ -79,7 +79,7 @@ describe("query", () => {
             writeStore.address!
         )) as DString;
         await observerStore.init(observer, await createIdentity(), {
-            replicationTopic,
+            topic,
             store: {
                 ...DefaultOptions,
                 resolveCache: () => new Cache(cacheStore2),
@@ -214,7 +214,7 @@ describe("query", () => {
     it("handles AccessError gracefully", async () => {
         const store = new DString({});
         await store.init(writer, await createIdentity(), {
-            replicationTopic: uuid(),
+            topic: uuid(),
             store: {
                 ...DefaultOptions,
                 encryption: {

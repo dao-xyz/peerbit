@@ -29,8 +29,7 @@ Object.keys(testAPIs).forEach((API) => {
             orbitdb3: Peerbit,
             db1: PermissionedEventStore,
             db2: PermissionedEventStore,
-            db3: PermissionedEventStore,
-            replicationTopic: string;
+            db3: PermissionedEventStore;
 
         beforeEach(async () => {
             rmrf.sync(dbPath1);
@@ -67,15 +66,6 @@ Object.keys(testAPIs).forEach((API) => {
             await network.add(orbitdb3.id);
             await network.add(orbitdb3.identity.publicKey);
             db3 = await orbitdb3.open<PermissionedEventStore>(db1.address!);
-
-            /*   replicationTopic = network.address!.toString();
-  
-              db1 = await orbitdb1.open(new EventStore<string>({ id: 'sharding-tests' })
-                  , { replicationTopic })
-  
-              db2 = await orbitdb2.open(db1.address!, { replicationTopic }) as EventStore<string>
-  
-              db3 = await orbitdb3.open(db1.address!, { replicationTopic }) as EventStore<string> */
         });
 
         afterEach(async () => {

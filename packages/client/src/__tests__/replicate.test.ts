@@ -36,7 +36,7 @@ Object.keys(testAPIs).forEach((API) => {
             orbitdb2: Peerbit,
             db1: EventStore<string>,
             db2: EventStore<string>;
-        let replicationTopic: string;
+        let topic: string;
         let options: IStoreOptions<any>;
 
         beforeAll(async () => {
@@ -66,10 +66,10 @@ Object.keys(testAPIs).forEach((API) => {
             orbitdb2 = await Peerbit.create(ipfs2, { directory: orbitdbPath2 });
 
             options = Object.assign({}, options, { directory: dbPath1 });
-            replicationTopic = uuid();
+            topic = uuid();
             db1 = await orbitdb1.open(new EventStore<string>({ id: "a" }), {
                 ...options,
-                replicationTopic,
+                topic: topic,
             });
         });
 
@@ -94,7 +94,7 @@ Object.keys(testAPIs).forEach((API) => {
                     db1.address!
                 ),
                 {
-                    replicationTopic,
+                    topic: topic,
                     ...options,
                     onReplicationComplete: async () => {
                         expect(
@@ -107,7 +107,7 @@ Object.keys(testAPIs).forEach((API) => {
                         expect(db1Entries.length).toEqual(1);
                         expect(
                             await orbitdb1.findReplicators(
-                                replicationTopic,
+                                topic,
                                 db1.address.toString(),
                                 db1Entries[0].gid,
                                 orbitdb1._minReplicas
@@ -125,7 +125,7 @@ Object.keys(testAPIs).forEach((API) => {
                         expect(db2Entries.length).toEqual(1);
                         expect(
                             await orbitdb2.findReplicators(
-                                replicationTopic,
+                                topic,
                                 db1.address.toString(),
                                 db2Entries[0].gid,
                                 orbitdb1._minReplicas
@@ -140,16 +140,8 @@ Object.keys(testAPIs).forEach((API) => {
                     },
                 }
             );
-            await waitForPeers(
-                ipfs2,
-                [orbitdb1.id],
-                getObserverTopic(replicationTopic)
-            );
-            await waitForPeers(
-                ipfs1,
-                [orbitdb2.id],
-                getObserverTopic(replicationTopic)
-            );
+            await waitForPeers(ipfs2, [orbitdb1.id], getObserverTopic(topic));
+            await waitForPeers(ipfs1, [orbitdb2.id], getObserverTopic(topic));
             await waitFor(() => orbitdb1._directConnections.size === 1);
             await waitFor(() => orbitdb2._directConnections.size === 1);
 
@@ -163,7 +155,7 @@ Object.keys(testAPIs).forEach((API) => {
             await waitForPeers(
                 ipfs2,
                 [orbitdb1.id],
-                getReplicationTopic(replicationTopic)
+                getReplicationTopic(topic)
             );
 
             options = Object.assign({}, options, { directory: dbPath2 });
@@ -175,7 +167,7 @@ Object.keys(testAPIs).forEach((API) => {
                     db1.address!
                 ),
                 {
-                    replicationTopic,
+                    topic: topic,
                     ...options,
                     onReplicationComplete: () => {
                         // Once db2 has finished replication, make sure it has all elements
@@ -211,7 +203,7 @@ Object.keys(testAPIs).forEach((API) => {
             await waitForPeers(
                 ipfs2,
                 [orbitdb1.id],
-                getReplicationTopic(replicationTopic)
+                getReplicationTopic(topic)
             );
 
             options = Object.assign({}, options, { directory: dbPath2 });
@@ -232,7 +224,7 @@ Object.keys(testAPIs).forEach((API) => {
                     db1.address!
                 ),
                 {
-                    replicationTopic,
+                    topic: topic,
                     ...options,
                     onReplicationQueued: (store, entry) => {
                         if (!replicateSet.has(entry.hash)) {
@@ -333,7 +325,7 @@ Object.keys(testAPIs).forEach((API) => {
                     db1.address!
                 ),
                 {
-                    replicationTopic,
+                    topic: topic,
                     ...options,
                     onReplicationQueued: (store, entry) => {
                         if (!replicateSet.has(entry.hash)) {
@@ -389,7 +381,7 @@ Object.keys(testAPIs).forEach((API) => {
             await waitForPeers(
                 ipfs2,
                 [orbitdb1.id],
-                getReplicationTopic(replicationTopic)
+                getReplicationTopic(topic)
             );
 
             const entryCount = 15;
@@ -425,7 +417,7 @@ Object.keys(testAPIs).forEach((API) => {
                     db1.address!
                 ),
                 {
-                    replicationTopic,
+                    topic: topic,
                     ...options,
                     onReplicationComplete: (store) => {
                         // Once db2 has finished replication, make sure it has all elements

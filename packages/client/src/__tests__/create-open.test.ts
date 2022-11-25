@@ -66,7 +66,7 @@ describe(`Create & Open `, function () {
                 db = await orbitdb.open(
                     new KeyValueStore<string>({ id: "second" }),
                     {
-                        replicationTopic: uuid(),
+                        topic: uuid(),
                         directory: localDataPath,
                         replicate: false,
                     }
@@ -107,7 +107,7 @@ describe(`Create & Open `, function () {
                 const db2 = await orbitdb.open(
                     new EventStore({ id: "third" }),
                     {
-                        replicationTopic: uuid(),
+                        topic: uuid(),
                         directory: dir,
                     }
                 );
@@ -136,9 +136,9 @@ describe(`Create & Open `, function () {
         });
 
         it("opens a database - name only", async () => {
-            const replicationTopic = uuid();
+            const topic = uuid();
             const db = await orbitdb.open(new EventStore({}), {
-                replicationTopic,
+                topic: topic,
             });
             assert.equal(db.address!.toString().indexOf("/peerbit"), 0);
             assert.equal(db.address!.toString().indexOf("zd"), 9);
@@ -147,9 +147,9 @@ describe(`Create & Open `, function () {
 
         it("opens a database - with a different identity", async () => {
             const signKey = await orbitdb.keystore.createEd25519Key();
-            const replicationTopic = uuid();
+            const topic = uuid();
             const db = await orbitdb.open(new EventStore({}), {
-                replicationTopic,
+                topic: topic,
                 identity: {
                     ...signKey.keypair,
                     sign: (data) => signKey.keypair.sign(data),
@@ -165,9 +165,9 @@ describe(`Create & Open `, function () {
 
         it("opens the same database - from an address", async () => {
             const signKey = await orbitdb.keystore.createEd25519Key();
-            const replicationTopic = uuid();
+            const topic = uuid();
             const db = await orbitdb.open(new EventStore({}), {
-                replicationTopic,
+                topic: topic,
                 identity: {
                     ...signKey.keypair,
                     sign: (data) => signKey.keypair.sign(data),
@@ -175,7 +175,7 @@ describe(`Create & Open `, function () {
             });
             const db2 = await orbitdb.open(
                 await Program.load(orbitdb._ipfs, db.address!),
-                { replicationTopic }
+                { topic: topic }
             );
             assert.equal(db2.address!.toString().indexOf("/peerbit"), 0);
             assert.equal(db2.address!.toString().indexOf("zd"), 9);
@@ -184,9 +184,9 @@ describe(`Create & Open `, function () {
         });
 
         it("doesn't open a database if we don't have it locally", async () => {
-            const replicationTopic = uuid();
+            const topic = uuid();
             const db = await orbitdb.open(new EventStore({}), {
-                replicationTopic,
+                topic: topic,
             });
             const address = new Address({
                 cid: db.address!.cid.slice(0, -1) + "A",
@@ -196,7 +196,7 @@ describe(`Create & Open `, function () {
                 setTimeout(resolve, 900);
                 orbitdb
                     .open(await Program.load(orbitdb._ipfs, address), {
-                        replicationTopic,
+                        topic: topic,
                     })
                     .then(() =>
                         reject(new Error("Shouldn't open the database"))
@@ -255,7 +255,7 @@ describe(`Create & Open `, function () {
             const directory = path.join(dbPath, "custom-store");
             const replicationTopic = uuid();
             const db = await orbitdb.open(new EventStore({}), {
-                replicationTopic,
+                topic: replicationTopic,
                 directory,
             });
             try {
@@ -283,24 +283,24 @@ describe(`Create & Open `, function () {
             const directory = path.join(dbPath, "custom-store");
             const directory2 = path.join(dbPath, "custom-store2");
 
-            const replicationTopic = uuid();
+            const topic = uuid();
             const db1 = await orbitdb.open(new EventStore({ id: "xyz1" }), {
-                replicationTopic,
+                topic: topic,
             });
             const db2 = await orbitdb.open(new EventStore({ id: "xyz2" }), {
-                replicationTopic,
+                topic: topic,
                 directory,
             });
             const db3 = await orbitdb.open(new EventStore({ id: "xyz3" }), {
-                replicationTopic,
+                topic: topic,
                 directory,
             });
             const db4 = await orbitdb.open(new EventStore({ id: "xyz4" }), {
-                replicationTopic,
+                topic: topic,
                 directory: directory2,
             });
             const db5 = await orbitdb.open(new EventStore({ id: "xyz5" }), {
-                replicationTopic,
+                topic: topic,
             });
             try {
                 await db1.close();

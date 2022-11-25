@@ -40,7 +40,7 @@ describe("index", () => {
     ) =>
         store.init &&
         store.init(session.peers[i].ipfs, identites[i], {
-            replicationTopic: "_",
+            topic: "_",
             ...options,
             store: {
                 ...options.store,

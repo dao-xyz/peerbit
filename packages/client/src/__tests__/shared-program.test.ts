@@ -68,31 +68,31 @@ describe(`shared`, function () {
     });
 
     it("open same store twice will share instance", async () => {
-        const replicationTopic = "topic";
+        const topic = "topic";
         db1 = await orbitdb1.open(
             new SimpleStoreContract({
                 store: new EventStore({ id: "some db" }),
             }),
-            { replicationTopic }
+            { topic: topic }
         );
         const sameDb = await orbitdb1.open(
             new SimpleStoreContract({
                 store: new EventStore({ id: "some db" }),
             }),
-            { replicationTopic }
+            { topic: topic }
         );
         expect(db1 === sameDb);
     });
 
     it("can share nested stores", async () => {
-        const replicationTopic = "topic";
+        const topic = "topic";
         db1 = await orbitdb1.open(
             new SimpleStoreContract({
                 store: new EventStore<string>({
                     id: "event store",
                 }),
             }),
-            { replicationTopic }
+            { topic: topic }
         );
         db2 = await orbitdb1.open(
             new SimpleStoreContract({
@@ -100,7 +100,7 @@ describe(`shared`, function () {
                     id: "event store",
                 }),
             }),
-            { replicationTopic }
+            { topic: topic }
         );
         expect(db1 !== db2);
         expect(db1.store === db2.store);
