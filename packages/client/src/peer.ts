@@ -69,7 +69,7 @@ import { setTimeout } from "timers";
 import { inNetwork, Network } from "./network.js";
 import isNode from "is-node";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
-const logger = loggerFn({ module: "peer" });
+export const logger = loggerFn({ module: "peer" });
 
 const MIN_REPLICAS = 2;
 
@@ -606,6 +606,7 @@ export class Peerbit {
     _maybeOpenStorePromise: Promise<boolean>;
     // Callback for receiving a message from the network
     async _onMessage(message: PubSubMessage) {
+        logger.debug("Recieved message on topic: " + message.topic);
         if (this._disconnecting) {
             logger.warn("Got message while disconnecting");
             return;
