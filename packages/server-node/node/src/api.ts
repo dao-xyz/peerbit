@@ -433,6 +433,10 @@ export const startServer = async (
 
     const server = http.createServer(endpoints(client));
     server.listen(port);
+    server.on("error", (e) => {
+        console.log("Server error: " + e);
+        throw e;
+    });
     console.log("API server accessible at port", port);
     return server;
 };
