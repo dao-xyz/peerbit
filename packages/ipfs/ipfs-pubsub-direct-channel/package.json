@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/ipfs-pubsub-direct-channel",
-    "version": "0.0.28",
+    "version": "0.0.29",
     "description": "1-to-1 communication channel over IPFS Pubsub between two peers",
     "license": "MIT",
     "type": "module",

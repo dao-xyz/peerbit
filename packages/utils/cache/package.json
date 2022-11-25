@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-cache",
-    "version": "0.4.19",
+    "version": "0.4.20",
     "description": "Local cache for Peerbit",
     "type": "module",
     "publishConfig": {
@@ -45,7 +45,7 @@
     "license": "MIT",
     "dependencies": {
         "@dao-xyz/borsh": "^3.4.3",
-        "@dao-xyz/peerbit-logger": "^0.0.1",
+        "@dao-xyz/peerbit-logger": "^0.0.2",
         "level": "^8.0.0"
     },
     "devDependencies": {
