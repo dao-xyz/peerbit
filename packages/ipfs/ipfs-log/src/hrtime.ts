@@ -72,6 +72,7 @@ _hrtime.bigint = (time?: [number, number]): bigint => {
     return BigInt(diff[0] * NS_PER_SEC + diff[1]);
 };
 
-export default typeof process?.hrtime === "undefined"
+export default typeof process === "undefined" ||
+typeof process.hrtime === "undefined"
     ? _hrtime
     : process.hrtime;
