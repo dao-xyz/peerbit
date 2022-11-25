@@ -145,7 +145,7 @@ describe(`Subprogram`, function () {
                 }),
             })
         );
-        await orbitdb2.subscribeToReplicationTopic(replicationTopic);
+        await orbitdb2.subscribeToReplicationTopic(replicationTopic, true);
 
         await orbitdb1.open(store, {
             replicationTopic,

@@ -121,14 +121,12 @@ Object.keys(testAPIs).forEach((API) => {
             const leadersFrom1 = await orbitdb1.findLeaders(
                 program.address.toString(),
                 network.address!.toString(),
-                true,
                 "",
                 3
             );
             const leadersFrom2 = await orbitdb2.findLeaders(
                 program.address.toString(),
                 network.address!.toString(),
-                true,
                 "",
                 3
             );
@@ -154,7 +152,6 @@ Object.keys(testAPIs).forEach((API) => {
                 await orbitdb1.findLeaders(
                     replicationTopic,
                     db1.address!.toString(),
-                    true,
                     123,
                     1
                 )
@@ -164,7 +161,6 @@ Object.keys(testAPIs).forEach((API) => {
                 await orbitdb1.findLeaders(
                     replicationTopic,
                     db1.address!.toString(),
-                    true,
                     123,
                     2
                 )
@@ -186,7 +182,6 @@ Object.keys(testAPIs).forEach((API) => {
                     await orbitdb1.findLeaders(
                         replicationTopic,
                         db1.address!.toString(),
-                        true,
                         slot,
                         1
                     )
@@ -195,7 +190,6 @@ Object.keys(testAPIs).forEach((API) => {
                     await orbitdb2.findLeaders(
                         replicationTopic,
                         db1.address!.toString(),
-                        true,
                         slot,
                         1
                     )
@@ -210,7 +204,6 @@ Object.keys(testAPIs).forEach((API) => {
                     await orbitdb1.findLeaders(
                         replicationTopic,
                         db1.address!.toString(),
-                        true,
                         slot,
                         2
                     )
@@ -219,7 +212,6 @@ Object.keys(testAPIs).forEach((API) => {
                     await orbitdb2.findLeaders(
                         replicationTopic,
                         db1.address!.toString(),
-                        true,
                         slot,
                         2
                     )
@@ -257,7 +249,6 @@ Object.keys(testAPIs).forEach((API) => {
                 await orbitdb1.findLeaders(
                     replicationTopic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     2
                 )
@@ -266,7 +257,6 @@ Object.keys(testAPIs).forEach((API) => {
                 await orbitdb2.findLeaders(
                     replicationTopic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     2
                 )
@@ -319,7 +309,6 @@ Object.keys(testAPIs).forEach((API) => {
                 await orbitdb1.findLeaders(
                     replicationTopic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     3
                 )
@@ -328,7 +317,6 @@ Object.keys(testAPIs).forEach((API) => {
                 await orbitdb2.findLeaders(
                     replicationTopic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     3
                 )
@@ -337,7 +325,6 @@ Object.keys(testAPIs).forEach((API) => {
                 await orbitdb3.findLeaders(
                     replicationTopic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     3
                 )
@@ -377,7 +364,6 @@ Object.keys(testAPIs).forEach((API) => {
                 await orbitdb1.findLeaders(
                     replicationTopic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     1
                 )
@@ -386,7 +372,6 @@ Object.keys(testAPIs).forEach((API) => {
                 await orbitdb2.findLeaders(
                     replicationTopic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     1
                 )
@@ -395,7 +380,6 @@ Object.keys(testAPIs).forEach((API) => {
                 await orbitdb3.findLeaders(
                     replicationTopic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     1
                 )
@@ -411,7 +395,6 @@ Object.keys(testAPIs).forEach((API) => {
                 await orbitdb1.findLeaders(
                     replicationTopic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     2
                 )
@@ -420,7 +403,6 @@ Object.keys(testAPIs).forEach((API) => {
                 await orbitdb2.findLeaders(
                     replicationTopic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     2
                 )
@@ -429,7 +411,6 @@ Object.keys(testAPIs).forEach((API) => {
                 await orbitdb3.findLeaders(
                     replicationTopic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     2
                 )
@@ -445,7 +426,6 @@ Object.keys(testAPIs).forEach((API) => {
                 await orbitdb1.findLeaders(
                     replicationTopic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     3
                 )
@@ -454,7 +434,6 @@ Object.keys(testAPIs).forEach((API) => {
                 await orbitdb2.findLeaders(
                     replicationTopic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     3
                 )
@@ -463,7 +442,6 @@ Object.keys(testAPIs).forEach((API) => {
                 await orbitdb3.findLeaders(
                     replicationTopic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     3
                 )

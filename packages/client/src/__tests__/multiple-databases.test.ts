@@ -1,6 +1,6 @@
 import mapSeries from "p-each-series";
 import rmrf from "rimraf";
-import { Peerbit } from "../peer";
+import { getReplicationTopic, Peerbit } from "../peer";
 
 import { EventStore } from "./utils/stores";
 import { jest } from "@jest/globals";
@@ -121,9 +121,21 @@ Object.keys(testAPIs).forEach((API) => {
             }
 
             // Wait for the peers to connect
-            await waitForPeers(ipfs1, [orbitdb2.id], replicationTopic);
-            await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic);
-            await waitForPeers(ipfs3, [orbitdb1.id], replicationTopic);
+            await waitForPeers(
+                ipfs1,
+                [orbitdb2.id],
+                getReplicationTopic(replicationTopic)
+            );
+            await waitForPeers(
+                ipfs2,
+                [orbitdb1.id],
+                getReplicationTopic(replicationTopic)
+            );
+            await waitForPeers(
+                ipfs3,
+                [orbitdb1.id],
+                getReplicationTopic(replicationTopic)
+            );
 
             await waitFor(() => orbitdb1._directConnections.size === 2);
             await waitFor(() => orbitdb2._directConnections.size === 2);
@@ -210,7 +222,7 @@ Object.keys(testAPIs).forEach((API) => {
             // check gracefully shut down (with no leak)
             let directConnections = 2;
             const subscriptions = await orbitdb3._ipfs.pubsub.ls();
-            expect(subscriptions.length).toEqual(directConnections + 1 + 1); //+ 1 for 1 replication topic + 1 for subcribing to "self" topic
+            expect(subscriptions.length).toEqual(directConnections + 2 + 1); //+ 1 for 2 replication topic (observer and replicator) + 1 for subcribing to "self" topic
             for (let i = 0; i < dbCount; i++) {
                 await remoteDatabasesB[i].drop();
                 if (i === dbCount - 1) {

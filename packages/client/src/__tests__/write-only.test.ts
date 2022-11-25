@@ -1,21 +1,13 @@
 import rmrf from "rimraf";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { variant, field, Constructor } from "@dao-xyz/borsh";
-import { Peerbit } from "../peer";
+import { getReplicationTopic, Peerbit } from "../peer";
 
 import { EventStore } from "./utils/stores/event-store";
 import { jest } from "@jest/globals";
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
-// @ts-ignore
 import { v4 as uuid } from "uuid";
-
-import {
-    Documents,
-    PutOperation,
-    Operation,
-    DocumentIndex,
-} from "@dao-xyz/peerbit-document";
 
 // Include test utilities
 import {
@@ -25,9 +17,6 @@ import {
     connectPeers,
     waitForPeers,
 } from "@dao-xyz/peerbit-test-utils";
-import { CanOpenSubPrograms, Program } from "@dao-xyz/peerbit-program";
-import { RPC } from "@dao-xyz/peerbit-rpc";
-import { Entry } from "@dao-xyz/ipfs-log";
 
 const orbitdbPath1 = "./orbitdb/tests/write-only/1";
 const orbitdbPath2 = "./orbitdb/tests/write-only/2";
@@ -102,7 +91,11 @@ describe(`Write-only`, function () {
     });
 
     it("write 1 entry replicate false", async () => {
-        await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic);
+        await waitForPeers(
+            ipfs2,
+            [orbitdb1.id],
+            getReplicationTopic(replicationTopic)
+        );
         db2 = await orbitdb2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
                 orbitdb2._ipfs,
@@ -123,7 +116,11 @@ describe(`Write-only`, function () {
     });
 
     it("encrypted clock sync write 1 entry replicate false", async () => {
-        await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic);
+        await waitForPeers(
+            ipfs2,
+            [orbitdb1.id],
+            getReplicationTopic(replicationTopic)
+        );
         const encryptionKey = await orbitdb1.keystore.createEd25519Key({
             id: "encryption key",
             group: replicationTopic,
@@ -160,7 +157,7 @@ describe(`Write-only`, function () {
     it("will open store on exchange heads message", async () => {
         const replicationTopic = "x";
         const store = new EventStore<string>({ id: "replication-tests" });
-        await orbitdb2.subscribeToReplicationTopic(replicationTopic);
+        await orbitdb2.subscribeToReplicationTopic(replicationTopic, true);
         await orbitdb1.open(store, { replicationTopic, replicate: false });
 
         const hello = await store.add("hello", { nexts: [] });

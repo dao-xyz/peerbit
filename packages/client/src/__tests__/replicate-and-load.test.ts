@@ -1,4 +1,4 @@
-import { Peerbit } from "../peer";
+import { getReplicationTopic, Peerbit } from "../peer";
 
 import { EventStore } from "./utils/stores/event-store";
 
@@ -92,8 +92,16 @@ Object.keys(testAPIs).forEach((API) => {
                     db2.address!.toString()
                 );
 
-                await waitForPeers(ipfs1, [orbitdb2.id], replicationTopic);
-                await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic);
+                await waitForPeers(
+                    ipfs1,
+                    [orbitdb2.id],
+                    getReplicationTopic(replicationTopic)
+                );
+                await waitForPeers(
+                    ipfs2,
+                    [orbitdb1.id],
+                    getReplicationTopic(replicationTopic)
+                );
             });
 
             afterAll(async () => {

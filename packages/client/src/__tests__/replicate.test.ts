@@ -6,7 +6,7 @@ import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { jest } from "@jest/globals";
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
-import { Peerbit } from "../peer";
+import { getObserverTopic, getReplicationTopic, Peerbit } from "../peer";
 
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { IStoreOptions } from "@dao-xyz/peerbit-store";
@@ -109,7 +109,6 @@ Object.keys(testAPIs).forEach((API) => {
                             await orbitdb1.findReplicators(
                                 replicationTopic,
                                 db1.address.toString(),
-                                true,
                                 db1Entries[0].gid,
                                 orbitdb1._minReplicas
                             )
@@ -128,7 +127,6 @@ Object.keys(testAPIs).forEach((API) => {
                             await orbitdb2.findReplicators(
                                 replicationTopic,
                                 db1.address.toString(),
-                                true,
                                 db2Entries[0].gid,
                                 orbitdb1._minReplicas
                             )
@@ -142,8 +140,16 @@ Object.keys(testAPIs).forEach((API) => {
                     },
                 }
             );
-            await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic);
-
+            await waitForPeers(
+                ipfs2,
+                [orbitdb1.id],
+                getObserverTopic(replicationTopic)
+            );
+            await waitForPeers(
+                ipfs1,
+                [orbitdb2.id],
+                getObserverTopic(replicationTopic)
+            );
             await waitFor(() => orbitdb1._directConnections.size === 1);
             await waitFor(() => orbitdb2._directConnections.size === 1);
 
@@ -154,7 +160,11 @@ Object.keys(testAPIs).forEach((API) => {
         });
 
         it("replicates database of 100 entries", async () => {
-            await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic);
+            await waitForPeers(
+                ipfs2,
+                [orbitdb1.id],
+                getReplicationTopic(replicationTopic)
+            );
 
             options = Object.assign({}, options, { directory: dbPath2 });
 
@@ -198,7 +208,11 @@ Object.keys(testAPIs).forEach((API) => {
         });
 
         it("emits correct replication info", async () => {
-            await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic);
+            await waitForPeers(
+                ipfs2,
+                [orbitdb1.id],
+                getReplicationTopic(replicationTopic)
+            );
 
             options = Object.assign({}, options, { directory: dbPath2 });
 
@@ -372,7 +386,11 @@ Object.keys(testAPIs).forEach((API) => {
         });
 
         it("emits correct replication info in two-way replication", async () => {
-            await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic);
+            await waitForPeers(
+                ipfs2,
+                [orbitdb1.id],
+                getReplicationTopic(replicationTopic)
+            );
 
             const entryCount = 15;
 

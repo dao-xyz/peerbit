@@ -1,14 +1,14 @@
 import assert from "assert";
 import rmrf from "rimraf";
 import { Entry } from "@dao-xyz/ipfs-log";
-import { Peerbit } from "../peer";
+import { getReplicationTopic, Peerbit } from "../peer";
 import { Operation } from "./utils/stores/event-store";
 import { Ed25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
 import { AccessError } from "@dao-xyz/peerbit-crypto";
 import { v4 as uuid } from "uuid";
 import { jest } from "@jest/globals";
 import { KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 
 // Include test utilities
 import {
@@ -39,9 +39,14 @@ const addHello = async (
     });
 };
 const checkHello = async (db: PermissionedEventStore) => {
+    await waitFor(
+        () => db.store.iterator({ limit: -1 }).collect().length === 1
+    );
+
     const entries: Entry<Operation<string>>[] = db.store
         .iterator({ limit: -1 })
         .collect();
+
     expect(entries.length).toEqual(1);
     await entries[0].getPayload();
     expect(entries[0].payload.getValue().value).toEqual("hello");
@@ -138,6 +143,7 @@ Object.keys(testAPIs).forEach((API) => {
             expect(
                 await orbitdb2.keystore.getKey(recieverKey.keypair.publicKey)
             ).toBeDefined();
+
             await addHello(db1, recieverKey.keypair.publicKey);
             await waitFor(() => done);
         });
@@ -190,7 +196,7 @@ Object.keys(testAPIs).forEach((API) => {
             await waitForPeers(
                 session.peers[2].ipfs,
                 [orbitdb1.id],
-                replicationTopic
+                getReplicationTopic(replicationTopic)
             );
 
             const db1Key = await orbitdb1.keystore.createEd25519Key({
@@ -219,7 +225,7 @@ Object.keys(testAPIs).forEach((API) => {
             await waitForPeers(
                 session.peers[2].ipfs,
                 [orbitdb1.id],
-                replicationTopic
+                getReplicationTopic(replicationTopic)
             );
 
             db2 = await orbitdb2.open<PermissionedEventStore>(db1.address!, {
