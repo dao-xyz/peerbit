@@ -5,7 +5,7 @@ export const getEnv = (key) => {
         return process.env[key];
     }
     // browser
-    return window.process.env[key];
+    return window.process?.env?.[key];
 };
 export const getLogLevel = () => {
     const level = getEnv("LOG_LEVEL") || getEnv("REACT_APP_LOG_LEVEL");
