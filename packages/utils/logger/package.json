@@ -1,7 +1,7 @@
 {
-    "name": "@dao-xyz/peerbit-rpc",
-    "version": "0.0.51",
-    "description": "RPC calls for peers",
+    "name": "@dao-xyz/peerbit-logger",
+    "version": "0.0.1",
+    "description": "Logging utils",
     "type": "module",
     "sideEffects": false,
     "main": "lib/cjs/index.js",
@@ -16,11 +16,13 @@
         "src",
         "!src/**/__tests__",
         "!lib/**/__tests__",
-        "!documentation",
         "LICENSE"
     ],
     "publishConfig": {
         "access": "public"
+    },
+    "dependencies": {
+        "pino": "^8.7.0"
     },
     "scripts": {
         "clean": "shx rm -rf lib/*",
@@ -31,18 +33,5 @@
         "test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
     },
     "author": "dao.xyz",
-    "license": "MIT",
-    "dependencies": {
-        "@dao-xyz/borsh": "^3.4.3",
-        "@dao-xyz/peerbit-crypto": "^0.0.17",
-        "@dao-xyz/peerbit-program": "^0.0.48",
-        "@dao-xyz/peerbit-store": "^0.0.63",
-        "@dao-xyz/peerbit-time": "^0.0.18",
-        "@dao-xyz/peerbit-logger": "^0.0.1",
-        "uuid": "^8.3.2"
-    },
-    "devDependencies": {
-        "ipfs": "^0.65.0"
-    },
-    "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
+    "license": "MIT"
 }

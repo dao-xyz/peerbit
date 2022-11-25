@@ -22,9 +22,8 @@ import {
 } from "@dao-xyz/peerbit-program";
 import { IPFS } from "ipfs-core-types";
 import { Identity } from "@dao-xyz/ipfs-log";
-import pino from "pino";
-
-const logger = pino().child({ module: "query" });
+import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+const logger = loggerFn({ module: "query" });
 
 export type SearchContext = (() => Address) | AbstractProgram | string;
 

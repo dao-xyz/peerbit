@@ -30,7 +30,8 @@
             "packages/utils/test-utils",
             "packages/utils/cache",
             "packages/utils/borsh-utils",
-            "packages/utils/time"
+            "packages/utils/time",
+            "packages/utils/logger"
         ],
         "nohoist": [
             "**/@babel/preset-env",

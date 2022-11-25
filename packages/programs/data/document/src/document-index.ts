@@ -30,9 +30,9 @@ import {
 } from "./query.js";
 import { AccessError, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { CanRead, RPC, QueryContext, RPCOptions } from "@dao-xyz/peerbit-rpc";
-import pino from "pino";
 import { Results } from "./query";
-const logger = pino().child({ module: "document-index" });
+import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+const logger = loggerFn({ module: "document-index" });
 
 @variant(0)
 export class Operation<T> {}

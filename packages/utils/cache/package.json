@@ -45,8 +45,8 @@
     "license": "MIT",
     "dependencies": {
         "@dao-xyz/borsh": "^3.4.3",
-        "level": "^8.0.0",
-        "pino": "^8.7.0"
+        "@dao-xyz/peerbit-logger": "^0.0.1",
+        "level": "^8.0.0"
     },
     "devDependencies": {
         "@dao-xyz/peerbit-test-utils": "^0.0.13"

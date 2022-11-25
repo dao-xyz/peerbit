@@ -6,9 +6,10 @@ import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
 
 import { Program } from "@dao-xyz/peerbit-program";
 import { fixedUint8Array } from "@dao-xyz/peerbit-borsh-utils";
-import { logger as parentLogger } from "./logger.js";
 import { Store } from "@dao-xyz/peerbit-store";
-const logger = parentLogger.child({ module: "exchange-heads" });
+
+import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+const logger = loggerFn({ module: "exchange-heads" });
 
 export class MinReplicas {
     get value(): number {

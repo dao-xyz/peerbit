@@ -216,6 +216,7 @@ export const cli = async (args?: string[]) => {
             yargs
                 .command({
                     command: "list",
+                    aliases: "ls",
                     describe: "List all topics",
                     handler: async () => {
                         const c = await client();

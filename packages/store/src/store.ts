@@ -28,8 +28,8 @@ import { joinUint8Arrays } from "@dao-xyz/peerbit-borsh-utils";
 import { EntryWithRefs } from "./entry-with-refs.js";
 import { waitForAsync } from "@dao-xyz/peerbit-time";
 
-import pino from "pino";
-const logger = pino().child({ module: "store" });
+import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+const logger = loggerFn({ module: "store" });
 
 export class CachedValue {}
 

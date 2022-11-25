@@ -15,8 +15,8 @@ import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { Program } from "@dao-xyz/peerbit-program";
 import { RPCOptions, CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 
-import pino from "pino";
-const logger = pino().child({ module: "string" });
+import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+const logger = loggerFn({ module: "string" });
 
 export const STRING_STORE_TYPE = "string_store";
 const findAllOccurrences = (str: string, substr: string): number[] => {

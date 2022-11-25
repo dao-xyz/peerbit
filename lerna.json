@@ -23,7 +23,8 @@
         "packages/utils/test-utils",
         "packages/utils/cache",
         "packages/utils/borsh-utils",
-        "packages/utils/time"
+        "packages/utils/time",
+        "packages/utils/logger"
     ],
     "version": "independent",
     "npmClient": "yarn",

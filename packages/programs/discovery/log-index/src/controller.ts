@@ -9,8 +9,8 @@ import {
 } from "@dao-xyz/peerbit-rpc";
 import { Store } from "@dao-xyz/peerbit-store";
 import { EncryptedThing, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
-import pino from "pino";
-const logger = pino().child({ module: "log-index" });
+import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+const logger = loggerFn({ module: "log-index" });
 
 @variant(0)
 export class HeadsMessage {

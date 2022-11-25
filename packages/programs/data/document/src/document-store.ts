@@ -30,11 +30,11 @@ import { LogIndex } from "@dao-xyz/peerbit-logindex";
 
 import { AccessError } from "@dao-xyz/peerbit-crypto";
 
-import pino from "pino";
 import { Results } from "./query";
 import io from "@dao-xyz/peerbit-io-utils";
 
-const logger = pino().child({ module: "document-store" });
+import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+const logger = loggerFn({ module: "document" });
 
 export class OperationError extends Error {
     constructor(message?: string) {

@@ -48,7 +48,6 @@ import LRU from "lru-cache";
 import { DirectChannel } from "@dao-xyz/ipfs-pubsub-direct-channel";
 import { encryptionWithRequestKey } from "./encryption.js";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
-import { WAIT_FOR_PEERS_TIME } from "./exchange-replication.js";
 import { createHash } from "crypto";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { multiaddr } from "@multiformats/multiaddr";
@@ -67,11 +66,10 @@ import {
     ExchangeSwarmMessage,
 } from "./exchange-network.js";
 import { setTimeout } from "timers";
-import { logger as parentLogger } from "./logger.js";
 import { inNetwork, Network } from "./network.js";
 import isNode from "is-node";
-
-const logger = parentLogger.child({ module: "peer" });
+import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+const logger = loggerFn({ module: "peer" });
 
 const MIN_REPLICAS = 2;
 

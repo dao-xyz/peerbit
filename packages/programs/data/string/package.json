@@ -37,7 +37,7 @@
         "@dao-xyz/peerbit-rpc": "^0.0.51",
         "@dao-xyz/peerbit-store": "^0.0.63",
         "@dao-xyz/peerbit-time": "^0.0.18",
-        "pino": "^8.7.0"
+        "@dao-xyz/peerbit-logger": "^0.0.1"
     },
     "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
 }

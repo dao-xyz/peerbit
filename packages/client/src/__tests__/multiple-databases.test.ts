@@ -1,4 +1,3 @@
-import mapSeries from "p-each-series";
 import rmrf from "rimraf";
 import { getReplicationTopic, Peerbit } from "../peer";
 

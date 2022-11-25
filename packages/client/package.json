@@ -44,7 +44,7 @@
         "level": "^8.0.0",
         "lru-cache": "^7.14.0",
         "p-queue": "^7.3.0",
-        "pino": "^8.7.0",
+        "@dao-xyz/peerbit-logger": "^0.0.1",
         "wherearewe": "^2.0.1"
     },
     "devDependencies": {

@@ -6,9 +6,8 @@ import { IpfsPubsubPeerMonitor } from "@dao-xyz/ipfs-pubsub-peer-monitor";
 import type { Message, SignedMessage } from "@libp2p/interface-pubsub";
 import type { EventHandler } from "@libp2p/interfaces/events";
 import type { PeerId } from "@libp2p/interface-peer-id";
-
-import { logger as parentLogger } from "./logger.js";
-const logger = parentLogger.child({ module: "direct-channel" });
+import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+const logger = loggerFn({ module: "direct-channel" });
 
 /**
  * Communication channel over Pubsub between two IPFS nodes

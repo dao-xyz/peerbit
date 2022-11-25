@@ -1,13 +1,13 @@
 import { variant, option } from "@dao-xyz/borsh";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Program } from "@dao-xyz/peerbit-program";
-import pino from "pino";
 import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { Entry, HLC } from "@dao-xyz/ipfs-log";
 import { field, deserialize } from "@dao-xyz/borsh";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 
-const logger = pino().child({ module: "remote_signer" });
+import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+const logger = loggerFn({ module: "reomte-signer" });
 
 const abs = (n) => (n < 0n ? -n : n);
 

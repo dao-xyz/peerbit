@@ -16,11 +16,11 @@ import { MaybeSigned, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { TimeoutError, waitForAsync } from "@dao-xyz/peerbit-time";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
-import { Constructor } from "@dao-xyz/borsh";
 
 import { Identity } from "@dao-xyz/ipfs-log";
-import { logger as parentLogger } from "./logger.js";
-const logger = parentLogger.child({ module: "exchange-keys" });
+
+import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+const logger = loggerFn({ module: "exchange-keys" });
 
 export type KeyAccessCondition = (
     keyToAccess: KeyWithMeta<Ed25519Keypair | X25519Keypair>

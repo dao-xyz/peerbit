@@ -1,8 +1,7 @@
 import { serialize, deserialize, Constructor } from "@dao-xyz/borsh";
 import { AbstractLevel } from "abstract-level";
-import pino from "pino";
-
-const logger = pino().child({ module: "cache" });
+import { logger } from "@dao-xyz/peerbit-logger";
+const log = logger({ module: "cache" });
 
 export default class Cache<T> {
     _store: AbstractLevel<any, any, any>;
@@ -54,7 +53,7 @@ export default class Cache<T> {
                 if (err) {
                     return reject(err);
                 }
-                logger.debug(`cache: Set ${key} to ${JSON.stringify(value)}`);
+                log.debug(`cache: Set ${key} to ${JSON.stringify(value)}`);
                 resolve(true);
             });
         });
