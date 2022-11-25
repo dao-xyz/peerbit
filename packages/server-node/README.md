@@ -26,11 +26,11 @@ then install the CLI
 npm install -g @dao-xyz/peerbit-node    
 ```
 
-### Quick started quickly 
+### Getting started quickly
 
 Start the node in a background process
 ```sh
-peerbit start &> log.txt &
+peerbit start > log.txt 2>&1 &
 ```
 
 Setup a test domain (so can access the node)
@@ -39,7 +39,7 @@ Setup a test domain (so can access the node)
 sudo peerbit domain test --email YOUR_EMAIL 
 ```
 
-(Sudo is needed because docker will be installed if it is not available)
+(``sudo`` is needed because docker will be installed if it is not available)
 
 After a while a domain will be written out that you can access and learn more about your peer
 
