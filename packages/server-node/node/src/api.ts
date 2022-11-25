@@ -211,7 +211,7 @@ export const startServer = async (
                                     res.end("Already subscribed to this topic");
                                 } else {
                                     client
-                                        .subscribeToReplicationTopic(topic)
+                                        .subscribeToTopic(topic, true)
                                         .then(() => {
                                             res.writeHead(200);
                                             res.end();
@@ -257,8 +257,7 @@ export const startServer = async (
                                         );
                                         client
                                             .open(parsed, {
-                                                replicationTopic:
-                                                    topic || undefined,
+                                                topic: topic || undefined,
                                             })
                                             .then((program) => {
                                                 res.writeHead(200);
@@ -538,7 +537,7 @@ export const client = async (
 
             /**
              * @param program Program, or base64 string representation
-             * @param topic, replicationTopic
+             * @param topic, topic
              * @returns
              */
             put: async (

@@ -90,7 +90,7 @@ describe("index", () => {
         store: T,
         i: number,
         options: {
-            replicationTopic: string;
+            topic: string;
             store: { replicate: boolean };
             canRead?: CanRead;
             canAppend?: CanAppend<T>;
@@ -139,7 +139,7 @@ describe("index", () => {
     it("can write from trust web", async () => {
         const s = new TestStore({ identity: identity(0) });
         const options = {
-            replicationTopic: uuid(),
+            topic: uuid(),
             store: { replicate: true },
         };
         const l0a = await init(s, 0, options);
@@ -195,7 +195,7 @@ describe("index", () => {
     describe("conditions", () => {
         it("publickey", async () => {
             const options = {
-                replicationTopic: uuid(),
+                topic: uuid(),
                 store: { replicate: true },
             };
 
@@ -249,7 +249,7 @@ describe("index", () => {
 
         it("through trust chain", async () => {
             const options = {
-                replicationTopic: uuid(),
+                topic: uuid(),
                 store: { replicate: true },
             };
 
@@ -331,7 +331,7 @@ describe("index", () => {
 
         it("any access", async () => {
             const options = {
-                replicationTopic: uuid(),
+                topic: uuid(),
                 store: { replicate: true },
             };
 
@@ -379,7 +379,7 @@ describe("index", () => {
 
         it("read access", async () => {
             const options = {
-                replicationTopic: uuid(),
+                topic: uuid(),
                 store: { replicate: true },
             };
 
@@ -435,7 +435,7 @@ describe("index", () => {
 
     it("manifests are unique", async () => {
         const options = {
-            replicationTopic: uuid(),
+            topic: uuid(),
             store: { replicate: true },
         };
 
@@ -454,7 +454,7 @@ describe("index", () => {
 
     it("can query", async () => {
         const options = {
-            replicationTopic: uuid(),
+            topic: uuid(),
             store: { replicate: true },
         };
 

@@ -52,7 +52,7 @@ export class EntryWithRefs<T> {
 @variant([0, 0])
 export class ExchangeHeadsMessage<T> extends ProtocolMessage {
     @field({ type: "string" })
-    replicationTopic: string;
+    topic: string;
 
     @field({ type: "string" })
     programAddress: string;
@@ -73,7 +73,7 @@ export class ExchangeHeadsMessage<T> extends ProtocolMessage {
     reserved: Uint8Array = new Uint8Array(4);
 
     constructor(props?: {
-        replicationTopic: string;
+        topic: string;
         programIndex?: number;
         programAddress: string;
         storeIndex: number;
@@ -84,7 +84,7 @@ export class ExchangeHeadsMessage<T> extends ProtocolMessage {
         super();
         if (props) {
             /* this.resourceRequirements = props.resourceRequirements || []; */
-            this.replicationTopic = props.replicationTopic;
+            this.topic = props.topic;
             this.storeIndex = props.storeIndex;
             this.programIndex = props.programIndex;
             this.programAddress = props.programAddress;
@@ -97,15 +97,15 @@ export class ExchangeHeadsMessage<T> extends ProtocolMessage {
 @variant([0, 1])
 export class RequestHeadsMessage extends ProtocolMessage {
     @field({ type: "string" })
-    replicationTopic: string;
+    topic: string;
 
     @field({ type: "string" })
     address: string;
 
-    constructor(props?: { replicationTopic: string; address: string }) {
+    constructor(props?: { topic: string; address: string }) {
         super();
         if (props) {
-            this.replicationTopic = props.replicationTopic;
+            this.topic = props.topic;
             this.address = props.address;
         }
     }
@@ -116,7 +116,7 @@ export const exchangeHeads = async (
     store: Store<any>,
     program: Program,
     heads: Entry<any>[],
-    replicationTopic: string,
+    topic: string,
     includeReferences: boolean,
     identity?: Identity
 ) => {
@@ -140,7 +140,7 @@ export const exchangeHeads = async (
     logger.debug(`Send latest heads of '${store._storeIndex}'`);
     if (heads && heads.length > 0) {
         const message = new ExchangeHeadsMessage({
-            replicationTopic,
+            topic: topic,
             storeIndex: store._storeIndex,
             programIndex: program._programIndex,
             programAddress: (program.address ||

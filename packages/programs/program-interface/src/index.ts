@@ -206,7 +206,7 @@ export const load = async <S extends Addressable>(
 export type ProgramInitializationOptions = {
     store: IInitializationOptions<any>;
     parent?: AbstractProgram;
-    replicationTopic: string;
+    topic: string;
     onClose?: () => void;
     onDrop?: () => void;
 };

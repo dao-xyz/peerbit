@@ -17,7 +17,7 @@ export class ReplicatorInfo extends ProtocolMessage {
     fromId?: string;
 
     @field({ type: "string" })
-    replicationTopic: string;
+    topic: string;
 
     @field({ type: "u32" })
     store: number; // address
@@ -31,7 +31,7 @@ export class ReplicatorInfo extends ProtocolMessage {
 
     constructor(props?: {
         fromId?: string;
-        replicationTopic: string;
+        topic: string;
         store: number;
         /*         allowForks: boolean
          */ heads?: Set<string> | string[];
@@ -39,7 +39,7 @@ export class ReplicatorInfo extends ProtocolMessage {
         super();
         if (props) {
             this.fromId = props.fromId;
-            this.replicationTopic = props.replicationTopic;
+            this.topic = props.topic;
             this.store = props.store;
             this.heads = Array.isArray(props.heads)
                 ? new Set(props.heads)
@@ -49,13 +49,13 @@ export class ReplicatorInfo extends ProtocolMessage {
     }
 }
 
-@variant([2, 1])
+/* @variant([2, 1])
 export class RequestReplicatorInfo extends ProtocolMessage {
     @field({ type: "string" })
     id: string;
 
     @field({ type: "string" })
-    replicationTopic: string;
+    topic: string;
 
     @field({ type: "string" })
     address: string; // address
@@ -64,14 +64,14 @@ export class RequestReplicatorInfo extends ProtocolMessage {
     heads: string[];
 
     constructor(props?: {
-        replicationTopic: string;
+        topic: string;
         address: Address | string;
         heads: string[];
     }) {
         super();
         if (props) {
             this.id = uuid();
-            this.replicationTopic = props.replicationTopic;
+            this.topic = props.topic;
             this.address =
                 typeof props.address === "string"
                     ? props.address
@@ -80,11 +80,11 @@ export class RequestReplicatorInfo extends ProtocolMessage {
         }
     }
 }
-
-export interface PeerInfoWithMeta {
+ */
+/* export interface PeerInfoWithMeta {
     peerInfo: ReplicatorInfo;
     publicKey: PublicSignKey;
-}
+} */
 /* return new PeerInfo({
     key: this._shard.peer.orbitDB.identity,
     addresses: (await this._shard.peer.node.id()).addresses.map(x => x.toString()),
@@ -138,7 +138,7 @@ export interface PeerInfoWithMeta {
 }
  */
 
-export const requestPeerInfo = async (
+/* export const requestPeerInfo = async (
     serializedRequest: Uint8Array,
     replicationTopic: string,
     publish: (topic: string, message: Uint8Array) => Promise<void>,
@@ -157,9 +157,9 @@ export const requestPeerInfo = async (
     }); // TODO add encryption  .init(encryption).encrypt(lala)
 
     return publish(replicationTopic, serialize(decryptedMessage));
-};
+}; */
 
-export const exchangePeerInfo = async (
+/* export const exchangePeerInfo = async (
     fromId: string,
     replicationTopic: string,
     store: Store<any>,
@@ -175,7 +175,6 @@ export const exchangePeerInfo = async (
                 fromId,
                 replicationTopic,
                 store: store._storeIndex,
-                /*   allowForks: store.allowForks, */
                 heads,
             })
         ),
@@ -187,7 +186,7 @@ export const exchangePeerInfo = async (
 
     return publish(serialize(decryptedMessage));
 };
-
+ */
 export class ResourceRequirement {
     async ok(_orbitdb: Peerbit): Promise<boolean> {
         throw new Error("Not implemented");

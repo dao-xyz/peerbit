@@ -65,17 +65,19 @@ Object.keys(testAPIs).forEach((API) => {
         });
 
         it("replicates database of 1 entry", async () => {
-            const replicationTopic = uuid();
-            orbitdb2.subscribeToReplicationTopic(replicationTopic);
+            const topic = uuid();
+            orbitdb2.subscribeToTopic(topic, true);
 
             eventStore = new EventStore<string>({});
-            eventStore = await orbitdb1.open(eventStore, { replicationTopic });
+            eventStore = await orbitdb1.open(eventStore, {
+                topic: topic,
+            });
             eventStore.add("hello");
             await waitFor(
                 () =>
                     (
                         orbitdb2.programs
-                            .get(replicationTopic)
+                            .get(topic)
                             ?.get(eventStore.address!.toString())
                             ?.program as EventStore<string>
                     )?.store?.oplog.values.length === 1

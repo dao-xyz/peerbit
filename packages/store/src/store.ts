@@ -225,7 +225,7 @@ export class Store<T> implements Initiable<T> {
         // Set ipfs since we are to save the store
         this._ipfs = ipfs;
 
-        // Set the options (we will use the replicationTopic property after thiis)
+        // Set the options (we will use the topic property after thiis)
         const opts = { ...DefaultOptions, ...options };
         this._options = opts;
 
@@ -783,15 +783,6 @@ export class Store<T> implements Initiable<T> {
                 identity: options?.identity,
             });
 
-            // TODO below is not nice, do we really need replication status?
-            /*    try {
-                   this._recalculateReplicationStatus(
-                       this._oplog.heads,
-                       entry
-                   );
-               } catch (error) {
-                   this._rresetReplicationStatus();
-               } */
             await this._cache.setBinary(
                 this.localHeadsPath,
                 new HeadsCache({ heads: [entry] })
@@ -804,9 +795,6 @@ export class Store<T> implements Initiable<T> {
             // TODO: don't use events, or make it more transparent that there is a vital subscription in the background
             // that is handling replication
             this._options.onWrite && this._options.onWrite(this, entry);
-
-            /*      const headsFromWrite = await this.oplog.getHeads(entry.hash);
-           this.events.emit('write', this.replicationTopic, this.address.toString(), entry, headsFromWrite) */
             if (options?.onProgressCallback) options.onProgressCallback(entry);
             return entry;
         };

@@ -121,14 +121,12 @@ Object.keys(testAPIs).forEach((API) => {
             const leadersFrom1 = await orbitdb1.findLeaders(
                 program.address.toString(),
                 network.address!.toString(),
-                true,
                 "",
                 3
             );
             const leadersFrom2 = await orbitdb2.findLeaders(
                 program.address.toString(),
                 network.address!.toString(),
-                true,
                 "",
                 3
             );
@@ -144,17 +142,16 @@ Object.keys(testAPIs).forEach((API) => {
             // TODO fix test timeout, isLeader is too slow as we need to wait for peers
             // perhaps do an event based get peers using the pubsub peers api
 
-            const replicationTopic = uuid();
+            const topic = uuid();
             db1 = await orbitdb1.open(
                 new EventStore<string>({ id: "replication-tests" }),
-                { replicationTopic: replicationTopic, directory: dbPath1 }
+                { topic: topic, directory: dbPath1 }
             );
 
             const isLeaderAOneLeader = orbitdb1.isLeader(
                 await orbitdb1.findLeaders(
-                    replicationTopic,
+                    topic,
                     db1.address!.toString(),
-                    true,
                     123,
                     1
                 )
@@ -162,9 +159,8 @@ Object.keys(testAPIs).forEach((API) => {
             expect(isLeaderAOneLeader);
             const isLeaderATwoLeader = orbitdb1.isLeader(
                 await orbitdb1.findLeaders(
-                    replicationTopic,
+                    topic,
                     db1.address!.toString(),
-                    true,
                     123,
                     2
                 )
@@ -172,7 +168,7 @@ Object.keys(testAPIs).forEach((API) => {
             expect(isLeaderATwoLeader);
 
             db2 = await orbitdb2.open<EventStore<string>>(db1.address!, {
-                replicationTopic,
+                topic: topic,
                 directory: dbPath2,
             });
 
@@ -184,18 +180,16 @@ Object.keys(testAPIs).forEach((API) => {
                 // One leader
                 const isLeaderAOneLeader = orbitdb1.isLeader(
                     await orbitdb1.findLeaders(
-                        replicationTopic,
+                        topic,
                         db1.address!.toString(),
-                        true,
                         slot,
                         1
                     )
                 );
                 const isLeaderBOneLeader = orbitdb2.isLeader(
                     await orbitdb2.findLeaders(
-                        replicationTopic,
+                        topic,
                         db1.address!.toString(),
-                        true,
                         slot,
                         1
                     )
@@ -208,18 +202,16 @@ Object.keys(testAPIs).forEach((API) => {
                 // Two leaders
                 const isLeaderATwoLeaders = orbitdb1.isLeader(
                     await orbitdb1.findLeaders(
-                        replicationTopic,
+                        topic,
                         db1.address!.toString(),
-                        true,
                         slot,
                         2
                     )
                 );
                 const isLeaderBTwoLeaders = orbitdb2.isLeader(
                     await orbitdb2.findLeaders(
-                        replicationTopic,
+                        topic,
                         db1.address!.toString(),
-                        true,
                         slot,
                         2
                     )
@@ -235,17 +227,17 @@ Object.keys(testAPIs).forEach((API) => {
             // TODO fix test timeout, isLeader is too slow as we need to wait for peers
             // perhaps do an event based get peers using the pubsub peers api
 
-            const replicationTopic = uuid();
+            const topic = uuid();
             db1 = await orbitdb1.open(
                 new EventStore<string>({ id: "replication-tests" }),
                 {
-                    replicationTopic: replicationTopic,
+                    topic: topic,
                     replicate: false,
                     directory: dbPath1,
                 }
             );
             db2 = await orbitdb2.open<EventStore<string>>(db1.address!, {
-                replicationTopic,
+                topic: topic,
                 directory: dbPath2,
             });
 
@@ -255,18 +247,16 @@ Object.keys(testAPIs).forEach((API) => {
             // Two leaders, but only one will be leader since only one is replicating
             const isLeaderA = orbitdb1.isLeader(
                 await orbitdb1.findLeaders(
-                    replicationTopic,
+                    topic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     2
                 )
             );
             const isLeaderB = orbitdb2.isLeader(
                 await orbitdb2.findLeaders(
-                    replicationTopic,
+                    topic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     2
                 )
@@ -279,21 +269,21 @@ Object.keys(testAPIs).forEach((API) => {
             // TODO fix test timeout, isLeader is too slow as we need to wait for peers
             // perhaps do an event based get peers using the pubsub peers api
 
-            const replicationTopic = uuid();
+            const topic = uuid();
             db1 = await orbitdb1.open(
                 new EventStore<string>({ id: "replication-tests" }),
                 {
-                    replicationTopic: replicationTopic,
+                    topic: topic,
                     replicate: false,
                     directory: dbPath1,
                 }
             );
             db2 = await orbitdb2.open<EventStore<string>>(db1.address!, {
-                replicationTopic,
+                topic: topic,
                 directory: dbPath2,
             });
             db3 = await orbitdb3.open<EventStore<string>>(db1.address!, {
-                replicationTopic,
+                topic: topic,
                 directory: dbPath3,
             });
 
@@ -317,27 +307,24 @@ Object.keys(testAPIs).forEach((API) => {
             // Two leaders, but only one will be leader since only one is replicating
             const isLeaderA = orbitdb1.isLeader(
                 await orbitdb1.findLeaders(
-                    replicationTopic,
+                    topic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     3
                 )
             );
             const isLeaderB = orbitdb2.isLeader(
                 await orbitdb2.findLeaders(
-                    replicationTopic,
+                    topic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     3
                 )
             );
             const isLeaderC = orbitdb3.isLeader(
                 await orbitdb3.findLeaders(
-                    replicationTopic,
+                    topic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     3
                 )
@@ -352,17 +339,17 @@ Object.keys(testAPIs).forEach((API) => {
             // TODO fix test timeout, isLeader is too slow as we need to wait for peers
             // perhaps do an event based get peers using the pubsub peers api
 
-            const replicationTopic = uuid();
+            const topic = uuid();
             db1 = await orbitdb1.open(
                 new EventStore<string>({ id: "replication-tests" }),
-                { replicationTopic: replicationTopic, directory: dbPath1 }
+                { topic: topic, directory: dbPath1 }
             );
             db2 = await orbitdb2.open<EventStore<string>>(db1.address!, {
-                replicationTopic,
+                topic: topic,
                 directory: dbPath2,
             });
             db3 = await orbitdb3.open<EventStore<string>>(db1.address!, {
-                replicationTopic,
+                topic: topic,
                 directory: dbPath3,
             });
 
@@ -375,27 +362,24 @@ Object.keys(testAPIs).forEach((API) => {
 
             const isLeaderAOneLeader = orbitdb1.isLeader(
                 await orbitdb1.findLeaders(
-                    replicationTopic,
+                    topic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     1
                 )
             );
             const isLeaderBOneLeader = orbitdb2.isLeader(
                 await orbitdb2.findLeaders(
-                    replicationTopic,
+                    topic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     1
                 )
             );
             const isLeaderCOneLeader = orbitdb3.isLeader(
                 await orbitdb3.findLeaders(
-                    replicationTopic,
+                    topic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     1
                 )
@@ -409,27 +393,24 @@ Object.keys(testAPIs).forEach((API) => {
             // Two leaders
             const isLeaderATwoLeaders = orbitdb1.isLeader(
                 await orbitdb1.findLeaders(
-                    replicationTopic,
+                    topic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     2
                 )
             );
             const isLeaderBTwoLeaders = orbitdb2.isLeader(
                 await orbitdb2.findLeaders(
-                    replicationTopic,
+                    topic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     2
                 )
             );
             const isLeaderCTwoLeaders = orbitdb3.isLeader(
                 await orbitdb3.findLeaders(
-                    replicationTopic,
+                    topic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     2
                 )
@@ -443,27 +424,24 @@ Object.keys(testAPIs).forEach((API) => {
             // Three leders
             const isLeaderAThreeLeaders = orbitdb1.isLeader(
                 await orbitdb1.findLeaders(
-                    replicationTopic,
+                    topic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     3
                 )
             );
             const isLeaderBThreeLeaders = orbitdb2.isLeader(
                 await orbitdb2.findLeaders(
-                    replicationTopic,
+                    topic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     3
                 )
             );
             const isLeaderCThreeLeaders = orbitdb3.isLeader(
                 await orbitdb3.findLeaders(
-                    replicationTopic,
+                    topic,
                     db1.address!.toString(),
-                    true,
                     slot,
                     3
                 )

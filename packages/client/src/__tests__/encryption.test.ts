@@ -1,14 +1,14 @@
 import assert from "assert";
 import rmrf from "rimraf";
 import { Entry } from "@dao-xyz/ipfs-log";
-import { Peerbit } from "../peer";
+import { getReplicationTopic, Peerbit } from "../peer";
 import { Operation } from "./utils/stores/event-store";
 import { Ed25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
 import { AccessError } from "@dao-xyz/peerbit-crypto";
 import { v4 as uuid } from "uuid";
 import { jest } from "@jest/globals";
 import { KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 
 // Include test utilities
 import {
@@ -39,9 +39,14 @@ const addHello = async (
     });
 };
 const checkHello = async (db: PermissionedEventStore) => {
+    await waitFor(
+        () => db.store.iterator({ limit: -1 }).collect().length === 1
+    );
+
     const entries: Entry<Operation<string>>[] = db.store
         .iterator({ limit: -1 })
         .collect();
+
     expect(entries.length).toEqual(1);
     await entries[0].getPayload();
     expect(entries[0].payload.getValue().value).toEqual("hello");
@@ -60,7 +65,7 @@ Object.keys(testAPIs).forEach((API) => {
             db2: PermissionedEventStore,
             db3: PermissionedEventStore;
         let recieverKey: KeyWithMeta<Ed25519Keypair>;
-        let replicationTopic: string;
+        let topic: string;
 
         beforeAll(async () => {
             session = await Session.connected(3, API);
@@ -88,7 +93,7 @@ Object.keys(testAPIs).forEach((API) => {
             });
             await program.network.add(orbitdb2.id);
             await program.network.add(orbitdb2.identity.publicKey);
-            replicationTopic = program.address!.toString();
+            topic = program.address!.toString();
 
             // Untrusted client 3
             orbitdb3 = await Peerbit.create(session.peers[2].ipfs, {
@@ -127,7 +132,7 @@ Object.keys(testAPIs).forEach((API) => {
             let done = false;
 
             db2 = await orbitdb2.open<PermissionedEventStore>(db1.address, {
-                replicationTopic,
+                topic: topic,
                 directory: dbPath + uuid(),
                 onReplicationComplete: async (_store) => {
                     await checkHello(db1);
@@ -138,6 +143,7 @@ Object.keys(testAPIs).forEach((API) => {
             expect(
                 await orbitdb2.keystore.getKey(recieverKey.keypair.publicKey)
             ).toBeDefined();
+
             await addHello(db1, recieverKey.keypair.publicKey);
             await waitFor(() => done);
         });
@@ -147,13 +153,13 @@ Object.keys(testAPIs).forEach((API) => {
 
             const unknownKey = await orbitdb1.keystore.createEd25519Key({
                 id: "unknown",
-                group: replicationTopic,
+                group: topic,
             });
 
             // We expect during opening that keys are exchange
             let done = false;
             db2 = await orbitdb2.open<PermissionedEventStore>(db1.address, {
-                replicationTopic,
+                topic: topic,
                 directory: dbPath + uuid(),
                 onReplicationComplete: async (store) => {
                     if (store === db2.store.store) {
@@ -172,10 +178,7 @@ Object.keys(testAPIs).forEach((API) => {
             const xKey = await X25519PublicKey.from(
                 unknownKey.keypair.publicKey
             );
-            const getXKEy = await orbitdb1.keystore.getKey(
-                xKey,
-                replicationTopic
-            );
+            const getXKEy = await orbitdb1.keystore.getKey(xKey, topic);
             expect(getXKEy).toBeDefined();
             expect(
                 !(await orbitdb2.keystore.hasKey(unknownKey.keypair.publicKey))
@@ -190,7 +193,7 @@ Object.keys(testAPIs).forEach((API) => {
             await waitForPeers(
                 session.peers[2].ipfs,
                 [orbitdb1.id],
-                replicationTopic
+                getReplicationTopic(topic)
             );
 
             const db1Key = await orbitdb1.keystore.createEd25519Key({
@@ -200,7 +203,7 @@ Object.keys(testAPIs).forEach((API) => {
 
             // Open store from orbitdb2 so that both client 1 and 2 is listening to the replication topic
             db2 = await orbitdb2.open<PermissionedEventStore>(db1.address!, {
-                replicationTopic,
+                topic: topic,
                 directory: dbPath + uuid(),
             });
             await waitFor(() => db2.network?.trustGraph.index.size >= 3);
@@ -208,7 +211,7 @@ Object.keys(testAPIs).forEach((API) => {
             await waitFor(() => db1.network?.trustGraph.index.size >= 4);
 
             const reciever = (await orbitdb2.getEncryptionKey(
-                replicationTopic,
+                topic,
                 db2.address.toString()
             )) as KeyWithMeta<Ed25519Keypair>;
             expect(reciever).toBeDefined();
@@ -219,11 +222,11 @@ Object.keys(testAPIs).forEach((API) => {
             await waitForPeers(
                 session.peers[2].ipfs,
                 [orbitdb1.id],
-                replicationTopic
+                getReplicationTopic(topic)
             );
 
             db2 = await orbitdb2.open<PermissionedEventStore>(db1.address!, {
-                replicationTopic,
+                topic: topic,
                 directory: dbPath + uuid(),
             });
 
@@ -267,7 +270,7 @@ Object.keys(testAPIs).forEach((API) => {
             // Now close db2 and open db3 and make sure message are available
             await db2.drop();
             db3 = await orbitdb3.open<PermissionedEventStore>(db1.address, {
-                replicationTopic,
+                topic: topic,
                 directory: dbPath + uuid(),
                 onReplicationComplete: async (store) => {
                     const entriesRelay: Entry<Operation<string>>[] = db3.store

@@ -50,7 +50,7 @@ describe(`load (js-ipfs)`, () => {
             for (let i = 0; i < entryCount; i++) entryArr.push(i);
 
             db = await orbitdb1.open(new EventStore<string>({}), {
-                replicationTopic: uuid(),
+                topic: uuid(),
             });
             address = db.address!.toString();
             await mapSeries(entryArr, (i) => db.add("hello" + i));
@@ -69,7 +69,7 @@ describe(`load (js-ipfs)`, () => {
                     orbitdb1._ipfs,
                     Address.parse(address)
                 ),
-                { replicationTopic: uuid() }
+                { topic: uuid() }
             );
             await db.load();
             await waitFor(
@@ -90,7 +90,7 @@ describe(`load (js-ipfs)`, () => {
                     orbitdb1._ipfs,
                     Address.parse(address)
                 ),
-                { replicationTopic: uuid() }
+                { topic: uuid() }
             );
             await db.store.load(amount);
             await waitFor(
@@ -117,7 +117,7 @@ describe(`load (js-ipfs)`, () => {
                         orbitdb1._ipfs,
                         Address.parse(address)
                     ),
-                    { replicationTopic: uuid() }
+                    { topic: uuid() }
                 );
                 await db.load();
                 await waitFor(
@@ -162,7 +162,7 @@ describe(`load (js-ipfs)`, () => {
                         orbitdb1._ipfs,
                         Address.parse(address)
                     ),
-                    { replicationTopic: uuid() }
+                    { topic: uuid() }
                 );
                 await db.load();
                 await waitFor(
@@ -193,7 +193,7 @@ describe(`load (js-ipfs)`, () => {
                     Address.parse(address)
                 ),
                 {
-                    replicationTopic: uuid(),
+                    topic: uuid(),
                     onReady: async (store) => {
                         await waitFor(
                             () =>
@@ -225,7 +225,7 @@ describe(`load (js-ipfs)`, () => {
                     Address.parse(address)
                 ),
                 {
-                    replicationTopic: uuid(),
+                    topic: uuid(),
                     onLoadProgress: (store, entry) => {
                         count++;
                         expect(address).toEqual(db.address!.toString());
@@ -268,7 +268,7 @@ describe(`load (js-ipfs)`, () => {
         });
 
         it("loads database from an empty snapshot", async () => {
-            const options = { replicationTopic: uuid() };
+            const options = { topic: uuid() };
             db = await orbitdb1.open(new EventStore<string>({}), options);
             address = db.address!.toString();
             await db.saveSnapshot();
@@ -314,7 +314,7 @@ describe(`load (js-ipfs)`, () => {
             for (let i = 0; i < entryCount; i++) entryArr.push(i);
 
             db = await orbitdb1.open(new EventStore<string>({}), {
-                replicationTopic: uuid(),
+                topic: uuid(),
             });
             address = db.address!.toString();
             await mapSeries(entryArr, (i) => db.add("hello" + i));
@@ -334,7 +334,7 @@ describe(`load (js-ipfs)`, () => {
                     orbitdb1._ipfs,
                     Address.parse(address)
                 ),
-                { replicationTopic: uuid() }
+                { topic: uuid() }
             );
             await db.loadFromSnapshot();
             const items = db.iterator({ limit: -1 }).collect();
@@ -353,7 +353,7 @@ describe(`load (js-ipfs)`, () => {
                         orbitdb1._ipfs,
                         Address.parse(address)
                     ),
-                    { replicationTopic: uuid() }
+                    { topic: uuid() }
                 );
                 await db.loadFromSnapshot();
                 const expectedCount = entryCount + i;
@@ -375,13 +375,13 @@ describe(`load (js-ipfs)`, () => {
         });
 
         it("throws an error when trying to load a missing snapshot", async () => {
-            const replicationTopic = { replicationTopic: uuid() };
+            const options = { topic: uuid() };
             db = await orbitdb1.open(
                 await EventStore.load<EventStore<string>>(
                     orbitdb1._ipfs,
                     Address.parse(address)
                 ),
-                replicationTopic
+                options
             );
             await db.drop();
             db = null as any;
@@ -390,7 +390,7 @@ describe(`load (js-ipfs)`, () => {
                     orbitdb1._ipfs,
                     Address.parse(address)
                 ),
-                replicationTopic
+                options
             );
 
             let err;
@@ -412,7 +412,7 @@ describe(`load (js-ipfs)`, () => {
                     Address.parse(address)
                 ),
                 {
-                    replicationTopic: uuid(),
+                    topic: uuid(),
                     onReady: (store) => {
                         const items = db.iterator({ limit: -1 }).collect();
                         expect(items.length).toEqual(entryCount);
@@ -439,7 +439,7 @@ describe(`load (js-ipfs)`, () => {
                     Address.parse(address)
                 ),
                 {
-                    replicationTopic: uuid(),
+                    topic: uuid(),
                     onLoadProgress: (store, entry) => {
                         count++;
                         expect(address).toEqual(db.address!.toString());

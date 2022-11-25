@@ -1,21 +1,13 @@
 import rmrf from "rimraf";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { variant, field, Constructor } from "@dao-xyz/borsh";
-import { Peerbit } from "../peer";
+import { getReplicationTopic, Peerbit } from "../peer";
 
 import { EventStore } from "./utils/stores/event-store";
 import { jest } from "@jest/globals";
 import { Controller } from "ipfsd-ctl";
 import { IPFS } from "ipfs-core-types";
-// @ts-ignore
 import { v4 as uuid } from "uuid";
-
-import {
-    Documents,
-    PutOperation,
-    Operation,
-    DocumentIndex,
-} from "@dao-xyz/peerbit-document";
 
 // Include test utilities
 import {
@@ -25,9 +17,6 @@ import {
     connectPeers,
     waitForPeers,
 } from "@dao-xyz/peerbit-test-utils";
-import { CanOpenSubPrograms, Program } from "@dao-xyz/peerbit-program";
-import { RPC } from "@dao-xyz/peerbit-rpc";
-import { Entry } from "@dao-xyz/ipfs-log";
 
 const orbitdbPath1 = "./orbitdb/tests/write-only/1";
 const orbitdbPath2 = "./orbitdb/tests/write-only/2";
@@ -42,7 +31,7 @@ describe(`Write-only`, function () {
         orbitdb2: Peerbit,
         db1: EventStore<string>,
         db2: EventStore<string>;
-    let replicationTopic: string;
+    let topic: string;
     let timer: any;
 
     beforeAll(async () => {
@@ -50,7 +39,7 @@ describe(`Write-only`, function () {
         ipfsd2 = await startIpfs("js-ipfs", config.daemon2);
         ipfs1 = ipfsd1.api;
         ipfs2 = ipfsd2.api;
-        replicationTopic = uuid();
+        topic = uuid();
         // Connect the peers manually to speed up test times
         const isLocalhostAddress = (addr: string) =>
             addr.toString().includes("127.0.0.1");
@@ -85,7 +74,7 @@ describe(`Write-only`, function () {
             new EventStore<string>({
                 id: "abc",
             }),
-            { replicationTopic, directory: dbPath1 }
+            { topic: topic, directory: dbPath1 }
         );
     });
 
@@ -102,13 +91,13 @@ describe(`Write-only`, function () {
     });
 
     it("write 1 entry replicate false", async () => {
-        await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic);
+        await waitForPeers(ipfs2, [orbitdb1.id], getReplicationTopic(topic));
         db2 = await orbitdb2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
                 orbitdb2._ipfs,
                 db1.address!
             ),
-            { replicationTopic, directory: dbPath2, replicate: false }
+            { topic: topic, directory: dbPath2, replicate: false }
         );
 
         await db1.add("hello");
@@ -123,17 +112,17 @@ describe(`Write-only`, function () {
     });
 
     it("encrypted clock sync write 1 entry replicate false", async () => {
-        await waitForPeers(ipfs2, [orbitdb1.id], replicationTopic);
+        await waitForPeers(ipfs2, [orbitdb1.id], getReplicationTopic(topic));
         const encryptionKey = await orbitdb1.keystore.createEd25519Key({
             id: "encryption key",
-            group: replicationTopic,
+            group: topic,
         });
         db2 = await orbitdb2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
                 orbitdb2._ipfs,
                 db1.address!
             ),
-            { replicationTopic, directory: dbPath2, replicate: false }
+            { topic: topic, directory: dbPath2, replicate: false }
         );
 
         await db1.add("hello", {
@@ -158,23 +147,26 @@ describe(`Write-only`, function () {
     });
 
     it("will open store on exchange heads message", async () => {
-        const replicationTopic = "x";
+        const topic = "x";
         const store = new EventStore<string>({ id: "replication-tests" });
-        await orbitdb2.subscribeToReplicationTopic(replicationTopic);
-        await orbitdb1.open(store, { replicationTopic, replicate: false });
+        await orbitdb2.subscribeToTopic(topic, true);
+        await orbitdb1.open(store, {
+            topic: topic,
+            replicate: false,
+        });
 
         const hello = await store.add("hello", { nexts: [] });
         const world = await store.add("world", { nexts: [hello] });
 
         expect(store.store.oplog.heads).toHaveLength(1);
 
-        await waitFor(
-            () => orbitdb2.programs.get(replicationTopic)?.size || 0 > 0,
-            { timeout: 20 * 1000, delayInterval: 50 }
-        );
+        await waitFor(() => orbitdb2.programs.get(topic)?.size || 0 > 0, {
+            timeout: 20 * 1000,
+            delayInterval: 50,
+        });
 
         const replicatedProgramAndStores = orbitdb2.programs
-            .get(replicationTopic)
+            .get(topic)
             ?.values()
             .next().value;
         const replicatedStore = replicatedProgramAndStores.program.stores[0];

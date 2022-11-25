@@ -134,7 +134,7 @@ export class RPC<Q, R> extends ComposableProgram {
     _responseHandler: ResponseHandler<Q, (R | undefined) | R>;
     _requestType: AbstractType<Q>;
     _responseType: AbstractType<R>;
-    _replicationTopic: string;
+    _topic: string;
     _context: SearchContext;
 
     public async setup(options: RPCInitializationOptions<Q, R>) {
@@ -173,7 +173,7 @@ export class RPC<Q, R> extends ComposableProgram {
         options: ProgramInitializationOptions
     ): Promise<this> {
         await super.init(ipfs, identity, options);
-        this._replicationTopic = options.replicationTopic;
+        this._topic = options.topic;
         if (options.store.replicate) {
             await this._subscribe();
         }
@@ -310,7 +310,7 @@ export class RPC<Q, R> extends ComposableProgram {
         }
         const rpcTopic = this.rpcRegion
             ? this.rpcRegion.from(this.parentProgram.address)
-            : getRPCTopic(this.parentProgram, this._replicationTopic);
+            : getRPCTopic(this.parentProgram, this._topic);
         return rpcTopic;
     }
 }
