@@ -16,6 +16,7 @@ import { Program } from "@dao-xyz/peerbit-program";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { NetworkDiscovery } from "../controller";
 import { jest } from "@jest/globals";
+import { v4 as uuid } from "uuid";
 
 const __filename = fileURLToPath(import.meta.url);
 
@@ -32,6 +33,7 @@ describe("index", () => {
         identites: Identity[],
         cacheStore: AbstractLevel<any, string>[];
 
+    const topic = uuid();
     const identity = (i: number) => identites[i];
     const init = (
         store: Program,
@@ -40,7 +42,7 @@ describe("index", () => {
     ) =>
         store.init &&
         store.init(session.peers[i].ipfs, identites[i], {
-            topic: "_",
+            topic,
             ...options,
             store: {
                 ...options.store,

@@ -316,12 +316,17 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
             } else {
                 secretKey = await X25519SecretKey.from(key.keypair.privateKey);
             }
-            const epheremalKey = await sodium.crypto_box_open_easy(
-                k._encryptedKey.cipher,
-                k._encryptedKey.nonce,
-                this._envelope._senderPublicKey.publicKey,
-                secretKey.secretKey
-            );
+            let epheremalKey: Uint8Array;
+            try {
+                epheremalKey = await sodium.crypto_box_open_easy(
+                    k._encryptedKey.cipher,
+                    k._encryptedKey.nonce,
+                    this._envelope._senderPublicKey.publicKey,
+                    secretKey.secretKey
+                );
+            } catch (error) {
+                throw new AccessError("Failed to decrypt");
+            }
 
             // TODO: is nested decryption necessary?
             /*  let der: any = this;

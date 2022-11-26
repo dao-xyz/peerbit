@@ -1,4 +1,4 @@
-import { serialize } from "@dao-xyz/borsh";
+import { serialize, BorshError } from "@dao-xyz/borsh";
 import type { Message } from "@libp2p/interface-pubsub";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import {
@@ -16,8 +16,9 @@ import {
 } from "@dao-xyz/peerbit-crypto";
 import { IPFS } from "ipfs-core-types";
 import { Identity } from "@dao-xyz/ipfs-log";
-import { RequestV0, ReponseV0 } from "./encoding";
-
+import { RequestV0, ResponseV0, RPCMessage } from "./encoding";
+import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+export const logger = loggerFn({ module: "rpc" });
 export type RPCOptions = {
     signer?: Identity;
     keyResolver?: GetAnyKeypair;
@@ -30,13 +31,15 @@ export type RPCOptions = {
     isTrusted?: (publicKey: MaybeSigned<any>) => Promise<boolean>;
     responseRecievers?: X25519PublicKey[];
     context?: string;
+    strict?: boolean;
 };
 
 export const send = async (
     ipfs: IPFS,
     topic: string,
+    responseTopic: string,
     query: RequestV0,
-    responseHandler: (response: ReponseV0, from?: PublicSignKey) => void,
+    responseHandler: (response: ResponseV0, from?: PublicSignKey) => void,
     options: RPCOptions = {}
 ) => {
     if (typeof options.maxAggregationTime !== "number") {
@@ -44,23 +47,29 @@ export const send = async (
     }
 
     // send query and wait for replies in a generator like behaviour
-    const responseTopic = query.getResponseTopic(topic);
     let results = 0;
     const _responseHandler = async (msg: Message) => {
         try {
             const { result, from } = await decryptVerifyInto(
                 msg.data,
-                ReponseV0,
+                RPCMessage,
                 options.keyResolver || (() => Promise.resolve(undefined)),
                 {
                     isTrusted: options?.isTrusted,
                 }
             );
-            responseHandler(result, from);
-            results += 1;
+            if (result instanceof ResponseV0) {
+                responseHandler(result, from);
+                results += 1;
+            }
         } catch (error) {
             if (error instanceof AccessError) {
                 return; // Ignore things we can not open
+            }
+
+            if (error instanceof BorshError && !options.strict) {
+                logger.debug("Namespace error");
+                return; // Name space conflict most likely
             }
 
             console.error("failed ot deserialize query response", error);
@@ -133,9 +142,9 @@ export const send = async (
 
 export const respond = async (
     ipfs: IPFS,
-    topic: string,
+    responseTopic: string,
     request: RequestV0,
-    response: ReponseV0,
+    response: ResponseV0,
     options: {
         signer?: Identity;
         encryption?: {
@@ -173,8 +182,5 @@ export const respond = async (
             ...request.responseRecievers
         );
     }
-    await ipfs.pubsub.publish(
-        request.getResponseTopic(topic),
-        serialize(maybeEncryptedMessage)
-    );
+    await ipfs.pubsub.publish(responseTopic, serialize(maybeEncryptedMessage));
 };

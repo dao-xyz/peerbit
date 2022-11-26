@@ -45,7 +45,7 @@ describe("query", () => {
             );
         }
 
-        const rpcTopic = uuid();
+        const topic = uuid();
         for (let i = 0; i < peersCount; i++) {
             const store = new Store({ storeIndex: 0 });
             const signKey = await Ed25519Keypair.create();
@@ -56,7 +56,7 @@ describe("query", () => {
             } as any; // because query topic needs a parent with address
             await logIndex.setup({
                 store,
-                rpcTopic: { rpcRegion: rpcTopic },
+                rpcTopic: { rpcRegion: topic },
                 context: "context",
             });
             logIndices.push(logIndex);
@@ -100,7 +100,7 @@ describe("query", () => {
                     sign: async (data: Uint8Array) => await signKey.sign(data),
                 },
                 {
-                    topic: "_",
+                    topic,
                     store: {
                         ...DefaultOptions,
                         encryption,
@@ -110,11 +110,7 @@ describe("query", () => {
                 }
             );
         }
-        await waitForPeers(
-            session.peers[1].ipfs,
-            [session.peers[0].id],
-            rpcTopic
-        );
+        await waitForPeers(session.peers[1].ipfs, [session.peers[0].id], topic);
 
         expect(logIndices[0].query.rpcTopic).toEqual(
             logIndices[1].query.rpcTopic

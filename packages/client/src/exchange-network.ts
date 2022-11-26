@@ -1,5 +1,5 @@
 import { variant, field, serialize, vec } from "@dao-xyz/borsh";
-import { ProtocolMessage } from "./message.js";
+import { TransportMessage } from "./message.js";
 import { IPFSAddress } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
@@ -24,7 +24,7 @@ export class PeerInfo {
 }
 
 @variant([3, 0])
-export class ExchangeSwarmMessage extends ProtocolMessage {
+export class ExchangeSwarmMessage extends TransportMessage {
     @field({ type: vec(PeerInfo) })
     info: PeerInfo[];
 

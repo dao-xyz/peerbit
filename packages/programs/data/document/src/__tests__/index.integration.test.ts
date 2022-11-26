@@ -98,7 +98,7 @@ describe("index", () => {
                 await createStore(path.join(__filename, "cache- " + i))
             );
         }
-
+        const topic = uuid();
         // Create store
         for (let i = 0; i < peersCount; i++) {
             const store =
@@ -116,7 +116,7 @@ describe("index", () => {
                       });
             const keypair = await X25519Keypair.create();
             await store.init(session.peers[i].ipfs, await createIdentity(), {
-                topic: "_",
+                topic: topic,
                 store: {
                     ...DefaultOptions,
                     replicate: i === 0,
@@ -332,6 +332,7 @@ describe("index", () => {
             );
             expect(response.results).toHaveLength(3);
         });
+
         it("can match sync", async () => {
             expect(stores[1].docs.index.size).toEqual(0);
             await stores[1].docs.index.query(

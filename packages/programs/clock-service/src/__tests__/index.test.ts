@@ -8,6 +8,7 @@ import { ClockService } from "../controller";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { MemoryLevel } from "memory-level";
 import { default as Cache } from "@dao-xyz/peerbit-cache";
+import { v4 as uuid } from "uuid";
 
 const createIdentity = async () => {
     const ed = await Ed25519Keypair.create();
@@ -41,6 +42,7 @@ describe("clock", () => {
     beforeAll(async () => {
         session = await Session.connected(3);
         const responderIdentity = await createIdentity();
+        const topic = uuid();
         responder = new P({
             clock: new ClockService({
                 trustedNetwork: new TrustedNetwork({
@@ -49,6 +51,7 @@ describe("clock", () => {
             }),
         });
         await responder.init(session.peers[0].ipfs, responderIdentity, {
+            topic,
             store: {
                 resolveCache: () =>
                     Promise.resolve(new Cache(new MemoryLevel())),
@@ -60,17 +63,14 @@ describe("clock", () => {
 
         reader = deserialize(serialize(responder), P);
         await reader.init(session.peers[1].ipfs, await createIdentity(), {
+            topic,
             store: {
                 resolveCache: () =>
                     Promise.resolve(new Cache(new MemoryLevel())),
             } as any,
         } as any);
 
-        await waitForPeers(
-            session.peers[1].ipfs,
-            [session.peers[0].id],
-            responder.clock._remoteSigner.rpcTopic
-        );
+        await waitForPeers(session.peers[1].ipfs, [session.peers[0].id], topic);
     });
     afterAll(async () => {
         await session.stop();

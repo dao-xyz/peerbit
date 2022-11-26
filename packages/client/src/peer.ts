@@ -15,7 +15,7 @@ import {
 } from "./exchange-heads.js";
 import { Entry, Identity } from "@dao-xyz/ipfs-log";
 import { serialize, deserialize } from "@dao-xyz/borsh";
-import { ProtocolMessage } from "./message.js";
+import { TransportMessage } from "./message.js";
 import type {
     Message as PubSubMessage,
     SignedMessage as SignedPubSubMessage,
@@ -141,14 +141,14 @@ const groupByGid = async <T extends Entry<any> | EntryWithRefs<any>>(
 };
 
 export const getObserverTopic = (topic: string) => {
-    return topic + "/o";
+    return topic + "?";
 };
 
 export const getReplicationTopic = (topic: string) => {
-    return topic + "/r";
+    return topic + "!";
 };
 export const isReplicationTopic = (topic: string) => {
-    return topic.endsWith("/r");
+    return topic.endsWith("!");
 };
 
 export class Peerbit {
@@ -627,13 +627,13 @@ export class Peerbit {
             const maybeEncryptedMessage = deserialize(
                 message.data,
                 MaybeEncrypted
-            ) as MaybeEncrypted<MaybeSigned<ProtocolMessage>>;
+            ) as MaybeEncrypted<MaybeSigned<TransportMessage>>;
             const decrypted = await maybeEncryptedMessage.decrypt(
                 this.encryption.getAnyKeypair
             );
             const signedMessage = decrypted.getValue(MaybeSigned);
             await signedMessage.verify();
-            const msg = signedMessage.getValue(ProtocolMessage);
+            const msg = signedMessage.getValue(TransportMessage);
             const sender: PublicSignKey | undefined =
                 signedMessage.signature?.publicKey;
             const checkTrustedSender = async (

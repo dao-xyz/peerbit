@@ -14,6 +14,7 @@ import {
 } from "@dao-xyz/borsh";
 import path from "path";
 import { CID } from "multiformats/cid";
+export * from "./protocol-message.js";
 
 const notEmpty = (e: string) => e !== "" && e !== " ";
 

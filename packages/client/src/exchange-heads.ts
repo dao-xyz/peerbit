@@ -1,6 +1,6 @@
 import { variant, option, field, vec, serialize } from "@dao-xyz/borsh";
 import { Entry, Identity } from "@dao-xyz/ipfs-log";
-import { ProtocolMessage } from "./message.js";
+import { TransportMessage } from "./message.js";
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
 
@@ -51,7 +51,7 @@ export class EntryWithRefs<T> {
 }
 
 @variant([0, 0])
-export class ExchangeHeadsMessage<T> extends ProtocolMessage {
+export class ExchangeHeadsMessage<T> extends TransportMessage {
     @field({ type: "string" })
     topic: string;
 
@@ -96,7 +96,7 @@ export class ExchangeHeadsMessage<T> extends ProtocolMessage {
 }
 
 @variant([0, 1])
-export class RequestHeadsMessage extends ProtocolMessage {
+export class RequestHeadsMessage extends TransportMessage {
     @field({ type: "string" })
     topic: string;
 

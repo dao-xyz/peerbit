@@ -1,18 +1,12 @@
-import { variant, field, vec, option, serialize } from "@dao-xyz/borsh";
-import { ProtocolMessage } from "./message.js";
-import { MaybeSigned, PublicSignKey } from "@dao-xyz/peerbit-crypto";
-import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
-import { Address } from "@dao-xyz/peerbit-program";
+import { variant, field, option } from "@dao-xyz/borsh";
 import { Peerbit } from "./peer.js";
 import { StringSetSerializer } from "@dao-xyz/peerbit-borsh-utils";
-import { v4 as uuid } from "uuid";
-import { Identity } from "@dao-xyz/ipfs-log";
-import { Store } from "@dao-xyz/peerbit-store";
+import { TransportMessage } from "./message.js";
 
 export const WAIT_FOR_PEERS_TIME = 5000;
 
 @variant([2, 0])
-export class ReplicatorInfo extends ProtocolMessage {
+export class ReplicatorInfo extends TransportMessage {
     @field({ type: option("string") })
     fromId?: string;
 

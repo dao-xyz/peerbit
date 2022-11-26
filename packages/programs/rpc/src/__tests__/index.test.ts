@@ -3,13 +3,14 @@ import type { Message } from "@libp2p/interface-pubsub";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { Session, waitForPeers } from "@dao-xyz/peerbit-test-utils";
 import {
+    AccessError,
     decryptVerifyInto,
     Ed25519Keypair,
     Ed25519PublicKey,
     X25519Keypair,
     X25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
-import { RequestV0, ReponseV0, send, respond, RPC } from "../";
+import { RequestV0, ResponseV0, send, respond, RPC, RPCMessage } from "../";
 import { Ed25519Identity } from "@dao-xyz/ipfs-log";
 import { Program } from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
@@ -53,18 +54,21 @@ class RPCTest extends Program {
     }
 }
 
-describe("query", () => {
+describe("rpc", () => {
     let session: Session, responder: RPCTest, reader: RPCTest;
     beforeAll(async () => {
         session = await Session.connected(3);
 
         responder = new RPCTest();
         responder.query = new RPC();
+        const topic = uuid();
         await responder.init(session.peers[0].ipfs, await createIdentity(), {
+            topic,
             store: { replicate: true } as any,
         } as any);
         reader = deserialize(serialize(responder), RPCTest);
         await reader.init(session.peers[1].ipfs, await createIdentity(), {
+            topic,
             store: {} as any,
         } as any);
 
@@ -164,20 +168,22 @@ describe("query", () => {
                 async (msg: Message) => {
                     let { result: request } = await decryptVerifyInto(
                         msg.data,
-                        RequestV0,
+                        RPCMessage,
                         () => Promise.resolve(undefined)
                     );
-                    await respond(
-                        session.peers[i].ipfs,
-                        topic,
-                        request,
-                        new ReponseV0({
-                            response: serialize(
-                                new Body({ arr: new Uint8Array([0, 1, 2]) })
-                            ),
-                            context: "context",
-                        })
-                    );
+                    if (request instanceof RequestV0) {
+                        await respond(
+                            session.peers[i].ipfs,
+                            topic,
+                            request,
+                            new ResponseV0({
+                                response: serialize(
+                                    new Body({ arr: new Uint8Array([0, 1, 2]) })
+                                ),
+                                context: "context",
+                            })
+                        );
+                    }
                 }
             );
         }
@@ -191,6 +197,7 @@ describe("query", () => {
         let results: Uint8Array[] = [];
         await send(
             session.peers[0].ipfs,
+            topic,
             topic,
             new RequestV0({
                 request: serialize(
@@ -222,26 +229,27 @@ describe("query", () => {
             async (msg: Message) => {
                 let { result: request, from } = await decryptVerifyInto(
                     msg.data,
-                    RequestV0,
+                    RPCMessage,
                     () => Promise.resolve(undefined)
                 );
+                if (request instanceof RequestV0) {
+                    // Check that it was signed by the sender
+                    expect(from).toBeInstanceOf(Ed25519PublicKey);
+                    expect(
+                        (from as Ed25519PublicKey).equals(sender.publicKey)
+                    ).toBeTrue();
 
-                // Check that it was signed by the sender
-                expect(from).toBeInstanceOf(Ed25519PublicKey);
-                expect(
-                    (from as Ed25519PublicKey).equals(sender.publicKey)
-                ).toBeTrue();
-
-                await respond(
-                    session.peers[1].ipfs,
-                    topic,
-                    request,
-                    new ReponseV0({
-                        response: new Uint8Array([0, 1, 2]),
-                        context: "context",
-                    }),
-                    { signer: responder }
-                );
+                    await respond(
+                        session.peers[1].ipfs,
+                        topic,
+                        request,
+                        new ResponseV0({
+                            response: new Uint8Array([0, 1, 2]),
+                            context: "context",
+                        }),
+                        { signer: responder }
+                    );
+                }
             }
         );
 
@@ -250,6 +258,7 @@ describe("query", () => {
         let results: Uint8Array[] = [];
         await send(
             session.peers[0].ipfs,
+            topic,
             topic,
             new RequestV0({
                 request: new Uint8Array([0, 1, 2]),
@@ -284,27 +293,36 @@ describe("query", () => {
         await session.peers[1].ipfs.pubsub.subscribe(
             topic,
             async (msg: Message) => {
-                let { result: request } = await decryptVerifyInto(
-                    msg.data,
-                    RequestV0,
-                    async (keys) => {
-                        return {
-                            index: 0,
-                            keypair: await X25519Keypair.from(
-                                new Ed25519Keypair({ ...responder })
-                            ),
-                        };
+                try {
+                    let { result: request } = await decryptVerifyInto(
+                        msg.data,
+                        RequestV0,
+                        async (keys) => {
+                            return {
+                                index: 0,
+                                keypair: await X25519Keypair.from(
+                                    new Ed25519Keypair({ ...responder })
+                                ),
+                            };
+                        }
+                    );
+                    if (request instanceof RequestV0) {
+                        await respond(
+                            session.peers[1].ipfs,
+                            topic,
+                            request,
+                            new ResponseV0({
+                                response: new Uint8Array([0, 1, 2]),
+                                context: "context",
+                            })
+                        );
                     }
-                );
-                await respond(
-                    session.peers[1].ipfs,
-                    topic,
-                    request,
-                    new ReponseV0({
-                        response: new Uint8Array([0, 1, 2]),
-                        context: "context",
-                    })
-                );
+                } catch (error) {
+                    if (error instanceof AccessError) {
+                        return;
+                    }
+                    throw error;
+                }
             }
         );
         await waitForPeers(session.peers[0].ipfs, [session.peers[1].id], topic);
@@ -312,6 +330,7 @@ describe("query", () => {
         let results: Uint8Array[] = [];
         await send(
             session.peers[0].ipfs,
+            topic,
             topic,
             new RequestV0({
                 request: new Uint8Array([0, 1, 2]),

@@ -1,5 +1,5 @@
 import { variant, field, option, serialize, vec } from "@dao-xyz/borsh";
-import { ProtocolMessage } from "./message.js";
+import { TransportMessage } from "./message.js";
 import { UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
 import {
     Ed25519Keypair,
@@ -149,7 +149,7 @@ export class RequestKeysByKey extends RequestKeyCondition {
 }
 
 @variant([1, 0])
-export class RequestKeyMessage extends ProtocolMessage {
+export class RequestKeyMessage extends TransportMessage {
     @field({ type: PublicKeyEncryptionKey })
     _encryptionKey: PublicKeyEncryptionKey;
 
@@ -175,7 +175,7 @@ export class RequestKeyMessage extends ProtocolMessage {
 }
 
 @variant([1, 1])
-export class KeyResponseMessage extends ProtocolMessage {
+export class KeyResponseMessage extends TransportMessage {
     @field({ type: vec(KeyWithMeta) })
     keys: KeyWithMeta<Ed25519Keypair | X25519Keypair>[];
 

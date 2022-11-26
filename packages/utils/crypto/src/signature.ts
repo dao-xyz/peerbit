@@ -1,10 +1,10 @@
 import {
     deserialize,
-    Constructor,
     variant,
     field,
     option,
     serialize,
+    AbstractType,
 } from "@dao-xyz/borsh";
 import {
     arraysEqual,
@@ -65,7 +65,7 @@ export class MaybeSigned<T> {
 
     _value?: T;
 
-    getValue(constructor: Constructor<T>): T {
+    getValue(constructor: AbstractType<T>): T {
         return deserialize(this.data, constructor);
     }
 

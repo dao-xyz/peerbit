@@ -11,8 +11,8 @@ import {
 import type { Message } from "@libp2p/interface-pubsub";
 import { PublicSignKey, toBase64 } from "@dao-xyz/peerbit-crypto";
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
-import { RequestV0, ReponseV0 } from "./encoding.js";
-import { send, RPCOptions, respond } from "./io.js";
+import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
+import { send, RPCOptions, respond, logger } from "./io.js";
 import {
     AbstractProgram,
     Address,
@@ -22,8 +22,6 @@ import {
 } from "@dao-xyz/peerbit-program";
 import { IPFS } from "ipfs-core-types";
 import { Identity } from "@dao-xyz/ipfs-log";
-import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
-const logger = loggerFn({ module: "query" });
 
 export type SearchContext = (() => Address) | AbstractProgram | string;
 
@@ -58,7 +56,10 @@ export const getDiscriminatorApproximation = (
     return writer.toArray();
 };
 
-export const getRPCTopic = (parentProgram: Program, region: string): string => {
+export const getSubprogramTopic = (
+    parentProgram: Program,
+    region: string
+): string => {
     const disriminator = getDiscriminatorApproximation(
         parentProgram.constructor as Constructor<any>
     );
@@ -208,7 +209,7 @@ export class RPC<Q, R> extends ComposableProgram {
             try {
                 const { result: request, from } = await decryptVerifyInto(
                     msg.data,
-                    RequestV0,
+                    RPCMessage,
                     this._encryption?.getAnyKeypair ||
                         (() => Promise.resolve(undefined)),
                     {
@@ -216,38 +217,43 @@ export class RPC<Q, R> extends ComposableProgram {
                             this.canRead(key.signature?.publicKey),
                     }
                 );
-
-                if (request.context != undefined) {
-                    if (request.context != this.contextAddress) {
-                        logger.debug("Recieved a request for another context");
-                        return;
+                if (request instanceof RequestV0) {
+                    if (request.context != undefined) {
+                        if (request.context != this.contextAddress) {
+                            logger.debug(
+                                "Recieved a request for another context"
+                            );
+                            return;
+                        }
                     }
-                }
 
-                const response = await this._responseHandler(
-                    (this._requestType as any) === Uint8Array
-                        ? (request.request as Q)
-                        : deserialize(request.request, this._requestType),
-                    {
-                        address: this.contextAddress,
-                        from,
-                    }
-                );
-
-                if (response) {
-                    await respond(
-                        this._ipfs,
-                        this.rpcTopic,
-                        request,
-                        new ReponseV0({
-                            response: serialize(response),
-                            context: this.contextAddress,
-                        }),
+                    const response = await this._responseHandler(
+                        (this._requestType as any) === Uint8Array
+                            ? (request.request as Q)
+                            : deserialize(request.request, this._requestType),
                         {
-                            encryption: this._encryption,
-                            signer: this._identity,
+                            address: this.contextAddress,
+                            from,
                         }
                     );
+
+                    if (response) {
+                        await respond(
+                            this._ipfs,
+                            this.getRpcResponseTopic(request),
+                            request,
+                            new ResponseV0({
+                                response: serialize(response),
+                                context: this.contextAddress,
+                            }),
+                            {
+                                encryption: this._encryption,
+                                signer: this._identity,
+                            }
+                        );
+                    }
+                } else {
+                    return;
                 }
             } catch (error: any) {
                 if (error instanceof AccessError) {
@@ -273,17 +279,19 @@ export class RPC<Q, R> extends ComposableProgram {
         options?: RPCOptions
     ): Promise<void> {
         logger.debug("querying topic: " + this.rpcTopic);
+        const r = new RequestV0({
+            request:
+                (this._requestType as any) === Uint8Array
+                    ? (request as Uint8Array)
+                    : serialize(request),
+            responseRecievers: options?.responseRecievers,
+            context: options?.context || this.contextAddress.toString(),
+        });
         return send(
             this._ipfs,
             this.rpcTopic,
-            new RequestV0({
-                request:
-                    (this._requestType as any) === Uint8Array
-                        ? (request as Uint8Array)
-                        : serialize(request),
-                responseRecievers: options?.responseRecievers,
-                context: options?.context || this.contextAddress.toString(),
-            }),
+            this.getRpcResponseTopic(r),
+            r,
             (response, from) => {
                 responseHandler(
                     deserialize(response.response, this._responseType),
@@ -304,12 +312,20 @@ export class RPC<Q, R> extends ComposableProgram {
     }
 
     public get rpcTopic(): string {
-        if (!this.parentProgram.address) {
+        if (!this._topic) {
             throw new Error("Not initialized");
         }
-        const rpcTopic = this.rpcRegion
-            ? this.rpcRegion.from(this.parentProgram.address)
-            : getRPCTopic(this.parentProgram, this._topic);
-        return rpcTopic;
+        if (this.rpcRegion) {
+            if (!this.parentProgram.address) {
+                throw new Error("Not initialized");
+            }
+            return this.rpcRegion.from(this.parentProgram.address);
+        }
+        return this._topic;
+    }
+
+    public getRpcResponseTopic(_request: RequestV0): string {
+        const topic = this.rpcTopic;
+        return topic;
     }
 }

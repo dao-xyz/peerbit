@@ -1,20 +1,13 @@
 import rmrf from "rimraf";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
-import { variant, field, Constructor } from "@dao-xyz/borsh";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import { getObserverTopic, getReplicationTopic, Peerbit } from "../peer";
-
 import { EventStore } from "./utils/stores/event-store";
 import { jest } from "@jest/globals";
-import { Controller } from "ipfsd-ctl";
-import { IPFS } from "ipfs-core-types";
 import { v4 as uuid } from "uuid";
 
 // Include test utilities
 import {
     nodeConfig as config,
-    startIpfs,
-    stopIpfs,
-    connectPeers,
     waitForPeers,
     Session,
 } from "@dao-xyz/peerbit-test-utils";

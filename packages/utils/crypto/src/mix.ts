@@ -1,11 +1,11 @@
-import { Constructor, deserialize } from "@dao-xyz/borsh";
+import { AbstractType, deserialize } from "@dao-xyz/borsh";
 import { PublicSignKey } from "./key";
 import { MaybeSigned } from "./signature";
 import { GetAnyKeypair, MaybeEncrypted } from "./encryption";
 import { AccessError } from "./errors.js";
 export const decryptVerifyInto = async <T>(
     data: Uint8Array,
-    clazz: Constructor<T>,
+    clazz: AbstractType<T>,
     keyResolver: GetAnyKeypair,
     options: { isTrusted?: (key: MaybeSigned<any>) => Promise<boolean> } = {}
 ): Promise<{ result: T; from?: PublicSignKey }> => {
