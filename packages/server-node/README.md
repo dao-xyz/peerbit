@@ -6,7 +6,6 @@ A non-browser node with a CLI and server API so you can manage your non-browser 
 - Manage topics
 - Manage VPC/Networks (add/revoke trust)
 
-## 🚧 WIP 🚧
 **This CLI does not work in Windows at the moment. As of now this CLI have only tested with Ubuntu 22.04.**
 
 ## Run a node 
@@ -39,7 +38,7 @@ peerbit start --relay  > log.txt 2>&1 &
 ```
 (you can try to run ```docker exec ipfs_host ipfs id)``` to check ipfs is running in the background)
 
-2.
+3.
 Setup a test domain (so can access the node)
 
 ```sh
@@ -51,7 +50,7 @@ sudo peerbit domain test --email YOUR_EMAIL
 After a while a domain will be written out that you can access and learn more about your peer
 
 
-3. 
+4. 
 You might want to subscribe to a few topics. If you are working on an app where you rely on some topic, e.g. "world". Then you want to run following commands
 
 ~~peerbit topic add "world"~~
