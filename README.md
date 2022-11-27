@@ -6,7 +6,7 @@
 
 <h1 align="center">
     <strong>
-        Peerbit
+        P   e   e   r   b   i   t
    </strong>
 </h1>
 <h3 align="center">
