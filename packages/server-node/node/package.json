@@ -20,7 +20,7 @@
         "src/nginx-template.conf",
         "!src/**/__tests__",
         "!lib/**/__tests__",
-        "packages",
+        "patches",
         "LICENSE"
     ],
     "publishConfig": {
