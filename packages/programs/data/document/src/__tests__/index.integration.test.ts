@@ -467,7 +467,13 @@ describe("index", () => {
             it("modified between", async () => {
                 let response: Results<Document> = undefined as any;
 
-                const allDocs = writeStore.docs.store.oplog.values;
+                const allDocs = [...writeStore.docs.index._index.values()].sort(
+                    (a, b) =>
+                        Number(
+                            a.entry.metadata.clock.timestamp.wallTime -
+                                b.entry.metadata.clock.timestamp.wallTime
+                        )
+                );
                 await stores[1].docs.index.query(
                     new DocumentQueryRequest({
                         queries: [
@@ -475,12 +481,12 @@ describe("index", () => {
                                 modified: [
                                     new U64Compare({
                                         compare: Compare.GreaterOrEqual,
-                                        value: allDocs[1].metadata.clock
+                                        value: allDocs[1].entry.metadata.clock
                                             .timestamp.wallTime,
                                     }),
                                     new U64Compare({
                                         compare: Compare.Less,
-                                        value: allDocs[2].metadata.clock
+                                        value: allDocs[2].entry.metadata.clock
                                             .timestamp.wallTime,
                                     }),
                                 ],
@@ -494,7 +500,7 @@ describe("index", () => {
                 );
                 expect(
                     response.results.map((x) => x.context.head)
-                ).toContainAllValues([allDocs[1].hash]);
+                ).toContainAllValues([allDocs[1].entry.hash]);
             });
         });
 
