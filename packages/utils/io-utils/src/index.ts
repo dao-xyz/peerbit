@@ -92,6 +92,7 @@ async function write(
         pin?: boolean;
         timeout?: number;
         links?: string[];
+        onlyHash?: boolean;
     } = {}
 ) {
     const codec = (codecMap as any)[format];
@@ -111,14 +112,17 @@ async function write(
     }
 
     const block = await Block.encode({ value, codec, hasher });
-    await ipfs.block.put(block.bytes, {
-        /* cid: block.cid.bytes, */
-        version: block.cid.version,
-        format,
-        mhtype,
-        pin: options.pin,
-        timeout: options.timeout,
-    });
+
+    if (!options.onlyHash) {
+        await ipfs.block.put(block.bytes, {
+            /* cid: block.cid.bytes, */
+            version: block.cid.version,
+            format,
+            mhtype,
+            pin: options.pin,
+            timeout: options.timeout,
+        });
+    }
 
     const cid = codec.code === dagPb.code ? block.cid.toV0() : block.cid;
     const cidString = cid.toString(options.base || defaultBase);

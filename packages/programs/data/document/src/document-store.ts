@@ -121,7 +121,13 @@ export class Documents<T> extends ComposableProgram {
                                 )
                                 .then((bytes) => {
                                     const entry = deserialize(bytes, Entry);
-                                    return this.canAppend(entry)
+
+                                    if (!this._optionCanAppend) {
+                                        return entry;
+                                    }
+                                    return Promise.resolve(
+                                        this._optionCanAppend(entry)
+                                    ) // we do optionalCanAppend on query because we might not be able to actually check with history whether we can append, TODO make more resilient/robust!
                                         .then((r) => {
                                             if (r) {
                                                 return entry;
@@ -139,7 +145,12 @@ export class Documents<T> extends ComposableProgram {
                         })
                     )
                 ).filter((x) => !!x) as Entry<any>[];
-                await this.store.sync(entries);
+                await this.store.sync(entries, {
+                    save: this.store.replicate,
+                    canAppend:
+                        this._optionCanAppend?.bind(this) || (() => true),
+                });
+                const y = 123;
             },
         });
     }
