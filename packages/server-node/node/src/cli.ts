@@ -1,5 +1,5 @@
 import { Peerbit } from "@dao-xyz/peerbit";
-import { startIpfs } from "./ipfs.js";
+import { ipfsDocker, startIpfs } from "./ipfs.js";
 import { createTestDomain, startCertbot } from "./domain.js";
 import { Controller } from "ipfsd-ctl";
 import { serialize } from "@dao-xyz/borsh";
@@ -47,9 +47,12 @@ export const cli = async (args?: string[]) => {
                 },
             },
             handler: async (args) => {
-                const controller = await startIpfs(args.ipfs, {
-                    module: { disposable: args.disposable },
-                });
+                const controller =
+                    args.disposable || args.ipfs !== "go"
+                        ? await startIpfs(args.ipfs, {
+                              module: { disposable: args.disposable },
+                          })
+                        : await ipfsDocker();
                 const peer = args.relay
                     ? controller.api
                     : await Peerbit.create(controller.api);
@@ -68,7 +71,7 @@ export const cli = async (args?: string[]) => {
 
                 await printNodeInfo();
                 const shutDownHook = async (
-                    controller: Controller,
+                    controller: { stop: () => any },
                     server: {
                         close: () => void;
                     }

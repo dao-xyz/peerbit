@@ -35,7 +35,7 @@
         "test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
     },
     "devDependencies": {
-        "@dao-xyz/peerbit-test-utils": "^0.0.13",
+        "@dao-xyz/peerbit-test-utils": "*",
         "go-ipfs": "^0.17.0",
         "ipfs": "^0.65.0"
     },

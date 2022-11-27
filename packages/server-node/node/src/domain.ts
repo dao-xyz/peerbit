@@ -1,6 +1,7 @@
 import isNode from "is-node";
 import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { client } from "./api";
+import { installDocker, startContainer } from "./docker";
 
 const validateEmail = (email) => {
     return String(email)
@@ -128,42 +129,7 @@ export const startCertbot = async (
 
     await createConfig(nginxConfigPath, domain);
 
-    // check if docker is installed
-    const dockerExist = async () => {
-        try {
-            const out = await new Promise((resolve, reject) => {
-                exec("docker --version", (error, stdout, stderr) => {
-                    if (error || stderr) {
-                        reject();
-                    }
-                    resolve(stdout);
-                });
-            });
-            return true;
-        } catch (error) {
-            return false;
-        }
-    };
-
-    if (!(await dockerExist())) {
-        await new Promise((resolve, reject) => {
-            exec("sudo snap install docker", (error, stdout, stderr) => {
-                if (error || stderr) {
-                    reject();
-                }
-                resolve(stdout);
-            });
-        });
-
-        try {
-            await waitForAsync(() => dockerExist(), {
-                timeout: 30 * 1000,
-                delayInterval: 1000,
-            });
-        } catch (error) {
-            throw new Error("Failed to install docker");
-        }
-    }
+    await installDocker();
 
     // run
     const isTest = process.env.JEST_WORKER_ID !== undefined;
@@ -180,32 +146,10 @@ export const startCertbot = async (
 
     console.log("Starting Certbot");
     // try two times with some delay, because sometimes the docker daemon is not available immidatel
-    const startContainer = () =>
-        new Promise((resolve, reject) => {
-            exec(certbotDockerCommand, (error, stdout, stderr) => {
-                if (error || stderr) {
-                    reject(
-                        'Failed to start docker container "jonasal/nginx-certbot:latest". ' +
-                            stderr
-                    );
-                }
-                resolve(stdout);
-            });
-        });
-
-    try {
-        await startContainer();
-    } catch (error) {
-        if (
-            typeof error === "string" &&
-            error.indexOf("Cannot connect to the Docker daemon") != -1
-        ) {
-            await delay(10000);
-            await startContainer();
-        } else {
-            throw error;
-        }
-    }
+    await startContainer(
+        certbotDockerCommand,
+        "Failed to start certbot container"
+    );
 
     console.log("Certbot started succesfully!");
     console.log("You domain is: ");

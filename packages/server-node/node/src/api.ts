@@ -5,7 +5,7 @@ import { serialize, deserialize } from "@dao-xyz/borsh";
 import { Program, Address } from "@dao-xyz/peerbit-program";
 import { IdentityRelation } from "@dao-xyz/peerbit-trusted-network";
 import { multiaddr } from "@multiformats/multiaddr";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { v4 as uuid } from "uuid";
 import { IPFS } from "ipfs-core-types";
 import io from "@dao-xyz/peerbit-io-utils";
@@ -106,7 +106,24 @@ export const startServer = async (
 
     // TODO for convinience we do this, but should we? Who might not like this
     // This is needed atm for all Peerbit apps, but not for other thinngs potentially
-    await ipfs.pubsub.subscribe(io.BLOCK_TRANSPORT_TOPIC, () => undefined);
+    let err: any = undefined;
+    for (let i = 0; i < 3; i++) {
+        try {
+            await ipfs.pubsub.subscribe(
+                io.BLOCK_TRANSPORT_TOPIC,
+                () => undefined
+            );
+            err = undefined;
+            break;
+        } catch (error) {
+            err = error;
+            await delay(5000);
+        }
+    }
+
+    if (err) {
+        throw err;
+    }
 
     type ACL = (req: http.IncomingMessage) => boolean;
     const password = await loadOrCreatePassword(
