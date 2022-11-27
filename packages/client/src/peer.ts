@@ -14,7 +14,7 @@ import {
     MinReplicas,
 } from "./exchange-heads.js";
 import { Entry, Identity } from "@dao-xyz/ipfs-log";
-import { serialize, deserialize } from "@dao-xyz/borsh";
+import { serialize, deserialize, BorshError } from "@dao-xyz/borsh";
 import { TransportMessage } from "./message.js";
 import type {
     Message as PubSubMessage,
@@ -170,7 +170,7 @@ export class Peerbit {
     browser: boolean; // is running inside of browser?
 
     _gidPeersHistory: Map<string, Set<string>> = new Map();
-    _waitForKeysTimeout = 10000;
+    _waitForKeysTimeout: number | undefined;
     _keysInflightMap: Map<string, Promise<any>> = new Map(); // TODO fix types
     _keyRequestsLRU: LRU<
         string,
@@ -772,6 +772,14 @@ export class Peerbit {
                 throw new Error("Unexpected message");
             }
         } catch (e: any) {
+            if (e instanceof BorshError) {
+                logger.debug("Got message for a different namespace");
+                return;
+            }
+            if (e instanceof AccessError) {
+                logger.debug("Got message I could not decrypt");
+                return;
+            }
             logger.error(e);
         }
     }
