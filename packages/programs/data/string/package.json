@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-string",
-    "version": "0.0.122",
+    "version": "0.0.123",
     "description": "String store",
     "type": "module",
     "sideEffects": false,
@@ -35,7 +35,7 @@
         "@dao-xyz/borsh": "^3.4.4",
         "@dao-xyz/peerbit-logger": "^0.0.3",
         "@dao-xyz/peerbit-program": "^0.0.54",
-        "@dao-xyz/peerbit-rpc": "^0.0.57",
+        "@dao-xyz/peerbit-rpc": "^0.0.58",
         "@dao-xyz/peerbit-store": "^0.0.69",
         "@dao-xyz/peerbit-time": "^0.0.18"
     },
