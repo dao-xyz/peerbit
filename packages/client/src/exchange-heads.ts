@@ -121,11 +121,6 @@ export const exchangeHeads = async (
     includeReferences: boolean,
     identity?: Identity
 ) => {
-    const gids = new Set(heads.map((h) => h.gid));
-    if (gids.size > 1) {
-        throw new Error("Expected to share heads only from 1 gid");
-    }
-
     const headsSet = new Set(heads);
     const headsWithRefs = heads.map((head) => {
         const refs = !includeReferences
