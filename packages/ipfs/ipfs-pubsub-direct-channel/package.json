@@ -31,8 +31,7 @@
     "dependencies": {
         "@dao-xyz/borsh": "^3.4.4",
         "@dao-xyz/ipfs-pubsub-peer-monitor": "^0.0.15",
-        "@dao-xyz/peerbit-borsh-utils": "^0.0.11",
-        "@dao-xyz/peerbit-test-utils": "^0.0.14"
+        "@dao-xyz/peerbit-borsh-utils": "^0.0.11"
     },
     "devDependencies": {
         "@dao-xyz/peerbit-time": "^0.0.18",
@@ -45,7 +44,8 @@
         "is-node": "^1.0.2",
         "node-pre-gyp": "^0.17.0",
         "nyc": "^15.0.1",
-        "p-map-series": "^3.0.0"
+        "p-map-series": "^3.0.0",
+        "@dao-xyz/peerbit-test-utils": "^0.0.14"
     },
     "scripts": {
         "clean": "shx rm -rf lib/*",
@@ -61,5 +61,5 @@
     "localMaintainers": [
         "dao.xyz"
     ],
-    "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
+    "gitHead": "8afb0ae1fd56516b8159d8dfe5a47854b7782ce7"
 }
