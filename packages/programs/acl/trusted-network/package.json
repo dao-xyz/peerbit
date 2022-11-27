@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-trusted-network",
-    "version": "0.0.86",
+    "version": "0.0.87",
     "description": "Access controller that operates on a DB",
     "type": "module",
     "sideEffects": false,
@@ -33,9 +33,9 @@
     "license": "MIT",
     "dependencies": {
         "@dao-xyz/borsh": "^3.4.4",
-        "@dao-xyz/peerbit-crypto": "^0.0.18",
-        "@dao-xyz/peerbit-document": "^0.0.130",
-        "@dao-xyz/peerbit-logindex": "^0.0.38",
+        "@dao-xyz/peerbit-crypto": "^0.0.19",
+        "@dao-xyz/peerbit-document": "^0.0.131",
+        "@dao-xyz/peerbit-logindex": "^0.0.39",
         "p-map": "~1.1.1",
         "uuid": "^8.3.2"
     },

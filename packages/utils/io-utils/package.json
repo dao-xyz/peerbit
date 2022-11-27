@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-io-utils",
-    "version": "1.1.12",
+    "version": "1.1.13",
     "description": "IO helper module for orbit-db",
     "type": "module",
     "sideEffects": false,
