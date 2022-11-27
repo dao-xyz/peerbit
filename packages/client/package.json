@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit",
-    "version": "0.0.72",
+    "version": "0.0.73",
     "description": "Distributed p2p database on IPFS",
     "author": "dao.xyz",
     "license": "MIT",
@@ -31,7 +31,7 @@
     },
     "dependencies": {
         "@dao-xyz/borsh": "^3.4.4",
-        "@dao-xyz/ipfs-pubsub-direct-channel": "^0.0.31",
+        "@dao-xyz/ipfs-pubsub-direct-channel": "^0.0.32",
         "@dao-xyz/ipfs-pubsub-peer-monitor": "^0.0.15",
         "@dao-xyz/peerbit-cache": "^0.4.23",
         "@dao-xyz/peerbit-crypto": "^0.0.20",

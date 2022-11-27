@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-node",
-    "version": "0.0.69",
+    "version": "0.0.70",
     "author": "dao.xyz",
     "repository": "https://github.com/@dao-xyz/peerbit-node",
     "license": "Apache-2.0",
@@ -53,7 +53,7 @@
     },
     "dependencies": {
         "@aws-sdk/client-route-53": "^3.216.0",
-        "@dao-xyz/peerbit": "^0.0.72",
+        "@dao-xyz/peerbit": "^0.0.73",
         "ipfsd-ctl": "^12.2.2",
         "is-node": "^1.0.2",
         "patch-package": "^6.5.0"
