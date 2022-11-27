@@ -60,7 +60,7 @@ You might want to subscribe to a few topics. If you are working on an app where 
 
 ~~peerbit topic add "_block"~~
 
-Because if an `ipfs-http-client` bug, you have to subscribe directly with docker 
+Latest version `ipfs-http-client` behaves unexpectedly on long lasting pubsub connection. For a more resiliant behaviour you have to subscribe directly with docker 
 
 ```
 docker exec ipfs_host ipfs pubsub sub "world" &
