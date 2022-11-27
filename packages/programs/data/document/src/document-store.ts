@@ -117,7 +117,10 @@ export class Documents<T> extends ComposableProgram {
                             return io
                                 .read(
                                     this.store.oplog._storage,
-                                    result.context.head
+                                    result.context.head,
+                                    {
+                                        timeout: 10 * 10000,
+                                    }
                                 )
                                 .then((bytes) => {
                                     const entry = deserialize(bytes, Entry);
