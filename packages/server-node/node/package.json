@@ -37,7 +37,7 @@
         "test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
         "test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
         "test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit",
-        "postinstall": "patch-package"
+        "postinstall": "patch-package || exit 0"
     },
     "devDependencies": {
         "@dao-xyz/peerbit-node-test-lib": "^0.0.1",
@@ -47,7 +47,6 @@
         "aws-sdk": "^2.1259.0",
         "axios": "^1.1.3",
         "dotenv": "^16.0.3",
-        "go-ipfs": "^0.17.0",
         "ipfs": "^0.65.0",
         "yargs": "^17.6.0"
     },
@@ -60,7 +59,6 @@
     },
     "peerDependencies": {
         "axios": "^1.1.3",
-        "go-ipfs": "^0.17.0",
         "ipfs": "^0.65.0",
         "yargs": "^17.6.0"
     }

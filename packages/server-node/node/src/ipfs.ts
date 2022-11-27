@@ -1,5 +1,7 @@
-import isNode from "is-node";
 import { ControllerType, createController, IPFSOptions } from "ipfsd-ctl";
+import { installDocker, startContainer } from "./docker";
+import { IPFS } from "ipfs-core-types";
+import { delay } from "@dao-xyz/peerbit-time";
 
 interface Module {
     type: ControllerType;
@@ -19,16 +21,17 @@ interface Module {
  *
  */
 export const startIpfs = async (
-    type: "js" | "go",
+    type: "js" | string,
     options?: {
         ipfsOptions?: IPFSOptions;
         module?: { disposable: boolean; go?: { args?: string[] } };
     }
 ) => {
     let module: Module;
-    if (!isNode) {
-        if (type === "go") throw new Error("Not supported");
+    if (type === "go") {
+        throw new Error("Not supported");
     }
+
     const disposable = options?.module?.disposable || false;
     if (type === "js") {
         const ipfsModule = await import("ipfs");
@@ -38,7 +41,7 @@ export const startIpfs = async (
             test: false,
             ipfsModule,
         };
-    } else if (type === "go") {
+    } /* else if (type === "go") {
         const ipfsHttpModule = await import("ipfs-http-client");
         const ipfsBin = await import("go-ipfs");
         const extraArgs = options?.module?.go?.args
@@ -52,7 +55,7 @@ export const startIpfs = async (
             ipfsHttpModule,
             ipfsBin: ipfsBin.path(),
         };
-    } else {
+    } */ else {
         throw new Error("Unexpected IPFS module type: " + type);
     }
     const ipfsOptions = options?.ipfsOptions || {
@@ -103,4 +106,33 @@ export const startIpfs = async (
         await controller.start();
     }
     return controller;
+};
+
+export const ipfsDocker = async (): Promise<{
+    api: IPFS;
+    stop: () => Promise<void>;
+}> => {
+    const { exec } = await import("child_process");
+    await new Promise((resolve, reject) => {
+        exec(
+            'echo "#!/bin/sh \nset -ex \nipfs bootstrap rm all \nipfs config Addresses.Swarm \'[\\"/ip4/0.0.0.0/tcp/4001\\", \\"/ip4/0.0.0.0/tcp/8081/ws\\", \\"/ip6/::/tcp/4001\\"]\' --json\nipfs config --json Pubsub.Enabled true \nipfs config Swarm.RelayService \'{\\"Enabled\\": true}\' --json" > ipfs-config.sh',
+            (error, stdout, stderr) => {
+                if (error || stderr) {
+                    reject("Failed to create config file" + stderr);
+                }
+                resolve(stdout);
+            }
+        );
+    });
+
+    await installDocker();
+    await startContainer(
+        "sudo docker run -d --name ipfs_host -v $(pwd)/ipfs-config.sh:/container-init.d/001-test.sh  -p 4001:4001 -p 4001:4001/udp -p 127.0.0.1:8081:8081 -p 127.0.0.1:5001:5001 ipfs/kubo:latest daemon"
+    );
+    const c = await import("ipfs-http-client");
+    const client = c.create({ timeout: 10 * 1000 });
+    return {
+        api: client,
+        stop: async () => undefined,
+    };
 };

@@ -32,6 +32,10 @@ Start the node in a background process
 ```sh
 peerbit start > log.txt 2>&1 &
 ```
+or if you just want an IPFS node as a relay
+```
+peerbit start --relay  > log.txt 2>&1 &
+```
 
 Setup a test domain (so can access the node)
 
