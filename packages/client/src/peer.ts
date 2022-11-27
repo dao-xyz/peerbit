@@ -141,7 +141,7 @@ const groupByGid = async <T extends Entry<any> | EntryWithRefs<any>>(
 };
 
 export const getObserverTopic = (topic: string) => {
-    return topic + "?";
+    return topic;
 };
 
 export const getReplicationTopic = (topic: string) => {
