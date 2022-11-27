@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-crypto",
-    "version": "0.0.19",
+    "version": "0.0.20",
     "description": "Crypto fn",
     "type": "module",
     "sideEffects": false,
@@ -32,7 +32,7 @@
     "author": "dao.xyz",
     "license": "MIT",
     "devDependencies": {
-        "@dao-xyz/peerbit-test-utils": "^0.0.13",
+        "@dao-xyz/peerbit-test-utils": "^0.0.14",
         "@types/libsodium-wrappers": "^0.7.9"
     },
     "dependencies": {
