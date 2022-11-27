@@ -11,6 +11,42 @@ import { client, startServer } from "../api.js";
 import { jest } from "@jest/globals";
 import { PermissionedString } from "@dao-xyz/peerbit-node-test-lib";
 
+describe("ipfs only", () => {
+    let session: Session, peer: Peerbit, server: http.Server;
+    jest.setTimeout(60 * 1000);
+
+    beforeAll(async () => {
+        session = await Session.connected(1);
+    });
+
+    beforeEach(async () => {
+        server = await startServer(session.peers[0].ipfs, 7676);
+    });
+    afterEach(() => {
+        server.close();
+    });
+
+    afterAll(async () => {
+        await session.stop();
+    });
+
+    it("use cli as IPFS cli", async () => {
+        const c = await client("http://localhost:" + 7676);
+        await c.topic.put("1", false);
+        await c.topic.put("2", false);
+        try {
+            await c.topic.put("3", true);
+            fail();
+        } catch (error) {
+            // not peerbit, so should not succeed
+        }
+        expect(await c.topics.get(false)).toContainAllValues([
+            "_block",
+            "1",
+            "2",
+        ]);
+    });
+});
 describe("server", () => {
     let session: Session, peer: Peerbit, server: http.Server;
     jest.setTimeout(60 * 1000);
@@ -52,11 +88,12 @@ describe("server", () => {
 
     it("topics", async () => {
         const c = await client();
-        expect(await c.topics.get()).toHaveLength(0);
-        await c.topic.put("1");
-        await c.topic.put("2");
-        await c.topic.put("3");
-        expect(await c.topics.get()).toHaveLength(3);
+        expect(await c.topics.get(false)).toHaveLength(1); // _block topic
+        await c.topic.put("1", true); // 2 pubsub topics
+        await c.topic.put("2", true); // 2 pubsub topics
+        await c.topic.put("3", false); // 1 pubsub topic
+        expect(await c.topics.get(true)).toHaveLength(2); // two topic we are replicating
+        expect(await c.topics.get(false)).toHaveLength(6); // not 3 but 5 + _blockTopic because extra topics as replciator
     });
 
     it("program", async () => {

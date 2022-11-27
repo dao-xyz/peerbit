@@ -73,12 +73,21 @@ export const startIpfs = async (
                 Gateway: "/ip4/0.0.0.0/tcp/0",
             },
             Bootstrap: [],
+            // TODO Remove delegators?
             Discovery: {
                 MDNS: {
                     Enabled: false, // should we?
                 },
                 webRTCStar: {
                     Enabled: false,
+                },
+            },
+            Pubsub: {
+                enabled: true,
+            },
+            Swarm: {
+                RelayService: {
+                    Enabled: true,
                 },
             },
         },

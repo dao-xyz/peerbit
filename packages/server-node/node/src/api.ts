@@ -7,6 +7,8 @@ import { IdentityRelation } from "@dao-xyz/peerbit-trusted-network";
 import { multiaddr } from "@multiformats/multiaddr";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { v4 as uuid } from "uuid";
+import { IPFS } from "ipfs-core-types";
+import io from "@dao-xyz/peerbit-io-utils";
 export const LOCAL_PORT = 8082;
 export const SSL_PORT = 9002;
 export const getPort = (protocol: string) => {
@@ -96,12 +98,19 @@ export const loadOrCreatePassword = async (ipfsId: string): Promise<string> => {
 };
 
 export const startServer = async (
-    client: Peerbit,
+    client: Peerbit | IPFS,
     port: number = LOCAL_PORT
 ): Promise<http.Server> => {
+    const notPeerBitError = "Client is not Peerbit but IPFS";
+    const ipfs = client instanceof Peerbit ? client.ipfs : client;
+
+    // TODO for convinience we do this, but should we? Who might not like this
+    // This is needed atm for all Peerbit apps, but not for other thinngs potentially
+    await ipfs.pubsub.subscribe(io.BLOCK_TRANSPORT_TOPIC, () => undefined);
+
     type ACL = (req: http.IncomingMessage) => boolean;
     const password = await loadOrCreatePassword(
-        (await client.ipfs.id()).id.toString()
+        (await ipfs.id()).id.toString()
     );
     const adminACL = (req: http.IncomingMessage): boolean => {
         const auth = req.headers["authorization"];
@@ -126,22 +135,29 @@ export const startServer = async (
         if (!req.url) {
             throw new Error("Missing url");
         }
+        if (client instanceof Peerbit) {
+            const url = new URL(req.url, "http://localhost:" + port);
+            const path = url.pathname
+                .substring(
+                    Math.min(1, url.pathname.length),
+                    url.pathname.length
+                )
+                .split("/");
+            if (path.length <= pathIndex) {
+                throw new Error("Invalid path");
+            }
+            const address = decodeURIComponent(path[pathIndex]);
 
-        const url = new URL(req.url, "http://localhost:" + port);
-        const path = url.pathname
-            .substring(Math.min(1, url.pathname.length), url.pathname.length)
-            .split("/");
-        if (path.length <= pathIndex) {
-            throw new Error("Invalid path");
-        }
-        const address = decodeURIComponent(path[pathIndex]);
-        for (const [topic, programs] of client.programs.entries()) {
-            {
-                const p = programs.get(address);
-                if (p) {
-                    return p.program;
+            for (const [topic, programs] of client.programs.entries()) {
+                {
+                    const p = programs.get(address);
+                    if (p) {
+                        return p.program;
+                    }
                 }
             }
+        } else {
+            throw new Error(notPeerBitError);
         }
         return;
     };
@@ -159,7 +175,7 @@ export const startServer = async (
     };
 
     const e404 = "404";
-    const endpoints = (client: Peerbit, acl?: ACL): http.RequestListener => {
+    const endpoints = (client: Peerbit | IPFS): http.RequestListener => {
         return async (req, res) => {
             res.setHeader("Access-Control-Allow-Origin", "*");
             res.setHeader("Access-Control-Request-Method", "*");
@@ -181,12 +197,46 @@ export const startServer = async (
                 } else if (req.url.startsWith(TOPICS_PATH)) {
                     switch (req.method) {
                         case "GET":
-                            res.setHeader("Content-Type", "application/json");
-                            res.writeHead(200);
-                            res.write(
-                                JSON.stringify([...client.programs.keys()])
-                            );
-                            res.end();
+                            import("url").then((parse) => {
+                                const replicateParam = parse.parse(
+                                    req.url!,
+                                    true
+                                ).query["replicate"];
+                                if (Array.isArray(replicateParam)) {
+                                    res.writeHead(400);
+                                    res.end("Expecting one replicate param");
+                                    return;
+                                }
+                                const replicate = replicateParam
+                                    ? JSON.parse(replicateParam)
+                                    : replicateParam;
+
+                                res.setHeader(
+                                    "Content-Type",
+                                    "application/json"
+                                );
+                                res.writeHead(200);
+                                if (replicate) {
+                                    if (client instanceof Peerbit) {
+                                        res.write(
+                                            JSON.stringify([
+                                                ...client.programs.keys(),
+                                            ])
+                                        );
+                                        res.end();
+                                    } else {
+                                        res.writeHead(400);
+                                        res.write(notPeerBitError);
+                                        res.end();
+                                    }
+                                } else {
+                                    ipfs.pubsub.ls().then((topics) => {
+                                        res.write(JSON.stringify(topics));
+                                        res.end();
+                                    });
+                                }
+                            });
+
                             break;
                         default:
                             r404();
@@ -196,27 +246,63 @@ export const startServer = async (
                     switch (req.method) {
                         case "PUT":
                             getBody(req, (body) => {
-                                const topic = body;
-                                if (
-                                    typeof topic !== "string" ||
-                                    topic.trim().length !== topic.length
-                                ) {
-                                    res.writeHead(400);
-                                    res.end(
-                                        "Invalid topic: " +
-                                            JSON.stringify(topic)
-                                    );
-                                } else if (client.programs.has(topic)) {
-                                    res.writeHead(400);
-                                    res.end("Already subscribed to this topic");
-                                } else {
-                                    client
-                                        .subscribeToTopic(topic, true)
-                                        .then(() => {
-                                            res.writeHead(200);
+                                import("url").then((parse) => {
+                                    const replicateParam = parse.parse(
+                                        req.url!,
+                                        true
+                                    ).query["replicate"];
+                                    if (Array.isArray(replicateParam)) {
+                                        res.writeHead(400);
+                                        res.end(
+                                            "Expecting one replicate param"
+                                        );
+                                        return;
+                                    }
+                                    const replicate = replicateParam
+                                        ? JSON.parse(replicateParam)
+                                        : replicateParam;
+                                    const topic = body;
+                                    if (
+                                        typeof topic !== "string" ||
+                                        topic.trim().length !== topic.length
+                                    ) {
+                                        res.writeHead(400);
+                                        res.end(
+                                            "Invalid topic: " +
+                                                JSON.stringify(topic)
+                                        );
+                                    } else if (!replicate) {
+                                        ipfs.pubsub
+                                            .subscribe(topic, () => undefined)
+                                            .then(() => {
+                                                res.writeHead(200);
+                                                res.end();
+                                            });
+                                    } else {
+                                        if (client instanceof Peerbit) {
+                                            if (client.programs.has(topic)) {
+                                                res.writeHead(400);
+                                                res.end(
+                                                    "Already subscribed to this topic"
+                                                );
+                                            } else {
+                                                client
+                                                    .subscribeToTopic(
+                                                        topic,
+                                                        true
+                                                    )
+                                                    .then(() => {
+                                                        res.writeHead(200);
+                                                        res.end();
+                                                    });
+                                            }
+                                        } else {
+                                            res.writeHead(400);
+                                            res.write(notPeerBitError);
                                             res.end();
-                                        });
-                                }
+                                        }
+                                    }
+                                });
                             });
                             break;
                         default:
@@ -225,66 +311,72 @@ export const startServer = async (
                     }
                 } else if (req.url.startsWith(PROGRAM_PATH)) {
                     const url = new URL(req.url, "http://localhost:" + port);
-                    switch (req.method) {
-                        case "GET":
-                            try {
-                                const program = getProgramFromPath(req, 1);
-                                if (program) {
-                                    res.writeHead(200);
-                                    res.write(toBase64(serialize(program)));
-                                    res.end();
-                                } else {
-                                    res.writeHead(404);
-                                    res.end();
-                                }
-                            } catch (error: any) {
-                                res.writeHead(404);
-                                res.end(error.message);
-                            }
-                            break;
-
-                        case "PUT":
-                            getBody(req, (body) => {
-                                const topic = url.searchParams.get("topic");
-                                if (topic && topic.length === 0) {
-                                    res.writeHead(400);
-                                    res.end("Invalid topic: " + topic);
-                                } else {
-                                    try {
-                                        const parsed = deserialize(
-                                            fromBase64(body),
-                                            Program
-                                        );
-                                        client
-                                            .open(parsed, {
-                                                topic: topic || undefined,
-                                            })
-                                            .then((program) => {
-                                                res.writeHead(200);
-                                                res.end(
-                                                    program.address.toString()
-                                                );
-                                            })
-                                            .catch((error) => {
-                                                res.writeHead(400);
-                                                res.end(
-                                                    "Failed to open program: " +
-                                                        error.toString()
-                                                );
-                                            });
-                                    } catch (error) {
-                                        res.writeHead(400);
-                                        res.end(
-                                            "Invalid base64 program binary"
-                                        );
+                    if (client instanceof Peerbit === false) {
+                        res.writeHead(400);
+                        res.write(notPeerBitError);
+                        res.end();
+                    } else {
+                        switch (req.method) {
+                            case "GET":
+                                try {
+                                    const program = getProgramFromPath(req, 1);
+                                    if (program) {
+                                        res.writeHead(200);
+                                        res.write(toBase64(serialize(program)));
+                                        res.end();
+                                    } else {
+                                        res.writeHead(404);
+                                        res.end();
                                     }
+                                } catch (error: any) {
+                                    res.writeHead(404);
+                                    res.end(error.message);
                                 }
-                            });
-                            break;
+                                break;
 
-                        default:
-                            r404();
-                            break;
+                            case "PUT":
+                                getBody(req, (body) => {
+                                    const topic = url.searchParams.get("topic");
+                                    if (topic && topic.length === 0) {
+                                        res.writeHead(400);
+                                        res.end("Invalid topic: " + topic);
+                                    } else {
+                                        try {
+                                            const parsed = deserialize(
+                                                fromBase64(body),
+                                                Program
+                                            );
+                                            (client as Peerbit)
+                                                .open(parsed, {
+                                                    topic: topic || undefined,
+                                                })
+                                                .then((program) => {
+                                                    res.writeHead(200);
+                                                    res.end(
+                                                        program.address.toString()
+                                                    );
+                                                })
+                                                .catch((error) => {
+                                                    res.writeHead(400);
+                                                    res.end(
+                                                        "Failed to open program: " +
+                                                            error.toString()
+                                                    );
+                                                });
+                                        } catch (error) {
+                                            res.writeHead(400);
+                                            res.end(
+                                                "Invalid base64 program binary"
+                                            );
+                                        }
+                                    }
+                                });
+                                break;
+
+                            default:
+                                r404();
+                                break;
+                        }
                     }
                 } else if (req.url.startsWith(LIBRARY_PATH)) {
                     const url = new URL(req.url, "http://localhost:" + port);
@@ -414,12 +506,12 @@ export const startServer = async (
                     }
                 } else if (req.url.startsWith(IPFS_ID_PATH)) {
                     res.writeHead(200);
-                    res.end((await client.ipfs.id()).id.toString());
+                    res.end((await ipfs.id()).id.toString());
                 } else if (req.url.startsWith(IPFS_ADDRESSES_PATH)) {
                     res.setHeader("Content-Type", "application/json");
                     res.writeHead(200);
-                    const addresses = (await client.ipfs.id()).addresses.map(
-                        (x) => x.toString()
+                    const addresses = (await ipfs.id()).addresses.map((x) =>
+                        x.toString()
                     );
                     res.end(JSON.stringify(addresses));
                 } else {
@@ -501,22 +593,29 @@ export const client = async (
             },
         },
         topic: {
-            put: async (topic: string): Promise<void> => {
+            put: async (topic: string, replicate: boolean): Promise<void> => {
                 throwIfNot200(
-                    await axios.put(endpoint + TOPIC_PATH, topic, {
-                        validateStatus,
-                        headers: await getHeaders(),
-                    })
+                    await axios.put(
+                        endpoint + TOPIC_PATH + "?replicate=" + replicate,
+                        topic,
+                        {
+                            validateStatus,
+                            headers: await getHeaders(),
+                        }
+                    )
                 );
             },
         },
         topics: {
-            get: async (): Promise<string[]> => {
+            get: async (replicate: boolean): Promise<string[]> => {
                 const result = throwIfNot200(
-                    await axios.get(endpoint + TOPICS_PATH, {
-                        validateStatus,
-                        headers: await getHeaders(),
-                    })
+                    await axios.get(
+                        endpoint + TOPICS_PATH + "?replicate=" + replicate,
+                        {
+                            validateStatus,
+                            headers: await getHeaders(),
+                        }
+                    )
                 );
                 return result.data as string[];
             },

@@ -24,6 +24,7 @@ export const cli = async (args?: string[]) => {
             ipfs: "js" | "go";
             disposable: boolean;
             timeout: number;
+            relay: boolean;
         }>({
             command: "start",
             describe: "Start node",
@@ -33,6 +34,11 @@ export const cli = async (args?: string[]) => {
                     type: "string",
                     choices: ["go", "js"],
                     default: "go",
+                },
+                relay: {
+                    describe: "Relay only. No replication functionality",
+                    type: "boolean",
+                    default: false,
                 },
                 disposable: {
                     describe:
@@ -44,9 +50,10 @@ export const cli = async (args?: string[]) => {
                 const controller = await startIpfs(args.ipfs, {
                     module: { disposable: args.disposable },
                 });
-                const peer = await Peerbit.create(controller.api);
+                const peer = args.relay
+                    ? controller.api
+                    : await Peerbit.create(controller.api);
                 const server = await startServer(peer);
-
                 const printNodeInfo = async () => {
                     console.log("Starting node with address(es): ");
                     const id = await (await client()).ipfs.id.get();
@@ -214,13 +221,22 @@ export const cli = async (args?: string[]) => {
         )
         .command("topic", "Manage topics the node is listening to", (yargs) => {
             yargs
-                .command({
+                .command<{ replicate: boolean }>({
                     command: "list",
                     aliases: "ls",
                     describe: "List all topics",
-                    handler: async () => {
+                    builder: (yargs: any) => {
+                        yargs.option("replicate", {
+                            type: "boolean",
+                            describe: "Replicate data on this topic",
+                            alias: "r",
+                            default: false,
+                        });
+                        return yargs;
+                    },
+                    handler: async (args) => {
                         const c = await client();
-                        const topics = await c.topics.get();
+                        const topics = await c.topics.get(args.replicate);
                         if (topics?.length > 0) {
                             console.log("Topic (" + topics.length + "):");
                             for (const t of topics) {
@@ -231,7 +247,7 @@ export const cli = async (args?: string[]) => {
                         }
                     },
                 })
-                .command<{ topic: string }>({
+                .command<{ topic: string; replicate: boolean }>({
                     command: "add <topic>",
                     describe: "add topic",
                     builder: (yargs: any) => {
@@ -240,11 +256,17 @@ export const cli = async (args?: string[]) => {
                             type: "string",
                             demandOption: true,
                         });
+                        yargs.option("replicate", {
+                            type: "boolean",
+                            describe: "Replicate data on this topic",
+                            alias: "r",
+                            default: false,
+                        });
                         return yargs;
                     },
                     handler: async (args) => {
                         const c = await client();
-                        await c.topic.put(args.topic);
+                        await c.topic.put(args.topic, args.replicate);
                         console.log(
                             "Topic: " + args.topic + " is now subscribed to"
                         );
