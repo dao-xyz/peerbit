@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-document",
-    "version": "0.0.131",
+    "version": "0.0.132",
     "description": "Document Store for orbit-db with binary ser/der",
     "type": "module",
     "sideEffects": false,
@@ -33,9 +33,9 @@
     "license": "MIT",
     "dependencies": {
         "@dao-xyz/borsh": "^3.4.4",
-        "@dao-xyz/peerbit-logindex": "^0.0.39",
-        "@dao-xyz/peerbit-rpc": "^0.0.55",
-        "@dao-xyz/peerbit-store": "^0.0.67",
+        "@dao-xyz/peerbit-logindex": "^0.0.40",
+        "@dao-xyz/peerbit-rpc": "^0.0.56",
+        "@dao-xyz/peerbit-store": "^0.0.68",
         "uuid": "^8.3.2"
     },
     "devDependencies": {

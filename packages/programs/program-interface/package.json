@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-program",
-    "version": "0.0.52",
+    "version": "0.0.53",
     "description": "Program interface",
     "type": "module",
     "sideEffects": false,
@@ -34,7 +34,7 @@
     "dependencies": {
         "@dao-xyz/borsh": "^3.4.4",
         "@dao-xyz/peerbit-crypto": "^0.0.19",
-        "@dao-xyz/peerbit-store": "^0.0.67"
+        "@dao-xyz/peerbit-store": "^0.0.68"
     },
     "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
 }
