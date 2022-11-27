@@ -9,6 +9,7 @@ import {
     Ed25519PublicKey,
     X25519Keypair,
     X25519PublicKey,
+    X25519SecretKey,
 } from "@dao-xyz/peerbit-crypto";
 import { RequestV0, ResponseV0, send, respond, RPC, RPCMessage } from "../";
 import { Ed25519Identity } from "@dao-xyz/ipfs-log";
@@ -334,9 +335,7 @@ describe("rpc", () => {
             topic,
             new RequestV0({
                 request: new Uint8Array([0, 1, 2]),
-                responseRecievers: [
-                    await X25519PublicKey.from(requester.publicKey),
-                ],
+                respondTo: await X25519PublicKey.from(requester.publicKey),
             }),
             (resp) => {
                 results.push(resp.response);
@@ -345,14 +344,17 @@ describe("rpc", () => {
                 maxAggregationTime,
                 waitForAmount,
                 signer: requester,
-                keyResolver: async () => {
+                sendKey: await X25519Keypair.from(
+                    new Ed25519Keypair({ ...requester })
+                ),
+                /* keyResolver: async () => {
                     return {
                         index: 0,
                         keypair: await X25519Keypair.from(
                             new Ed25519Keypair({ ...requester })
                         ),
                     };
-                },
+                }, */
                 encryption: {
                     key: () => new Ed25519Keypair({ ...requester }),
                     responders: [

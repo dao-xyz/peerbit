@@ -27,7 +27,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 import { v4 as uuid } from "uuid";
 import { Program } from "@dao-xyz/peerbit-program";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { DocumentIndex } from "../document-index";
 import {
     HeadsMessage,
@@ -112,6 +112,7 @@ describe("index", () => {
                               index: new DocumentIndex({
                                   indexBy: "id",
                               }),
+                              canEdit: true,
                           }),
                       });
             const keypair = await X25519Keypair.create();
@@ -153,10 +154,22 @@ describe("index", () => {
 
         let doc = new Document({
             id: "1",
+            name: "hello",
+            number: 1n,
+        });
+        let docEdit = new Document({
+            id: "1",
             name: "hello world",
             number: 1n,
         });
+
         let doc2 = new Document({
+            id: "2",
+            name: "hello world",
+            number: 4n,
+        });
+
+        let doc2Edit = new Document({
             id: "2",
             name: "hello world",
             number: 2n,
@@ -169,8 +182,13 @@ describe("index", () => {
         });
 
         await writeStore.docs.put(doc);
+        await waitFor(() => writeStore.docs.index.size === 1);
+        await writeStore.docs.put(docEdit);
         await writeStore.docs.put(doc2);
+        await waitFor(() => writeStore.docs.index.size === 2);
+        await writeStore.docs.put(doc2Edit);
         await writeStore.docs.put(doc3);
+        await waitFor(() => writeStore.docs.index.size === 3);
     });
 
     afterEach(async () => {});
@@ -341,9 +359,11 @@ describe("index", () => {
                 }),
                 (r: Results<Document>) => {
                     // dont do anything
+                    const x = 123;
                 },
                 { waitForAmount: 1, sync: true }
             );
+            await delay(5000);
             await waitFor(() => stores[1].docs.index.size === 3);
         });
 
@@ -372,7 +392,13 @@ describe("index", () => {
             it("created before", async () => {
                 let response: Results<Document> = undefined as any;
 
-                const allDocs = writeStore.docs.store.oplog.values;
+                const allDocs = [...writeStore.docs.index._index.values()].sort(
+                    (a, b) =>
+                        Number(
+                            a.entry.metadata.clock.timestamp.wallTime -
+                                b.entry.metadata.clock.timestamp.wallTime
+                        )
+                );
                 await stores[1].docs.index.query(
                     new DocumentQueryRequest({
                         queries: [
@@ -380,7 +406,7 @@ describe("index", () => {
                                 created: [
                                     new U64Compare({
                                         compare: Compare.Less,
-                                        value: allDocs[1].metadata.clock
+                                        value: allDocs[1].entry.metadata.clock
                                             .timestamp.wallTime,
                                     }),
                                 ],
@@ -394,12 +420,21 @@ describe("index", () => {
                 );
                 expect(
                     response.results.map((x) => x.context.head)
-                ).toContainAllValues([allDocs[0].hash]);
+                ).toContainAllValues([
+                    allDocs[0].entry.hash,
+                    allDocs[1].entry.hash,
+                ]); // allDocs[1] is also included because it was edited before allDocs[1].entry.metadata.clock.timestamp.wallTime
             });
             it("created between", async () => {
                 let response: Results<Document> = undefined as any;
 
-                const allDocs = writeStore.docs.store.oplog.values;
+                const allDocs = [...writeStore.docs.index._index.values()].sort(
+                    (a, b) =>
+                        Number(
+                            a.entry.metadata.clock.timestamp.wallTime -
+                                b.entry.metadata.clock.timestamp.wallTime
+                        )
+                );
                 await stores[1].docs.index.query(
                     new DocumentQueryRequest({
                         queries: [
@@ -407,12 +442,12 @@ describe("index", () => {
                                 created: [
                                     new U64Compare({
                                         compare: Compare.Greater,
-                                        value: allDocs[1].metadata.clock
+                                        value: allDocs[1].entry.metadata.clock
                                             .timestamp.wallTime,
                                     }),
                                     new U64Compare({
                                         compare: Compare.LessOrEqual,
-                                        value: allDocs[2].metadata.clock
+                                        value: allDocs[2].entry.metadata.clock
                                             .timestamp.wallTime,
                                     }),
                                 ],
@@ -426,7 +461,7 @@ describe("index", () => {
                 );
                 expect(
                     response.results.map((x) => x.context.head)
-                ).toContainAllValues([allDocs[2].hash]);
+                ).toContainAllValues([allDocs[2].entry.hash]);
             });
 
             it("modified between", async () => {
