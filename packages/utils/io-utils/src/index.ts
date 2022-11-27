@@ -7,32 +7,29 @@ import * as raw from "multiformats/codecs/raw";
 import { sha256 as hasher } from "multiformats/hashes/sha2";
 import { base58btc } from "multiformats/bases/base58";
 import { IPFS } from "ipfs-core-types";
+import type { Message as PubSubMessage } from "@libp2p/interface-pubsub";
+import { waitFor } from "@dao-xyz/peerbit-time";
 
 const mhtype = "sha2-256";
 const defaultBase = base58btc;
 const unsupportedCodecError = () => new Error("unsupported codec");
 
-const cidifyString = (str: any): any => {
-    if (!str) {
-        return str;
-    }
+const BLOCK_TRANSPORT_TOPIC = "_block";
 
-    if (Array.isArray(str)) {
-        return str.map(cidifyString);
+const cidifyString = (str: string): CID => {
+    if (!str) {
+        return str as any as CID; // TODO fix types
     }
 
     return CID.parse(str);
 };
 
-const stringifyCid = (cid: any, options: any = {}): any => {
+const stringifyCid = (cid: any): string => {
     if (!cid || typeof cid === "string") {
         return cid;
     }
 
-    if (Array.isArray(cid)) {
-        return cid.map(stringifyCid);
-    }
-    const base = options.base || defaultBase;
+    const base = defaultBase;
 
     if (cid["/"]) {
         return cid["/"].toString(base);
@@ -52,27 +49,52 @@ const codecMap = {
     "dag-cbor": dagCbor,
 };
 
-async function read(
-    ipfs: IPFS,
-    cid: any,
-    options: { timeout?: number; links?: string[] } = {}
-) {
-    cid = cidifyString(stringifyCid(cid));
+const _onMessage =
+    (ipfs: IPFS, me: string) => async (message: PubSubMessage) => {
+        // TODO dont hardcode timeouts
+        if (message.type === "signed") {
+            if (message.from.toString() === me) {
+                return;
+            }
 
-    const codec = (codecCodes as any)[cid.code];
+            const decoder = new TextDecoder();
 
-    const bytes = await ipfs.block.get(cid, { timeout: options.timeout });
-    const block = await Block.decode({ bytes, codec, hasher });
+            try {
+                const cid = cidifyString(
+                    stringifyCid(decoder.decode(message.data))
+                );
+                const block = await ipfs.block.get(cid as any, {
+                    timeout: 1000,
+                });
+                await ipfs.pubsub.publish(BLOCK_TRANSPORT_TOPIC, block);
+            } catch (error) {
+                return; // timeout o r invalid cid
+            }
+        }
+    };
 
+const announcePubSubBlocks = async (ipfs: IPFS) => {
+    const topics = await ipfs.pubsub.ls();
+    if (topics.indexOf(BLOCK_TRANSPORT_TOPIC) === -1) {
+        await ipfs.pubsub.subscribe(
+            BLOCK_TRANSPORT_TOPIC,
+            _onMessage(ipfs, (await ipfs.id()).id.toString())
+        );
+    }
+};
+
+const getBlockValue = (block: Block.Block<unknown>, links?: string[]): any => {
     if (block.cid.code === dagPb.code) {
         return JSON.parse(new TextDecoder().decode((block.value as any).Data));
     }
     if (block.cid.code === dagCbor.code) {
         const value = block.value as any;
-        const links = options.links || [];
+        links = links || [];
         links.forEach((prop) => {
             if (value[prop]) {
-                value[prop] = stringifyCid(value[prop], options);
+                value[prop] = Array.isArray(value[prop])
+                    ? value[prop].map(stringifyCid)
+                    : stringifyCid(value[prop]);
             }
         });
         return value;
@@ -81,7 +103,116 @@ async function read(
         return block.value;
     }
     throw new Error("Unsupported");
+};
+
+async function readFromPubSub<T>(
+    ipfs: IPFS,
+    cid: string | CID,
+    options: { timeout?: number; links?: string[] } = {}
+): Promise<T | undefined> {
+    const timeout = options.timeout || 5000;
+    const cidString = stringifyCid(cid);
+    const cidObject = cidifyString(cidString);
+    const codec = (codecCodes as any)[cidObject.code];
+    let value: T | undefined = undefined;
+    const me = (await ipfs.id()).id.toString();
+    const messageHandler = async (message: PubSubMessage) => {
+        if (value) {
+            return;
+        }
+        if (message.type === "signed") {
+            if (message.from.toString() === me) {
+                return;
+            }
+
+            const bytes = message.data;
+            try {
+                const decoded = await Block.decode({ bytes, codec, hasher });
+                if (!cidObject.equals(decoded.cid)) {
+                    return;
+                }
+                value = getBlockValue(decoded, options.links);
+            } catch (error) {
+                // invalid bytes like "CBOR decode error: not enough data for type"
+                return;
+            }
+        }
+    };
+    await ipfs.pubsub.subscribe(BLOCK_TRANSPORT_TOPIC, messageHandler, {
+        timeout,
+    });
+    await ipfs.pubsub.publish(
+        BLOCK_TRANSPORT_TOPIC,
+        new TextEncoder().encode(cidString)
+    );
+
+    try {
+        await waitFor(() => value !== undefined, {
+            timeout,
+            delayInterval: 100,
+        });
+    } catch (error) {
+        /// TODO, timeout or?
+    } finally {
+        await ipfs.pubsub.unsubscribe(BLOCK_TRANSPORT_TOPIC, messageHandler);
+    }
+    return value;
 }
+
+async function readFromBlock(
+    ipfs: IPFS,
+    cid: string | CID,
+    options: { timeout?: number; links?: string[] } = {}
+) {
+    cid = cidifyString(stringifyCid(cid));
+    const codec = (codecCodes as any)[cid.code];
+    const bytes = await ipfs.block.get(cid as any, {
+        timeout: options.timeout,
+    });
+    const block = await Block.decode({ bytes, codec, hasher });
+    return getBlockValue(block, options?.links);
+}
+
+async function read(
+    ipfs: IPFS,
+    cid: string | CID,
+    options: { timeout?: number; links?: string[] } = {}
+) {
+    const promises = [
+        readFromPubSub(ipfs, cid, options),
+        readFromBlock(ipfs, cid, options),
+    ];
+    const result = await Promise.any(promises);
+    if (!result) {
+        const results = await Promise.all(promises);
+        for (const result of results) {
+            if (result) {
+                return result;
+            }
+        }
+    }
+    return result;
+}
+
+const prepareBlockWrite = (codec: any, value: any, links?: string[]) => {
+    if (!codec) throw unsupportedCodecError();
+
+    if (codec.code === dagPb.code) {
+        value = typeof value === "string" ? value : JSON.stringify(value);
+        value = { Data: new TextEncoder().encode(value), Links: [] };
+    }
+    if (codec.code === dagCbor.code) {
+        links = links || [];
+        links.forEach((prop) => {
+            if (value[prop]) {
+                value[prop] = Array.isArray(value[prop])
+                    ? value[prop].map(cidifyString)
+                    : cidifyString(value[prop]);
+            }
+        });
+    }
+    return value;
+};
 
 async function write(
     ipfs: IPFS,
@@ -96,21 +227,7 @@ async function write(
     } = {}
 ) {
     const codec = (codecMap as any)[format];
-    if (!codec) throw unsupportedCodecError();
-
-    if (codec.code === dagPb.code) {
-        value = typeof value === "string" ? value : JSON.stringify(value);
-        value = { Data: new TextEncoder().encode(value), Links: [] };
-    }
-    if (codec.code === dagCbor.code) {
-        const links = options.links || [];
-        links.forEach((prop) => {
-            if (value[prop]) {
-                value[prop] = cidifyString(value[prop]);
-            }
-        });
-    }
-
+    value = prepareBlockWrite(codec, value, options?.links);
     const block = await Block.encode({ value, codec, hasher });
 
     if (!options.onlyHash) {
@@ -126,6 +243,9 @@ async function write(
 
     const cid = codec.code === dagPb.code ? block.cid.toV0() : block.cid;
     const cidString = cid.toString(options.base || defaultBase);
+
+    await announcePubSubBlocks(ipfs);
+
     return cidString;
 }
 
@@ -149,5 +269,8 @@ async function rm(ipfs: IPFS, hash: CID | string) {
 export default {
     read,
     write,
+    readFromBlock,
+    readFromPubSub,
     rm,
+    BLOCK_TRANSPORT_TOPIC,
 };

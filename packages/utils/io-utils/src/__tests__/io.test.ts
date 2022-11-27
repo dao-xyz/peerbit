@@ -8,14 +8,17 @@ import {
     testAPIs,
     startIpfs,
     stopIpfs,
+    Session,
+    waitForPeers,
 } from "@dao-xyz/peerbit-test-utils";
 import { IPFS } from "ipfs-core-types";
 import { Controller } from "ipfsd-ctl";
 import { jest } from "@jest/globals";
 import { delay } from "@dao-xyz/peerbit-time";
+import { CID } from "multiformats/cid";
 
 Object.keys(testAPIs).forEach((IPFS) => {
-    describe(`IO tests (${IPFS})`, function () {
+    describe(`encoding (${IPFS})`, function () {
         jest.setTimeout(10000);
 
         let ipfs: IPFS, ipfsd: Controller;
@@ -115,6 +118,37 @@ Object.keys(testAPIs).forEach((IPFS) => {
                     fail();
                 } catch (error) {}
             });
+        });
+    });
+    describe(`pubsub (${IPFS})`, function () {
+        let session: Session;
+        beforeAll(async () => {
+            session = await Session.connected(2);
+        });
+
+        afterAll(async () => {
+            await session.stop();
+        });
+
+        it("rw", async () => {
+            let cid;
+            const data = new Uint8Array([1, 2, 3]);
+            cid = await io.write(session.peers[0].ipfs, "raw", data, {
+                pin: true,
+            });
+            expect(cid).toEqual(
+                "zb2rhWtC5SY6zV1y2SVN119ofpxsbEtpwiqSoK77bWVzHqeWU"
+            );
+            await waitForPeers(
+                session.peers[1].ipfs,
+                [session.peers[0].id],
+                io.BLOCK_TRANSPORT_TOPIC
+            );
+
+            const obj = await io.readFromPubSub(session.peers[1].ipfs, cid, {
+                timeout: 10000,
+            });
+            expect(obj).toEqual(data);
         });
     });
 });

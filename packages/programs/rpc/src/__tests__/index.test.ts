@@ -138,7 +138,7 @@ describe("rpc", () => {
     });
 
     it("timeout", async () => {
-        let maxAggregationTime = 2000;
+        let maxAggregationTime = 5000;
 
         let results: Body[] = [];
         const t0 = +new Date();

@@ -221,7 +221,7 @@ Object.keys(testAPIs).forEach((API) => {
             // check gracefully shut down (with no leak)
             let directConnections = 2;
             const subscriptions = await orbitdb3._ipfs.pubsub.ls();
-            expect(subscriptions.length).toEqual(directConnections + 2 + 1); //+ 1 for 2 replication topic (observer and replicator) + 1 for subcribing to "self" topic
+            expect(subscriptions.length).toEqual(directConnections + 2 + 1 + 1); //+ 1 for 2 replication topic (observer and replicator) + 1 for subcribing to "self" topic + block topic
             for (let i = 0; i < dbCount; i++) {
                 await remoteDatabasesB[i].drop();
                 if (i === dbCount - 1) {
@@ -229,7 +229,7 @@ Object.keys(testAPIs).forEach((API) => {
                     const connections = await orbitdb3._ipfs.pubsub.ls();
 
                     // Direct connection should close because no databases "in common" are open
-                    expect(connections).toHaveLength(0 + 1); // + 1 for subcribing to "self" topic
+                    expect(connections).toHaveLength(0 + 1 + 1); // + 1 for subcribing to "self" topic + "block" topic
                 }
             }
         });
