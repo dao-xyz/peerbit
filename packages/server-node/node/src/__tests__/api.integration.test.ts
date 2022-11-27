@@ -12,7 +12,7 @@ import { jest } from "@jest/globals";
 import { PermissionedString } from "@dao-xyz/peerbit-node-test-lib";
 
 describe("ipfs only", () => {
-    let session: Session, peer: Peerbit, server: http.Server;
+    let session: Session, server: http.Server;
     jest.setTimeout(60 * 1000);
 
     beforeAll(async () => {
