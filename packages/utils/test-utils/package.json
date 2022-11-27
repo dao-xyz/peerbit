@@ -35,7 +35,7 @@
     },
     "devDependencies": {
         "@dao-xyz/peerbit-time": "^0.0.18",
-        "go-ipfs": "^0.15.0",
+        "go-ipfs": "^0.17.0",
         "ipfs": "^0.65.0",
         "ipfsd-ctl": "^12.2.2",
         "wtfnode": "^0.9.1"

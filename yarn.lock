@@ -11104,19 +11104,6 @@ globby@^6.1.0:
     pify "^2.0.0"
     pinkie-promise "^2.0.0"
 
-go-ipfs@^0.15.0:
-  version "0.15.0"
-  resolved "https://registry.yarnpkg.com/go-ipfs/-/go-ipfs-0.15.0.tgz#9bf597e2f35aeb12b1865a1447e8c4b03af5ce8f"
-  integrity sha512-Ischwb8Gs5FSr9cKUPNr6ZY1ukNcZNY0xyMUtbiR08zg4fB4vT6t2c5YMR9TglEfS1FlFpHyV77+RSkexYS/PA==
-  dependencies:
-    cachedir "^2.3.0"
-    got "^11.7.0"
-    gunzip-maybe "^1.4.2"
-    hasha "^5.2.2"
-    pkg-conf "^3.1.0"
-    tar-fs "^2.1.0"
-    unzip-stream "^0.3.0"
-
 go-ipfs@^0.17.0:
   version "0.17.0"
   resolved "https://registry.yarnpkg.com/go-ipfs/-/go-ipfs-0.17.0.tgz#53459ef728f601defc92ac7cdf61248a92d78b93"
@@ -16561,7 +16548,7 @@ pascal-case@^3.1.2:
     no-case "^3.0.4"
     tslib "^2.0.3"
 
-patch-package@^6.4.7:
+patch-package@^6.4.7, patch-package@^6.5.0:
   version "6.5.0"
   resolved "https://registry.yarnpkg.com/patch-package/-/patch-package-6.5.0.tgz#feb058db56f0005da59cfa316488321de585e88a"
   integrity sha512-tC3EqJmo74yKqfsMzELaFwxOAu6FH6t+FzFOsnWAuARm7/n2xB5AOeOueE221eM9gtMuIKMKpF9tBy/X2mNP0Q==
