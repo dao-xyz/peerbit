@@ -22,6 +22,7 @@ import {
 } from "@dao-xyz/peerbit-program";
 import { IPFS } from "ipfs-core-types";
 import { Identity } from "@dao-xyz/ipfs-log";
+import { X25519Keypair } from "@dao-xyz/peerbit-crypto";
 
 export type SearchContext = (() => Address) | AbstractProgram | string;
 
@@ -273,19 +274,22 @@ export class RPC<Q, R> extends ComposableProgram {
         }
     }
 
-    public send(
+    public async send(
         request: Q,
         responseHandler: (response: R, from?: PublicSignKey) => void,
         options?: RPCOptions
     ): Promise<void> {
         logger.debug("querying topic: " + this.rpcTopic);
+        // We are generatinga new encryption keypair for each send, so we now that when we get the responses, they are encrypted specifcally for me, and for this request
+        // this allows us to easily disregard a bunch of message just beacuse they are for a different reciever!
+        const keypair = options?.sendKey || (await X25519Keypair.create());
         const r = new RequestV0({
             request:
                 (this._requestType as any) === Uint8Array
                     ? (request as Uint8Array)
                     : serialize(request),
-            responseRecievers: options?.responseRecievers,
             context: options?.context || this.contextAddress.toString(),
+            respondTo: keypair.publicKey,
         });
         return send(
             this._ipfs,
@@ -298,7 +302,7 @@ export class RPC<Q, R> extends ComposableProgram {
                     from
                 );
             },
-            options
+            { ...options, sendKey: keypair }
         );
     }
 

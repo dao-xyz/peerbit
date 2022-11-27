@@ -182,10 +182,13 @@ describe("index", () => {
         });
 
         await writeStore.docs.put(doc);
+        await waitFor(() => writeStore.docs.index.size === 1);
         await writeStore.docs.put(docEdit);
         await writeStore.docs.put(doc2);
+        await waitFor(() => writeStore.docs.index.size === 2);
         await writeStore.docs.put(doc2Edit);
         await writeStore.docs.put(doc3);
+        await waitFor(() => writeStore.docs.index.size === 3);
     });
 
     afterEach(async () => {});

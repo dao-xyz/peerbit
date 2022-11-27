@@ -20,11 +20,13 @@ export interface PublicKeyEncryptionResolver {
     getEncryptionKeypair: GetEncryptionKeypair;
     getAnyKeypair: GetAnyKeypair;
 }
-export type GetAnyKeypair = (
-    publicKey: (X25519PublicKey | Ed25519PublicKey)[]
-) => Promise<
-    { index: number; keypair: X25519Keypair | Ed25519Keypair } | undefined
->;
+export type GetAnyKeypair =
+    | ((
+          publicKey: (X25519PublicKey | Ed25519PublicKey)[]
+      ) => Promise<
+          { index: number; keypair: X25519Keypair | Ed25519Keypair } | undefined
+      >)
+    | X25519Keypair;
 export type GetEncryptionKeypair =
     | (() =>
           | Promise<X25519Keypair | Ed25519Keypair>
@@ -305,9 +307,24 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
         await sodium.ready;
 
         // We only need to open with one of the keys
-        const key = await keyResolver(
-            this._envelope._ks.map((k) => k._recieverPublicKey)
-        );
+        let key:
+            | { index: number; keypair: X25519Keypair | Ed25519Keypair }
+            | undefined;
+        if (keyResolver instanceof X25519Keypair) {
+            for (const [i, k] of this._envelope._ks.entries()) {
+                if (k._recieverPublicKey.equals(keyResolver.publicKey)) {
+                    key = {
+                        index: i,
+                        keypair: keyResolver,
+                    };
+                }
+            }
+        } else {
+            key = await keyResolver(
+                this._envelope._ks.map((k) => k._recieverPublicKey)
+            );
+        }
+
         if (key) {
             const k = this._envelope._ks[key.index];
             let secretKey: X25519SecretKey = undefined as any;

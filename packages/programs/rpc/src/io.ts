@@ -21,7 +21,8 @@ import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 export const logger = loggerFn({ module: "rpc" });
 export type RPCOptions = {
     signer?: Identity;
-    keyResolver?: GetAnyKeypair;
+    // keyResolver?: GetAnyKeypair;
+    sendKey?: X25519Keypair;
     encryption?: {
         key: GetEncryptionKeypair;
         responders?: (X25519PublicKey | Ed25519PublicKey)[];
@@ -53,7 +54,7 @@ export const send = async (
             const { result, from } = await decryptVerifyInto(
                 msg.data,
                 RPCMessage,
-                options.keyResolver || (() => Promise.resolve(undefined)),
+                options.sendKey || (() => Promise.resolve(undefined)),
                 {
                     isTrusted: options?.isTrusted,
                 }
@@ -176,10 +177,11 @@ export const respond = async (
     });
     let maybeEncryptedMessage: MaybeEncrypted<MaybeSigned<Uint8Array>> =
         decryptedMessage;
-    if (request.responseRecievers?.length > 0) {
+
+    if (request.respondTo) {
         maybeEncryptedMessage = await decryptedMessage.encrypt(
             options.encryption.getEncryptionKeypair,
-            ...request.responseRecievers
+            request.respondTo
         );
     }
     await ipfs.pubsub.publish(responseTopic, serialize(maybeEncryptedMessage));
