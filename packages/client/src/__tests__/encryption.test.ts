@@ -1,5 +1,4 @@
 import assert from "assert";
-import rmrf from "rimraf";
 import { Entry } from "@dao-xyz/ipfs-log";
 import { getReplicationTopic, Peerbit } from "../peer";
 import { Operation } from "./utils/stores/event-store";
@@ -8,7 +7,7 @@ import { AccessError } from "@dao-xyz/peerbit-crypto";
 import { v4 as uuid } from "uuid";
 import { jest } from "@jest/globals";
 import { KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 
 // Include test utilities
 import {

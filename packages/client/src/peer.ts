@@ -155,6 +155,7 @@ export class Peerbit {
     _ipfs: IPFS;
     _directConnections: Map<string, SharedChannel<DirectChannel>>;
     _topicSubscriptions: Map<string, SharedChannel<SharedIPFSChannel>>;
+
     identity: Identity;
     id: PeerId;
     directory: string;
@@ -175,11 +176,7 @@ export class Peerbit {
         string,
         KeyWithMeta<Ed25519Keypair | X25519Keypair>[] | null
     > = new LRU({ max: 100, ttl: 10000 });
-    /*  _peerInfoLRU: Map<string, PeerInfoWithMeta> = new Map();  */ // LRU = new LRU({ max: 1000, ttl:  EMIT_HEALTHCHECK_INTERVAL * 4 });
-    _supportedHashesLRU: LRUCounter = new LRUCounter(new LRU({ ttl: 60000 }));
-    _peerInfoResponseCounter: LRUCounter = new LRUCounter(
-        new LRU({ ttl: 100000 })
-    );
+
     _canOpenProgram: (
         address: string,
         topic?: string,
@@ -244,10 +241,6 @@ export class Peerbit {
             this._waitForKeysTimeout = options.waitForKeysTimout;
         }
         this._openProgramQueue = new PQueue({ concurrency: 1 });
-        this._ipfs.pubsub.subscribe(
-            DirectChannel.getTopic([this.id.toString()]),
-            this._onMessage.bind(this)
-        );
 
         this._topicSubscriptions = new Map();
     }
@@ -262,68 +255,6 @@ export class Peerbit {
 
     get encryption(): PublicKeyEncryptionResolver {
         return encryptionWithRequestKey(this.identity, this.keystore);
-    }
-
-    async requestAndWaitForKeys<T extends Ed25519Keypair | X25519Keypair>(
-        topic: string,
-        address: string,
-        condition: RequestKeyCondition
-    ): Promise<KeyWithMeta<T>[] | undefined> {
-        if (!this._getNetwork(address)) {
-            return;
-        }
-        const promiseKey = condition.hashcode;
-        const existingPromise = this._keysInflightMap.get(promiseKey);
-        if (existingPromise) {
-            return existingPromise;
-        }
-
-        const lruCache = this._keyRequestsLRU.get(promiseKey);
-        if (lruCache !== undefined) {
-            return lruCache as KeyWithMeta<T>[];
-        }
-
-        const promise = new Promise<KeyWithMeta<T>[] | undefined>(
-            (resolve, reject) => {
-                const send = (message: Uint8Array) =>
-                    this._ipfs.pubsub.publish(
-                        getReplicationTopic(topic),
-                        message
-                    );
-                requestAndWaitForKeys(
-                    condition,
-                    send,
-                    this.keystore,
-                    this.identity,
-                    this._waitForKeysTimeout
-                )
-                    .then((results) => {
-                        if (results && results?.length > 0) {
-                            resolve(results as KeyWithMeta<T>[] | undefined); // TODO fix type safety
-                        } else {
-                            resolve(undefined);
-                        }
-                    })
-                    .catch((error) => {
-                        reject(error);
-                    });
-            }
-        );
-        this._keysInflightMap.set(promiseKey, promise);
-
-        try {
-            const result = await promise;
-            this._keyRequestsLRU.set(promiseKey, result ? result : null);
-            this._keysInflightMap.delete(promiseKey);
-            return result;
-        } catch (error) {
-            if (error instanceof StoreError) {
-                if (this._disconnected) {
-                    return undefined;
-                }
-            }
-            throw error;
-        }
     }
 
     async decryptedSignedThing(
@@ -357,31 +288,6 @@ export class Peerbit {
         return new DecryptedThing<MaybeSigned<Uint8Array>>({
             data: serialize(signedMessage),
         }).encrypt(this.encryption.getEncryptionKeypair, reciever);
-    }
-
-    async getEncryptionKey(
-        topic: string,
-        address: string
-    ): Promise<KeyWithMeta<Ed25519Keypair | X25519Keypair> | undefined> {
-        // v0 take some recent
-        const keys = await this.keystore.getKeys<
-            Ed25519Keypair | X25519Keypair
-        >(address);
-        let key = keys?.[0];
-        if (!key) {
-            const keys = this._waitForKeysTimeout
-                ? await this.requestAndWaitForKeys(
-                      topic,
-                      address,
-                      new RequestKeysByAddress({
-                          address,
-                          type: "encryption",
-                      })
-                  )
-                : undefined;
-            key = keys ? keys[0] : undefined;
-        }
-        return key;
     }
 
     static async create(ipfs: IPFS, options: CreateInstanceOptions = {}) {
@@ -463,9 +369,6 @@ export class Peerbit {
             await channel.close();
         }
 
-        await this._ipfs.pubsub.unsubscribe(
-            DirectChannel.getTopic([this.id.toString()])
-        );
         const removeDirectConnect = (value: any, e: string) => {
             this._directConnections.get(e)?.close();
             this._directConnections.delete(e);
@@ -853,7 +756,7 @@ export class Peerbit {
 
                 const send = (data: Uint8Array) =>
                     this._ipfs.pubsub.publish(
-                        DirectChannel.getTopic([peer.toString()]),
+                        message.topic, // DirectChannel.getTopic([peer.toString()]),
                         data
                     );
                 await exchangeKeys(
@@ -920,7 +823,7 @@ export class Peerbit {
                             // Because we dont know anything about whom are to store data, so we assume all peers might have responsibility
                             const send = (data: Uint8Array) =>
                                 this._ipfs.pubsub.publish(
-                                    DirectChannel.getTopic([peer.toString()]),
+                                    getObserverTopic(topic), // DirectChannel.getTopic([peer.toString()]),
                                     data
                                 );
                             await exchangeHeads(
@@ -1721,6 +1624,93 @@ export class Peerbit {
         const addr = id;
         const data = await cache.get(path.join(addr, "_manifest"));
         return data !== undefined && data !== null;
+    }
+
+    async requestAndWaitForKeys<T extends Ed25519Keypair | X25519Keypair>(
+        topic: string,
+        address: string,
+        condition: RequestKeyCondition
+    ): Promise<KeyWithMeta<T>[] | undefined> {
+        if (!this._getNetwork(address)) {
+            return;
+        }
+        const promiseKey = condition.hashcode;
+        const existingPromise = this._keysInflightMap.get(promiseKey);
+        if (existingPromise) {
+            return existingPromise;
+        }
+
+        const lruCache = this._keyRequestsLRU.get(promiseKey);
+        if (lruCache !== undefined) {
+            return lruCache as KeyWithMeta<T>[];
+        }
+
+        const promise = new Promise<KeyWithMeta<T>[] | undefined>(
+            (resolve, reject) => {
+                const send = (message: Uint8Array) =>
+                    this._ipfs.pubsub.publish(
+                        getReplicationTopic(topic),
+                        message
+                    );
+                requestAndWaitForKeys(
+                    condition,
+                    send,
+                    this.keystore,
+                    this.identity,
+                    this._waitForKeysTimeout
+                )
+                    .then((results) => {
+                        if (results && results?.length > 0) {
+                            resolve(results as KeyWithMeta<T>[] | undefined); // TODO fix type safety
+                        } else {
+                            resolve(undefined);
+                        }
+                    })
+                    .catch((error) => {
+                        reject(error);
+                    });
+            }
+        );
+        this._keysInflightMap.set(promiseKey, promise);
+
+        try {
+            const result = await promise;
+            this._keyRequestsLRU.set(promiseKey, result ? result : null);
+            this._keysInflightMap.delete(promiseKey);
+            return result;
+        } catch (error) {
+            if (error instanceof StoreError) {
+                if (this._disconnected) {
+                    return undefined;
+                }
+            }
+            throw error;
+        }
+    }
+
+    async getEncryptionKey(
+        topic: string,
+        address: string
+    ): Promise<KeyWithMeta<Ed25519Keypair | X25519Keypair> | undefined> {
+        // v0 take some recent
+        const keys = await this.keystore.getKeys<
+            Ed25519Keypair | X25519Keypair
+        >(address);
+        let key = keys?.[0];
+        if (!key) {
+            const keys = this._waitForKeysTimeout
+                ? await this.requestAndWaitForKeys(
+                      topic,
+                      address,
+                      new RequestKeysByAddress({
+                          address,
+                          type: "encryption",
+                      })
+                  )
+                : undefined;
+            key = keys ? keys[0] : undefined;
+        }
+        return key;
     }
 }
 const areWeTestingWithJest = (): boolean => {
