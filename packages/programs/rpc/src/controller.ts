@@ -1,6 +1,7 @@
 import {
     AbstractType,
     BinaryWriter,
+    BorshError,
     Constructor,
     deserialize,
     field,
@@ -257,9 +258,15 @@ export class RPC<Q, R> extends ComposableProgram {
                     return;
                 }
             } catch (error: any) {
-                if (error instanceof AccessError) {
+                if (error instanceof BorshError) {
+                    logger.debug("Got message for a different namespace");
                     return;
                 }
+                if (error instanceof AccessError) {
+                    logger.debug("Got message I could not decrypt");
+                    return;
+                }
+
                 logger.error(
                     "Error handling query: " +
                         (error?.message ? error?.message?.toString() : error)
