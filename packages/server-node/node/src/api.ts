@@ -603,22 +603,13 @@ export const startServer = async (
     server.on("error", (e) => {
         console.log("Server error: " + e);
         import("fs").then((fs) => {
-            fs.writeFile("error.log", JSON.stringify(err), function () {
+            fs.writeFile("error.log", JSON.stringify(e), function () {
                 /* void */
             });
         });
     });
-    server.on("close", (code, signal) => {
+    server.on("close", () => {
         console.log("Exit server");
-        import("fs").then((fs) => {
-            fs.writeFile(
-                "exit.log",
-                "code=" + code + " signal=" + signal,
-                function () {
-                    /* void */
-                }
-            );
-        });
     });
 
     console.log("API available at port", port);
