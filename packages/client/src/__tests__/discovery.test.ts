@@ -1,8 +1,6 @@
 //
 import rmrf from "rimraf";
-
 import { Peerbit } from "../peer";
-
 import { jest } from "@jest/globals";
 
 // Include test utilities

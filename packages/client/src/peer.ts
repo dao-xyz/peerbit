@@ -377,11 +377,6 @@ export class Peerbit {
         // Close all direct connections to peers
         this._directConnections.forEach(removeDirectConnect);
 
-        // Disconnect from pubsub
-        /*   if (this._pubsub) {
-        await this._ipfs.pubsub.disconnect()
-      } */
-
         // close keystore
         await this.keystore.close();
 
@@ -703,10 +698,6 @@ export class Peerbit {
                     return;
                 }
 
-                /*    if (!await checkTrustedSender(message.address, false)) { TODO, how to make this DDOS resistant?
-             return;
-           }
-    */
                 msg.info.forEach(async (info) => {
                     if (info.id === this.id.toString()) {
                         return;
@@ -1118,11 +1109,6 @@ export class Peerbit {
         this.programs.get(topic)?.set(programAddress, p);
         return p;
     }
-
-    /* _getPeersLRU: LRU<string, Promise<PeerInfoWithMeta[]>> = new LRU({
-        max: 500,
-        ttl: WAIT_FOR_PEERS_TIME,
-    }); */
 
     getReplicatorsOnTopic(topic: string): string[] {
         return (

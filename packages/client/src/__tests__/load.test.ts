@@ -4,7 +4,6 @@ import { Address } from "@dao-xyz/peerbit-program";
 import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store.js";
 import { jest } from "@jest/globals";
-// @ts-ignore
 import { v4 as uuid } from "uuid";
 
 // Include test utilities

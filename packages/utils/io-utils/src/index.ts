@@ -83,7 +83,7 @@ const announcePubSubBlocks = async (ipfs: IPFS) => {
     }
 };
 
-const getBlockValue = (block: Block.Block<unknown>, links?: string[]): any => {
+const getBlockValue = (block: any, links?: string[]): any => {
     if (block.cid.code === dagPb.code) {
         return JSON.parse(new TextDecoder().decode((block.value as any).Data));
     }

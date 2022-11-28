@@ -520,10 +520,6 @@ export class Entry<T>
 
         let clock: Clock | undefined = properties.clock;
         if (!clock) {
-            /*  const newTime =
-                 nexts?.length > 0
-                     ? nexts.reduce(maxClockTimeReducer, new HLC().now())
-                     : new HLC().now(); */
             const hlc = new HLC();
             nexts.forEach((next) => {
                 hlc.update(next.metadata.clock.timestamp);
@@ -592,7 +588,7 @@ export class Entry<T>
                     else if (
                         /*   maxChainLength < n.maxChainLength ||
                           maxClock < n.clock.logical ||
-                          (maxClock == n.clock.logical && n.gid < gid) */ // Longest chain
+                          (maxClock == n.clock.logical && n.gid < gid) */ // Longest chain?
                         Timestamp.compare(
                             n.metadata.clock.timestamp,
                             maxClock

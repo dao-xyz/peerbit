@@ -20,7 +20,7 @@ import {
     createStore,
 } from "@dao-xyz/peerbit-test-utils";
 import { Program } from "@dao-xyz/peerbit-program";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 
 const dbPath = path.join("./peerbit", "tests", "create-open");
 
