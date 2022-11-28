@@ -122,10 +122,6 @@ console.log(await document.string.toString({remote: {maxAggregationTime: 3000 }}
 
 ```
 
-### Social media app
-A (under work) [social media application is developed by dao.xyz](https://github.com/dao-xyz/dao.xyz).
-
-
 ## [Peerbit](./packages/client)
 The peer client
 - Open/close programs (databases)
