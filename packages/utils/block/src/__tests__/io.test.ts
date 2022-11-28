@@ -14,8 +14,6 @@ import {
 import { IPFS } from "ipfs-core-types";
 import { Controller } from "ipfsd-ctl";
 import { jest } from "@jest/globals";
-import { delay } from "@dao-xyz/peerbit-time";
-import { CID } from "multiformats/cid";
 
 Object.keys(testAPIs).forEach((IPFS) => {
     describe(`encoding (${IPFS})`, function () {
@@ -101,7 +99,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 try {
                     await io.read(ipfs, cid1, { timeout: 3000 });
                     fail();
-                } catch (error) {}
+                } catch (error) { }
             });
 
             it("unpinned", async () => {
@@ -116,7 +114,7 @@ Object.keys(testAPIs).forEach((IPFS) => {
                 try {
                     await io.read(ipfs, cid1, { timeout: 3000 });
                     fail();
-                } catch (error) {}
+                } catch (error) { }
             });
         });
     });

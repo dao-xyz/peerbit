@@ -19,7 +19,7 @@
         "packages/programs/data/document",
         "packages/programs/data/string",
         "packages/store",
-        "packages/utils/io-utils",
+        "packages/utils/block",
         "packages/utils/test-utils",
         "packages/utils/cache",
         "packages/utils/borsh-utils",

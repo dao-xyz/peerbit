@@ -5,7 +5,7 @@ import { IInitializationOptions, Store } from "@dao-xyz/peerbit-store";
 import { v4 as uuid } from "uuid";
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { getValuesWithType } from "./utils.js";
-import io from "@dao-xyz/peerbit-io-utils";
+import io from "@dao-xyz/peerbit-block";
 import {
     serialize,
     deserialize,
@@ -406,8 +406,7 @@ export interface CanOpenSubPrograms {
 @variant(0)
 export abstract class Program
     extends AbstractProgram
-    implements Addressable, Saveable
-{
+    implements Addressable, Saveable {
     @field({ type: "string" })
     id: string;
 
@@ -530,4 +529,4 @@ export abstract class Program
  * Building block, but not something you use as a standalone
  */
 @variant(1)
-export abstract class ComposableProgram extends AbstractProgram {}
+export abstract class ComposableProgram extends AbstractProgram { }

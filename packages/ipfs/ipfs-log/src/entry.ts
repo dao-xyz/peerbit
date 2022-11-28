@@ -9,8 +9,8 @@ import {
     vec,
     fixedArray,
 } from "@dao-xyz/borsh";
-import io from "@dao-xyz/peerbit-io-utils";
-import { IPFS } from "ipfs-core-types";
+import { Libp2p } from 'libp2p'
+import io from "@dao-xyz/peerbit-block";
 import {
     arraysCompare,
     arraysEqual,
@@ -180,12 +180,12 @@ export class Signatures {
 @variant(0)
 export class Entry<T>
     implements
-        EntryEncryptionTemplate<
-            Metadata,
-            Payload<T>,
-            SignatureWithKey[],
-            Array<string>
-        >
+    EntryEncryptionTemplate<
+        Metadata,
+        Payload<T>,
+        SignatureWithKey[],
+        Array<string>
+    >
 {
     @field({ type: MaybeEncrypted })
     _metadata: MaybeEncrypted<Metadata>;
@@ -237,9 +237,9 @@ export class Entry<T>
     init(
         props:
             | {
-                  encryption?: PublicKeyEncryptionResolver;
-                  encoding: Encoding<T>;
-              }
+                encryption?: PublicKeyEncryptionResolver;
+                encoding: Encoding<T>;
+            }
             | Entry<T>
     ): Entry<T> {
         const encryption =
@@ -264,7 +264,7 @@ export class Entry<T>
     async getMetadata(): Promise<Metadata> {
         await this._metadata.decrypt(
             this._encryption?.getAnyKeypair ||
-                (() => Promise.resolve(undefined))
+            (() => Promise.resolve(undefined))
         );
         return this.metadata;
     }
@@ -296,7 +296,7 @@ export class Entry<T>
     async getPayload(): Promise<Payload<T>> {
         await this._payload.decrypt(
             this._encryption?.getAnyKeypair ||
-                (() => Promise.resolve(undefined))
+            (() => Promise.resolve(undefined))
         );
         return this.payload;
     }
@@ -322,7 +322,7 @@ export class Entry<T>
     async getNext(): Promise<string[]> {
         await this._next.decrypt(
             this._encryption?.getAnyKeypair ||
-                (() => Promise.resolve(undefined))
+            (() => Promise.resolve(undefined))
         );
         return this.next;
     }
@@ -355,7 +355,7 @@ export class Entry<T>
             this._signatures!.signatures.map((x) =>
                 x.decrypt(
                     this._encryption?.getAnyKeypair ||
-                        (() => Promise.resolve(undefined))
+                    (() => Promise.resolve(undefined))
                 )
             )
         );
@@ -433,11 +433,11 @@ export class Entry<T>
         ); // dont compare hashes because the hash is a function of the other properties
     }
 
-    async delete(ipfs: IPFS): Promise<void> {
+    async delete(libp2p: Libp2p): Promise<void> {
         if (!this.hash) {
             throw new Error("Missing hash");
         }
-        await io.rm(ipfs, this.hash);
+        await io.rm(libp2p, this.hash);
     }
 
     static async createGid(seed?: string): Promise<string> {
@@ -451,7 +451,7 @@ export class Entry<T>
     }
 
     static async create<T>(properties: {
-        ipfs: IPFS;
+        ipfs: Libp2p;
         gid?: string;
         gidSeed?: string;
         data: T;
@@ -553,9 +553,9 @@ export class Entry<T>
                 ) {
                     throw new Error(
                         "Expecting next(s) to happen before entry, got: " +
-                            n.metadata.clock.timestamp +
-                            " > " +
-                            cv.timestamp
+                        n.metadata.clock.timestamp +
+                        " > " +
+                        cv.timestamp
                     );
                 }
             });
@@ -676,8 +676,8 @@ export class Entry<T>
             const encryption = encryptAllSignaturesWithSameKey
                 ? properties.encryption?.reciever?.signatures
                 : properties.encryption?.reciever?.signatures?.[
-                      signature.publicKey.hashCode()
-                  ];
+                signature.publicKey.hashCode()
+                ];
             const signatureEncrypted = await maybeEncrypt(
                 signature,
                 encryption
@@ -719,8 +719,8 @@ export class Entry<T>
      * // "Qm...Foo"
      * @deprecated
      */
-    static async toMultihash<T>(ipfs: IPFS, entry: Entry<T>, pin = false) {
-        if (!ipfs) throw IpfsNotDefinedError();
+    static async toMultihash<T>(libp2p: Libp2p, entry: Entry<T>, pin = false) {
+        if (!libp2p) throw IpfsNotDefinedError();
 
         if (entry.hash) {
             throw new Error("Expected hash to be missing");

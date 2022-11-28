@@ -28,8 +28,11 @@ import { browserConfig, factoryConfig, nodeConfig } from "./config.js";
 import { startIpfs } from "./start-ipfs.js";
 import { MemStore } from "./mem-store.js";
 export { createStore } from "./storage.js";
+import { LSession } from "./libp2p.js";
+
 export {
     MemStore,
+    LSession,
     connectPeers,
     getIpfsPeerId,
     startIpfs,

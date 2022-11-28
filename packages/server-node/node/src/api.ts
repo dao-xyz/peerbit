@@ -8,7 +8,7 @@ import { multiaddr } from "@multiformats/multiaddr";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { v4 as uuid } from "uuid";
 import { IPFS } from "ipfs-core-types";
-import io from "@dao-xyz/peerbit-io-utils";
+import io from "@dao-xyz/peerbit-block";
 
 export const LOCAL_PORT = 8082;
 export const SSL_PORT = 9002;
@@ -46,7 +46,7 @@ const getCredentialsPath = async (configDir: string): Promise<string> => {
     return path.join(configDir, "credentials");
 };
 
-class NotFoundError extends Error {}
+class NotFoundError extends Error { }
 
 export const checkExistPath = async (path: string) => {
     const fs = await import("fs");
@@ -71,8 +71,8 @@ export const createPassword = async (ipfsId: string): Promise<string> => {
     if (await checkExistPath(credentialsPath)) {
         throw new Error(
             "Config path for credentials: " +
-                credentialsPath +
-                ", already exist"
+            credentialsPath +
+            ", already exist"
         );
     }
     console.log(`Creating config folder ${configDir}`);
@@ -311,7 +311,7 @@ export const startServer = async (
                                             res.writeHead(400);
                                             res.end(
                                                 "Invalid topic: " +
-                                                    JSON.stringify(topic)
+                                                JSON.stringify(topic)
                                             );
                                         } else if (!replicate) {
                                             ipfs.pubsub
@@ -417,7 +417,7 @@ export const startServer = async (
                                                         res.writeHead(400);
                                                         res.end(
                                                             "Failed to open program: " +
-                                                                error.toString()
+                                                            error.toString()
                                                         );
                                                     });
                                             } catch (error) {
@@ -550,8 +550,8 @@ export const startServer = async (
                                                                         "string"
                                                                         ? error.message
                                                                         : JSON.stringify(
-                                                                              error.message
-                                                                          )
+                                                                            error.message
+                                                                        )
                                                                 );
                                                             }
                                                         );
@@ -714,9 +714,9 @@ export const client = async (
                 const result = getBodyByStatus<string, any>(
                     await axios.get(
                         endpoint +
-                            PROGRAM_PATH +
-                            "/" +
-                            encodeURIComponent(address.toString()),
+                        PROGRAM_PATH +
+                        "/" +
+                        encodeURIComponent(address.toString()),
                         { validateStatus, headers: await getHeaders() }
                     )
                 );
@@ -741,8 +741,8 @@ export const client = async (
                 const resp = throwIfNot200(
                     await axios.put(
                         endpoint +
-                            PROGRAM_PATH +
-                            (topic ? "?topic=" + topic : ""),
+                        PROGRAM_PATH +
+                        (topic ? "?topic=" + topic : ""),
                         base64,
                         { validateStatus, headers: await getHeaders() }
                     )
@@ -770,17 +770,17 @@ export const client = async (
                     const result = getBodyByStatus(
                         await axios.get(
                             endpoint +
-                                NETWORK_PEERS_PATH +
-                                "/" +
-                                encodeURIComponent(address.toString()),
+                            NETWORK_PEERS_PATH +
+                            "/" +
+                            encodeURIComponent(address.toString()),
                             { validateStatus, headers: await getHeaders() }
                         )
                     );
                     return !result
                         ? undefined
                         : (result as string[]).map((r) =>
-                              deserialize(fromBase64(r), IdentityRelation)
-                          );
+                            deserialize(fromBase64(r), IdentityRelation)
+                        );
                 },
             },
             peer: {
@@ -792,9 +792,9 @@ export const client = async (
                     const resp = throwIfNot200(
                         await axios.put(
                             endpoint +
-                                NETWORK_PEER_PATH +
-                                "/" +
-                                encodeURIComponent(address.toString()),
+                            NETWORK_PEER_PATH +
+                            "/" +
+                            encodeURIComponent(address.toString()),
                             base64,
                             { validateStatus, headers: await getHeaders() }
                         )

@@ -35,7 +35,7 @@
         "@dao-xyz/ipfs-pubsub-peer-monitor": "^0.0.15",
         "@dao-xyz/peerbit-cache": "^0.4.23",
         "@dao-xyz/peerbit-crypto": "^0.0.20",
-        "@dao-xyz/peerbit-io-utils": "^1.1.15",
+        "@dao-xyz/peerbit-block": "^1.1.15",
         "@dao-xyz/peerbit-keystore": "^0.0.31",
         "@dao-xyz/peerbit-logger": "^0.0.3",
         "@dao-xyz/peerbit-program": "^0.0.54",

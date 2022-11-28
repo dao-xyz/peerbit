@@ -6,14 +6,11 @@ import * as dagCbor from "@ipld/dag-cbor";
 import * as raw from "multiformats/codecs/raw";
 import { sha256 as hasher } from "multiformats/hashes/sha2";
 import { base58btc } from "multiformats/bases/base58";
-import { IPFS } from "ipfs-core-types";
-import type { Message as PubSubMessage } from "@libp2p/interface-pubsub";
 import { waitFor } from "@dao-xyz/peerbit-time";
+import { Libp2p } from 'libp2p'
 
-const mhtype = "sha2-256";
 const defaultBase = base58btc;
 const unsupportedCodecError = () => new Error("unsupported codec");
-
 const BLOCK_TRANSPORT_TOPIC = "_block";
 
 const cidifyString = (str: string): CID => {
@@ -49,39 +46,6 @@ const codecMap = {
     "dag-cbor": dagCbor,
 };
 
-const _onMessage =
-    (ipfs: IPFS, me: string) => async (message: PubSubMessage) => {
-        // TODO dont hardcode timeouts
-        if (message.type === "signed") {
-            if (message.from.toString() === me) {
-                return;
-            }
-
-            const decoder = new TextDecoder();
-
-            try {
-                const cid = cidifyString(
-                    stringifyCid(decoder.decode(message.data))
-                );
-                const block = await ipfs.block.get(cid as any, {
-                    timeout: 1000,
-                });
-                await ipfs.pubsub.publish(BLOCK_TRANSPORT_TOPIC, block);
-            } catch (error) {
-                return; // timeout o r invalid cid
-            }
-        }
-    };
-
-const announcePubSubBlocks = async (ipfs: IPFS) => {
-    const topics = await ipfs.pubsub.ls();
-    if (topics.indexOf(BLOCK_TRANSPORT_TOPIC) === -1) {
-        await ipfs.pubsub.subscribe(
-            BLOCK_TRANSPORT_TOPIC,
-            _onMessage(ipfs, (await ipfs.id()).id.toString())
-        );
-    }
-};
 
 const getBlockValue = (block: Block.Block<unknown>, links?: string[]): any => {
     if (block.cid.code === dagPb.code) {
@@ -106,7 +70,7 @@ const getBlockValue = (block: Block.Block<unknown>, links?: string[]): any => {
 };
 
 async function readFromPubSub<T>(
-    ipfs: IPFS,
+    libp2p: Libp2p,
     cid: string | CID,
     options: { timeout?: number; links?: string[] } = {}
 ): Promise<T | undefined> {
@@ -115,13 +79,14 @@ async function readFromPubSub<T>(
     const cidObject = cidifyString(cidString);
     const codec = (codecCodes as any)[cidObject.code];
     let value: T | undefined = undefined;
-    const me = (await ipfs.id()).id.toString();
-    const messageHandler = async (message: PubSubMessage) => {
+    // await libp2p.pubsub.subscribe(BLOCK_TRANSPORT_TOPIC) TODO
+    const eventHandler = async (evt) => {
         if (value) {
             return;
         }
+        const message = evt.detail;
         if (message.type === "signed") {
-            if (message.from.toString() === me) {
+            if (message.from.equals(libp2p.peerId)) {
                 return;
             }
 
@@ -137,11 +102,9 @@ async function readFromPubSub<T>(
                 return;
             }
         }
-    };
-    await ipfs.pubsub.subscribe(BLOCK_TRANSPORT_TOPIC, messageHandler, {
-        timeout,
-    });
-    await ipfs.pubsub.publish(
+    }
+    libp2p.pubsub.addEventListener('message', eventHandler);
+    await libp2p.pubsub.publish(
         BLOCK_TRANSPORT_TOPIC,
         new TextEncoder().encode(cidString)
     );
@@ -154,33 +117,20 @@ async function readFromPubSub<T>(
     } catch (error) {
         /// TODO, timeout or?
     } finally {
-        await ipfs.pubsub.unsubscribe(BLOCK_TRANSPORT_TOPIC, messageHandler);
+        await libp2p.pubsub.removeEventListener('message', eventHandler);
     }
     return value;
 }
 
-async function readFromBlock(
-    ipfs: IPFS,
-    cid: string | CID,
-    options: { timeout?: number; links?: string[] } = {}
-) {
-    cid = cidifyString(stringifyCid(cid));
-    const codec = (codecCodes as any)[cid.code];
-    const bytes = await ipfs.block.get(cid as any, {
-        timeout: options.timeout,
-    });
-    const block = await Block.decode({ bytes, codec, hasher });
-    return getBlockValue(block, options?.links);
-}
 
 async function read(
-    ipfs: IPFS,
+    libp2p: Libp2p,
     cid: string | CID,
     options: { timeout?: number; links?: string[] } = {}
 ) {
     const promises = [
-        readFromPubSub(ipfs, cid, options),
-        readFromBlock(ipfs, cid, options),
+        readFromPubSub(libp2p, cid, options),
+        /* readFromBlock(ipfs, cid, options), */
     ];
     const result = await Promise.any(promises);
     if (!result) {
@@ -215,7 +165,7 @@ const prepareBlockWrite = (codec: any, value: any, links?: string[]) => {
 };
 
 async function write(
-    ipfs: IPFS,
+    saveBlock: (block: Block.Block<any>) => Promise<void> | void,
     format: string,
     value: any,
     options: {
@@ -231,46 +181,17 @@ async function write(
     const block = await Block.encode({ value, codec, hasher });
 
     if (!options.onlyHash) {
-        await ipfs.block.put(block.bytes, {
-            /* cid: block.cid.bytes, */
-            version: block.cid.version,
-            format,
-            mhtype,
-            pin: options.pin,
-            timeout: options.timeout,
-        });
+        await saveBlock(block);
     }
 
     const cid = codec.code === dagPb.code ? block.cid.toV0() : block.cid;
     const cidString = cid.toString(options.base || defaultBase);
-
-    await announcePubSubBlocks(ipfs);
-
     return cidString;
-}
-
-async function rm(ipfs: IPFS, hash: CID | string) {
-    try {
-        await ipfs.pin.rm(hash as any);
-    } catch (error) {
-        // not pinned // TODO add bettor error handling
-    }
-    for await (const result of ipfs.block.rm(
-        (hash instanceof CID ? hash : CID.parse(hash)) as any
-    )) {
-        if (result.error) {
-            throw new Error(
-                `Failed to remove block ${result.cid} due to ${result.error.message}`
-            );
-        }
-    }
 }
 
 export default {
     read,
     write,
-    readFromBlock,
     readFromPubSub,
-    rm,
     BLOCK_TRANSPORT_TOPIC,
 };

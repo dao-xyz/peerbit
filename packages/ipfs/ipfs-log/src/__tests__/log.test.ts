@@ -7,7 +7,7 @@ import { LamportClock as Clock, Timestamp } from "../clock.js";
 import { Log } from "../log.js";
 import { createStore, Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import fs from "fs-extra";
-import io from "@dao-xyz/peerbit-io-utils";
+import io from "@dao-xyz/peerbit-block";
 
 // For tiebreaker testing
 import { LastWriteWins } from "../log-sorting.js";

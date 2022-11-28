@@ -31,7 +31,7 @@ import { LogIndex } from "@dao-xyz/peerbit-logindex";
 import { AccessError } from "@dao-xyz/peerbit-crypto";
 
 import { Results } from "./query";
-import io from "@dao-xyz/peerbit-io-utils";
+import io from "@dao-xyz/peerbit-block";
 
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 const logger = loggerFn({ module: "document" });
@@ -140,7 +140,7 @@ export class Documents<T> extends ComposableProgram {
                                         .catch((e: any) => {
                                             logger.info(
                                                 "canAppend resulted in error: " +
-                                                    e.message
+                                                e.message
                                             );
                                             return undefined;
                                         });
@@ -248,8 +248,8 @@ export class Documents<T> extends ComposableProgram {
             if (!(this.parentProgram as any as CanOpenSubPrograms).canOpen) {
                 throw new Error(
                     "Class " +
-                        this.parentProgram.constructor.name +
-                        " needs to implement CanOpenSubPrograms for this Documents store to progams"
+                    this.parentProgram.constructor.name +
+                    " needs to implement CanOpenSubPrograms for this Documents store to progams"
                 );
             }
             doc.owner = this.parentProgram.address.toString();

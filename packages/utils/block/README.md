@@ -1,3 +1,3 @@
-# io-utils
+# block
 
 IO helper module used within Peerbit

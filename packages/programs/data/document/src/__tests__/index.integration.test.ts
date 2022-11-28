@@ -12,7 +12,7 @@ import {
     Compare,
     ModifiedAtQuery,
 } from "../query.js";
-import { Session, createStore } from "@dao-xyz/peerbit-test-utils";
+import { Session, LSession, createStore } from "@dao-xyz/peerbit-test-utils";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";
 import { Identity } from "@dao-xyz/ipfs-log";
 import {
@@ -104,17 +104,17 @@ describe("index", () => {
             const store =
                 i > 0
                     ? await TestStore.load<TestStore>(
-                          session.peers[i].ipfs,
-                          stores[0].address!
-                      )
+                        session.peers[i].ipfs,
+                        stores[0].address!
+                    )
                     : new TestStore({
-                          docs: new Documents<Document>({
-                              index: new DocumentIndex({
-                                  indexBy: "id",
-                              }),
-                              canEdit: true,
-                          }),
-                      });
+                        docs: new Documents<Document>({
+                            index: new DocumentIndex({
+                                indexBy: "id",
+                            }),
+                            canEdit: true,
+                        }),
+                    });
             const keypair = await X25519Keypair.create();
             await store.init(session.peers[i].ipfs, await createIdentity(), {
                 topic: topic,
@@ -191,7 +191,7 @@ describe("index", () => {
         await waitFor(() => writeStore.docs.index.size === 3);
     });
 
-    afterEach(async () => {});
+    afterEach(async () => { });
 
     afterAll(async () => {
         await Promise.all(stores.map((x) => x.drop()));
@@ -396,7 +396,7 @@ describe("index", () => {
                     (a, b) =>
                         Number(
                             a.entry.metadata.clock.timestamp.wallTime -
-                                b.entry.metadata.clock.timestamp.wallTime
+                            b.entry.metadata.clock.timestamp.wallTime
                         )
                 );
                 await stores[1].docs.index.query(
@@ -432,7 +432,7 @@ describe("index", () => {
                     (a, b) =>
                         Number(
                             a.entry.metadata.clock.timestamp.wallTime -
-                                b.entry.metadata.clock.timestamp.wallTime
+                            b.entry.metadata.clock.timestamp.wallTime
                         )
                 );
                 await stores[1].docs.index.query(
@@ -471,7 +471,7 @@ describe("index", () => {
                     (a, b) =>
                         Number(
                             a.entry.metadata.clock.timestamp.wallTime -
-                                b.entry.metadata.clock.timestamp.wallTime
+                            b.entry.metadata.clock.timestamp.wallTime
                         )
                 );
                 await stores[1].docs.index.query(

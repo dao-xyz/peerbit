@@ -8,7 +8,7 @@ import {
     EntryFetchOptions,
     strictFetchOptions,
 } from "./entry-io.js";
-import { IPFS } from "ipfs-core-types";
+import { Libp2p } from "libp2p";
 import { isDefined } from "./is-defined.js";
 import { findUniques } from "./find-uniques.js";
 import {
@@ -78,7 +78,7 @@ export type LogOptions<T> = {
 
 export class Log<T> extends GSet {
     _sortFn: Sorting.ISortFunction;
-    _storage: IPFS;
+    _storage: Libp2p;
     _id: string;
     /*   _rootGid: string; */
 
@@ -105,7 +105,7 @@ export class Log<T> extends GSet {
 
     joinConcurrency: number;
 
-    constructor(ipfs: IPFS, identity: Identity, options: LogOptions<T> = {}) {
+    constructor(ipfs: Libp2p, identity: Identity, options: LogOptions<T> = {}) {
         if (!isDefined(ipfs)) {
             throw LogError.IPFSNotDefinedError();
         }
@@ -455,11 +455,11 @@ export class Log<T> extends GSet {
             pin: options.pin,
             encryption: options.reciever
                 ? {
-                      options: this._encryption as PublicKeyEncryptionResolver,
-                      reciever: {
-                          ...options.reciever,
-                      },
-                  }
+                    options: this._encryption as PublicKeyEncryptionResolver,
+                    reciever: {
+                        ...options.reciever,
+                    },
+                }
                 : undefined,
             canAppend: options.canAppend,
         });
@@ -566,8 +566,8 @@ export class Log<T> extends GSet {
         const endHash = gte
             ? this.get(gte)!.hash
             : gt
-            ? this.get(gt)!.hash
-            : undefined;
+                ? this.get(gt)!.hash
+                : undefined;
         const count = endHash ? -1 : amount || -1;
 
         const entries = this.traverse(start, count, endHash);

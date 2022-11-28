@@ -3,7 +3,7 @@ import fs from "fs-extra";
 import { Log } from "../log.js";
 import { createStore, Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { jest } from "@jest/globals";
-import io from "@dao-xyz/peerbit-io-utils";
+import io from "@dao-xyz/peerbit-block";
 // Test utils
 import {
     nodeConfig as config,

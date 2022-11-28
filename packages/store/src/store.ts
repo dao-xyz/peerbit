@@ -14,7 +14,7 @@ import {
 import { Encoding, EncryptionTemplateMaybeEncrypted } from "@dao-xyz/ipfs-log";
 import { Entry } from "@dao-xyz/ipfs-log";
 import { Replicator } from "./replicator.js";
-import io from "@dao-xyz/peerbit-io-utils";
+import io from "@dao-xyz/peerbit-block";
 import Cache from "@dao-xyz/peerbit-cache";
 import { variant, field, vec, Constructor } from "@dao-xyz/borsh";
 import { IPFS } from "ipfs-core-types";
@@ -31,7 +31,7 @@ import { waitForAsync } from "@dao-xyz/peerbit-time";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 const logger = loggerFn({ module: "store" });
 
-export class CachedValue {}
+export class CachedValue { }
 
 export type AddOperationOptions<T> = {
     skipCanAppendCheck?: boolean;
@@ -129,7 +129,7 @@ export interface IStoreOptions<T> {
 
 export interface IInitializationOptions<T>
     extends IStoreOptions<T>,
-        IInitializationOptionsDefault<T> {
+    IInitializationOptionsDefault<T> {
     resolveCache: (
         store: Store<any>
     ) => Promise<Cache<CachedValue>> | Cache<CachedValue>;
@@ -656,8 +656,7 @@ export class Store<T> implements Initiable<T> {
         );
 
         logger.debug(
-            `Saved snapshot: ${snapshot.cid.toString()}, queue length: ${
-                unfinished.length
+            `Saved snapshot: ${snapshot.cid.toString()}, queue length: ${unfinished.length
             }`
         );
         return [snapshot];
