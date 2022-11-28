@@ -131,12 +131,24 @@ export const ipfsDocker = async (): Promise<{
     );
     const c = await import("ipfs-http-client");
     const http = await import("http");
-    const client = c.create({
-        timeout: 10 * 1000,
-        agent: new http.Agent({ keepAlive: true, maxSockets: Infinity }),
-    });
-    return {
-        api: client,
-        stop: async () => undefined,
-    };
+    for (let i = 0; i < 3; i++) {
+        try {
+            const client = c.create({
+                timeout: 10 * 1000,
+                agent: new http.Agent({
+                    keepAlive: true,
+                    maxSockets: Infinity,
+                }),
+            });
+            return {
+                api: client,
+                stop: async () => undefined,
+            };
+        } catch (error: any) {
+            console.log(
+                `Faield to create client, retrying ${i}: ${error?.message}`
+            );
+        }
+    }
+    throw new Error("Failed to create ipfs-http-client");
 };
