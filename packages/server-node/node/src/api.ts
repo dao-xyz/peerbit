@@ -203,66 +203,19 @@ export const startServer = async (
                 res.writeHead(404);
                 res.end(e404);
             };
-            if (req.url) {
-                if (
-                    !req.url.startsWith(IPFS_ID_PATH) &&
-                    !(await adminACL(req))
-                ) {
-                    res.writeHead(401);
-                    res.end("Not authorized");
-                    return;
-                } else if (req.url.startsWith(TOPICS_PATH)) {
-                    switch (req.method) {
-                        case "GET":
-                            import("url").then((parse) => {
-                                const replicateParam = parse.parse(
-                                    req.url!,
-                                    true
-                                ).query["replicate"];
-                                if (Array.isArray(replicateParam)) {
-                                    res.writeHead(400);
-                                    res.end("Expecting one replicate param");
-                                    return;
-                                }
-                                const replicate = replicateParam
-                                    ? JSON.parse(replicateParam)
-                                    : replicateParam;
 
-                                res.setHeader(
-                                    "Content-Type",
-                                    "application/json"
-                                );
-                                res.writeHead(200);
-                                if (replicate) {
-                                    if (client instanceof Peerbit) {
-                                        res.write(
-                                            JSON.stringify([
-                                                ...client.programs.keys(),
-                                            ])
-                                        );
-                                        res.end();
-                                    } else {
-                                        res.writeHead(400);
-                                        res.write(notPeerBitError);
-                                        res.end();
-                                    }
-                                } else {
-                                    ipfs.pubsub.ls().then((topics) => {
-                                        res.write(JSON.stringify(topics));
-                                        res.end();
-                                    });
-                                }
-                            });
-
-                            break;
-                        default:
-                            r404();
-                            break;
-                    }
-                } else if (req.url.startsWith(TOPIC_PATH)) {
-                    switch (req.method) {
-                        case "PUT":
-                            getBody(req, (body) => {
+            try {
+                if (req.url) {
+                    if (
+                        !req.url.startsWith(IPFS_ID_PATH) &&
+                        !(await adminACL(req))
+                    ) {
+                        res.writeHead(401);
+                        res.end("Not authorized");
+                        return;
+                    } else if (req.url.startsWith(TOPICS_PATH)) {
+                        switch (req.method) {
+                            case "GET":
                                 import("url").then((parse) => {
                                     const replicateParam = parse.parse(
                                         req.url!,
@@ -278,225 +231,172 @@ export const startServer = async (
                                     const replicate = replicateParam
                                         ? JSON.parse(replicateParam)
                                         : replicateParam;
-                                    const topic = body;
-                                    if (
-                                        typeof topic !== "string" ||
-                                        topic.trim().length !== topic.length
-                                    ) {
-                                        res.writeHead(400);
-                                        res.end(
-                                            "Invalid topic: " +
-                                                JSON.stringify(topic)
-                                        );
-                                    } else if (!replicate) {
-                                        ipfs.pubsub
-                                            .subscribe(topic, () => undefined)
-                                            .then(() => {
-                                                res.writeHead(200);
-                                                res.end();
-                                            });
-                                    } else {
+
+                                    res.setHeader(
+                                        "Content-Type",
+                                        "application/json"
+                                    );
+                                    res.writeHead(200);
+                                    if (replicate) {
                                         if (client instanceof Peerbit) {
-                                            if (client.programs.has(topic)) {
-                                                res.writeHead(400);
-                                                res.end(
-                                                    "Already subscribed to this topic"
-                                                );
-                                            } else {
-                                                client
-                                                    .subscribeToTopic(
-                                                        topic,
-                                                        true
-                                                    )
-                                                    .then(() => {
-                                                        res.writeHead(200);
-                                                        res.end();
-                                                    });
-                                            }
+                                            res.write(
+                                                JSON.stringify([
+                                                    ...client.programs.keys(),
+                                                ])
+                                            );
+                                            res.end();
                                         } else {
                                             res.writeHead(400);
                                             res.write(notPeerBitError);
                                             res.end();
                                         }
+                                    } else {
+                                        ipfs.pubsub.ls().then((topics) => {
+                                            res.write(JSON.stringify(topics));
+                                            res.end();
+                                        });
                                     }
                                 });
-                            });
-                            break;
-                        default:
-                            r404();
-                            break;
-                    }
-                } else if (req.url.startsWith(PROGRAM_PATH)) {
-                    const url = new URL(req.url, "http://localhost:" + port);
-                    if (client instanceof Peerbit === false) {
-                        res.writeHead(400);
-                        res.write(notPeerBitError);
-                        res.end();
-                    } else {
-                        switch (req.method) {
-                            case "GET":
-                                try {
-                                    const program = getProgramFromPath(req, 1);
-                                    if (program) {
-                                        res.writeHead(200);
-                                        res.write(toBase64(serialize(program)));
-                                        res.end();
-                                    } else {
-                                        res.writeHead(404);
-                                        res.end();
-                                    }
-                                } catch (error: any) {
-                                    res.writeHead(404);
-                                    res.end(error.message);
-                                }
-                                break;
 
-                            case "PUT":
-                                getBody(req, (body) => {
-                                    const topic = url.searchParams.get("topic");
-                                    if (topic && topic.length === 0) {
-                                        res.writeHead(400);
-                                        res.end("Invalid topic: " + topic);
-                                    } else {
-                                        try {
-                                            const parsed = deserialize(
-                                                fromBase64(body),
-                                                Program
-                                            );
-                                            (client as Peerbit)
-                                                .open(parsed, {
-                                                    topic: topic || undefined,
-                                                })
-                                                .then((program) => {
-                                                    res.writeHead(200);
-                                                    res.end(
-                                                        program.address.toString()
-                                                    );
-                                                })
-                                                .catch((error) => {
-                                                    res.writeHead(400);
-                                                    res.end(
-                                                        "Failed to open program: " +
-                                                            error.toString()
-                                                    );
-                                                });
-                                        } catch (error) {
-                                            res.writeHead(400);
-                                            res.end(
-                                                "Invalid base64 program binary"
-                                            );
-                                        }
-                                    }
-                                });
                                 break;
-
                             default:
                                 r404();
                                 break;
                         }
-                    }
-                } else if (req.url.startsWith(LIBRARY_PATH)) {
-                    const url = new URL(req.url, "http://localhost:" + port);
-                    switch (req.method) {
-                        case "PUT":
-                            getBody(req, (body) => {
-                                const name = body;
-                                if (name && name.length === 0) {
-                                    res.writeHead(400);
-                                    res.end("Invalid library: " + name);
-                                } else {
-                                    import(/* webpackIgnore: true */ name)
-                                        .then(() => {
-                                            res.writeHead(200);
-                                            res.end();
-                                        })
-                                        .catch((e) => {
+                    } else if (req.url.startsWith(TOPIC_PATH)) {
+                        switch (req.method) {
+                            case "PUT":
+                                getBody(req, (body) => {
+                                    import("url").then((parse) => {
+                                        const replicateParam = parse.parse(
+                                            req.url!,
+                                            true
+                                        ).query["replicate"];
+                                        if (Array.isArray(replicateParam)) {
                                             res.writeHead(400);
-                                            res.end(e.message.toString?.());
-                                        });
-                                }
-                            });
-                            break;
-
-                        default:
-                            r404();
-                            break;
-                    }
-                } else if (req.url.startsWith(NETWORK_PEERS_PATH)) {
-                    switch (req.method) {
-                        case "GET":
-                            try {
-                                const program = getProgramFromPath(req, 2);
-                                if (program) {
-                                    if (inNetwork(program)) {
-                                        res.setHeader(
-                                            "Content-Type",
-                                            "application/json"
-                                        );
-                                        res.writeHead(200);
-                                        res.write(
-                                            JSON.stringify(
-                                                [
-                                                    ...program.network.trustGraph._index._index.values(),
-                                                ].map((x) =>
-                                                    toBase64(serialize(x.value))
+                                            res.end(
+                                                "Expecting one replicate param"
+                                            );
+                                            return;
+                                        }
+                                        const replicate = replicateParam
+                                            ? JSON.parse(replicateParam)
+                                            : replicateParam;
+                                        const topic = body;
+                                        if (
+                                            typeof topic !== "string" ||
+                                            topic.trim().length !== topic.length
+                                        ) {
+                                            res.writeHead(400);
+                                            res.end(
+                                                "Invalid topic: " +
+                                                    JSON.stringify(topic)
+                                            );
+                                        } else if (!replicate) {
+                                            ipfs.pubsub
+                                                .subscribe(
+                                                    topic,
+                                                    () => undefined
                                                 )
-                                            )
+                                                .then(() => {
+                                                    res.writeHead(200);
+                                                    res.end();
+                                                });
+                                        } else {
+                                            if (client instanceof Peerbit) {
+                                                if (
+                                                    client.programs.has(topic)
+                                                ) {
+                                                    res.writeHead(400);
+                                                    res.end(
+                                                        "Already subscribed to this topic"
+                                                    );
+                                                } else {
+                                                    client
+                                                        .subscribeToTopic(
+                                                            topic,
+                                                            true
+                                                        )
+                                                        .then(() => {
+                                                            res.writeHead(200);
+                                                            res.end();
+                                                        });
+                                                }
+                                            } else {
+                                                res.writeHead(400);
+                                                res.write(notPeerBitError);
+                                                res.end();
+                                            }
+                                        }
+                                    });
+                                });
+                                break;
+                            default:
+                                r404();
+                                break;
+                        }
+                    } else if (req.url.startsWith(PROGRAM_PATH)) {
+                        const url = new URL(
+                            req.url,
+                            "http://localhost:" + port
+                        );
+                        if (client instanceof Peerbit === false) {
+                            res.writeHead(400);
+                            res.write(notPeerBitError);
+                            res.end();
+                        } else {
+                            switch (req.method) {
+                                case "GET":
+                                    try {
+                                        const program = getProgramFromPath(
+                                            req,
+                                            1
                                         );
-                                        res.end();
-                                    } else {
-                                        res.writeHead(400);
-                                        res.end("Program is not in a VPC");
+                                        if (program) {
+                                            res.writeHead(200);
+                                            res.write(
+                                                toBase64(serialize(program))
+                                            );
+                                            res.end();
+                                        } else {
+                                            res.writeHead(404);
+                                            res.end();
+                                        }
+                                    } catch (error: any) {
+                                        res.writeHead(404);
+                                        res.end(error.message);
                                     }
-                                } else {
-                                    res.writeHead(404);
-                                    res.end();
-                                }
-                            } catch (error: any) {
-                                res.writeHead(404);
-                                res.end(error.message);
-                            }
-                            break;
+                                    break;
 
-                        default:
-                            r404();
-                            break;
-                    }
-                } else if (req.url.startsWith(NETWORK_PEER_PATH)) {
-                    const url = new URL(req.url, "http://localhost:" + port);
-                    //const path = url.pathname.substring(NETWORK_PEER_PATH.length, url.pathname.length).split("/");
-                    switch (req.method) {
-                        case "PUT":
-                            getBody(req, (body) => {
-                                try {
-                                    const program = getProgramFromPath(req, 2);
-                                    if (program) {
-                                        if (inNetwork(program)) {
+                                case "PUT":
+                                    getBody(req, (body) => {
+                                        const topic =
+                                            url.searchParams.get("topic");
+                                        if (topic && topic.length === 0) {
+                                            res.writeHead(400);
+                                            res.end("Invalid topic: " + topic);
+                                        } else {
                                             try {
-                                                const reciever = deserialize(
+                                                const parsed = deserialize(
                                                     fromBase64(body),
-                                                    PublicSignKey
+                                                    Program
                                                 );
-                                                program.network
-                                                    .add(reciever)
-                                                    .then((r) => {
+                                                (client as Peerbit)
+                                                    .open(parsed, {
+                                                        topic:
+                                                            topic || undefined,
+                                                    })
+                                                    .then((program) => {
                                                         res.writeHead(200);
                                                         res.end(
-                                                            toBase64(
-                                                                serialize(r)
-                                                            )
+                                                            program.address.toString()
                                                         );
                                                     })
-                                                    .catch((error?: any) => {
+                                                    .catch((error) => {
                                                         res.writeHead(400);
                                                         res.end(
-                                                            "Failed to add relation: " +
-                                                                typeof error.message ===
-                                                                "string"
-                                                                ? error.message
-                                                                : JSON.stringify(
-                                                                      error.message
-                                                                  )
+                                                            "Failed to open program: " +
+                                                                error.toString()
                                                         );
                                                     });
                                             } catch (error) {
@@ -506,6 +406,72 @@ export const startServer = async (
                                                 );
                                             }
                                         }
+                                    });
+                                    break;
+
+                                default:
+                                    r404();
+                                    break;
+                            }
+                        }
+                    } else if (req.url.startsWith(LIBRARY_PATH)) {
+                        const url = new URL(
+                            req.url,
+                            "http://localhost:" + port
+                        );
+                        switch (req.method) {
+                            case "PUT":
+                                getBody(req, (body) => {
+                                    const name = body;
+                                    if (name && name.length === 0) {
+                                        res.writeHead(400);
+                                        res.end("Invalid library: " + name);
+                                    } else {
+                                        import(/* webpackIgnore: true */ name)
+                                            .then(() => {
+                                                res.writeHead(200);
+                                                res.end();
+                                            })
+                                            .catch((e) => {
+                                                res.writeHead(400);
+                                                res.end(e.message.toString?.());
+                                            });
+                                    }
+                                });
+                                break;
+
+                            default:
+                                r404();
+                                break;
+                        }
+                    } else if (req.url.startsWith(NETWORK_PEERS_PATH)) {
+                        switch (req.method) {
+                            case "GET":
+                                try {
+                                    const program = getProgramFromPath(req, 2);
+                                    if (program) {
+                                        if (inNetwork(program)) {
+                                            res.setHeader(
+                                                "Content-Type",
+                                                "application/json"
+                                            );
+                                            res.writeHead(200);
+                                            res.write(
+                                                JSON.stringify(
+                                                    [
+                                                        ...program.network.trustGraph._index._index.values(),
+                                                    ].map((x) =>
+                                                        toBase64(
+                                                            serialize(x.value)
+                                                        )
+                                                    )
+                                                )
+                                            );
+                                            res.end();
+                                        } else {
+                                            res.writeHead(400);
+                                            res.end("Program is not in a VPC");
+                                        }
                                     } else {
                                         res.writeHead(404);
                                         res.end();
@@ -514,28 +480,102 @@ export const startServer = async (
                                     res.writeHead(404);
                                     res.end(error.message);
                                 }
-                            });
-                            break;
+                                break;
 
-                        default:
-                            r404();
-                            break;
+                            default:
+                                r404();
+                                break;
+                        }
+                    } else if (req.url.startsWith(NETWORK_PEER_PATH)) {
+                        const url = new URL(
+                            req.url,
+                            "http://localhost:" + port
+                        );
+                        //const path = url.pathname.substring(NETWORK_PEER_PATH.length, url.pathname.length).split("/");
+                        switch (req.method) {
+                            case "PUT":
+                                getBody(req, (body) => {
+                                    try {
+                                        const program = getProgramFromPath(
+                                            req,
+                                            2
+                                        );
+                                        if (program) {
+                                            if (inNetwork(program)) {
+                                                try {
+                                                    const reciever =
+                                                        deserialize(
+                                                            fromBase64(body),
+                                                            PublicSignKey
+                                                        );
+                                                    program.network
+                                                        .add(reciever)
+                                                        .then((r) => {
+                                                            res.writeHead(200);
+                                                            res.end(
+                                                                toBase64(
+                                                                    serialize(r)
+                                                                )
+                                                            );
+                                                        })
+                                                        .catch(
+                                                            (error?: any) => {
+                                                                res.writeHead(
+                                                                    400
+                                                                );
+                                                                res.end(
+                                                                    "Failed to add relation: " +
+                                                                        typeof error.message ===
+                                                                        "string"
+                                                                        ? error.message
+                                                                        : JSON.stringify(
+                                                                              error.message
+                                                                          )
+                                                                );
+                                                            }
+                                                        );
+                                                } catch (error) {
+                                                    res.writeHead(400);
+                                                    res.end(
+                                                        "Invalid base64 program binary"
+                                                    );
+                                                }
+                                            }
+                                        } else {
+                                            res.writeHead(404);
+                                            res.end();
+                                        }
+                                    } catch (error: any) {
+                                        res.writeHead(404);
+                                        res.end(error.message);
+                                    }
+                                });
+                                break;
+
+                            default:
+                                r404();
+                                break;
+                        }
+                    } else if (req.url.startsWith(IPFS_ID_PATH)) {
+                        res.writeHead(200);
+                        res.end((await ipfs.id()).id.toString());
+                    } else if (req.url.startsWith(IPFS_ADDRESSES_PATH)) {
+                        res.setHeader("Content-Type", "application/json");
+                        res.writeHead(200);
+                        const addresses = (await ipfs.id()).addresses.map((x) =>
+                            x.toString()
+                        );
+                        res.end(JSON.stringify(addresses));
+                    } else {
+                        r404();
                     }
-                } else if (req.url.startsWith(IPFS_ID_PATH)) {
-                    res.writeHead(200);
-                    res.end((await ipfs.id()).id.toString());
-                } else if (req.url.startsWith(IPFS_ADDRESSES_PATH)) {
-                    res.setHeader("Content-Type", "application/json");
-                    res.writeHead(200);
-                    const addresses = (await ipfs.id()).addresses.map((x) =>
-                        x.toString()
-                    );
-                    res.end(JSON.stringify(addresses));
                 } else {
                     r404();
                 }
-            } else {
-                r404();
+            } catch (error) {
+                res.writeHead(500);
+                console.error(error);
+                res.end("Unexpected error");
             }
         };
     };
