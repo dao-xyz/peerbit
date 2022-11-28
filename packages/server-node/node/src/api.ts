@@ -48,11 +48,24 @@ const getCredentialsPath = async (configDir: string): Promise<string> => {
 
 class NotFoundError extends Error {}
 
+export const checkExistPath = async (path: string) => {
+    const fs = await import("fs");
+
+    try {
+        if (!fs.existsSync(path)) {
+            fs.accessSync(path, fs.constants.W_OK); // will throw if fails
+            return false;
+        }
+        return true;
+    } catch (err) {
+        throw new Error("Can not access path");
+    }
+};
 export const createPassword = async (ipfsId: string): Promise<string> => {
     const fs = await import("fs");
     const configDir = await getConfigDir(ipfsId);
     const credentialsPath = await getCredentialsPath(configDir);
-    if (fs.existsSync(credentialsPath)) {
+    if (await checkExistPath(credentialsPath)) {
         throw new Error(
             "Config path for credentials: " +
                 credentialsPath +
@@ -79,7 +92,7 @@ export const loadPassword = async (ipfsId: string): Promise<string> => {
     const fs = await import("fs");
     const configDir = await getConfigDir(ipfsId);
     const credentialsPath = await getCredentialsPath(configDir);
-    if (!fs.existsSync(credentialsPath)) {
+    if (!(await checkExistPath(credentialsPath))) {
         throw new NotFoundError("Credentials file does not exist");
     }
     const password = JSON.parse(
@@ -589,9 +602,26 @@ export const startServer = async (
     server.listen(port);
     server.on("error", (e) => {
         console.log("Server error: " + e);
-        throw e;
+        import("fs").then((fs) => {
+            fs.writeFile("error.log", JSON.stringify(err), function () {
+                /* void */
+            });
+        });
     });
-    console.log("API server accessible at port", port);
+    server.on("close", (code, signal) => {
+        console.log("Exit server");
+        import("fs").then((fs) => {
+            fs.writeFile(
+                "exit.log",
+                "code=" + code + " signal=" + signal,
+                function () {
+                    /* void */
+                }
+            );
+        });
+    });
+
+    console.log("API available at port", port);
     return server;
 };
 
