@@ -127,7 +127,7 @@ export const ipfsDocker = async (): Promise<{
 
     await installDocker();
     await startContainer(
-        "sudo docker start ipfs_host 2>/dev/null || sudo docker run -d --name ipfs_host -v $(pwd)/ipfs-config.sh:/container-init.d/001-test.sh  -p 4001:4001 -p 4001:4001/udp -p 127.0.0.1:8081:8081 -p 127.0.0.1:5001:5001 ipfs/kubo:latest daemon"
+        "sudo docker start ipfs_host 2>/dev/null || docker run -d --name ipfs_host -v $(pwd)/ipfs-config.sh:/container-init.d/001-test.sh  -p 4001:4001 -p 4001:4001/udp -p 127.0.0.1:8081:8081 -p 127.0.0.1:5001:5001 ipfs/kubo:latest daemon"
     );
     const c = await import("ipfs-http-client");
     const http = await import("http");
