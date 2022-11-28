@@ -9,8 +9,10 @@ import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { v4 as uuid } from "uuid";
 import { IPFS } from "ipfs-core-types";
 import io from "@dao-xyz/peerbit-io-utils";
+
 export const LOCAL_PORT = 8082;
 export const SSL_PORT = 9002;
+
 export const getPort = (protocol: string) => {
     if (protocol === "https:") {
         return SSL_PORT;
@@ -57,16 +59,19 @@ export const createPassword = async (ipfsId: string): Promise<string> => {
                 ", already exist"
         );
     }
-    fs.mkdir(configDir, { recursive: true }, (err) => {
-        if (err) throw err;
-    });
+    console.log(`Creating config folder ${configDir}`);
 
+    fs.mkdirSync(configDir, { recursive: true });
     await waitFor(() => fs.existsSync(configDir));
+
+    console.log(`Created config folder ${configDir}`);
+
     const password = uuid();
     fs.writeFileSync(
         credentialsPath,
         JSON.stringify({ username: "admin", password })
     );
+    console.log(`Created credentials at ${credentialsPath}`);
     return password;
 };
 
@@ -125,10 +130,10 @@ export const startServer = async (
         throw err;
     }
 
-    type ACL = (req: http.IncomingMessage) => boolean;
     const password = await loadOrCreatePassword(
         (await ipfs.id()).id.toString()
     );
+
     const adminACL = (req: http.IncomingMessage): boolean => {
         const auth = req.headers["authorization"];
         if (!auth?.startsWith("Basic ")) {
