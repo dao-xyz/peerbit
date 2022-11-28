@@ -57,7 +57,10 @@ export const checkExistPath = async (path: string) => {
             return false;
         }
         return true;
-    } catch (err) {
+    } catch (err: any) {
+        if (err.message.indexOf("no such file")) {
+            return false;
+        }
         throw new Error("Can not access path");
     }
 };
@@ -602,7 +605,7 @@ export const startServer = async (
     const server = http.createServer(endpoints(client));
     server.listen(port);
     server.on("error", (e) => {
-        console.log("Server error: " + e);
+        console.error("Server error: " + e);
         import("fs").then((fs) => {
             fs.writeFile("error.log", JSON.stringify(e), function () {
                 /* void */
