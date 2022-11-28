@@ -598,6 +598,7 @@ export const startServer = async (
         };
     };
 
+    process.setMaxListeners(Math.max(process.getMaxListeners(), 100)); // Because the default might limit might be too low
     const server = http.createServer(endpoints(client));
     server.listen(port);
     server.on("error", (e) => {
