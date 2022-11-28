@@ -29,12 +29,10 @@ describe(`browser`, function () {
         orbitdb2: Peerbit,
         db1: EventStore<string>,
         db2: EventStore<string>;
-    let topic: string;
     let timer: any;
 
     beforeAll(async () => {
         session = await Session.connected(2);
-        topic = uuid();
     });
 
     afterAll(async () => {
@@ -72,10 +70,10 @@ describe(`browser`, function () {
     });
 
     it("can replicate entries", async () => {
-        // limitSigning = dont sign exchange heads request
+        let topic = uuid();
         db1 = await orbitdb1.open(
             new EventStore<string>({
-                id: "observe",
+                id: uuid(),
             }),
             { topic: topic, directory: dbPath1, replicate: true }
         );
@@ -122,10 +120,10 @@ describe(`browser`, function () {
     });
 
     it("will share entries as replicator on peer connect", async () => {
-        // limitSigning = dont sign exchange heads request
+        let topic = uuid();
         db1 = await orbitdb1.open(
             new EventStore<string>({
-                id: "observe",
+                id: uuid(),
             }),
             { topic: topic, directory: dbPath1, replicate: true }
         );
@@ -172,10 +170,10 @@ describe(`browser`, function () {
     });
 
     it("will share entries as observer on peer connect", async () => {
-        // limitSigning = dont sign exchange heads request
+        let topic = uuid();
         db1 = await orbitdb1.open(
             new EventStore<string>({
-                id: "observe",
+                id: uuid(),
             }),
             { topic: topic, directory: dbPath1, replicate: false }
         );
