@@ -67,8 +67,7 @@ Backwards compatibility for new releases might be lacking. Use with caution and 
 
 ## Example code
 
-### Example library project (contains live demos)
-[A repo containing meaningful example(s)](https://github.com/dao-xyz/peerbit-examples). 
+### [Example library project (contains live demos)](https://github.com/dao-xyz/peerbit-examples)
 
 ### Collaborative text 
 Below is a short example how you can create a collaborative text document: 
