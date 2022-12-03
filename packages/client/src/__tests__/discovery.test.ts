@@ -1,13 +1,11 @@
-//
 import rmrf from "rimraf";
 import { Peerbit } from "../peer";
-
-// Include test utilities
 import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
+import { jest } from "@jest/globals";
 
 const orbitdbPath1 = "./orbitdb/tests/discovery/1";
 const orbitdbPath2 = "./orbitdb/tests/discovery/2";
@@ -18,6 +16,7 @@ const dbPath2 = "./orbitdb/tests/discovery/2/db2";
 const dbPath3 = "./orbitdb/tests/discovery/3/db3";
 
 describe(`discovery`, function () {
+    jest.setTimeout(60 * 1000);
     let session1: LSession, session2: LSession;
     let orbitdb1: Peerbit, orbitdb2: Peerbit, orbitdb3: Peerbit;
 
