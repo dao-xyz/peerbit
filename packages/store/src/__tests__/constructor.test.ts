@@ -3,34 +3,29 @@ import { default as Cache } from "@dao-xyz/peerbit-cache";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 
 // Test utils
-import {
-    nodeConfig as config,
-    startIpfs,
-    stopIpfs,
-    createStore,
-} from "@dao-xyz/peerbit-test-utils";
+import { createStore } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { Controller } from "ipfsd-ctl";
 import { AbstractLevel } from "abstract-level";
-import { jest } from "@jest/globals";
 import { fileURLToPath } from "url";
 import path from "path";
+import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 
 describe(`Constructor`, function () {
-    let ipfs: Controller,
+    let blockStore: Blocks,
         signKey: KeyWithMeta<Ed25519Keypair>,
         identityStore: AbstractLevel<any, string>,
         store: Store<any>,
         cacheStore: AbstractLevel<any, string>;
 
-    jest.setTimeout(config.timeout);
-
-    const ipfsConfig = Object.assign({}, config, {
-        repo: "repo-entry" + __filenameBase + new Date().getTime(),
-    });
+    const ipfsConfig = Object.assign(
+        {},
+        {
+            repo: "repo-entry" + __filenameBase + new Date().getTime(),
+        }
+    );
 
     beforeAll(async () => {
         identityStore = await createStore(__filenameBase + "/identity");
@@ -40,13 +35,16 @@ describe(`Constructor`, function () {
         const cache = new Cache<CachedValue>(cacheStore);
 
         signKey = await keystore.createEd25519Key();
-        ipfs = await startIpfs("js-ipfs", ipfsConfig.daemon1);
+
+        blockStore = new Blocks(new MemoryLevelBlockStore());
+        await blockStore.open();
+
         const options = Object.assign({}, DefaultOptions, {
             resolveCache: () => Promise.resolve(cache),
         });
         store = new Store({ storeIndex: 0 });
         await store.init(
-            ipfs.api,
+            blockStore,
             {
                 ...signKey.keypair,
                 sign: async (data: Uint8Array) =>
@@ -58,14 +56,14 @@ describe(`Constructor`, function () {
 
     afterAll(async () => {
         await store?.close();
-        ipfs && (await stopIpfs(ipfs));
+        await blockStore?.close();
         await identityStore?.close();
         await cacheStore?.close();
     });
 
     it("creates a new Store instance", async () => {
         expect(typeof store._options).toEqual("object");
-        expect(typeof store._ipfs).toEqual("object");
+        expect(typeof store._store).toEqual("object");
         expect(typeof store._cache).toEqual("object");
         expect(typeof store._oplog).toEqual("object");
         expect(typeof store._stats).toEqual("object");

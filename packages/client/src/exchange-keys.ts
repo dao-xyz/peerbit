@@ -1,6 +1,5 @@
 import { variant, field, option, serialize, vec } from "@dao-xyz/borsh";
 import { TransportMessage } from "./message.js";
-import { UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
 import {
     Ed25519Keypair,
     Ed25519PublicKey,
@@ -27,10 +26,10 @@ export type KeyAccessCondition = (
 ) => Promise<boolean>;
 
 export class SignedX25519PublicKey {
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     signature: Uint8Array;
 
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     publicKey: Uint8Array; // Ed25519PublicKey
 
     constructor(props?: { signature: Uint8Array; publicKey: Uint8Array }) {
@@ -42,10 +41,10 @@ export class SignedX25519PublicKey {
 }
 
 export class PublicKeyMessage {
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     message: Uint8Array;
 
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     key: Uint8Array;
 
     constructor(props?: { message: Uint8Array; key: Uint8Array }) {
@@ -193,7 +192,7 @@ export const requestAndWaitForKeys = async <
     T extends Ed25519Keypair | X25519Keypair
 >(
     condition: RequestKeyCondition,
-    send: (message: Uint8Array) => void | Promise<void>,
+    send: (message: Uint8Array) => any | Promise<any>,
     keystore: Keystore,
     identity: Identity,
     timeout = 10000
@@ -295,7 +294,7 @@ export const requestKeys = async (
 };
 
 export const exchangeKeys = async <T extends Ed25519Keypair | X25519Keypair>(
-    send: (data: Uint8Array) => Promise<void>,
+    send: (data: Uint8Array) => Promise<any>,
     request: RequestKeyMessage,
     canAccessKey: KeyAccessCondition,
     keystore: Keystore,

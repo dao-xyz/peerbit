@@ -5,33 +5,25 @@ import { Peerbit } from "../peer";
 import { createStore } from "./storage.js";
 import CustomCache from "@dao-xyz/peerbit-cache";
 import { jest } from "@jest/globals";
-import { Controller } from "ipfsd-ctl";
-import { IPFS } from "ipfs-core-types";
-
-// Include test utilities
-import {
-    nodeConfig as config,
-    startIpfs,
-    stopIpfs,
-} from "@dao-xyz/peerbit-test-utils";
-
 import { databases } from "./utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 const dbPath = "./orbitdb/tests/customKeystore";
 
 describe(`Use a Custom Cache`, function () {
     jest.setTimeout(20000);
 
-    let ipfsd: Controller, ipfs: IPFS, orbitdb1: Peerbit, store;
+    let session: LSession, orbitdb1: Peerbit, store;
 
     beforeAll(async () => {
+        session = await LSession.connected(1, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
         store = await createStore("local");
         const cache = new CustomCache(store);
 
         rmrf.sync(dbPath);
-        ipfsd = await startIpfs("js-ipfs", config.daemon1);
-        ipfs = ipfsd.api;
-        orbitdb1 = await Peerbit.create(ipfs, {
+
+        orbitdb1 = await Peerbit.create(session.peers[0], {
             directory: path.join(dbPath, "1"),
             cache: cache,
         });
@@ -39,7 +31,7 @@ describe(`Use a Custom Cache`, function () {
 
     afterAll(async () => {
         await orbitdb1.stop();
-        await stopIpfs(ipfsd);
+        await session.stop();
     });
 
     describe("allows orbit to use a custom cache with different store types", function () {

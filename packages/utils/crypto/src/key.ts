@@ -6,7 +6,7 @@ export type IdentityProviderType = "orbitdb" | "ethereum" | "solana";
 interface Key {
     equals(other: Key): boolean;
     get bytes(): Uint8Array;
-    hashCode(): string;
+    hashcode(): Promise<string>;
     toString(): string;
 }
 
@@ -29,7 +29,7 @@ export abstract class PublicSignKey implements Key {
         return serialize(this);
     }
 
-    hashCode(): string {
+    hashcode(): Promise<string> {
         return toBase64(this.bytes);
     }
 }
@@ -40,7 +40,7 @@ export abstract class PrivateSignKey implements Key {
         return serialize(this);
     }
 
-    hashCode(): string {
+    hashcode(): Promise<string> {
         return toBase64(this.bytes);
     }
 }
@@ -52,7 +52,7 @@ export abstract class PublicKeyEncryptionKey implements Key {
         return serialize(this);
     }
 
-    hashCode(): string {
+    hashcode(): Promise<string> {
         return toBase64(this.bytes);
     }
 }
@@ -62,7 +62,7 @@ export abstract class PrivateEncryptionKey implements Key {
         return serialize(this);
     }
 
-    hashCode(): string {
+    hashcode(): Promise<string> {
         return toBase64(this.bytes);
     }
 }
@@ -74,7 +74,7 @@ export abstract class PlainKey implements Key {
         return serialize(this);
     }
 
-    hashCode(): string {
+    hashcode(): Promise<string> {
         return toBase64(this.bytes);
     }
 }

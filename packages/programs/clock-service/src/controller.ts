@@ -1,14 +1,12 @@
-import { variant, option } from "@dao-xyz/borsh";
+import { field, deserialize, variant, option } from "@dao-xyz/borsh";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Program } from "@dao-xyz/peerbit-program";
 import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { Entry, HLC } from "@dao-xyz/ipfs-log";
-import { field, deserialize } from "@dao-xyz/borsh";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
-
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
-const logger = loggerFn({ module: "reomte-signer" });
 
+const logger = loggerFn({ module: "clock-signer" });
 const abs = (n) => (n < 0n ? -n : n);
 
 export abstract class Result {}

@@ -208,10 +208,9 @@ import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network'
 import { field, variant } from '@dao-xyz/borst-ts' 
 
 @variant("string_store") 
-class StringStore extends Program implements Network 
+@network({property: 'network'})
+class StringStore extends Program
 {
-    inNetwork: true = true // This needs to be included for type safety reasons
-
     @field({type: Store})
     store: Store<string>
 

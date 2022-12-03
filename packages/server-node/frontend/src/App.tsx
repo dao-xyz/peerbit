@@ -18,7 +18,7 @@ export const App = () => {
                 getPort(window.location.protocol)
         ).then((c) => {
             setClient(c);
-            c.ipfs.id
+            c.peer.id
                 .get()
                 .then((_id) => {
                     setId(_id);

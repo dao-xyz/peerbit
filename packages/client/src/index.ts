@@ -4,5 +4,4 @@ export * from "./channel.js";
 
 // For convenience export common modules
 export type { Identity };
-export type { Network } from "./network.js";
-export { inNetwork } from "./network.js";
+export { network, getNetwork } from "./network.js";

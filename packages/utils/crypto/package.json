@@ -36,10 +36,11 @@
         "@types/libsodium-wrappers": "^0.7.9"
     },
     "dependencies": {
-        "@dao-xyz/borsh": "^3.4.4",
+        "@dao-xyz/borsh": "^4.0.3",
         "@dao-xyz/peerbit-borsh-utils": "^0.0.11",
         "@ethersproject/wallet": "^5.7.0",
-        "libsodium-wrappers": "^0.7.10"
+        "libsodium-wrappers": "^0.7.10",
+        "multiformats": "10.0.2"
     },
     "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
 }

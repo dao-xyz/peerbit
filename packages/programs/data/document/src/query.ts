@@ -1,5 +1,4 @@
 import { AbstractType, deserialize, field, variant, vec } from "@dao-xyz/borsh";
-import { UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
 
 export enum Compare {
     Equal = 0,
@@ -109,7 +108,7 @@ export class StateFieldQuery extends StateQuery {
 
 @variant(1)
 export class FieldByteMatchQuery extends StateFieldQuery {
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     value: Uint8Array;
 
     constructor(props?: { key: string[]; value: Uint8Array }) {
@@ -156,7 +155,7 @@ export class FieldBigIntCompareQuery extends StateFieldQuery {
 
 @variant(0)
 export class MemoryCompare {
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     bytes: Uint8Array;
 
     @field({ type: "u64" })
@@ -213,7 +212,7 @@ export class Context {
 
 @variant(0)
 export class ResultWithSource<T> extends Result {
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     _source: Uint8Array;
 
     @field({ type: Context })

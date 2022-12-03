@@ -27,13 +27,10 @@ import {
 } from "@dao-xyz/peerbit-program";
 import { CanRead } from "@dao-xyz/peerbit-rpc";
 import { LogIndex } from "@dao-xyz/peerbit-logindex";
-
 import { AccessError } from "@dao-xyz/peerbit-crypto";
-
 import { Results } from "./query";
-import io from "@dao-xyz/peerbit-block";
-
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+
 const logger = loggerFn({ module: "document" });
 
 export class OperationError extends Error {
@@ -114,17 +111,20 @@ export class Documents<T> extends ComposableProgram {
                 const entries = (
                     await Promise.all(
                         result.results.map((result) => {
-                            return io
-                                .read(
-                                    this.store.oplog._storage,
-                                    result.context.head,
-                                    {
-                                        timeout: 10 * 10000,
-                                    }
-                                )
+                            return this.store._store
+                                .get<Uint8Array>(result.context.head, {
+                                    timeout: 10 * 10000,
+                                })
                                 .then((bytes) => {
-                                    const entry = deserialize(bytes, Entry);
+                                    if (!bytes) {
+                                        logger.error(
+                                            "Faield to resolve block: ",
+                                            result.context.head
+                                        );
+                                        return;
+                                    }
 
+                                    const entry = deserialize(bytes, Entry);
                                     if (!this._optionCanAppend) {
                                         return entry;
                                     }
@@ -140,7 +140,7 @@ export class Documents<T> extends ComposableProgram {
                                         .catch((e: any) => {
                                             logger.info(
                                                 "canAppend resulted in error: " +
-                                                e.message
+                                                    e.message
                                             );
                                             return undefined;
                                         });
@@ -248,8 +248,8 @@ export class Documents<T> extends ComposableProgram {
             if (!(this.parentProgram as any as CanOpenSubPrograms).canOpen) {
                 throw new Error(
                     "Class " +
-                    this.parentProgram.constructor.name +
-                    " needs to implement CanOpenSubPrograms for this Documents store to progams"
+                        this.parentProgram.constructor.name +
+                        " needs to implement CanOpenSubPrograms for this Documents store to progams"
                 );
             }
             doc.owner = this.parentProgram.address.toString();

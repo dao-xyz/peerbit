@@ -6,11 +6,8 @@ import { jest } from "@jest/globals";
 import { v4 as uuid } from "uuid";
 
 // Include test utilities
-import {
-    nodeConfig as config,
-    waitForPeers,
-    Session,
-} from "@dao-xyz/peerbit-test-utils";
+import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 const orbitdbPath1 = "./orbitdb/tests/browser/1";
 const orbitdbPath2 = "./orbitdb/tests/browser/2";
@@ -22,9 +19,7 @@ const dbPath2 = "./orbitdb/tests/browser/2/db2";
  */
 
 describe(`browser`, function () {
-    jest.setTimeout(config.timeout * 2);
-
-    let session: Session;
+    let session: LSession;
     let orbitdb1: Peerbit,
         orbitdb2: Peerbit,
         db1: EventStore<string>,
@@ -32,7 +27,7 @@ describe(`browser`, function () {
     let timer: any;
 
     beforeAll(async () => {
-        session = await Session.connected(2);
+        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
     });
 
     afterAll(async () => {
@@ -47,11 +42,11 @@ describe(`browser`, function () {
         rmrf.sync(dbPath1);
         rmrf.sync(dbPath2);
 
-        orbitdb1 = await Peerbit.create(session.peers[0].ipfs, {
+        orbitdb1 = await Peerbit.create(session.peers[0], {
             directory: orbitdbPath1,
             browser: true,
         });
-        orbitdb2 = await Peerbit.create(session.peers[1].ipfs, {
+        orbitdb2 = await Peerbit.create(session.peers[1], {
             directory: orbitdbPath2,
             browser: true,
         });
@@ -80,29 +75,29 @@ describe(`browser`, function () {
 
         db2 = await orbitdb2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._ipfs,
+                orbitdb2._store,
                 db1.address!
             ),
             { topic: topic, directory: dbPath2, replicate: true }
         );
 
         await waitForPeers(
-            session.peers[1].ipfs,
+            session.peers[1],
             [orbitdb1.id],
             getObserverTopic(topic)
         );
         await waitForPeers(
-            session.peers[0].ipfs,
+            session.peers[0],
             [orbitdb2.id],
             getObserverTopic(topic)
         );
         await waitForPeers(
-            session.peers[1].ipfs,
+            session.peers[1],
             [orbitdb1.id],
             getReplicationTopic(topic)
         );
         await waitForPeers(
-            session.peers[0].ipfs,
+            session.peers[0],
             [orbitdb2.id],
             getReplicationTopic(topic)
         );
@@ -133,29 +128,29 @@ describe(`browser`, function () {
 
         db2 = await orbitdb2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._ipfs,
+                orbitdb2._store,
                 db1.address!
             ),
             { topic: topic, directory: dbPath2, replicate: true }
         );
 
         await waitForPeers(
-            session.peers[1].ipfs,
+            session.peers[1],
             [orbitdb1.id],
             getObserverTopic(topic)
         );
         await waitForPeers(
-            session.peers[0].ipfs,
+            session.peers[0],
             [orbitdb2.id],
             getObserverTopic(topic)
         );
         await waitForPeers(
-            session.peers[1].ipfs,
+            session.peers[1],
             [orbitdb1.id],
             getReplicationTopic(topic)
         );
         await waitForPeers(
-            session.peers[0].ipfs,
+            session.peers[0],
             [orbitdb2.id],
             getReplicationTopic(topic)
         );
@@ -183,24 +178,24 @@ describe(`browser`, function () {
 
         db2 = await orbitdb2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._ipfs,
+                orbitdb2._store,
                 db1.address!
             ),
             { topic: topic, directory: dbPath2, replicate: true }
         );
 
         await waitForPeers(
-            session.peers[1].ipfs,
+            session.peers[1],
             [orbitdb1.id],
             getObserverTopic(topic)
         );
         await waitForPeers(
-            session.peers[0].ipfs,
+            session.peers[0],
             [orbitdb2.id],
             getObserverTopic(topic)
         );
         await waitForPeers(
-            session.peers[0].ipfs,
+            session.peers[0],
             [orbitdb2.id],
             getReplicationTopic(topic)
         );

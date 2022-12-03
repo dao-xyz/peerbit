@@ -34,7 +34,7 @@
         "url": "https://github.com/dao-xyz/peerbit"
     },
     "engines": {
-        "node": ">=16.0"
+        "node": ">=16.15.1"
     },
     "license": "MIT",
     "dependencies": {
@@ -48,9 +48,6 @@
     "devDependencies": {
         "@dao-xyz/peerbit-keystore": "^0.0.31",
         "@dao-xyz/peerbit-test-utils": "^0.0.14",
-        "go-ipfs": "^0.17.0",
-        "ipfs": "^0.65.0",
-        "ipfsd-ctl": "^12.2.2",
         "level": "^8.0.0",
         "libsodium-wrappers": "^0.7.10"
     },

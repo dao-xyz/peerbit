@@ -1,11 +1,9 @@
 import { field, option, variant } from "@dao-xyz/borsh";
 import { Entry, Identity } from "@dao-xyz/ipfs-log";
-import { IPFS } from "ipfs-core-types";
 import { IInitializationOptions, Store } from "@dao-xyz/peerbit-store";
 import { v4 as uuid } from "uuid";
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { getValuesWithType } from "./utils.js";
-import io from "@dao-xyz/peerbit-block";
 import {
     serialize,
     deserialize,
@@ -14,6 +12,8 @@ import {
 } from "@dao-xyz/borsh";
 import path from "path";
 import { CID } from "multiformats/cid";
+import { LibP2PBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import { Libp2p } from "libp2p";
 export * from "./protocol-message.js";
 
 const notEmpty = (e: string) => e !== "" && e !== " ";
@@ -176,29 +176,31 @@ export interface Saveable {
 }
 
 export const save = async (
-    ipfs: IPFS,
+    store: Blocks,
     thing: Addressable,
     options: { format?: string; pin?: boolean; timeout?: number } = {}
 ): Promise<Address> => {
     const manifest: Manifest = {
         data: serialize(thing),
     };
-    const hash = await io.write(
-        ipfs,
-        options.format || "dag-cbor",
+    const hash = await store.put(
         manifest,
+        options.format || "dag-cbor",
         options
     );
     return Address.parse(Address.join(hash));
 };
 
 export const load = async <S extends Addressable>(
-    ipfs: IPFS,
+    store: Blocks,
     address: Address,
     into: Constructor<S> | AbstractType<S>,
     options: { timeout?: number } = {}
-): Promise<S> => {
-    const manifest: Manifest = await io.read(ipfs, address.cid, options);
+): Promise<S | undefined> => {
+    const manifest = await store.get<Manifest>(address.cid, options);
+    if (!manifest) {
+        return undefined;
+    }
     const der = deserialize(manifest.data, into);
     der.address = Address.parse(Address.join(address.cid));
     return der;
@@ -220,7 +222,7 @@ export abstract class AbstractProgram {
     @field({ type: option("string") })
     owner?: string; // Will control whether this program can be opened or not
 
-    _ipfs: IPFS;
+    _libp2p: Libp2p;
     _identity: Identity;
     _encryption?: PublicKeyEncryptionResolver;
     _onClose?: () => void;
@@ -241,7 +243,8 @@ export abstract class AbstractProgram {
     }
 
     async init(
-        ipfs: IPFS,
+        libp2p: Libp2p,
+        store: Blocks,
         identity: Identity,
         options: ProgramInitializationOptions
     ): Promise<this> {
@@ -250,7 +253,7 @@ export abstract class AbstractProgram {
         }
 
         const fn = async () => {
-            this._ipfs = ipfs;
+            this._libp2p = libp2p;
             this._identity = identity;
             this._encryption = options.store.encryption;
             this._onClose = options.onClose;
@@ -258,11 +261,14 @@ export abstract class AbstractProgram {
 
             const nexts = this.programs;
             for (const next of nexts) {
-                await next.init(ipfs, identity, { ...options, parent: this });
+                await next.init(libp2p, store, identity, {
+                    ...options,
+                    parent: this,
+                });
             }
 
             await Promise.all(
-                this.stores.map((s) => s.init(ipfs, identity, options.store))
+                this.stores.map((s) => s.init(store, identity, options.store))
             );
 
             this._initialized = true;
@@ -303,8 +309,8 @@ export abstract class AbstractProgram {
         this._onDrop && this._onDrop();
     }
 
-    get ipfs(): IPFS {
-        return this._ipfs;
+    get libp2p(): Libp2p {
+        return this._libp2p;
     }
 
     get identity(): Identity {
@@ -406,7 +412,8 @@ export interface CanOpenSubPrograms {
 @variant(0)
 export abstract class Program
     extends AbstractProgram
-    implements Addressable, Saveable {
+    implements Addressable, Saveable
+{
     @field({ type: "string" })
     id: string;
 
@@ -450,17 +457,18 @@ export abstract class Program
     }
 
     async init(
-        ipfs: IPFS,
+        libp2p: Libp2p,
+        store: Blocks,
         identity: Identity,
         options: ProgramInitializationOptions
     ): Promise<this> {
         // TODO, determine whether setup should be called before or after save
         if (this.parentProgram === undefined) {
-            await this.save(ipfs);
+            await this.save(store);
         }
 
         await this.setup();
-        await super.init(ipfs, identity, options);
+        await super.init(libp2p, store, identity, options);
         if (this.parentProgram != undefined && this._address) {
             throw new Error(
                 "Expecting address to be undefined as this program is part of another program"
@@ -485,7 +493,7 @@ export abstract class Program
     }
 
     async save(
-        ipfs: IPFS,
+        store: Blocks,
         options?: {
             format?: string;
             pin?: boolean;
@@ -494,7 +502,7 @@ export abstract class Program
     ): Promise<Address> {
         this.setupIndices();
         const existingAddress = this._address;
-        const address = await save(ipfs, this, options);
+        const address = await save(store, this, options);
         this._address = address;
         if (!this.address) {
             throw new Error("Unexpected");
@@ -510,14 +518,14 @@ export abstract class Program
     }
 
     static load<S extends Program>(
-        ipfs: IPFS,
+        store: Blocks,
         address: Address | string,
         options?: {
             timeout?: number;
         }
     ): Promise<S> {
         return load(
-            ipfs,
+            store,
             address instanceof Address ? address : Address.parse(address),
             Program,
             options
@@ -529,4 +537,4 @@ export abstract class Program
  * Building block, but not something you use as a standalone
  */
 @variant(1)
-export abstract class ComposableProgram extends AbstractProgram { }
+export abstract class ComposableProgram extends AbstractProgram {}

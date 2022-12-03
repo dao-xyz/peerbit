@@ -6,10 +6,7 @@ import {
     serialize,
     AbstractType,
 } from "@dao-xyz/borsh";
-import {
-    arraysEqual,
-    UInt8ArraySerializer,
-} from "@dao-xyz/peerbit-borsh-utils";
+import { arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
 import { Ed25519PublicKey, verifySignatureEd25519 } from "./ed25519";
 import { PublicSignKey } from "./key";
 import { Secp256k1PublicKey, verifySignatureSecp256k1 } from "./sepc256k1.js";
@@ -17,7 +14,7 @@ import { SignWithKey } from "./signer.js";
 
 @variant(0)
 export class SignatureWithKey {
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     signature: Uint8Array;
 
     @field({ type: PublicSignKey })
@@ -45,7 +42,7 @@ export class SignatureWithKey {
 
 @variant(0)
 export class MaybeSigned<T> {
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     data: Uint8Array;
 
     @field({ type: option(SignatureWithKey) })

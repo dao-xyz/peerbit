@@ -9,24 +9,7 @@ on:
 
 name: Check, Tests, Lints
 jobs:
-
-    buildAndLint:
-        timeout-minutes: 10
-        runs-on: ubuntu-latest
-
-        strategy:
-            matrix:
-                node-version: [16.x]
-
-        steps:
-            - uses: actions/checkout@v3
-            - run: yarn install
-            - run: yarn lerna bootstrap
-            - run: yarn build
-            - run: yarn lint
-
-    Test:
-        needs: [buildAndLint]
+    buildLintTest:
         timeout-minutes: 30
         runs-on: ubuntu-latest
 
@@ -41,4 +24,5 @@ jobs:
             - run: yarn install
             - run: yarn lerna bootstrap
             - run: yarn build
+            - run: yarn lint
             - run: yarn test --roots ${{matrix.folder}}  --w 2

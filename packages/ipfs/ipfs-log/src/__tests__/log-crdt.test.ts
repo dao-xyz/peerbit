@@ -2,530 +2,513 @@ import rmrf from "rimraf";
 import fs from "fs-extra";
 import { Log } from "../log.js";
 import { createStore, Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { jest } from "@jest/globals";
-
-// Test utils
-import {
-    nodeConfig as config,
-    testAPIs,
-    startIpfs,
-    stopIpfs,
-} from "@dao-xyz/peerbit-test-utils";
-import { Controller } from "ipfsd-ctl";
-import { IPFS } from "ipfs-core-types";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
+import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 
-let ipfsd: Controller,
-    ipfs: IPFS,
-    signKey: KeyWithMeta<Ed25519Keypair>,
+let signKey: KeyWithMeta<Ed25519Keypair>,
     signKey2: KeyWithMeta<Ed25519Keypair>,
     signKey3: KeyWithMeta<Ed25519Keypair>;
 
-Object.keys(testAPIs).forEach((IPFS) => {
-    describe("Log - CRDT", function () {
-        jest.setTimeout(config.timeout);
+describe("Log - CRDT", function () {
+    let keystore: Keystore, store: Blocks;
 
-        const { signingKeyFixtures, signingKeysPath } = config;
+    beforeAll(async () => {
+        rmrf.sync(testKeyStorePath(__filenameBase));
 
-        let keystore: Keystore;
+        await fs.copy(
+            signingKeysFixturesPath(__dirname),
+            testKeyStorePath(__filenameBase)
+        );
 
-        beforeAll(async () => {
-            rmrf.sync(signingKeysPath(__filenameBase));
+        keystore = new Keystore(
+            await createStore(testKeyStorePath(__filenameBase))
+        );
 
-            await fs.copy(
-                signingKeyFixtures(__dirname),
-                signingKeysPath(__filenameBase)
+        signKey = (await keystore.getKey(
+            new Uint8Array([0])
+        )) as KeyWithMeta<Ed25519Keypair>;
+        signKey2 = (await await keystore.getKey(
+            new Uint8Array([2])
+        )) as KeyWithMeta<Ed25519Keypair>;
+        signKey3 = (await await keystore.getKey(
+            new Uint8Array([3])
+        )) as KeyWithMeta<Ed25519Keypair>;
+
+        store = new Blocks(new MemoryLevelBlockStore());
+        await store.open();
+    });
+
+    afterAll(async () => {
+        await store.close();
+
+        rmrf.sync(testKeyStorePath(__filenameBase));
+
+        await keystore?.close();
+    });
+
+    describe("is a CRDT", () => {
+        let log1: Log<any>, log2: Log<any>, log3: Log<any>;
+
+        beforeEach(async () => {
+            log1 = new Log(
+                store,
+                {
+                    ...signKey.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey.keypair.sign(data),
+                },
+                { logId: "X" }
             );
-
-            keystore = new Keystore(
-                await createStore(signingKeysPath(__filenameBase))
+            log2 = new Log(
+                store,
+                {
+                    ...signKey2.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey2.keypair.sign(data),
+                },
+                { logId: "X" }
             );
-
-            signKey = (await keystore.getKey(
-                new Uint8Array([0])
-            )) as KeyWithMeta<Ed25519Keypair>;
-            signKey2 = (await await keystore.getKey(
-                new Uint8Array([2])
-            )) as KeyWithMeta<Ed25519Keypair>;
-            signKey3 = (await await keystore.getKey(
-                new Uint8Array([3])
-            )) as KeyWithMeta<Ed25519Keypair>;
-
-            ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig);
-            ipfs = ipfsd.api;
+            log3 = new Log(
+                store,
+                {
+                    ...signKey3.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey3.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
         });
 
-        afterAll(async () => {
-            await stopIpfs(ipfsd);
+        it("join is associative", async () => {
+            const expectedElementsCount = 6;
 
-            rmrf.sync(signingKeysPath(__filenameBase));
+            await log1.append("helloA1", { gidSeed: "a" });
+            await log1.append("helloA2", { gidSeed: "a" });
+            await log2.append("helloB1", { gidSeed: "a" });
+            await log2.append("helloB2", { gidSeed: "a" });
+            await log3.append("helloC1", { gidSeed: "a" });
+            await log3.append("helloC2", { gidSeed: "a" });
 
-            await keystore?.close();
+            // a + (b + c)
+            await log2.join(log3);
+            await log1.join(log2);
+
+            const res1 = log1.values.slice();
+
+            log1 = new Log(
+                store,
+                {
+                    ...signKey.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            log2 = new Log(
+                store,
+                {
+                    ...signKey2.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey2.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            log3 = new Log(
+                store,
+                {
+                    ...signKey3.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey3.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            await log1.append("helloA1", { gidSeed: "a" });
+            await log1.append("helloA2", { gidSeed: "a" });
+            await log2.append("helloB1", { gidSeed: "a" });
+            await log2.append("helloB2", { gidSeed: "a" });
+            await log3.append("helloC1", { gidSeed: "a" });
+            await log3.append("helloC2", { gidSeed: "a" });
+
+            // (a + b) + c
+            await log1.join(log2);
+            await log3.join(log1);
+
+            const res2 = log3.values.slice();
+
+            // associativity: a + (b + c) == (a + b) + c
+            expect(res1.length).toEqual(expectedElementsCount);
+            expect(res2.length).toEqual(expectedElementsCount);
+            expect(res1.map((x) => x.payload.getValue())).toEqual(
+                res2.map((x) => x.payload.getValue())
+            );
         });
 
-        describe("is a CRDT", () => {
-            let log1: Log<any>, log2: Log<any>, log3: Log<any>;
+        it("join is commutative", async () => {
+            const expectedElementsCount = 4;
 
-            beforeEach(async () => {
-                log1 = new Log(
-                    ipfs,
-                    {
-                        ...signKey.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                log2 = new Log(
-                    ipfs,
-                    {
-                        ...signKey2.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey2.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                log3 = new Log(
-                    ipfs,
-                    {
-                        ...signKey3.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey3.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-            });
+            await log1.append("helloA1", { gidSeed: "a" });
+            await log1.append("helloA2", { gidSeed: "a" });
+            await log2.append("helloB1", { gidSeed: "a" });
+            await log2.append("helloB2", { gidSeed: "a" });
 
-            it("join is associative", async () => {
-                const expectedElementsCount = 6;
+            // b + a
+            await log2.join(log1);
+            const res1 = log2.values.slice();
 
-                await log1.append("helloA1", { gidSeed: "a" });
-                await log1.append("helloA2", { gidSeed: "a" });
-                await log2.append("helloB1", { gidSeed: "a" });
-                await log2.append("helloB2", { gidSeed: "a" });
-                await log3.append("helloC1", { gidSeed: "a" });
-                await log3.append("helloC2", { gidSeed: "a" });
+            log1 = new Log(
+                store,
+                {
+                    ...signKey.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            log2 = new Log(
+                store,
+                {
+                    ...signKey2.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey2.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            await log1.append("helloA1", { gidSeed: "a" });
+            await log1.append("helloA2", { gidSeed: "a" });
+            await log2.append("helloB1", { gidSeed: "a" });
+            await log2.append("helloB2", { gidSeed: "a" });
 
-                // a + (b + c)
-                await log2.join(log3);
-                await log1.join(log2);
+            // a + b
+            await log1.join(log2);
+            const res2 = log1.values.slice();
 
-                const res1 = log1.values.slice();
+            // commutativity: a + b == b + a
+            expect(res1.length).toEqual(expectedElementsCount);
+            expect(res2.length).toEqual(expectedElementsCount);
+            expect(res1.map((x) => x.payload.getValue())).toEqual(
+                res2.map((x) => x.payload.getValue())
+            );
+        });
 
-                log1 = new Log(
-                    ipfs,
-                    {
-                        ...signKey.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                log2 = new Log(
-                    ipfs,
-                    {
-                        ...signKey2.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey2.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                log3 = new Log(
-                    ipfs,
-                    {
-                        ...signKey3.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey3.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                await log1.append("helloA1", { gidSeed: "a" });
-                await log1.append("helloA2", { gidSeed: "a" });
-                await log2.append("helloB1", { gidSeed: "a" });
-                await log2.append("helloB2", { gidSeed: "a" });
-                await log3.append("helloC1", { gidSeed: "a" });
-                await log3.append("helloC2", { gidSeed: "a" });
+        it("multiple joins are commutative", async () => {
+            // b + a == a + b
+            log1 = new Log(
+                store,
+                {
+                    ...signKey.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            log2 = new Log(
+                store,
+                {
+                    ...signKey2.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey2.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            await log1.append("helloA1", { gidSeed: "a" });
+            await log1.append("helloA2", { gidSeed: "a" });
+            await log2.append("helloB1", { gidSeed: "a" });
+            await log2.append("helloB2", { gidSeed: "a" });
+            await log2.join(log1);
+            const resA1 = log2.toString();
 
-                // (a + b) + c
-                await log1.join(log2);
-                await log3.join(log1);
+            log1 = new Log(
+                store,
+                {
+                    ...signKey.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            log2 = new Log(
+                store,
+                {
+                    ...signKey2.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey2.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            await log1.append("helloA1", { gidSeed: "a" });
+            await log1.append("helloA2", { gidSeed: "a" });
+            await log2.append("helloB1", { gidSeed: "a" });
+            await log2.append("helloB2", { gidSeed: "a" });
+            await log1.join(log2);
+            const resA2 = log1.toString();
 
-                const res2 = log3.values.slice();
+            expect(resA1).toEqual(resA2);
 
-                // associativity: a + (b + c) == (a + b) + c
-                expect(res1.length).toEqual(expectedElementsCount);
-                expect(res2.length).toEqual(expectedElementsCount);
-                expect(res1.map((x) => x.payload.getValue())).toEqual(
-                    res2.map((x) => x.payload.getValue())
-                );
-            });
+            // a + b == b + a
+            log1 = new Log(
+                store,
+                {
+                    ...signKey.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            log2 = new Log(
+                store,
+                {
+                    ...signKey2.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey2.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            await log1.append("helloA1", { gidSeed: "a" });
+            await log1.append("helloA2", { gidSeed: "a" });
+            await log2.append("helloB1", { gidSeed: "a" });
+            await log2.append("helloB2", { gidSeed: "a" });
+            await log1.join(log2);
+            const resB1 = log1.toString();
 
-            it("join is commutative", async () => {
-                const expectedElementsCount = 4;
+            log1 = new Log(
+                store,
+                {
+                    ...signKey.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            log2 = new Log(
+                store,
+                {
+                    ...signKey2.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey2.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            await log1.append("helloA1", { gidSeed: "a" });
+            await log1.append("helloA2", { gidSeed: "a" });
+            await log2.append("helloB1", { gidSeed: "a" });
+            await log2.append("helloB2", { gidSeed: "a" });
+            await log2.join(log1);
+            const resB2 = log2.toString();
 
-                await log1.append("helloA1", { gidSeed: "a" });
-                await log1.append("helloA2", { gidSeed: "a" });
-                await log2.append("helloB1", { gidSeed: "a" });
-                await log2.append("helloB2", { gidSeed: "a" });
+            expect(resB1).toEqual(resB2);
 
-                // b + a
-                await log2.join(log1);
-                const res1 = log2.values.slice();
+            // a + c == c + a
+            log1 = new Log(
+                store,
+                {
+                    ...signKey.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey.keypair.sign(data),
+                },
+                { logId: "A" }
+            );
+            log3 = new Log(
+                store,
+                {
+                    ...signKey3.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey3.keypair.sign(data),
+                },
+                { logId: "A" }
+            );
+            await log1.append("helloA1", { gidSeed: "a" });
+            await log1.append("helloA2", { gidSeed: "a" });
+            await log3.append("helloC1", { gidSeed: "a" });
+            await log3.append("helloC2", { gidSeed: "a" });
+            await log3.join(log1);
+            const resC1 = log3.toString();
 
-                log1 = new Log(
-                    ipfs,
-                    {
-                        ...signKey.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                log2 = new Log(
-                    ipfs,
-                    {
-                        ...signKey2.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey2.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                await log1.append("helloA1", { gidSeed: "a" });
-                await log1.append("helloA2", { gidSeed: "a" });
-                await log2.append("helloB1", { gidSeed: "a" });
-                await log2.append("helloB2", { gidSeed: "a" });
+            log1 = new Log(
+                store,
+                {
+                    ...signKey.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            log3 = new Log(
+                store,
+                {
+                    ...signKey3.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey3.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            await log1.append("helloA1", { gidSeed: "a" });
+            await log1.append("helloA2", { gidSeed: "a" });
+            await log3.append("helloC1", { gidSeed: "a" });
+            await log3.append("helloC2", { gidSeed: "a" });
+            await log1.join(log3);
+            const resC2 = log1.toString();
 
-                // a + b
-                await log1.join(log2);
-                const res2 = log1.values.slice();
+            expect(resC1).toEqual(resC2);
 
-                // commutativity: a + b == b + a
-                expect(res1.length).toEqual(expectedElementsCount);
-                expect(res2.length).toEqual(expectedElementsCount);
-                expect(res1.map((x) => x.payload.getValue())).toEqual(
-                    res2.map((x) => x.payload.getValue())
-                );
-            });
+            // c + b == b + c
+            log2 = new Log(
+                store,
+                {
+                    ...signKey2.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey2.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            log3 = new Log(
+                store,
+                {
+                    ...signKey3.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey3.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
 
-            it("multiple joins are commutative", async () => {
-                // b + a == a + b
-                log1 = new Log(
-                    ipfs,
-                    {
-                        ...signKey.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                log2 = new Log(
-                    ipfs,
-                    {
-                        ...signKey2.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey2.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                await log1.append("helloA1", { gidSeed: "a" });
-                await log1.append("helloA2", { gidSeed: "a" });
-                await log2.append("helloB1", { gidSeed: "a" });
-                await log2.append("helloB2", { gidSeed: "a" });
-                await log2.join(log1);
-                const resA1 = log2.toString();
+            await log2.append("helloB1", { gidSeed: "a" });
+            await log2.append("helloB2", { gidSeed: "a" });
+            await log3.append("helloC1", { gidSeed: "a" });
+            await log3.append("helloC2", { gidSeed: "a" });
+            await log3.join(log2);
+            const resD1 = log3.toString();
 
-                log1 = new Log(
-                    ipfs,
-                    {
-                        ...signKey.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                log2 = new Log(
-                    ipfs,
-                    {
-                        ...signKey2.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey2.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                await log1.append("helloA1", { gidSeed: "a" });
-                await log1.append("helloA2", { gidSeed: "a" });
-                await log2.append("helloB1", { gidSeed: "a" });
-                await log2.append("helloB2", { gidSeed: "a" });
-                await log1.join(log2);
-                const resA2 = log1.toString();
+            log2 = new Log(
+                store,
+                {
+                    ...signKey2.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey2.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            log3 = new Log(
+                store,
+                {
+                    ...signKey3.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey3.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            await log2.append("helloB1", { gidSeed: "a" });
+            await log2.append("helloB2", { gidSeed: "a" });
+            await log3.append("helloC1", { gidSeed: "a" });
+            await log3.append("helloC2", { gidSeed: "a" });
+            await log2.join(log3);
+            const resD2 = log2.toString();
 
-                expect(resA1).toEqual(resA2);
+            expect(resD1).toEqual(resD2);
 
-                // a + b == b + a
-                log1 = new Log(
-                    ipfs,
-                    {
-                        ...signKey.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                log2 = new Log(
-                    ipfs,
-                    {
-                        ...signKey2.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey2.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                await log1.append("helloA1", { gidSeed: "a" });
-                await log1.append("helloA2", { gidSeed: "a" });
-                await log2.append("helloB1", { gidSeed: "a" });
-                await log2.append("helloB2", { gidSeed: "a" });
-                await log1.join(log2);
-                const resB1 = log1.toString();
+            // a + b + c == c + b + a
+            log1 = new Log(
+                store,
+                {
+                    ...signKey.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            log2 = new Log(
+                store,
+                {
+                    ...signKey2.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey2.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            log3 = new Log(
+                store,
+                {
+                    ...signKey3.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey3.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            await log1.append("helloA1", { gidSeed: "a" });
+            await log1.append("helloA2", { gidSeed: "a" });
+            await log2.append("helloB1", { gidSeed: "a" });
+            await log2.append("helloB2", { gidSeed: "a" });
+            await log3.append("helloC1", { gidSeed: "a" });
+            await log3.append("helloC2", { gidSeed: "a" });
+            await log1.join(log2);
+            await log1.join(log3);
+            const logLeft = log1.toString();
 
-                log1 = new Log(
-                    ipfs,
-                    {
-                        ...signKey.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                log2 = new Log(
-                    ipfs,
-                    {
-                        ...signKey2.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey2.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                await log1.append("helloA1", { gidSeed: "a" });
-                await log1.append("helloA2", { gidSeed: "a" });
-                await log2.append("helloB1", { gidSeed: "a" });
-                await log2.append("helloB2", { gidSeed: "a" });
-                await log2.join(log1);
-                const resB2 = log2.toString();
+            log1 = new Log(
+                store,
+                {
+                    ...signKey.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            log2 = new Log(
+                store,
+                {
+                    ...signKey2.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey2.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            log3 = new Log(
+                store,
+                {
+                    ...signKey3.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey3.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            await log1.append("helloA1", { gidSeed: "a" });
+            await log1.append("helloA2", { gidSeed: "a" });
+            await log2.append("helloB1", { gidSeed: "a" });
+            await log2.append("helloB2", { gidSeed: "a" });
+            await log3.append("helloC1", { gidSeed: "a" });
+            await log3.append("helloC2", { gidSeed: "a" });
+            await log3.join(log2);
+            await log3.join(log1);
+            const logRight = log3.toString();
 
-                expect(resB1).toEqual(resB2);
+            expect(logLeft).toEqual(logRight);
+        });
 
-                // a + c == c + a
-                log1 = new Log(
-                    ipfs,
-                    {
-                        ...signKey.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey.keypair.sign(data),
-                    },
-                    { logId: "A" }
-                );
-                log3 = new Log(
-                    ipfs,
-                    {
-                        ...signKey3.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey3.keypair.sign(data),
-                    },
-                    { logId: "A" }
-                );
-                await log1.append("helloA1", { gidSeed: "a" });
-                await log1.append("helloA2", { gidSeed: "a" });
-                await log3.append("helloC1", { gidSeed: "a" });
-                await log3.append("helloC2", { gidSeed: "a" });
-                await log3.join(log1);
-                const resC1 = log3.toString();
+        it("join is idempotent", async () => {
+            const expectedElementsCount = 3;
 
-                log1 = new Log(
-                    ipfs,
-                    {
-                        ...signKey.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                log3 = new Log(
-                    ipfs,
-                    {
-                        ...signKey3.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey3.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                await log1.append("helloA1", { gidSeed: "a" });
-                await log1.append("helloA2", { gidSeed: "a" });
-                await log3.append("helloC1", { gidSeed: "a" });
-                await log3.append("helloC2", { gidSeed: "a" });
-                await log1.join(log3);
-                const resC2 = log1.toString();
+            const logA = new Log(
+                store,
+                {
+                    ...signKey.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+            await logA.append("helloA1");
+            await logA.append("helloA2");
+            await logA.append("helloA3");
 
-                expect(resC1).toEqual(resC2);
-
-                // c + b == b + c
-                log2 = new Log(
-                    ipfs,
-                    {
-                        ...signKey2.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey2.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                log3 = new Log(
-                    ipfs,
-                    {
-                        ...signKey3.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey3.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-
-                await log2.append("helloB1", { gidSeed: "a" });
-                await log2.append("helloB2", { gidSeed: "a" });
-                await log3.append("helloC1", { gidSeed: "a" });
-                await log3.append("helloC2", { gidSeed: "a" });
-                await log3.join(log2);
-                const resD1 = log3.toString();
-
-                log2 = new Log(
-                    ipfs,
-                    {
-                        ...signKey2.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey2.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                log3 = new Log(
-                    ipfs,
-                    {
-                        ...signKey3.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey3.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                await log2.append("helloB1", { gidSeed: "a" });
-                await log2.append("helloB2", { gidSeed: "a" });
-                await log3.append("helloC1", { gidSeed: "a" });
-                await log3.append("helloC2", { gidSeed: "a" });
-                await log2.join(log3);
-                const resD2 = log2.toString();
-
-                expect(resD1).toEqual(resD2);
-
-                // a + b + c == c + b + a
-                log1 = new Log(
-                    ipfs,
-                    {
-                        ...signKey.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                log2 = new Log(
-                    ipfs,
-                    {
-                        ...signKey2.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey2.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                log3 = new Log(
-                    ipfs,
-                    {
-                        ...signKey3.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey3.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                await log1.append("helloA1", { gidSeed: "a" });
-                await log1.append("helloA2", { gidSeed: "a" });
-                await log2.append("helloB1", { gidSeed: "a" });
-                await log2.append("helloB2", { gidSeed: "a" });
-                await log3.append("helloC1", { gidSeed: "a" });
-                await log3.append("helloC2", { gidSeed: "a" });
-                await log1.join(log2);
-                await log1.join(log3);
-                const logLeft = log1.toString();
-
-                log1 = new Log(
-                    ipfs,
-                    {
-                        ...signKey.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                log2 = new Log(
-                    ipfs,
-                    {
-                        ...signKey2.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey2.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                log3 = new Log(
-                    ipfs,
-                    {
-                        ...signKey3.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey3.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                await log1.append("helloA1", { gidSeed: "a" });
-                await log1.append("helloA2", { gidSeed: "a" });
-                await log2.append("helloB1", { gidSeed: "a" });
-                await log2.append("helloB2", { gidSeed: "a" });
-                await log3.append("helloC1", { gidSeed: "a" });
-                await log3.append("helloC2", { gidSeed: "a" });
-                await log3.join(log2);
-                await log3.join(log1);
-                const logRight = log3.toString();
-
-                expect(logLeft).toEqual(logRight);
-            });
-
-            it("join is idempotent", async () => {
-                const expectedElementsCount = 3;
-
-                const logA = new Log(
-                    ipfs,
-                    {
-                        ...signKey.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey.keypair.sign(data),
-                    },
-                    { logId: "X" }
-                );
-                await logA.append("helloA1");
-                await logA.append("helloA2");
-                await logA.append("helloA3");
-
-                // idempotence: a + a = a
-                await logA.join(logA);
-                expect(logA.length).toEqual(expectedElementsCount);
-            });
+            // idempotence: a + a = a
+            await logA.join(logA);
+            expect(logA.length).toEqual(expectedElementsCount);
         });
     });
 });

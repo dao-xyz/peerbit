@@ -2,58 +2,44 @@ import rmrf from "rimraf";
 import fs from "fs-extra";
 import { Log } from "../log.js";
 import { createStore, Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { jest } from "@jest/globals";
-
-// Test utils
-import {
-    nodeConfig as config,
-    testAPIs,
-    LSession,
-    stopIpfs,
-} from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { Controller } from "ipfsd-ctl";
-import { IPFS } from "ipfs-core-types";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
+import { Blocks, MemoryLevelBlockStore } from "@dao-xyz/peerbit-block";
+import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 
-let ipfsd: Controller, session: LSession, signKey: KeyWithMeta<Ed25519Keypair>;
+let signKey: KeyWithMeta<Ed25519Keypair>;
 describe("Log - Append", function () {
-    jest.setTimeout(config.timeout);
-
-    const { signingKeyFixtures, signingKeysPath } = config;
-    let keystore: Keystore, session: LSession
+    let keystore: Keystore, store: Blocks;
 
     beforeAll(async () => {
-        session = await LSession.connected(1);
-
-        rmrf.sync(signingKeysPath(__filenameBase));
+        rmrf.sync(testKeyStorePath(__filenameBase));
 
         await fs.copy(
-            signingKeyFixtures(__dirname),
-            signingKeysPath(__filenameBase)
+            signingKeysFixturesPath(__dirname),
+            testKeyStorePath(__filenameBase)
         );
 
         keystore = new Keystore(
-            await createStore(signingKeysPath(__filenameBase))
+            await createStore(testKeyStorePath(__filenameBase))
         );
 
         signKey = (await keystore.getKey(
             new Uint8Array([0])
         )) as KeyWithMeta<Ed25519Keypair>;
 
+        store = new Blocks(new MemoryLevelBlockStore());
+        await store.open();
     });
 
     afterAll(async () => {
-        await stopIpfs(ipfsd);
-
-        rmrf.sync(signingKeysPath(__filenameBase));
-
+        await store.close();
+        rmrf.sync(testKeyStorePath(__filenameBase));
         await keystore?.close();
     });
 
@@ -62,7 +48,7 @@ describe("Log - Append", function () {
 
         beforeEach(async () => {
             log = new Log(
-                ipfs,
+                store,
                 {
                     ...signKey.keypair,
                     sign: async (data: Uint8Array) =>
@@ -114,7 +100,7 @@ describe("Log - Append", function () {
         beforeAll(async () => {
             // Do sign function really need to returnr publcikey
             log = new Log(
-                ipfs,
+                store,
                 {
                     ...signKey.keypair,
                     sign: (data) => signKey.keypair.sign(data),

@@ -40,7 +40,7 @@ export class KeyValueIndex {
 const encoding = JSON_ENCODING;
 
 @variant("kvstore")
-export class KeyValueStore<T> extends Program {
+export class KeyBlocks<T> extends Program {
     _index: KeyValueIndex;
 
     @field({ type: Store })
@@ -49,9 +49,10 @@ export class KeyValueStore<T> extends Program {
     constructor(properties: { id: string }) {
         super(properties);
         this.store = new Store();
-        this._index = new KeyValueIndex();
     }
     async setup() {
+        this._index = new KeyValueIndex();
+
         this.store.setup({
             onUpdate: this._index.updateIndex.bind(this._index),
             encoding,

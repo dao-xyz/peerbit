@@ -7,7 +7,6 @@ import {
     variant,
     vec,
 } from "@dao-xyz/borsh";
-import { UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
 import { arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
 import { AccessError } from "./errors.js";
 import sodium from "libsodium-wrappers";
@@ -61,7 +60,7 @@ export class MaybeEncrypted<T> {
 
 @variant(0)
 export class DecryptedThing<T> extends MaybeEncrypted<T> {
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     _data?: Uint8Array;
 
     constructor(props?: { data?: Uint8Array; value?: T }) {
@@ -170,10 +169,10 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 
 @variant(0)
 export class CipherWithNonce {
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     nonce: Uint8Array;
 
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     cipher: Uint8Array;
 
     constructor(props?: { nonce: Uint8Array; cipher: Uint8Array }) {
@@ -263,10 +262,10 @@ export class Envelope {
 
 @variant(1)
 export class EncryptedThing<T> extends MaybeEncrypted<T> {
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     _encrypted: Uint8Array;
 
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     _nonce: Uint8Array;
 
     @field({ type: Envelope })

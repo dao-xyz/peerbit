@@ -2,7 +2,8 @@ import { field, variant, vec, option } from "@dao-xyz/borsh";
 import { Store } from "@dao-xyz/peerbit-store";
 import { ComposableProgram, Program } from "..";
 import { getValuesWithType } from "../utils";
-import { Session } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
+import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
 
 @variant(0)
 class P1 extends ComposableProgram {}
@@ -51,9 +52,9 @@ describe("getValuesWithType", () => {
     });
 });
 describe("program", () => {
-    let session: Session;
+    let session: LSession;
     beforeAll(async () => {
-        session = await Session.connected(1);
+        session = await LSession.connected(1);
     });
 
     afterAll(async () => {
@@ -77,7 +78,7 @@ describe("program", () => {
     it("create subprogram address", async () => {
         const store = new Store();
         const p = new P2(store);
-        await p.save(session.peers[0].ipfs);
+        await p.save(new Blocks(new MemoryLevelBlockStore()));
         expect(p.program.address.toString()).toEndWith("/0");
     });
 
@@ -112,7 +113,7 @@ describe("program", () => {
         }
 
         const pr = new ProgramC();
-        await pr.save(session.peers[0].ipfs);
+        await pr.save(new Blocks(new MemoryLevelBlockStore()));
 
         expect(pr._programIndex).toBeUndefined();
         expect(pr.programA._programIndex).toEqual(0);
@@ -122,6 +123,5 @@ describe("program", () => {
         expect(pr.programB.storeB._storeIndex).toEqual(1);
         expect(pr.programB.programA.storeA._storeIndex).toEqual(2);
         expect(pr.storeC._storeIndex).toEqual(3);
-        // await expect(() => pr.save(session.peers[0].ipfs)).rejects.toThrow(Error);
     });
 });

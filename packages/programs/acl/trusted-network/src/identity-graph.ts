@@ -7,12 +7,9 @@ import {
     MemoryCompare,
     MemoryCompareQuery,
 } from "@dao-xyz/peerbit-document";
-import { IPFSAddress, PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import { PeerIdAddress, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { createHash } from "crypto";
-import {
-    joinUint8Arrays,
-    UInt8ArraySerializer,
-} from "@dao-xyz/peerbit-borsh-utils";
+import { joinUint8Arrays } from "@dao-xyz/peerbit-borsh-utils";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 
 abstract class KeyEnum {
@@ -24,7 +21,7 @@ abstract class KeyEnum {
         throw new Error("Not implemented");
     }
 
-    get key(): PublicSignKey | IPFSAddress {
+    get key(): PublicSignKey | PeerIdAddress {
         throw new Error("Not implemented");
     }
 }
@@ -58,13 +55,13 @@ export class PK extends KeyEnum {
 
 @variant(1)
 export class IPFSId extends KeyEnum {
-    @field({ type: IPFSAddress })
-    _id: IPFSAddress;
+    @field({ type: PeerIdAddress })
+    _id: PeerIdAddress;
 
-    constructor(properties: { id: IPFSAddress } | IPFSAddress) {
+    constructor(properties: { id: PeerIdAddress } | PeerIdAddress) {
         super();
         if (properties) {
-            if (properties instanceof IPFSAddress) {
+            if (properties instanceof PeerIdAddress) {
                 this._id = properties;
             } else {
                 this._id = properties.id;
@@ -141,7 +138,7 @@ export const getToByFrom: RelationResolver = {
 };
 
 export async function* getPathGenerator(
-    from: PublicSignKey | IPFSAddress,
+    from: PublicSignKey | PeerIdAddress,
     db: Documents<IdentityRelation>,
     resolver: RelationResolver
 ) {
@@ -175,8 +172,8 @@ export async function* getPathGenerator(
  * @returns
  */
 export const hasPathToTarget = async (
-    start: PublicSignKey | IPFSAddress,
-    target: (key: PublicSignKey | IPFSAddress) => boolean,
+    start: PublicSignKey | PeerIdAddress,
+    target: (key: PublicSignKey | PeerIdAddress) => boolean,
     db: Documents<IdentityRelation>,
     resolver: RelationResolver
 ): Promise<boolean> => {
@@ -209,15 +206,15 @@ export class IdentityRelation extends AbstractRelation {
     @field({ type: KeyEnum })
     _from: KeyEnum;
 
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     padding: Uint8Array;
 
     @field({ type: KeyEnum })
     _to: KeyEnum;
 
     constructor(properties?: {
-        to: PublicSignKey | IPFSAddress; // signed by truster
-        from: PublicSignKey | IPFSAddress;
+        to: PublicSignKey | PeerIdAddress; // signed by truster
+        from: PublicSignKey | PeerIdAddress;
     }) {
         super();
         if (properties) {
@@ -235,11 +232,11 @@ export class IdentityRelation extends AbstractRelation {
         }
     }
 
-    get from(): PublicSignKey | IPFSAddress {
+    get from(): PublicSignKey | PeerIdAddress {
         return this._from.key;
     }
 
-    get to(): PublicSignKey | IPFSAddress {
+    get to(): PublicSignKey | PeerIdAddress {
         return this._to.key;
     }
 
@@ -256,8 +253,8 @@ export class IdentityRelation extends AbstractRelation {
 }
 
 export const hasPath = async (
-    start: PublicSignKey | IPFSAddress,
-    end: PublicSignKey | IPFSAddress,
+    start: PublicSignKey | PeerIdAddress,
+    end: PublicSignKey | PeerIdAddress,
     db: Documents<IdentityRelation>,
     resolver: RelationResolver
 ): Promise<boolean> => {
@@ -265,8 +262,8 @@ export const hasPath = async (
 };
 
 export const getRelation = (
-    from: PublicSignKey | IPFSAddress,
-    to: PublicSignKey | IPFSAddress,
+    from: PublicSignKey | PeerIdAddress,
+    to: PublicSignKey | PeerIdAddress,
     db: Documents<IdentityRelation>
 ): IndexedValue<IdentityRelation> | undefined => {
     return db.index.get(new IdentityRelation({ from, to }).id);

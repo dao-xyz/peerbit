@@ -8,80 +8,71 @@ import { EventStore } from "./utils/stores/event-store";
 import { v4 as uuid } from "uuid";
 
 // Include test utilities
-import {
-    nodeConfig as config,
-    testAPIs,
-    Session,
-} from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 const orbitdbPath1 = "./orbitdb/tests/replication-topic/1";
 const orbitdbPath2 = "./orbitdb/tests/replication-topic/2";
 const dbPath1 = "./orbitdb/tests/replication-topic/1/db1";
 const dbPath2 = "./orbitdb/tests/replication-topic/2/db2";
 
-Object.keys(testAPIs).forEach((API) => {
-    describe(`Replication topic (${API})`, function () {
-        jest.setTimeout(config.timeout * 2);
+describe(`Replication topic`, function () {
+    let session: LSession;
+    let orbitdb1: Peerbit, orbitdb2: Peerbit, eventStore: EventStore<string>;
 
-        let session: Session;
-        let orbitdb1: Peerbit,
-            orbitdb2: Peerbit,
-            eventStore: EventStore<string>;
+    let timer: any;
 
-        let timer: any;
+    beforeAll(async () => {
+        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+    });
 
-        beforeAll(async () => {
-            session = await Session.connected(2);
+    afterAll(async () => {
+        await session.stop();
+    });
+
+    beforeEach(async () => {
+        clearInterval(timer);
+
+        rmrf.sync(orbitdbPath1);
+        rmrf.sync(orbitdbPath2);
+        rmrf.sync(dbPath1);
+        rmrf.sync(dbPath2);
+
+        orbitdb1 = await Peerbit.create(session.peers[0], {
+            directory: orbitdbPath1,
         });
-
-        afterAll(async () => {
-            await session.stop();
+        orbitdb2 = await Peerbit.create(session.peers[1], {
+            directory: orbitdbPath2,
         });
+    });
 
-        beforeEach(async () => {
-            clearInterval(timer);
+    afterEach(async () => {
+        clearInterval(timer);
+        if (eventStore) {
+            await eventStore.drop();
+        }
+        if (orbitdb1) await orbitdb1.stop();
 
-            rmrf.sync(orbitdbPath1);
-            rmrf.sync(orbitdbPath2);
-            rmrf.sync(dbPath1);
-            rmrf.sync(dbPath2);
+        if (orbitdb2) await orbitdb2.stop();
+    });
 
-            orbitdb1 = await Peerbit.create(session.peers[0].ipfs, {
-                directory: orbitdbPath1,
-            });
-            orbitdb2 = await Peerbit.create(session.peers[1].ipfs, {
-                directory: orbitdbPath2,
-            });
+    it("replicates database of 1 entry", async () => {
+        const topic = uuid();
+        orbitdb2.subscribeToTopic(topic, true);
+
+        eventStore = new EventStore<string>({});
+        eventStore = await orbitdb1.open(eventStore, {
+            topic: topic,
         });
-
-        afterEach(async () => {
-            clearInterval(timer);
-            if (eventStore) {
-                await eventStore.drop();
-            }
-            if (orbitdb1) await orbitdb1.stop();
-
-            if (orbitdb2) await orbitdb2.stop();
-        });
-
-        it("replicates database of 1 entry", async () => {
-            const topic = uuid();
-            orbitdb2.subscribeToTopic(topic, true);
-
-            eventStore = new EventStore<string>({});
-            eventStore = await orbitdb1.open(eventStore, {
-                topic: topic,
-            });
-            eventStore.add("hello");
-            await waitFor(
-                () =>
-                    (
-                        orbitdb2.programs
-                            .get(topic)
-                            ?.get(eventStore.address!.toString())
-                            ?.program as EventStore<string>
-                    )?.store?.oplog.values.length === 1
-            );
-        });
+        eventStore.add("hello");
+        await waitFor(
+            () =>
+                (
+                    orbitdb2.programs
+                        .get(topic)
+                        ?.get(eventStore.address!.toString())
+                        ?.program as EventStore<string>
+                )?.store?.oplog.values.length === 1
+        );
     });
 });

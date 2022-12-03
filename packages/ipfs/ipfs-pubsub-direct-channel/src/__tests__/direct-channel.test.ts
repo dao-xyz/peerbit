@@ -1,25 +1,23 @@
-import rmrf from "rimraf";
 import path from "path";
 import assert from "assert";
-import { Session } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { DirectChannel as Channel } from "../direct-channel.js";
 import { v1 as PROTOCOL } from "../protocol.js";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { waitForPeers } from "../wait-for-peers.js";
-import type { PeerId } from "@libp2p/interface-peer-id";
 
-const API = "js-ipfs";
-
-describe(`DirectChannel js-ipfs`, function () {
+describe(`DirectChannel`, function () {
     let expectedPeerIDs: string[] = [];
-    let session: Session;
+    let session: LSession;
     beforeEach(async () => {
-        session = await Session.connected(3, API);
+        session = await LSession.connected(3);
 
         // Note, we only create channels between peer1 and peer2 in these test,
         // peer3 is used for "external actor" tests
         expectedPeerIDs = Array.from(
-            [session.peers[0].id, session.peers[1].id].map((x) => x.toString())
+            [session.peers[0].peerId, session.peers[1].peerId].map((x) =>
+                x.toString()
+            )
         ).sort();
     });
 
@@ -30,8 +28,8 @@ describe(`DirectChannel js-ipfs`, function () {
     describe("create a channel", function () {
         it("has two participants", async () => {
             const c = await Channel.open(
-                session.peers[0].ipfs,
-                session.peers[1].id,
+                session.peers[0],
+                session.peers[1].peerId,
                 () => {}
             );
             expect(c.peers).toContainAllValues(expectedPeerIDs);
@@ -45,8 +43,8 @@ describe(`DirectChannel js-ipfs`, function () {
                 expectedPeerIDs.join("/")
             );
             const c = await Channel.open(
-                session.peers[0].ipfs,
-                session.peers[1].id,
+                session.peers[0],
+                session.peers[1].peerId,
                 () => {}
             );
             assert.deepEqual(c.id, expectedID);
@@ -55,13 +53,13 @@ describe(`DirectChannel js-ipfs`, function () {
 
         it("has two peers", async () => {
             const c1 = await Channel.open(
-                session.peers[0].ipfs,
-                session.peers[1].id,
+                session.peers[0],
+                session.peers[1].peerId,
                 () => {}
             );
             const c2 = await Channel.open(
-                session.peers[1].ipfs,
-                session.peers[0].id,
+                session.peers[1],
+                session.peers[0].peerId,
                 () => {}
             );
             expect(c1.peers).toContainAllValues(expectedPeerIDs);
@@ -78,11 +76,11 @@ describe(`DirectChannel js-ipfs`, function () {
 
         it("can be created with one line", async () => {
             const c = await Channel.open(
-                session.peers[0].ipfs,
-                session.peers[1].id,
+                session.peers[0],
+                session.peers[1].peerId,
                 () => {}
             );
-            const topics = await session.peers[0].ipfs.pubsub.ls();
+            const topics = await session.peers[0].pubsub.getTopics();
             const channelID = topics.find((e) => e === c.id);
             expect(channelID).toEqual(c.id);
             c.close();
@@ -94,8 +92,8 @@ describe(`DirectChannel js-ipfs`, function () {
 
         beforeEach(async () => {
             c = await Channel.open(
-                session.peers[0].ipfs,
-                session.peers[1].id,
+                session.peers[0],
+                session.peers[1].peerId,
                 () => {}
             );
         });
@@ -122,12 +120,16 @@ describe(`DirectChannel js-ipfs`, function () {
         it("sends and receives messages", async () => {
             let c1Response: boolean | undefined = undefined;
             const c1 = await Channel.open(
-                session.peers[0].ipfs,
-                session.peers[1].id,
+                session.peers[0],
+                session.peers[1].peerId,
                 (m) => {
                     if (m.type === "signed") {
-                        expect(m.from.equals(session.peers[1].id));
-                        expect(m.data).toEqual(new Uint8Array([1]));
+                        expect(
+                            m.from.equals(session.peers[1].peerId.toString())
+                        );
+                        expect(new Uint8Array(m.data)).toEqual(
+                            new Uint8Array([1])
+                        );
                         expect(m.topic).toEqual(c1.id);
                         expect(m.topic).toEqual(c2.id);
                     } else {
@@ -140,12 +142,16 @@ describe(`DirectChannel js-ipfs`, function () {
                 }
             );
             const c2 = await Channel.open(
-                session.peers[1].ipfs,
-                session.peers[0].id,
+                session.peers[1],
+                session.peers[0].peerId,
                 (m) => {
                     if (m.type === "signed") {
-                        expect(m.from.equals(session.peers[0].id));
-                        expect(m.data).toEqual(new Uint8Array([0]));
+                        expect(
+                            m.from.equals(session.peers[0].peerId.toString())
+                        );
+                        expect(new Uint8Array(m.data)).toEqual(
+                            new Uint8Array([0])
+                        );
                         expect(m.topic).toEqual(c1.id);
                         expect(m.topic).toEqual(c2.id);
                     } else {
@@ -166,27 +172,27 @@ describe(`DirectChannel js-ipfs`, function () {
         it("can share a channel for multiple handlers", async () => {
             let c1Response: boolean | undefined = undefined;
             const c1 = await Channel.open(
-                session.peers[0].ipfs,
-                session.peers[1].id,
+                session.peers[0],
+                session.peers[1].peerId,
                 (m) => {
                     c1Response = true;
                 }
             );
             const c2 = await Channel.open(
-                session.peers[1].ipfs,
-                session.peers[0].id,
+                session.peers[1],
+                session.peers[0].peerId,
                 (m) => {
                     c2.send(new Uint8Array([1]));
                 }
             );
             const c1x = await Channel.open(
-                session.peers[0].ipfs,
-                session.peers[1].id,
+                session.peers[0],
+                session.peers[1].peerId,
                 (m) => {}
             );
             const c2x = await Channel.open(
-                session.peers[1].ipfs,
-                session.peers[0].id,
+                session.peers[1],
+                session.peers[0].peerId,
                 (m) => {}
             );
 
@@ -211,8 +217,8 @@ describe(`DirectChannel js-ipfs`, function () {
             let callbackLeavingCounter: number = 0;
 
             c1 = await Channel.open(
-                session.peers[0].ipfs,
-                session.peers[1].id,
+                session.peers[0],
+                session.peers[1].peerId,
                 () => {},
                 {
                     onNewPeerCallback: (channel) => {
@@ -224,39 +230,39 @@ describe(`DirectChannel js-ipfs`, function () {
                 }
             );
             c2 = await Channel.open(
-                session.peers[1].ipfs,
-                session.peers[0].id,
+                session.peers[1],
+                session.peers[0].peerId,
                 () => {}
             );
 
-            let peers = await session.peers[0].ipfs.pubsub.peers(c1.id);
+            let peers = await session.peers[0].pubsub.getSubscribers(c1.id);
             // assert.deepEqual(peers, [])
 
             await c1.connect();
 
-            peers = await session.peers[0].ipfs.pubsub.peers(c1.id);
+            peers = await session.peers[0].pubsub.getSubscribers(c1.id);
             expect(peers.map((x) => x.toString())).toContainAllValues([
-                session.peers[1].id.toString(),
+                session.peers[1].peerId.toString(),
             ]);
             await delay(2000); // wait for all callbacks
             expect(callbackJoinedCounter).toEqual(1);
-            await c2.close();
+            await c2.close({ subscription: true });
             await delay(2000); // wait for all callbacks
             expect(callbackLeavingCounter).toEqual(1);
-            await c1.close();
+            await c1.close({ subscription: true });
         });
     });
 
     describe("disconnecting", function () {
         it("closes a channel", async () => {
             const c1 = await Channel.open(
-                session.peers[0].ipfs,
-                session.peers[1].id,
+                session.peers[0],
+                session.peers[1].peerId,
                 () => {}
             );
             const c2 = await Channel.open(
-                session.peers[1].ipfs,
-                session.peers[0].id,
+                session.peers[1],
+                session.peers[0].peerId,
                 () => {}
             );
 
@@ -266,25 +272,25 @@ describe(`DirectChannel js-ipfs`, function () {
             return new Promise(async (resolve, reject) => {
                 expect(c1._closed).toEqual(false);
                 expect(c1._isClosed()).toEqual(false);
-                c1.close();
-                const topics1 = await session.peers[0].ipfs.pubsub.ls();
+                c1.close({ subscription: true });
+                const topics1 = await session.peers[0].pubsub.getTopics();
                 assert.deepEqual(topics1, []);
                 expect(c1._closed).toEqual(true);
                 expect(c1._isClosed()).toEqual(true);
 
                 expect(c2._closed).toEqual(false);
                 expect(c2._isClosed()).toEqual(false);
-                c2.close();
-                const topics2 = await session.peers[1].ipfs.pubsub.ls();
-                assert.deepEqual(topics1, []);
+                c2.close({ subscription: true });
+                const topics2 = await session.peers[1].pubsub.getTopics();
+                assert.deepEqual(topics2, []);
                 expect(c2._closed).toEqual(true);
                 expect(c2._isClosed()).toEqual(true);
 
                 setTimeout(async () => {
-                    const peers1 = await session.peers[0].ipfs.pubsub.peers(
+                    const peers1 = await session.peers[0].pubsub.getSubscribers(
                         c1.id
                     );
-                    const peers2 = await session.peers[1].ipfs.pubsub.peers(
+                    const peers2 = await session.peers[1].pubsub.getSubscribers(
                         c1.id
                     );
                     assert.deepEqual(peers1, []);
@@ -298,12 +304,16 @@ describe(`DirectChannel js-ipfs`, function () {
     describe("non-participant peers can't send messages", function () {
         it("doesn't receive unwanted messages", async () => {
             const c1 = await Channel.open(
-                session.peers[0].ipfs,
-                session.peers[1].id,
+                session.peers[0],
+                session.peers[1].peerId,
                 (m) => {
                     if (m.type === "signed") {
-                        expect(m.from.equals(session.peers[1].id));
-                        expect(m.data).toEqual(new Uint8Array([0]));
+                        expect(
+                            m.from.equals(session.peers[1].peerId.toString())
+                        );
+                        expect(new Uint8Array(m.data)).toEqual(
+                            new Uint8Array([0])
+                        );
                         expect(m.topic).toEqual(c1.id);
                         expect(m.topic).toEqual(c2.id);
                     } else {
@@ -312,25 +322,22 @@ describe(`DirectChannel js-ipfs`, function () {
                 }
             );
             const c2 = await Channel.open(
-                session.peers[1].ipfs,
-                session.peers[0].id,
+                session.peers[1],
+                session.peers[0].peerId,
                 () => {}
             );
 
             await c1.connect();
             await c2.connect();
 
-            await session.peers[2].ipfs.pubsub.subscribe(c1.id, () => {});
+            await session.peers[2].pubsub.subscribe(c1.id);
             await waitForPeers(
-                session.peers[0].ipfs,
-                [session.peers[2].id.toString()],
+                session.peers[0],
+                [session.peers[2].peerId.toString()],
                 c1.id,
                 c1._isClosed.bind(c1)
             );
-            await session.peers[2].ipfs.pubsub.publish(
-                c1.id,
-                Buffer.from("OMG!")
-            );
+            await session.peers[2].pubsub.publish(c1.id, Buffer.from("OMG!"));
 
             return new Promise((resolve, reject) => {
                 setTimeout(() => {

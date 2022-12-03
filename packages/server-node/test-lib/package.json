@@ -36,14 +36,12 @@
     },
     "devDependencies": {
         "@dao-xyz/peerbit-test-utils": "*",
-        "go-ipfs": "^0.17.0",
-        "ipfs": "^0.65.0"
+        "libp2p": "^0.40.0"
     },
     "dependencies": {
         "@dao-xyz/peerbit-string": "*",
         "@dao-xyz/peerbit-trusted-network": "*",
         "@dao-xyz/peerbit": "*",
-        "ipfsd-ctl": "^12.2.2",
         "is-node": "^1.0.2"
     }
 }

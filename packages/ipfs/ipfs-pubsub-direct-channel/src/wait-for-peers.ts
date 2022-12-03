@@ -1,16 +1,65 @@
-import { IPFS } from "ipfs-core-types";
+import type { PeerId } from "@libp2p/interface-peer-id";
+import { Libp2p } from "libp2p";
 
-export const waitForPeers = async (
-    ipfs: IPFS,
-    peersToWait: string[],
+export const waitForPeers2 = (
+    libp2p: Libp2p,
+    peersToWait: (PeerId | string | Libp2p)[] | PeerId | string | Libp2p,
     topic: string,
     isClosed: () => boolean
 ) => {
+    const peersToWaitArr = Array.isArray(peersToWait)
+        ? peersToWait
+        : [peersToWait];
+    return new Promise<void>((resolve, reject) => {
+        const interval = setInterval(async () => {
+            try {
+                const peers = libp2p.pubsub.getSubscribers(topic);
+                const peerIds = peers.map((peer) => peer.toString());
+                const peerIdsToWait = peersToWaitArr.map((peer) =>
+                    (peer as Libp2p).peerId
+                        ? (peer as Libp2p).peerId.toString()
+                        : peer.toString()
+                );
+
+                const hasAllPeers =
+                    peerIdsToWait
+                        .map((e) => peerIds.includes(e))
+                        .filter((e) => e === false).length === 0;
+
+                // FIXME: Does not fail on timeout, not easily fixable
+                if (hasAllPeers) {
+                    clearInterval(interval);
+                    resolve();
+                }
+            } catch (e) {
+                clearInterval(interval);
+                reject(e);
+            }
+        }, 200);
+    });
+};
+
+export const waitForPeers = async (
+    libp2p: Libp2p,
+    peersToWait: (PeerId | string | Libp2p)[] | PeerId | string | Libp2p,
+    topic: string,
+    isClosed: () => boolean
+) => {
+    const peersToWaitArr = Array.isArray(peersToWait)
+        ? peersToWait
+        : [peersToWait];
+    const peerIdsToWaitMapped = peersToWaitArr.map((peer) =>
+        (peer as Libp2p).peerId
+            ? (peer as Libp2p).peerId.toString()
+            : peer.toString()
+    );
+
     const checkPeers = async () => {
-        const peers = (await ipfs.pubsub.peers(topic)).toString();
+        const peers = (await libp2p.pubsub.getSubscribers(topic)).toString();
         const hasAllPeers =
-            peersToWait.map((e) => peers.includes(e)).filter((e) => e === false)
-                .length === 0;
+            peerIdsToWaitMapped
+                .map((e) => peers.includes(e))
+                .filter((e) => e === false).length === 0;
         return hasAllPeers;
     };
 

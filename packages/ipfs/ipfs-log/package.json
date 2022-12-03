@@ -23,7 +23,7 @@
         "access": "public"
     },
     "engines": {
-        "node": ">=16.0"
+        "node": ">=16.15.1"
     },
     "keywords": [
         "ipfs",
@@ -32,7 +32,7 @@
         "crdt"
     ],
     "dependencies": {
-        "@dao-xyz/borsh": "^3.4.4",
+        "@dao-xyz/borsh": "^4.0.3",
         "@dao-xyz/peerbit-crypto": "^0.0.20",
         "@dao-xyz/peerbit-block": "^1.1.15",
         "@dao-xyz/peerbit-logger": "^0.0.3",
@@ -46,16 +46,9 @@
     "devDependencies": {
         "@dao-xyz/peerbit-keystore": "^0.0.31",
         "@dao-xyz/peerbit-test-utils": "^0.0.14",
-        "@mapbox/node-pre-gyp": "^1.0.10",
         "assert": "^2.0.0",
-        "fs-extra": "^10.0.0",
-        "go-ipfs": "^0.17.0",
-        "ipfs": "^0.65.0",
-        "ipfsd-ctl": "^12.2.2",
+        "fs-extra": "^10.0.1",
         "is-node": "^1.0.2",
-        "node-pre-gyp": "^0.17.0",
-        "nyc": "^15.0.1",
-        "orbit-db-benchmark-runner": "^1.0.3",
         "path-browserify": "^1.0.1",
         "stream-browserify": "^3.0.0"
     },

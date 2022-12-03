@@ -1,29 +1,26 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { Program } from "@dao-xyz/peerbit-program";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
-import { Network } from "../../../network";
+import { network } from "../../../network";
 import { EventStore } from "./event-store";
 
 @variant("permissioned_program")
-export class PermissionedEventStore extends Program implements Network {
-    inNetwork: true = true;
-
+@network({ property: "_network" })
+export class PermissionedEventStore extends Program {
     @field({ type: EventStore })
     _store: EventStore<string>;
 
     @field({ type: TrustedNetwork })
     _network: TrustedNetwork;
 
-    constructor(properties?: {
+    constructor(properties: {
         store?: EventStore<string>;
         network: TrustedNetwork;
     }) {
         super();
-        if (properties) {
-            this._network = properties.network;
-            this._store =
-                properties.store || new EventStore({ id: this._network.id });
-        }
+        this._network = properties.network;
+        this._store =
+            properties.store || new EventStore({ id: this._network.id });
     }
 
     get network(): TrustedNetwork {

@@ -1,22 +1,10 @@
 import rmrf from "rimraf";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
-import { variant, field, Constructor } from "@dao-xyz/borsh";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import { getReplicationTopic, Peerbit } from "../peer";
-
 import { EventStore } from "./utils/stores/event-store";
-import { jest } from "@jest/globals";
-import { Controller } from "ipfsd-ctl";
-import { IPFS } from "ipfs-core-types";
 import { v4 as uuid } from "uuid";
-
-// Include test utilities
-import {
-    nodeConfig as config,
-    startIpfs,
-    stopIpfs,
-    connectPeers,
-    waitForPeers,
-} from "@dao-xyz/peerbit-test-utils";
+import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 const orbitdbPath1 = "./orbitdb/tests/write-only/1";
 const orbitdbPath2 = "./orbitdb/tests/write-only/2";
@@ -24,9 +12,7 @@ const dbPath1 = "./orbitdb/tests/write-only/1/db1";
 const dbPath2 = "./orbitdb/tests/write-only/2/db2";
 
 describe(`Write-only`, function () {
-    jest.setTimeout(config.timeout * 2);
-
-    let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS;
+    let session: LSession;
     let orbitdb1: Peerbit,
         orbitdb2: Peerbit,
         db1: EventStore<string>,
@@ -35,21 +21,12 @@ describe(`Write-only`, function () {
     let timer: any;
 
     beforeAll(async () => {
-        ipfsd1 = await startIpfs("js-ipfs", config.daemon1);
-        ipfsd2 = await startIpfs("js-ipfs", config.daemon2);
-        ipfs1 = ipfsd1.api;
-        ipfs2 = ipfsd2.api;
+        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
         topic = uuid();
-        // Connect the peers manually to speed up test times
-        const isLocalhostAddress = (addr: string) =>
-            addr.toString().includes("127.0.0.1");
-        await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress });
     });
 
     afterAll(async () => {
-        if (ipfsd1) await stopIpfs(ipfsd1);
-
-        if (ipfsd2) await stopIpfs(ipfsd2);
+        await session.stop();
     });
 
     beforeEach(async () => {
@@ -60,13 +37,11 @@ describe(`Write-only`, function () {
         rmrf.sync(dbPath1);
         rmrf.sync(dbPath2);
 
-        orbitdb1 = await Peerbit.create(ipfs1, {
+        orbitdb1 = await Peerbit.create(session.peers[0], {
             directory: orbitdbPath1,
-            /*  canAccessKeys: async (requester, _keyToAccess) => {
-                return requester.equals(orbitdb2.identity.publicKey); // allow orbitdb1 to share keys with orbitdb2
-            },  */ waitForKeysTimout: 1000,
+            waitForKeysTimout: 1000,
         });
-        orbitdb2 = await Peerbit.create(ipfs2, {
+        orbitdb2 = await Peerbit.create(session.peers[1], {
             directory: orbitdbPath2,
             limitSigning: true,
         }); // limitSigning = dont sign exchange heads request
@@ -91,10 +66,14 @@ describe(`Write-only`, function () {
     });
 
     it("write 1 entry replicate false", async () => {
-        await waitForPeers(ipfs2, [orbitdb1.id], getReplicationTopic(topic));
+        await waitForPeers(
+            session.peers[1],
+            [orbitdb1.id],
+            getReplicationTopic(topic)
+        );
         db2 = await orbitdb2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._ipfs,
+                orbitdb2._store,
                 db1.address!
             ),
             { topic: topic, directory: dbPath2, replicate: false }
@@ -112,14 +91,18 @@ describe(`Write-only`, function () {
     });
 
     it("encrypted clock sync write 1 entry replicate false", async () => {
-        await waitForPeers(ipfs2, [orbitdb1.id], getReplicationTopic(topic));
+        await waitForPeers(
+            session.peers[1],
+            [orbitdb1.id],
+            getReplicationTopic(topic)
+        );
         const encryptionKey = await orbitdb1.keystore.createEd25519Key({
             id: "encryption key",
             group: topic,
         });
         db2 = await orbitdb2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._ipfs,
+                orbitdb2._store,
                 db1.address!
             ),
             { topic: topic, directory: dbPath2, replicate: false }

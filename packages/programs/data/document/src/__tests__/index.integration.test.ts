@@ -12,7 +12,11 @@ import {
     Compare,
     ModifiedAtQuery,
 } from "../query.js";
-import { Session, LSession, createStore } from "@dao-xyz/peerbit-test-utils";
+import {
+    LSession,
+    createStore,
+    waitForPeers,
+} from "@dao-xyz/peerbit-test-utils";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";
 import { Identity } from "@dao-xyz/ipfs-log";
 import {
@@ -34,6 +38,11 @@ import {
     LogEntryEncryptionQuery,
     LogQueryRequest,
 } from "@dao-xyz/peerbit-logindex";
+import {
+    LibP2PBlockStore,
+    MemoryLevelBlockStore,
+    Blocks,
+} from "@dao-xyz/peerbit-block";
 
 const __filename = fileURLToPath(import.meta.url);
 
@@ -75,10 +84,8 @@ const bigIntSort = <T extends number | bigint>(a: T, b: T): number =>
     a > b ? 1 : 0 || -(a < b);
 
 describe("index", () => {
-    let session: Session,
+    let session: LSession,
         peersCount = 3,
-        /*     writerStoreKeypair: X25519Keypair, observer2Keypair: X25519Keypair,
-         */
         stores: TestStore[] = [],
         writeStore: TestStore,
         cacheStores: AbstractLevel<any, string>[] = [];
@@ -92,7 +99,7 @@ describe("index", () => {
     };
 
     beforeAll(async () => {
-        session = await Session.connected(peersCount);
+        session = await LSession.connected(peersCount);
         for (let i = 0; i < peersCount; i++) {
             cacheStores.push(
                 await createStore(path.join(__filename, "cache- " + i))
@@ -101,53 +108,72 @@ describe("index", () => {
         const topic = uuid();
         // Create store
         for (let i = 0; i < peersCount; i++) {
+            const blockStore = new Blocks(
+                new LibP2PBlockStore(
+                    session.peers[i],
+                    new MemoryLevelBlockStore()
+                )
+            );
+            await blockStore.open();
+            if (i > 0) {
+                await waitForPeers(
+                    session.peers[i],
+                    session.peers[0].peerId,
+                    (blockStore._store as LibP2PBlockStore)._transportTopic
+                );
+            }
             const store =
                 i > 0
                     ? await TestStore.load<TestStore>(
-                        session.peers[i].ipfs,
-                        stores[0].address!
-                    )
+                          blockStore,
+                          stores[0].address!
+                      )
                     : new TestStore({
-                        docs: new Documents<Document>({
-                            index: new DocumentIndex({
-                                indexBy: "id",
-                            }),
-                            canEdit: true,
-                        }),
-                    });
+                          docs: new Documents<Document>({
+                              index: new DocumentIndex({
+                                  indexBy: "id",
+                              }),
+                              canEdit: true,
+                          }),
+                      });
             const keypair = await X25519Keypair.create();
-            await store.init(session.peers[i].ipfs, await createIdentity(), {
-                topic: topic,
-                store: {
-                    ...DefaultOptions,
-                    replicate: i === 0,
-                    encryption: {
-                        getEncryptionKeypair: () =>
-                            Promise.resolve(
-                                keypair as Ed25519Keypair | X25519Keypair
-                            ),
-                        getAnyKeypair: async (
-                            publicKeys: X25519PublicKey[]
-                        ) => {
-                            for (let i = 0; i < publicKeys.length; i++) {
-                                if (
-                                    publicKeys[i].equals(
-                                        (keypair as X25519Keypair).publicKey
-                                    )
-                                ) {
-                                    return {
-                                        index: i,
-                                        keypair: keypair as
-                                            | Ed25519Keypair
-                                            | X25519Keypair,
-                                    };
+            await store.init(
+                session.peers[i],
+                blockStore,
+                await createIdentity(),
+                {
+                    topic: topic,
+                    store: {
+                        ...DefaultOptions,
+                        replicate: i === 0,
+                        encryption: {
+                            getEncryptionKeypair: () =>
+                                Promise.resolve(
+                                    keypair as Ed25519Keypair | X25519Keypair
+                                ),
+                            getAnyKeypair: async (
+                                publicKeys: X25519PublicKey[]
+                            ) => {
+                                for (let i = 0; i < publicKeys.length; i++) {
+                                    if (
+                                        publicKeys[i].equals(
+                                            (keypair as X25519Keypair).publicKey
+                                        )
+                                    ) {
+                                        return {
+                                            index: i,
+                                            keypair: keypair as
+                                                | Ed25519Keypair
+                                                | X25519Keypair,
+                                        };
+                                    }
                                 }
-                            }
+                            },
                         },
+                        resolveCache: () => new Cache(cacheStores[i]),
                     },
-                    resolveCache: () => new Cache(cacheStores[i]),
-                },
-            });
+                }
+            );
             stores.push(store);
         }
         writeStore = stores[0];
@@ -191,7 +217,7 @@ describe("index", () => {
         await waitFor(() => writeStore.docs.index.size === 3);
     });
 
-    afterEach(async () => { });
+    afterEach(async () => {});
 
     afterAll(async () => {
         await Promise.all(stores.map((x) => x.drop()));
@@ -210,38 +236,43 @@ describe("index", () => {
                 }),
             });
             const keypair = await X25519Keypair.create();
-            await store.init(session.peers[0].ipfs, await createIdentity(), {
-                topic: "topic",
-                store: {
-                    ...DefaultOptions,
-                    replicate: true,
-                    encryption: {
-                        getEncryptionKeypair: () =>
-                            Promise.resolve(
-                                keypair as Ed25519Keypair | X25519Keypair
-                            ),
-                        getAnyKeypair: async (
-                            publicKeys: X25519PublicKey[]
-                        ) => {
-                            for (let i = 0; i < publicKeys.length; i++) {
-                                if (
-                                    publicKeys[i].equals(
-                                        (keypair as X25519Keypair).publicKey
-                                    )
-                                ) {
-                                    return {
-                                        index: i,
-                                        keypair: keypair as
-                                            | Ed25519Keypair
-                                            | X25519Keypair,
-                                    };
+            await store.init(
+                session.peers[0],
+                new Blocks(new MemoryLevelBlockStore()),
+                await createIdentity(),
+                {
+                    topic: "topic",
+                    store: {
+                        ...DefaultOptions,
+                        replicate: true,
+                        encryption: {
+                            getEncryptionKeypair: () =>
+                                Promise.resolve(
+                                    keypair as Ed25519Keypair | X25519Keypair
+                                ),
+                            getAnyKeypair: async (
+                                publicKeys: X25519PublicKey[]
+                            ) => {
+                                for (let i = 0; i < publicKeys.length; i++) {
+                                    if (
+                                        publicKeys[i].equals(
+                                            (keypair as X25519Keypair).publicKey
+                                        )
+                                    ) {
+                                        return {
+                                            index: i,
+                                            keypair: keypair as
+                                                | Ed25519Keypair
+                                                | X25519Keypair,
+                                        };
+                                    }
                                 }
-                            }
+                            },
                         },
+                        resolveCache: () => new Cache(cacheStores[0]),
                     },
-                    resolveCache: () => new Cache(cacheStores[0]),
-                },
-            });
+                }
+            );
 
             let doc = new Document({
                 id: uuid(),
@@ -276,38 +307,43 @@ describe("index", () => {
                 }),
             });
             const keypair = await X25519Keypair.create();
-            await store.init(session.peers[0].ipfs, await createIdentity(), {
-                topic: "topic",
-                store: {
-                    ...DefaultOptions,
-                    replicate: true,
-                    encryption: {
-                        getEncryptionKeypair: () =>
-                            Promise.resolve(
-                                keypair as Ed25519Keypair | X25519Keypair
-                            ),
-                        getAnyKeypair: async (
-                            publicKeys: X25519PublicKey[]
-                        ) => {
-                            for (let i = 0; i < publicKeys.length; i++) {
-                                if (
-                                    publicKeys[i].equals(
-                                        (keypair as X25519Keypair).publicKey
-                                    )
-                                ) {
-                                    return {
-                                        index: i,
-                                        keypair: keypair as
-                                            | Ed25519Keypair
-                                            | X25519Keypair,
-                                    };
+            await store.init(
+                session.peers[0],
+                new Blocks(new MemoryLevelBlockStore()),
+                await createIdentity(),
+                {
+                    topic: "topic",
+                    store: {
+                        ...DefaultOptions,
+                        replicate: true,
+                        encryption: {
+                            getEncryptionKeypair: () =>
+                                Promise.resolve(
+                                    keypair as Ed25519Keypair | X25519Keypair
+                                ),
+                            getAnyKeypair: async (
+                                publicKeys: X25519PublicKey[]
+                            ) => {
+                                for (let i = 0; i < publicKeys.length; i++) {
+                                    if (
+                                        publicKeys[i].equals(
+                                            (keypair as X25519Keypair).publicKey
+                                        )
+                                    ) {
+                                        return {
+                                            index: i,
+                                            keypair: keypair as
+                                                | Ed25519Keypair
+                                                | X25519Keypair,
+                                        };
+                                    }
                                 }
-                            }
+                            },
                         },
+                        resolveCache: () => new Cache(cacheStores[0]),
                     },
-                    resolveCache: () => new Cache(cacheStores[0]),
-                },
-            });
+                }
+            );
 
             let doc = new Document({
                 id: uuid(),
@@ -363,7 +399,6 @@ describe("index", () => {
                 },
                 { waitForAmount: 1, sync: true }
             );
-            await delay(5000);
             await waitFor(() => stores[1].docs.index.size === 3);
         });
 
@@ -396,7 +431,7 @@ describe("index", () => {
                     (a, b) =>
                         Number(
                             a.entry.metadata.clock.timestamp.wallTime -
-                            b.entry.metadata.clock.timestamp.wallTime
+                                b.entry.metadata.clock.timestamp.wallTime
                         )
                 );
                 await stores[1].docs.index.query(
@@ -432,7 +467,7 @@ describe("index", () => {
                     (a, b) =>
                         Number(
                             a.entry.metadata.clock.timestamp.wallTime -
-                            b.entry.metadata.clock.timestamp.wallTime
+                                b.entry.metadata.clock.timestamp.wallTime
                         )
                 );
                 await stores[1].docs.index.query(
@@ -471,7 +506,7 @@ describe("index", () => {
                     (a, b) =>
                         Number(
                             a.entry.metadata.clock.timestamp.wallTime -
-                            b.entry.metadata.clock.timestamp.wallTime
+                                b.entry.metadata.clock.timestamp.wallTime
                         )
                 );
                 await stores[1].docs.index.query(

@@ -42,10 +42,10 @@ export class EventStore<T> extends Program {
     constructor(properties?: { id?: string }) {
         super(properties);
         this.store = new Store();
-        this._index = new EventIndex();
     }
 
     async setup() {
+        this._index = new EventIndex();
         this.store.setup({
             onUpdate: this._index.updateIndex.bind(this._index),
             encoding,

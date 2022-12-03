@@ -1,12 +1,12 @@
 import { KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { IPFS } from "ipfs-core-types";
 import { Log } from "../../log.js";
 import { Timestamp } from "../../clock.js";
+import { BlockStore, Blocks } from "@dao-xyz/peerbit-block";
 
 export class LogCreator {
     static async createLogWithSixteenEntries(
-        ipfs: IPFS,
+        store: Blocks,
         signKeys: KeyWithMeta<Ed25519Keypair>[]
     ) {
         const expectedData = [
@@ -30,7 +30,7 @@ export class LogCreator {
 
         const create = async (): Promise<Log<string>> => {
             const logA = new Log<string>(
-                ipfs,
+                store,
                 {
                     ...signKeys[0].keypair,
                     sign: (data) => signKeys[0].keypair.sign(data),
@@ -38,7 +38,7 @@ export class LogCreator {
                 { logId: "X" }
             );
             const logB = new Log<string>(
-                ipfs,
+                store,
                 {
                     ...signKeys[1].keypair,
                     sign: (data) => signKeys[1].keypair.sign(data),
@@ -46,7 +46,7 @@ export class LogCreator {
                 { logId: "X" }
             );
             const log3 = new Log<string>(
-                ipfs,
+                store,
                 {
                     ...signKeys[2].keypair,
                     sign: (data) => signKeys[2].keypair.sign(data),
@@ -54,7 +54,7 @@ export class LogCreator {
                 { logId: "X" }
             );
             const log = new Log<string>(
-                ipfs,
+                store,
                 {
                     ...signKeys[3].keypair,
                     sign: (data) => signKeys[3].keypair.sign(data),
@@ -92,7 +92,7 @@ export class LogCreator {
     }
 
     static async createLogWithTwoHundredEntries(
-        ipfs: IPFS,
+        store: Blocks,
         signKeys: KeyWithMeta<Ed25519Keypair>[]
     ) {
         const amount = 100;
@@ -101,7 +101,7 @@ export class LogCreator {
 
         const create = async (): Promise<Log<string>> => {
             const logA = new Log<string>(
-                ipfs,
+                store,
                 {
                     ...signKeys[0].keypair,
                     sign: (data) => signKeys[0].keypair.sign(data),
@@ -109,7 +109,7 @@ export class LogCreator {
                 { logId: "X" }
             );
             const logB = new Log<string>(
-                ipfs,
+                store,
                 {
                     ...signKeys[1].keypair,
                     sign: (data) => signKeys[1].keypair.sign(data),

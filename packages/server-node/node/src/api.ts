@@ -1,14 +1,19 @@
 import http from "http";
-import { PublicSignKey, toBase64, fromBase64 } from "@dao-xyz/peerbit-crypto";
-import { Peerbit, inNetwork } from "@dao-xyz/peerbit";
+import {
+    PublicSignKey,
+    fromBase64Sync,
+    toBase64Sync,
+} from "@dao-xyz/peerbit-crypto";
+import { Peerbit } from "@dao-xyz/peerbit";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { Program, Address } from "@dao-xyz/peerbit-program";
 import { IdentityRelation } from "@dao-xyz/peerbit-trusted-network";
 import { multiaddr } from "@multiformats/multiaddr";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { v4 as uuid } from "uuid";
-import { IPFS } from "ipfs-core-types";
-import io from "@dao-xyz/peerbit-block";
+import { Libp2p } from "libp2p";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
+import { getNetwork } from "@dao-xyz/peerbit";
 
 export const LOCAL_PORT = 8082;
 export const SSL_PORT = 9002;
@@ -25,8 +30,8 @@ export const getPort = (protocol: string) => {
     throw new Error("Unsupported protocol: " + protocol);
 };
 
-const IPFS_ID_PATH = "/ipfs/id";
-const IPFS_ADDRESSES_PATH = "/ipfs/addresses";
+const IPFS_ID_PATH = "/peer/id";
+const ADDRESSES_PATH = "/peer/addresses";
 const TOPIC_PATH = "/topic";
 const TOPICS_PATH = "/topics";
 const PROGRAM_PATH = "/program";
@@ -46,7 +51,7 @@ const getCredentialsPath = async (configDir: string): Promise<string> => {
     return path.join(configDir, "credentials");
 };
 
-class NotFoundError extends Error { }
+class NotFoundError extends Error {}
 
 export const checkExistPath = async (path: string) => {
     const fs = await import("fs");
@@ -71,8 +76,8 @@ export const createPassword = async (ipfsId: string): Promise<string> => {
     if (await checkExistPath(credentialsPath)) {
         throw new Error(
             "Config path for credentials: " +
-            credentialsPath +
-            ", already exist"
+                credentialsPath +
+                ", already exist"
         );
     }
     console.log(`Creating config folder ${configDir}`);
@@ -119,21 +124,19 @@ export const loadOrCreatePassword = async (ipfsId: string): Promise<string> => {
 };
 
 export const startServer = async (
-    client: Peerbit | IPFS,
+    client: Peerbit | Libp2p,
     port: number = LOCAL_PORT
 ): Promise<http.Server> => {
-    const notPeerBitError = "Client is not Peerbit but IPFS";
-    const ipfs = client instanceof Peerbit ? client.ipfs : client;
+    const notPeerBitError =
+        "Client is just a Libp2p node, not a full Peerbit client. The command is not supported for this node type";
+    const libp2p = client instanceof Peerbit ? client.libp2p : client;
 
     // TODO for convinience we do this, but should we? Who might not like this
     // This is needed atm for all Peerbit apps, but not for other thinngs potentially
     let err: any = undefined;
     for (let i = 0; i < 3; i++) {
         try {
-            await ipfs.pubsub.subscribe(
-                io.BLOCK_TRANSPORT_TOPIC,
-                () => undefined
-            );
+            await libp2p.pubsub.subscribe(DEFAULT_BLOCK_TRANSPORT_TOPIC);
             err = undefined;
             break;
         } catch (error) {
@@ -146,9 +149,7 @@ export const startServer = async (
         throw err;
     }
 
-    const password = await loadOrCreatePassword(
-        (await ipfs.id()).id.toString()
-    );
+    const password = await loadOrCreatePassword(libp2p.peerId.toString());
 
     const adminACL = (req: http.IncomingMessage): boolean => {
         const auth = req.headers["authorization"];
@@ -213,7 +214,7 @@ export const startServer = async (
     };
 
     const e404 = "404";
-    const endpoints = (client: Peerbit | IPFS): http.RequestListener => {
+    const endpoints = (client: Peerbit | Libp2p): http.RequestListener => {
         return async (req, res) => {
             res.setHeader("Access-Control-Allow-Origin", "*");
             res.setHeader("Access-Control-Request-Method", "*");
@@ -272,10 +273,12 @@ export const startServer = async (
                                             res.end();
                                         }
                                     } else {
-                                        ipfs.pubsub.ls().then((topics) => {
-                                            res.write(JSON.stringify(topics));
-                                            res.end();
-                                        });
+                                        res.write(
+                                            JSON.stringify(
+                                                libp2p.pubsub.getTopics()
+                                            )
+                                        );
+                                        res.end();
                                     }
                                 });
 
@@ -311,18 +314,12 @@ export const startServer = async (
                                             res.writeHead(400);
                                             res.end(
                                                 "Invalid topic: " +
-                                                JSON.stringify(topic)
+                                                    JSON.stringify(topic)
                                             );
                                         } else if (!replicate) {
-                                            ipfs.pubsub
-                                                .subscribe(
-                                                    topic,
-                                                    () => undefined
-                                                )
-                                                .then(() => {
-                                                    res.writeHead(200);
-                                                    res.end();
-                                                });
+                                            libp2p.pubsub.subscribe(topic);
+                                            res.writeHead(200);
+                                            res.end();
                                         } else {
                                             if (client instanceof Peerbit) {
                                                 if (
@@ -376,7 +373,7 @@ export const startServer = async (
                                         if (program) {
                                             res.writeHead(200);
                                             res.write(
-                                                toBase64(serialize(program))
+                                                toBase64Sync(serialize(program))
                                             );
                                             res.end();
                                         } else {
@@ -399,7 +396,7 @@ export const startServer = async (
                                         } else {
                                             try {
                                                 const parsed = deserialize(
-                                                    fromBase64(body),
+                                                    fromBase64Sync(body),
                                                     Program
                                                 );
                                                 (client as Peerbit)
@@ -417,7 +414,7 @@ export const startServer = async (
                                                         res.writeHead(400);
                                                         res.end(
                                                             "Failed to open program: " +
-                                                            error.toString()
+                                                                error.toString()
                                                         );
                                                     });
                                             } catch (error) {
@@ -471,7 +468,8 @@ export const startServer = async (
                                 try {
                                     const program = getProgramFromPath(req, 2);
                                     if (program) {
-                                        if (inNetwork(program)) {
+                                        const network = getNetwork(program);
+                                        if (network) {
                                             res.setHeader(
                                                 "Content-Type",
                                                 "application/json"
@@ -480,9 +478,9 @@ export const startServer = async (
                                             res.write(
                                                 JSON.stringify(
                                                     [
-                                                        ...program.network.trustGraph._index._index.values(),
+                                                        ...network.trustGraph._index._index.values(),
                                                     ].map((x) =>
-                                                        toBase64(
+                                                        toBase64Sync(
                                                             serialize(x.value)
                                                         )
                                                     )
@@ -522,19 +520,22 @@ export const startServer = async (
                                             2
                                         );
                                         if (program) {
-                                            if (inNetwork(program)) {
+                                            const network = getNetwork(program);
+                                            if (network) {
                                                 try {
                                                     const reciever =
                                                         deserialize(
-                                                            fromBase64(body),
+                                                            fromBase64Sync(
+                                                                body
+                                                            ),
                                                             PublicSignKey
                                                         );
-                                                    program.network
+                                                    network
                                                         .add(reciever)
                                                         .then((r) => {
                                                             res.writeHead(200);
                                                             res.end(
-                                                                toBase64(
+                                                                toBase64Sync(
                                                                     serialize(r)
                                                                 )
                                                             );
@@ -550,8 +551,8 @@ export const startServer = async (
                                                                         "string"
                                                                         ? error.message
                                                                         : JSON.stringify(
-                                                                            error.message
-                                                                        )
+                                                                              error.message
+                                                                          )
                                                                 );
                                                             }
                                                         );
@@ -579,13 +580,13 @@ export const startServer = async (
                         }
                     } else if (req.url.startsWith(IPFS_ID_PATH)) {
                         res.writeHead(200);
-                        res.end((await ipfs.id()).id.toString());
-                    } else if (req.url.startsWith(IPFS_ADDRESSES_PATH)) {
+                        res.end(libp2p.peerId.toString());
+                    } else if (req.url.startsWith(ADDRESSES_PATH)) {
                         res.setHeader("Content-Type", "application/json");
                         res.writeHead(200);
-                        const addresses = (await ipfs.id()).addresses.map((x) =>
-                            x.toString()
-                        );
+                        const addresses = libp2p
+                            .getMultiaddrs()
+                            .map((x) => x.toString());
                         res.end(JSON.stringify(addresses));
                     } else {
                         r404();
@@ -662,7 +663,7 @@ export const client = async (
         return headers;
     };
     return {
-        ipfs: {
+        peer: {
             id: {
                 get: getId,
             },
@@ -670,7 +671,7 @@ export const client = async (
                 get: async () => {
                     return (
                         throwIfNot200(
-                            await axios.get(endpoint + IPFS_ADDRESSES_PATH, {
+                            await axios.get(endpoint + ADDRESSES_PATH, {
                                 validateStatus,
                                 headers: await getHeaders(),
                             })
@@ -714,15 +715,15 @@ export const client = async (
                 const result = getBodyByStatus<string, any>(
                     await axios.get(
                         endpoint +
-                        PROGRAM_PATH +
-                        "/" +
-                        encodeURIComponent(address.toString()),
+                            PROGRAM_PATH +
+                            "/" +
+                            encodeURIComponent(address.toString()),
                         { validateStatus, headers: await getHeaders() }
                     )
                 );
                 return !result
                     ? undefined
-                    : deserialize(fromBase64(result), Program);
+                    : deserialize(fromBase64Sync(result), Program);
             },
 
             /**
@@ -736,13 +737,13 @@ export const client = async (
             ): Promise<Address> => {
                 const base64 =
                     program instanceof Program
-                        ? toBase64(serialize(program))
+                        ? toBase64Sync(serialize(program))
                         : program;
                 const resp = throwIfNot200(
                     await axios.put(
                         endpoint +
-                        PROGRAM_PATH +
-                        (topic ? "?topic=" + topic : ""),
+                            PROGRAM_PATH +
+                            (topic ? "?topic=" + topic : ""),
                         base64,
                         { validateStatus, headers: await getHeaders() }
                     )
@@ -770,17 +771,17 @@ export const client = async (
                     const result = getBodyByStatus(
                         await axios.get(
                             endpoint +
-                            NETWORK_PEERS_PATH +
-                            "/" +
-                            encodeURIComponent(address.toString()),
+                                NETWORK_PEERS_PATH +
+                                "/" +
+                                encodeURIComponent(address.toString()),
                             { validateStatus, headers: await getHeaders() }
                         )
                     );
                     return !result
                         ? undefined
                         : (result as string[]).map((r) =>
-                            deserialize(fromBase64(r), IdentityRelation)
-                        );
+                              deserialize(fromBase64Sync(r), IdentityRelation)
+                          );
                 },
             },
             peer: {
@@ -788,18 +789,21 @@ export const client = async (
                     address: Address | string,
                     publicKey: PublicSignKey
                 ): Promise<IdentityRelation> => {
-                    const base64 = toBase64(serialize(publicKey));
+                    const base64 = toBase64Sync(serialize(publicKey));
                     const resp = throwIfNot200(
                         await axios.put(
                             endpoint +
-                            NETWORK_PEER_PATH +
-                            "/" +
-                            encodeURIComponent(address.toString()),
+                                NETWORK_PEER_PATH +
+                                "/" +
+                                encodeURIComponent(address.toString()),
                             base64,
                             { validateStatus, headers: await getHeaders() }
                         )
                     );
-                    return deserialize(fromBase64(resp.data), IdentityRelation);
+                    return deserialize(
+                        fromBase64Sync(resp.data),
+                        IdentityRelation
+                    );
                 },
             },
         },

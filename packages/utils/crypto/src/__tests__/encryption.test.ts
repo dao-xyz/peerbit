@@ -2,7 +2,6 @@ import {
     DecryptedThing,
     X25519PublicKey,
     PublicKeyEncryptionResolver,
-    Ed25519PrivateKey,
     verifySignatureEd25519,
     Ed25519Keypair,
     X25519Keypair,

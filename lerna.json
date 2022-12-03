@@ -12,7 +12,6 @@
         "packages/programs/acl/trusted-network",
         "packages/programs/program-interface",
         "packages/programs/clock-service",
-        "packages/programs/discovery/network-discovery",
         "packages/programs/discovery/log-index",
         "packages/utils/keystore",
         "packages/utils/crypto",

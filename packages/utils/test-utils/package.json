@@ -28,23 +28,23 @@
         "type": "git",
         "url": "https://github.com/dao-xyz/peerbit"
     },
+    "engines": {
+        "node": ">=16.15.1"
+    },
     "author": "dao.xyz",
     "license": "MIT",
     "dependencies": {
-        "memory-level": "^1.0.0"
+        "memory-level": "^1.0.0",
+        "libp2p": "^0.40.0",
+        "@chainsafe/libp2p-gossipsub": "^5.2.1",
+        "@libp2p/mplex": "^7.1.0",
+        "@libp2p/tcp": "^6.0.4",
+        "@chainsafe/libp2p-noise": "^10.2.0"
     },
     "devDependencies": {
-        "@dao-xyz/peerbit-time": "^0.0.18",
-        "go-ipfs": "^0.17.0",
-        "ipfs": "^0.65.0",
-        "ipfsd-ctl": "^12.2.2",
-        "wtfnode": "^0.9.1"
+        "@dao-xyz/peerbit-time": "^0.0.18"
     },
-    "peerDependencies": {
-        "go-ipfs": "*",
-        "ipfs": "*",
-        "ipfsd-ctl": "*"
-    },
+    "peerDependencies": {},
     "localMaintainers": [
         "dao.xyz"
     ],
