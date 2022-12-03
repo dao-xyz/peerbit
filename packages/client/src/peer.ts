@@ -386,8 +386,6 @@ export class Peerbit {
         // Close all direct connections to peers
         this._directConnections.forEach(removeDirectConnect);
 
-        // Disconnect from pubsub
-
         // close keystore
         await this.keystore.close();
 
@@ -1187,11 +1185,6 @@ export class Peerbit {
         this.programs.get(topic)?.set(programAddress, p);
         return p;
     }
-
-    /* _getPeersLRU: LRU<string, Promise<PeerInfoWithMeta[]>> = new LRU({
-        max: 500,
-        ttl: WAIT_FOR_PEERS_TIME,
-    }); */
 
     getReplicatorsOnTopic(topic: string): string[] {
         return (

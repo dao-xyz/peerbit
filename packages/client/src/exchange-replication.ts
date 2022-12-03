@@ -180,7 +180,7 @@ export class RequestReplicatorInfo extends ProtocolMessage {
 
     return publish(serialize(decryptedMessage));
 };
- */
+
 export class ResourceRequirement {
     async ok(_orbitdb: Peerbit): Promise<boolean> {
         throw new Error("Not implemented");
@@ -188,7 +188,7 @@ export class ResourceRequirement {
 }
 
 @variant(0)
-export class NoResourceRequirement extends ResourceRequirement {}
+export class NoResourceRequirement extends ResourceRequirement {} */
 
 /* @variant(1)
 export class HeapSizeRequirement extends ResourceRequirement {

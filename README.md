@@ -67,8 +67,7 @@ Backwards compatibility for new releases might be lacking. Use with caution and 
 
 ## Example code
 
-### Example library project
-[A repo containing meaningful examples](https://github.com/dao-xyz/peerbit-examples) is under way. 
+### [Example library project (contains live demos)](https://github.com/dao-xyz/peerbit-examples)
 
 ### Collaborative text 
 Below is a short example how you can create a collaborative text document: 
@@ -122,10 +121,6 @@ console.log(await document.string.toString()) // 'hello world' from local store
 console.log(await document.string.toString({remote: {maxAggregationTime: 3000 }})) // 'hello world' from peers
 
 ```
-
-### Social media app
-A (under work) [social media application is developed by dao.xyz](https://github.com/dao-xyz/dao.xyz).
-
 
 ## [Peerbit](./packages/client)
 The peer client

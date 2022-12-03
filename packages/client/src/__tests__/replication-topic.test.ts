@@ -4,7 +4,6 @@ import { jest } from "@jest/globals";
 import { Peerbit } from "../peer";
 
 import { EventStore } from "./utils/stores/event-store";
-// @ts-ignore
 import { v4 as uuid } from "uuid";
 
 // Include test utilities
