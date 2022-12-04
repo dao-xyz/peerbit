@@ -12,7 +12,8 @@ import { waitFor } from "@dao-xyz/peerbit-time";
 
 abstract class LevelBlockStore implements BlockStore {
     _level: AbstractLevel<any, string, Uint8Array>;
-
+    _opening: Promise<any>;
+    _closed = false;
     constructor(level: AbstractLevel<any, string, Uint8Array>) {
         this._level = level;
     }
@@ -62,13 +63,23 @@ abstract class LevelBlockStore implements BlockStore {
     }
 
     async open(): Promise<void> {
+        this._closed = false;
         if (this._level.status !== "opening" && this._level.status !== "open") {
             await this._level.open();
         }
-        await waitFor(() => this._level.status === "open");
+        try {
+            this._opening = waitFor(() => this._level.status === "open");
+            await this._opening;
+        } catch (error) {
+            if (this._closed) {
+                return;
+            }
+            throw error;
+        }
     }
 
     async close(): Promise<void> {
+        this._closed = true;
         return this._level.close();
     }
 }
