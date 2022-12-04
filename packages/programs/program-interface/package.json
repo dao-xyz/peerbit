@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-program",
-    "version": "0.0.55",
+    "version": "0.0.56",
     "description": "Program interface",
     "type": "module",
     "sideEffects": false,
@@ -33,8 +33,8 @@
     "license": "MIT",
     "dependencies": {
         "@dao-xyz/borsh": "^4.0.3",
-        "@dao-xyz/peerbit-crypto": "^0.0.21",
-        "@dao-xyz/peerbit-store": "^0.0.70"
+        "@dao-xyz/peerbit-crypto": "^0.0.22",
+        "@dao-xyz/peerbit-store": "^0.0.71"
     },
     "gitHead": "bfbec720aee276ab1bc7cf4ee7a6c0e90ecb4f51"
 }

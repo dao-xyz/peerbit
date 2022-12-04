@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-crypto",
-    "version": "0.0.21",
+    "version": "0.0.22",
     "description": "Crypto fn",
     "type": "module",
     "sideEffects": false,
@@ -32,12 +32,12 @@
     "author": "dao.xyz",
     "license": "MIT",
     "devDependencies": {
-        "@dao-xyz/peerbit-test-utils": "^0.0.15",
+        "@dao-xyz/peerbit-test-utils": "^0.0.16",
         "@types/libsodium-wrappers": "^0.7.9"
     },
     "dependencies": {
         "@dao-xyz/borsh": "^4.0.3",
-        "@dao-xyz/peerbit-borsh-utils": "^0.0.12",
+        "@dao-xyz/peerbit-borsh-utils": "^0.0.13",
         "@ethersproject/wallet": "^5.7.0",
         "libsodium-wrappers": "^0.7.10",
         "multiformats": "10.0.2"
