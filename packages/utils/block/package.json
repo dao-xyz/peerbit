@@ -1,7 +1,7 @@
 {
     "name": "@dao-xyz/peerbit-block",
-    "version": "1.1.16",
-    "description": "IO helper module for orbit-db",
+    "version": "0.0.1",
+    "description": "Block store for Peerbit",
     "type": "module",
     "sideEffects": false,
     "main": "lib/cjs/index.js",
@@ -58,6 +58,5 @@
         "abstract-level": "^1.0.3",
         "libp2p": "^0.40.0",
         "memory-level": "^1.0.0"
-    },
-    "gitHead": "bfbec720aee276ab1bc7cf4ee7a6c0e90ecb4f51"
+    }
 }
