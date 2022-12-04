@@ -7,14 +7,6 @@ import { PermissionedEventStore } from "./utils/stores/test-store";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 import { jest } from "@jest/globals";
 
-const orbitdbPath1 = "./orbitdb/tests/discovery/1";
-const orbitdbPath2 = "./orbitdb/tests/discovery/2";
-const orbitdbPath3 = "./orbitdb/tests/discovery/3";
-
-const dbPath1 = "./orbitdb/tests/discovery/1/db1";
-const dbPath2 = "./orbitdb/tests/discovery/2/db2";
-const dbPath3 = "./orbitdb/tests/discovery/3/db3";
-
 describe(`discovery`, function () {
     jest.setTimeout(60 * 1000);
     jest.retryTimes(1);
@@ -32,24 +24,13 @@ describe(`discovery`, function () {
     });
 
     beforeEach(async () => {
-        rmrf.sync(orbitdbPath1);
-        rmrf.sync(orbitdbPath2);
-        rmrf.sync(orbitdbPath3);
-
-        rmrf.sync(dbPath1);
-        rmrf.sync(dbPath2);
-        rmrf.sync(dbPath3);
-
         orbitdb1 = await Peerbit.create(session1.peers[0], {
-            directory: orbitdbPath1,
             localNetwork: true,
         });
         orbitdb2 = await Peerbit.create(session1.peers[1], {
-            directory: orbitdbPath2,
             localNetwork: true,
         });
         orbitdb3 = await Peerbit.create(session2.peers[0], {
-            directory: orbitdbPath3,
             localNetwork: true,
         });
     });
@@ -69,8 +50,7 @@ describe(`discovery`, function () {
                     id: "network-tests",
                     rootTrust: orbitdb1.identity.publicKey,
                 }),
-            }),
-            { directory: dbPath1 }
+            })
         );
         await orbitdb1.join(program);
 
@@ -83,7 +63,7 @@ describe(`discovery`, function () {
         await program.network.add(orbitdb3.identity.publicKey); // will have to trust identity because else this can t add more idenetities
         await waitFor(() => program.network.trustGraph.index.size === 5);
 
-        await orbitdb2.open(program.address!, { directory: dbPath2 });
+        await orbitdb2.open(program.address!);
 
         // Connect client 1 with 3, but try to connect 2 to 3 by swarm messages
         await session1.peers[0].peerStore.addressBook.set(
@@ -96,7 +76,7 @@ describe(`discovery`, function () {
             session1.peers[0],
             DEFAULT_BLOCK_TRANSPORT_TOPIC
         );
-        await orbitdb3.open(program.address!, { directory: dbPath3 });
+        await orbitdb3.open(program.address!);
         await delay(10000);
         await waitFor(() => orbitdb3._directConnections.size === 2);
         expect(

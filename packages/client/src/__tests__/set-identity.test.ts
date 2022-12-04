@@ -1,25 +1,16 @@
 import { Peerbit } from "../peer";
 
-import fs from "fs";
-import rmrf from "rimraf";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { EventStore } from "./utils/stores";
 
-import { Level } from "level";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { jest } from "@jest/globals";
 
 // Include test utilities
 import { LSession } from "@dao-xyz/peerbit-test-utils";
+import { MemoryLevel } from "memory-level";
 
-const keysPath = "./orbitdb/identity/identitykeys";
-const dbPath = "./orbitdb/tests/change-identity";
-
-export const createStore = (path = "./keystore"): Level => {
-    if (fs && fs.mkdirSync) {
-        fs.mkdirSync(path, { recursive: true });
-    }
-    return new Level(path, { valueEncoding: "view" });
+export const createStore = (path = "./keystore"): MemoryLevel => {
+    return new MemoryLevel({ valueEncoding: "view" });
 };
 
 describe(`Set identities`, function () {
@@ -28,18 +19,16 @@ describe(`Set identities`, function () {
         signKey2: KeyWithMeta<Ed25519Keypair>;
 
     beforeAll(async () => {
-        rmrf.sync(dbPath);
         session = await LSession.connected(1);
 
-        if (fs && fs.mkdirSync) fs.mkdirSync(keysPath, { recursive: true });
-        const identityStore = await createStore(keysPath);
+        const identityStore = await createStore();
 
         keystore = new Keystore(identityStore);
         signKey1 =
             (await keystore.createEd25519Key()) as KeyWithMeta<Ed25519Keypair>;
         signKey2 =
             (await keystore.createEd25519Key()) as KeyWithMeta<Ed25519Keypair>;
-        orbitdb = await Peerbit.create(session.peers[0], { directory: dbPath });
+        orbitdb = await Peerbit.create(session.peers[0]);
     });
 
     afterAll(async () => {

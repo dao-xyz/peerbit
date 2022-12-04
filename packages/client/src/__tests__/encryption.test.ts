@@ -15,11 +15,6 @@ import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { PermissionedEventStore } from "./utils/stores/test-store";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
-const orbitdbPath1 = "./orbitdb/tests/encryption/1";
-const orbitdbPath2 = "./orbitdb/tests/encryption/2";
-const orbitdbPath3 = "./orbitdb/tests/encryption/3";
-const dbPath = "./orbitdb/tests/encryption/";
-
 const addHello = async (
     db: PermissionedEventStore,
     receiver: X25519PublicKey
@@ -60,12 +55,11 @@ describe(`encryption`, function () {
     let recieverKey: KeyWithMeta<Ed25519Keypair>;
     let topic: string;
 
-    beforeAll(async () => {
-        session = await LSession.connected(3, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
-    });
+    beforeAll(async () => {});
     beforeEach(async () => {
+        session = await LSession.connected(3, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+
         orbitdb1 = await Peerbit.create(session.peers[0], {
-            directory: orbitdbPath1,
             waitForKeysTimout: 10000,
         });
         const program = await orbitdb1.open(
@@ -74,14 +68,12 @@ describe(`encryption`, function () {
                     id: "network-tests",
                     rootTrust: orbitdb1.identity.publicKey,
                 }),
-            }),
-            { directory: dbPath + uuid() }
+            })
         );
         await orbitdb1.join(program);
 
         // Trusted client 2
         orbitdb2 = await Peerbit.create(session.peers[1], {
-            directory: orbitdbPath2 + +new Date(),
             waitForKeysTimout: 10000,
         });
         await program.network.add(orbitdb2.id);
@@ -90,7 +82,6 @@ describe(`encryption`, function () {
 
         // Untrusted client 3
         orbitdb3 = await Peerbit.create(session.peers[2], {
-            directory: orbitdbPath3 + +new Date(),
             waitForKeysTimout: 10000,
         });
 
@@ -115,18 +106,16 @@ describe(`encryption`, function () {
         if (orbitdb3) {
             await orbitdb3.disconnect();
         }
-    });
-
-    afterAll(async () => {
         await session.stop();
     });
+
+    afterAll(async () => {});
 
     it("replicates database of 1 entry known keys", async () => {
         let done = false;
 
         db2 = await orbitdb2.open<PermissionedEventStore>(db1.address, {
             topic: topic,
-            directory: dbPath + uuid(),
             onReplicationComplete: async (_store) => {
                 await checkHello(db1);
                 done = true;
@@ -153,7 +142,6 @@ describe(`encryption`, function () {
         let done = false;
         db2 = await orbitdb2.open<PermissionedEventStore>(db1.address, {
             topic: topic,
-            directory: dbPath + uuid(),
             onReplicationComplete: async (store) => {
                 if (store === db2.store.store) {
                     await checkHello(db1);
@@ -193,7 +181,6 @@ describe(`encryption`, function () {
         // Open store from orbitdb2 so that both client 1 and 2 is listening to the replication topic
         db2 = await orbitdb2.open<PermissionedEventStore>(db1.address!, {
             topic: topic,
-            directory: dbPath + uuid(),
         });
         await waitFor(() => db2.network?.trustGraph.index.size >= 3);
         await orbitdb2.join(db2);
@@ -216,7 +203,6 @@ describe(`encryption`, function () {
 
         db2 = await orbitdb2.open<PermissionedEventStore>(db1.address!, {
             topic: topic,
-            directory: dbPath + uuid(),
         });
 
         await waitFor(() => db2.network?.trustGraph.index.size >= 3);
@@ -260,7 +246,6 @@ describe(`encryption`, function () {
         await db2.drop();
         db3 = await orbitdb3.open<PermissionedEventStore>(db1.address, {
             topic: topic,
-            directory: dbPath + uuid(),
             onReplicationComplete: async (store) => {
                 const entriesRelay: Entry<Operation<string>>[] = db3.store
                     .iterator({ limit: -1 })

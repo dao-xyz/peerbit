@@ -12,9 +12,6 @@ import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
-const dbPath1 = "./orbitdb/tests/sharding/1";
-const dbPath2 = "./orbitdb/tests/sharding/2";
-const dbPath3 = "./orbitdb/tests/sharding/3";
 describe(`sharding`, function () {
     jest.retryTimes(3); // TODO this test is FLAKY
 
@@ -27,29 +24,18 @@ describe(`sharding`, function () {
         db3: PermissionedEventStore;
 
     beforeEach(async () => {
-        rmrf.sync(dbPath1);
-        rmrf.sync(dbPath2);
-        rmrf.sync(dbPath3);
-
         session = await LSession.connected(3, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
 
-        orbitdb1 = await Peerbit.create(session.peers[0], {
-            directory: dbPath1,
-        });
-        orbitdb2 = await Peerbit.create(session.peers[1], {
-            directory: dbPath2,
-        });
-        orbitdb3 = await Peerbit.create(session.peers[2], {
-            directory: dbPath2,
-        });
+        orbitdb1 = await Peerbit.create(session.peers[0], {});
+        orbitdb2 = await Peerbit.create(session.peers[1], {});
+        orbitdb3 = await Peerbit.create(session.peers[2], {});
 
         const network = new TrustedNetwork({
             id: "network-tests",
             rootTrust: orbitdb1.identity.publicKey,
         });
         db1 = await orbitdb1.open<PermissionedEventStore>(
-            new PermissionedEventStore({ network }),
-            { directory: dbPath1 }
+            new PermissionedEventStore({ network })
         );
 
         await orbitdb1.join(db1);
@@ -74,10 +60,6 @@ describe(`sharding`, function () {
         if (orbitdb3) {
             await orbitdb3.stop();
         }
-
-        rmrf.sync(dbPath1);
-        rmrf.sync(dbPath2);
-        rmrf.sync(dbPath3);
         await session.stop();
     });
 

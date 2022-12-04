@@ -10,11 +10,6 @@ import { v4 as uuid } from "uuid";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
-const orbitdbPath1 = "./orbitdb/tests/replication-topic/1";
-const orbitdbPath2 = "./orbitdb/tests/replication-topic/2";
-const dbPath1 = "./orbitdb/tests/replication-topic/1/db1";
-const dbPath2 = "./orbitdb/tests/replication-topic/2/db2";
-
 describe(`Replication topic`, function () {
     let session: LSession;
     let orbitdb1: Peerbit, orbitdb2: Peerbit, eventStore: EventStore<string>;
@@ -32,17 +27,8 @@ describe(`Replication topic`, function () {
     beforeEach(async () => {
         clearInterval(timer);
 
-        rmrf.sync(orbitdbPath1);
-        rmrf.sync(orbitdbPath2);
-        rmrf.sync(dbPath1);
-        rmrf.sync(dbPath2);
-
-        orbitdb1 = await Peerbit.create(session.peers[0], {
-            directory: orbitdbPath1,
-        });
-        orbitdb2 = await Peerbit.create(session.peers[1], {
-            directory: orbitdbPath2,
-        });
+        orbitdb1 = await Peerbit.create(session.peers[0], {});
+        orbitdb2 = await Peerbit.create(session.peers[1], {});
     });
 
     afterEach(async () => {

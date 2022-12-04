@@ -5,6 +5,7 @@ import { Keystore, KeyWithMeta, StoreError } from "@dao-xyz/peerbit-keystore";
 import { isDefined } from "./is-defined.js";
 import { AbstractLevel } from "abstract-level";
 import { Level } from "level";
+import { MemoryLevel } from "memory-level";
 import { multiaddr } from "@multiformats/multiaddr";
 import {
     exchangeHeads,
@@ -83,7 +84,7 @@ interface ProgramWithMetadata {
 
 export type StoreOperations = "write" | "all";
 export type Storage = {
-    createStore: (string: string) => AbstractLevel<any, string>;
+    createStore: (string?: string) => AbstractLevel<any, string>;
 };
 export type OptionalCreateOptions = {
     limitSigning?: boolean;
@@ -98,7 +99,7 @@ export type OptionalCreateOptions = {
 export type CreateOptions = {
     keystore: Keystore;
     identity: Identity;
-    directory: string;
+    directory?: string;
     peerId: PeerId;
     storage: Storage;
     cache: Cache<any>;
@@ -162,7 +163,7 @@ export class Peerbit {
 
     identity: Identity;
     id: PeerId;
-    directory: string;
+    directory?: string;
     storage: Storage;
     caches: { [key: string]: { cache: Cache<any>; handlers: Set<string> } };
     keystore: Keystore;
@@ -258,8 +259,12 @@ export class Peerbit {
         return this._libp2p;
     }
 
+    get cacheDir() {
+        return this.directory || "./cache";
+    }
+
     get cache() {
-        return this.caches[this.directory].cache;
+        return this.caches[this.cacheDir].cache;
     }
 
     get encryption(): PublicKeyEncryptionResolver {
@@ -301,11 +306,11 @@ export class Peerbit {
 
     static async create(libp2p: Libp2p, options: CreateInstanceOptions = {}) {
         const id: PeerId = libp2p.peerId;
-        const directory = options.directory || "./orbitdb";
+        const directory = options.directory;
 
         const storage = options.storage || {
-            createStore: (path): AbstractLevel<any, string> => {
-                return new Level(path);
+            createStore: (path?: string): AbstractLevel<any, string> => {
+                return path ? new Level(path) : new MemoryLevel();
             },
         };
 
@@ -313,12 +318,14 @@ export class Peerbit {
         if (options.keystore) {
             keystore = options.keystore;
         } else {
-            const keyStorePath = path.join(
-                directory,
-                id.toString(),
-                "/keystore"
+            const keyStorePath = directory
+                ? path.join(directory, id.toString(), "/keystore")
+                : undefined;
+            logger.info(
+                keyStorePath
+                    ? "Creating keystore at path: " + keyStorePath
+                    : "Creating an in memory keystore"
             );
-            logger.info("Creating keystore at path: " + keyStorePath);
             keystore = new Keystore(await storage.createStore(keyStorePath));
         }
 
@@ -354,7 +361,9 @@ export class Peerbit {
             options.cache ||
             new Cache(
                 await storage.createStore(
-                    path.join(directory, id.toString(), "/cache")
+                    directory
+                        ? path.join(directory, id.toString(), "/cache")
+                        : undefined
                 )
             );
         const localNetwork = options.localNetwork || false;
@@ -1117,11 +1126,8 @@ export class Peerbit {
         await this.unsubscribeToTopic(topic, db.id);
 
         const dir =
-            db && db._options.directory
-                ? db._options.directory
-                : this.directory;
+            db && db._options.directory ? db._options.directory : this.cacheDir;
         const cache = this.caches[dir];
-
         if (cache && cache.handlers.has(db.id)) {
             cache.handlers.delete(db.id);
             if (!cache.handlers.size) {
@@ -1377,7 +1383,7 @@ export class Peerbit {
         directory: string,
         existingCache?: Cache<any>
     ) {
-        const dir = directory || this.directory;
+        const dir = directory || this.cacheDir;
         if (!this.caches[dir]) {
             const newCache = existingCache || (await this._createCache(dir));
             this.caches[dir] = { cache: newCache, handlers: new Set() };
@@ -1630,7 +1636,7 @@ export class Peerbit {
             const resolveCache = async (address: Address) => {
                 const cache = await this._requestCache(
                     address.toString(),
-                    options.directory || this.directory
+                    options.directory || this.cacheDir
                 );
                 const haveDB = await this._haveLocalData(
                     cache,

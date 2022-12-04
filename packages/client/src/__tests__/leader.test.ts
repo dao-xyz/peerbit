@@ -13,14 +13,6 @@ import { waitFor } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
-const orbitdbPath1 = "./orbitdb/tests/leader/1";
-const orbitdbPath2 = "./orbitdb/tests/leader/2";
-const orbitdbPath3 = "./orbitdb/tests/leader/3";
-
-const dbPath1 = "./orbitdb/tests/leader/1/db1";
-const dbPath2 = "./orbitdb/tests/leader/2/db2";
-const dbPath3 = "./orbitdb/tests/leader/3/db3";
-
 describe(`leaders`, function () {
     let session: LSession;
     let orbitdb1: Peerbit,
@@ -39,23 +31,9 @@ describe(`leaders`, function () {
     });
 
     beforeEach(async () => {
-        rmrf.sync(orbitdbPath1);
-        rmrf.sync(orbitdbPath2);
-        rmrf.sync(orbitdbPath3);
-
-        rmrf.sync(dbPath1);
-        rmrf.sync(dbPath2);
-        rmrf.sync(dbPath3);
-
-        orbitdb1 = await Peerbit.create(session.peers[0], {
-            directory: orbitdbPath1,
-        });
-        orbitdb2 = await Peerbit.create(session.peers[1], {
-            directory: orbitdbPath2,
-        });
-        orbitdb3 = await Peerbit.create(session.peers[2], {
-            directory: orbitdbPath3,
-        });
+        orbitdb1 = await Peerbit.create(session.peers[0], {});
+        orbitdb2 = await Peerbit.create(session.peers[1], {});
+        orbitdb3 = await Peerbit.create(session.peers[2], {});
     });
 
     afterEach(async () => {
@@ -78,8 +56,7 @@ describe(`leaders`, function () {
             rootTrust: orbitdb1.identity.publicKey,
         });
         const program = await orbitdb1.open(
-            new PermissionedEventStore({ network }),
-            { directory: dbPath1 }
+            new PermissionedEventStore({ network })
         );
         await orbitdb1.join(program);
 
@@ -87,8 +64,7 @@ describe(`leaders`, function () {
         await network.add(orbitdb2.id);
         await network.add(orbitdb2.identity.publicKey);
         const program2 = await orbitdb2.open<PermissionedEventStore>(
-            program.address!,
-            { directory: dbPath2 }
+            program.address!
         );
         await waitFor(() => program2.network.trustGraph.index.size === 3);
         await orbitdb2.join(program2);
@@ -136,7 +112,7 @@ describe(`leaders`, function () {
         const topic = uuid();
         db1 = await orbitdb1.open(
             new EventStore<string>({ id: "replication-tests" }),
-            { topic: topic, directory: dbPath1 }
+            { topic: topic }
         );
 
         const isLeaderAOneLeader = orbitdb1.isLeader(
@@ -150,7 +126,6 @@ describe(`leaders`, function () {
 
         db2 = await orbitdb2.open<EventStore<string>>(db1.address!, {
             topic: topic,
-            directory: dbPath2,
         });
 
         await waitFor(() => orbitdb1._directConnections.size === 1);
@@ -213,12 +188,10 @@ describe(`leaders`, function () {
             {
                 topic: topic,
                 replicate: false,
-                directory: dbPath1,
             }
         );
         db2 = await orbitdb2.open<EventStore<string>>(db1.address!, {
             topic: topic,
-            directory: dbPath2,
         });
 
         // One leader
@@ -245,16 +218,13 @@ describe(`leaders`, function () {
             {
                 topic: topic,
                 replicate: false,
-                directory: dbPath1,
             }
         );
         db2 = await orbitdb2.open<EventStore<string>>(db1.address!, {
             topic: topic,
-            directory: dbPath2,
         });
         db3 = await orbitdb3.open<EventStore<string>>(db1.address!, {
             topic: topic,
-            directory: dbPath3,
         });
 
         await waitForPeers(
@@ -297,15 +267,13 @@ describe(`leaders`, function () {
         const topic = uuid();
         db1 = await orbitdb1.open(
             new EventStore<string>({ id: "replication-tests" }),
-            { topic: topic, directory: dbPath1 }
+            { topic: topic }
         );
         db2 = await orbitdb2.open<EventStore<string>>(db1.address!, {
             topic: topic,
-            directory: dbPath2,
         });
         db3 = await orbitdb3.open<EventStore<string>>(db1.address!, {
             topic: topic,
-            directory: dbPath3,
         });
 
         await waitFor(() => orbitdb1._directConnections.size === 2);

@@ -120,7 +120,7 @@ describe(`Create & Open`, function () {
             orbitdb = await Peerbit.create(session.peers[0], {
                 directory: dbPath + uuid(),
                 storage: {
-                    createStore: (string: string) => createStore(string),
+                    createStore: (string?: string) => createStore(string),
                 },
             });
         });

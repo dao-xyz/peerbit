@@ -10,10 +10,6 @@ import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
-const dbPath1 = "./orbitdb/tests/multiple-databases/1";
-const dbPath2 = "./orbitdb/tests/multiple-databases/2";
-const dbPath3 = "./orbitdb/tests/multiple-databases/3";
-
 describe(`Multiple Databases`, function () {
     jest.setTimeout(60000);
 
@@ -28,21 +24,11 @@ describe(`Multiple Databases`, function () {
 
     // Create two IPFS instances and two OrbitDB instances (2 nodes/peers)
     beforeAll(async () => {
-        rmrf.sync(dbPath1);
-        rmrf.sync(dbPath2);
-        rmrf.sync(dbPath3);
-
         session = await LSession.connected(3, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
 
-        orbitdb1 = await Peerbit.create(session.peers[0], {
-            directory: dbPath1,
-        });
-        orbitdb2 = await Peerbit.create(session.peers[1], {
-            directory: dbPath2,
-        });
-        orbitdb3 = await Peerbit.create(session.peers[2], {
-            directory: dbPath3,
-        });
+        orbitdb1 = await Peerbit.create(session.peers[0], {});
+        orbitdb2 = await Peerbit.create(session.peers[1], {});
+        orbitdb3 = await Peerbit.create(session.peers[2], {});
         orbitdb2._minReplicas = 3;
         orbitdb3._minReplicas = 3;
         orbitdb1._minReplicas = 3;
@@ -78,7 +64,7 @@ describe(`Multiple Databases`, function () {
                     orbitdb2._store,
                     localDatabases[i].address!
                 ),
-                { topic: topic, directory: dbPath2, ...options }
+                { topic: topic, ...options }
             );
             remoteDatabasesA.push(db);
         }
@@ -89,7 +75,7 @@ describe(`Multiple Databases`, function () {
                     orbitdb3._store,
                     localDatabases[i].address!
                 ),
-                { topic: topic, directory: dbPath3, ...options }
+                { topic: topic, ...options }
             );
             remoteDatabasesB.push(db);
         }

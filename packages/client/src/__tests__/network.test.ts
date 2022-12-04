@@ -14,14 +14,6 @@ import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { PermissionedEventStore } from "./utils/stores/test-store";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
-const orbitdbPath1 = "./orbitdb/tests/network/1";
-const orbitdbPath2 = "./orbitdb/tests/network/2";
-const orbitdbPath3 = "./orbitdb/tests/network/3";
-
-const dbPath1 = "./orbitdb/tests/network/1/db1";
-const dbPath2 = "./orbitdb/tests/network/2/db2";
-const dbPath3 = "./orbitdb/tests/network/3/db3";
-
 describe(`network`, function () {
     let session: LSession;
     let orbitdb1: Peerbit,
@@ -40,23 +32,9 @@ describe(`network`, function () {
     });
 
     beforeEach(async () => {
-        rmrf.sync(orbitdbPath1);
-        rmrf.sync(orbitdbPath2);
-        rmrf.sync(orbitdbPath3);
-
-        rmrf.sync(dbPath1);
-        rmrf.sync(dbPath2);
-        rmrf.sync(dbPath3);
-
-        orbitdb1 = await Peerbit.create(session.peers[0], {
-            directory: orbitdbPath1,
-        });
-        orbitdb2 = await Peerbit.create(session.peers[1], {
-            directory: orbitdbPath2,
-        });
-        orbitdb3 = await Peerbit.create(session.peers[2], {
-            directory: orbitdbPath3,
-        });
+        orbitdb1 = await Peerbit.create(session.peers[0], {});
+        orbitdb2 = await Peerbit.create(session.peers[1], {});
+        orbitdb3 = await Peerbit.create(session.peers[2], {});
     });
 
     afterEach(async () => {

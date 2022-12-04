@@ -10,11 +10,6 @@ import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
-const dbPath1 = "./orbitdb/tests/replicate-automatically/1";
-const dbPath2 = "./orbitdb/tests/replicate-automatically/2";
-const dbPath3 = "./orbitdb/tests/replicate-automatically/3";
-const dbPath4 = "./orbitdb/tests/replicate-automatically/4";
-
 describe(`Automatic Replication`, function () {
     /*  let ipfsd1: Controller, ipfsd2: Controller, ipfsd3: Controller, ipfsd4: Controller, ipfs1: IPFS, ipfs2: IPFS, ipfs3: IPFS, ipfs4: IPFS */
     let orbitdb1: Peerbit,
@@ -23,17 +18,9 @@ describe(`Automatic Replication`, function () {
         orbitdb4: Peerbit;
     let session: LSession;
     beforeAll(async () => {
-        rmrf.sync(dbPath1);
-        rmrf.sync(dbPath2);
-        rmrf.sync(dbPath3);
-        rmrf.sync(dbPath4);
         session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
-        orbitdb1 = await Peerbit.create(session.peers[0], {
-            directory: dbPath1,
-        });
-        orbitdb2 = await Peerbit.create(session.peers[1], {
-            directory: dbPath2,
-        });
+        orbitdb1 = await Peerbit.create(session.peers[0], {});
+        orbitdb2 = await Peerbit.create(session.peers[1], {});
     });
 
     afterAll(async () => {
@@ -51,10 +38,6 @@ describe(`Automatic Replication`, function () {
         }
 
         await session.stop();
-        rmrf.sync(dbPath1);
-        rmrf.sync(dbPath2);
-        rmrf.sync(dbPath3);
-        rmrf.sync(dbPath4);
     });
 
     it("starts replicating the database when peers connect", async () => {

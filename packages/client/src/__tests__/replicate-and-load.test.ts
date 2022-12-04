@@ -12,27 +12,14 @@ import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 import { v4 as uuid } from "uuid";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
-const orbitdbPath1 = "./orbitdb/tests/replicate-and-load/1";
-const orbitdbPath2 = "./orbitdb/tests/replicate-and-load/2";
-const dbPath1 = "./orbitdb/tests/replicate-and-load/1/db1";
-const dbPath2 = "./orbitdb/tests/replicate-and-load/2/db2";
-
 describe(`Replicate and Load`, function () {
     let session: LSession;
     let orbitdb1: Peerbit, orbitdb2: Peerbit;
 
     beforeAll(async () => {
-        rmrf.sync(orbitdbPath1);
-        rmrf.sync(orbitdbPath2);
-        rmrf.sync(dbPath1);
-        rmrf.sync(dbPath2);
         session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
-        orbitdb1 = await Peerbit.create(session.peers[0], {
-            directory: orbitdbPath1,
-        });
-        orbitdb2 = await Peerbit.create(session.peers[1], {
-            directory: orbitdbPath2,
-        });
+        orbitdb1 = await Peerbit.create(session.peers[0], {});
+        orbitdb2 = await Peerbit.create(session.peers[1], {});
 
         // Connect the peers manually to speed up test times
     });
@@ -43,9 +30,6 @@ describe(`Replicate and Load`, function () {
         if (orbitdb2) await orbitdb2.stop();
 
         await session.stop();
-
-        rmrf.sync(dbPath1);
-        rmrf.sync(dbPath2);
     });
 
     describe("two peers", function () {
@@ -58,7 +42,7 @@ describe(`Replicate and Load`, function () {
                 new EventStore<string>({
                     id: "events",
                 }),
-                { topic: topic, directory: dbPath1 }
+                { topic: topic }
             );
             // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
             db2 = await orbitdb2.open<EventStore<string>>(
@@ -66,7 +50,7 @@ describe(`Replicate and Load`, function () {
                     orbitdb2._store,
                     db1.address!
                 ),
-                { topic: topic, directory: dbPath2 }
+                { topic: topic }
             );
         };
 

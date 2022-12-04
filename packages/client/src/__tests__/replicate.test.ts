@@ -14,11 +14,6 @@ import { v4 as uuid } from "uuid";
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
-const orbitdbPath1 = "./orbitdb/tests/replication/1";
-const orbitdbPath2 = "./orbitdb/tests/replication/2";
-const dbPath1 = "./orbitdb/tests/replication/1/db1";
-const dbPath2 = "./orbitdb/tests/replication/2/db2";
-
 describe(`Replication`, function () {
     jest.setTimeout(60000);
 
@@ -31,20 +26,12 @@ describe(`Replication`, function () {
     let options: IStoreOptions<any>;
 
     beforeEach(async () => {
-        rmrf.sync(orbitdbPath1);
-        rmrf.sync(orbitdbPath2);
-        rmrf.sync(dbPath1);
-        rmrf.sync(dbPath2);
         session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
 
-        orbitdb1 = await Peerbit.create(session.peers[0], {
-            directory: orbitdbPath1,
-        });
-        orbitdb2 = await Peerbit.create(session.peers[1], {
-            directory: orbitdbPath2,
-        });
+        orbitdb1 = await Peerbit.create(session.peers[0], {});
+        orbitdb2 = await Peerbit.create(session.peers[1], {});
 
-        options = Object.assign({}, options, { directory: dbPath1 });
+        options = Object.assign({}, options, {});
         topic = uuid();
         db1 = await orbitdb1.open(new EventStore<string>({ id: "a" }), {
             ...options,
@@ -66,7 +53,7 @@ describe(`Replication`, function () {
     });
 
     it("replicates database of 1 entry", async () => {
-        options = Object.assign({}, options, { directory: dbPath2 });
+        options = Object.assign({}, options);
         let done = false;
         db2 = await orbitdb2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
@@ -146,7 +133,7 @@ describe(`Replication`, function () {
             getReplicationTopic(topic)
         );
 
-        options = Object.assign({}, options, { directory: dbPath2 });
+        options = Object.assign({}, options);
 
         let done = false;
         db2 = await orbitdb2.open<EventStore<string>>(
@@ -192,7 +179,7 @@ describe(`Replication`, function () {
             getReplicationTopic(topic)
         );
 
-        options = Object.assign({}, options, { directory: dbPath2 });
+        options = Object.assign({}, options);
 
         // Test that none of the entries gets into the replication queue twice
         const replicateSet = new Set();
@@ -287,9 +274,7 @@ describe(`Replication`, function () {
         await mapSeries(adds, add);
 
         // Open second instance again
-        options = {
-            directory: dbPath2,
-        };
+        options = {};
 
         // Test that none of the entries gets into the replication queue twice
         const replicateSet = new Set();
@@ -382,7 +367,6 @@ describe(`Replication`, function () {
 
         // Open second instance again
         let options = {
-            directory: dbPath2 + "2",
             overwrite: true,
         };
         // Test that none of the entries gets into the replication queue twice

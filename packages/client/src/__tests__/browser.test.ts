@@ -2,17 +2,11 @@ import rmrf from "rimraf";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { getObserverTopic, getReplicationTopic, Peerbit } from "../peer";
 import { EventStore } from "./utils/stores/event-store";
-import { jest } from "@jest/globals";
 import { v4 as uuid } from "uuid";
 
 // Include test utilities
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
-
-const orbitdbPath1 = "./orbitdb/tests/browser/1";
-const orbitdbPath2 = "./orbitdb/tests/browser/2";
-const dbPath1 = "./orbitdb/tests/browser/1/db1";
-const dbPath2 = "./orbitdb/tests/browser/2/db2";
 
 /**
  * Tests that are relavent for browser environments
@@ -37,17 +31,10 @@ describe(`browser`, function () {
     beforeEach(async () => {
         clearInterval(timer);
 
-        rmrf.sync(orbitdbPath1);
-        rmrf.sync(orbitdbPath2);
-        rmrf.sync(dbPath1);
-        rmrf.sync(dbPath2);
-
         orbitdb1 = await Peerbit.create(session.peers[0], {
-            directory: orbitdbPath1,
             browser: true,
         });
         orbitdb2 = await Peerbit.create(session.peers[1], {
-            directory: orbitdbPath2,
             browser: true,
         });
     });
@@ -70,7 +57,7 @@ describe(`browser`, function () {
             new EventStore<string>({
                 id: uuid(),
             }),
-            { topic: topic, directory: dbPath1, replicate: true }
+            { topic: topic, replicate: true }
         );
 
         db2 = await orbitdb2.open<EventStore<string>>(
@@ -78,7 +65,7 @@ describe(`browser`, function () {
                 orbitdb2._store,
                 db1.address!
             ),
-            { topic: topic, directory: dbPath2, replicate: true }
+            { topic: topic, replicate: true }
         );
 
         await waitForPeers(
@@ -120,7 +107,7 @@ describe(`browser`, function () {
             new EventStore<string>({
                 id: uuid(),
             }),
-            { topic: topic, directory: dbPath1, replicate: true }
+            { topic: topic, replicate: true }
         );
 
         await db1.add("hello");
@@ -131,7 +118,7 @@ describe(`browser`, function () {
                 orbitdb2._store,
                 db1.address!
             ),
-            { topic: topic, directory: dbPath2, replicate: true }
+            { topic: topic, replicate: true }
         );
 
         await waitForPeers(
@@ -170,7 +157,7 @@ describe(`browser`, function () {
             new EventStore<string>({
                 id: uuid(),
             }),
-            { topic: topic, directory: dbPath1, replicate: false }
+            { topic: topic, replicate: false }
         );
 
         await db1.add("hello");
@@ -181,7 +168,7 @@ describe(`browser`, function () {
                 orbitdb2._store,
                 db1.address!
             ),
-            { topic: topic, directory: dbPath2, replicate: true }
+            { topic: topic, replicate: true }
         );
 
         await waitForPeers(

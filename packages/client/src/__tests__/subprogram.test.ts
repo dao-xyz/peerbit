@@ -16,11 +16,6 @@ import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Entry } from "@dao-xyz/ipfs-log";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
-const orbitdbPath1 = "./orbitdb/tests/subprogram/1";
-const orbitdbPath2 = "./orbitdb/tests/subprogram/2";
-const dbPath1 = "./orbitdb/tests/subprogram/1/db1";
-const dbPath2 = "./orbitdb/tests/subprogram/2/db2";
-
 describe(`Subprogram`, function () {
     let session: LSession;
     let orbitdb1: Peerbit,
@@ -40,26 +35,20 @@ describe(`Subprogram`, function () {
 
     beforeEach(async () => {
         clearInterval(timer);
-        rmrf.sync(orbitdbPath1);
-        rmrf.sync(orbitdbPath2);
-        rmrf.sync(dbPath1);
-        rmrf.sync(dbPath2);
 
         orbitdb1 = await Peerbit.create(session.peers[0], {
-            directory: orbitdbPath1,
             /*  canAccessKeys: async (requester, _keyToAccess) => {
                 return requester.equals(orbitdb2.identity.publicKey); // allow orbitdb1 to share keys with orbitdb2
             },  */ waitForKeysTimout: 1000,
         });
         orbitdb2 = await Peerbit.create(session.peers[1], {
-            directory: orbitdbPath2,
             limitSigning: true,
         }); // limitSigning = dont sign exchange heads request
         db1 = await orbitdb1.open(
             new EventStore<string>({
                 id: "abc",
             }),
-            { topic: topic, directory: dbPath1 }
+            { topic: topic }
         );
     });
 

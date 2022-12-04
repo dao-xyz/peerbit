@@ -36,7 +36,7 @@ describe(`load`, () => {
             orbitdb1 = await Peerbit.create(session.peers[0], {
                 directory: dbPath + "/" + uuid(),
                 storage: {
-                    createStore: (string: string) => createStore(string),
+                    createStore: (string?: string) => createStore(string),
                 },
             }); // We do custom store to prevent sideeffects when writing to disc
 
@@ -300,7 +300,7 @@ describe(`load`, () => {
             orbitdb1 = await Peerbit.create(session.peers[0], {
                 directory: dbPath + "/" + uuid(),
                 storage: {
-                    createStore: (string: string) => createStore(string),
+                    createStore: (string?: string) => createStore(string),
                 },
             });
 
