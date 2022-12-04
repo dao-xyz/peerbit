@@ -1,5 +1,9 @@
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
-import { createStore, LSession } from "@dao-xyz/peerbit-test-utils";
+import {
+    createStore,
+    LSession,
+    waitForPeers,
+} from "@dao-xyz/peerbit-test-utils";
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
 import { waitFor } from "@dao-xyz/peerbit-time";
@@ -290,6 +294,16 @@ describe("index", () => {
                 2,
                 options
             )) as TestStore;
+            await waitForPeers(
+                session.peers[1],
+                session.peers[0],
+                options.topic
+            );
+            await waitForPeers(
+                session.peers[2],
+                session.peers[0],
+                options.topic
+            );
 
             await expect(
                 l0c.store.put(
@@ -366,6 +380,12 @@ describe("index", () => {
                 1,
                 options
             )) as TestStore;
+            await waitForPeers(
+                session.peers[1],
+                session.peers[0],
+                options.topic
+            );
+
             await expect(
                 l0b.store.put(
                     new Document({
@@ -409,14 +429,20 @@ describe("index", () => {
                     id: "1",
                 })
             );
+            const l0b = await init<TestStore>(
+                deserialize(serialize(l0a), TestStore),
+                1,
+                options
+            );
+            await waitForPeers(
+                session.peers[1],
+                session.peers[0],
+                options.topic
+            );
 
             const q = async (): Promise<Results<Document>> => {
                 let results: Results<Document> = undefined as any;
-                const l0b = await init<TestStore>(
-                    deserialize(serialize(l0a), TestStore),
-                    1,
-                    options
-                );
+
                 l0b.store.index.query(
                     new DocumentQueryRequest({
                         queries: [
