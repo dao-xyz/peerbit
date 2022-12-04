@@ -34,5 +34,5 @@
     "dependencies": {
         "@dao-xyz/borsh": "^4.0.3"
     },
-    "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
+    "gitHead": "bfbec720aee276ab1bc7cf4ee7a6c0e90ecb4f51"
 }
