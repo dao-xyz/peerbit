@@ -14,6 +14,7 @@ abstract class LevelBlockStore implements BlockStore {
     _level: AbstractLevel<any, string, Uint8Array>;
     _opening: Promise<any>;
     _closed = false;
+    _onClose: (() => any) | undefined;
     constructor(level: AbstractLevel<any, string, Uint8Array>) {
         this._level = level;
     }
@@ -68,18 +69,27 @@ abstract class LevelBlockStore implements BlockStore {
             await this._level.open();
         }
         try {
-            this._opening = waitFor(() => this._level.status === "open");
+            this._opening = waitFor(() => this._level.status === "open", {
+                delayInterval: 100,
+                timeout: 10 * 1000,
+                stopperCallback: (fn) => {
+                    this._onClose = fn;
+                },
+            });
             await this._opening;
         } catch (error) {
             if (this._closed) {
                 return;
             }
             throw error;
+        } finally {
+            this._onClose = undefined;
         }
     }
 
     async close(): Promise<void> {
         this._closed = true;
+        this._onClose && this._onClose();
         return this._level.close();
     }
 }
