@@ -4,6 +4,7 @@ import { mplex } from "@libp2p/mplex";
 import { tcp } from "@libp2p/tcp";
 import { gossipsub } from "@chainsafe/libp2p-gossipsub";
 import waitForPeers from "./wait-for-peers";
+import { setMaxListeners } from "events";
 
 export class LSession {
     peers: Libp2p[];
@@ -14,7 +15,7 @@ export class LSession {
 
     static async connected(n: number, pubsubTopics?: string[]) {
         // Allow more than 11 listneers
-        if (typeof process !== "undefined") process.setMaxListeners(Infinity);
+        setMaxListeners(Infinity);
 
         // create nodes
         const promises: Promise<Libp2p>[] = [];
