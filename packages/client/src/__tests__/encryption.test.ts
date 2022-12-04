@@ -121,6 +121,7 @@ describe(`encryption`, function () {
                 done = true;
             },
         });
+        await waitForPeers(session.peers[1], session.peers[0], topic);
         await orbitdb2.keystore.saveKey(recieverKey);
         expect(
             await orbitdb2.keystore.getKey(recieverKey.keypair.publicKey)
@@ -149,7 +150,7 @@ describe(`encryption`, function () {
                 }
             },
         });
-
+        await waitForPeers(session.peers[1], session.peers[0], topic);
         await waitFor(() => db2.network?.trustGraph.index.size >= 3);
         await orbitdb2.join(db2);
 
@@ -182,6 +183,7 @@ describe(`encryption`, function () {
         db2 = await orbitdb2.open<PermissionedEventStore>(db1.address!, {
             topic: topic,
         });
+        await waitForPeers(session.peers[1], session.peers[0], topic);
         await waitFor(() => db2.network?.trustGraph.index.size >= 3);
         await orbitdb2.join(db2);
         await waitFor(() => db1.network?.trustGraph.index.size >= 4);
@@ -204,6 +206,7 @@ describe(`encryption`, function () {
         db2 = await orbitdb2.open<PermissionedEventStore>(db1.address!, {
             topic: topic,
         });
+        await waitForPeers(session.peers[1], session.peers[0], topic);
 
         await waitFor(() => db2.network?.trustGraph.index.size >= 3);
         await orbitdb2.join(db2);

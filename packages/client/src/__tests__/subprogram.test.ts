@@ -69,7 +69,7 @@ describe(`Subprogram`, function () {
         @field({ type: Documents })
         eventStore: Documents<EventStore<string>>;
 
-        accessRequests: { entry: Entry<any> }[] = [];
+        accessRequests: { entry: Entry<any> }[];
 
         constructor(eventStore: Documents<EventStore<string>>) {
             super();
@@ -77,11 +77,12 @@ describe(`Subprogram`, function () {
         }
 
         async canAppend(entry: Entry<any>): Promise<boolean> {
-            this.accessRequests.push({ entry }); // this is what we are testing, are we going here when opening a subprogram?
+            this.accessRequests.push({ entry }); // this is wat we are testing, are we going here when opening a subprogram?
             return true;
         }
 
         setup(): Promise<void> {
+            this.accessRequests = [];
             return this.eventStore.setup({
                 type: EventStore,
                 canAppend: this.canAppend.bind(this),
