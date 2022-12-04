@@ -17,6 +17,7 @@ const dbPath3 = "./orbitdb/tests/discovery/3/db3";
 
 describe(`discovery`, function () {
     jest.setTimeout(60 * 1000);
+    jest.retryTimes(1);
     let session1: LSession, session2: LSession;
     let orbitdb1: Peerbit, orbitdb2: Peerbit, orbitdb3: Peerbit;
 
