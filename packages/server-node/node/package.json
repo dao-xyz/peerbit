@@ -51,7 +51,7 @@
     },
     "dependencies": {
         "@aws-sdk/client-route-53": "^3.216.0",
-        "@chainsafe/libp2p-gossipsub": "^5.2.1",
+        "@chainsafe/libp2p-gossipsub": "^5.3.0",
         "@chainsafe/libp2p-noise": "^10.2.0",
         "@dao-xyz/peerbit": "^0.0.78",
         "@libp2p/mplex": "^7.1.0",

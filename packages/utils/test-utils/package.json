@@ -34,7 +34,7 @@
     "author": "dao.xyz",
     "license": "MIT",
     "dependencies": {
-        "@chainsafe/libp2p-gossipsub": "^5.2.1",
+        "@chainsafe/libp2p-gossipsub": "^5.3.0",
         "@chainsafe/libp2p-noise": "^10.2.0",
         "@libp2p/mplex": "^7.1.0",
         "@libp2p/tcp": "^6.0.4",
