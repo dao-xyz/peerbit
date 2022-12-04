@@ -1,11 +1,7 @@
-import rmrf from "rimraf";
 import { getReplicationTopic, Peerbit } from "../peer";
-
 import { EventStore } from "./utils/stores";
 import { jest } from "@jest/globals";
-// @ts-ignore
 import { v4 as uuid } from "uuid";
-// Include test utilities
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";

@@ -9,7 +9,7 @@ import sodium from "libsodium-wrappers";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { Wallet } from "@ethersproject/wallet";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { PeerIdAddress } from "../ipfs.js";
+import { PeerIdAddress } from "../libp2p.js";
 
 describe("Ed25519", () => {
     it("ser/der", async () => {

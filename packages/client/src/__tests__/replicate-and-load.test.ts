@@ -1,10 +1,6 @@
 import { getReplicationTopic, Peerbit } from "../peer";
-
 import { EventStore } from "./utils/stores/event-store";
-
 import mapSeries from "p-each-series";
-import rmrf from "rimraf";
-import { jest } from "@jest/globals";
 
 // Include test utilities
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";

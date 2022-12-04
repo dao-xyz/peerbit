@@ -39,10 +39,10 @@ const LIBRARY_PATH = "/library";
 const NETWORK_PEER_PATH = "/network/peer";
 const NETWORK_PEERS_PATH = "/network/peers";
 
-const getConfigDir = async (ipfsId: string): Promise<string> => {
+const getConfigDir = async (peerId: string): Promise<string> => {
     const path = await import("path");
     const os = await import("os");
-    const configDir = path.join(os.homedir(), ".peerbit", ipfsId);
+    const configDir = path.join(os.homedir(), ".peerbit", peerId);
     return configDir;
 };
 
@@ -69,9 +69,9 @@ export const checkExistPath = async (path: string) => {
         throw new Error("Can not access path");
     }
 };
-export const createPassword = async (ipfsId: string): Promise<string> => {
+export const createPassword = async (peerId: string): Promise<string> => {
     const fs = await import("fs");
-    const configDir = await getConfigDir(ipfsId);
+    const configDir = await getConfigDir(peerId);
     const credentialsPath = await getCredentialsPath(configDir);
     if (await checkExistPath(credentialsPath)) {
         throw new Error(
@@ -96,9 +96,9 @@ export const createPassword = async (ipfsId: string): Promise<string> => {
     return password;
 };
 
-export const loadPassword = async (ipfsId: string): Promise<string> => {
+export const loadPassword = async (peerId: string): Promise<string> => {
     const fs = await import("fs");
-    const configDir = await getConfigDir(ipfsId);
+    const configDir = await getConfigDir(peerId);
     const credentialsPath = await getCredentialsPath(configDir);
     if (!(await checkExistPath(credentialsPath))) {
         throw new NotFoundError("Credentials file does not exist");
@@ -112,12 +112,12 @@ export const loadPassword = async (ipfsId: string): Promise<string> => {
     return password;
 };
 
-export const loadOrCreatePassword = async (ipfsId: string): Promise<string> => {
+export const loadOrCreatePassword = async (peerId: string): Promise<string> => {
     try {
-        return await loadPassword(ipfsId);
+        return await loadPassword(peerId);
     } catch (error) {
         if (error instanceof NotFoundError) {
-            return createPassword(ipfsId);
+            return createPassword(peerId);
         }
         throw error;
     }

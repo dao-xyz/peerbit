@@ -1,10 +1,7 @@
-import assert from "assert";
 import { Entry } from "@dao-xyz/ipfs-log";
 import { getObserverTopic, getReplicationTopic, Peerbit } from "../peer";
 import { Operation } from "./utils/stores/event-store";
 import { Ed25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
-import { AccessError } from "@dao-xyz/peerbit-crypto";
-import { v4 as uuid } from "uuid";
 import { jest } from "@jest/globals";
 import { KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";

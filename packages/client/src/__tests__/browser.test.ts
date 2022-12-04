@@ -1,4 +1,3 @@
-import rmrf from "rimraf";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { getObserverTopic, getReplicationTopic, Peerbit } from "../peer";
 import { EventStore } from "./utils/stores/event-store";

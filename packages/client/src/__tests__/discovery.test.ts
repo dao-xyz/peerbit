@@ -1,4 +1,3 @@
-import rmrf from "rimraf";
 import { Peerbit } from "../peer";
 import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";

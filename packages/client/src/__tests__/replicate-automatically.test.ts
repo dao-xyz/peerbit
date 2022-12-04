@@ -1,10 +1,8 @@
 import { Peerbit } from "../peer";
-
 import { EventStore } from "./utils/stores/event-store";
 import { KeyBlocks } from "./utils/stores/key-value-store";
 import assert from "assert";
 import mapSeries from "p-each-series";
-import rmrf from "rimraf";
 import { v4 as uuid } from "uuid";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { waitFor } from "@dao-xyz/peerbit-time";

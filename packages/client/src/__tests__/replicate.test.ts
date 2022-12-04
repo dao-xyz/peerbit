@@ -1,16 +1,12 @@
 import assert from "assert";
 import mapSeries from "p-each-series";
-import rmrf from "rimraf";
 import { Entry } from "@dao-xyz/ipfs-log";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import { jest } from "@jest/globals";
 import { getObserverTopic, getReplicationTopic, Peerbit } from "../peer";
-
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { IStoreOptions } from "@dao-xyz/peerbit-store";
-// @ts-ignore
 import { v4 as uuid } from "uuid";
-// Include test utilities
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 

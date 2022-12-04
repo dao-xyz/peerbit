@@ -62,8 +62,8 @@ export class LSession {
         // Subscribe to initial topics
         if (pubsubTopics) {
             for (const topic of pubsubTopics) {
-                for (const ipfs of libs) {
-                    ipfs.pubsub.subscribe(topic);
+                for (const lib of libs) {
+                    lib.pubsub.subscribe(topic);
                 }
                 for (let i = 0; i < n - 1; i++) {
                     for (let j = i + 1; j < n; j++) {

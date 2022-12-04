@@ -19,7 +19,7 @@
 ![tests](https://github.com/dao-xyz/peerbit/actions/workflows/ci.yml/badge.svg)
 
 ## P2P databases simplified
-Started originally as a fork of OrbitDB: A peer-to-peer database on top of IPFS supporting encryption, sharding and discoverability (searching).
+Started originally as a fork of OrbitDB: A peer-to-peer database on top of Libp2p and optionally IPFS supporting encryption, sharding and discoverability (searching).
 
 Peerbit provides an abstraction layer that lets you program with distributed data types. For example, ```String``` can be replaced with [DString](./packages/programs/data/string) (distributed string). Some datatypes, like [Document store](./packages/programs/data/document) are sharded automatically as long as there are not data dependencies between indiviudal documents.
  
@@ -108,7 +108,7 @@ class CollaborativeText extends Program {
 
 // ... 
 
-const peer = await Peerbit.create (ipfs, options ...)
+const peer = await Peerbit.create (libp2p, options ...)
 const document = peer.open(new CollaborativeText());
 console.log(document.address) /// this address can be opened by another peer 
 
@@ -135,8 +135,8 @@ npm install @dao-xyz/peerbit
 ```typescript
 import { Peerbit } from '@dao-xyz/peerbit'
 
-// Create a peer from an ipfs instance
-const peer = await Peerbit.create(IPFS CLIENT, {... options ...})
+// Create a peer from an libp2p instance
+const peer = await Peerbit.create(LIBP2P_CLIENT, {... options ...})
 
 // Open a program 
 const program = await peer.open(PRORGAM ADDRESS or PRORGAM)
@@ -178,7 +178,7 @@ class StringStore extends Program  // Needs to extend Program if you are going t
 
 // Later 
 
-const peer = await Peerbit.create(IPFS CLIENT, {... options ...})
+const peer = await Peerbit.create(LIBP2P_CLIENT, {... options ...})
 
 const program = await peer.open(new StringStore({store: new Store()}), ... options ...)
  
@@ -228,8 +228,8 @@ class StringStore extends Program
 
 
 // Later 
-const peer1 = await Peerbit.create(IPFS_CLIENT, {... options ...})
-const peer2 = await Peerbit.create(IPFS_CLIENT_2, {... options ...})
+const peer1 = await Peerbit.create(LIBP2P_CLIENT, {... options ...})
+const peer2 = await Peerbit.create(LIBP2P_CLIENT_2, {... options ...})
 
 const programPeer1 = await peer1.open(new StringStore({store: new Store(), network: new TrustedNetwork()}), {... options ...})
 
@@ -237,7 +237,7 @@ const programPeer1 = await peer1.open(new StringStore({store: new Store(), netwo
 await program.network.add(peer2.identity.publicKey) 
 
 
-// peer2 also has to "join" the network, in practice this means that peer2 adds a record telling that its Peer ID trusts its IPFS ID
+// peer2 also has to "join" the network, in practice this means that peer2 adds a record telling that its Peer ID trusts its libp2p Id
 const programPeer2 = await peer2.open(programPeer1.address, {... options ...})
 await peer2.join(programPeer2) // This might fail with "AccessError" if you do this too quickly after "open", because it has not yet recieved the full trust graph from peer1 yet
 ```

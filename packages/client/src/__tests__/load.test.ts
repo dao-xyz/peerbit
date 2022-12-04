@@ -5,8 +5,6 @@ import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store.js";
 import { jest } from "@jest/globals";
 import { v4 as uuid } from "uuid";
-
-// Include test utilities
 import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
 import { waitFor } from "@dao-xyz/peerbit-time";
 

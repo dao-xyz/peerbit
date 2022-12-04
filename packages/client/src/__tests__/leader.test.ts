@@ -1,12 +1,7 @@
-import rmrf from "rimraf";
-
 import { DirectChannel } from "@dao-xyz/ipfs-pubsub-direct-channel";
 import { Peerbit } from "../peer";
 import { EventStore } from "./utils/stores/event-store";
-import { jest } from "@jest/globals";
 import { v4 as uuid } from "uuid";
-
-// Include test utilities
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { waitFor } from "@dao-xyz/peerbit-time";
