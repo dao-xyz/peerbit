@@ -43,7 +43,7 @@ const checkHello = async (db: PermissionedEventStore) => {
 };
 
 describe(`encryption`, function () {
-    // jest.retryTimes(1); // TODO Side effects may cause failures (or something else? Like missing await somewhere which makes this test fail if multiple tests are running and slowing down the system)
+    jest.retryTimes(1); // TODO Side effects may cause failures (or something else? Like missing await somewhere which makes this test fail if multiple tests are running and slowing down the system)
 
     let session: LSession;
     let orbitdb1: Peerbit,
