@@ -4,23 +4,23 @@ import {
 } from "@dao-xyz/peerbit-trusted-network";
 import { Peerbit } from "@dao-xyz/peerbit";
 import { DString } from "@dao-xyz/peerbit-string";
-import { Session } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import http from "http";
 import { client, startServer } from "../api.js";
 import { jest } from "@jest/globals";
 import { PermissionedString } from "@dao-xyz/peerbit-node-test-lib";
 
-describe("ipfs only", () => {
-    let session: Session, server: http.Server;
+describe("libp2p only", () => {
+    let session: LSession, server: http.Server;
     jest.setTimeout(60 * 1000);
 
     beforeAll(async () => {
-        session = await Session.connected(1);
+        session = await LSession.connected(1);
     });
 
     beforeEach(async () => {
-        server = await startServer(session.peers[0].ipfs, 7676);
+        server = await startServer(session.peers[0], 7676);
     });
     afterEach(() => {
         server.close();
@@ -30,7 +30,7 @@ describe("ipfs only", () => {
         await session.stop();
     });
 
-    it("use cli as IPFS cli", async () => {
+    it("use cli as libp2p cli", async () => {
         const c = await client("http://localhost:" + 7676);
         await c.topic.put("1", false);
         await c.topic.put("2", false);
@@ -48,15 +48,15 @@ describe("ipfs only", () => {
     });
 });
 describe("server", () => {
-    let session: Session, peer: Peerbit, server: http.Server;
+    let session: LSession, peer: Peerbit, server: http.Server;
     jest.setTimeout(60 * 1000);
 
     beforeAll(async () => {
-        session = await Session.connected(1);
+        session = await LSession.connected(1);
     });
 
     beforeEach(async () => {
-        peer = await Peerbit.create(session.peers[0].ipfs, {
+        peer = await Peerbit.create(session.peers[0], {
             directory: "./peerbit/" + +new Date(),
         });
         server = await startServer(peer);
@@ -72,16 +72,16 @@ describe("server", () => {
     describe("ipfs", () => {
         it("id", async () => {
             const c = await client();
-            expect(await c.ipfs.id.get()).toEqual(
-                (await peer.ipfs.id()).id.toString()
+            expect(await c.peer.id.get()).toEqual(
+                peer.libp2p.peerId.toString()
             );
         });
         it("addresses", async () => {
             const c = await client();
             expect(
-                (await c.ipfs.addresses.get()).map((x) => x.toString())
+                (await c.peer.addresses.get()).map((x) => x.toString())
             ).toEqual(
-                (await peer.ipfs.id()).addresses.map((x) => x.toString())
+                (await peer.libp2p.getMultiaddrs()).map((x) => x.toString())
             );
         });
     });
@@ -104,7 +104,8 @@ describe("server", () => {
         });
         program.setupIndices();
         const address = await c.program.put(program, "topic");
-        expect(await c.program.get(address)).toBeInstanceOf(PermissionedString);
+        const programInstance = await c.program.get(address);
+        expect(programInstance).toBeInstanceOf(PermissionedString);
     });
     it("library", async () => {
         const c = await client();

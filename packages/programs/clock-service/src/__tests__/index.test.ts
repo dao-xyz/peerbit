@@ -1,5 +1,5 @@
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
-import { Session, waitForPeers } from "@dao-xyz/peerbit-test-utils";
+import { delay } from "@dao-xyz/peerbit-time";
+import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { Ed25519Identity, Entry } from "@dao-xyz/ipfs-log";
 import { Program } from "@dao-xyz/peerbit-program";
@@ -9,6 +9,12 @@ import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { MemoryLevel } from "memory-level";
 import { default as Cache } from "@dao-xyz/peerbit-cache";
 import { v4 as uuid } from "uuid";
+import {
+    DEFAULT_BLOCK_TRANSPORT_TOPIC,
+    LibP2PBlockStore,
+    MemoryLevelBlockStore,
+    Blocks,
+} from "@dao-xyz/peerbit-block";
 
 const createIdentity = async () => {
     const ed = await Ed25519Keypair.create();
@@ -38,9 +44,9 @@ class P extends Program {
 }
 
 describe("clock", () => {
-    let session: Session, responder: P, reader: P;
+    let session: LSession, responder: P, reader: P, readerStore: Blocks;
     beforeAll(async () => {
-        session = await Session.connected(3);
+        session = await LSession.connected(3, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
         const responderIdentity = await createIdentity();
         const topic = uuid();
         responder = new P({
@@ -50,27 +56,45 @@ describe("clock", () => {
                 }),
             }),
         });
-        await responder.init(session.peers[0].ipfs, responderIdentity, {
-            topic,
-            store: {
-                resolveCache: () =>
-                    Promise.resolve(new Cache(new MemoryLevel())),
-                replicate: true,
-            } as any,
-        } as any);
+        await responder.init(
+            session.peers[0],
+            new Blocks(
+                new LibP2PBlockStore(
+                    session.peers[0],
+                    new MemoryLevelBlockStore()
+                )
+            ),
+            responderIdentity,
+            {
+                topic,
+                store: {
+                    resolveCache: () =>
+                        Promise.resolve(new Cache(new MemoryLevel())),
+                    replicate: true,
+                } as any,
+            } as any
+        );
 
         responder.clock._maxError = BigInt(maxTimeError * 1e6);
 
         reader = deserialize(serialize(responder), P);
-        await reader.init(session.peers[1].ipfs, await createIdentity(), {
-            topic,
-            store: {
-                resolveCache: () =>
-                    Promise.resolve(new Cache(new MemoryLevel())),
-            } as any,
-        } as any);
+        readerStore = new Blocks(
+            new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
+        );
+        await reader.init(
+            session.peers[1],
+            readerStore,
+            await createIdentity(),
+            {
+                topic,
+                store: {
+                    resolveCache: () =>
+                        Promise.resolve(new Cache(new MemoryLevel())),
+                } as any,
+            } as any
+        );
 
-        await waitForPeers(session.peers[1].ipfs, [session.peers[0].id], topic);
+        await waitForPeers(session.peers[1], [session.peers[0]], topic);
     });
     afterAll(async () => {
         await session.stop();
@@ -80,7 +104,7 @@ describe("clock", () => {
         const entry = await Entry.create({
             data: "hello world",
             identity: reader.identity,
-            ipfs: reader.ipfs,
+            store: readerStore,
             signers: [
                 async (data: Uint8Array) =>
                     new SignatureWithKey({
@@ -91,11 +115,15 @@ describe("clock", () => {
             ],
         });
         expect(
-            entry.signatures.map((x) => x.publicKey.hashCode())
-        ).toContainAllValues([
-            reader.identity.publicKey.hashCode(),
-            responder.identity.publicKey.hashCode(),
-        ]);
+            await Promise.all(
+                entry.signatures.map((x) => x.publicKey.hashcode())
+            )
+        ).toContainAllValues(
+            await Promise.all([
+                reader.identity.publicKey.hashcode(),
+                responder.identity.publicKey.hashcode(),
+            ])
+        );
         expect(await reader.clock.verify(entry)).toBeTrue();
     });
 
@@ -104,7 +132,7 @@ describe("clock", () => {
             Entry.create({
                 data: "hello world",
                 identity: reader.identity,
-                ipfs: reader.ipfs,
+                store: readerStore,
                 signers: [
                     async (data: Uint8Array) =>
                         new SignatureWithKey({

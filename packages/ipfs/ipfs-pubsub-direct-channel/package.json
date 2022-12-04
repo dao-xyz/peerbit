@@ -20,7 +20,7 @@
         "access": "public"
     },
     "engines": {
-        "node": ">=16.0"
+        "node": ">=16.15.1"
     },
     "keywords": [
         "ipfs",
@@ -29,23 +29,13 @@
         "crdt"
     ],
     "dependencies": {
-        "@dao-xyz/borsh": "^3.4.4",
+        "@dao-xyz/borsh": "^4.0.3",
         "@dao-xyz/ipfs-pubsub-peer-monitor": "^0.0.15",
         "@dao-xyz/peerbit-borsh-utils": "^0.0.11"
     },
     "devDependencies": {
         "@dao-xyz/peerbit-test-utils": "^0.0.14",
-        "@dao-xyz/peerbit-time": "^0.0.18",
-        "@mapbox/node-pre-gyp": "^1.0.10",
-        "assert": "^2.0.0",
-        "fs-extra": "^10.0.0",
-        "go-ipfs": "^0.17.0",
-        "ipfs": "^0.65.0",
-        "ipfsd-ctl": "^12.2.2",
-        "is-node": "^1.0.2",
-        "node-pre-gyp": "^0.17.0",
-        "nyc": "^15.0.1",
-        "p-map-series": "^3.0.0"
+        "@dao-xyz/peerbit-time": "^0.0.18"
     },
     "scripts": {
         "clean": "shx rm -rf lib/*",

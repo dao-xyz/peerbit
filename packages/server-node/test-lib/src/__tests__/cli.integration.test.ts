@@ -7,18 +7,18 @@ import { Program } from "@dao-xyz/peerbit-program";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { Peerbit } from "@dao-xyz/peerbit";
 import { DString } from "@dao-xyz/peerbit-string";
-import { Session } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { jest } from "@jest/globals";
 import { PermissionedString } from "..";
 
 describe("server", () => {
-    let session: Session, peer: Peerbit;
+    let session: LSession, peer: Peerbit;
     jest.setTimeout(60 * 1000);
 
     beforeAll(async () => {
-        session = await Session.connected(1);
-        peer = await Peerbit.create(session.peers[0].ipfs, {
-            directory: "./peerbit/" + +new Date(),
+        session = await LSession.connected(1);
+        peer = await Peerbit.create(session.peers[0], {
+            directory: "./tmp/peerbit/" + +new Date(),
         });
     });
 

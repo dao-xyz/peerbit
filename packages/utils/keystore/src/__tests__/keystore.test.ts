@@ -17,7 +17,6 @@ import { fileURLToPath } from "url";
 
 // @ts-ignore
 import { v4 as uuid } from "uuid";
-import { deserialize, serialize } from "@dao-xyz/borsh";
 import { fixturePath } from "./fixture.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -307,35 +306,43 @@ describe("getKeys", () => {
         const keysByGroup = await keystore.getKeys(group);
         expect(keysByGroup).toHaveLength(4); // because aSignKey with be also saved as X25519key
         expect(
-            keysByGroup?.map((k) =>
-                (
-                    k.keypair as X25519Keypair | Ed25519Keypair
-                ).publicKey.hashCode()
+            await Promise.all(
+                keysByGroup!.map((k) =>
+                    (
+                        k.keypair as X25519Keypair | Ed25519Keypair
+                    ).publicKey.hashcode()
+                )
             )
         ).toContainAllValues(
-            [
-                aBoxKey,
-                aBox2Key,
-                aSignKey,
-                await KeyWithMeta.toX25519(aSignKey),
-            ].map((k) =>
-                (
-                    k.keypair as X25519Keypair | Ed25519Keypair
-                ).publicKey.hashCode()
+            await Promise.all(
+                [
+                    aBoxKey,
+                    aBox2Key,
+                    aSignKey,
+                    await KeyWithMeta.toX25519(aSignKey),
+                ].map((k) =>
+                    (
+                        k.keypair as X25519Keypair | Ed25519Keypair
+                    ).publicKey.hashcode()
+                )
             )
         );
         const keysByType = await keystore.getKeys(group2);
         expect(
-            keysByType?.map((k) =>
-                (
-                    k.keypair as X25519Keypair | Ed25519Keypair
-                ).publicKey.hashCode()
+            await Promise.all(
+                keysByType!.map((k) =>
+                    (
+                        k.keypair as X25519Keypair | Ed25519Keypair
+                    ).publicKey.hashcode()
+                )
             )
         ).toContainAllValues(
-            [bSignKey, await KeyWithMeta.toX25519(bSignKey)].map((k) =>
-                (
-                    k.keypair as X25519Keypair | Ed25519Keypair
-                ).publicKey.hashCode()
+            await Promise.all(
+                [bSignKey, await KeyWithMeta.toX25519(bSignKey)].map((k) =>
+                    (
+                        k.keypair as X25519Keypair | Ed25519Keypair
+                    ).publicKey.hashcode()
+                )
             )
         );
     });

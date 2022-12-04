@@ -1,8 +1,8 @@
 import PQueue from "p-queue";
 import { CanAppend, Identity, Log } from "@dao-xyz/ipfs-log";
-import { IPFS } from "ipfs-core-types";
 import { Entry } from "@dao-xyz/ipfs-log";
 import { EntryWithRefs } from "./entry-with-refs";
+import { Blocks } from "@dao-xyz/peerbit-block";
 
 const flatMap = (res: any[], val: any) => res.concat(val);
 
@@ -10,7 +10,7 @@ const defaultConcurrency = 32;
 
 interface Store<T> {
     _oplog: Log<T>;
-    _ipfs: IPFS;
+    _store: Blocks;
     identity: Identity;
     canAppend?: CanAppend<T>;
 }
@@ -229,7 +229,7 @@ export class Replicator<T> {
         let log: Log<any>;
         if (typeof entry === "string") {
             log = await Log.fromEntryHash<T>(
-                this._store._ipfs,
+                this._store._store,
                 this._store.identity,
                 entry,
                 {
@@ -246,7 +246,7 @@ export class Replicator<T> {
             );
         } else {
             log = await Log.fromEntry(
-                this._store._ipfs,
+                this._store._store,
                 this._store.identity,
                 entry instanceof Entry
                     ? entry

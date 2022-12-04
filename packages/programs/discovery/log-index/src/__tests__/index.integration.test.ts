@@ -1,6 +1,6 @@
 import {
     createStore,
-    Session,
+    LSession,
     waitForPeers,
 } from "@dao-xyz/peerbit-test-utils";
 import {
@@ -26,9 +26,10 @@ import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Address } from "@dao-xyz/peerbit-program";
 import { jest } from "@jest/globals";
+import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
 
 describe("query", () => {
-    let session: Session,
+    let session: LSession,
         cacheStores: AbstractLevel<any, string>[] = [],
         logIndices: LogIndex[] = [],
         headsCount = 3,
@@ -38,7 +39,7 @@ describe("query", () => {
     const __filename = fileURLToPath(import.meta.url);
 
     beforeAll(async () => {
-        session = await Session.connected(peersCount);
+        session = await LSession.connected(peersCount);
         for (let i = 0; i < peersCount; i++) {
             cacheStores.push(
                 await createStore(path.join(__filename, "cache-" + i))
@@ -51,6 +52,7 @@ describe("query", () => {
             const signKey = await Ed25519Keypair.create();
             const cache = new Cache(cacheStores[i]);
             const logIndex = new LogIndex({ query: new RPC() });
+            const blockStore = new Blocks(new MemoryLevelBlockStore());
             logIndex.query.parentProgram = {
                 address: new Address({ cid: "1" }),
             } as any; // because query topic needs a parent with address
@@ -81,7 +83,7 @@ describe("query", () => {
                 },
             };
             await store.init(
-                session.peers[i].ipfs,
+                blockStore,
                 {
                     ...signKey,
                     sign: async (data: Uint8Array) => await signKey.sign(data),
@@ -94,7 +96,8 @@ describe("query", () => {
                 }
             );
             await logIndex.init(
-                session.peers[i].ipfs,
+                session.peers[i],
+                blockStore,
                 {
                     ...signKey,
                     sign: async (data: Uint8Array) => await signKey.sign(data),
@@ -110,7 +113,7 @@ describe("query", () => {
                 }
             );
         }
-        await waitForPeers(session.peers[1].ipfs, [session.peers[0].id], topic);
+        await waitForPeers(session.peers[1], [session.peers[0].peerId], topic);
 
         expect(logIndices[0].query.rpcTopic).toEqual(
             logIndices[1].query.rpcTopic

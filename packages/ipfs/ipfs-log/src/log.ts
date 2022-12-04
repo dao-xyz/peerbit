@@ -8,7 +8,7 @@ import {
     EntryFetchOptions,
     strictFetchOptions,
 } from "./entry-io.js";
-import { IPFS } from "ipfs-core-types";
+import { Libp2p } from "libp2p";
 import { isDefined } from "./is-defined.js";
 import { findUniques } from "./find-uniques.js";
 import {
@@ -33,6 +33,7 @@ import { Encoding, JSON_ENCODING } from "./encoding.js";
 import { Identity } from "./identity.js";
 import { logger as parentLogger } from "./logger.js";
 import { HeadsIndex } from "./heads.js";
+import { BlockStore, Blocks } from "@dao-xyz/peerbit-block";
 
 const logger = parentLogger.child({ module: "ipfs-log" });
 
@@ -78,7 +79,7 @@ export type LogOptions<T> = {
 
 export class Log<T> extends GSet {
     _sortFn: Sorting.ISortFunction;
-    _storage: IPFS;
+    _storage: Blocks;
     _id: string;
     /*   _rootGid: string; */
 
@@ -105,9 +106,13 @@ export class Log<T> extends GSet {
 
     joinConcurrency: number;
 
-    constructor(ipfs: IPFS, identity: Identity, options: LogOptions<T> = {}) {
-        if (!isDefined(ipfs)) {
-            throw LogError.IPFSNotDefinedError();
+    constructor(
+        store: Blocks,
+        identity: Identity,
+        options: LogOptions<T> = {}
+    ) {
+        if (!isDefined(store)) {
+            throw LogError.BlockStoreNotDefinedError();
         }
 
         if (!isDefined(identity)) {
@@ -136,7 +141,7 @@ export class Log<T> extends GSet {
 
         this._sortFn = NoZeroes(sortFn);
 
-        this._storage = ipfs;
+        this._storage = store;
         this._id = logId || randomId();
         /*     this._rootGid = rootGid;
          */
@@ -444,7 +449,7 @@ export class Log<T> extends GSet {
             options.onGidsShadowed && new Set(this.heads.map((h) => h.gid)); // could potentially be faster if we first groupBy
 
         const entry = await Entry.create<T>({
-            ipfs: this._storage,
+            store: this._storage,
             identity: identity,
             signers: options.signers,
             data,
@@ -840,14 +845,14 @@ export class Log<T> extends GSet {
      * @returns {Promise<Log>}
      */
     static async fromMultihash<T>(
-        ipfs: IPFS,
+        store: Blocks,
         identity: Identity,
         hash: string,
         options: { sortFn?: Sorting.ISortFunction } & EntryFetchAllOptions<T>
     ) {
         // TODO: need to verify the entries with 'key'
         const { logId, entries, heads } = await LogIO.fromMultihash(
-            ipfs,
+            store,
             hash,
             {
                 length: options?.length,
@@ -859,7 +864,7 @@ export class Log<T> extends GSet {
                 sortFn: options?.sortFn,
             }
         );
-        return new Log<T>(ipfs, identity, {
+        return new Log<T>(store, identity, {
             encryption: options?.encryption,
             encoding: options?.encoding,
             logId,
@@ -884,7 +889,7 @@ export class Log<T> extends GSet {
      * @return {Promise<Log>} New Log
      */
     static async fromEntryHash<T>(
-        ipfs: IPFS,
+        store: Blocks,
         identity: Identity,
         hash: string | string[],
         options: {
@@ -901,7 +906,7 @@ export class Log<T> extends GSet {
         } = { length: -1, exclude: [] }
     ): Promise<Log<T>> {
         // TODO: need to verify the entries with 'key'
-        const { entries } = await LogIO.fromEntryHash(ipfs, hash, {
+        const { entries } = await LogIO.fromEntryHash(store, hash, {
             length: options.length,
             exclude: options.exclude,
             encryption: options?.encryption,
@@ -912,7 +917,7 @@ export class Log<T> extends GSet {
             onProgressCallback: options.onProgressCallback,
             sortFn: options.sortFn,
         });
-        return new Log<T>(ipfs, identity, {
+        return new Log<T>(store, identity, {
             encryption: options?.encryption,
             encoding: options?.encoding,
             logId: options.logId,
@@ -934,7 +939,7 @@ export class Log<T> extends GSet {
      * @return {Promise<Log>} New Log
      */
     static async fromJSON<T>(
-        ipfs: IPFS,
+        store: Blocks,
         identity: Identity,
         json: { id: string; heads: string[] },
         options: {
@@ -947,14 +952,14 @@ export class Log<T> extends GSet {
         } = { encoding: JSON_ENCODING }
     ) {
         // TODO: need to verify the entries with 'key'
-        const { logId, entries } = await LogIO.fromJSON(ipfs, json, {
+        const { logId, entries } = await LogIO.fromJSON(store, json, {
             length: options?.length,
             encryption: options?.encryption,
             encoding: options.encoding,
             timeout: options?.timeout,
             onProgressCallback: options?.onProgressCallback,
         });
-        return new Log<T>(ipfs, identity, {
+        return new Log<T>(store, identity, {
             encryption: options?.encryption,
             encoding: options?.encoding,
             logId,
@@ -977,7 +982,7 @@ export class Log<T> extends GSet {
      * @return {Promise<Log>} New Log
      */
     static async fromEntry<T>(
-        ipfs: IPFS,
+        store: Blocks,
         identity: Identity,
         sourceEntries: Entry<T>[] | Entry<T>,
         options: EntryFetchOptions<T> & {
@@ -988,7 +993,7 @@ export class Log<T> extends GSet {
     ) {
         // TODO: need to verify the entries with 'key'
         options = strictFetchOptions(options);
-        const { entries } = await LogIO.fromEntry(ipfs, sourceEntries, {
+        const { entries } = await LogIO.fromEntry(store, sourceEntries, {
             length: options.length,
             exclude: options.exclude,
             encryption: options?.encryption,
@@ -998,7 +1003,7 @@ export class Log<T> extends GSet {
             shouldExclude: options.shouldExclude,
             onProgressCallback: options.onProgressCallback,
         });
-        return new Log<T>(ipfs, identity, {
+        return new Log<T>(store, identity, {
             encryption: options?.encryption,
             encoding: options?.encoding,
             entries,

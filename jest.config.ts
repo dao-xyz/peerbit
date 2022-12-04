@@ -18,12 +18,12 @@ const jestConfig: JestConfigWithTsJest = {
         uuid: require.resolve("uuid"),
         "^(\\.{1,2}/.*)\\.js$": "$1",
     },
-    transformIgnorePatterns: [],
+    transformIgnorePatterns: ["dns"],
 
     /*  useESM: true, */
     testRegex: "/__tests__/[A-Za-z0-9-/]+(\\.integration)?\\.(test|spec)\\.ts$",
     moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
-    testTimeout: 6600000,
+    testTimeout: 60000,
     setupFilesAfterEnv: ["jest-extended/all"],
     /*   coverageReporters: ["lcov"] */
 };

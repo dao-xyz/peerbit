@@ -12,15 +12,18 @@ import {
     toBase64,
 } from "@dao-xyz/peerbit-crypto";
 import sodium from "libsodium-wrappers";
-// Test utils
 import { jest } from "@jest/globals";
-import { nodeConfig as config, Session } from "@dao-xyz/peerbit-test-utils";
-import { IPFS } from "ipfs-core-types";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
 import { Identity } from "../identity.js";
 import { LamportClock, Timestamp } from "../clock.js";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+    Blocks,
+} from "@dao-xyz/peerbit-block";
+import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -38,48 +41,46 @@ const identityFromSignKey = (key: KeyWithMeta<Ed25519Keypair>): Identity => {
 const API = "js-ipfs";
 
 describe("Entry", function () {
-    jest.setTimeout(config.timeout);
-    let session: Session, ipfs: IPFS;
+    let store: Blocks;
 
-    const { signingKeyFixtures, signingKeysPath } = config;
     let keystore: Keystore, signKey: KeyWithMeta<Ed25519Keypair>;
 
     beforeAll(async () => {
         await sodium.ready;
-        session = await Session.connected(1, API, config.defaultIpfsConfig);
-        ipfs = session.peers[0].ipfs;
-        await sodium.ready;
 
         await fs.copy(
-            signingKeyFixtures(__dirname),
-            signingKeysPath(__filenameBase)
+            signingKeysFixturesPath(__dirname),
+            testKeyStorePath(__filenameBase)
         );
 
         keystore = new Keystore(
-            await createStore(signingKeysPath(__filenameBase))
+            await createStore(testKeyStorePath(__filenameBase))
         );
         await keystore.waitForOpen();
 
         signKey = (await keystore.getKey(
             new Uint8Array([0])
         )) as KeyWithMeta<Ed25519Keypair>;
+
+        store = new Blocks(new MemoryLevelBlockStore());
+        await store.open();
     });
 
     afterAll(async () => {
-        await session.stop();
+        await store.close();
 
         await fs.copy(
-            signingKeyFixtures(__dirname),
-            signingKeysPath(__filenameBase)
+            signingKeysFixturesPath(__dirname),
+            testKeyStorePath(__filenameBase)
         );
 
-        rmrf.sync(signingKeysPath(__filenameBase));
+        rmrf.sync(testKeyStorePath(__filenameBase));
         await keystore?.close();
     });
     describe("endocing", () => {
         it("can serialize and deserialialize", async () => {
             const entry = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: "hello",
@@ -96,7 +97,7 @@ describe("Entry", function () {
             });
 
             const entry = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: "hello",
@@ -104,7 +105,7 @@ describe("Entry", function () {
             });
             expect(entry.hash).toMatchSnapshot();
             expect(entry.gid).toEqual(
-                toBase64(await sodium.crypto_generichash(32, "A"))
+                await toBase64(await sodium.crypto_generichash(32, "A"))
             );
             expect(entry.metadata.clock.equals(clock)).toBeTrue();
 
@@ -119,7 +120,7 @@ describe("Entry", function () {
                 timestamp: new Timestamp({ wallTime: 2n, logical: 3 }),
             });
             const entry = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload,
@@ -129,7 +130,7 @@ describe("Entry", function () {
             expect(entry.hash).toMatchSnapshot();
             expect(entry.payload.getValue()).toEqual(payload);
             expect(entry.gid).toEqual(
-                toBase64(await sodium.crypto_generichash(32, "A"))
+                await toBase64(await sodium.crypto_generichash(32, "A"))
             );
             expect(entry.metadata.clock.equals(clock)).toBeTrue();
             expect(entry.next.length).toEqual(0);
@@ -146,7 +147,7 @@ describe("Entry", function () {
                 overwrite: true,
             });
             const entry = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload,
@@ -205,7 +206,7 @@ describe("Entry", function () {
 
             // We can not have a hash check because nonce of encryption will always change
             expect(entry.gid).toEqual(
-                toBase64(await sodium.crypto_generichash(32, "A"))
+                await toBase64(await sodium.crypto_generichash(32, "A"))
             );
             assert.deepStrictEqual(
                 entry.metadata.clock.id,
@@ -221,7 +222,7 @@ describe("Entry", function () {
             const payload1 = "hello world";
             const payload2 = "hello again";
             const entry1 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload1,
@@ -232,7 +233,7 @@ describe("Entry", function () {
                 }),
             });
             const entry2 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload2,
@@ -250,14 +251,14 @@ describe("Entry", function () {
 
         it("`next` parameter can be an array of strings", async () => {
             const entry1 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: "hello1",
                 next: [],
             });
             const entry2 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: "hello2",
@@ -268,14 +269,14 @@ describe("Entry", function () {
 
         it("`next` parameter can be an array of Entry instances", async () => {
             const entry1 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: "hello1",
                 next: [],
             });
             const entry2 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: "hello2",
@@ -286,7 +287,7 @@ describe("Entry", function () {
 
         it("can calculate join gid from `next` max chain length", async () => {
             const entry0A = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: "hello1",
@@ -294,7 +295,7 @@ describe("Entry", function () {
             });
 
             const entry1A = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: "hello1",
@@ -302,7 +303,7 @@ describe("Entry", function () {
             });
 
             const entry1B = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "B",
                 clock: entry1A.metadata.clock,
@@ -316,7 +317,7 @@ describe("Entry", function () {
             );
 
             const entry2 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "Should not be used",
                 data: "hello2",
@@ -327,7 +328,7 @@ describe("Entry", function () {
 
         it("can calculate join gid from `next` max clock", async () => {
             const entry1A = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "B",
                 data: "hello1",
@@ -335,7 +336,7 @@ describe("Entry", function () {
             });
 
             const entry1B = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 clock: entry1A.metadata.clock.advance(),
@@ -352,7 +353,7 @@ describe("Entry", function () {
             ).toBeGreaterThan(0);
 
             const entry2 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "Should not be used",
                 data: "hello2",
@@ -363,7 +364,7 @@ describe("Entry", function () {
 
         it("can calculate join gid from `next` gid comparison", async () => {
             const entry1A = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: "hello1",
@@ -371,7 +372,7 @@ describe("Entry", function () {
             });
 
             const entry1B = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "B",
                 clock: entry1A.metadata.clock,
@@ -386,7 +387,7 @@ describe("Entry", function () {
             );
 
             const entry2 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "Should not be used",
                 data: "hello2",
@@ -397,7 +398,7 @@ describe("Entry", function () {
 
         it("can calculate reuse gid from `next`", async () => {
             const entry1A = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: "hello1",
@@ -405,7 +406,7 @@ describe("Entry", function () {
             });
 
             const entry1B = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gid: entry1A.gid,
                 data: "hello1",
@@ -413,7 +414,7 @@ describe("Entry", function () {
             });
 
             const entry2 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "Should not be used",
                 data: "hello2",
@@ -425,7 +426,7 @@ describe("Entry", function () {
 
         it("will use next for gid instaed of gidSeed", async () => {
             const entry1 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: "hello1",
@@ -433,7 +434,7 @@ describe("Entry", function () {
             });
 
             const entry2 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "Should not be used",
                 data: "hello2",
@@ -446,7 +447,7 @@ describe("Entry", function () {
             let err: any;
             try {
                 await Entry.create({
-                    ipfs,
+                    store,
                     identity: identityFromSignKey(signKey),
                     gidSeed: "A",
                     data: null,
@@ -462,7 +463,7 @@ describe("Entry", function () {
             let err: any;
             try {
                 await Entry.create({
-                    ipfs,
+                    store,
                     identity: identityFromSignKey(signKey),
                     gidSeed: "A",
                     data: "hello",
@@ -478,7 +479,7 @@ describe("Entry", function () {
     describe("toMultihash", () => {
         it("returns an ipfs multihash", async () => {
             const entry = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: "hello",
@@ -490,7 +491,7 @@ describe("Entry", function () {
             });
             const hash = entry.hash;
             entry.hash = undefined as any;
-            const multihash = await Entry.toMultihash(ipfs, entry);
+            const multihash = await Entry.toMultihash(store, entry);
             expect(multihash).toEqual(hash);
             expect(multihash).toMatchSnapshot();
         });
@@ -500,9 +501,9 @@ describe("Entry", function () {
     it('throws an error if the object being passed is invalid', async () => {
       let err
       try {
-        const entry = await Entry.create({ ipfs, identity: identityFromSignKey(signKey), gidSeed:   'A', data: 'hello', next: [] })
+        const entry = await Entry.create({ store, identity: identityFromSignKey(signKey), gidSeed:   'A', data: 'hello', next: [] })
         delete ((entry.metadata as MetadataSecure)._metadata as DecryptedThing<Metadata>)
-        await Entry.toMultihash(ipfs, entry)
+        await Entry.toMultihash(store, entry)
       } catch (e: any) {
         err = e
       }
@@ -515,7 +516,7 @@ describe("Entry", function () {
             const payload1 = "hello world";
             const payload2 = "hello again";
             const entry1 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload1,
@@ -526,7 +527,7 @@ describe("Entry", function () {
                 }),
             });
             const entry2 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload2,
@@ -536,11 +537,11 @@ describe("Entry", function () {
                     timestamp: new Timestamp({ wallTime: 3n, logical: 3 }),
                 }),
             });
-            const final = await Entry.fromMultihash<string>(ipfs, entry2.hash);
+            const final = await Entry.fromMultihash<string>(store, entry2.hash);
             final.init(entry2);
             assert(final.equals(entry2));
             expect(final.gid).toEqual(
-                toBase64(await sodium.crypto_generichash(32, "A"))
+                await toBase64(await sodium.crypto_generichash(32, "A"))
             );
             expect(final.payload.getValue()).toEqual(payload2);
             expect(final.next.length).toEqual(1);
@@ -554,14 +555,14 @@ describe("Entry", function () {
             const payload1 = "hello world";
             const payload2 = "hello again";
             const entry1 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload1,
                 next: [],
             });
             const entry2 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload2,
@@ -574,21 +575,21 @@ describe("Entry", function () {
             const payload1 = "hello world";
             const payload2 = "hello again";
             const entry1 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload1,
                 next: [],
             });
             const entry2 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload2,
                 next: [],
             });
             const entry3 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload2,
@@ -604,7 +605,7 @@ describe("Entry", function () {
         it("returns true if entries are the same", async () => {
             const payload1 = "hello world";
             const entry1 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload1,
@@ -615,7 +616,7 @@ describe("Entry", function () {
                 next: [],
             });
             const entry2 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload1,
@@ -632,14 +633,14 @@ describe("Entry", function () {
             const payload1 = "hello world1";
             const payload2 = "hello world2";
             const entry1 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload1,
                 next: [],
             });
             const entry2 = await Entry.create({
-                ipfs,
+                store,
                 identity: identityFromSignKey(signKey),
                 gidSeed: "A",
                 data: payload2,

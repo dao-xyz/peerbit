@@ -1,5 +1,9 @@
-import { field, serialize, variant } from "@dao-xyz/borsh";
-import { createStore, Session } from "@dao-xyz/peerbit-test-utils";
+import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
+import {
+    createStore,
+    LSession,
+    waitForPeers,
+} from "@dao-xyz/peerbit-test-utils";
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
 import { waitFor } from "@dao-xyz/peerbit-time";
@@ -22,6 +26,12 @@ import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 import { Program } from "@dao-xyz/peerbit-program";
 import { IdentityAccessController } from "../acl-db";
 import { v4 as uuid } from "uuid";
+import {
+    DEFAULT_BLOCK_TRANSPORT_TOPIC,
+    LibP2PBlockStore,
+    MemoryLevelBlockStore,
+    Blocks,
+} from "@dao-xyz/peerbit-block";
 
 @variant("document")
 class Document {
@@ -81,12 +91,13 @@ class TestStore extends Program {
     }
 }
 describe("index", () => {
-    let session: Session,
+    let session: LSession,
+        stores: Blocks[],
         identites: Identity[],
         cacheStore: AbstractLevel<any, string>[];
 
     const identity = (i: number) => identites[i];
-    const init = <T extends Program>(
+    const init = async <T extends Program>(
         store: T,
         i: number,
         options: {
@@ -95,22 +106,22 @@ describe("index", () => {
             canRead?: CanRead;
             canAppend?: CanAppend<T>;
         }
-    ) =>
-        (store.init &&
-            store.init(session.peers[i].ipfs, identites[i], {
-                ...options,
-                store: {
-                    ...DefaultOptions,
-                    ...options.store,
-                    resolveCache: async () =>
-                        new Cache<CachedValue>(cacheStore[i]),
-                },
-            })) as Promise<T>;
+    ) => {
+        return store.init(session.peers[i], stores[i], identites[i], {
+            ...options,
+            store: {
+                ...DefaultOptions,
+                ...options.store,
+                resolveCache: async () => new Cache<CachedValue>(cacheStore[i]),
+            },
+        });
+    };
 
     beforeAll(async () => {
-        session = await Session.connected(3);
+        session = await LSession.connected(3, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
         identites = [];
         cacheStore = [];
+        stores = [];
         const __filename = fileURLToPath(import.meta.url);
 
         for (let i = 0; i < session.peers.length; i++) {
@@ -118,6 +129,14 @@ describe("index", () => {
             cacheStore.push(
                 await createStore(path.join(__filename, "cache", i.toString()))
             );
+            const blocks = new Blocks(
+                new LibP2PBlockStore(
+                    session.peers[i],
+                    new MemoryLevelBlockStore()
+                )
+            );
+            stores.push(blocks);
+            await blocks.open();
         }
     });
 
@@ -151,7 +170,7 @@ describe("index", () => {
         );
 
         const l0b = (await init(
-            await TestStore.load(session.peers[1].ipfs, l0a.address!),
+            await TestStore.load(stores[1], l0a.address!),
             1,
             options
         )) as TestStore;
@@ -212,7 +231,7 @@ describe("index", () => {
             );
 
             const l0b = (await init(
-                await TestStore.load(session.peers[1].ipfs, l0a.address!),
+                await TestStore.load(stores[1], l0a.address!),
                 1,
                 options
             )) as TestStore;
@@ -266,15 +285,25 @@ describe("index", () => {
             );
 
             const l0b = (await init(
-                await TestStore.load(session.peers[1].ipfs, l0a.address!),
+                await TestStore.load(stores[1], l0a.address!),
                 1,
                 options
             )) as TestStore;
             const l0c = (await init(
-                await TestStore.load(session.peers[2].ipfs, l0a.address!),
+                await TestStore.load(stores[2], l0a.address!),
                 2,
                 options
             )) as TestStore;
+            await waitForPeers(
+                session.peers[1],
+                session.peers[0],
+                options.topic
+            );
+            await waitForPeers(
+                session.peers[2],
+                session.peers[0],
+                options.topic
+            );
 
             await expect(
                 l0c.store.put(
@@ -347,10 +376,16 @@ describe("index", () => {
             );
 
             const l0b = (await init(
-                await TestStore.load(session.peers[1].ipfs, l0a.address!),
+                await TestStore.load(stores[1], l0a.address!),
                 1,
                 options
             )) as TestStore;
+            await waitForPeers(
+                session.peers[1],
+                session.peers[0],
+                options.topic
+            );
+
             await expect(
                 l0b.store.put(
                     new Document({
@@ -394,10 +429,21 @@ describe("index", () => {
                     id: "1",
                 })
             );
+            const l0b = await init<TestStore>(
+                deserialize(serialize(l0a), TestStore),
+                1,
+                options
+            );
+            await waitForPeers(
+                session.peers[1],
+                session.peers[0],
+                options.topic
+            );
 
             const q = async (): Promise<Results<Document>> => {
                 let results: Results<Document> = undefined as any;
-                l0a.store.index.query(
+
+                l0b.store.index.query(
                     new DocumentQueryRequest({
                         queries: [
                             new FieldStringMatchQuery({
@@ -470,7 +516,7 @@ describe("index", () => {
         );
 
         const dbb = (await TestStore.load(
-            session.peers[1].ipfs,
+            stores[0],
             l0a.address!
         )) as TestStore;
 
@@ -488,7 +534,7 @@ describe("index", () => {
         await waitFor(() => l0b.accessController.access.index.size === 1);
 
         let results: Results<Document> = undefined as any;
-        l0a.accessController.access.index.query(
+        l0b.accessController.access.index.query(
             new DocumentQueryRequest({
                 queries: [],
             }),

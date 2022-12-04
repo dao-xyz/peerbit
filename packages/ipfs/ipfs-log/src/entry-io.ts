@@ -1,10 +1,10 @@
 import pMap from "p-map";
 import pDoWhilst from "p-do-whilst";
 import { Entry } from "./entry";
-import { IPFS } from "ipfs-core-types";
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { Encoding, JSON_ENCODING } from "./encoding";
 import { Timestamp } from "./clock";
+import { BlockStore, Blocks } from "@dao-xyz/peerbit-block";
 
 export interface EntryFetchOptions<T> {
     length?: number;
@@ -77,12 +77,12 @@ export const strictFetchOptions = <T>(
 export class EntryIO {
     // Fetch log graphs in parallel
     static async fetchParallel<T>(
-        ipfs: IPFS,
+        store: Blocks,
         hashes: string | string[],
         options: EntryFetchAllOptions<T>
     ): Promise<Entry<T>[]> {
         const fetchOne = async (hash: string) =>
-            EntryIO.fetchAll(ipfs, hash, options);
+            EntryIO.fetchAll(store, hash, options);
         const concatArrays = (arr1: any[], arr2: any) => arr1.concat(arr2);
         const flatten = (arr: any[]) => arr.reduce(concatArrays, []);
         const res = await pMap(hashes, fetchOne, {
@@ -105,7 +105,7 @@ export class EntryIO {
      * @returns {Promise<Array<Entry<T>>>}
      */
     static async fetchAll<T>(
-        ipfs: IPFS,
+        store: Blocks,
         hashes: string | string[],
         fetchOptions: EntryFetchAllOptions<T>
     ): Promise<Entry<T>[]> {
@@ -258,7 +258,7 @@ export class EntryIO {
 
                 try {
                     // Load the entry
-                    const entry = await Entry.fromMultihash<T>(ipfs, hash);
+                    const entry = await Entry.fromMultihash<T>(store, hash);
                     // Simulate network latency (for debugging purposes)
                     if (options.delay > 0) {
                         const sleep = (ms = 0) =>

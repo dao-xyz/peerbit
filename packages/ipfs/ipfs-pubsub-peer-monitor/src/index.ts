@@ -5,9 +5,11 @@ const DEFAULT_OPTIONS = {
     pollInterval: 1000,
 };
 interface PubSub {
-    peers: (topic: string) => Promise<(PeerId | string)[]>;
+    getSubscribers: (
+        topic: string
+    ) => Promise<(PeerId | string)[]> | PeerId[] | string[];
 }
-const difference = (set1: string[], set2: string[]): string[] => {
+export const difference = (set1: string[], set2: string[]): string[] => {
     // assume size of set1 and set2 are small
     return set1.filter((p) => !set2.find((p2) => p2 === p));
 };
@@ -66,8 +68,8 @@ export class IpfsPubsubPeerMonitor {
     }
 
     async getPeers() {
-        this._peers = (await this._pubsub.peers(this._topic)).map((x) =>
-            x.toString()
+        this._peers = (await this._pubsub.getSubscribers(this._topic)).map(
+            (x) => x.toString()
         );
         return this._peers.slice();
     }
@@ -78,8 +80,8 @@ export class IpfsPubsubPeerMonitor {
 
     async _pollPeers() {
         try {
-            const peers = (await this._pubsub.peers(this._topic)).map((x) =>
-                x.toString()
+            const peers = (await this._pubsub.getSubscribers(this._topic)).map(
+                (x) => x.toString()
             );
             IpfsPubsubPeerMonitor._emitJoinsAndLeaves(
                 this._peers,

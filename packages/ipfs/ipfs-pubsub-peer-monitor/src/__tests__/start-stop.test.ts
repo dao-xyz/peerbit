@@ -1,4 +1,3 @@
-import assert from "assert";
 import { IpfsPubsubPeerMonitor } from "../index.js";
 import { waitFor } from "@dao-xyz/peerbit-time";
 
@@ -6,7 +5,7 @@ const peers = ["A", "B", "C"];
 const topic = "tests";
 
 const mockPubsub: any = {
-    peers: () => Promise.resolve(peers),
+    getSubscribers: () => Promise.resolve(peers),
 };
 
 describe("start and stop", () => {
@@ -28,7 +27,7 @@ describe("start and stop", () => {
     describe("poll loop", () => {
         it("starts polling peers", () => {
             const m = new IpfsPubsubPeerMonitor(mockPubsub, topic, {});
-            assert.notEqual(m, null);
+            expect(m).toBeDefined();
             expect(m.started).toEqual(true);
         });
 
@@ -39,7 +38,7 @@ describe("start and stop", () => {
                 {},
                 { start: false }
             );
-            assert.notEqual(m, null);
+            expect(m).toBeDefined();
             expect(m.started).toEqual(false);
         });
 
@@ -72,12 +71,8 @@ describe("start and stop", () => {
                     onJoin: () => {
                         const stopTime = new Date().getTime();
                         const deltaTime = stopTime - startTime;
-                        assert.equal(deltaTime >= interval, true);
-                        assert.equal(
-                            deltaTime < interval + margin,
-                            true,
-                            `Not within margin of ${margin} ms`
-                        );
+                        expect(deltaTime >= interval).toBeTrue();
+                        expect(deltaTime < interval + margin).toBeTrue();
                         resolved = true;
                     },
                 },

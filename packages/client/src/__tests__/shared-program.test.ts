@@ -1,60 +1,28 @@
 import rmrf from "rimraf";
 import { Peerbit } from "../peer";
 import { EventStore } from "./utils/stores/event-store";
-
-import { jest } from "@jest/globals";
-import { Controller } from "ipfsd-ctl";
-import { IPFS } from "ipfs-core-types";
-
-// Include test utilities
-import {
-    nodeConfig as config,
-    startIpfs,
-    stopIpfs,
-    connectPeers,
-} from "@dao-xyz/peerbit-test-utils";
-
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { SimpleStoreContract } from "./utils/access";
-
-const orbitdbPath1 = "./orbitdb/tests/reuse-store/1";
-const orbitdbPath2 = "./orbitdb/tests/reuse-store/2";
-const dbPath1 = "./orbitdb/tests/reuse-store/1/db1";
-const dbPath2 = "./orbitdb/tests/reuse-store/2/db2";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 describe(`shared`, function () {
-    jest.setTimeout(config.timeout * 2);
-
-    let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS;
+    let session: LSession;
     let orbitdb1: Peerbit,
         orbitdb2: Peerbit,
         db1: SimpleStoreContract,
         db2: SimpleStoreContract;
 
     beforeAll(async () => {
-        ipfsd1 = await startIpfs("js-ipfs", config.daemon1);
-        ipfsd2 = await startIpfs("js-ipfs", config.daemon2);
-        ipfs1 = ipfsd1.api;
-        ipfs2 = ipfsd2.api;
-        // Connect the peers manually to speed up test times
-        const isLocalhostAddress = (addr: string) =>
-            addr.toString().includes("127.0.0.1");
-        await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress });
+        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
     });
 
     afterAll(async () => {
-        if (ipfsd1) await stopIpfs(ipfsd1);
-
-        if (ipfsd2) await stopIpfs(ipfsd2);
+        await session.stop();
     });
 
     beforeEach(async () => {
-        rmrf.sync(orbitdbPath1);
-        rmrf.sync(orbitdbPath2);
-        rmrf.sync(dbPath1);
-        rmrf.sync(dbPath2);
-
-        orbitdb1 = await Peerbit.create(ipfs1, { directory: orbitdbPath1 });
-        orbitdb2 = await Peerbit.create(ipfs2, { directory: orbitdbPath2 });
+        orbitdb1 = await Peerbit.create(session.peers[0], {});
+        orbitdb2 = await Peerbit.create(session.peers[1], {});
     });
 
     afterEach(async () => {

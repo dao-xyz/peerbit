@@ -21,9 +21,10 @@ import {
     Program,
     ProgramInitializationOptions,
 } from "@dao-xyz/peerbit-program";
-import { IPFS } from "ipfs-core-types";
+import { Libp2p } from "libp2p";
 import { Identity } from "@dao-xyz/ipfs-log";
 import { X25519Keypair } from "@dao-xyz/peerbit-crypto";
+import { Blocks } from "@dao-xyz/peerbit-block";
 
 export type SearchContext = (() => Address) | AbstractProgram | string;
 
@@ -40,12 +41,12 @@ export const getDiscriminatorApproximation = (
             continue;
         }
         if (typeof variant === "string") {
-            writer.writeString(variant);
+            writer.string(variant);
         } else if (typeof variant === "number") {
-            writer.writeU8(variant);
+            writer.u8(variant);
         } else if (Array.isArray(variant)) {
             variant.forEach((v) => {
-                writer.writeU8(v);
+                writer.u8(v);
             });
         } else {
             throw new Error(
@@ -132,7 +133,7 @@ export class RPC<Q, R> extends ComposableProgram {
     canRead: CanRead;
 
     _subscribed = false;
-    _onMessageBinded: any = undefined;
+    _onMessageBinded: (evt: CustomEvent<Message>) => any;
     _responseHandler: ResponseHandler<Q, (R | undefined) | R>;
     _requestType: AbstractType<Q>;
     _responseType: AbstractType<R>;
@@ -170,11 +171,12 @@ export class RPC<Q, R> extends ComposableProgram {
     }
 
     async init(
-        ipfs: IPFS,
+        libp2p: Libp2p,
+        store: Blocks,
         identity: Identity,
         options: ProgramInitializationOptions
     ): Promise<this> {
-        await super.init(ipfs, identity, options);
+        await super.init(libp2p, store, identity, options);
         this._topic = options.topic;
         if (options.store.replicate) {
             await this._subscribe();
@@ -184,8 +186,13 @@ export class RPC<Q, R> extends ComposableProgram {
 
     public async close(): Promise<void> {
         await this._initializationPromise;
-        await this._ipfs.pubsub.unsubscribe(
-            this.rpcTopic,
+
+        /*     await this._libp2p.pubsub.unsubscribe(
+                this.rpcTopic
+            );  should we? */
+
+        await this._libp2p.pubsub.addEventListener(
+            "message",
             this._onMessageBinded
         );
         this._subscribed = false;
@@ -197,87 +204,101 @@ export class RPC<Q, R> extends ComposableProgram {
         }
 
         this._onMessageBinded = this._onMessage.bind(this);
-        this._initializationPromise = this._ipfs.pubsub.subscribe(
-            this.rpcTopic,
-            this._onMessageBinded
-        );
-        await this._initializationPromise;
+        this._libp2p.pubsub.subscribe(this.rpcTopic);
+
+        this._libp2p.pubsub.addEventListener("message", this._onMessageBinded);
         logger.debug("subscribing to query topic: " + this.rpcTopic);
         this._subscribed = true;
     }
 
-    async _onMessage(msg: Message): Promise<void> {
-        try {
-            try {
-                const { result: request, from } = await decryptVerifyInto(
-                    msg.data,
-                    RPCMessage,
-                    this._encryption?.getAnyKeypair ||
-                        (() => Promise.resolve(undefined)),
-                    {
-                        isTrusted: async (key) =>
-                            this.canRead(key.signature?.publicKey),
-                    }
-                );
-                if (request instanceof RequestV0) {
-                    if (request.context != undefined) {
-                        if (request.context != this.contextAddress) {
+    async _onMessage(evt: CustomEvent<Message>): Promise<void> {
+        if (evt.detail.type === "signed") {
+            const message = evt.detail;
+            if (message) {
+                if (message.from.equals(this._libp2p.peerId)) {
+                    return;
+                }
+                try {
+                    try {
+                        const { result: request, from } =
+                            await decryptVerifyInto(
+                                message.data,
+                                RPCMessage,
+                                this._encryption?.getAnyKeypair ||
+                                    (() => Promise.resolve(undefined)),
+                                {
+                                    isTrusted: async (key) =>
+                                        this.canRead(key.signature?.publicKey),
+                                }
+                            );
+                        if (request instanceof RequestV0) {
+                            if (request.context != undefined) {
+                                if (request.context != this.contextAddress) {
+                                    logger.debug(
+                                        "Recieved a request for another context"
+                                    );
+                                    return;
+                                }
+                            }
+
+                            const response = await this._responseHandler(
+                                (this._requestType as any) === Uint8Array
+                                    ? (request.request as Q)
+                                    : deserialize(
+                                          request.request,
+                                          this._requestType
+                                      ),
+                                {
+                                    address: this.contextAddress,
+                                    from,
+                                }
+                            );
+
+                            if (response) {
+                                await respond(
+                                    this._libp2p,
+                                    this.getRpcResponseTopic(request),
+                                    request,
+                                    new ResponseV0({
+                                        response: serialize(response),
+                                        context: this.contextAddress,
+                                    }),
+                                    {
+                                        encryption: this._encryption,
+                                        signer: this._identity,
+                                    }
+                                );
+                            }
+                        } else {
+                            return;
+                        }
+                    } catch (error: any) {
+                        if (error instanceof BorshError) {
                             logger.debug(
-                                "Recieved a request for another context"
+                                "Got message for a different namespace"
                             );
                             return;
                         }
-                    }
-
-                    const response = await this._responseHandler(
-                        (this._requestType as any) === Uint8Array
-                            ? (request.request as Q)
-                            : deserialize(request.request, this._requestType),
-                        {
-                            address: this.contextAddress,
-                            from,
+                        if (error instanceof AccessError) {
+                            logger.debug("Got message I could not decrypt");
+                            return;
                         }
-                    );
 
-                    if (response) {
-                        await respond(
-                            this._ipfs,
-                            this.getRpcResponseTopic(request),
-                            request,
-                            new ResponseV0({
-                                response: serialize(response),
-                                context: this.contextAddress,
-                            }),
-                            {
-                                encryption: this._encryption,
-                                signer: this._identity,
-                            }
+                        logger.error(
+                            "Error handling query: " +
+                                (error?.message
+                                    ? error?.message?.toString()
+                                    : error)
                         );
+                        throw error;
                     }
-                } else {
-                    return;
+                } catch (error: any) {
+                    if (error.constructor.name === "BorshError") {
+                        return; // unknown message
+                    }
+                    console.error(error);
                 }
-            } catch (error: any) {
-                if (error instanceof BorshError) {
-                    logger.debug("Got message for a different namespace");
-                    return;
-                }
-                if (error instanceof AccessError) {
-                    logger.debug("Got message I could not decrypt");
-                    return;
-                }
-
-                logger.error(
-                    "Error handling query: " +
-                        (error?.message ? error?.message?.toString() : error)
-                );
-                throw error;
             }
-        } catch (error: any) {
-            if (error.constructor.name === "BorshError") {
-                return; // unknown message
-            }
-            console.error(error);
         }
     }
 
@@ -289,7 +310,7 @@ export class RPC<Q, R> extends ComposableProgram {
         logger.debug("querying topic: " + this.rpcTopic);
         // We are generatinga new encryption keypair for each send, so we now that when we get the responses, they are encrypted specifcally for me, and for this request
         // this allows us to easily disregard a bunch of message just beacuse they are for a different reciever!
-        const keypair = options?.sendKey || (await X25519Keypair.create());
+        const keypair = await X25519Keypair.create();
         const r = new RequestV0({
             request:
                 (this._requestType as any) === Uint8Array
@@ -299,7 +320,7 @@ export class RPC<Q, R> extends ComposableProgram {
             respondTo: keypair.publicKey,
         });
         return send(
-            this._ipfs,
+            this._libp2p,
             this.rpcTopic,
             this.getRpcResponseTopic(r),
             r,
@@ -309,7 +330,8 @@ export class RPC<Q, R> extends ComposableProgram {
                     from
                 );
             },
-            { ...options, sendKey: keypair }
+            keypair,
+            options
         );
     }
 

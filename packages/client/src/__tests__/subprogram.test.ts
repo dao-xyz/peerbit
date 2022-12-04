@@ -1,42 +1,23 @@
 import rmrf from "rimraf";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
-import { variant, field, Constructor } from "@dao-xyz/borsh";
+import { waitFor } from "@dao-xyz/peerbit-time";
+import { variant, field } from "@dao-xyz/borsh";
 import { Peerbit } from "../peer";
-
 import { EventStore } from "./utils/stores/event-store";
-import { jest } from "@jest/globals";
-import { Controller } from "ipfsd-ctl";
-import { IPFS } from "ipfs-core-types";
-// @ts-ignore
-import { v4 as uuid } from "uuid";
-
 import {
     Documents,
     PutOperation,
-    Operation,
     DocumentIndex,
 } from "@dao-xyz/peerbit-document";
 
 // Include test utilities
-import {
-    nodeConfig as config,
-    startIpfs,
-    stopIpfs,
-    connectPeers,
-} from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { CanOpenSubPrograms, Program } from "@dao-xyz/peerbit-program";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Entry } from "@dao-xyz/ipfs-log";
-
-const orbitdbPath1 = "./orbitdb/tests/subprogram/1";
-const orbitdbPath2 = "./orbitdb/tests/subprogram/2";
-const dbPath1 = "./orbitdb/tests/subprogram/1/db1";
-const dbPath2 = "./orbitdb/tests/subprogram/2/db2";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 describe(`Subprogram`, function () {
-    jest.setTimeout(config.timeout * 2);
-
-    let ipfsd1: Controller, ipfsd2: Controller, ipfs1: IPFS, ipfs2: IPFS;
+    let session: LSession;
     let orbitdb1: Peerbit,
         orbitdb2: Peerbit,
         db1: EventStore<string>,
@@ -45,46 +26,29 @@ describe(`Subprogram`, function () {
     let timer: any;
 
     beforeAll(async () => {
-        ipfsd1 = await startIpfs("js-ipfs", config.daemon1);
-        ipfsd2 = await startIpfs("js-ipfs", config.daemon2);
-        ipfs1 = ipfsd1.api;
-        ipfs2 = ipfsd2.api;
-        topic = uuid();
-        // Connect the peers manually to speed up test times
-        const isLocalhostAddress = (addr: string) =>
-            addr.toString().includes("127.0.0.1");
-        await connectPeers(ipfs1, ipfs2, { filter: isLocalhostAddress });
+        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
     });
 
     afterAll(async () => {
-        if (ipfsd1) await stopIpfs(ipfsd1);
-
-        if (ipfsd2) await stopIpfs(ipfsd2);
+        await session.stop();
     });
 
     beforeEach(async () => {
         clearInterval(timer);
 
-        rmrf.sync(orbitdbPath1);
-        rmrf.sync(orbitdbPath2);
-        rmrf.sync(dbPath1);
-        rmrf.sync(dbPath2);
-
-        orbitdb1 = await Peerbit.create(ipfs1, {
-            directory: orbitdbPath1,
+        orbitdb1 = await Peerbit.create(session.peers[0], {
             /*  canAccessKeys: async (requester, _keyToAccess) => {
                 return requester.equals(orbitdb2.identity.publicKey); // allow orbitdb1 to share keys with orbitdb2
             },  */ waitForKeysTimout: 1000,
         });
-        orbitdb2 = await Peerbit.create(ipfs2, {
-            directory: orbitdbPath2,
+        orbitdb2 = await Peerbit.create(session.peers[1], {
             limitSigning: true,
         }); // limitSigning = dont sign exchange heads request
         db1 = await orbitdb1.open(
             new EventStore<string>({
                 id: "abc",
             }),
-            { topic: topic, directory: dbPath1 }
+            { topic: topic }
         );
     });
 
@@ -105,7 +69,7 @@ describe(`Subprogram`, function () {
         @field({ type: Documents })
         eventStore: Documents<EventStore<string>>;
 
-        accessRequests: { entry: Entry<any> }[] = [];
+        accessRequests: { entry: Entry<any> }[];
 
         constructor(eventStore: Documents<EventStore<string>>) {
             super();
@@ -113,11 +77,12 @@ describe(`Subprogram`, function () {
         }
 
         async canAppend(entry: Entry<any>): Promise<boolean> {
-            this.accessRequests.push({ entry }); // this is what we are testing, are we going here when opening a subprogram?
+            this.accessRequests.push({ entry }); // this is wat we are testing, are we going here when opening a subprogram?
             return true;
         }
 
         setup(): Promise<void> {
+            this.accessRequests = [];
             return this.eventStore.setup({
                 type: EventStore,
                 canAppend: this.canAppend.bind(this),

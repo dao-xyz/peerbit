@@ -10,7 +10,7 @@
         "url": "https://github.com/dao-xyz/peerbit"
     },
     "engines": {
-        "node": ">=16.0"
+        "node": ">=16.15.1"
     },
     "files": [
         "lib",
@@ -30,12 +30,12 @@
         "require": "./lib/cjs/index.js"
     },
     "dependencies": {
-        "@dao-xyz/borsh": "^3.4.4",
+        "@dao-xyz/borsh": "^4.0.3",
         "@dao-xyz/ipfs-pubsub-direct-channel": "^0.0.32",
         "@dao-xyz/ipfs-pubsub-peer-monitor": "^0.0.15",
         "@dao-xyz/peerbit-cache": "^0.4.23",
         "@dao-xyz/peerbit-crypto": "^0.0.20",
-        "@dao-xyz/peerbit-io-utils": "^1.1.15",
+        "@dao-xyz/peerbit-block": "^1.1.15",
         "@dao-xyz/peerbit-keystore": "^0.0.31",
         "@dao-xyz/peerbit-logger": "^0.0.3",
         "@dao-xyz/peerbit-program": "^0.0.54",
@@ -43,6 +43,7 @@
         "@dao-xyz/peerbit-trusted-network": "^0.0.90",
         "is-node": "^1.0.2",
         "level": "^8.0.0",
+        "memory-level": "^1.0.0",
         "lru-cache": "^7.14.0",
         "p-queue": "^7.3.0",
         "wherearewe": "^2.0.1"
@@ -50,13 +51,8 @@
     "devDependencies": {
         "@dao-xyz/peerbit-document": "^0.0.134",
         "@dao-xyz/peerbit-test-utils": "^0.0.14",
-        "fs-extra": "^9.0.1",
-        "go-ipfs": "^0.17.0",
-        "ipfs": "^0.65.0",
-        "ipfsd-ctl": "^12.2.2",
-        "markdown-toc": "^1.2.0",
+        "fs-extra": "^10.1.0",
         "mkdirp": "^1.0.4",
-        "node-pre-gyp": "^0.17.0",
         "p-each-series": "^3.0.0",
         "p-map": "^5.5.0",
         "p-map-series": "^3.0.0",

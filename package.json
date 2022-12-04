@@ -19,14 +19,13 @@
             "packages/programs/acl/trusted-network",
             "packages/programs/program-interface",
             "packages/programs/clock-service",
-            "packages/programs/discovery/network-discovery",
             "packages/programs/discovery/log-index",
             "packages/utils/keystore",
             "packages/utils/crypto",
             "packages/programs/data/document",
             "packages/programs/data/string",
             "packages/store",
-            "packages/utils/io-utils",
+            "packages/utils/block",
             "packages/utils/test-utils",
             "packages/utils/cache",
             "packages/utils/borsh-utils",
@@ -43,7 +42,7 @@
         ]
     },
     "engines": {
-        "node": ">=16.0"
+        "node": ">=16.15.1"
     },
     "publishConfig": {
         "access": "public"
@@ -80,7 +79,6 @@
         "eslint-plugin-prettier": "^4.2.1",
         "gh-pages": "^4.0.0",
         "dotenv": "^16.0.3",
-        "ipfs-core-types": "^0.13.0",
         "jest": "^29.3.1",
         "jest-extended": "^3.1.0",
         "json": "^11.0.0",

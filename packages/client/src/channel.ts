@@ -1,11 +1,11 @@
 import { IpfsPubsubPeerMonitor } from "@dao-xyz/ipfs-pubsub-peer-monitor";
-import { IPFS } from "ipfs-core-types";
+import { Libp2p } from "libp2p";
 import type { Message, SignedMessage } from "@libp2p/interface-pubsub";
 import type { EventHandler } from "@libp2p/interfaces/events";
 import type { PeerId } from "@libp2p/interface-peer-id";
 
 interface Closable {
-    close: () => Promise<void>;
+    close: (options?: { subscription: boolean }) => Promise<void>;
 }
 export class SharedChannel<T extends Closable> {
     _channel: T;
@@ -22,7 +22,7 @@ export class SharedChannel<T extends Closable> {
         if (dependency) {
             this.dependencies.delete(dependency);
             if (this.dependencies.size === 0) {
-                await this._channel.close();
+                await this._channel.close({ subscription: true });
                 return true;
             }
             return false;
@@ -33,19 +33,19 @@ export class SharedChannel<T extends Closable> {
 }
 
 export class SharedIPFSChannel implements Closable {
-    _ipfs: IPFS;
+    _libp2p: Libp2p;
     _topic: string;
-    _handler: EventHandler<Message>;
+    _handler: EventHandler<CustomEvent<Message>>;
     _monitor?: IpfsPubsubPeerMonitor;
     _id: PeerId;
     constructor(
-        ipfs: IPFS,
+        libp2p: Libp2p,
         id: PeerId,
         topic: string,
         handler: (message: Message) => void,
         monitor?: IpfsPubsubPeerMonitor
     ) {
-        this._ipfs = ipfs;
+        this._libp2p = libp2p;
         this._topic = topic;
         this._handler = this._messageHandler(handler);
         this._monitor = monitor;
@@ -58,11 +58,19 @@ export class SharedIPFSChannel implements Closable {
      */
     _messageHandler(
         messageCallback: (message: Message) => void
-    ): EventHandler<Message> {
-        return (message: Message) => {
+    ): EventHandler<CustomEvent<Message>> {
+        return (evt: CustomEvent<Message>) => {
+            const message = evt.detail;
+            if (message.topic !== this._topic) {
+                return;
+            }
+
             if (message.type === "signed") {
                 const signedMessage = message as SignedMessage;
                 if (signedMessage.from.equals(this._id)) {
+                    return;
+                }
+                if (signedMessage.topic !== this._topic) {
                     return;
                 }
 
@@ -74,11 +82,13 @@ export class SharedIPFSChannel implements Closable {
     }
 
     async start(): Promise<SharedIPFSChannel> {
-        await this._ipfs.pubsub.subscribe(this._topic, this._handler);
+        await this._libp2p.pubsub.subscribe(this._topic);
+        this._libp2p.pubsub.addEventListener("message", this._handler);
         return this;
     }
     async close() {
         await this._monitor?.stop();
-        return this._ipfs.pubsub.unsubscribe(this._topic);
+        this._libp2p.pubsub.removeEventListener("message", this._handler);
+        await this._libp2p.pubsub.unsubscribe(this._topic);
     }
 }

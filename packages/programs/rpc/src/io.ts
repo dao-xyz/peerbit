@@ -11,18 +11,15 @@ import {
     Ed25519PublicKey,
     X25519Keypair,
     GetEncryptionKeypair,
-    GetAnyKeypair,
     PublicSignKey,
 } from "@dao-xyz/peerbit-crypto";
-import { IPFS } from "ipfs-core-types";
+import { Libp2p } from "libp2p";
 import { Identity } from "@dao-xyz/ipfs-log";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 export const logger = loggerFn({ module: "rpc" });
 export type RPCOptions = {
     signer?: Identity;
-    // keyResolver?: GetAnyKeypair;
-    sendKey?: X25519Keypair;
     encryption?: {
         key: GetEncryptionKeypair;
         responders?: (X25519PublicKey | Ed25519PublicKey)[];
@@ -36,11 +33,12 @@ export type RPCOptions = {
 };
 
 export const send = async (
-    ipfs: IPFS,
+    libp2p: Libp2p,
     topic: string,
     responseTopic: string,
     query: RequestV0,
     responseHandler: (response: ResponseV0, from?: PublicSignKey) => void,
+    sendKey: X25519Keypair,
     options: RPCOptions = {}
 ) => {
     if (typeof options.maxAggregationTime !== "number") {
@@ -49,38 +47,49 @@ export const send = async (
 
     // send query and wait for replies in a generator like behaviour
     let results = 0;
-    const _responseHandler = async (msg: Message) => {
-        try {
-            const { result, from } = await decryptVerifyInto(
-                msg.data,
-                RPCMessage,
-                options.sendKey || (() => Promise.resolve(undefined)),
-                {
-                    isTrusted: options?.isTrusted,
+    const _responseHandler = async (evt: CustomEvent<Message>) => {
+        if (evt.detail.type === "signed") {
+            const message = evt.detail;
+            if (message) {
+                if (message.from.equals(libp2p.peerId)) {
+                    return;
                 }
-            );
-            if (result instanceof ResponseV0) {
-                responseHandler(result, from);
-                results += 1;
-            }
-        } catch (error) {
-            if (error instanceof AccessError) {
-                return; // Ignore things we can not open
-            }
+                try {
+                    const { result, from } = await decryptVerifyInto(
+                        message.data,
+                        RPCMessage,
+                        sendKey,
+                        {
+                            isTrusted: options?.isTrusted,
+                        }
+                    );
 
-            if (error instanceof BorshError && !options.strict) {
-                logger.debug("Namespace error");
-                return; // Name space conflict most likely
-            }
+                    if (result instanceof ResponseV0) {
+                        responseHandler(result, from);
+                        results += 1;
+                    }
+                } catch (error) {
+                    if (error instanceof AccessError) {
+                        return; // Ignore things we can not open
+                    }
 
-            console.error("failed ot deserialize query response", error);
-            throw error;
+                    if (error instanceof BorshError && !options.strict) {
+                        logger.debug("Namespace error");
+                        return; // Name space conflict most likely
+                    }
+
+                    console.error(
+                        "failed ot deserialize query response",
+                        error
+                    );
+                    throw error;
+                }
+            }
         }
     };
     try {
-        await ipfs.pubsub.subscribe(responseTopic, _responseHandler, {
-            timeout: options.maxAggregationTime,
-        });
+        libp2p.pubsub.subscribe(responseTopic);
+        libp2p.pubsub.addEventListener("message", _responseHandler);
     } catch (error: any) {
         // timeout
         if (error.constructor.name != "TimeoutError") {
@@ -116,7 +125,7 @@ export const send = async (
         );
     }
 
-    await ipfs.pubsub.publish(topic, serialize(maybeEncryptedMessage));
+    await libp2p.pubsub.publish(topic, serialize(maybeEncryptedMessage));
 
     if (options.waitForAmount != undefined) {
         await waitFor(() => results >= (options.waitForAmount as number), {
@@ -127,7 +136,8 @@ export const send = async (
         await delay(options.maxAggregationTime);
     }
     try {
-        await ipfs.pubsub.unsubscribe(responseTopic, _responseHandler);
+        //  await libp2p.pubsub.unsubscribe(topic); TODO should we?
+        await libp2p.pubsub.removeEventListener("message", _responseHandler);
     } catch (error: any) {
         if (
             error?.constructor?.name === "NotStartedError" ||
@@ -142,7 +152,7 @@ export const send = async (
 };
 
 export const respond = async (
-    ipfs: IPFS,
+    libp2p: Libp2p,
     responseTopic: string,
     request: RequestV0,
     response: ResponseV0,
@@ -178,11 +188,13 @@ export const respond = async (
     let maybeEncryptedMessage: MaybeEncrypted<MaybeSigned<Uint8Array>> =
         decryptedMessage;
 
-    if (request.respondTo) {
-        maybeEncryptedMessage = await decryptedMessage.encrypt(
-            options.encryption.getEncryptionKeypair,
-            request.respondTo
-        );
-    }
-    await ipfs.pubsub.publish(responseTopic, serialize(maybeEncryptedMessage));
+    maybeEncryptedMessage = await decryptedMessage.encrypt(
+        options.encryption.getEncryptionKeypair,
+        request.respondTo
+    );
+
+    await libp2p.pubsub.publish(
+        responseTopic,
+        serialize(maybeEncryptedMessage)
+    );
 };

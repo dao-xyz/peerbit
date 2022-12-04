@@ -2,12 +2,11 @@ import { Entry } from "./entry";
 import { EntryFetchAllOptions, EntryIO, strictFetchOptions } from "./entry-io";
 import { ISortFunction, LastWriteWins, NoZeroes } from "./log-sorting";
 import * as LogError from "./log-errors";
-import io from "@dao-xyz/peerbit-io-utils";
+import io, { BlockStore, Blocks } from "@dao-xyz/peerbit-block";
 import { isDefined } from "./is-defined";
 import { findUniques } from "./find-uniques";
 import { difference } from "./difference";
 import { Log } from "./log";
-import { IPFS } from "ipfs-core-types";
 import { JSON_ENCODING } from "./encoding";
 
 const IPLD_LINKS = ["heads"];
@@ -25,12 +24,10 @@ export class LogIO {
      * @deprecated
      */
     static async toMultihash(
-        ipfs: IPFS,
+        store: Blocks,
         log: Log<any>,
         options: { format?: string } = {}
     ) {
-        if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError();
-        if (!isDefined(log)) throw LogError.LogNotDefinedError();
         let format = options.format;
         if (!isDefined(format)) {
             format = "dag-cbor";
@@ -38,7 +35,7 @@ export class LogIO {
         if (log.values.length < 1)
             throw new Error("Can't serialize an empty log");
 
-        return io.write(ipfs, format as string, log.toJSON(), {
+        return store.put(log.toJSON(), format!, {
             links: IPLD_LINKS,
         });
     }
@@ -53,14 +50,19 @@ export class LogIO {
      * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
      */
     static async fromMultihash<T>(
-        ipfs: IPFS,
+        store: Blocks,
         hash: string,
         options: EntryFetchAllOptions<T> & { sortFn: any }
     ) {
-        if (!isDefined(ipfs)) throw LogError.IPFSNotDefinedError();
         if (!isDefined(hash)) throw new Error(`Invalid hash: ${hash}`);
 
-        const logData = await io.read(ipfs, hash, { links: IPLD_LINKS });
+        const logData = await store.get<{ id: string; heads: string[] }>(hash, {
+            links: IPLD_LINKS,
+        });
+
+        if (!logData) {
+            throw new Error("Not found");
+        }
 
         if (!logData.heads || !logData.id) throw LogError.NotALogError();
 
@@ -69,7 +71,7 @@ export class LogIO {
         const isHead = (e: Entry<any>) => logData.heads.includes(e.hash);
 
         const all = await EntryIO.fetchAll(
-            ipfs,
+            store,
             logData.heads as any as string[],
             strictFetchOptions(options)
         ); // TODO fix typings
@@ -90,7 +92,7 @@ export class LogIO {
      * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
      */
     static async fromEntryHash<T>(
-        ipfs: IPFS,
+        store: Blocks,
         hash: string[] | string,
         options: EntryFetchAllOptions<T> & { sortFn?: ISortFunction }
     ) {
@@ -107,7 +109,7 @@ export class LogIO {
             };
         }
 
-        const all = await EntryIO.fetchParallel<T>(ipfs, hashes, options);
+        const all = await EntryIO.fetchParallel<T>(store, hashes, options);
         // Cap the result at the right size by taking the last n entries,
         // or if given length is -1, then take all
         options.sortFn = options.sortFn || NoZeroes(LastWriteWins);
@@ -126,13 +128,13 @@ export class LogIO {
      * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
      **/
     static async fromJSON<T>(
-        ipfs: IPFS,
+        store: Blocks,
         json: { id: string; heads: string[] },
         options: EntryFetchAllOptions<T>
     ) {
         const { id, heads } = json;
         const all: Entry<T>[] = await EntryIO.fetchParallel(
-            ipfs,
+            store,
             heads,
             options
         );
@@ -150,7 +152,7 @@ export class LogIO {
      * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
      */
     static async fromEntry<T>(
-        ipfs: IPFS,
+        store: Blocks,
         sourceEntries: Entry<T>[] | Entry<T>,
         options: EntryFetchAllOptions<T>
     ): Promise<{ entries: Entry<T>[] }> {
@@ -191,7 +193,7 @@ export class LogIO {
         }
 
         // Fetch the entries
-        const all = await EntryIO.fetchParallel(ipfs, hashes, options);
+        const all = await EntryIO.fetchParallel(store, hashes, options);
 
         // Combine the fetches with the source entries and take only uniques
         const combined = sourceEntries

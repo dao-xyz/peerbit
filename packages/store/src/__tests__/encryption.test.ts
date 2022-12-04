@@ -17,37 +17,27 @@ import { v4 as uuid } from "uuid";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { fileURLToPath } from "url";
 import path from "path";
-import { jest } from "@jest/globals";
 const __filename = fileURLToPath(import.meta.url);
 import { AbstractLevel } from "abstract-level";
 
 // Test utils
-import {
-    nodeConfig as config,
-    createStore,
-    Session,
-} from "@dao-xyz/peerbit-test-utils";
+import { createStore } from "@dao-xyz/peerbit-test-utils";
 
 import { Entry } from "@dao-xyz/ipfs-log";
 import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
+import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
 
 describe(`addOperation`, function () {
-    let session: Session,
-        signKey: KeyWithMeta<Ed25519Keypair>,
+    let signKey: KeyWithMeta<Ed25519Keypair>,
         keystore: Keystore,
         identityStore: AbstractLevel<any, string>,
         store: Store<any>,
         cacheStore: AbstractLevel<any, string>,
         senderKey: KeyWithMeta<Ed25519Keypair>,
         recieverKey: KeyWithMeta<Ed25519Keypair>,
-        encryption: PublicKeyEncryptionResolver;
+        encryption: PublicKeyEncryptionResolver,
+        blockStore: Blocks;
     let index: SimpleIndex<string>;
-
-    jest.setTimeout(config.timeout);
-
-    beforeAll(async () => {
-        session = await Session.connected(1);
-    });
 
     beforeEach(async () => {
         identityStore = await createStore(
@@ -90,16 +80,15 @@ describe(`addOperation`, function () {
                 }
             },
         };
+        blockStore = new Blocks(new MemoryLevelBlockStore());
+        await blockStore.open();
     });
 
     afterEach(async () => {
         await store?.close();
         await identityStore?.close();
         await cacheStore?.close();
-    });
-
-    afterAll(async () => {
-        await session?.stop();
+        await blockStore?.close();
     });
 
     it("encrypted entry is appended known key", async () => {
@@ -157,7 +146,7 @@ describe(`addOperation`, function () {
         };
         store = new Store({ storeIndex: 0 });
         await store.init(
-            session.peers[0].ipfs,
+            blockStore,
             {
                 ...signKey.keypair,
                 sign: async (data: Uint8Array) =>
@@ -234,7 +223,7 @@ describe(`addOperation`, function () {
         };
         store = new Store({ storeIndex: 0 });
         await store.init(
-            session.peers[0].ipfs,
+            blockStore,
             {
                 ...signKey.keypair,
                 sign: async (data: Uint8Array) =>

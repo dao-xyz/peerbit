@@ -1,5 +1,5 @@
 import isNode from "is-node";
-import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
+import { waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { client } from "./api";
 import { installDocker, startContainer } from "./docker";
 
@@ -30,7 +30,7 @@ const createConfig = async (
     );
     let ipfsId: string;
     try {
-        ipfsId = await (await client()).ipfs.id.get();
+        ipfsId = await (await client()).peer.id.get();
     } catch (error) {
         if (error instanceof AxiosError) {
             throw new Error(

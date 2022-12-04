@@ -2,7 +2,7 @@ import { field, variant } from "@dao-xyz/borsh";
 import { PlainKey } from "./key.js";
 
 @variant(0)
-export class IPFSAddress extends PlainKey {
+export class PeerIdAddress extends PlainKey {
     @field({ type: "string" })
     address: string;
 
@@ -14,7 +14,7 @@ export class IPFSAddress extends PlainKey {
     }
 
     equals(other: any): boolean {
-        if (other instanceof IPFSAddress) {
+        if (other instanceof PeerIdAddress) {
             return this.address === other.address;
         }
         return false;

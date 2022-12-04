@@ -6,8 +6,7 @@ import {
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { Program, Address } from "@dao-xyz/peerbit-program";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
-import { IPFS } from "ipfs-core-types";
-
+import { Libp2p } from "libp2p";
 export const parsePublicKey = (string: string): PublicSignKey | undefined => {
     const lc = string.toLowerCase();
     let parsed: PublicSignKey;
@@ -34,8 +33,8 @@ export const parsePublicKey = (string: string): PublicSignKey | undefined => {
     return parsed;
 };
 
-export const networkFromTopic = async (
-    ipfs: IPFS,
+/* export const networkFromTopic = async (
+    libp2p: Libp2p,
     topic: string
 ): Promise<TrustedNetwork | undefined> => {
     const publicKey = parsePublicKey(topic);
@@ -56,3 +55,4 @@ export const networkFromTopic = async (
         }
     }
 };
+ */

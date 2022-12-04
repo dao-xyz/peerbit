@@ -9,10 +9,7 @@ import {
 import { asString, Hashable } from "./utils";
 import { BORSH_ENCODING, Encoding, Entry } from "@dao-xyz/ipfs-log";
 import { Log } from "@dao-xyz/ipfs-log";
-import {
-    arraysEqual,
-    UInt8ArraySerializer,
-} from "@dao-xyz/peerbit-borsh-utils";
+import { arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
 import { ComposableProgram } from "@dao-xyz/peerbit-program";
 import {
     FieldBigIntCompareQuery,
@@ -44,7 +41,7 @@ export class PutOperation<T> extends Operation<T> {
     @field({ type: "string" })
     key: string;
 
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     data: Uint8Array;
 
     _value?: T;
@@ -119,21 +116,17 @@ export class DocumentIndex<T> extends ComposableProgram {
     @field({ type: "string" })
     indexBy: string;
 
-    _index: Map<string, IndexedValue<T>>;
     _sync: (result: Results<T>) => Promise<void>;
-
+    _index: Map<string, IndexedValue<T>>;
     type: Constructor<T>;
 
-    constructor(properties?: {
+    constructor(properties: {
         query?: RPC<DocumentQueryRequest, Results<T>>;
         indexBy: string;
     }) {
         super();
-        if (properties) {
-            this._query = properties.query || new RPC();
-            this.indexBy = properties.indexBy;
-        }
-        this._index = new Map();
+        this._query = properties.query || new RPC();
+        this.indexBy = properties.indexBy;
     }
 
     async setup(properties: {
@@ -141,6 +134,7 @@ export class DocumentIndex<T> extends ComposableProgram {
         canRead: CanRead;
         sync: (result: Results<T>) => Promise<void>;
     }) {
+        this._index = new Map();
         this.type = properties.type;
         this._sync = properties.sync;
         await this._query.setup({

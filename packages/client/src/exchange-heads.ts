@@ -113,7 +113,7 @@ export class RequestHeadsMessage extends TransportMessage {
 }
 
 export const exchangeHeads = async (
-    send: (message: Uint8Array) => Promise<void>,
+    send: (message: Uint8Array) => Promise<any>,
     store: Store<any>,
     program: Program,
     heads: Entry<any>[],

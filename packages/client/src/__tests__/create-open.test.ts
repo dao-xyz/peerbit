@@ -1,10 +1,9 @@
 import assert from "assert";
 import fs from "fs-extra";
 import path from "path";
-import rmrf from "rimraf";
 // @ts-ignore
 import { Peerbit } from "../peer";
-import { KeyValueStore } from "./utils/stores/key-value-store";
+import { KeyBlocks } from "./utils/stores/key-value-store";
 
 import { Address } from "@dao-xyz/peerbit-program";
 import { EventStore } from "./utils/stores";
@@ -14,24 +13,20 @@ import { v4 as uuid } from "uuid";
 import { jest } from "@jest/globals";
 
 // Include test utilities
-import {
-    nodeConfig as config,
-    Session,
-    createStore,
-} from "@dao-xyz/peerbit-test-utils";
+import { createStore, LSession } from "@dao-xyz/peerbit-test-utils";
 import { Program } from "@dao-xyz/peerbit-program";
 import { waitFor } from "@dao-xyz/peerbit-time";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 const dbPath = path.join("./peerbit", "tests", "create-open");
 
-describe(`Create & Open `, function () {
-    jest.retryTimes(1); // TODO Side effects may cause failures
-    jest.setTimeout(config.timeout * 5);
+describe(`Create & Open`, function () {
+    //   jest.retryTimes(1); // TODO Side effects may cause failures
 
-    let session: Session;
+    let session: LSession;
 
     beforeAll(async () => {
-        session = await Session.connected(1);
+        session = await LSession.connected(1, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
     });
 
     afterAll(async () => {
@@ -42,11 +37,11 @@ describe(`Create & Open `, function () {
 
     describe("Create", function () {
         describe("Success", function () {
-            let db: KeyValueStore<string>;
+            let db: KeyBlocks<string>;
             let localDataPath: string, orbitdb: Peerbit;
 
             beforeAll(async () => {
-                orbitdb = await Peerbit.create(session.peers[0].ipfs, {
+                orbitdb = await Peerbit.create(session.peers[0], {
                     directory: dbPath + uuid(),
                 });
             });
@@ -64,7 +59,7 @@ describe(`Create & Open `, function () {
                 );
 
                 db = await orbitdb.open(
-                    new KeyValueStore<string>({ id: "second" }),
+                    new KeyBlocks<string>({ id: "second" }),
                     {
                         topic: uuid(),
                         directory: localDataPath,
@@ -95,9 +90,9 @@ describe(`Create & Open `, function () {
 
             it("saves database manifest file locally", async () => {
                 const loaded = (await Program.load(
-                    session.peers[0].ipfs,
+                    orbitdb._store,
                     db.address!
-                )) as KeyValueStore<string>;
+                )) as KeyBlocks<string>;
                 expect(loaded).toBeDefined();
                 expect(loaded.store).toBeDefined();
             });
@@ -122,10 +117,10 @@ describe(`Create & Open `, function () {
         jest.retryTimes(1); // TODO Side effects may cause failures
 
         beforeAll(async () => {
-            orbitdb = await Peerbit.create(session.peers[0].ipfs, {
+            orbitdb = await Peerbit.create(session.peers[0], {
                 directory: dbPath + uuid(),
                 storage: {
-                    createStore: (string: string) => createStore(string),
+                    createStore: (string?: string) => createStore(string),
                 },
             });
         });
@@ -174,7 +169,7 @@ describe(`Create & Open `, function () {
                 },
             });
             const db2 = await orbitdb.open(
-                await Program.load(orbitdb._ipfs, db.address!),
+                await Program.load(orbitdb._store, db.address!),
                 { topic: topic }
             );
             assert.equal(db2.address!.toString().indexOf("/peerbit"), 0);
@@ -192,17 +187,8 @@ describe(`Create & Open `, function () {
                 cid: db.address!.cid.slice(0, -1) + "A",
             });
             await db.drop();
-            return new Promise(async (resolve, reject) => {
-                setTimeout(resolve, 900);
-                orbitdb
-                    .open(await Program.load(orbitdb._ipfs, address), {
-                        topic: topic,
-                    })
-                    .then(() =>
-                        reject(new Error("Shouldn't open the database"))
-                    )
-                    .catch(reject);
-            });
+            const dbToLoad = await Program.load(orbitdb._store, address);
+            expect(dbToLoad).toBeUndefined();
         });
 
         /*  TODO, this test throws error, but not the expected one
@@ -241,7 +227,7 @@ describe(`Create & Open `, function () {
         let orbitdb: Peerbit;
 
         beforeAll(async () => {
-            orbitdb = await Peerbit.create(session.peers[0].ipfs, {
+            orbitdb = await Peerbit.create(session.peers[0], {
                 directory: dbPath + uuid(),
             });
         });

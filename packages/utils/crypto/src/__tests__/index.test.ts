@@ -8,8 +8,8 @@ import {
 import sodium from "libsodium-wrappers";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { Wallet } from "@ethersproject/wallet";
-import { Session } from "@dao-xyz/peerbit-test-utils";
-import { IPFSAddress } from "../ipfs.js";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
+import { PeerIdAddress } from "../libp2p.js";
 
 describe("Ed25519", () => {
     it("ser/der", async () => {
@@ -104,10 +104,10 @@ describe("Sepck2561k1", () => {
     });
 });
 
-describe("IPFS", () => {
-    let session: Session;
+describe("libp2p", () => {
+    let session: LSession;
     beforeAll(async () => {
-        session = await Session.connected(1);
+        session = await LSession.connected(1);
     });
 
     afterAll(async () => {
@@ -115,15 +115,15 @@ describe("IPFS", () => {
     });
 
     it("ser/der", async () => {
-        const pk = new IPFSAddress({
-            address: session.peers[0].id.toString(),
+        const pk = new PeerIdAddress({
+            address: session.peers[0].peerId.toString(),
         });
-        const derser = deserialize(serialize(pk), IPFSAddress);
+        const derser = deserialize(serialize(pk), PeerIdAddress);
         expect(derser.address).toEqual(pk.address);
     });
 
     /*  it('size', async () => {
-         const pk = new IPFSAddress({
+         const pk = new PeerIdAddress({
              address: session.peers[0].id.toString()
          });
          expect(serialize(pk)).toHaveLength(PUBLIC_KEY_WIDTH);

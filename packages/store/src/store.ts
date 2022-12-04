@@ -14,20 +14,17 @@ import {
 import { Encoding, EncryptionTemplateMaybeEncrypted } from "@dao-xyz/ipfs-log";
 import { Entry } from "@dao-xyz/ipfs-log";
 import { Replicator } from "./replicator.js";
-import io from "@dao-xyz/peerbit-io-utils";
+import { stringifyCid, Blocks } from "@dao-xyz/peerbit-block";
 import Cache from "@dao-xyz/peerbit-cache";
 import { variant, field, vec, Constructor } from "@dao-xyz/borsh";
-import { IPFS } from "ipfs-core-types";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { Snapshot } from "./snapshot.js";
 import {
     AccessError,
     PublicKeyEncryptionResolver,
 } from "@dao-xyz/peerbit-crypto";
-import { joinUint8Arrays } from "@dao-xyz/peerbit-borsh-utils";
 import { EntryWithRefs } from "./entry-with-refs.js";
 import { waitForAsync } from "@dao-xyz/peerbit-time";
-
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 const logger = loggerFn({ module: "store" });
 
@@ -115,6 +112,8 @@ export interface IStoreOptions<T> {
     onReplicationProgress?: (store: Store<any>, entry: Entry<T>) => void;
     onReplicationComplete?: (store: Store<any>) => void;
     onReady?: (store: Store<T>) => void;
+    saveFile?: (file: any) => Promise<string>;
+    loadFile?: (cid: string) => Promise<Uint8Array>;
 
     encryption?: PublicKeyEncryptionResolver;
     maxHistory?: number;
@@ -152,7 +151,7 @@ export const DefaultOptions: IInitializationOptionsDefault<any> = {
 
 export interface Initiable<T> {
     init?(
-        ipfs: IPFS,
+        blockStore: Blocks,
         identity: Identity,
         options: IInitializationOptions<T>
     ): Promise<this>;
@@ -187,7 +186,7 @@ export class Store<T> implements Initiable<T> {
     /*   allowForks: boolean = true;
      */
 
-    _ipfs: IPFS;
+    _store: Blocks;
     _cache: Cache<CachedValue>;
     _oplog: Log<T>;
     _queue: PQueue<any, any>;
@@ -196,6 +195,9 @@ export class Store<T> implements Initiable<T> {
     _replicator: Replicator<T>;
     _loader: Replicator<T>;
     _key: string;
+
+    _saveFile: (file: any) => Promise<string>;
+    _loadFile: (cid: string) => Promise<Uint8Array | undefined>;
 
     constructor(properties?: { storeIndex: number }) {
         if (properties) {
@@ -214,7 +216,7 @@ export class Store<T> implements Initiable<T> {
     }
 
     async init(
-        ipfs: IPFS,
+        store: Blocks,
         identity: Identity,
         options: IInitializationOptions<T>
     ): Promise<this> {
@@ -222,8 +224,12 @@ export class Store<T> implements Initiable<T> {
             throw new Error("Already initialized");
         }
 
+        this._saveFile =
+            options.saveFile || ((file) => store.put(file, "dag-cbor"));
+        this._loadFile = options.loadFile || ((file) => store.get(file));
+
         // Set ipfs since we are to save the store
-        this._ipfs = ipfs;
+        this._store = store;
 
         // Set the options (we will use the topic property after thiis)
         const opts = { ...DefaultOptions, ...options };
@@ -243,7 +249,7 @@ export class Store<T> implements Initiable<T> {
         this._cache = await this._options.resolveCache(this);
 
         // Create the operations log
-        this._oplog = new Log<T>(this._ipfs, identity, this.logOptions);
+        this._oplog = new Log<T>(this._store, identity, this.logOptions);
 
         // _addOperation and log-joins queue. Adding ops and joins to the queue
         // makes sure they get processed sequentially to avoid race conditions
@@ -327,7 +333,7 @@ export class Store<T> implements Initiable<T> {
         return this;
     }
 
-    updateStateFromLogs = async (logs: Log<T>[]) => {
+    async updateStateFromLogs(logs: Log<T>[]) {
         if (this._oplog && logs.length > 0) {
             try {
                 for (const log of logs) {
@@ -363,7 +369,7 @@ export class Store<T> implements Initiable<T> {
             this._options.onReplicationComplete &&
                 this._options.onReplicationComplete(this);
         }
-    };
+    }
 
     get id(): string {
         if (typeof this._storeIndex !== "number") {
@@ -503,7 +509,7 @@ export class Store<T> implements Initiable<T> {
            } */
 
         // Load the log
-        const log = await Log.fromEntry(this._ipfs, this.identity, heads, {
+        const log = await Log.fromEntry(this._store, this.identity, heads, {
             ...this.logOptions,
             length: amount,
             timeout: fetchEntryTimeout,
@@ -552,35 +558,42 @@ export class Store<T> implements Initiable<T> {
                     })
                 )
             );
+            const entry =
+                headToHandle instanceof Entry
+                    ? headToHandle
+                    : headToHandle.entry;
             const canAppend = options?.canAppend || this.canAppend;
-            if (
-                canAppend &&
-                !(await canAppend(
-                    headToHandle instanceof Entry
-                        ? headToHandle
-                        : headToHandle.entry
-                ))
-            ) {
+            if (canAppend && !(await canAppend(entry))) {
+                logger.debug("Not allowd to append head " + entry.hash);
                 return Promise.resolve(null);
             }
             await Promise.all(
                 allEntries.map(async (head) => {
                     const headHash = head.hash;
                     head.hash = undefined as any;
-                    const hash = await io.write(
-                        this._ipfs,
-                        "raw",
-                        serialize(head),
-                        {
-                            onlyHash: !options?.save,
+                    try {
+                        const hash = options?.save
+                            ? await this._store.put(serialize(head), "raw")
+                            : stringifyCid(
+                                  (
+                                      await this._store.block(
+                                          serialize(head),
+                                          "raw"
+                                      )
+                                  ).cid
+                              );
+                        head.hash = headHash;
+                        if (head.hash === undefined) {
+                            head.hash = hash; // can happen if you sync entries that you load directly from ipfs
+                        } else if (hash !== head.hash) {
+                            logger.error("Head hash didn't match the contents");
+                            throw new Error(
+                                "Head hash didn't match the contents"
+                            );
                         }
-                    );
-                    head.hash = headHash;
-                    if (head.hash === undefined) {
-                        head.hash = hash; // can happen if you sync entries that you load directly from ipfs
-                    } else if (hash !== head.hash) {
-                        logger.error("Head hash didn't match the contents");
-                        throw new Error("Head hash didn't match the contents");
+                    } catch (error) {
+                        logger.error(error);
+                        throw error;
                     }
                 })
             );
@@ -638,11 +651,11 @@ export class Store<T> implements Initiable<T> {
             })
         );
 
-        const snapshot = await this._ipfs.add(buf);
+        const snapshot = await this._saveFile(buf);
 
         await this._cache.setBinary(
             this.snapshotPath,
-            new CID({ hash: snapshot.cid.toString() })
+            new CID({ hash: snapshot })
         );
         await this._cache.setBinary(
             this.queuePath,
@@ -656,9 +669,7 @@ export class Store<T> implements Initiable<T> {
         );
 
         logger.debug(
-            `Saved snapshot: ${snapshot.cid.toString()}, queue length: ${
-                unfinished.length
-            }`
+            `Saved snapshot: ${snapshot}, queue length: ${unfinished.length}`
         );
         return [snapshot];
     }
@@ -681,11 +692,11 @@ export class Store<T> implements Initiable<T> {
 
         const snapshotCID = await this._cache.getBinary(this.snapshotPath, CID);
         if (snapshotCID) {
-            const chunks: any[] = [];
-            for await (const chunk of this._ipfs.cat(snapshotCID.hash)) {
-                chunks.push(chunk);
+            const file = await this._loadFile(snapshotCID.hash);
+            if (!file) {
+                throw new Error("Missing snapshot");
             }
-            const snapshotData = deserialize(joinUint8Arrays(chunks), Snapshot);
+            const snapshotData = deserialize(file, Snapshot);
 
             // Fetch the entries
             // Timeout 1 sec to only load entries that are already fetched (in order to not get stuck at loading)
@@ -694,7 +705,7 @@ export class Store<T> implements Initiable<T> {
               ); */
             if (snapshotData) {
                 this._oplog = await Log.fromEntry(
-                    this._ipfs,
+                    this._store,
                     this.identity,
                     snapshotData.heads,
                     {
@@ -782,7 +793,7 @@ export class Store<T> implements Initiable<T> {
                     : this.canAppend,
                 identity: options?.identity,
             });
-
+            logger.debug("Appended entry with hash: " + entry.hash);
             await this._cache.setBinary(
                 this.localHeadsPath,
                 new HeadsCache({ heads: [entry] })

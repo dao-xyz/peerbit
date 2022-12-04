@@ -3,7 +3,7 @@ import { Documents, Operation, PutOperation } from "@dao-xyz/peerbit-document";
 import { Entry } from "@dao-xyz/ipfs-log";
 import { LogIndex, LogQueryRequest } from "@dao-xyz/peerbit-logindex";
 import { createHash } from "crypto";
-import { IPFSAddress, PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import { PeerIdAddress, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { DeleteOperation } from "@dao-xyz/peerbit-document";
 import {
     IdentityRelation,
@@ -174,20 +174,21 @@ export class TrustedNetwork extends Program {
         if (!key) {
             return false;
         }
-        return await this.isTrusted(key);
+        const canRead = await this.isTrusted(key);
+        return canRead;
     }
 
     async add(
-        trustee: PublicSignKey | IPFSAddress | PeerId
+        trustee: PublicSignKey | PeerIdAddress | PeerId
     ): Promise<IdentityRelation | undefined> {
-        let key: PublicSignKey | IPFSAddress;
+        let key: PublicSignKey | PeerIdAddress;
         if (
             trustee instanceof PublicSignKey === false &&
-            trustee instanceof IPFSAddress === false
+            trustee instanceof PeerIdAddress === false
         ) {
-            key = new IPFSAddress({ address: trustee.toString() });
+            key = new PeerIdAddress({ address: trustee.toString() });
         } else {
-            key = trustee as PublicSignKey | IPFSAddress;
+            key = trustee as PublicSignKey | PeerIdAddress;
         }
 
         const existingRelation = this.getRelation(
@@ -209,14 +210,14 @@ export class TrustedNetwork extends Program {
         return !!this.getRelation(trustee, truster);
     }
     getRelation(
-        trustee: PublicSignKey | IPFSAddress,
+        trustee: PublicSignKey | PeerIdAddress,
         truster = this.rootTrust
     ) {
         return getRelation(
             truster,
             trustee instanceof PublicSignKey
                 ? trustee
-                : new IPFSAddress({ address: trustee.toString() }),
+                : new PeerIdAddress({ address: trustee.toString() }),
             this.trustGraph
         );
     }
@@ -232,7 +233,7 @@ export class TrustedNetwork extends Program {
      * @returns true, if trusted
      */
     async isTrusted(
-        trustee: PublicSignKey | IPFSAddress,
+        trustee: PublicSignKey | PeerIdAddress,
         truster: PublicSignKey = this.rootTrust
     ): Promise<boolean> {
         if (trustee.equals(this.rootTrust)) {
@@ -285,7 +286,7 @@ export class TrustedNetwork extends Program {
     }
 
     async _isTrustedLocal(
-        trustee: PublicSignKey | IPFSAddress,
+        trustee: PublicSignKey | PeerIdAddress,
         truster: PublicSignKey = this.rootTrust
     ): Promise<boolean> {
         const trustPath = await hasPath(

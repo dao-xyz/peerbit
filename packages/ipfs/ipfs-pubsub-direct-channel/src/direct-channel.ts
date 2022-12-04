@@ -1,31 +1,29 @@
-import { getPeerID } from "./get-peer-id.js";
 import { waitForPeers } from "./wait-for-peers.js";
 import { v1 as PROTOCOL } from "./protocol.js";
-import { IPFS } from "ipfs-core-types";
+import { Libp2p } from "libp2p";
 import { IpfsPubsubPeerMonitor } from "@dao-xyz/ipfs-pubsub-peer-monitor";
-import type { Message, SignedMessage } from "@libp2p/interface-pubsub";
+import type { Message } from "@libp2p/interface-pubsub";
 import type { EventHandler } from "@libp2p/interfaces/events";
 import type { PeerId } from "@libp2p/interface-peer-id";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 const logger = loggerFn({ module: "direct-channel" });
-
 /**
  * Communication channel over Pubsub between two IPFS nodes
  */
 export class DirectChannel {
     _id: string;
-    _ipfs: IPFS;
+    _libp2p: Libp2p;
     _closed: boolean;
     _isClosed: () => boolean;
     _receiverID: string;
     _senderID: string;
     _peers: string[];
-    _handler: EventHandler<Message>;
+    _handler: EventHandler<CustomEvent<Message>>;
     _monitor: IpfsPubsubPeerMonitor;
 
-    constructor(ipfs: IPFS, receiverID: string) {
+    constructor(libp2p: Libp2p, receiverID: string) {
         // IPFS instance to use internally
-        this._ipfs = ipfs;
+        this._libp2p = libp2p;
 
         this._closed = false;
         this._isClosed = () => this._closed;
@@ -63,7 +61,7 @@ export class DirectChannel {
 
     async connect(options?: { isClosed: () => boolean }): Promise<boolean> {
         return waitForPeers(
-            this._ipfs,
+            this._libp2p,
             [this._receiverID.toString()],
             this._id,
             () =>
@@ -77,20 +75,29 @@ export class DirectChannel {
      */
     async send(message: Uint8Array) {
         if (this._closed) return;
-        await this._ipfs.pubsub.publish(this._id, message);
+        logger.debug(
+            `Send message on channel: ${this._id} with size ${message.byteLength}`
+        );
+        await this._libp2p.pubsub.publish(this._id, message);
     }
 
     /**
      * Close the channel
      */
-    async close(): Promise<void> {
+    async close(options?: { subscription: boolean }): Promise<void> {
         this._closed = true;
         this._monitor?.stop();
-        return this._ipfs.pubsub.unsubscribe(this._id, this._handler);
+        if (options?.subscription) {
+            await this._libp2p.pubsub.unsubscribe(this._id); // because the topic could be shared
+        }
+        return this._libp2p.pubsub.removeEventListener(
+            "message",
+            this._handler
+        );
     }
 
     async _setup() {
-        this._senderID = await getPeerID(this._ipfs);
+        this._senderID = this._libp2p.peerId.toString();
 
         // Channel's participants
         this._peers = Array.from([this._senderID, this._receiverID]);
@@ -121,7 +128,7 @@ export class DirectChannel {
     }
 
     async _openChannel(
-        onMessageCallback: EventHandler<Message>,
+        onMessageCallback: EventHandler<CustomEvent<Message>>,
         monitor?: {
             onNewPeerCallback?: (channel: DirectChannel) => void;
             onPeerLeaveCallback?: (channel: DirectChannel) => void;
@@ -130,10 +137,11 @@ export class DirectChannel {
         this._closed = false;
         await this._setup();
         this._handler = onMessageCallback;
-        await this._ipfs.pubsub.subscribe(this._id, onMessageCallback);
+        await this._libp2p.pubsub.subscribe(this._id);
+        this._libp2p.pubsub.addEventListener("message", onMessageCallback);
         if (monitor?.onNewPeerCallback || monitor?.onPeerLeaveCallback) {
             const topicMonitor = new IpfsPubsubPeerMonitor(
-                this._ipfs.pubsub,
+                this._libp2p.pubsub,
                 this._id,
                 {
                     onJoin: (peer) => {
@@ -165,12 +173,14 @@ export class DirectChannel {
     }
     _messageHandler(
         messageCallback: (message: Message) => void
-    ): EventHandler<Message> {
-        return (message: Message) => {
-            if (message.type === "signed") {
+    ): EventHandler<CustomEvent<Message>> {
+        return (evt: CustomEvent<Message>) => {
+            logger.debug(
+                `Recieved message on channel: ${this._id} with size ${evt.detail.data.byteLength}`
+            );
+            const message = evt.detail;
+            if (message.type === "signed" && this._id === message.topic) {
                 if (message.from.equals(this._receiverID)) {
-                    // is valid
-                    const topicId = message.topic;
                     let data: Uint8Array = message.data;
                     if (data.constructor !== Uint8Array) {
                         if (data instanceof Uint8Array) {
@@ -186,7 +196,7 @@ export class DirectChannel {
     }
 
     static async open(
-        ipfs: IPFS,
+        libp2p: Libp2p,
         receiverID: string | PeerId,
         onMessageCallback: (message: Message) => void,
         monitor?: {
@@ -194,7 +204,7 @@ export class DirectChannel {
             onPeerLeaveCallback?: (channel: DirectChannel) => void;
         }
     ): Promise<DirectChannel> {
-        const channel = new DirectChannel(ipfs, receiverID.toString());
+        const channel = new DirectChannel(libp2p, receiverID.toString());
         const handler = channel._messageHandler(onMessageCallback);
         await channel._openChannel(handler, monitor);
         return channel;

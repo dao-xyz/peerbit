@@ -1,21 +1,17 @@
-import { Session } from "@dao-xyz/peerbit-test-utils";
-import { createTestDomain, startCertbot } from "../domain";
-import path from "path";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { Peerbit } from "@dao-xyz/peerbit";
 import http from "http";
 import { startServer } from "../api";
 import dotenv from "dotenv";
-import { createRecord } from "../aws";
-import { v4 as uuid } from "uuid";
 
 dotenv.config();
 
 describe("ssl", () => {
-    let session: Session, peer: Peerbit, server: http.Server;
+    let session: LSession, peer: Peerbit, server: http.Server;
 
     beforeAll(async () => {
-        session = await Session.connected(1);
-        peer = await Peerbit.create(session.peers[0].ipfs, {
+        session = await LSession.connected(1);
+        peer = await Peerbit.create(session.peers[0], {
             directory: "./peerbit/" + +new Date(),
         });
         server = await startServer(peer, 12345);

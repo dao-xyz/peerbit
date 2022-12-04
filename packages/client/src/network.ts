@@ -1,9 +1,14 @@
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 
-export interface Network {
-    inNetwork: true;
-    get network(): TrustedNetwork;
-}
-export const inNetwork = (object: any): object is Network => {
-    return object.inNetwork === true;
+export const getNetwork = (object: any): TrustedNetwork | undefined => {
+    return (
+        object.constructor.prototype._network &&
+        object[object.constructor.prototype._network]
+    );
 };
+
+export function network(options: { property: string }) {
+    return (constructor: any) => {
+        constructor.prototype._network = options.property;
+    };
+}

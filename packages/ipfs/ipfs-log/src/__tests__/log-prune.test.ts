@@ -2,97 +2,87 @@ import rmrf from "rimraf";
 import fs from "fs-extra";
 import { Log } from "../log.js";
 import { createStore, Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { jest } from "@jest/globals";
 
-// Test utils
-import {
-    nodeConfig as config,
-    testAPIs,
-    startIpfs,
-    stopIpfs,
-} from "@dao-xyz/peerbit-test-utils";
-import { Controller } from "ipfsd-ctl";
-import { IPFS } from "ipfs-core-types";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+    Blocks,
+} from "@dao-xyz/peerbit-block";
+import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 
-let ipfsd: Controller, ipfs: IPFS, signKey: KeyWithMeta<Ed25519Keypair>;
+let signKey: KeyWithMeta<Ed25519Keypair>;
 
-Object.keys(testAPIs).forEach((IPFS) => {
-    describe("Log - Cut", function () {
-        jest.setTimeout(config.timeout);
+describe("Log - Cut", function () {
+    let keystore: Keystore, store: Blocks;
 
-        const { signingKeyFixtures, signingKeysPath } = config;
+    beforeAll(async () => {
+        rmrf.sync(testKeyStorePath(__filenameBase));
 
-        let keystore: Keystore;
+        await fs.copy(
+            signingKeysFixturesPath(__dirname),
+            testKeyStorePath(__filenameBase)
+        );
 
-        beforeAll(async () => {
-            rmrf.sync(signingKeysPath(__filenameBase));
+        keystore = new Keystore(
+            await createStore(testKeyStorePath(__filenameBase))
+        );
 
-            await fs.copy(
-                signingKeyFixtures(__dirname),
-                signingKeysPath(__filenameBase)
-            );
+        //@ts-ignore
+        signKey = await keystore.getKey(new Uint8Array([0]));
 
-            keystore = new Keystore(
-                await createStore(signingKeysPath(__filenameBase))
-            );
+        store = new Blocks(new MemoryLevelBlockStore());
+        await store.open();
+    });
 
-            //@ts-ignore
-            signKey = await keystore.getKey(new Uint8Array([0]));
+    afterAll(async () => {
+        await store.close();
 
-            ipfsd = await startIpfs(IPFS, config.defaultIpfsConfig);
-            ipfs = ipfsd.api;
-        });
+        rmrf.sync(testKeyStorePath(__filenameBase));
 
-        afterAll(async () => {
-            await stopIpfs(ipfsd);
+        await keystore?.close();
+    });
 
-            rmrf.sync(signingKeysPath(__filenameBase));
+    it("cut back to max oplog length", async () => {
+        const log = new Log<string>(
+            store,
+            {
+                ...signKey.keypair,
+                sign: async (data: Uint8Array) =>
+                    await signKey.keypair.sign(data),
+            },
+            { logId: "A", prune: { maxLength: 1, cutToLength: 1 } }
+        );
+        await log.append("hello1");
+        await log.append("hello2");
+        await log.append("hello3");
+        expect(log.length).toEqual(1);
+        expect(log.values[0].payload.getValue()).toEqual("hello3");
+    });
 
-            await keystore?.close();
-        });
-
-        it("cut back to max oplog length", async () => {
-            const log = new Log<string>(
-                ipfs,
-                {
-                    ...signKey.keypair,
-                    sign: async (data: Uint8Array) =>
-                        await signKey.keypair.sign(data),
-                },
-                { logId: "A", prune: { maxLength: 1, cutToLength: 1 } }
-            );
-            await log.append("hello1");
-            await log.append("hello2");
-            await log.append("hello3");
-            expect(log.length).toEqual(1);
-            expect(log.values[0].payload.getValue()).toEqual("hello3");
-        });
-
-        it("cut back to cut length", async () => {
-            const log = new Log<string>(
-                ipfs,
-                {
-                    ...signKey.keypair,
-                    sign: async (data: Uint8Array) =>
-                        await signKey.keypair.sign(data),
-                },
-                { logId: "A", prune: { maxLength: 3, cutToLength: 1 } }
-            );
-            await log.append("hello1");
-            await log.append("hello2");
-            await log.append("hello3");
-            expect(log.length).toEqual(3);
-            await log.append("hello4");
-            expect(log.length).toEqual(1); // We exceed 'maxLength' and cut back to 'cutToLength'
-            expect(log.values[0].payload.getValue()).toEqual("hello4");
-        });
+    it("cut back to cut length", async () => {
+        const log = new Log<string>(
+            store,
+            {
+                ...signKey.keypair,
+                sign: async (data: Uint8Array) =>
+                    await signKey.keypair.sign(data),
+            },
+            { logId: "A", prune: { maxLength: 3, cutToLength: 1 } }
+        );
+        await log.append("hello1");
+        await log.append("hello2");
+        await log.append("hello3");
+        expect(log.length).toEqual(3);
+        await log.append("hello4");
+        expect(log.length).toEqual(1); // We exceed 'maxLength' and cut back to 'cutToLength'
+        expect(log.values[0].payload.getValue()).toEqual("hello4");
     });
 });

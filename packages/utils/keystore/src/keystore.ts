@@ -1,7 +1,6 @@
 import { AbstractLevel } from "abstract-level";
 import LRU from "lru-cache";
 import { variant, field, serialize, deserialize } from "@dao-xyz/borsh";
-import { UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
 import {
     X25519PublicKey,
     Ed25519PublicKey,
@@ -27,13 +26,15 @@ const getGroupKey = (group: string) =>
     group === DEFAULT_KEY_GROUP
         ? DEFAULT_KEY_GROUP
         : createHash("sha1").update(group).digest("base64");
-const getIdKey = (id: string | Uint8Array | PublicSignKey): string => {
+const getIdKey = async (
+    id: string | Uint8Array | PublicSignKey
+): Promise<string> => {
     if (id instanceof PublicSignKey || id instanceof PublicKeyEncryptionKey) {
-        return id.hashCode();
+        return id.hashcode();
     }
 
     if (typeof id !== "string") {
-        id = toBase64(id);
+        id = await toBase64(id);
     } else {
         if (isPath(id)) {
             throw new Error("Ids can not contain path key: " + PATH_KEY);
@@ -51,7 +52,7 @@ export const getPath = (group: string, key: string) => {
 };
 
 const idFromKey = async (keypair: Keypair): Promise<string> => {
-    return publicKeyFromKeyPair(keypair).hashCode();
+    return publicKeyFromKeyPair(keypair).hashcode();
 };
 
 const publicKeyFromKeyPair = (keypair: Keypair) => {
@@ -88,10 +89,10 @@ const NONCE_LENGTH = 24;
  */
 @variant(0)
 export class EncryptedMessage {
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     nonce: Uint8Array;
 
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     cipher: Uint8Array;
 
     constructor(props?: EncryptedMessage) {
@@ -297,7 +298,7 @@ export class Keystore {
         this.assertOpen();
 
         const idKey = options.id
-            ? getIdKey(options.id)
+            ? await getIdKey(options.id)
             : await idFromKey(key.keypair);
 
         // Normalize group names
@@ -314,7 +315,9 @@ export class Keystore {
         }
 
         const ser = serialize(key);
-        const publicKeyString = publicKeyFromKeyPair(key.keypair).hashCode();
+        const publicKeyString = await publicKeyFromKeyPair(
+            key.keypair
+        ).hashcode();
         await this.groupStore.put(path, ser, {
             valueEncoding: "view",
         }); // TODO fix types, are just wrong
@@ -353,7 +356,7 @@ export class Keystore {
             }
         } else {
             group = getGroupKey(group || DEFAULT_KEY_GROUP);
-            path = getPath(group, getIdKey(id));
+            path = getPath(group, await getIdKey(id));
         }
 
         const cachedKey = path ? this._cache.get(path) : undefined;
@@ -366,7 +369,7 @@ export class Keystore {
                     id instanceof PublicSignKey ||
                     id instanceof PublicKeyEncryptionKey
                 ) {
-                    buffer = await this.keyStore.get(id.hashCode(), {
+                    buffer = await this.keyStore.get(await id.hashcode(), {
                         valueEncoding: "view",
                     });
                 } else if (path) {
@@ -383,7 +386,7 @@ export class Keystore {
             loadedKey = deserialize(buffer, KeyWithMeta) as KeyWithMeta<T>;
             path = getPath(
                 loadedKey.group,
-                getIdKey(loadedKey.keypair.publicKey)
+                await getIdKey(loadedKey.keypair.publicKey)
             );
         }
 

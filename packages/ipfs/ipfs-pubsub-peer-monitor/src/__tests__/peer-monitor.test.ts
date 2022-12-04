@@ -1,6 +1,5 @@
-import assert, { equal } from "assert";
 import EventEmitter from "events";
-import { IpfsPubsubPeerMonitor } from "../index.js";
+import { difference, IpfsPubsubPeerMonitor } from "../index.js";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import type { PeerId } from "@libp2p/interface-peer-id";
 
@@ -14,7 +13,7 @@ const mockPeerId = (p: string) => {
     } as PeerId;
 };
 const mockPubsub = {
-    peers: () => Promise.resolve(peers.map(mockPeerId)),
+    getSubscribers: () => Promise.resolve(peers.map(mockPeerId)),
 };
 
 describe("peer monitor", () => {
@@ -26,10 +25,7 @@ describe("peer monitor", () => {
             { pollInterval: 100 }
         );
         const newPeers = await m.getPeers();
-        assert.deepEqual(
-            newPeers.map((p) => p.toString()),
-            peers
-        );
+        expect(newPeers.map((p) => p.toString())).toEqual(peers);
     });
 
     it("emits 'join' event for each peer", async () => {
@@ -78,6 +74,15 @@ describe("peer monitor", () => {
                 }
             );
         });
+    });
+
+    it("order independent", async () => {
+        expect(
+            difference(["A", "B", "D", "C"], ["A", "B", "C", "D"])
+        ).toHaveLength(0);
+        expect(
+            difference(["A", "B", "C", "D"], ["A", "B", "D", "C"])
+        ).toHaveLength(0);
     });
 
     it("emits leaves", async () => {

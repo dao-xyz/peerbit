@@ -5,31 +5,25 @@ import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store.js";
 import { jest } from "@jest/globals";
 import { v4 as uuid } from "uuid";
-
-// Include test utilities
-import {
-    nodeConfig as config,
-    Session,
-    createStore,
-} from "@dao-xyz/peerbit-test-utils";
+import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
 import { waitFor } from "@dao-xyz/peerbit-time";
 
 const dbPath = "./orbitdb/tests/persistency";
 
 /* tests.forEach(test => {*/
-describe(`load (js-ipfs)`, () => {
+describe(`load`, () => {
     //${test.title}
-    jest.setTimeout(config.timeout * 5);
+
     jest.retryTimes(1); // TODO Side effects may cause failures
 
     const entryCount = 10;
 
     describe("load", function () {
         let db: EventStore<string>, address: string, orbitdb1: Peerbit;
-        let session: Session;
+        let session: LSession;
 
         beforeAll(async () => {
-            session = await Session.connected(1);
+            session = await LSession.connected(1);
         });
 
         afterAll(async () => {
@@ -37,10 +31,10 @@ describe(`load (js-ipfs)`, () => {
         });
 
         beforeEach(async () => {
-            orbitdb1 = await Peerbit.create(session.peers[0].ipfs, {
+            orbitdb1 = await Peerbit.create(session.peers[0], {
                 directory: dbPath + "/" + uuid(),
                 storage: {
-                    createStore: (string: string) => createStore(string),
+                    createStore: (string?: string) => createStore(string),
                 },
             }); // We do custom store to prevent sideeffects when writing to disc
 
@@ -65,7 +59,7 @@ describe(`load (js-ipfs)`, () => {
         it("loads database from local cache", async () => {
             db = await orbitdb1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._ipfs,
+                    orbitdb1._store,
                     Address.parse(address)
                 ),
                 { topic: uuid() }
@@ -86,7 +80,7 @@ describe(`load (js-ipfs)`, () => {
             const amount = 3;
             db = await orbitdb1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._ipfs,
+                    orbitdb1._store,
                     Address.parse(address)
                 ),
                 { topic: uuid() }
@@ -113,7 +107,7 @@ describe(`load (js-ipfs)`, () => {
             for (let i = 0; i < amount; i++) {
                 db = await orbitdb1.open(
                     await EventStore.load<EventStore<string>>(
-                        orbitdb1._ipfs,
+                        orbitdb1._store,
                         Address.parse(address)
                     ),
                     { topic: uuid() }
@@ -158,7 +152,7 @@ describe(`load (js-ipfs)`, () => {
             for (let i = 0; i < amount; i++) {
                 db = await orbitdb1.open(
                     await EventStore.load<EventStore<string>>(
-                        orbitdb1._ipfs,
+                        orbitdb1._store,
                         Address.parse(address)
                     ),
                     { topic: uuid() }
@@ -188,7 +182,7 @@ describe(`load (js-ipfs)`, () => {
             let done = false;
             db = await orbitdb1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._ipfs,
+                    orbitdb1._store,
                     Address.parse(address)
                 ),
                 {
@@ -220,7 +214,7 @@ describe(`load (js-ipfs)`, () => {
             let done = false;
             db = await orbitdb1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._ipfs,
+                    orbitdb1._store,
                     Address.parse(address)
                 ),
                 {
@@ -246,10 +240,10 @@ describe(`load (js-ipfs)`, () => {
         let db: EventStore<string>,
             address: string,
             orbitdb1: Peerbit,
-            session: Session;
+            session: LSession;
 
         beforeAll(async () => {
-            session = await Session.connected(1);
+            session = await LSession.connected(1);
         });
 
         afterAll(async () => {
@@ -257,7 +251,7 @@ describe(`load (js-ipfs)`, () => {
         });
 
         beforeEach(async () => {
-            orbitdb1 = await Peerbit.create(session.peers[0].ipfs, {
+            orbitdb1 = await Peerbit.create(session.peers[0], {
                 directory: dbPath + "/" + uuid(),
             });
         });
@@ -275,7 +269,7 @@ describe(`load (js-ipfs)`, () => {
 
             db = await orbitdb1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._ipfs,
+                    orbitdb1._store,
                     Address.parse(address)
                 ),
                 options
@@ -290,10 +284,10 @@ describe(`load (js-ipfs)`, () => {
         let db: EventStore<string>,
             address: string,
             orbitdb1: Peerbit,
-            session: Session;
+            session: LSession;
 
         beforeAll(async () => {
-            session = await Session.connected(1);
+            session = await LSession.connected(1);
         });
 
         afterAll(async () => {
@@ -301,10 +295,10 @@ describe(`load (js-ipfs)`, () => {
         });
 
         beforeEach(async () => {
-            orbitdb1 = await Peerbit.create(session.peers[0].ipfs, {
+            orbitdb1 = await Peerbit.create(session.peers[0], {
                 directory: dbPath + "/" + uuid(),
                 storage: {
-                    createStore: (string: string) => createStore(string),
+                    createStore: (string?: string) => createStore(string),
                 },
             });
 
@@ -330,7 +324,7 @@ describe(`load (js-ipfs)`, () => {
         it("loads database from snapshot", async () => {
             db = await orbitdb1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._ipfs,
+                    orbitdb1._store,
                     Address.parse(address)
                 ),
                 { topic: uuid() }
@@ -349,7 +343,7 @@ describe(`load (js-ipfs)`, () => {
             for (let i = 0; i < amount; i++) {
                 db = await orbitdb1.open(
                     await EventStore.load<EventStore<string>>(
-                        orbitdb1._ipfs,
+                        orbitdb1._store,
                         Address.parse(address)
                     ),
                     { topic: uuid() }
@@ -377,7 +371,7 @@ describe(`load (js-ipfs)`, () => {
             const options = { topic: uuid() };
             db = await orbitdb1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._ipfs,
+                    orbitdb1._store,
                     Address.parse(address)
                 ),
                 options
@@ -386,7 +380,7 @@ describe(`load (js-ipfs)`, () => {
             db = null as any;
             db = await orbitdb1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._ipfs,
+                    orbitdb1._store,
                     Address.parse(address)
                 ),
                 options
@@ -407,7 +401,7 @@ describe(`load (js-ipfs)`, () => {
             let done = false;
             db = await orbitdb1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._ipfs,
+                    orbitdb1._store,
                     Address.parse(address)
                 ),
                 {
@@ -434,7 +428,7 @@ describe(`load (js-ipfs)`, () => {
             let count = 0;
             db = await orbitdb1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._ipfs,
+                    orbitdb1._store,
                     Address.parse(address)
                 ),
                 {

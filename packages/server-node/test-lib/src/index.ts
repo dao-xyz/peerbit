@@ -1,16 +1,15 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { Program } from "@dao-xyz/peerbit-program";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
-import { Network } from "@dao-xyz/peerbit";
+import { network } from "@dao-xyz/peerbit";
 import { DString } from "@dao-xyz/peerbit-string";
 
 @variant("permissioned_string")
-export class PermissionedString extends Program implements Network {
-    inNetwork: true = true;
-
+@network({ property: "_network" })
+export class PermissionedString extends Program {
     @field({ type: DString })
     _store: DString;
-    ß;
+
     @field({ type: TrustedNetwork })
     _network: TrustedNetwork;
 

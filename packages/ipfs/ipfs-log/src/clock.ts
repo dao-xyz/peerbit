@@ -24,7 +24,6 @@ SOFTWARE.
  */
 
 import { field, variant } from "@dao-xyz/borsh";
-import { UInt8ArraySerializer } from "@dao-xyz/peerbit-borsh-utils";
 import { arraysCompare, arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
 import hrtime from "./hrtime.js";
 
@@ -221,7 +220,7 @@ export class ForwardJumpError extends Error {
 
 @variant(0)
 export class LamportClock {
-    @field(UInt8ArraySerializer)
+    @field({ type: Uint8Array })
     id: Uint8Array;
 
     @field({ type: Timestamp })

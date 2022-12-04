@@ -1,12 +1,11 @@
 import { Peerbit } from "@dao-xyz/peerbit";
-import { ipfsDocker, startIpfs } from "./ipfs.js";
 import { createTestDomain, startCertbot } from "./domain.js";
-import { Controller } from "ipfsd-ctl";
 import { serialize } from "@dao-xyz/borsh";
 import { client, startServer } from "./api.js";
 import { parsePublicKey } from "./utils.js";
 import { createRecord } from "./aws.js";
-import { toBase64 } from "@dao-xyz/peerbit-crypto";
+import { toBase64Sync } from "@dao-xyz/peerbit-crypto";
+import { createNode } from "./libp2p.js";
 
 const KEY_EXAMPLE =
     'E.g. [CHAIN TYPE]/[PUBLICKEY]. e.g. if ethereum: "ethereum/0x4e54fD83..."';
@@ -21,50 +20,57 @@ export const cli = async (args?: string[]) => {
     return yargs
         .default(args)
         .command<{
-            ipfs: "js" | "go";
+            /* ipfs: "js" | "go";
             disposable: boolean;
             timeout: number;
+             */
             relay: boolean;
         }>({
             command: "start",
             describe: "Start node",
             builder: {
-                ipfs: {
-                    describe: "IPFS type",
-                    type: "string",
-                    choices: ["go", "js"],
-                    default: "go",
-                },
                 relay: {
                     describe: "Relay only. No replication functionality",
                     type: "boolean",
                     default: false,
                 },
-                disposable: {
-                    describe:
-                        "Run IPFS node as disposable (will be destroyed on termination)",
-                    boolean: true,
-                },
+                /*   ipfs: {
+                      describe: "IPFS type",
+                      type: "string",
+                      choices: ["go", "js"],
+                      default: "go",
+                  },
+                
+                  disposable: {
+                      describe:
+                          "Run IPFS node as disposable (will be destroyed on termination)",
+                      boolean: true,
+                  }, */
             },
             handler: async (args) => {
-                const controller =
-                    args.disposable || args.ipfs !== "go"
-                        ? await startIpfs(args.ipfs, {
-                              module: { disposable: args.disposable },
-                          })
-                        : await ipfsDocker();
+                /*  const controller =
+                     args.disposable || args.ipfs !== "go"
+                         ? await startIpfs(args.ipfs, {
+                             module: { disposable: args.disposable },
+                         })
+                         : await ipfsDocker(); */
+                const node = await createNode();
+                const controller = {
+                    api: node,
+                    stop: () => node.stop(),
+                };
                 const peer = args.relay
                     ? controller.api
                     : await Peerbit.create(controller.api);
                 const server = await startServer(peer);
                 const printNodeInfo = async () => {
                     console.log("Starting node with address(es): ");
-                    const id = await (await client()).ipfs.id.get();
+                    const id = await (await client()).peer.id.get();
                     console.log("id: " + id);
                     console.log("Addresses: ");
                     for (const a of await (
                         await client()
-                    ).ipfs.addresses.get()) {
+                    ).peer.addresses.get()) {
                         console.log(a.toString());
                     }
                 };
@@ -383,7 +389,7 @@ export const cli = async (args?: string[]) => {
                         if (!program) {
                             console.log("Program does not exist");
                         } else {
-                            console.log(toBase64(serialize(program)));
+                            console.log(toBase64Sync(serialize(program)));
                         }
                     },
                 })

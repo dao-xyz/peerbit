@@ -37,7 +37,6 @@
         "@dao-xyz/peerbit-trusted-network": "^0.0.90"
     },
     "devDependencies": {
-        "ipfs": "^0.65.0",
         "memory-level": "^1.0.0"
     }
 }

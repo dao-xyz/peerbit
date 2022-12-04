@@ -1,4 +1,4 @@
-import { Session, waitForPeers } from "@dao-xyz/peerbit-test-utils";
+import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
 import {
     IdentityRelation,
     createIdentityGraphStore,
@@ -9,11 +9,11 @@ import {
     KEY_OFFSET,
     OFFSET_TO_KEY,
 } from "..";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import {
     AccessError,
     Ed25519Keypair,
-    IPFSAddress,
+    PeerIdAddress,
 } from "@dao-xyz/peerbit-crypto";
 import { Secp256k1PublicKey } from "@dao-xyz/peerbit-crypto";
 import { Identity } from "@dao-xyz/ipfs-log";
@@ -36,6 +36,12 @@ import {
     Results,
 } from "@dao-xyz/peerbit-document";
 import { v4 as uuid } from "uuid";
+import {
+    DEFAULT_BLOCK_TRANSPORT_TOPIC,
+    LibP2PBlockStore,
+    MemoryLevelBlockStore,
+    Blocks,
+} from "@dao-xyz/peerbit-block";
 
 const __filename = fileURLToPath(import.meta.url);
 
@@ -63,7 +69,8 @@ class IdentityGraph extends Program {
     }
 }
 describe("index", () => {
-    let session: Session,
+    let session: LSession,
+        stores: Blocks[],
         identites: Identity[],
         cacheStore: AbstractLevel<any, string>[];
 
@@ -74,7 +81,7 @@ describe("index", () => {
         options: { topic: string; store?: IStoreOptions<any> }
     ) =>
         store.init &&
-        store.init(session.peers[i].ipfs, identites[i], {
+        store.init(session.peers[i], stores[i], identites[i], {
             ...options,
             store: {
                 ...DefaultOptions,
@@ -84,9 +91,10 @@ describe("index", () => {
             },
         });
     beforeAll(async () => {
-        session = await Session.connected(4);
+        session = await LSession.connected(4, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
         identites = [];
         cacheStore = [];
+        stores = [];
         for (let i = 0; i < session.peers.length; i++) {
             identites.push(await createIdentity());
             cacheStore.push(
@@ -94,12 +102,21 @@ describe("index", () => {
                     path.join(__filename, "/cache/" + i.toString())
                 )
             );
+            const store = new Blocks(
+                new LibP2PBlockStore(
+                    session.peers[i],
+                    new MemoryLevelBlockStore()
+                )
+            );
+            await store.open();
+            stores.push(store);
         }
     });
 
     afterAll(async () => {
         await session.stop();
         await Promise.all(cacheStore?.map((c) => c.close()));
+        await Promise.all(stores?.map((c) => c.close()));
     });
     describe("identity-graph", () => {
         it("serializes relation with right padding ed25519", async () => {
@@ -140,7 +157,7 @@ describe("index", () => {
             const from = new Secp256k1PublicKey({
                 address: await Wallet.createRandom().getAddress(),
             });
-            const to = new IPFSAddress({ address: "abc123" });
+            const to = new PeerIdAddress({ address: "abc123" });
             const relation = new IdentityRelation({ from, to });
             const serRelation = serialize(relation);
             const serFrom = serialize(from);
@@ -163,7 +180,7 @@ describe("index", () => {
 
             const store = new IdentityGraph({
                 store: createIdentityGraphStore({
-                    id: session.peers[0].id.toString(),
+                    id: session.peers[0].peerId.toString(),
                 }),
             });
             await init(store, 0, { topic: uuid() });
@@ -230,7 +247,7 @@ describe("index", () => {
 
             const store = new IdentityGraph({
                 store: createIdentityGraphStore({
-                    id: session.peers[0].id.toString(),
+                    id: session.peers[0].peerId.toString(),
                 }),
             });
             const topic = uuid();
@@ -263,7 +280,10 @@ describe("index", () => {
 
             expect(serialize(t1)).toEqual(serialize(t2));
         });
+
         it("trusted by chain", async () => {
+            // TODO make this test in parts instead (very bloaty atm)
+
             const l0a = new TrustedNetwork({
                 rootTrust: identity(0).publicKey,
             });
@@ -271,11 +291,11 @@ describe("index", () => {
             const topic = uuid();
 
             await init(l0a, 0, { topic });
-
             await l0a.add(identity(1).publicKey);
 
+            await delay(1000);
             let l0b: TrustedNetwork = (await TrustedNetwork.load(
-                session.peers[1].ipfs,
+                stores[1],
                 l0a.address!
             )) as any;
             await init(l0b, 1, { topic });
@@ -292,14 +312,20 @@ describe("index", () => {
             await waitFor(() => l0a.trustGraph.index.size == 2);
 
             await waitForPeers(
-                session.peers[2].ipfs,
-                [session.peers[0].id, session.peers[1].id],
+                session.peers[2],
+                [session.peers[0], session.peers[1]],
                 l0b.trustGraph.index._query.rpcTopic
             );
 
             // Try query with trusted
             let responses: Results<IdentityRelation>[] = [];
-            await l0b.trustGraph.index.query(
+            let l0c: TrustedNetwork = (await TrustedNetwork.load(
+                stores[2],
+                l0a.address!
+            )) as any;
+            await init(l0c, 2, { topic });
+
+            await l0c.trustGraph.index.query(
                 new DocumentQueryRequest({
                     queries: [],
                 }),
@@ -316,8 +342,14 @@ describe("index", () => {
             expect(responses).toHaveLength(2);
 
             // Try query with untrusted
+            let l0d: TrustedNetwork = (await TrustedNetwork.load(
+                stores[3],
+                l0a.address!
+            )) as any;
+            await init(l0d, 3, { topic });
+
             let untrustedResponse: any = undefined;
-            await l0b.trustGraph.index.query(
+            await l0d.trustGraph.index.query(
                 new DocumentQueryRequest({
                     queries: [],
                 }),
@@ -337,7 +369,12 @@ describe("index", () => {
 
             // check if peer3 is trusted from a peer that is not replicating
             let l0observer: TrustedNetwork = (await TrustedNetwork.load(
-                session.peers[1].ipfs,
+                new Blocks(
+                    new LibP2PBlockStore(
+                        session.peers[1],
+                        new MemoryLevelBlockStore()
+                    )
+                ),
                 l0a.address!
             )) as any;
             await init(l0observer, 1, {
@@ -404,7 +441,12 @@ describe("index", () => {
             await init(l0a, 0, { topic });
 
             let l0b: TrustedNetwork = (await TrustedNetwork.load(
-                session.peers[1].ipfs,
+                new Blocks(
+                    new LibP2PBlockStore(
+                        session.peers[1],
+                        new MemoryLevelBlockStore()
+                    )
+                ),
                 l0a.address!
             )) as any;
             await init(l0b, 1, { topic });

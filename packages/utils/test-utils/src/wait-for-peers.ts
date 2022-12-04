@@ -1,18 +1,25 @@
-import { IPFS } from "ipfs-core-types";
 import type { PeerId } from "@libp2p/interface-peer-id";
+import { Libp2p } from "libp2p";
 
 const waitForPeers = (
-    ipfs: IPFS,
-    peersToWait: (PeerId | string)[],
+    libp2p: Libp2p | any,
+    peersToWait: (PeerId | string | Libp2p)[] | PeerId | string | Libp2p,
     topic: string
 ) => {
+    const peersToWaitArr = Array.isArray(peersToWait)
+        ? peersToWait
+        : [peersToWait];
     return new Promise<void>((resolve, reject) => {
         const interval = setInterval(async () => {
             try {
-                const peers = await ipfs.pubsub.peers(topic);
+                const peers = !!(libp2p as Libp2p).pubsub.getSubscribers
+                    ? (libp2p as Libp2p).pubsub.getSubscribers(topic)
+                    : await (libp2p as any).pubsub.peers(topic);
                 const peerIds = peers.map((peer) => peer.toString());
-                const peerIdsToWait = peersToWait.map((peer) =>
-                    peer.toString()
+                const peerIdsToWait = peersToWaitArr.map((peer) =>
+                    (peer as Libp2p).peerId
+                        ? (peer as Libp2p).peerId.toString()
+                        : peer.toString()
                 );
 
                 const hasAllPeers =

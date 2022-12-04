@@ -1,11 +1,12 @@
 import path from "path";
 import { IStoreOptions, Store } from "@dao-xyz/peerbit-store";
-import { IPFS } from "ipfs-core-types";
 import Cache from "@dao-xyz/peerbit-cache";
 import { Keystore, KeyWithMeta, StoreError } from "@dao-xyz/peerbit-keystore";
 import { isDefined } from "./is-defined.js";
 import { AbstractLevel } from "abstract-level";
 import { Level } from "level";
+import { MemoryLevel } from "memory-level";
+import { multiaddr } from "@multiformats/multiaddr";
 import {
     exchangeHeads,
     ExchangeHeadsMessage,
@@ -34,7 +35,7 @@ import {
 } from "./exchange-keys.js";
 import {
     X25519PublicKey,
-    IPFSAddress,
+    PeerIdAddress,
     AccessError,
     DecryptedThing,
     Ed25519Keypair,
@@ -50,7 +51,6 @@ import { encryptionWithRequestKey } from "./encryption.js";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
 import { createHash } from "crypto";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
-import { multiaddr } from "@multiformats/multiaddr";
 import {
     AbstractProgram,
     CanOpenSubPrograms,
@@ -58,7 +58,7 @@ import {
     Address,
 } from "@dao-xyz/peerbit-program";
 import PQueue from "p-queue";
-import { LRUCounter } from "./lru-counter.js";
+import { Libp2p } from "libp2p";
 import { IpfsPubsubPeerMonitor } from "@dao-xyz/ipfs-pubsub-peer-monitor";
 import type { PeerId } from "@libp2p/interface-peer-id";
 import {
@@ -66,11 +66,15 @@ import {
     ExchangeSwarmMessage,
 } from "./exchange-network.js";
 import { setTimeout } from "timers";
-import { inNetwork, Network } from "./network.js";
+import { getNetwork, network } from "./network.js";
 import isNode from "is-node";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+import {
+    LibP2PBlockStore,
+    MemoryLevelBlockStore,
+    Blocks,
+} from "@dao-xyz/peerbit-block";
 export const logger = loggerFn({ module: "peer" });
-
 const MIN_REPLICAS = 2;
 
 interface ProgramWithMetadata {
@@ -80,7 +84,7 @@ interface ProgramWithMetadata {
 
 export type StoreOperations = "write" | "all";
 export type Storage = {
-    createStore: (string: string) => AbstractLevel<any, string>;
+    createStore: (string?: string) => AbstractLevel<any, string>;
 };
 export type OptionalCreateOptions = {
     limitSigning?: boolean;
@@ -95,7 +99,7 @@ export type OptionalCreateOptions = {
 export type CreateOptions = {
     keystore: Keystore;
     identity: Identity;
-    directory: string;
+    directory?: string;
     peerId: PeerId;
     storage: Storage;
     cache: Cache<any>;
@@ -152,13 +156,14 @@ export const isReplicationTopic = (topic: string) => {
 };
 
 export class Peerbit {
-    _ipfs: IPFS;
+    _libp2p: Libp2p;
+    _store: Blocks;
     _directConnections: Map<string, SharedChannel<DirectChannel>>;
     _topicSubscriptions: Map<string, SharedChannel<SharedIPFSChannel>>;
 
     identity: Identity;
     id: PeerId;
-    directory: string;
+    directory?: string;
     storage: Storage;
     caches: { [key: string]: { cache: Cache<any>; handlers: Set<string> } };
     keystore: Keystore;
@@ -186,15 +191,20 @@ export class Peerbit {
     _disconnected = false;
     _disconnecting = false;
 
-    constructor(ipfs: IPFS, identity: Identity, options: CreateOptions) {
-        if (!isDefined(ipfs)) {
-            throw new Error("IPFS required");
+    constructor(libp2p: Libp2p, identity: Identity, options: CreateOptions) {
+        if (!isDefined(libp2p)) {
+            throw new Error("Libp2p required");
         }
         if (!isDefined(identity)) {
             throw new Error("identity key required");
         }
 
-        this._ipfs = ipfs;
+        this._libp2p = libp2p;
+        this._store = new Blocks(
+            new LibP2PBlockStore(this._libp2p, new MemoryLevelBlockStore())
+        );
+        this._store.open();
+
         this.identity = identity;
         this.id = options.peerId;
 
@@ -245,12 +255,16 @@ export class Peerbit {
         this._topicSubscriptions = new Map();
     }
 
-    get ipfs(): IPFS {
-        return this._ipfs;
+    get libp2p(): Libp2p {
+        return this._libp2p;
+    }
+
+    get cacheDir() {
+        return this.directory || "./cache";
     }
 
     get cache() {
-        return this.caches[this.directory].cache;
+        return this.caches[this.cacheDir].cache;
     }
 
     get encryption(): PublicKeyEncryptionResolver {
@@ -290,13 +304,13 @@ export class Peerbit {
         }).encrypt(this.encryption.getEncryptionKeypair, reciever);
     }
 
-    static async create(ipfs: IPFS, options: CreateInstanceOptions = {}) {
-        const id: PeerId = (await ipfs.id()).id;
-        const directory = options.directory || "./orbitdb";
+    static async create(libp2p: Libp2p, options: CreateInstanceOptions = {}) {
+        const id: PeerId = libp2p.peerId;
+        const directory = options.directory;
 
         const storage = options.storage || {
-            createStore: (path): AbstractLevel<any, string> => {
-                return new Level(path);
+            createStore: (path?: string): AbstractLevel<any, string> => {
+                return path ? new Level(path) : new MemoryLevel();
             },
         };
 
@@ -304,12 +318,14 @@ export class Peerbit {
         if (options.keystore) {
             keystore = options.keystore;
         } else {
-            const keyStorePath = path.join(
-                directory,
-                id.toString(),
-                "/keystore"
+            const keyStorePath = directory
+                ? path.join(directory, id.toString(), "/keystore")
+                : undefined;
+            logger.info(
+                keyStorePath
+                    ? "Creating keystore at path: " + keyStorePath
+                    : "Creating an in memory keystore"
             );
-            logger.info("Creating keystore at path: " + keyStorePath);
             keystore = new Keystore(await storage.createStore(keyStorePath));
         }
 
@@ -345,7 +361,9 @@ export class Peerbit {
             options.cache ||
             new Cache(
                 await storage.createStore(
-                    path.join(directory, id.toString(), "/cache")
+                    directory
+                        ? path.join(directory, id.toString(), "/cache")
+                        : undefined
                 )
             );
         const localNetwork = options.localNetwork || false;
@@ -358,7 +376,7 @@ export class Peerbit {
             cache,
             localNetwork,
         });
-        return new Peerbit(ipfs, identity, finalOptions);
+        return new Peerbit(libp2p, identity, finalOptions);
     }
 
     async disconnect() {
@@ -395,10 +413,10 @@ export class Peerbit {
             delete this.caches[directory];
         }
 
+        await this._store.close();
+
         // Remove all databases from the state
         this.programs = new Map();
-        // this.allPrograms = {}
-
         this._disconnecting = false;
         this._disconnected = true;
     }
@@ -426,9 +444,16 @@ export class Peerbit {
             if (!storeInfo) {
                 throw new Error("Missing store info");
             }
-            const sendAll = (data: Uint8Array): Promise<void> => {
-                return this._ipfs.pubsub.publish(getObserverTopic(topic), data);
-            };
+            const observerTopic = getObserverTopic(topic);
+            const sendAll =
+                this._libp2p.pubsub.getSubscribers(observerTopic)?.length > 0
+                    ? (data: Uint8Array): Promise<any> => {
+                          return this.libp2p.pubsub.publish(
+                              getObserverTopic(topic),
+                              data
+                          );
+                      }
+                    : undefined;
             let send = sendAll;
             if (!this.browser && store.replicate) {
                 // send to peers directly
@@ -457,9 +482,14 @@ export class Peerbit {
                             continue;
                         }
                         const channel = this._directConnections.get(replicator);
-                        if (!channel) {
+                        if (
+                            !channel ||
+                            this.libp2p.pubsub.getSubscribers(
+                                channel.channel._id
+                            ).length === 0
+                        ) {
                             // we are missing a channel, send to all instead as fallback
-                            return sendAll(data);
+                            return sendAll && sendAll(data);
                         } else {
                             channels.push(channel);
                         }
@@ -470,19 +500,20 @@ export class Peerbit {
                     return;
                 };
             }
-
-            exchangeHeads(
-                send,
-                store,
-                program,
-                [entry],
-                topic,
-                true,
-                this.limitSigning ? undefined : this.identity
-            ).catch((error) => {
-                logger.error("Got error when exchanging heads: " + error);
-                throw error;
-            });
+            if (send) {
+                exchangeHeads(
+                    send,
+                    store,
+                    program,
+                    [entry],
+                    topic,
+                    true,
+                    this.limitSigning ? undefined : this.identity
+                ).catch((error) => {
+                    logger.error("Got error when exchanging heads: " + error);
+                    throw error;
+                });
+            }
         };
     }
 
@@ -504,7 +535,9 @@ export class Peerbit {
     _maybeOpenStorePromise: Promise<boolean>;
     // Callback for receiving a message from the network
     async _onMessage(message: PubSubMessage) {
-        logger.debug("Recieved message on topic: " + message.topic);
+        logger.debug(
+            `${this.id}: Recieved message on topic: ${message.topic} ${message.data.length}`
+        );
         if (this._disconnecting) {
             logger.warn("Got message while disconnecting");
             return;
@@ -513,7 +546,6 @@ export class Peerbit {
         if (this._disconnected) {
             if (!areWeTestingWithJest())
                 throw new Error("Got message while disconnected");
-
             return; // because these could just be testing sideffects
         }
 
@@ -566,18 +598,19 @@ export class Peerbit {
                  * I can use them to load associated logs and join/sync them with the data stores I own
                  */
 
-                const {
-                    topic,
-                    storeIndex,
-                    programIndex,
-                    programAddress,
-                    heads,
-                } = msg;
+                const { topic, storeIndex, programAddress, heads } = msg;
                 // replication topic === trustedNetwork address
 
                 const pstores = this.programs.get(topic);
                 const paddress = programAddress;
 
+                logger.debug(
+                    `${this.id}: Recieved heads: ${
+                        heads.length === 1
+                            ? heads[0].entry.hash
+                            : "#" + heads[0].entry.hash
+                    }, topic: ${topic}, storeIndex: ${storeIndex}`
+                );
                 if (heads) {
                     const leaderCache: Map<string, string[]> = new Map();
                     if (!pstores?.has(programAddress)) {
@@ -592,10 +625,10 @@ export class Peerbit {
                             ); // Todo reuse calculations
                             leaderCache.set(gid, leaders);
                             if (leaders.find((x) => x === this.id.toString())) {
+                                const oneEntry = entries[0].entry;
                                 try {
                                     // Assumption: All entries should suffice as references
                                     // when passing to this.open as reasons/proof of validity of opening the store
-                                    const oneEntry = entries[0].entry;
 
                                     await this.open(Address.parse(paddress), {
                                         topic: topic,
@@ -607,6 +640,10 @@ export class Peerbit {
                                     });
                                 } catch (error) {
                                     if (error instanceof AccessError) {
+                                        logger.debug(
+                                            `${this.id}: Failed to open store from head: ${oneEntry.hash}`
+                                        );
+
                                         return;
                                     }
                                     throw error; // unexpected
@@ -655,10 +692,16 @@ export class Peerbit {
                             (l) => l === this.id.toString()
                         );
                         if (!isLeader) {
+                            logger.debug(
+                                `${this.id}: Dropping heads with gid: ${gid}. Because not leader`
+                            );
                             continue;
                         }
                         value.forEach((head) => {
                             toMerge.push(head);
+                            logger.debug(
+                                `${this.id}: Leader for head: ' ${head.entry.hash}`
+                            );
                         });
                     }
                     if (toMerge.length > 0) {
@@ -673,7 +716,7 @@ export class Peerbit {
                     }
                 }
                 logger.debug(
-                    `Received ${heads.length} heads for '${paddress}/${storeIndex}':\n`,
+                    `${this.id}: Synced ${heads.length} heads for '${paddress}/${storeIndex}':\n`,
                     JSON.stringify(
                         heads.map((e) => e.entry.hash),
                         null,
@@ -698,20 +741,35 @@ export class Peerbit {
                     return;
                 }
 
-                msg.info.forEach(async (info) => {
-                    if (info.id === this.id.toString()) {
-                        return;
-                    }
-                    const suffix = "/p2p/" + info.id;
-                    this._ipfs.swarm.connect(
-                        multiaddr(
-                            info.address.toString() +
-                                (info.address.indexOf(suffix) === -1
-                                    ? suffix
-                                    : "")
-                        )
-                    );
-                });
+                await Promise.all(
+                    msg.info.map(async (info) => {
+                        if (info.id === this.id.toString()) {
+                            return;
+                        }
+                        const suffix = "/p2p/" + info.id;
+                        this._libp2p.peerStore.addressBook.set(
+                            info.peerId,
+                            info.multiaddrs
+                        );
+                        const promises = await Promise.any(
+                            info.multiaddrs.map((addr) =>
+                                this._libp2p.dial(
+                                    // addr
+                                    multiaddr(
+                                        addr.toString() +
+                                            (addr.toString().indexOf(suffix) ===
+                                            -1
+                                                ? suffix
+                                                : "")
+                                    )
+                                )
+                            )
+                        );
+                        //  const promises = await this._libp2p.dial(info.peerId)
+
+                        return promises;
+                    })
+                );
             } else if (msg instanceof RequestKeyMessage) {
                 /**
                  * Someone is requesting X25519 Secret keys for me so that they can open encrypted messages (and encrypt)
@@ -746,7 +804,7 @@ export class Peerbit {
                 }
 
                 const send = (data: Uint8Array) =>
-                    this._ipfs.pubsub.publish(
+                    this._libp2p.pubsub.publish(
                         message.topic, // DirectChannel.getTopic([peer.toString()]),
                         data
                     );
@@ -763,6 +821,9 @@ export class Peerbit {
                 throw new Error("Unexpected message");
             }
         } catch (e: any) {
+            logger.debug(
+                `${this.id}: Failed to handle message on topic: ${message.topic} ${message.data.length}`
+            );
             if (e instanceof BorshError) {
                 logger.debug("Got message for a different namespace");
                 return;
@@ -785,13 +846,14 @@ export class Peerbit {
                 const initializeAsNonBrowser = async () => {
                     await exchangeSwarmAddresses(
                         (data) =>
-                            this._ipfs.pubsub.publish(
+                            this.libp2p.pubsub.publish(
                                 getReplicationTopic(topic),
                                 data
                             ),
                         this.identity,
                         peer,
-                        await this._ipfs.swarm.peers(),
+                        this._libp2p.pubsub.getPeers(),
+                        this._libp2p.peerStore.addressBook,
                         this._getNetwork(topic),
                         this.localNetwork
                     );
@@ -821,15 +883,23 @@ export class Peerbit {
                             // If replicate false, we are in write mode. Means we should exchange all heads
                             // Because we dont know anything about whom are to store data, so we assume all peers might have responsibility
                             const send = (data: Uint8Array) =>
-                                this._ipfs.pubsub.publish(
+                                this._libp2p.pubsub.publish(
                                     getObserverTopic(topic), // DirectChannel.getTopic([peer.toString()]),
                                     data
                                 );
+                            const headsToExchange = store.oplog.heads;
+                            logger.debug(
+                                `${this.id}: Exchange heads ${
+                                    headsToExchange.length === 1
+                                        ? headsToExchange[0].hash
+                                        : "#" + headsToExchange.length
+                                } onPeerConnected ${topic} - ${peer}`
+                            );
                             await exchangeHeads(
                                 send,
                                 store,
                                 programAndStores.program,
-                                store.oplog.heads,
+                                headsToExchange,
                                 topic,
                                 false,
                                 this.limitSigning ? undefined : this.identity
@@ -903,7 +973,13 @@ export class Peerbit {
                                         );
                                         continue;
                                     }
-
+                                    logger.debug(
+                                        `${this.id}: Exchange heads ${
+                                            entries.length === 1
+                                                ? entries[0].hash
+                                                : "#" + entries.length
+                                        }  on rebalance ${topic}`
+                                    );
                                     await exchangeHeads(
                                         async (message) => {
                                             await channel.send(message);
@@ -937,11 +1013,15 @@ export class Peerbit {
         }
     }
 
-    async join(program: Network) {
+    async join(program: Program) {
+        const network = getNetwork(program);
+        if (!network) {
+            throw new Error("Program not part of anetwork");
+        }
         // Will be rejected by peers if my identity is not trusted
         // (this will sign our IPFS ID with our client Ed25519 key identity, if peers do not trust our identity, we will be rejected)
-        await program.network.add(
-            new IPFSAddress({ address: (await this.ipfs.id()).id.toString() })
+        await network.add(
+            new PeerIdAddress({ address: this._libp2p.peerId.toString() })
         );
     }
 
@@ -959,9 +1039,14 @@ export class Peerbit {
             try {
                 logger.debug(`Create a channel to ${peer}`);
                 channel = await DirectChannel.open(
-                    this._ipfs,
+                    this.libp2p,
                     peer,
-                    this._onMessage.bind(this),
+                    (message) => {
+                        logger.debug(
+                            `${this.id}: Recieved message from direct channel: ${message.topic}`
+                        );
+                        this._onMessage(message);
+                    },
                     {
                         onPeerLeaveCallback: (channel) => {
                             // First modify direct connections
@@ -1041,11 +1126,8 @@ export class Peerbit {
         await this.unsubscribeToTopic(topic, db.id);
 
         const dir =
-            db && db._options.directory
-                ? db._options.directory
-                : this.directory;
+            db && db._options.directory ? db._options.directory : this.cacheDir;
         const cache = this.caches[dir];
-
         if (cache && cache.handlers.has(db.id)) {
             cache.handlers.delete(db.id);
             if (!cache.handlers.size) {
@@ -1154,7 +1236,7 @@ export class Peerbit {
         const isTrusted = (peer: string | PeerId) =>
             network
                 ? network.isTrusted(
-                      new IPFSAddress({ address: peer.toString() })
+                      new PeerIdAddress({ address: peer.toString() })
                   )
                 : true;
         const peers = await Promise.all(allPeers.map(isTrusted)).then(
@@ -1224,7 +1306,7 @@ export class Peerbit {
         ) => {
             if (!this._topicSubscriptions.has(topic)) {
                 const topicMonitor = new IpfsPubsubPeerMonitor(
-                    this._ipfs.pubsub,
+                    this.libp2p.pubsub,
                     topic,
                     {
                         onJoin: (peer) => {
@@ -1244,7 +1326,7 @@ export class Peerbit {
                     topic,
                     new SharedChannel(
                         await new SharedIPFSChannel(
-                            this._ipfs,
+                            this._libp2p,
                             this.id,
                             topic,
                             (message) => {
@@ -1301,7 +1383,7 @@ export class Peerbit {
         directory: string,
         existingCache?: Cache<any>
     ) {
-        const dir = directory || this.directory;
+        const dir = directory || this.cacheDir;
         if (!this.caches[dir]) {
             const newCache = existingCache || (await this._createCache(dir));
             this.caches[dir] = { cache: newCache, handlers: new Set() };
@@ -1356,7 +1438,7 @@ export class Peerbit {
             ) {
                 try {
                     program = (await Program.load(
-                        this._ipfs,
+                        this._store,
                         storeOrAddress,
                         options
                     )) as any as S; // TODO fix typings
@@ -1374,7 +1456,7 @@ export class Peerbit {
                 }
             }
 
-            await program.save(this.ipfs);
+            await program.save(this._store);
             const programAddress = program.address!.toString()!;
 
             const definedTopic: string = (options.topic || programAddress)!;
@@ -1471,81 +1553,90 @@ export class Peerbit {
             }
             const replicate =
                 options.replicate !== undefined ? options.replicate : true;
-            await program.init(this._ipfs, options.identity || this.identity, {
-                topic: definedTopic,
-                onClose: () => this._onProgamClose(program, definedTopic!),
-                onDrop: () => this._onProgamClose(program, definedTopic!),
+            await program.init(
+                this.libp2p,
+                this._store,
+                options.identity || this.identity,
+                {
+                    topic: definedTopic,
+                    onClose: () => this._onProgamClose(program, definedTopic!),
+                    onDrop: () => this._onProgamClose(program, definedTopic!),
 
-                store: {
-                    ...options,
-                    replicate,
-                    resolveCache: (store) => {
-                        const programAddress = program.address?.toString();
-                        if (!programAddress) {
-                            throw new Error("Unexpected");
-                        }
-                        return new Cache(
-                            this.cache._store.sublevel(
-                                path.join(programAddress, "store", store.id)
-                            )
-                        );
+                    store: {
+                        ...options,
+                        replicate,
+                        resolveCache: (store) => {
+                            const programAddress = program.address?.toString();
+                            if (!programAddress) {
+                                throw new Error("Unexpected");
+                            }
+                            return new Cache(
+                                this.cache._store.sublevel(
+                                    path.join(programAddress, "store", store.id)
+                                )
+                            );
+                        },
+                        onClose: async (store) => {
+                            await this._onClose(program, store, definedTopic);
+                            if (options.onClose) {
+                                return options.onClose(store);
+                            }
+                            return;
+                        },
+                        onDrop: async (store) => {
+                            await this._onDrop(store);
+                            if (options.onDrop) {
+                                return options.onDrop(store);
+                            }
+                            return;
+                        },
+                        onLoad: async (store) => {
+                            /*  await this._onLoad(store) */
+                            if (options.onLoad) {
+                                return options.onLoad(store);
+                            }
+                            return;
+                        },
+                        onWrite: async (store, entry) => {
+                            await this.onWrite(program)(
+                                store,
+                                entry,
+                                definedTopic
+                            );
+                            if (options.onWrite) {
+                                return options.onWrite(store, entry);
+                            }
+                            return;
+                        },
+                        onReplicationComplete: async (store) => {
+                            if (options.onReplicationComplete) {
+                                options.onReplicationComplete(store);
+                            }
+                        },
+                        onReplicationProgress: async (store, entry) => {
+                            if (options.onReplicationProgress) {
+                                options.onReplicationProgress(store, entry);
+                            }
+                        },
+                        onReplicationQueued: async (store, entry) => {
+                            if (options.onReplicationQueued) {
+                                options.onReplicationQueued(store, entry);
+                            }
+                        },
+                        onOpen: async (store) => {
+                            if (options.onOpen) {
+                                return options.onOpen(store);
+                            }
+                            return;
+                        },
                     },
-                    onClose: async (store) => {
-                        await this._onClose(program, store, definedTopic);
-                        if (options.onClose) {
-                            return options.onClose(store);
-                        }
-                        return;
-                    },
-                    onDrop: async (store) => {
-                        await this._onDrop(store);
-                        if (options.onDrop) {
-                            return options.onDrop(store);
-                        }
-                        return;
-                    },
-                    onLoad: async (store) => {
-                        /*  await this._onLoad(store) */
-                        if (options.onLoad) {
-                            return options.onLoad(store);
-                        }
-                        return;
-                    },
-                    onWrite: async (store, entry) => {
-                        await this.onWrite(program)(store, entry, definedTopic);
-                        if (options.onWrite) {
-                            return options.onWrite(store, entry);
-                        }
-                        return;
-                    },
-                    onReplicationComplete: async (store) => {
-                        if (options.onReplicationComplete) {
-                            options.onReplicationComplete(store);
-                        }
-                    },
-                    onReplicationProgress: async (store, entry) => {
-                        if (options.onReplicationProgress) {
-                            options.onReplicationProgress(store, entry);
-                        }
-                    },
-                    onReplicationQueued: async (store, entry) => {
-                        if (options.onReplicationQueued) {
-                            options.onReplicationQueued(store, entry);
-                        }
-                    },
-                    onOpen: async (store) => {
-                        if (options.onOpen) {
-                            return options.onOpen(store);
-                        }
-                        return;
-                    },
-                },
-            });
+                }
+            );
 
             const resolveCache = async (address: Address) => {
                 const cache = await this._requestCache(
                     address.toString(),
-                    options.directory || this.directory
+                    options.directory || this.cacheDir
                 );
                 const haveDB = await this._haveLocalData(
                     cache,
@@ -1598,10 +1689,10 @@ export class Peerbit {
         const asPermissioned = this.programs
             .get(topic)
             ?.get(parsedAddress.root().toString())?.program;
-        if (!asPermissioned || !inNetwork(asPermissioned)) {
+        if (!asPermissioned) {
             return;
         }
-        return asPermissioned.network;
+        return getNetwork(asPermissioned);
     }
 
     /**
@@ -1642,7 +1733,7 @@ export class Peerbit {
         const promise = new Promise<KeyWithMeta<T>[] | undefined>(
             (resolve, reject) => {
                 const send = (message: Uint8Array) =>
-                    this._ipfs.pubsub.publish(
+                    this._libp2p.pubsub.publish(
                         getReplicationTopic(topic),
                         message
                     );
