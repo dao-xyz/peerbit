@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-test-utils",
-    "version": "0.0.14",
+    "version": "0.0.15",
     "description": "Test utils for Peerbit",
     "type": "module",
     "sideEffects": false,
@@ -34,17 +34,16 @@
     "author": "dao.xyz",
     "license": "MIT",
     "dependencies": {
-        "memory-level": "^1.0.0",
-        "libp2p": "^0.40.0",
         "@chainsafe/libp2p-gossipsub": "^5.2.1",
+        "@chainsafe/libp2p-noise": "^10.2.0",
         "@libp2p/mplex": "^7.1.0",
         "@libp2p/tcp": "^6.0.4",
-        "@chainsafe/libp2p-noise": "^10.2.0"
+        "libp2p": "^0.40.0",
+        "memory-level": "^1.0.0"
     },
     "devDependencies": {
         "@dao-xyz/peerbit-time": "^0.0.18"
     },
-    "peerDependencies": {},
     "localMaintainers": [
         "dao.xyz"
     ],

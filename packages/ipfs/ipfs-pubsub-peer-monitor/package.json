@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/ipfs-pubsub-peer-monitor",
-    "version": "0.0.15",
+    "version": "0.0.16",
     "description": "Peer monitor",
     "type": "module",
     "license": "MIT",
