@@ -47,6 +47,8 @@ it("test pubsub 4", async () => {
     });
     // wait for subscriptions to propagate
     await waitForPeers(session.peers[1], [session.peers[0].peerId], topic);
+    await waitForPeers(session.peers[2], [session.peers[0].peerId], topic);
+    await waitForPeers(session.peers[3], [session.peers[0].peerId], topic);
     await session.peers[3].pubsub.publish(topic, data);
     await waitFor(() => !!msg);
     expect(msg).toEqual(data);
