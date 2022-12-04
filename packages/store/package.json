@@ -39,7 +39,7 @@
     "license": "MIT",
     "dependencies": {
         "@dao-xyz/ipfs-log": "^5.5.60",
-        "@dao-xyz/peerbit-block": "^1.1.16",
+        "@dao-xyz/peerbit-block": "^0.0.2",
         "@dao-xyz/peerbit-cache": "^0.4.25",
         "p-each-series": "^3.0.0",
         "p-map": "^5.5.0",

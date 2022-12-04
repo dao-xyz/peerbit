@@ -33,7 +33,7 @@
         "@dao-xyz/borsh": "^4.0.3",
         "@dao-xyz/ipfs-pubsub-direct-channel": "^0.0.34",
         "@dao-xyz/ipfs-pubsub-peer-monitor": "^0.0.17",
-        "@dao-xyz/peerbit-block": "^1.1.16",
+        "@dao-xyz/peerbit-block": "^0.0.2",
         "@dao-xyz/peerbit-cache": "^0.4.25",
         "@dao-xyz/peerbit-crypto": "^0.0.22",
         "@dao-xyz/peerbit-keystore": "^0.0.33",
