@@ -13,6 +13,10 @@ export class LSession {
     }
 
     static async connected(n: number, pubsubTopics?: string[]) {
+        // Allow more than 11 listneers
+        if (typeof process !== "undefined") process.setMaxListeners(Infinity);
+
+        // create nodes
         const promises: Promise<Libp2p>[] = [];
         for (let i = 0; i < n; i++) {
             const result = async () => {
@@ -34,33 +38,35 @@ export class LSession {
             promises.push(result());
         }
 
-        const ipfsd = await Promise.all(promises);
-        const connectPromises: Promise<any>[] = [];
+        const libs = await Promise.all(promises);
 
+        // Connect the nodes
+        const connectPromises: Promise<any>[] = [];
         for (let i = 0; i < n - 1; i++) {
             for (let j = i + 1; j < n; j++) {
-                await ipfsd[i].peerStore.addressBook.set(
-                    ipfsd[j].peerId,
-                    ipfsd[j].getMultiaddrs()
+                await libs[i].peerStore.addressBook.set(
+                    libs[j].peerId,
+                    libs[j].getMultiaddrs()
                 );
-                connectPromises.push(ipfsd[i].dial(ipfsd[j].peerId));
+                connectPromises.push(libs[i].dial(libs[j].peerId));
             }
         }
 
         await Promise.all(connectPromises);
-
         const peers: Libp2p[] = [];
-        for (let i = 0; i < ipfsd.length; i++) {
-            peers.push(ipfsd[i]);
+        for (let i = 0; i < libs.length; i++) {
+            peers.push(libs[i]);
         }
+
+        // Subscribe to initial topics
         if (pubsubTopics) {
             for (const topic of pubsubTopics) {
-                for (const ipfs of ipfsd) {
+                for (const ipfs of libs) {
                     ipfs.pubsub.subscribe(topic);
                 }
                 for (let i = 0; i < n - 1; i++) {
                     for (let j = i + 1; j < n; j++) {
-                        await waitForPeers(ipfsd[i], ipfsd[j], topic);
+                        await waitForPeers(libs[i], libs[j], topic);
                     }
                 }
             }
