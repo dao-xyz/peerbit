@@ -13,7 +13,7 @@ import {
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { createHash } from "crypto";
 import sodium from "libsodium-wrappers";
-import { StoreError } from "./errors";
+import { StoreError } from "./errors.js";
 import { Level } from "level";
 import { toBase64 } from "@dao-xyz/peerbit-crypto";
 
@@ -51,7 +51,7 @@ export const getPath = (group: string, key: string) => {
     return group + PATH_KEY + key;
 };
 
-const idFromKey = async (keypair: Keypair): Promise<string> => {
+const idFromKey = (keypair: Keypair): string => {
     return publicKeyFromKeyPair(keypair).hashcode();
 };
 

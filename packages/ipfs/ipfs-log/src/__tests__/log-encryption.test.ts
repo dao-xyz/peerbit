@@ -80,8 +80,7 @@ describe("Log - Encryption", function () {
             const logOptions = {
                 gid: "X",
                 encryption: {
-                    getEncryptionKeypair: () =>
-                        Promise.resolve(senderKey.keypair),
+                    getEncryptionKeypair: () => senderKey.keypair,
                     getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
                         for (let i = 0; i < publicKeys.length; i++) {
                             if (

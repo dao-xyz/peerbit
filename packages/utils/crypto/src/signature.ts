@@ -7,8 +7,8 @@ import {
     AbstractType,
 } from "@dao-xyz/borsh";
 import { arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
-import { Ed25519PublicKey, verifySignatureEd25519 } from "./ed25519";
-import { PublicSignKey } from "./key";
+import { Ed25519PublicKey, verifySignatureEd25519 } from "./ed25519.js";
+import { PublicSignKey } from "./key.js";
 import { Secp256k1PublicKey, verifySignatureSecp256k1 } from "./sepc256k1.js";
 import { SignWithKey } from "./signer.js";
 
@@ -104,7 +104,7 @@ export class MaybeSigned<T> {
     }
 }
 
-export const verify = async (
+export const verify = (
     signature: Uint8Array,
     publicKey: PublicSignKey,
     data: Uint8Array
@@ -113,9 +113,9 @@ export const verify = async (
         return true;
     }
     if (publicKey instanceof Ed25519PublicKey) {
-        return await verifySignatureEd25519(signature, publicKey, data);
+        return verifySignatureEd25519(signature, publicKey, data);
     } else if (publicKey instanceof Secp256k1PublicKey) {
-        return await verifySignatureSecp256k1(signature, publicKey, data);
+        return verifySignatureSecp256k1(signature, publicKey, data);
     }
     return false;
 };

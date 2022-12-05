@@ -44,6 +44,10 @@ module.exports = (config) => {
         },
     ];
 
+    config.experiments = {
+        topLevelAwait: true,
+    };
+
     /* config.plugins.push(new webpack.DefinePlugin({
         process: { env: {} }
     })) */

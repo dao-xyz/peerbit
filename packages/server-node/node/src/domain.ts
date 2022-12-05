@@ -1,7 +1,7 @@
 import isNode from "is-node";
 import { waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
-import { client } from "./api";
-import { installDocker, startContainer } from "./docker";
+import { client } from "./api.js";
+import { installDocker, startContainer } from "./docker.js";
 
 const validateEmail = (email) => {
     return String(email)

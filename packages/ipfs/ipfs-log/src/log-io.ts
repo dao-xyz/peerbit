@@ -1,13 +1,17 @@
-import { Entry } from "./entry";
-import { EntryFetchAllOptions, EntryIO, strictFetchOptions } from "./entry-io";
-import { ISortFunction, LastWriteWins, NoZeroes } from "./log-sorting";
-import * as LogError from "./log-errors";
-import io, { BlockStore, Blocks } from "@dao-xyz/peerbit-block";
-import { isDefined } from "./is-defined";
-import { findUniques } from "./find-uniques";
-import { difference } from "./difference";
-import { Log } from "./log";
-import { JSON_ENCODING } from "./encoding";
+import { Entry } from "./entry.js";
+import {
+    EntryFetchAllOptions,
+    EntryIO,
+    strictFetchOptions,
+} from "./entry-io.js";
+import { ISortFunction, LastWriteWins, NoZeroes } from "./log-sorting.js";
+import * as LogError from "./log-errors.js";
+import { Blocks } from "@dao-xyz/peerbit-block";
+import { isDefined } from "./is-defined.js";
+import { findUniques } from "./find-uniques.js";
+import { difference } from "./difference.js";
+import { Log } from "./log.js";
+import { JSON_ENCODING } from "./encoding.js";
 
 const IPLD_LINKS = ["heads"];
 

@@ -4,6 +4,7 @@ import { verifyMessage } from "@ethersproject/wallet";
 import sodium from "libsodium-wrappers";
 import { arraysEqual, fixedUint8Array } from "@dao-xyz/peerbit-borsh-utils";
 import { fromHexString } from "./utils.js";
+await sodium.ready;
 
 @variant(1)
 export class Secp256k1PublicKey extends PublicSignKey {
@@ -32,16 +33,13 @@ export class Secp256k1PublicKey extends PublicSignKey {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-export const verifySignatureSecp256k1 = async (
+export const verifySignatureSecp256k1 = (
     signature: Uint8Array,
     publicKey: Secp256k1PublicKey,
     data: Uint8Array,
     signedHash = false
-): Promise<boolean> => {
-    await sodium.ready;
-    const signedData = signedHash
-        ? await sodium.crypto_generichash(32, data)
-        : data;
+): boolean => {
+    const signedData = signedHash ? sodium.crypto_generichash(32, data) : data;
     const signerAddress = verifyMessage(signedData, decoder.decode(signature));
     return arraysEqual(
         fromHexString(signerAddress.slice(2)),

@@ -1,7 +1,7 @@
 import { AbstractType, deserialize } from "@dao-xyz/borsh";
-import { PublicSignKey } from "./key";
-import { MaybeSigned } from "./signature";
-import { GetAnyKeypair, MaybeEncrypted } from "./encryption";
+import { PublicSignKey } from "./key.js";
+import { MaybeSigned } from "./signature.js";
+import { GetAnyKeypair, MaybeEncrypted } from "./encryption.js";
 import { AccessError } from "./errors.js";
 export const decryptVerifyInto = async <T>(
     data: Uint8Array,

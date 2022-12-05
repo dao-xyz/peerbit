@@ -1,9 +1,5 @@
 import http from "http";
-import {
-    PublicSignKey,
-    fromBase64Sync,
-    toBase64Sync,
-} from "@dao-xyz/peerbit-crypto";
+import { PublicSignKey, fromBase64, toBase64 } from "@dao-xyz/peerbit-crypto";
 import { Peerbit } from "@dao-xyz/peerbit";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { Program, Address } from "@dao-xyz/peerbit-program";
@@ -14,6 +10,7 @@ import { v4 as uuid } from "uuid";
 import { Libp2p } from "libp2p";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 import { getNetwork } from "@dao-xyz/peerbit";
+import { getConfigDir, getCredentialsPath, NotFoundError } from "./config.js";
 
 export const LOCAL_PORT = 8082;
 export const SSL_PORT = 9002;
@@ -39,20 +36,6 @@ const LIBRARY_PATH = "/library";
 const NETWORK_PEER_PATH = "/network/peer";
 const NETWORK_PEERS_PATH = "/network/peers";
 
-const getConfigDir = async (peerId: string): Promise<string> => {
-    const path = await import("path");
-    const os = await import("os");
-    const configDir = path.join(os.homedir(), ".peerbit", peerId);
-    return configDir;
-};
-
-const getCredentialsPath = async (configDir: string): Promise<string> => {
-    const path = await import("path");
-    return path.join(configDir, "credentials");
-};
-
-class NotFoundError extends Error {}
-
 export const checkExistPath = async (path: string) => {
     const fs = await import("fs");
 
@@ -69,9 +52,9 @@ export const checkExistPath = async (path: string) => {
         throw new Error("Can not access path");
     }
 };
-export const createPassword = async (peerId: string): Promise<string> => {
+export const createPassword = async (): Promise<string> => {
     const fs = await import("fs");
-    const configDir = await getConfigDir(peerId);
+    const configDir = await getConfigDir();
     const credentialsPath = await getCredentialsPath(configDir);
     if (await checkExistPath(credentialsPath)) {
         throw new Error(
@@ -96,9 +79,9 @@ export const createPassword = async (peerId: string): Promise<string> => {
     return password;
 };
 
-export const loadPassword = async (peerId: string): Promise<string> => {
+export const loadPassword = async (): Promise<string> => {
     const fs = await import("fs");
-    const configDir = await getConfigDir(peerId);
+    const configDir = await getConfigDir();
     const credentialsPath = await getCredentialsPath(configDir);
     if (!(await checkExistPath(credentialsPath))) {
         throw new NotFoundError("Credentials file does not exist");
@@ -112,12 +95,12 @@ export const loadPassword = async (peerId: string): Promise<string> => {
     return password;
 };
 
-export const loadOrCreatePassword = async (peerId: string): Promise<string> => {
+export const loadOrCreatePassword = async (): Promise<string> => {
     try {
-        return await loadPassword(peerId);
+        return await loadPassword();
     } catch (error) {
         if (error instanceof NotFoundError) {
-            return createPassword(peerId);
+            return createPassword();
         }
         throw error;
     }
@@ -149,7 +132,7 @@ export const startServer = async (
         throw err;
     }
 
-    const password = await loadOrCreatePassword(libp2p.peerId.toString());
+    const password = await loadOrCreatePassword();
 
     const adminACL = (req: http.IncomingMessage): boolean => {
         const auth = req.headers["authorization"];
@@ -373,7 +356,7 @@ export const startServer = async (
                                         if (program) {
                                             res.writeHead(200);
                                             res.write(
-                                                toBase64Sync(serialize(program))
+                                                toBase64(serialize(program))
                                             );
                                             res.end();
                                         } else {
@@ -396,7 +379,7 @@ export const startServer = async (
                                         } else {
                                             try {
                                                 const parsed = deserialize(
-                                                    fromBase64Sync(body),
+                                                    fromBase64(body),
                                                     Program
                                                 );
                                                 (client as Peerbit)
@@ -480,7 +463,7 @@ export const startServer = async (
                                                     [
                                                         ...network.trustGraph._index._index.values(),
                                                     ].map((x) =>
-                                                        toBase64Sync(
+                                                        toBase64(
                                                             serialize(x.value)
                                                         )
                                                     )
@@ -525,9 +508,7 @@ export const startServer = async (
                                                 try {
                                                     const reciever =
                                                         deserialize(
-                                                            fromBase64Sync(
-                                                                body
-                                                            ),
+                                                            fromBase64(body),
                                                             PublicSignKey
                                                         );
                                                     network
@@ -535,7 +516,7 @@ export const startServer = async (
                                                         .then((r) => {
                                                             res.writeHead(200);
                                                             res.end(
-                                                                toBase64Sync(
+                                                                toBase64(
                                                                     serialize(r)
                                                                 )
                                                             );
@@ -658,7 +639,7 @@ export const client = async (
         ).data;
     const getHeaders = async () => {
         const headers = {
-            authorization: "Basic admin:" + (await loadPassword(await getId())),
+            authorization: "Basic admin:" + (await loadPassword()),
         };
         return headers;
     };
@@ -723,7 +704,7 @@ export const client = async (
                 );
                 return !result
                     ? undefined
-                    : deserialize(fromBase64Sync(result), Program);
+                    : deserialize(fromBase64(result), Program);
             },
 
             /**
@@ -737,7 +718,7 @@ export const client = async (
             ): Promise<Address> => {
                 const base64 =
                     program instanceof Program
-                        ? toBase64Sync(serialize(program))
+                        ? toBase64(serialize(program))
                         : program;
                 const resp = throwIfNot200(
                     await axios.put(
@@ -780,7 +761,7 @@ export const client = async (
                     return !result
                         ? undefined
                         : (result as string[]).map((r) =>
-                              deserialize(fromBase64Sync(r), IdentityRelation)
+                              deserialize(fromBase64(r), IdentityRelation)
                           );
                 },
             },
@@ -789,7 +770,7 @@ export const client = async (
                     address: Address | string,
                     publicKey: PublicSignKey
                 ): Promise<IdentityRelation> => {
-                    const base64 = toBase64Sync(serialize(publicKey));
+                    const base64 = toBase64(serialize(publicKey));
                     const resp = throwIfNot200(
                         await axios.put(
                             endpoint +
@@ -800,10 +781,7 @@ export const client = async (
                             { validateStatus, headers: await getHeaders() }
                         )
                     );
-                    return deserialize(
-                        fromBase64Sync(resp.data),
-                        IdentityRelation
-                    );
+                    return deserialize(fromBase64(resp.data), IdentityRelation);
                 },
             },
         },

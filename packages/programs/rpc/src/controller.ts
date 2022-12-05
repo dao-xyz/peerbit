@@ -140,7 +140,7 @@ export class RPC<Q, R> extends ComposableProgram {
     _topic: string;
     _context: SearchContext;
 
-    public async setup(options: RPCInitializationOptions<Q, R>) {
+    public setup(options: RPCInitializationOptions<Q, R>) {
         if (options.rpcTopic) {
             if (
                 !!(options.rpcTopic as { rpcRegion }).rpcRegion &&
@@ -179,7 +179,7 @@ export class RPC<Q, R> extends ComposableProgram {
         await super.init(libp2p, store, identity, options);
         this._topic = options.topic;
         if (options.store.replicate) {
-            await this._subscribe();
+            this._subscribe();
         }
         return this;
     }
@@ -198,7 +198,7 @@ export class RPC<Q, R> extends ComposableProgram {
         this._subscribed = false;
     }
 
-    async _subscribe(): Promise<void> {
+    _subscribe(): void {
         if (this._subscribed) {
             return;
         }
@@ -227,8 +227,12 @@ export class RPC<Q, R> extends ComposableProgram {
                                 this._encryption?.getAnyKeypair ||
                                     (() => Promise.resolve(undefined)),
                                 {
-                                    isTrusted: async (key) =>
-                                        this.canRead(key.signature?.publicKey),
+                                    isTrusted: (key) =>
+                                        Promise.resolve(
+                                            this.canRead(
+                                                key.signature?.publicKey
+                                            )
+                                        ),
                                 }
                             );
                         if (request instanceof RequestV0) {

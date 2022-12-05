@@ -3,7 +3,7 @@ import {
     DocumentIndex,
     Operation,
     PutOperation,
-} from "./document-index";
+} from "./document-index.js";
 import {
     Constructor,
     deserialize,
@@ -28,7 +28,7 @@ import {
 import { CanRead } from "@dao-xyz/peerbit-rpc";
 import { LogIndex } from "@dao-xyz/peerbit-logindex";
 import { AccessError } from "@dao-xyz/peerbit-crypto";
-import { Results } from "./query";
+import { Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 
 const logger = loggerFn({ module: "document" });

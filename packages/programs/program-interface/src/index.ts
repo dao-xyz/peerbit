@@ -12,7 +12,7 @@ import {
 } from "@dao-xyz/borsh";
 import path from "path";
 import { CID } from "multiformats/cid";
-import { LibP2PBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import { Blocks } from "@dao-xyz/peerbit-block";
 import { Libp2p } from "libp2p";
 export * from "./protocol-message.js";
 

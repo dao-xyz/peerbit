@@ -22,7 +22,7 @@ import {
     LogQueryRequest,
 } from "../controller";
 import { fileURLToPath } from "url";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Address } from "@dao-xyz/peerbit-program";
 import { jest } from "@jest/globals";
@@ -63,8 +63,7 @@ describe("query", () => {
             });
             logIndices.push(logIndex);
             const encryption = {
-                getEncryptionKeypair: () =>
-                    Promise.resolve(signKey as Ed25519Keypair | X25519Keypair),
+                getEncryptionKeypair: () => signKey,
                 getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
                     for (let i = 0; i < publicKeys.length; i++) {
                         if (

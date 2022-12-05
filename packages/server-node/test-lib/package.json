@@ -10,10 +10,10 @@
     "bin": {
         "peerbit": "./lib/esm/bin.js"
     },
-    "module": "lib/esm/index.mjs",
+    "module": "lib/esm/index.js",
     "types": "lib/esm/index.d.ts",
     "exports": {
-        "import": "./lib/esm/index.mjs"
+        "import": "./lib/esm/index.js"
     },
     "files": [
         "lib",

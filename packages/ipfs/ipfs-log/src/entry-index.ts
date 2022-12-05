@@ -1,4 +1,4 @@
-import { Entry } from "./entry";
+import { Entry } from "./entry.js";
 export class EntryIndex<T> {
     _cache: { [key: string]: Entry<T> };
     constructor(entries = {}) {

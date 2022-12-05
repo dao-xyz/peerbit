@@ -4,7 +4,7 @@ import { serialize } from "@dao-xyz/borsh";
 import { client, startServer } from "./api.js";
 import { parsePublicKey } from "./utils.js";
 import { createRecord } from "./aws.js";
-import { toBase64Sync } from "@dao-xyz/peerbit-crypto";
+import { toBase64 } from "@dao-xyz/peerbit-crypto";
 import { createNode } from "./libp2p.js";
 
 const KEY_EXAMPLE =
@@ -389,7 +389,7 @@ export const cli = async (args?: string[]) => {
                         if (!program) {
                             console.log("Program does not exist");
                         } else {
-                            console.log(toBase64Sync(serialize(program)));
+                            console.log(toBase64(serialize(program)));
                         }
                     },
                 })

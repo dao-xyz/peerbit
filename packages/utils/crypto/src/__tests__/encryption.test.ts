@@ -7,11 +7,12 @@ import {
     X25519Keypair,
 } from "../index.js";
 import sodium from "libsodium-wrappers";
+await sodium.ready;
 
 describe("encryption", function () {
     const config = (keypair: Ed25519Keypair | X25519Keypair) => {
         return {
-            getEncryptionKeypair: () => Promise.resolve(keypair),
+            getEncryptionKeypair: () => keypair,
             getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
                 const pk =
                     keypair.publicKey instanceof X25519PublicKey
@@ -29,10 +30,9 @@ describe("encryption", function () {
         } as PublicKeyEncryptionResolver;
     };
     it("encrypt", async () => {
-        await sodium.ready;
-        const senderKey = await X25519Keypair.create();
-        const recieverKey1 = await X25519Keypair.create();
-        const recieverKey2 = await X25519Keypair.create();
+        const senderKey = X25519Keypair.create();
+        const recieverKey1 = X25519Keypair.create();
+        const recieverKey2 = X25519Keypair.create();
 
         const data = new Uint8Array([1, 2, 3]);
         const decrypted = new DecryptedThing({
@@ -42,7 +42,7 @@ describe("encryption", function () {
         const reciever1Config = config(recieverKey1);
         const reciever2Config = config(recieverKey2);
 
-        const encrypted = await decrypted.encrypt(
+        const encrypted = decrypted.encrypt(
             senderKey,
             recieverKey1.publicKey,
             recieverKey2.publicKey
@@ -61,9 +61,9 @@ describe("encryption", function () {
     });
 
     it("it can use ed25519 for encryption", async () => {
-        const senderKey = await Ed25519Keypair.create();
-        const recieverKey1 = await Ed25519Keypair.create();
-        const recieverKey2 = await Ed25519Keypair.create();
+        const senderKey = Ed25519Keypair.create();
+        const recieverKey1 = Ed25519Keypair.create();
+        const recieverKey2 = Ed25519Keypair.create();
 
         const reciever1Config = config(recieverKey1);
         const reciever2Config = config(recieverKey2);
@@ -73,7 +73,7 @@ describe("encryption", function () {
             data,
         });
 
-        const encrypted = await decrypted.encrypt(
+        const encrypted = decrypted.encrypt(
             senderKey,
             recieverKey1.publicKey,
             recieverKey2.publicKey
@@ -94,12 +94,11 @@ describe("encryption", function () {
 
 describe("ed25519", function () {
     it("can sign verify", async () => {
-        await sodium.ready;
         const data = new Uint8Array([1, 2, 3]);
-        const senderKey = await Ed25519Keypair.create();
-        const signature = await senderKey.sign(data);
+        const senderKey = Ed25519Keypair.create();
+        const signature = senderKey.sign(data);
         expect(signature).toHaveLength(64); // detached
-        const verify = await verifySignatureEd25519(
+        const verify = verifySignatureEd25519(
             signature,
             senderKey.publicKey.publicKey,
             data

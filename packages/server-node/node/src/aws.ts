@@ -1,4 +1,4 @@
-import { getMyIp } from "./domain";
+import { getMyIp } from "./domain.js";
 
 export const createRecord = async (options: {
     domain: string;

@@ -18,13 +18,23 @@ export type StorePublicKeyEncryption = (
 }
  */
 
-export const encryptionWithRequestKey = (
+export const encryptionWithRequestKey = async (
     identity: Identity,
     keystore: Keystore,
     requestKey?: (
         key: X25519PublicKey
     ) => Promise<KeyWithMeta<Ed25519Keypair | X25519Keypair>[] | undefined>
-): PublicKeyEncryptionResolver => {
+): Promise<PublicKeyEncryptionResolver> => {
+    let defaultEncryptionKey = await keystore.getKey(identity.publicKey); // TODO add key rotation, potentially generate new key every call
+    // TODO key rotation
+    if (
+        !defaultEncryptionKey ||
+        (defaultEncryptionKey instanceof Ed25519Keypair === false &&
+            defaultEncryptionKey instanceof X25519Keypair === false)
+    ) {
+        defaultEncryptionKey = await keystore.createEd25519Key();
+    }
+
     return {
         getAnyKeypair: async (publicKeys) => {
             for (let i = 0; i < publicKeys.length; i++) {
@@ -62,17 +72,10 @@ export const encryptionWithRequestKey = (
             throw new AccessError("Failed to access key");
         },
 
-        getEncryptionKeypair: async () => {
-            // TODO key rotation
-            let key = await keystore.getKey(identity.publicKey); // TODO add key rotation, potentially generate new key every call
-            if (
-                !key ||
-                (key instanceof Ed25519Keypair === false &&
-                    key instanceof X25519Keypair === false)
-            ) {
-                key = await keystore.createEd25519Key();
-            }
-            return key.keypair as Ed25519Keypair | X25519Keypair;
+        getEncryptionKeypair: () => {
+            return defaultEncryptionKey!.keypair as
+                | Ed25519Keypair
+                | X25519Keypair;
         },
     };
 };

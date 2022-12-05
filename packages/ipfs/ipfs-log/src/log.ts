@@ -8,7 +8,6 @@ import {
     EntryFetchOptions,
     strictFetchOptions,
 } from "./entry-io.js";
-import { Libp2p } from "libp2p";
 import { isDefined } from "./is-defined.js";
 import { findUniques } from "./find-uniques.js";
 import {

@@ -190,6 +190,7 @@ export class Peerbit {
     _openProgramQueue: PQueue;
     _disconnected = false;
     _disconnecting = false;
+    _encryption: PublicKeyEncryptionResolver;
 
     constructor(libp2p: Libp2p, identity: Identity, options: CreateOptions) {
         if (!isDefined(libp2p)) {
@@ -267,8 +268,18 @@ export class Peerbit {
         return this.caches[this.cacheDir].cache;
     }
 
-    get encryption(): PublicKeyEncryptionResolver {
-        return encryptionWithRequestKey(this.identity, this.keystore);
+    get encryption() {
+        if (!this._encryption) {
+            throw new Error("Unexpected");
+        }
+        return this._encryption;
+    }
+    async getEncryption(): Promise<PublicKeyEncryptionResolver> {
+        this._encryption = await encryptionWithRequestKey(
+            this.identity,
+            this.keystore
+        );
+        return this._encryption;
     }
 
     async decryptedSignedThing(
@@ -376,7 +387,10 @@ export class Peerbit {
             cache,
             localNetwork,
         });
-        return new Peerbit(libp2p, identity, finalOptions);
+
+        const peer = new Peerbit(libp2p, identity, finalOptions);
+        await peer.getEncryption();
+        return peer;
     }
 
     async disconnect() {
@@ -1154,15 +1168,15 @@ export class Peerbit {
         }
     }
 
-    async _onDrop(db: Store<any>) {
+    _onDrop(db: Store<any>) {
         logger.info("Dropped store: " + db.id);
     }
 
-    async addProgram(
+    addProgram(
         topic: string,
         program: Program,
         minReplicas: MinReplicas
-    ): Promise<ProgramWithMetadata> {
+    ): ProgramWithMetadata {
         if (!this.programs.has(topic)) {
             this.programs.set(topic, new Map());
         }
@@ -1536,7 +1550,7 @@ export class Peerbit {
             logger.debug(`Open database '${program.constructor.name}`);
 
             if (!options.encryption) {
-                options.encryption = encryptionWithRequestKey(
+                options.encryption = await encryptionWithRequestKey(
                     this.identity,
                     this.keystore,
                     this._waitForKeysTimeout

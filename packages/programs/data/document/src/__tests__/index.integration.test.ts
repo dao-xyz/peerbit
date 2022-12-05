@@ -32,7 +32,7 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import { Program } from "@dao-xyz/peerbit-program";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
-import { DocumentIndex } from "../document-index";
+import { DocumentIndex } from "../document-index.js";
 import {
     HeadsMessage,
     LogEntryEncryptionQuery,
@@ -90,8 +90,8 @@ describe("index", () => {
         writeStore: TestStore,
         cacheStores: AbstractLevel<any, string>[] = [];
 
-    const createIdentity = async () => {
-        const ed = await Ed25519Keypair.create();
+    const createIdentity = () => {
+        const ed = Ed25519Keypair.create();
         return {
             publicKey: ed.publicKey,
             sign: (data) => ed.sign(data),
@@ -147,10 +147,7 @@ describe("index", () => {
                         ...DefaultOptions,
                         replicate: i === 0,
                         encryption: {
-                            getEncryptionKeypair: () =>
-                                Promise.resolve(
-                                    keypair as Ed25519Keypair | X25519Keypair
-                                ),
+                            getEncryptionKeypair: () => keypair,
                             getAnyKeypair: async (
                                 publicKeys: X25519PublicKey[]
                             ) => {
@@ -246,10 +243,7 @@ describe("index", () => {
                         ...DefaultOptions,
                         replicate: true,
                         encryption: {
-                            getEncryptionKeypair: () =>
-                                Promise.resolve(
-                                    keypair as Ed25519Keypair | X25519Keypair
-                                ),
+                            getEncryptionKeypair: () => keypair,
                             getAnyKeypair: async (
                                 publicKeys: X25519PublicKey[]
                             ) => {
@@ -317,10 +311,7 @@ describe("index", () => {
                         ...DefaultOptions,
                         replicate: true,
                         encryption: {
-                            getEncryptionKeypair: () =>
-                                Promise.resolve(
-                                    keypair as Ed25519Keypair | X25519Keypair
-                                ),
+                            getEncryptionKeypair: () => keypair,
                             getAnyKeypair: async (
                                 publicKeys: X25519PublicKey[]
                             ) => {
