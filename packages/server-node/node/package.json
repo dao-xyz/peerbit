@@ -9,10 +9,10 @@
     "bin": {
         "peerbit": "./lib/esm/bin.js"
     },
-    "module": "lib/esm/index.mjs",
+    "module": "lib/esm/index.js",
     "types": "lib/esm/index.d.ts",
     "exports": {
-        "import": "./lib/esm/index.mjs"
+        "import": "./lib/esm/index.js"
     },
     "files": [
         "lib",
@@ -31,7 +31,8 @@
     },
     "scripts": {
         "clean": "shx rm -rf lib/*",
-        "build": "yarn clean && tsc -p tsconfig.json && tsc-esm -p tsconfig.json && yarn build-ui",
+        "build": "yarn clean && yarn build-lib && yarn build-ui",
+        "build-lib": "tsc -p tsconfig.json",
         "build-ui": "cd ../frontend && yarn build-prod && cd ../node",
         "postbuild": "cp src/nginx-template.conf lib/esm/ && echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json && cp -r ../frontend/build lib/ui",
         "test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",

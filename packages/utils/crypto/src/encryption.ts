@@ -12,6 +12,7 @@ import { AccessError } from "./errors.js";
 import sodium from "libsodium-wrappers";
 import { X25519Keypair, X25519PublicKey, X25519SecretKey } from "./x25519.js";
 import { Ed25519Keypair, Ed25519PublicKey } from "./ed25519.js";
+await sodium.ready;
 
 const NONCE_LENGTH = 24;
 
@@ -27,10 +28,7 @@ export type GetAnyKeypair =
       >)
     | X25519Keypair;
 export type GetEncryptionKeypair =
-    | (() =>
-          | Promise<X25519Keypair | Ed25519Keypair>
-          | X25519Keypair
-          | Ed25519Keypair)
+    | (() => X25519Keypair | Ed25519Keypair)
     | X25519Keypair
     | Ed25519Keypair;
 
@@ -43,7 +41,9 @@ export class MaybeEncrypted<T> {
         throw new Error("Not implented");
     }
 
-    async decrypt(keyResolver?: GetAnyKeypair): Promise<DecryptedThing<T>> {
+    decrypt(
+        keyResolver?: GetAnyKeypair
+    ): Promise<DecryptedThing<T>> | DecryptedThing<T> {
         throw new Error("Not implemented");
     }
     equals(other: MaybeEncrypted<T>): boolean {
@@ -82,63 +82,49 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
         return deserialize(this._data, clazz);
     }
 
-    async encrypt(
+    encrypt(
         keyResolver: GetEncryptionKeypair,
         ...recieverPublicKeys: (X25519PublicKey | Ed25519PublicKey)[]
-    ): Promise<EncryptedThing<T>> {
+    ): EncryptedThing<T> {
         const bytes = serialize(this);
-        await sodium.ready;
-        const epheremalKey = await sodium.crypto_secretbox_keygen();
-        const nonce = new Uint8Array(
-            await sodium.randombytes_buf(NONCE_LENGTH)
-        );
-        const cipher = await sodium.crypto_secretbox_easy(
-            bytes,
-            nonce,
-            epheremalKey
-        );
+        const epheremalKey = sodium.crypto_secretbox_keygen();
+        const nonce = new Uint8Array(sodium.randombytes_buf(NONCE_LENGTH));
+        const cipher = sodium.crypto_secretbox_easy(bytes, nonce, epheremalKey);
 
         let encryptionKeypair =
-            typeof keyResolver === "function"
-                ? await keyResolver()
-                : keyResolver;
+            typeof keyResolver === "function" ? keyResolver() : keyResolver;
         if (encryptionKeypair instanceof Ed25519Keypair) {
-            encryptionKeypair = await X25519Keypair.from(encryptionKeypair);
+            encryptionKeypair = X25519Keypair.from(encryptionKeypair);
         }
         const x25519Keypair = encryptionKeypair as X25519Keypair;
-        const recieverX25519PublicKeys = await Promise.all(
-            recieverPublicKeys.map((key) => {
-                if (key instanceof Ed25519PublicKey) {
-                    return X25519PublicKey.from(key);
-                }
-                return key;
-            })
-        );
+        const recieverX25519PublicKeys = recieverPublicKeys.map((key) => {
+            if (key instanceof Ed25519PublicKey) {
+                return X25519PublicKey.from(key);
+            }
+            return key;
+        });
 
-        const ks = await Promise.all(
-            recieverX25519PublicKeys.map(async (recieverPublicKey) => {
-                const kNonce = new Uint8Array(
-                    await sodium.randombytes_buf(NONCE_LENGTH)
-                );
-                return new K({
-                    encryptedKey: new CipherWithNonce({
-                        cipher: await sodium.crypto_box_easy(
-                            epheremalKey,
-                            kNonce,
-                            recieverPublicKey.publicKey,
-                            x25519Keypair.secretKey.secretKey
-                        ),
-                        nonce: kNonce,
-                    }),
-                    recieverPublicKey,
-                });
-            })
-        );
+        const ks = recieverX25519PublicKeys.map((recieverPublicKey) => {
+            const kNonce = new Uint8Array(sodium.randombytes_buf(NONCE_LENGTH));
+            return new K({
+                encryptedKey: new CipherWithNonce({
+                    cipher: sodium.crypto_box_easy(
+                        epheremalKey,
+                        kNonce,
+                        recieverPublicKey.publicKey,
+                        x25519Keypair.secretKey.secretKey
+                    ),
+                    nonce: kNonce,
+                }),
+                recieverPublicKey,
+            });
+        });
+
         const enc = new EncryptedThing<T>({
             encrypted: new Uint8Array(cipher),
             nonce,
             envelope: new Envelope({
-                senderPublicKey: await x25519Keypair.publicKey,
+                senderPublicKey: x25519Keypair.publicKey,
                 ks,
             }),
         });
@@ -150,7 +136,7 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
         return this;
     }
 
-    async decrypt(): Promise<DecryptedThing<T>> {
+    decrypt(): DecryptedThing<T> {
         return this;
     }
 
@@ -303,8 +289,6 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
             throw new Error("Expecting key resolver");
         }
 
-        await sodium.ready;
-
         // We only need to open with one of the keys
         let key:
             | { index: number; keypair: X25519Keypair | Ed25519Keypair }
@@ -330,11 +314,11 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
             if (key.keypair instanceof X25519Keypair) {
                 secretKey = key.keypair.secretKey;
             } else {
-                secretKey = await X25519SecretKey.from(key.keypair.privateKey);
+                secretKey = X25519SecretKey.from(key.keypair.privateKey);
             }
             let epheremalKey: Uint8Array;
             try {
-                epheremalKey = await sodium.crypto_box_open_easy(
+                epheremalKey = sodium.crypto_box_open_easy(
                     k._encryptedKey.cipher,
                     k._encryptedKey.nonce,
                     this._envelope._senderPublicKey.publicKey,
@@ -357,7 +341,7 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
              } */
 
             const der = deserialize(
-                await sodium.crypto_secretbox_open_easy(
+                sodium.crypto_secretbox_open_easy(
                     this._encrypted,
                     this._nonce,
                     epheremalKey

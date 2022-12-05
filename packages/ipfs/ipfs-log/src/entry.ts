@@ -1,5 +1,5 @@
-import { HLC, LamportClock as Clock, Timestamp } from "./clock";
-import { isDefined } from "./is-defined";
+import { HLC, LamportClock as Clock, Timestamp } from "./clock.js";
+import { isDefined } from "./is-defined.js";
 import {
     variant,
     field,
@@ -22,11 +22,11 @@ import {
     Ed25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
 import sodium from "libsodium-wrappers";
-import { Encoding, JSON_ENCODING } from "./encoding";
+import { Encoding, JSON_ENCODING } from "./encoding.js";
 import { Identity } from "./identity.js";
 import { verify, toBase64 } from "@dao-xyz/peerbit-crypto";
-import { StringArray } from "./types";
-import { logger } from "./logger";
+import { StringArray } from "./types.js";
+import { logger } from "./logger.js";
 
 export type MaybeEncryptionPublicKey =
     | X25519PublicKey
@@ -483,10 +483,10 @@ export class Entry<T>
             value: properties.data,
         });
 
-        const maybeEncrypt = async <Q>(
+        const maybeEncrypt = <Q>(
             thing: Q,
             reciever?: MaybeEncryptionPublicKey
-        ): Promise<MaybeEncrypted<Q>> => {
+        ): MaybeEncrypted<Q> => {
             const recievers = reciever
                 ? Array.isArray(reciever)
                     ? reciever
@@ -496,7 +496,7 @@ export class Entry<T>
                 if (!properties.encryption) {
                     throw new Error("Encrpryption config not initialized");
                 }
-                return await new DecryptedThing<Q>({
+                return new DecryptedThing<Q>({
                     data: serialize(thing),
                     value: thing,
                 }).encrypt(
@@ -549,7 +549,7 @@ export class Entry<T>
             });
         }
 
-        const payload = await maybeEncrypt(
+        const payload = maybeEncrypt(
             payloadToSave,
             properties.encryption?.reciever.payload
         );

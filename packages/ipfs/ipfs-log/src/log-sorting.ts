@@ -1,5 +1,5 @@
-import { Entry } from "./entry";
-import { LamportClock as Clock } from "./clock";
+import { Entry } from "./entry.js";
+import { LamportClock as Clock } from "./clock.js";
 import { arraysCompare } from "@dao-xyz/peerbit-borsh-utils";
 
 const First = (a: any, b: any) => a;

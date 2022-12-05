@@ -56,7 +56,7 @@ export class PublicKeyMessage {
 }
 
 export abstract class RequestKeyType {
-    publicKey: PublicSignKey | PublicKeyEncryptionKey;
+    abstract get publicKey(): PublicSignKey | PublicKeyEncryptionKey;
 }
 
 @variant(0)

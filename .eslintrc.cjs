@@ -22,6 +22,8 @@ module.exports = {
         "@typescript-eslint/no-explicit-any": "off",
         "@typescript-eslint/prefer-as-const": "off",
         "@typescript-eslint/no-empty-interface": "off",
-        "no-useless-escape": "off"
+        "no-useless-escape": "off",
+        "no-return-await": "error",
+        //"require-await": "error" TODO
     },
 }

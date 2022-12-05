@@ -1,19 +1,19 @@
 import { serialize } from "@dao-xyz/borsh";
-import { toBase64 } from "./utils";
+import { toBase64 } from "./utils.js";
 
 export type IdentityProviderType = "orbitdb" | "ethereum" | "solana";
 
 interface Key {
     equals(other: Key): boolean;
     get bytes(): Uint8Array;
-    hashcode(): Promise<string>;
+    hashcode(): string;
     toString(): string;
 }
 
 export abstract class Keypair {
-    publicKey: PublicSignKey | PublicKeyEncryptionKey;
+    abstract get publicKey(): PublicSignKey | PublicKeyEncryptionKey;
 
-    static async create(): Promise<Keypair> {
+    static create(): Keypair {
         throw new Error("Not implemented");
     }
 
@@ -29,7 +29,7 @@ export abstract class PublicSignKey implements Key {
         return serialize(this);
     }
 
-    hashcode(): Promise<string> {
+    hashcode(): string {
         return toBase64(this.bytes);
     }
 }
@@ -40,7 +40,7 @@ export abstract class PrivateSignKey implements Key {
         return serialize(this);
     }
 
-    hashcode(): Promise<string> {
+    hashcode(): string {
         return toBase64(this.bytes);
     }
 }
@@ -52,7 +52,7 @@ export abstract class PublicKeyEncryptionKey implements Key {
         return serialize(this);
     }
 
-    hashcode(): Promise<string> {
+    hashcode(): string {
         return toBase64(this.bytes);
     }
 }
@@ -62,7 +62,7 @@ export abstract class PrivateEncryptionKey implements Key {
         return serialize(this);
     }
 
-    hashcode(): Promise<string> {
+    hashcode(): string {
         return toBase64(this.bytes);
     }
 }
@@ -74,7 +74,7 @@ export abstract class PlainKey implements Key {
         return serialize(this);
     }
 
-    hashcode(): Promise<string> {
+    hashcode(): string {
         return toBase64(this.bytes);
     }
 }

@@ -14,7 +14,7 @@ import {
     getToByFrom,
     getRelation,
     AbstractRelation,
-} from "./identity-graph";
+} from "./identity-graph.js";
 import type { PeerId } from "@libp2p/interface-peer-id";
 import { Program } from "@dao-xyz/peerbit-program";
 import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
@@ -155,7 +155,7 @@ export class TrustedNetwork extends Program {
             canAppend: this.canAppend.bind(this),
             canRead: this.canRead.bind(this),
         }); // self referencing access controller
-        await this.logIndex.setup({
+        return this.logIndex.setup({
             store: this.trustGraph.store,
             context: this,
         });
@@ -164,18 +164,14 @@ export class TrustedNetwork extends Program {
     async canAppend(
         entry: Entry<Operation<IdentityRelation>>
     ): Promise<boolean> {
-        return canAppendByRelation(
-            entry,
-            async (key) => await this.isTrusted(key)
-        );
+        return canAppendByRelation(entry, (key) => this.isTrusted(key));
     }
 
     async canRead(key?: PublicSignKey): Promise<boolean> {
         if (!key) {
             return false;
         }
-        const canRead = await this.isTrusted(key);
-        return canRead;
+        return this.isTrusted(key);
     }
 
     async add(

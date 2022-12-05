@@ -2,7 +2,7 @@
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 import { LibP2PBlockStore } from "../libp2p";
 import { MemoryLevelBlockStore } from "../level";
-import { stringifyCid } from "../block";
+import { stringifyCid } from "../block.js";
 import { Blocks } from "..";
 
 describe(`pubsub`, function () {

@@ -12,17 +12,12 @@ import {
     toBase64,
 } from "@dao-xyz/peerbit-crypto";
 import sodium from "libsodium-wrappers";
-import { jest } from "@jest/globals";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
 import { Identity } from "../identity.js";
 import { LamportClock, Timestamp } from "../clock.js";
-import {
-    BlockStore,
-    MemoryLevelBlockStore,
-    Blocks,
-} from "@dao-xyz/peerbit-block";
+import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -160,12 +155,7 @@ describe("Entry", function () {
                         next: undefined,
                     },
                     options: {
-                        getEncryptionKeypair: () =>
-                            Promise.resolve(
-                                senderKey.keypair as
-                                    | Ed25519Keypair
-                                    | X25519Keypair
-                            ),
+                        getEncryptionKeypair: () => senderKey.keypair,
                         getAnyKeypair: async (
                             publicKeys: X25519PublicKey[]
                         ) => {

@@ -1,7 +1,7 @@
 import { field, variant, vec, option } from "@dao-xyz/borsh";
 import { Store } from "@dao-xyz/peerbit-store";
 import { ComposableProgram, Program } from "..";
-import { getValuesWithType } from "../utils";
+import { getValuesWithType } from "../utils.js";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
 

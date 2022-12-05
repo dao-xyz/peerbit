@@ -10,10 +10,11 @@ import { deserialize, serialize } from "@dao-xyz/borsh";
 import { Wallet } from "@ethersproject/wallet";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { PeerIdAddress } from "../libp2p.js";
+await sodium.ready;
 
 describe("Ed25519", () => {
-    it("ser/der", async () => {
-        const keypair = await Ed25519Keypair.create();
+    it("ser/der", () => {
+        const keypair = Ed25519Keypair.create();
         const derser = deserialize(serialize(keypair), Ed25519Keypair);
         expect(derser.publicKey.publicKey).toEqual(keypair.publicKey.publicKey);
     });
@@ -23,12 +24,11 @@ describe("Ed25519", () => {
           expect(serialize(kp.publicKey)).toHaveLength(PUBLIC_KEY_WIDTH);
       }) */
 
-    it("verify native", async () => {
-        await sodium.ready;
+    it("verify native", () => {
         const keypair = sodium.crypto_sign_keypair();
         const data = new Uint8Array([1, 2, 3]);
         const signature = sodium.crypto_sign_detached(data, keypair.privateKey);
-        const isVerified = await verifySignatureEd25519(
+        const isVerified = verifySignatureEd25519(
             signature,
             keypair.publicKey,
             data
@@ -36,19 +36,18 @@ describe("Ed25519", () => {
         expect(isVerified).toBeTrue();
     });
 
-    it("verify primitve", async () => {
-        await sodium.ready;
-        const keypair = await Ed25519Keypair.create();
+    it("verify primitve", () => {
+        const keypair = Ed25519Keypair.create();
         const data = new Uint8Array([1, 2, 3]);
-        const signature = await keypair.sign(data);
-        const isVerified = await verifySignatureEd25519(
+        const signature = keypair.sign(data);
+        const isVerified = verifySignatureEd25519(
             signature,
             keypair.publicKey,
             data
         );
         expect(isVerified).toBeTrue();
 
-        const isNotVerified = await verifySignatureEd25519(
+        const isNotVerified = verifySignatureEd25519(
             signature,
             keypair.publicKey,
             data.reverse()
@@ -58,8 +57,8 @@ describe("Ed25519", () => {
 });
 
 describe("X25519", () => {
-    it("ser/der", async () => {
-        const keypair = await X25519Keypair.create();
+    it("ser/der", () => {
+        const keypair = X25519Keypair.create();
         const derser = deserialize(serialize(keypair), X25519Keypair);
         expect(derser.publicKey.publicKey).toEqual(keypair.publicKey.publicKey);
     });
@@ -72,7 +71,7 @@ describe("X25519", () => {
 
 describe("Sepck2561k1", () => {
     it("verify", async () => {
-        const wallet = await Wallet.createRandom();
+        const wallet = Wallet.createRandom();
         const data = new Uint8Array([1, 2, 3]);
         const pk = new Secp256k1PublicKey({
             address: await wallet.getAddress(),

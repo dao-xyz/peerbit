@@ -5,7 +5,7 @@ import sodium from "libsodium-wrappers";
 import { Signer, SignWithKey } from "./signer.js";
 import { SignatureWithKey } from "./signature.js";
 import { toHexString } from "./utils.js";
-
+await sodium.ready;
 @variant(0)
 export class Ed25519PublicKey extends PublicSignKey {
     @field({ type: fixedUint8Array(32) })
@@ -71,8 +71,7 @@ export class Ed25519Keypair extends Keypair implements Signer {
         }
     }
 
-    static async create(): Promise<Ed25519Keypair> {
-        await sodium.ready;
+    static create(): Ed25519Keypair {
         const generated = sodium.crypto_sign_keypair();
         const kp = new Ed25519Keypair();
         kp.publicKey = new Ed25519PublicKey({
@@ -83,7 +82,7 @@ export class Ed25519Keypair extends Keypair implements Signer {
         });
         return kp;
     }
-    async sign(data: Uint8Array): Promise<Uint8Array> {
+    sign(data: Uint8Array): Uint8Array {
         return sign(data, this.privateKey);
     }
 
@@ -107,35 +106,31 @@ export class Ed25519Keypair extends Keypair implements Signer {
     }
 }
 
-const sign = async (
+const sign = (
     data: Uint8Array,
     privateKey: Ed25519PrivateKey,
     signedHash = false
 ) => {
-    await sodium.ready;
-    const signedData = signedHash
-        ? await sodium.crypto_generichash(32, data)
-        : data;
-    const signature = await sodium.crypto_sign_detached(
+    const signedData = signedHash ? sodium.crypto_generichash(32, data) : data;
+    const signature = sodium.crypto_sign_detached(
         signedData,
         privateKey.privateKey
     );
     return signature;
 };
 
-export const verifySignatureEd25519 = async (
+export const verifySignatureEd25519 = (
     signature: Uint8Array,
     publicKey: Ed25519PublicKey | Uint8Array,
     data: Uint8Array,
     signedHash = false
 ) => {
-    await sodium.ready;
     let res = false;
     try {
         const signedData = signedHash
-            ? await sodium.crypto_generichash(32, data)
+            ? sodium.crypto_generichash(32, data)
             : data;
-        const verified = await sodium.crypto_sign_verify_detached(
+        const verified = sodium.crypto_sign_verify_detached(
             signature,
             signedData,
             publicKey instanceof Ed25519PublicKey

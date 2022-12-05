@@ -50,7 +50,7 @@ describe(`addOperation`, function () {
         senderKey = await keystore.createEd25519Key();
         recieverKey = await keystore.createEd25519Key();
         encryption = {
-            getEncryptionKeypair: () => Promise.resolve(senderKey.keypair),
+            getEncryptionKeypair: () => senderKey.keypair,
             getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
                 for (let i = 0; i < publicKeys.length; i++) {
                     if (

@@ -1,5 +1,5 @@
-import { Entry } from "./entry";
-import { ISortFunction } from "./log-sorting";
+import { Entry } from "./entry.js";
+import { ISortFunction } from "./log-sorting.js";
 
 export class HeadsIndex<T> {
     _index: Map<string, Entry<T>> = new Map();

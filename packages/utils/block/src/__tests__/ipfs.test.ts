@@ -16,7 +16,7 @@ import { Controller } from "ipfsd-ctl";
 import { jest } from "@jest/globals";
 import { BlockStore, GetOptions, PutOptions } from "../store";
 import { Block, decode } from "multiformats/block";
-import { cidifyString, codecCodes, stringifyCid } from "../block";
+import { cidifyString, codecCodes, stringifyCid } from "../block.js";
 import { Blocks } from "..";
 import { sha256 as hasher } from "multiformats/hashes/sha2";
 

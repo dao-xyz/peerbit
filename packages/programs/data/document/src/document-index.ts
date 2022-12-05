@@ -6,7 +6,7 @@ import {
     variant,
     vec,
 } from "@dao-xyz/borsh";
-import { asString, Hashable } from "./utils";
+import { asString, Hashable } from "./utils.js";
 import { BORSH_ENCODING, Encoding, Entry } from "@dao-xyz/ipfs-log";
 import { Log } from "@dao-xyz/ipfs-log";
 import { arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
@@ -27,7 +27,7 @@ import {
 } from "./query.js";
 import { AccessError, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { CanRead, RPC, QueryContext, RPCOptions } from "@dao-xyz/peerbit-rpc";
-import { Results } from "./query";
+import { Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 const logger = loggerFn({ module: "document-index" });
 

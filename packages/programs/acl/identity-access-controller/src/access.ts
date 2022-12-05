@@ -1,7 +1,7 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh";
 import { serialize } from "@dao-xyz/borsh";
 import { AccessCondition } from "./condition";
-import { toBase64Sync } from "@dao-xyz/peerbit-crypto";
+import { toBase64 } from "@dao-xyz/peerbit-crypto";
 
 export enum AccessType {
     Any = 0,
@@ -42,7 +42,7 @@ export class Access extends AccessData {
         const a = new Access();
         a.accessCondition = this.accessCondition;
         a.accessTypes = this.accessTypes;
-        return toBase64Sync(serialize(a));
+        return toBase64(serialize(a));
     }
 
     initialize(): Access {

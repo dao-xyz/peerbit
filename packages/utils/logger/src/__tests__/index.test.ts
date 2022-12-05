@@ -1,4 +1,4 @@
-import { logger } from "..";
+import { logger } from "../index.js";
 
 describe("logger", () => {
     let reset: string | undefined;
