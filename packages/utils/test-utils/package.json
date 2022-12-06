@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-test-utils",
-    "version": "0.0.18",
+    "version": "0.0.19",
     "description": "Test utils for Peerbit",
     "type": "module",
     "sideEffects": false,
