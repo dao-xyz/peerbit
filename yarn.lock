@@ -2120,6 +2120,13 @@
   dependencies:
     "@protobufjs/utf8" "^1.1.0"
 
+"@dao-xyz/borsh@^4.0.5":
+  version "4.0.5"
+  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-4.0.5.tgz#39a35e781f7ffa79dca2c920b3714e6b804b9f77"
+  integrity sha512-DBvq5uoaGUG9rjCsgrxZFPCc9J+A1833Q64ZqyP9ZzILvpBM4qSdheLoMjwf7lO6/AO6HCqui5go6x6MFzravg==
+  dependencies:
+    "@protobufjs/utf8" "^1.1.0"
+
 "@emotion/babel-plugin@^11.10.5":
   version "11.10.5"
   resolved "https://registry.yarnpkg.com/@emotion/babel-plugin/-/babel-plugin-11.10.5.tgz#65fa6e1790ddc9e23cc22658a4c5dea423c55c3c"

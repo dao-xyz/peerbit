@@ -34,7 +34,7 @@
         "@types/libsodium-wrappers": "^0.7.9"
     },
     "dependencies": {
-        "@dao-xyz/borsh": "^4.0.4",
+        "@dao-xyz/borsh": "^4.0.5",
         "@dao-xyz/peerbit-borsh-utils": "^0.0.15",
         "@ethersproject/wallet": "^5.7.0",
         "libsodium-wrappers": "^0.7.10"

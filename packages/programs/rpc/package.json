@@ -32,7 +32,7 @@
     "author": "dao.xyz",
     "license": "MIT",
     "dependencies": {
-        "@dao-xyz/borsh": "^4.0.4",
+        "@dao-xyz/borsh": "^4.0.5",
         "@dao-xyz/peerbit-crypto": "^0.0.25",
         "@dao-xyz/peerbit-logger": "^0.0.4",
         "@dao-xyz/peerbit-program": "^0.0.60",
