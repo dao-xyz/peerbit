@@ -17,29 +17,7 @@ export class LSession {
         // Allow more than 11 listneers
         setMaxListeners(Infinity);
 
-        // create nodes
-        const promises: Promise<Libp2p>[] = [];
-        for (let i = 0; i < n; i++) {
-            const result = async () => {
-                const node = await createLibp2p({
-                    connectionManager: {
-                        autoDial: false,
-                    },
-                    addresses: {
-                        listen: ["/ip4/127.0.0.1/tcp/0"],
-                    },
-                    transports: [tcp()],
-                    connectionEncryption: [noise()],
-                    streamMuxers: [mplex()],
-                    pubsub: gossipsub(),
-                });
-                await node.start();
-                return node;
-            };
-            promises.push(result());
-        }
-
-        const libs = await Promise.all(promises);
+        const libs = (await LSession.disconnected(n)).peers;
 
         // Connect the nodes
         const connectPromises: Promise<any>[] = [];
@@ -73,6 +51,36 @@ export class LSession {
             }
         }
         return new LSession(peers);
+    }
+
+    static async disconnected(n: number) {
+        // Allow more than 11 listneers
+        setMaxListeners(Infinity);
+
+        // create nodes
+        const promises: Promise<Libp2p>[] = [];
+        for (let i = 0; i < n; i++) {
+            const result = async () => {
+                const node = await createLibp2p({
+                    connectionManager: {
+                        autoDial: false,
+                    },
+                    addresses: {
+                        listen: ["/ip4/127.0.0.1/tcp/0"],
+                    },
+                    transports: [tcp()],
+                    connectionEncryption: [noise()],
+                    streamMuxers: [mplex()],
+                    pubsub: gossipsub(),
+                });
+                await node.start();
+                return node;
+            };
+            promises.push(result());
+        }
+
+        const libs = await Promise.all(promises);
+        return new LSession(libs);
     }
 
     stop(): Promise<any> {

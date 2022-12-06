@@ -72,7 +72,7 @@ export const createNode = async () => {
     const node = await createLibp2p({
         peerId,
         connectionManager: {
-            autoDial: false,
+            autoDial: true,
         },
         addresses: {
             listen: ["/ip4/127.0.0.1/tcp/8001", "/ip4/127.0.0.1/tcp/8002/ws"],
