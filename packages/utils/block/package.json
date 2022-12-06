@@ -51,7 +51,7 @@
         "@dao-xyz/peerbit-test-utils": "^0.0.18"
     },
     "dependencies": {
-        "@dao-xyz/borsh": "^4.0.3",
+        "@dao-xyz/borsh": "^4.0.4",
         "@ipld/dag-cbor": "^7.0.3",
         "abstract-level": "^1.0.3",
         "libp2p": "^0.40.0",

@@ -2113,10 +2113,10 @@
   resolved "https://registry.yarnpkg.com/@csstools/selector-specificity/-/selector-specificity-2.0.2.tgz#1bfafe4b7ed0f3e4105837e056e0a89b108ebe36"
   integrity sha512-IkpVW/ehM1hWKln4fCA3NzJU8KwD+kIOvPZA4cqxoJHtE21CCzjyp+Kxbu0i5I4tBNOlXPL9mjwnWlL0VEG4Fg==
 
-"@dao-xyz/borsh@^4.0.3":
-  version "4.0.3"
-  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-4.0.3.tgz#87ad157887985647bc2886e92f4f6ca1fdfc80ca"
-  integrity sha512-KglV8pS1VoUD1MpFAHhKIQjYaf2lT9eWUUnEAdvNN3yqq7tPVRRpDQk3Q7c9nGHkIcyzeqG+xG/XCDUAP4s5lQ==
+"@dao-xyz/borsh@^4.0.4":
+  version "4.0.4"
+  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-4.0.4.tgz#309092ec3c9acc7317f6b8a4c0ed046dfefb1ec0"
+  integrity sha512-xCFK8HPyrnN+gtr1M6mQrgMNnepp8MLap2JJWIePw6SYL1Q/tYe+C9MF8nFw5pbbH4wmx9382CTF8+1Y6FxK6A==
   dependencies:
     "@protobufjs/utf8" "^1.1.0"
 
@@ -3765,6 +3765,19 @@
     multiformats "^10.0.0"
     node-forge "^1.1.0"
     protons-runtime "^4.0.1"
+    uint8arrays "^4.0.2"
+
+"@libp2p/floodsub@^5.0.0":
+  version "5.0.0"
+  resolved "https://registry.yarnpkg.com/@libp2p/floodsub/-/floodsub-5.0.0.tgz#4aeb10c89cae6f04d9244ad8cb094494222eb61f"
+  integrity sha512-B39UW/AWgfVVUl2yJDardmL2kKo1Zd4E+11/rkyjnjbygh944DTLcp3B2gSarqRlyN+x4ChUTKiN75UGajOaog==
+  dependencies:
+    "@libp2p/interface-peer-id" "^1.0.2"
+    "@libp2p/interface-pubsub" "^3.0.0"
+    "@libp2p/logger" "^2.0.0"
+    "@libp2p/pubsub" "^5.0.0"
+    protons-runtime "^4.0.1"
+    uint8arraylist "^2.1.1"
     uint8arrays "^4.0.2"
 
 "@libp2p/interface-address-manager@^2.0.0":

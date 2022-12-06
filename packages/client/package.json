@@ -28,7 +28,7 @@
         "import": "./lib/esm/index.js"
     },
     "dependencies": {
-        "@dao-xyz/borsh": "^4.0.3",
+        "@dao-xyz/borsh": "^4.0.4",
         "@dao-xyz/ipfs-pubsub-direct-channel": "^0.0.36",
         "@dao-xyz/ipfs-pubsub-peer-monitor": "^0.0.18",
         "@dao-xyz/peerbit-block": "^0.0.4",

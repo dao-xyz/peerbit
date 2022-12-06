@@ -79,7 +79,12 @@ export const App = () => {
                             alignItems="center"
                             mb={2}
                         >
-                            <Grid mr={2} item>
+                            <Grid
+                                mr={2}
+                                display="flex"
+                                justifyContent="center"
+                                item
+                            >
                                 <img
                                     width="30px"
                                     height="auto"
