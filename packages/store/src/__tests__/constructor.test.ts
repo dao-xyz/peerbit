@@ -16,9 +16,9 @@ const __filenameBase = path.parse(__filename).base;
 describe(`Constructor`, function () {
     let blockStore: Blocks,
         signKey: KeyWithMeta<Ed25519Keypair>,
-        identityStore: AbstractLevel<any, string>,
+        identityStore: AbstractLevel<any, string, Uint8Array>,
         store: Store<any>,
-        cacheStore: AbstractLevel<any, string>;
+        cacheStore: AbstractLevel<any, string, Uint8Array>;
 
     const ipfsConfig = Object.assign(
         {},

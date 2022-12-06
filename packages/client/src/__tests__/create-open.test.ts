@@ -16,7 +16,13 @@ import { jest } from "@jest/globals";
 import { createStore, LSession } from "@dao-xyz/peerbit-test-utils";
 import { Program } from "@dao-xyz/peerbit-program";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
+import {
+    DEFAULT_BLOCK_TRANSPORT_TOPIC,
+    LevelBlockStore,
+    LibP2PBlockStore,
+} from "@dao-xyz/peerbit-block";
+import { Level } from "level";
+import { exec } from "child_process";
 
 const dbPath = path.join("./peerbit", "tests", "create-open");
 
@@ -74,6 +80,25 @@ describe(`Create & Open`, function () {
 
             it("creates a feed database", async () => {
                 assert.notEqual(db, null);
+            });
+
+            it("block storage exist at path", async () => {
+                expect(
+                    orbitdb._store._store instanceof LibP2PBlockStore
+                ).toBeTrue();
+                expect(
+                    (orbitdb._store._store as LibP2PBlockStore)
+                        ._localStore instanceof LevelBlockStore
+                ).toBeTrue();
+                const location = (
+                    (
+                        (orbitdb._store._store as LibP2PBlockStore)
+                            ._localStore as LevelBlockStore
+                    )._level as any as Level
+                ).location;
+                expect(location).toEndWith(
+                    path.join(orbitdb.directory!, "blocks").toString()
+                );
             });
 
             it("saves the database locally", async () => {

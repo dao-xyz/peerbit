@@ -71,7 +71,7 @@ const publicKeyFromKeyPair = (keypair: Keypair) => {
  */
 export const createStore = async (
     path = "./keystore"
-): Promise<AbstractLevel<any, string>> => {
+): Promise<AbstractLevel<any, string, Uint8Array>> => {
     const fs = await import("fs");
     if (fs && fs.mkdirSync) {
         fs.mkdirSync(path, { recursive: true });
@@ -150,10 +150,10 @@ export class KeyWithMeta<T extends Keypair> {
 }
 
 export class Keystore {
-    _store: AbstractLevel<any, string>;
+    _store: AbstractLevel<any, string, Uint8Array>;
     _cache: LRU<string, KeyWithMeta<any>>;
 
-    constructor(store: AbstractLevel<any, string>, cache?: any) {
+    constructor(store: AbstractLevel<any, string, Uint8Array>, cache?: any) {
         this._store = store;
         if (!this.open && !this.opening && this._store.open) {
             this._store.open();

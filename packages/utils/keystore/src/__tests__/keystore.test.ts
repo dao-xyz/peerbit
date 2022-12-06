@@ -38,7 +38,7 @@ describe("keystore", () => {
     });
 
     describe("constructor", () => {
-        let store: AbstractLevel<any, string>;
+        let store: AbstractLevel<any, string, Uint8Array>;
 
         beforeAll(async () => {
             store = store || (await createStore(tempKeyPath + "/1")); // storagePath
@@ -83,7 +83,7 @@ describe("keystore", () => {
 
     describe("createKey", () => {
         let keystore: Keystore;
-        let store: AbstractLevel<any, string>;
+        let store: AbstractLevel<any, string, Uint8Array>;
 
         beforeAll(async () => {
             store = store || (await createStore(tempKeyPath + "/2")); // storagePath
@@ -182,7 +182,7 @@ describe("keystore", () => {
 
 describe("hasKey", () => {
     let keystore: Keystore;
-    let store: AbstractLevel<any, string>;
+    let store: AbstractLevel<any, string, Uint8Array>;
 
     beforeAll(async () => {
         store = store || (await createStore(tempKeyPath + "/3")); // storagePath
@@ -209,7 +209,7 @@ describe("hasKey", () => {
 });
 
 describe("getKey", () => {
-    let store: AbstractLevel<any, string>;
+    let store: AbstractLevel<any, string, Uint8Array>;
     let keystore: Keystore,
         createdKey: KeyWithMeta<Ed25519Keypair>,
         createdKeyInGroup: KeyWithMeta<Ed25519Keypair>;
@@ -272,7 +272,7 @@ describe("getKeys", () => {
         aBoxKey: KeyWithMeta<X25519Keypair>,
         aBox2Key: KeyWithMeta<X25519Keypair>,
         bSignKey: KeyWithMeta<Ed25519Keypair>;
-    let store: AbstractLevel<any, string>;
+    let store: AbstractLevel<any, string, Uint8Array>;
 
     beforeAll(async () => {
         store = store || (await createStore(tempKeyPath + "/5")); // storagePath

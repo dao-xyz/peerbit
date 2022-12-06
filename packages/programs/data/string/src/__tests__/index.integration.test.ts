@@ -45,8 +45,8 @@ describe("query", () => {
         writer: Libp2p,
         writeStore: DString,
         observerStore: DString,
-        cacheStore1: AbstractLevel<any, string>,
-        cacheStore2: AbstractLevel<any, string>;
+        cacheStore1: AbstractLevel<any, string, Uint8Array>,
+        cacheStore2: AbstractLevel<any, string, Uint8Array>;
 
     beforeAll(async () => {
         session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);

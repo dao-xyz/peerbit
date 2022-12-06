@@ -10,7 +10,7 @@ import { AbstractLevel } from "abstract-level";
 import { MemoryLevel } from "memory-level";
 import { waitFor } from "@dao-xyz/peerbit-time";
 
-abstract class LevelBlockStore implements BlockStore {
+export class LevelBlockStore implements BlockStore {
     _level: AbstractLevel<any, string, Uint8Array>;
     _opening: Promise<any>;
     _closed = false;

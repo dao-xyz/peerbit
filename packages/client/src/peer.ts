@@ -71,8 +71,9 @@ import isNode from "is-node";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import {
     LibP2PBlockStore,
-    MemoryLevelBlockStore,
+    LevelBlockStore,
     Blocks,
+    BlockStore,
 } from "@dao-xyz/peerbit-block";
 export const logger = loggerFn({ module: "peer" });
 const MIN_REPLICAS = 2;
@@ -84,12 +85,13 @@ interface ProgramWithMetadata {
 
 export type StoreOperations = "write" | "all";
 export type Storage = {
-    createStore: (string?: string) => AbstractLevel<any, string>;
+    createStore: (string?: string) => AbstractLevel<any, string, Uint8Array>;
 };
 export type OptionalCreateOptions = {
     limitSigning?: boolean;
     minReplicas?: number;
     waitForKeysTimout?: number;
+    store?: BlockStore;
     canOpenProgram?(
         address: string,
         topic?: string,
@@ -202,7 +204,18 @@ export class Peerbit {
 
         this._libp2p = libp2p;
         this._store = new Blocks(
-            new LibP2PBlockStore(this._libp2p, new MemoryLevelBlockStore())
+            new LibP2PBlockStore(
+                this._libp2p,
+                options.store ||
+                    new LevelBlockStore(
+                        options.storage.createStore(
+                            options.directory &&
+                                path
+                                    .join(options.directory, "/blocks")
+                                    .toString()
+                        )
+                    )
+            )
         );
         this._store.open();
 
@@ -320,8 +333,12 @@ export class Peerbit {
         const directory = options.directory;
 
         const storage = options.storage || {
-            createStore: (path?: string): AbstractLevel<any, string> => {
-                return path ? new Level(path) : new MemoryLevel();
+            createStore: (
+                path?: string
+            ): AbstractLevel<any, string, Uint8Array> => {
+                return path
+                    ? new Level(path, { valueEncoding: "view" })
+                    : new MemoryLevel({ valueEncoding: "view" });
             },
         };
 

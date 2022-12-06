@@ -88,7 +88,7 @@ describe("index", () => {
         peersCount = 3,
         stores: TestStore[] = [],
         writeStore: TestStore,
-        cacheStores: AbstractLevel<any, string>[] = [];
+        cacheStores: AbstractLevel<any, string, Uint8Array>[] = [];
 
     const createIdentity = () => {
         const ed = Ed25519Keypair.create();

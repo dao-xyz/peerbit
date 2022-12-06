@@ -94,7 +94,7 @@ describe("index", () => {
     let session: LSession,
         stores: Blocks[],
         identites: Identity[],
-        cacheStore: AbstractLevel<any, string>[];
+        cacheStore: AbstractLevel<any, string, Uint8Array>[];
 
     const identity = (i: number) => identites[i];
     const init = async <T extends Program>(

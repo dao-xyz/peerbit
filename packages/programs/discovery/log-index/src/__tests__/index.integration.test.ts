@@ -30,7 +30,7 @@ import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
 
 describe("query", () => {
     let session: LSession,
-        cacheStores: AbstractLevel<any, string>[] = [],
+        cacheStores: AbstractLevel<any, string, Uint8Array>[] = [],
         logIndices: LogIndex[] = [],
         headsCount = 3,
         peersCount = 3;

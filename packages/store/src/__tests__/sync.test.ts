@@ -28,7 +28,7 @@ describe(`Sync`, () => {
         signKey: KeyWithMeta<Ed25519Keypair>,
         store: Store<any>,
         keystore: Keystore,
-        cacheStore: AbstractLevel<any, string>,
+        cacheStore: AbstractLevel<any, string, Uint8Array>,
         blockStore: Blocks,
         blockStore2: Blocks;
 

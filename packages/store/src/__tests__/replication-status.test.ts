@@ -16,9 +16,9 @@ import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
 describe(`Replication Status`, function () {
     let session: LSession,
         signKey: KeyWithMeta<Ed25519Keypair>,
-        identityStore: AbstractLevel<any, string>,
-        cache1: AbstractLevel<any, string>,
-        cache2: AbstractLevel<any, string>,
+        identityStore: AbstractLevel<any, string, Uint8Array>,
+        cache1: AbstractLevel<any, string, Uint8Array>,
+        cache2: AbstractLevel<any, string, Uint8Array>,
         blockStore: Blocks;
 
     let store1: Store<any>;

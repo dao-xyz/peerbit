@@ -30,9 +30,9 @@ import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
 describe(`addOperation`, function () {
     let signKey: KeyWithMeta<Ed25519Keypair>,
         keystore: Keystore,
-        identityStore: AbstractLevel<any, string>,
+        identityStore: AbstractLevel<any, string, Uint8Array>,
         store: Store<any>,
-        cacheStore: AbstractLevel<any, string>,
+        cacheStore: AbstractLevel<any, string, Uint8Array>,
         senderKey: KeyWithMeta<Ed25519Keypair>,
         recieverKey: KeyWithMeta<Ed25519Keypair>,
         encryption: PublicKeyEncryptionResolver,
