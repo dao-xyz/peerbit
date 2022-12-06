@@ -311,7 +311,7 @@ export class RPC<Q, R> extends ComposableProgram {
         responseHandler: (response: R, from?: PublicSignKey) => void,
         options?: RPCOptions
     ): Promise<void> {
-        logger.debug("querying topic: " + this.rpcTopic);
+        logger.trace("Querying topic: " + this.rpcTopic);
         // We are generatinga new encryption keypair for each send, so we now that when we get the responses, they are encrypted specifcally for me, and for this request
         // this allows us to easily disregard a bunch of message just beacuse they are for a different reciever!
         const keypair = await X25519Keypair.create();

@@ -835,15 +835,16 @@ export class Peerbit {
                 throw new Error("Unexpected message");
             }
         } catch (e: any) {
-            logger.debug(
-                `${this.id}: Failed to handle message on topic: ${message.topic} ${message.data.length}`
-            );
             if (e instanceof BorshError) {
-                logger.debug("Got message for a different namespace");
+                logger.trace(
+                    `${this.id}: Failed to handle message on topic: ${message.topic} ${message.data.length}: Got message for a different namespace`
+                );
                 return;
             }
             if (e instanceof AccessError) {
-                logger.debug("Got message I could not decrypt");
+                logger.trace(
+                    `${this.id}: Failed to handle message on topic: ${message.topic} ${message.data.length}: Got message I could not decrypt`
+                );
                 return;
             }
             logger.error(e);
