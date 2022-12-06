@@ -138,7 +138,7 @@ describe("query", () => {
             (r) => {
                 response = r;
             },
-            { waitForAmount: 1 }
+            { amount: 1 }
         );
         expect(response).toBeDefined();
         expect(response).toMatchObject(
@@ -180,7 +180,7 @@ describe("query", () => {
             (r) => {
                 response = r;
             },
-            { waitForAmount: 1 }
+            { amount: 1 }
         );
         expect(response).toBeDefined();
         expect(response).toMatchObject(
@@ -219,7 +219,7 @@ describe("query", () => {
         const string = await observerStore.toString({
             remote: {
                 callback: (s) => callbackValues.push(s),
-                queryOptions: { waitForAmount: 1 },
+                queryOptions: { amount: 1 },
             },
         });
         expect(string).toEqual("hello world");

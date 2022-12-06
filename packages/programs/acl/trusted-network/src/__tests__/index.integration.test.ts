@@ -333,9 +333,11 @@ describe("index", () => {
                     responses.push(response);
                 },
                 {
-                    signer: identity(2),
-                    maxAggregationTime: 20000,
-                    waitForAmount: 2, // response from peer and peer2
+                    remote: {
+                        signer: identity(2),
+                        timeout: 20000,
+                        amount: 2, // response from peer and peer2
+                    },
                     local: false,
                 }
             );
@@ -358,8 +360,7 @@ describe("index", () => {
                     untrustedResponse = response;
                 },
                 {
-                    signer: identity(3),
-                    maxAggregationTime: 3000,
+                    remote: { timeout: 3000, signer: identity(3) },
                 }
             );
 

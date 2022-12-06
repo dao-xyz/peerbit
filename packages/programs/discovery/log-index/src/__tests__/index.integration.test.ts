@@ -139,7 +139,7 @@ describe("query", () => {
                 (m) => {
                     responses.push(m);
                 },
-                { waitForAmount: 1 }
+                { amount: 1 }
             );
             expect(responses).toHaveLength(1);
             expect(responses[0].heads).toHaveLength(headsCount);
@@ -194,7 +194,7 @@ describe("query", () => {
                 (m) => {
                     responses.push(m);
                 },
-                { waitForAmount: 1 }
+                { amount: 1 }
             );
             expect(responses).toHaveLength(1);
             expect(responses[0].heads).toHaveLength(headsCount);

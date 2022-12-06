@@ -247,6 +247,13 @@ export class Log<T> extends GSet {
     }
 
     /**
+     * Get local HLC
+     */
+    get hlc(): HLC {
+        return this._hlc;
+    }
+
+    /**
      * Set the identity for the log
      * @param {Identity} [identity] The identity to be set
      */

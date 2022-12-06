@@ -118,7 +118,7 @@ await document.string.add('hello', new Range({ offset: 0n, length: 6n }));
 await document.string.add('world', new Range({ offset: 7n, length: 5n }));
 
 console.log(await document.string.toString()) // 'hello world' from local store
-console.log(await document.string.toString({remote: {maxAggregationTime: 3000 }})) // 'hello world' from peers
+console.log(await document.string.toString({remote: {waitFor: 3000 }})) // 'hello world' from peers
 
 ```
 

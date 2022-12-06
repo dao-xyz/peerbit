@@ -101,7 +101,7 @@ describe("rpc", () => {
             (resp) => {
                 results.push(resp);
             },
-            { waitForAmount: 1 }
+            { amount: 1 }
         );
 
         await waitFor(() => results.length === 1);
@@ -118,7 +118,7 @@ describe("rpc", () => {
             (resp) => {
                 results.push(resp);
             },
-            { maxAggregationTime: 3000, context: "wrong context" }
+            { timeout: 3000, context: "wrong context" }
         );
 
         // Explicit
@@ -129,7 +129,7 @@ describe("rpc", () => {
             (resp) => {
                 results.push(resp);
             },
-            { waitForAmount: 1, context: reader.address.toString() }
+            { amount: 1, context: reader.address.toString() }
         );
         expect(results).toHaveLength(1);
 
@@ -141,13 +141,13 @@ describe("rpc", () => {
             (resp) => {
                 results.push(resp);
             },
-            { waitForAmount: 1 }
+            { amount: 1 }
         );
         expect(results).toHaveLength(2);
     });
 
     it("timeout", async () => {
-        let maxAggregationTime = 5000;
+        let waitFor = 5000;
 
         let results: Body[] = [];
         const t0 = +new Date();
@@ -159,17 +159,17 @@ describe("rpc", () => {
                 results.push(resp);
             },
             {
-                maxAggregationTime,
+                timeout: waitFor,
             }
         );
         const t1 = +new Date();
-        expect(Math.abs(t1 - t0 - maxAggregationTime)).toBeLessThan(200); // some threshold
+        expect(Math.abs(t1 - t0 - waitFor)).toBeLessThan(200); // some threshold
         expect(results).toHaveLength(1);
     });
 
-    it("waitForAmount", async () => {
-        let waitForAmount = 2;
-        let maxAggregationTime = 2000;
+    it("amount", async () => {
+        let amount = 2;
+        let timeout = 2000;
 
         const topic = uuid();
         const kp = await X25519Keypair.create();
@@ -243,18 +243,18 @@ describe("rpc", () => {
             },
             kp,
             {
-                maxAggregationTime,
-                waitForAmount,
+                timeout,
+                amount,
             }
         );
 
-        await waitFor(() => results.length == waitForAmount);
+        await waitFor(() => results.length == amount);
     });
 
     it("signed", async () => {
-        let waitForAmount = 1;
+        let amount = 1;
 
-        let maxAggregationTime = 3000;
+        let timeout = 3000;
 
         const sender = await createIdentity();
         const responder = await createIdentity();
@@ -335,19 +335,19 @@ describe("rpc", () => {
             },
             kp,
             {
-                maxAggregationTime,
-                waitForAmount,
+                timeout: timeout,
+                amount,
                 signer: sender,
             }
         );
 
-        await waitFor(() => results.length == waitForAmount);
+        await waitFor(() => results.length == amount);
     });
 
     it("encrypted", async () => {
         // query encrypted and respond encrypted
-        let waitForAmount = 1;
-        let maxAggregationTime = 3000;
+        let amount = 1;
+        let timeout = 3000;
 
         const responder = await createIdentity();
         const requester = await createIdentity();
@@ -413,8 +413,8 @@ describe("rpc", () => {
             },
             await X25519Keypair.from(new Ed25519Keypair({ ...requester })),
             {
-                maxAggregationTime,
-                waitForAmount,
+                timeout,
+                amount,
                 signer: requester,
 
                 encryption: {
@@ -426,6 +426,6 @@ describe("rpc", () => {
             }
         );
 
-        await waitFor(() => results.length == waitForAmount);
+        await waitFor(() => results.length == amount);
     });
 });

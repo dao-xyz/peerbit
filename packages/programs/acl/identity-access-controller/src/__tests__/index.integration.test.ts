@@ -456,8 +456,10 @@ describe("index", () => {
                         results = response;
                     },
                     {
-                        signer: identity(1),
-                        maxAggregationTime: 3000,
+                        remote: {
+                            signer: identity(1),
+                            timeout: 3000,
+                        },
                         local: false,
                     }
                 );
@@ -543,8 +545,10 @@ describe("index", () => {
                 results = response;
             },
             {
-                signer: identity(1),
-                waitForAmount: 1,
+                remote: {
+                    signer: identity(1),
+                    amount: 1,
+                },
                 local: false,
             }
         );

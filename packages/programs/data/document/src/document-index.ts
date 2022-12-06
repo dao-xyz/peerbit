@@ -370,9 +370,9 @@ export class DocumentIndex<T> extends ComposableProgram {
     public query(
         queryRequest: DocumentQueryRequest,
         responseHandler: (response: Results<T>, from?: PublicSignKey) => void,
-        options?: RPCOptions & {
+        options?: {
             sync?: boolean;
-            remote?: boolean;
+            remote?: boolean | RPCOptions;
             local?: boolean;
         }
     ): Promise<void[]> {
@@ -386,8 +386,17 @@ export class DocumentIndex<T> extends ComposableProgram {
         const promises: Promise<void>[] = [];
         const local =
             typeof options?.local == "boolean" ? options?.local : true;
-        const remote =
-            typeof options?.remote == "boolean" ? options?.remote : true;
+        let remote: RPCOptions | undefined;
+        if (typeof options?.remote === "boolean") {
+            if (options?.remote) {
+                remote = {};
+            } else {
+                remote = undefined;
+            }
+        } else {
+            remote = options?.remote;
+        }
+
         if (!local && !remote) {
             throw new Error(
                 "Expecting either 'options.remote' or 'options.local' to be true"
@@ -417,7 +426,7 @@ export class DocumentIndex<T> extends ComposableProgram {
             );
         }
         if (remote) {
-            promises.push(this._query.send(queryRequest, handler, options));
+            promises.push(this._query.send(queryRequest, handler, remote));
         }
         return Promise.all(promises);
     }

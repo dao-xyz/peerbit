@@ -211,7 +211,11 @@ export class Peerbit {
                         options.storage.createStore(
                             options.directory &&
                                 path
-                                    .join(options.directory, "/blocks")
+                                    .join(
+                                        options.directory,
+                                        options.peerId.toString(),
+                                        "/blocks"
+                                    )
                                     .toString()
                         )
                     )

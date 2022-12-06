@@ -91,7 +91,7 @@ await store2.docs.index.query(
     (r: Results<Document>) => {
         response = r;
     },
-    { waitForAmount: 1 }
+    { amount: 1 }
 );
 expect(response.results).toHaveLength(2);
 expect(response.results.map((x) => x.value.id)).toEqual(["1", "2"]);

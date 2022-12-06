@@ -31,7 +31,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 import { v4 as uuid } from "uuid";
 import { Program } from "@dao-xyz/peerbit-program";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import { DocumentIndex } from "../document-index.js";
 import {
     HeadsMessage,
@@ -373,7 +373,7 @@ describe("index", () => {
                 (r: Results<Document>) => {
                     response = r;
                 },
-                { waitForAmount: 1, remote: false }
+                { remote: false }
             );
             expect(response.results).toHaveLength(3);
         });
@@ -388,7 +388,7 @@ describe("index", () => {
                 (r: Results<Document>) => {
                     response = r;
                 },
-                { waitForAmount: 1 }
+                { remote: { amount: 1 } }
             );
             expect(response.results).toHaveLength(3);
         });
@@ -403,7 +403,7 @@ describe("index", () => {
                     // dont do anything
                     const x = 123;
                 },
-                { waitForAmount: 1, sync: true }
+                { remote: { amount: 1 }, sync: true }
             );
             await waitFor(() => stores[1].docs.index.size === 3);
         });
@@ -423,7 +423,7 @@ describe("index", () => {
                 (r: Results<Document>) => {
                     response = r;
                 },
-                { waitForAmount: 1 }
+                { remote: { amount: 1 } }
             );
             expect(response.results).toHaveLength(2);
             expect(response.results.map((x) => x.value.id)).toEqual(["1", "2"]);
@@ -457,7 +457,7 @@ describe("index", () => {
                     (r: Results<Document>) => {
                         response = r;
                     },
-                    { waitForAmount: 1 }
+                    { remote: { amount: 1 } }
                 );
                 expect(
                     response.results.map((x) => x.context.head)
@@ -498,7 +498,7 @@ describe("index", () => {
                     (r: Results<Document>) => {
                         response = r;
                     },
-                    { waitForAmount: 1 }
+                    { remote: { amount: 1 } }
                 );
                 expect(
                     response.results.map((x) => x.context.head)
@@ -537,7 +537,7 @@ describe("index", () => {
                     (r: Results<Document>) => {
                         response = r;
                     },
-                    { waitForAmount: 1 }
+                    { remote: { amount: 1 } }
                 );
                 expect(
                     response.results.map((x) => x.context.head)
@@ -561,7 +561,7 @@ describe("index", () => {
                     (r: Results<Document>) => {
                         response = r;
                     },
-                    { waitForAmount: 1 }
+                    { remote: { amount: 1 } }
                 );
                 expect(response.results).toHaveLength(1);
                 expect(response.results[0].value.number).toEqual(2n);
@@ -582,7 +582,7 @@ describe("index", () => {
                     (r: Results<Document>) => {
                         response = r;
                     },
-                    { waitForAmount: 1 }
+                    { remote: { amount: 1 } }
                 );
                 expect(response.results).toHaveLength(1);
                 expect(response.results[0].value.number).toEqual(3n);
@@ -603,7 +603,7 @@ describe("index", () => {
                     (r: Results<Document>) => {
                         response = r;
                     },
-                    { waitForAmount: 1 }
+                    { remote: { amount: 1 } }
                 );
                 response.results.sort((a, b) =>
                     bigIntSort(
@@ -631,7 +631,7 @@ describe("index", () => {
                     (r: Results<Document>) => {
                         response = r;
                     },
-                    { waitForAmount: 1 }
+                    { remote: { amount: 1 } }
                 );
                 expect(response.results).toHaveLength(1);
                 expect(response.results[0].value.number).toEqual(1n);
@@ -652,7 +652,7 @@ describe("index", () => {
                     (r: Results<Document>) => {
                         response = r;
                     },
-                    { waitForAmount: 1 }
+                    { remote: { amount: 1 } }
                 );
                 response.results.sort((a, b) =>
                     bigIntSort(
@@ -706,7 +706,7 @@ describe("index", () => {
                     (r: Results<Document>) => {
                         response = r;
                     },
-                    { waitForAmount: 1 }
+                    { remote: { amount: 1 } }
                 );
                 expect(response.results).toHaveLength(2);
                 expect(response.results[0].value.id).toEqual(doc2.id);
@@ -785,7 +785,7 @@ describe("index", () => {
                     (r: HeadsMessage) => {
                         response = r;
                     },
-                    { waitForAmount: 1 }
+                    { amount: 1 }
                 );
                 expect(response.heads).toHaveLength(1);
                 expect(response.heads[0].hash).toEqual(entry.hash);

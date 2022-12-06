@@ -97,7 +97,13 @@ describe(`Create & Open`, function () {
                     )._level as any as Level
                 ).location;
                 expect(location).toEndWith(
-                    path.join(orbitdb.directory!, "blocks").toString()
+                    path
+                        .join(
+                            orbitdb.directory!,
+                            orbitdb.id.toString(),
+                            "blocks"
+                        )
+                        .toString()
                 );
             });
 

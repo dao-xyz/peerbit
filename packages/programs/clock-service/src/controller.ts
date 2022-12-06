@@ -108,7 +108,7 @@ export class ClockService extends Program {
                     error = new Error(response.message);
                 }
             },
-            { waitForAmount: 1 }
+            { amount: 1 }
         );
         if (error) {
             throw error;

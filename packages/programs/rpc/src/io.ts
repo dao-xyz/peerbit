@@ -24,8 +24,8 @@ export type RPCOptions = {
         key: GetEncryptionKeypair;
         responders?: (X25519PublicKey | Ed25519PublicKey)[];
     };
-    waitForAmount?: number;
-    maxAggregationTime?: number;
+    amount?: number;
+    timeout?: number;
     isTrusted?: (publicKey: MaybeSigned<any>) => Promise<boolean>;
     responseRecievers?: X25519PublicKey[];
     context?: string;
@@ -41,8 +41,8 @@ export const send = async (
     sendKey: X25519Keypair,
     options: RPCOptions = {}
 ) => {
-    if (typeof options.maxAggregationTime !== "number") {
-        options.maxAggregationTime = 30 * 1000;
+    if (typeof options.timeout !== "number") {
+        options.timeout = 30 * 1000;
     }
 
     // send query and wait for replies in a generator like behaviour
@@ -127,13 +127,13 @@ export const send = async (
 
     await libp2p.pubsub.publish(topic, serialize(maybeEncryptedMessage));
 
-    if (options.waitForAmount != undefined) {
-        await waitFor(() => results >= (options.waitForAmount as number), {
-            timeout: options.maxAggregationTime,
+    if (options.amount != undefined) {
+        await waitFor(() => results >= (options.amount as number), {
+            timeout: options.timeout,
             delayInterval: 500,
         });
     } else {
-        await delay(options.maxAggregationTime);
+        await delay(options.timeout);
     }
     try {
         //  await libp2p.pubsub.unsubscribe(topic); TODO should we?
