@@ -119,7 +119,7 @@ export const App = () => {
                                     {window.location.hostname === "localhost"
                                         ? "127.0.0.1"
                                         : window.location.hostname}
-                                    /tcp/4002/wss/p2p/{id}
+                                    /tcp/4002/p2p/{id}
                                 </Typography>
                             </Paper>
                         </Grid>
