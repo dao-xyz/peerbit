@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-cache",
-    "version": "0.4.28",
+    "version": "0.4.29",
     "description": "Local cache for Peerbit",
     "type": "module",
     "publishConfig": {
