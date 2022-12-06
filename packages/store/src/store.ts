@@ -796,7 +796,7 @@ export class Store<T> implements Initiable<T> {
             logger.debug("Appended entry with hash: " + entry.hash);
             await this._cache.setBinary(
                 this.localHeadsPath,
-                new HeadsCache({ heads: [entry] })
+                new HeadsCache({ heads: [...this._oplog.heads] }) // TODO make more efficient, and maybe "forget"
             );
             await this._updateIndex([entry]);
 
