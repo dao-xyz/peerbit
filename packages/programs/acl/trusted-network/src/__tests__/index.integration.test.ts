@@ -336,6 +336,7 @@ describe("index", () => {
                     signer: identity(2),
                     maxAggregationTime: 20000,
                     waitForAmount: 2, // response from peer and peer2
+                    local: false,
                 }
             );
 

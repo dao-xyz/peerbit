@@ -213,28 +213,30 @@ export class Context {
 @variant(0)
 export class ResultWithSource<T> extends Result {
     @field({ type: Uint8Array })
-    _source: Uint8Array;
+    _source?: Uint8Array;
 
     @field({ type: Context })
     context: Context;
 
     _type: AbstractType<T>;
-    constructor(opts?: { source: Uint8Array; context: Context }) {
+    constructor(opts: { source?: Uint8Array; context: Context; value?: T }) {
         super();
-        if (opts) {
-            this._source = opts.source;
-            this.context = opts.context;
-        }
+        this._source = opts.source;
+        this.context = opts.context;
+        this._value = opts.value;
     }
 
     init(type: AbstractType<T>) {
         this._type = type;
     }
 
-    _value: T;
+    _value?: T;
     get value(): T {
         if (this._value) {
             return this._value;
+        }
+        if (!this._source) {
+            throw new Error("Missing source binary");
         }
         this._value = deserialize(this._source, this._type);
         return this._value;

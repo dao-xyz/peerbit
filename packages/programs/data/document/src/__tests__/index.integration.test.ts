@@ -363,6 +363,21 @@ describe("index", () => {
     });
 
     describe("query", () => {
+        it("match locally", async () => {
+            let response: Results<Document> = undefined as any;
+
+            await stores[0].docs.index.query(
+                new DocumentQueryRequest({
+                    queries: [],
+                }),
+                (r: Results<Document>) => {
+                    response = r;
+                },
+                { waitForAmount: 1, remote: false }
+            );
+            expect(response.results).toHaveLength(3);
+        });
+
         it("match all", async () => {
             let response: Results<Document> = undefined as any;
 

@@ -370,8 +370,12 @@ export class DocumentIndex<T> extends ComposableProgram {
     public query(
         queryRequest: DocumentQueryRequest,
         responseHandler: (response: Results<T>, from?: PublicSignKey) => void,
-        options?: RPCOptions & { sync?: boolean }
-    ): Promise<void> {
+        options?: RPCOptions & {
+            sync?: boolean;
+            remote?: boolean;
+            local?: boolean;
+        }
+    ): Promise<void[]> {
         const handler = async (response: Results<T>, from?: PublicSignKey) => {
             response.results.forEach((r) => r.init(this.type));
             if (options?.sync) {
@@ -379,6 +383,42 @@ export class DocumentIndex<T> extends ComposableProgram {
             }
             responseHandler(response, from);
         };
-        return this._query.send(queryRequest, handler, options);
+        const promises: Promise<void>[] = [];
+        const local =
+            typeof options?.local == "boolean" ? options?.local : true;
+        const remote =
+            typeof options?.remote == "boolean" ? options?.remote : true;
+        if (!local && !remote) {
+            throw new Error(
+                "Expecting either 'options.remote' or 'options.local' to be true"
+            );
+        }
+
+        if (local) {
+            promises.push(
+                this.queryHandler(queryRequest, {
+                    address: this.address.toString(),
+                    from: this._identity.publicKey,
+                }).then((results) => {
+                    if (results.length > 0) {
+                        responseHandler(
+                            new Results({
+                                results: results.map(
+                                    (r) =>
+                                        new ResultWithSource({
+                                            context: r.context,
+                                            value: r.value,
+                                        })
+                                ),
+                            })
+                        );
+                    }
+                })
+            );
+        }
+        if (remote) {
+            promises.push(this._query.send(queryRequest, handler, options));
+        }
+        return Promise.all(promises);
     }
 }

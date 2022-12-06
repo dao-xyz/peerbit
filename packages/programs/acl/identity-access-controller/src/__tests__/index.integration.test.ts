@@ -458,6 +458,7 @@ describe("index", () => {
                     {
                         signer: identity(1),
                         maxAggregationTime: 3000,
+                        local: false,
                     }
                 );
                 try {
@@ -544,6 +545,7 @@ describe("index", () => {
             {
                 signer: identity(1),
                 waitForAmount: 1,
+                local: false,
             }
         );
 
