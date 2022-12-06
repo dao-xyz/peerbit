@@ -589,8 +589,8 @@ export const startServer = async (
     server.on("error", (e) => {
         console.error("Server error: " + e);
         import("fs").then((fs) => {
-            fs.writeFile("error.log", JSON.stringify(e), function () {
-                /* void */
+            fs.writeFile("error.log", JSON.stringify(e.message), function () {
+                /* void */ 0;
             });
         });
     });
