@@ -107,12 +107,12 @@ describe(`addOperation`, function () {
                 await waitForAsync(
                     async () =>
                         (await store._cache.getBinary(
-                            store.localHeadsPath,
+                            store.headsPath,
                             HeadsCache
                         )) !== undefined
                 );
                 const localHeads = await store._cache.getBinary(
-                    store.localHeadsPath,
+                    store.headsPath,
                     HeadsCache
                 );
                 if (!localHeads) {
@@ -181,12 +181,12 @@ describe(`addOperation`, function () {
             await waitForAsync(
                 async () =>
                     (await store._cache.getBinary(
-                        store.localHeadsPath,
+                        store.headsPath,
                         HeadsCache
                     )) !== undefined
             );
             const localHeads = await store._cache.getBinary(
-                store.localHeadsPath,
+                store.headsPath,
                 HeadsCache
             );
 

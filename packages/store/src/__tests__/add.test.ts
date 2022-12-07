@@ -68,7 +68,7 @@ describe(`addOperation`, function () {
             assert.deepStrictEqual(index._index, heads);
             await delay(5000); // seems because write is async?
             store._cache
-                .getBinary(store.localHeadsPath, HeadsCache)
+                .getBinary(store.headsPath, HeadsCache)
                 .then((localHeads) => {
                     if (!localHeads) {
                         fail();
@@ -133,7 +133,7 @@ describe(`addOperation`, function () {
                 expect(index._index.length).toEqual(writes);
                 await delay(5000); // seems because write is async?
                 store._cache
-                    .getBinary(store.localHeadsPath, HeadsCache)
+                    .getBinary(store.headsPath, HeadsCache)
                     .then((localHeads) => {
                         if (!localHeads) {
                             fail();

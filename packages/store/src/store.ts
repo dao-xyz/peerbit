@@ -118,7 +118,6 @@ export interface IStoreOptions<T> {
     encryption?: PublicKeyEncryptionResolver;
     maxHistory?: number;
     fetchEntryTimeout?: number;
-    referenceCount?: number;
     replicationConcurrency?: number;
     syncLocal?: boolean;
     sortFn?: ISortFunction;
@@ -136,17 +135,14 @@ export interface IInitializationOptions<T>
 
 interface IInitializationOptionsDefault<T> {
     maxHistory?: number;
-    referenceCount?: number;
     replicationConcurrency?: number;
     typeMap?: { [key: string]: Constructor<any> };
 }
 
 export const DefaultOptions: IInitializationOptionsDefault<any> = {
     maxHistory: -1,
-    referenceCount: 32,
     replicationConcurrency: 32,
     typeMap: {},
-    /* nameResolver: (id: string) => name, */
 };
 
 export interface Initiable<T> {
@@ -176,15 +172,11 @@ export class Store<T> implements Initiable<T> {
 
     /*   events: EventEmitter;
      */
-    remoteHeadsPath: string;
-    localHeadsPath: string;
+    headsPath: string;
     snapshotPath: string;
     queuePath: string;
     initialized: boolean;
     encoding: Encoding<T> = JSON_ENCODING;
-
-    /*   allowForks: boolean = true;
-     */
 
     _store: Blocks;
     _cache: Cache<CachedValue>;
@@ -240,8 +232,7 @@ export class Store<T> implements Initiable<T> {
         this._onUpdateOption = options.onUpdate;
 
         /* this.events = new EventEmitter() */
-        this.remoteHeadsPath = path.join(this.id, "_remoteHeads");
-        this.localHeadsPath = path.join(this.id, "_localHeads");
+        this.headsPath = path.join(this.id, "_heads");
         this.snapshotPath = path.join(this.id, "snapshot");
         this.queuePath = path.join(this.id, "queue");
 
@@ -350,7 +341,7 @@ export class Store<T> implements Initiable<T> {
             // only store heads that has been verified and merges
             const heads = this._oplog.heads;
             await this._cache.setBinary(
-                this.remoteHeadsPath,
+                this.headsPath,
                 new HeadsCache({ heads })
             );
             logger.debug(
@@ -468,8 +459,7 @@ export class Store<T> implements Initiable<T> {
             await this._options.onDrop(this);
         }
 
-        await this._cache.del(this.localHeadsPath);
-        await this._cache.del(this.remoteHeadsPath);
+        await this._cache.del(this.headsPath);
         await this._cache.del(this.snapshotPath);
         await this._cache.del(this.queuePath);
 
@@ -495,18 +485,10 @@ export class Store<T> implements Initiable<T> {
         if (this._options.onLoad) {
             await this._options.onLoad(this);
         }
-        const localHeads: Entry<any>[] =
-            (await this._cache.getBinary(this.localHeadsPath, HeadsCache))
-                ?.heads || [];
-        const remoteHeads: Entry<any>[] =
-            (await this._cache.getBinary(this.remoteHeadsPath, HeadsCache))
-                ?.heads || [];
-        const heads = localHeads.concat(remoteHeads);
 
-        // Update the replication status from the heads
-        /*    for (const head of heads) {
-               this._recalculateReplicationMax((await head.maxChainLength));
-           } */
+        const heads: Entry<any>[] =
+            (await this._cache.getBinary(this.headsPath, HeadsCache))?.heads ||
+            [];
 
         // Load the log
         const log = await Log.fromEntry(this._store, this.identity, heads, {
@@ -630,13 +612,8 @@ export class Store<T> implements Initiable<T> {
         if (!this._cache) {
             return [];
         }
-        const localHeads = ((
-            await this._cache.getBinary(this.localHeadsPath, HeadsCache)
-        )?.heads || []) as Entry<T>[];
-        const remoteHeads = ((
-            await this._cache.getBinary(this.remoteHeadsPath, HeadsCache)
-        )?.heads || []) as Entry<T>[];
-        return [...localHeads, ...remoteHeads];
+        return ((await this._cache.getBinary(this.headsPath, HeadsCache))
+            ?.heads || []) as Entry<T>[];
     }
 
     async saveSnapshot() {
@@ -678,9 +655,6 @@ export class Store<T> implements Initiable<T> {
         if (this._options.onLoad) {
             await this._options.onLoad(this);
         }
-
-        const maxChainLength = (res: bigint, val: Entry<any>): bigint =>
-            max(res, val.metadata.maxChainLength);
         await this.sync([]);
 
         const queue = (
@@ -757,13 +731,9 @@ export class Store<T> implements Initiable<T> {
     }
 
     async syncLocal() {
-        const localHeads =
-            (await this._cache.getBinary(this.localHeadsPath, HeadsCache))
-                ?.heads || [];
-        const remoteHeads =
-            (await this._cache.getBinary(this.remoteHeadsPath, HeadsCache))
-                ?.heads || [];
-        const heads = localHeads.concat(remoteHeads);
+        const heads =
+            (await this._cache.getBinary(this.headsPath, HeadsCache))?.heads ||
+            [];
         const headsHashes = new Set(this._oplog.heads.map((h) => h.hash));
         for (let i = 0; i < heads.length; i++) {
             const head = heads[i];
@@ -795,7 +765,7 @@ export class Store<T> implements Initiable<T> {
             });
             logger.debug("Appended entry with hash: " + entry.hash);
             await this._cache.setBinary(
-                this.localHeadsPath,
+                this.headsPath,
                 new HeadsCache({ heads: [...this._oplog.heads] }) // TODO make more efficient, and maybe "forget"
             );
             await this._updateIndex([entry]);

@@ -351,7 +351,7 @@ export class Peerbit {
             keystore = options.keystore;
         } else {
             const keyStorePath = directory
-                ? path.join(directory, id.toString(), "/keystore")
+                ? path.join(directory, "/keystore")
                 : undefined;
             logger.info(
                 keyStorePath
@@ -393,9 +393,7 @@ export class Peerbit {
             options.cache ||
             new Cache(
                 await storage.createStore(
-                    directory
-                        ? path.join(directory, id.toString(), "/cache")
-                        : undefined
+                    directory ? path.join(directory, "/cache") : undefined
                 )
             );
         const localNetwork = options.localNetwork || false;
