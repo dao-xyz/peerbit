@@ -575,9 +575,9 @@ export const startServer = async (
                 } else {
                     r404();
                 }
-            } catch (error) {
+            } catch (error: any) {
                 res.writeHead(500);
-                console.error(error);
+                console.error(error?.message);
                 res.end("Unexpected error");
             }
         };
@@ -587,7 +587,7 @@ export const startServer = async (
     const server = http.createServer(endpoints(client));
     server.listen(port);
     server.on("error", (e) => {
-        console.error("Server error: " + e);
+        console.error("Server error: " + e?.message);
         import("fs").then((fs) => {
             fs.writeFile("error.log", JSON.stringify(e.message), function () {
                 /* void */ 0;

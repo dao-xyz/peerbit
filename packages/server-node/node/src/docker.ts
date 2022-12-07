@@ -48,8 +48,8 @@ export const startContainer = async (cmd: string, errorMessage?: string) => {
             exec(cmd, (error, stdout, stderr) => {
                 if (error) {
                     reject(
-                        errorMessage ||
-                            "Failed to start docker container: " + error
+                        (errorMessage || "Failed to start docker container: ") +
+                            error.message
                     );
                 }
                 resolve(stdout);
@@ -58,14 +58,10 @@ export const startContainer = async (cmd: string, errorMessage?: string) => {
     try {
         await startContainer();
     } catch (error) {
-        if (
-            typeof error === "string" &&
-            error.indexOf("Cannot connect to the Docker daemon") != -1
-        ) {
-            await delay(10000);
-            await startContainer();
-        } else {
-            throw error;
-        }
+        // try again no matter what?
+        // or
+        //  typeof error === "string" && error.indexOf("Cannot connect to the Docker daemon") != -1
+        await delay(10000);
+        await startContainer();
     }
 };

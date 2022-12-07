@@ -467,89 +467,91 @@ export class Peerbit {
     }
 
     // Callback for local writes to the database. We the update to pubsub.
-    onWrite<T>(program: Program) {
-        return (store: Store<any>, entry: Entry<T>, topic: string): void => {
-            const programAddress =
-                program.address?.toString() ||
-                program.parentProgram.address!.toString();
-            const storeInfo = this.programs
-                .get(topic)
-                ?.get(programAddress)
-                ?.program.allStoresMap.get(store._storeIndex);
-            if (!storeInfo) {
-                throw new Error("Missing store info");
-            }
-            const observerTopic = getObserverTopic(topic);
-            const sendAll =
-                this._libp2p.pubsub.getSubscribers(observerTopic)?.length > 0
-                    ? (data: Uint8Array): Promise<any> => {
-                          return this.libp2p.pubsub.publish(
-                              getObserverTopic(topic),
-                              data
-                          );
-                      }
-                    : undefined;
-            let send = sendAll;
-            if (!this.browser && store.replicate) {
-                // send to peers directly
-                send = async (data: Uint8Array) => {
-                    const minReplicas = this.programs
-                        .get(topic)
-                        ?.get(programAddress)?.minReplicas.value;
-                    if (typeof minReplicas !== "number") {
-                        throw new Error(
-                            "Min replicas info not found for: " +
-                                topic +
-                                "/" +
-                                programAddress
-                        );
-                    }
+    onWrite<T>(
+        program: Program,
+        store: Store<any>,
+        entry: Entry<T>,
+        topic: string
+    ): void {
+        const programAddress =
+            program.address?.toString() ||
+            program.parentProgram.address!.toString();
+        const storeInfo = this.programs
+            .get(topic)
+            ?.get(programAddress)
+            ?.program.allStoresMap.get(store._storeIndex);
+        if (!storeInfo) {
+            throw new Error("Missing store info");
+        }
+        const observerTopic = getObserverTopic(topic);
+        const sendAll =
+            this._libp2p.pubsub.getSubscribers(observerTopic)?.length > 0
+                ? (data: Uint8Array): Promise<any> => {
+                      return this.libp2p.pubsub.publish(
+                          getObserverTopic(topic),
+                          data
+                      );
+                  }
+                : undefined;
+        let send = sendAll;
+        if (!this.browser && store.replicate) {
+            // send to peers directly
+            send = async (data: Uint8Array) => {
+                const minReplicas = this.programs
+                    .get(topic)
+                    ?.get(programAddress)?.minReplicas.value;
+                if (typeof minReplicas !== "number") {
+                    throw new Error(
+                        "Min replicas info not found for: " +
+                            topic +
+                            "/" +
+                            programAddress
+                    );
+                }
 
-                    const replicators = await this.findReplicators(
-                        topic,
-                        programAddress,
-                        entry.gid,
-                        minReplicas
-                    );
-                    const channels: SharedChannel<DirectChannel>[] = [];
-                    for (const replicator of replicators) {
-                        if (replicator === this.id.toString()) {
-                            continue;
-                        }
-                        const channel = this._directConnections.get(replicator);
-                        if (
-                            !channel ||
-                            this.libp2p.pubsub.getSubscribers(
-                                channel.channel._id
-                            ).length === 0
-                        ) {
-                            // we are missing a channel, send to all instead as fallback
-                            return sendAll && sendAll(data);
-                        } else {
-                            channels.push(channel);
-                        }
-                    }
-                    await Promise.all(
-                        channels.map((channel) => channel.channel.send(data))
-                    );
-                    return;
-                };
-            }
-            if (send) {
-                exchangeHeads(
-                    send,
-                    store,
-                    program,
-                    [entry],
+                const replicators = await this.findReplicators(
                     topic,
-                    true,
-                    this.limitSigning ? undefined : this.identity
-                ).catch((error) => {
-                    logger.error("Got error when exchanging heads: " + error);
-                    throw error;
-                });
-            }
-        };
+                    programAddress,
+                    entry.gid,
+                    minReplicas
+                );
+                const channels: SharedChannel<DirectChannel>[] = [];
+                for (const replicator of replicators) {
+                    if (replicator === this.id.toString()) {
+                        continue;
+                    }
+                    const channel = this._directConnections.get(replicator);
+                    if (
+                        !channel ||
+                        this.libp2p.pubsub.getSubscribers(channel.channel._id)
+                            .length === 0
+                    ) {
+                        // we are missing a channel, send to all instead as fallback
+                        return sendAll && sendAll(data);
+                    } else {
+                        channels.push(channel);
+                    }
+                }
+                await Promise.all(
+                    channels.map((channel) => channel.channel.send(data))
+                );
+                return;
+            };
+        }
+        if (send) {
+            exchangeHeads(
+                send,
+                store,
+                program,
+                [entry],
+                topic,
+                true,
+                this.limitSigning ? undefined : this.identity
+            ).catch((error) => {
+                logger.error("Got error when exchanging heads: " + error);
+                throw error;
+            });
+        }
     }
 
     async isTrustedByNetwork(
@@ -1634,7 +1636,8 @@ export class Peerbit {
                             return;
                         },
                         onWrite: async (store, entry) => {
-                            await this.onWrite(program)(
+                            await this.onWrite(
+                                program,
                                 store,
                                 entry,
                                 definedTopic
