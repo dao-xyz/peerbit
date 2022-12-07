@@ -371,18 +371,10 @@ export class DocumentIndex<T> extends ComposableProgram {
         queryRequest: DocumentQueryRequest,
         responseHandler: (response: Results<T>, from?: PublicSignKey) => void,
         options?: {
-            sync?: boolean;
-            remote?: boolean | RPCOptions;
+            remote?: false | (RPCOptions & { sync?: boolean });
             local?: boolean;
         }
     ): Promise<void[]> {
-        const handler = async (response: Results<T>, from?: PublicSignKey) => {
-            response.results.forEach((r) => r.init(this.type));
-            if (options?.sync) {
-                await this._sync(response);
-            }
-            responseHandler(response, from);
-        };
         const promises: Promise<void>[] = [];
         const local =
             typeof options?.local == "boolean" ? options?.local : true;
@@ -426,7 +418,22 @@ export class DocumentIndex<T> extends ComposableProgram {
             );
         }
         if (remote) {
-            promises.push(this._query.send(queryRequest, handler, remote));
+            const remoteHandler = async (
+                response: Results<T>,
+                from?: PublicSignKey
+            ) => {
+                response.results.forEach((r) => r.init(this.type));
+                if (
+                    typeof options?.remote !== "boolean" &&
+                    options?.remote?.sync
+                ) {
+                    await this._sync(response);
+                }
+                responseHandler(response, from);
+            };
+            promises.push(
+                this._query.send(queryRequest, remoteHandler, remote)
+            );
         }
         return Promise.all(promises);
     }

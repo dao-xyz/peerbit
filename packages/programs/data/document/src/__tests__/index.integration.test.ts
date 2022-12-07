@@ -403,7 +403,7 @@ describe("index", () => {
                     // dont do anything
                     const x = 123;
                 },
-                { remote: { amount: 1 }, sync: true }
+                { remote: { amount: 1, sync: true } }
             );
             await waitFor(() => stores[1].docs.index.size === 3);
         });
