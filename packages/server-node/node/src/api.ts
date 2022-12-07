@@ -11,7 +11,7 @@ import { Libp2p } from "libp2p";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 import { getNetwork } from "@dao-xyz/peerbit";
 import { getConfigDir, getCredentialsPath, NotFoundError } from "./config.js";
-
+import { setMaxListeners } from "events";
 export const LOCAL_PORT = 8082;
 export const SSL_PORT = 9002;
 
@@ -583,7 +583,8 @@ export const startServer = async (
         };
     };
 
-    process.setMaxListeners(Math.max(process.getMaxListeners(), 100)); // Because the default might limit might be too low
+    setMaxListeners(Infinity); // TODO make this better (lower and large enough)
+
     const server = http.createServer(endpoints(client));
     server.listen(port);
     server.on("error", (e) => {
