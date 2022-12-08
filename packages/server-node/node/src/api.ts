@@ -12,6 +12,7 @@ import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 import { getNetwork } from "@dao-xyz/peerbit";
 import { getConfigDir, getCredentialsPath, NotFoundError } from "./config.js";
 import { setMaxListeners } from "events";
+import { createNode } from "./libp2p.js";
 export const LOCAL_PORT = 8082;
 export const SSL_PORT = 9002;
 
@@ -105,7 +106,41 @@ export const loadOrCreatePassword = async (): Promise<string> => {
         throw error;
     }
 };
+export const startServerWithNode = async (relay: boolean) => {
+    const node = await createNode();
+    const controller = {
+        api: node,
+        stop: () => node.stop(),
+    };
+    const peer = relay ? controller.api : await Peerbit.create(controller.api);
+    const server = await startServer(peer);
+    const printNodeInfo = async () => {
+        console.log("Starting node with address(es): ");
+        const id = await (await client()).peer.id.get();
+        console.log("id: " + id);
+        console.log("Addresses: ");
+        for (const a of await (await client()).peer.addresses.get()) {
+            console.log(a.toString());
+        }
+    };
 
+    await printNodeInfo();
+    const shutDownHook = async (
+        controller: { stop: () => any },
+        server: {
+            close: () => void;
+        }
+    ) => {
+        const { exit } = await import("process");
+        process.on("SIGINT", async () => {
+            console.log("Shutting down node");
+            await server.close();
+            await controller.stop();
+            exit();
+        });
+    };
+    await shutDownHook(controller, server);
+};
 export const startServer = async (
     client: Peerbit | Libp2p,
     port: number = LOCAL_PORT

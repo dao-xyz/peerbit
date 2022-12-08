@@ -1,7 +1,7 @@
 import { Peerbit } from "@dao-xyz/peerbit";
 import { createTestDomain, startCertbot } from "./domain.js";
 import { serialize } from "@dao-xyz/borsh";
-import { client, startServer } from "./api.js";
+import { client, startServer, startServerWithNode } from "./api.js";
 import { parsePublicKey } from "./utils.js";
 import { createRecord } from "./aws.js";
 import { toBase64 } from "@dao-xyz/peerbit-crypto";
@@ -20,10 +20,6 @@ export const cli = async (args?: string[]) => {
     return yargs
         .default(args)
         .command<{
-            /* ipfs: "js" | "go";
-            disposable: boolean;
-            timeout: number;
-             */
             relay: boolean;
         }>({
             command: "start",
@@ -34,63 +30,9 @@ export const cli = async (args?: string[]) => {
                     type: "boolean",
                     default: false,
                 },
-                /*   ipfs: {
-                      describe: "IPFS type",
-                      type: "string",
-                      choices: ["go", "js"],
-                      default: "go",
-                  },
-                
-                  disposable: {
-                      describe:
-                          "Run IPFS node as disposable (will be destroyed on termination)",
-                      boolean: true,
-                  }, */
             },
             handler: async (args) => {
-                /*  const controller =
-                     args.disposable || args.ipfs !== "go"
-                         ? await startIpfs(args.ipfs, {
-                             module: { disposable: args.disposable },
-                         })
-                         : await ipfsDocker(); */
-                const node = await createNode();
-                const controller = {
-                    api: node,
-                    stop: () => node.stop(),
-                };
-                const peer = args.relay
-                    ? controller.api
-                    : await Peerbit.create(controller.api);
-                const server = await startServer(peer);
-                const printNodeInfo = async () => {
-                    console.log("Starting node with address(es): ");
-                    const id = await (await client()).peer.id.get();
-                    console.log("id: " + id);
-                    console.log("Addresses: ");
-                    for (const a of await (
-                        await client()
-                    ).peer.addresses.get()) {
-                        console.log(a.toString());
-                    }
-                };
-
-                await printNodeInfo();
-                const shutDownHook = async (
-                    controller: { stop: () => any },
-                    server: {
-                        close: () => void;
-                    }
-                ) => {
-                    const { exit } = await import("process");
-                    process.on("SIGINT", async () => {
-                        console.log("Shutting down node");
-                        await server.close();
-                        await controller.stop();
-                        exit();
-                    });
-                };
-                await shutDownHook(controller, server);
+                await startServerWithNode(args.relay);
             },
         })
         .command<{ email: string; outdir?: string; wait: boolean }>(
