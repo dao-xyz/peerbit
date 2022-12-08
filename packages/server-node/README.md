@@ -53,18 +53,10 @@ After a while a domain will be written out that you can access and learn more ab
 4. 
 You might want to subscribe to a few topics. If you are working on an app where you rely on some topic, e.g. "world". Then you want to run following commands
 
-~~peerbit topic add "world"~~
-
-~~peerbit topic add "world!"~~
-
-~~peerbit topic add "_block"~~
-
-Latest version `ipfs-http-client` behaves unexpectedly on long lasting pubsub connection. For a more resiliant behaviour you have to subscribe directly with docker 
-
-```
-docker exec ipfs_host ipfs pubsub sub "world" &
-docker exec ipfs_host ipfs pubsub sub "world!" &
-docker exec ipfs_host ipfs pubsub sub "_block" &
+```sh
+peerbit topic add "_block"
+peerbit topic add "world"
+peerbit topic add "world!"
 ```
 
 First topic is the general topic for messages. The second topic ending with "!" is a topic designated for replicators. The last topic is used to distributed IPFS blocks on PubSub. Subscribing for that topic enables you to have Browser to Browser block share without them beeing in the same swarm. 
