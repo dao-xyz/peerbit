@@ -24,7 +24,7 @@
         "LICENSE"
     ],
     "engines": {
-        "node": ">=16.0"
+        "node": ">=16.15.1"
     },
     "scripts": {
         "clean": "shx rm -rf lib/*",
@@ -36,7 +36,7 @@
     },
     "devDependencies": {
         "@dao-xyz/peerbit-test-utils": "*",
-        "libp2p": "^0.40.0"
+        "libp2p": "^0.41.0"
     },
     "dependencies": {
         "@dao-xyz/peerbit-string": "*",
