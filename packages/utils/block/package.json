@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-block",
-    "version": "0.0.7",
+    "version": "0.0.8",
     "description": "Block store for Peerbit",
     "type": "module",
     "sideEffects": false,
@@ -48,7 +48,7 @@
         "dao.xyz"
     ],
     "devDependencies": {
-        "@dao-xyz/peerbit-test-utils": "^0.0.20"
+        "@dao-xyz/peerbit-test-utils": "^0.0.21"
     },
     "dependencies": {
         "@dao-xyz/borsh": "^4.0.5",
