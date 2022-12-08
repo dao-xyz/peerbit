@@ -619,6 +619,7 @@ export const startServer = async (
     };
 
     setMaxListeners(Infinity); // TODO make this better (lower and large enough)
+    process.setMaxListeners(Infinity); // TODO make this better (lower and large enough)
 
     const server = http.createServer(endpoints(client));
     server.listen(port);
