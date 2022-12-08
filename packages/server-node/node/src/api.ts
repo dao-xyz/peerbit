@@ -112,7 +112,9 @@ export const startServerWithNode = async (relay: boolean) => {
         api: node,
         stop: () => node.stop(),
     };
-    const peer = relay ? controller.api : await Peerbit.create(controller.api);
+    const peer = relay
+        ? controller.api
+        : await Peerbit.create(controller.api, { directory: ".peerbit/data" });
     const server = await startServer(peer);
     const printNodeInfo = async () => {
         console.log("Starting node with address(es): ");

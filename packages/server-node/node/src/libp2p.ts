@@ -4,6 +4,7 @@ import { mplex } from "@libp2p/mplex";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
 import { gossipsub } from "@chainsafe/libp2p-gossipsub";
+import { floodsub } from "@libp2p/floodsub";
 import { peerIdFromKeys } from "@libp2p/peer-id";
 import { Ed25519Keypair, fromBase64, toBase64 } from "@dao-xyz/peerbit-crypto";
 import { supportedKeys } from "@libp2p/crypto/keys";
@@ -80,7 +81,7 @@ export const createNode = async () => {
         transports: [tcp(), webSockets()],
         connectionEncryption: [noise()],
         streamMuxers: [mplex()],
-        pubsub: gossipsub(),
+        pubsub: gossipsub({ canRelayMessage: true }),
     });
     await node.start();
     return node;
