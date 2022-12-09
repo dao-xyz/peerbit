@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/libp2p-pubsub-peer-monitor",
-    "version": "0.0.18",
+    "version": "0.0.19",
     "description": "Peer monitor",
     "type": "module",
     "license": "MIT",

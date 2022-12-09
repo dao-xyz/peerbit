@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/libp2p-pubsub-direct-channel",
-    "version": "0.0.40",
+    "version": "0.0.41",
     "description": "1-to-1 communication channel over LibP2P Pubsub between two peers",
     "license": "MIT",
     "type": "module",
@@ -30,11 +30,11 @@
     ],
     "dependencies": {
         "@dao-xyz/borsh": "^4.0.6",
-        "@dao-xyz/libp2p-pubsub-peer-monitor": "^0.0.18",
-        "@dao-xyz/peerbit-borsh-utils": "^0.0.16"
+        "@dao-xyz/libp2p-pubsub-peer-monitor": "^0.0.19",
+        "@dao-xyz/peerbit-borsh-utils": "^0.0.17"
     },
     "devDependencies": {
-        "@dao-xyz/peerbit-test-utils": "^0.0.21",
+        "@dao-xyz/peerbit-test-utils": "^0.0.22",
         "@dao-xyz/peerbit-time": "^0.0.19"
     },
     "scripts": {

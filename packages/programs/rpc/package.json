@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-rpc",
-    "version": "0.0.70",
+    "version": "0.0.71",
     "description": "RPC calls for peers",
     "type": "module",
     "sideEffects": false,
@@ -33,10 +33,10 @@
     "license": "MIT",
     "dependencies": {
         "@dao-xyz/borsh": "^4.0.6",
-        "@dao-xyz/peerbit-crypto": "^0.0.28",
+        "@dao-xyz/peerbit-crypto": "^0.0.29",
         "@dao-xyz/peerbit-logger": "^0.0.4",
-        "@dao-xyz/peerbit-program": "^0.0.66",
-        "@dao-xyz/peerbit-store": "^0.0.81",
+        "@dao-xyz/peerbit-program": "^0.0.67",
+        "@dao-xyz/peerbit-store": "^0.0.82",
         "@dao-xyz/peerbit-time": "^0.0.19",
         "uuid": "^8.3.2"
     },
