@@ -61,6 +61,17 @@ peerbit topic add "world!"
 
 First topic is the general topic for messages. The second topic ending with "!" is a topic designated for replicators. The last topic is used to distributed IPFS blocks on PubSub. Subscribing for that topic enables you to have Browser to Browser block share without them beeing in the same swarm. 
 
+5. 
+If you ssh'ed into a some server, remember to do this before exiting the terminal:
+
+Remove all jobs from the shell and make them ignore SIGHUP
+
+```sh
+disown -ah
+```
+
+
+
 ### More documentation
 
 Run
