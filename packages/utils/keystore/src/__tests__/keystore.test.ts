@@ -1,7 +1,7 @@
 import path from "path";
 import assert from "assert";
 import LRU from "lru-cache";
-import { createStore, Keystore, KeyWithMeta } from "../keystore";
+import { Keystore, KeyWithMeta } from "../keystore";
 import rmrf from "rimraf";
 import { AbstractLevel } from "abstract-level";
 import {
@@ -18,6 +18,7 @@ import { fileURLToPath } from "url";
 // @ts-ignore
 import { v4 as uuid } from "uuid";
 import { fixturePath } from "./fixture.js";
+import { createStore } from "./utils";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

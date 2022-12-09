@@ -8,9 +8,10 @@ import {
     MemoryCompareQuery,
 } from "@dao-xyz/peerbit-document";
 import { PeerIdAddress, PublicSignKey } from "@dao-xyz/peerbit-crypto";
-import { createHash } from "crypto";
 import { joinUint8Arrays } from "@dao-xyz/peerbit-borsh-utils";
 import { RPC } from "@dao-xyz/peerbit-rpc";
+import sodium from "libsodium-wrappers";
+await sodium.ready;
 
 abstract class KeyEnum {
     equals(other: KeyEnum): boolean {
@@ -90,7 +91,7 @@ export type RelationResolver = {
 };
 
 export const OFFSET_TO_KEY = 73 + 1;
-export const KEY_OFFSET = 7 + 28; // Relation discriminator + IdentityRelation discriminator + id length u32 + utf8 encoding + id chars
+export const KEY_OFFSET = 7 + 43; // Relation discriminator + IdentityRelation discriminator + id length + utf8 encoding + id chars
 export const getFromByTo: RelationResolver = {
     resolve: async (to: PublicSignKey, db: Documents<IdentityRelation>) => {
         const ser = serialize(to);
@@ -246,9 +247,12 @@ export class IdentityRelation extends AbstractRelation {
 
     static id(to: PublicSignKey, from: PublicSignKey) {
         // we do sha1 to make sure id has fix length, this is important because we want the byte offest of the `trustee` and `truster` to be fixed
-        return createHash("sha1")
-            .update(joinUint8Arrays([serialize(to), serialize(from)]))
-            .digest("base64");
+        return sodium.crypto_generichash(
+            32,
+            joinUint8Arrays([serialize(to), serialize(from)]),
+            null,
+            "base64"
+        );
     }
 }
 

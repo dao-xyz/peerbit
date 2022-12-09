@@ -3,7 +3,7 @@ import rmrf from "rimraf";
 import fs from "fs-extra";
 import { Entry } from "../entry.js";
 import { Log } from "../log.js";
-import { createStore, Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
+import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { arraysCompare } from "@dao-xyz/peerbit-borsh-utils";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
@@ -17,6 +17,7 @@ import {
     DEFAULT_BLOCK_TRANSPORT_TOPIC,
 } from "@dao-xyz/peerbit-block";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
+import { createStore } from "./utils.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;

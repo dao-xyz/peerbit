@@ -2,7 +2,6 @@ import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import { Documents, Operation, PutOperation } from "@dao-xyz/peerbit-document";
 import { Entry } from "@dao-xyz/peerbit-log";
 import { LogIndex, LogQueryRequest } from "@dao-xyz/peerbit-logindex";
-import { createHash } from "crypto";
 import { PeerIdAddress, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { DeleteOperation } from "@dao-xyz/peerbit-document";
 import {
@@ -20,7 +19,8 @@ import { Program } from "@dao-xyz/peerbit-program";
 import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { AddOperationOptions } from "@dao-xyz/peerbit-store";
-
+import sodium from "libsodium-wrappers";
+await sodium.ready;
 const canAppendByRelation = async (
     entry: Entry<Operation<IdentityRelation>>,
     isTrusted?: (key: PublicSignKey) => Promise<boolean>
@@ -309,6 +309,6 @@ export class TrustedNetwork extends Program {
     }
 
     hashCode(): string {
-        return createHash("sha1").update(serialize(this)).digest("hex");
+        return sodium.crypto_generichash(32, serialize(this), null, "hex");
     }
 }

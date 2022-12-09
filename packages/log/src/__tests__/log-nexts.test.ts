@@ -2,7 +2,7 @@ import rmrf from "rimraf";
 import fs from "fs-extra";
 import { jest } from "@jest/globals";
 
-import { createStore, Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
+import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Log } from "../log.js";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
@@ -15,6 +15,7 @@ const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 
 import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import { createStore } from "./utils.js";
 
 let signKey: KeyWithMeta<Ed25519Keypair>;
 

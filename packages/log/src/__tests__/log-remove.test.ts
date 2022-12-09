@@ -1,6 +1,6 @@
 import rmrf from "rimraf";
 import { Log } from "../log.js";
-import { createStore, Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
+import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import fs from "fs-extra";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
@@ -8,6 +8,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
+import { createStore } from "./utils.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;

@@ -1,7 +1,8 @@
-import { createStore, Keystore } from "../keystore.js";
+import { Keystore } from "../keystore.js";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { delay } from "@dao-xyz/peerbit-time";
 import { fixturePath } from "./fixture.js";
+import { createStore } from "./utils.js";
 
 describe("setup fixture", () => {
     it("_", () => {});

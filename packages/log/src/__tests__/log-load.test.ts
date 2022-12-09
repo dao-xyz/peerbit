@@ -4,7 +4,7 @@ import fs from "fs-extra";
 import { LastWriteWins } from "../log-sorting.js";
 import { Entry } from "../entry.js";
 import { Log } from "../log.js";
-import { createStore, Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
+import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { LogCreator } from "./utils/log-creator.js";
 import { arraysCompare } from "@dao-xyz/peerbit-borsh-utils";
 import { dirname } from "path";
@@ -30,6 +30,7 @@ import {
     PutOptions,
     Blocks,
 } from "@dao-xyz/peerbit-block";
+import { createStore } from "./utils.js";
 
 let signKey: KeyWithMeta<Ed25519Keypair>,
     signKey2: KeyWithMeta<Ed25519Keypair>,

@@ -49,7 +49,6 @@ import LRU from "lru-cache";
 import { DirectChannel } from "@dao-xyz/libp2p-pubsub-direct-channel";
 import { encryptionWithRequestKey } from "./encryption.js";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
-import { createHash } from "crypto";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import {
     AbstractProgram,
@@ -65,7 +64,6 @@ import {
     exchangeSwarmAddresses,
     ExchangeSwarmMessage,
 } from "./exchange-network.js";
-import { setTimeout } from "timers";
 import { getNetwork, network } from "./network.js";
 import isNode from "is-node";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
@@ -75,7 +73,12 @@ import {
     Blocks,
     BlockStore,
 } from "@dao-xyz/peerbit-block";
+import sodium from "libsodium-wrappers";
+import { delay } from "@dao-xyz/peerbit-time";
+
 export const logger = loggerFn({ module: "peer" });
+await sodium.ready;
+
 const MIN_REPLICAS = 2;
 
 interface ProgramWithMetadata {
@@ -1124,9 +1127,9 @@ export class Peerbit {
         // Wait for the direct channel to be fully connected
         try {
             let cancel = false;
-            setTimeout(() => {
+            delay(20 * 1000).then(() => {
                 cancel = true;
-            }, 20 * 1000); // 20s timeout
+            });
 
             const connected = await channel.connect({
                 isClosed: () =>
@@ -1256,7 +1259,7 @@ export class Peerbit {
         numberOfLeaders: number
     ): Promise<string[]> {
         // Hash the time, and find the closest peer id to this hash
-        const h = (h: string) => createHash("sha1").update(h).digest("hex");
+        const h = (h: string) => sodium.crypto_generichash(32, h, null, "hex");
         const slotHash = h(slot.toString());
 
         // Assumption: All peers wanting to replicate on topic has direct connections with me (Fully connected network)

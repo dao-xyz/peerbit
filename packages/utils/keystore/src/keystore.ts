@@ -11,11 +11,10 @@ import {
     PublicKeyEncryptionKey,
 } from "@dao-xyz/peerbit-crypto";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import { createHash } from "crypto";
 import sodium from "libsodium-wrappers";
 import { StoreError } from "./errors.js";
-import { Level } from "level";
 import { toBase64 } from "@dao-xyz/peerbit-crypto";
+await sodium.ready;
 
 export interface Type<T> extends Function {
     new (...args: any[]): T;
@@ -25,7 +24,7 @@ const DEFAULT_KEY_GROUP = "_";
 const getGroupKey = (group: string) =>
     group === DEFAULT_KEY_GROUP
         ? DEFAULT_KEY_GROUP
-        : createHash("sha1").update(group).digest("base64");
+        : sodium.crypto_generichash(32, group, null, "base64");
 const getIdKey = async (
     id: string | Uint8Array | PublicSignKey
 ): Promise<string> => {
@@ -62,21 +61,6 @@ const publicKeyFromKeyPair = (keypair: Keypair) => {
         return keypair.publicKey;
     }
     throw new Error("Unsupported");
-};
-
-/**
- * Node only
- * @param path
- * @returns
- */
-export const createStore = async (
-    path = "./keystore"
-): Promise<AbstractLevel<any, string, Uint8Array>> => {
-    const fs = await import("fs");
-    if (fs && fs.mkdirSync) {
-        fs.mkdirSync(path, { recursive: true });
-    }
-    return new Level(path, { valueEncoding: "view" });
 };
 
 /* const verifiedCache: { get(string: string): { publicKey: Ed25519PublicKey, data: Uint8Array }, set(string: string, value: { publicKey: Ed25519PublicKey, data: Uint8Array }): void } = new LRU({ max: 1000 })

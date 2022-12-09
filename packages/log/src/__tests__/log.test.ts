@@ -3,7 +3,7 @@ import rmrf from "rimraf";
 import { Entry, Payload } from "../entry.js";
 import { LamportClock as Clock, Timestamp } from "../clock.js";
 import { Log } from "../log.js";
-import { createStore, Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
+import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import fs from "fs-extra";
 import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
 
@@ -14,6 +14,7 @@ import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
 import { arraysCompare } from "@dao-xyz/peerbit-borsh-utils";
+import { createStore } from "./utils.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
