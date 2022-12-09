@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-keystore",
-    "version": "0.0.41",
+    "version": "0.0.42",
     "description": "A local key manager",
     "sideEffects": false,
     "module": "lib/esm/index.js",

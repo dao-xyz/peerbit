@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-log",
-    "version": "0.0.3",
+    "version": "0.0.4",
     "description": "Append-only log CRDT",
     "author": "dao.xyz",
     "license": "MIT",
@@ -43,7 +43,7 @@
         "p-whilst": "^3.0.0"
     },
     "devDependencies": {
-        "@dao-xyz/peerbit-keystore": "^0.0.41",
+        "@dao-xyz/peerbit-keystore": "^0.0.42",
         "@dao-xyz/peerbit-test-utils": "^0.0.22",
         "assert": "^2.0.0",
         "fs-extra": "^10.0.1",
