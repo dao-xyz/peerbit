@@ -2113,10 +2113,10 @@
   resolved "https://registry.yarnpkg.com/@csstools/selector-specificity/-/selector-specificity-2.0.2.tgz#1bfafe4b7ed0f3e4105837e056e0a89b108ebe36"
   integrity sha512-IkpVW/ehM1hWKln4fCA3NzJU8KwD+kIOvPZA4cqxoJHtE21CCzjyp+Kxbu0i5I4tBNOlXPL9mjwnWlL0VEG4Fg==
 
-"@dao-xyz/borsh@^4.0.6":
-  version "4.0.6"
-  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-4.0.6.tgz#97973e15f543908615459ffefe91c2d5d0a28f25"
-  integrity sha512-jT0X0Kni9SUHgct+ygzj77Dl+DJk/EsrOzdJIOJSRhygBD8cMdtE10BiZTvwYZtqeFoXgpTO+JFYHCYX2SJxlQ==
+"@dao-xyz/borsh@^4.0.7":
+  version "4.0.7"
+  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-4.0.7.tgz#e70f2b646e0a72f01024e537a9eb2b015f2746fd"
+  integrity sha512-YvpI4jPenXDpBpKsQu6ZIYTKJej5XQdacLYH5mFJUiz08/TOTnM2mywKZE0BNZi13ujtLK5x4pDFk5YoFfEhaQ==
   dependencies:
     "@protobufjs/utf8" "^1.1.0"
 
