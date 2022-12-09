@@ -1,7 +1,7 @@
 {
     "name": "@dao-xyz/peerbit-keystore",
     "version": "0.0.39",
-    "description": "A local key manager for OrbitDB",
+    "description": "A local key manager",
     "sideEffects": false,
     "module": "lib/esm/index.js",
     "types": "lib/esm/index.d.ts",

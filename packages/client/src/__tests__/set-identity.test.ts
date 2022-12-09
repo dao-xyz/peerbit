@@ -16,7 +16,7 @@ export const createStore = (
 };
 
 describe(`Set identities`, function () {
-    let session: LSession, orbitdb: Peerbit, keystore: Keystore, options: any;
+    let session: LSession, client: Peerbit, keystore: Keystore, options: any;
     let signKey1: KeyWithMeta<Ed25519Keypair>,
         signKey2: KeyWithMeta<Ed25519Keypair>;
 
@@ -30,12 +30,12 @@ describe(`Set identities`, function () {
             (await keystore.createEd25519Key()) as KeyWithMeta<Ed25519Keypair>;
         signKey2 =
             (await keystore.createEd25519Key()) as KeyWithMeta<Ed25519Keypair>;
-        orbitdb = await Peerbit.create(session.peers[0]);
+        client = await Peerbit.create(session.peers[0]);
     });
 
     afterAll(async () => {
         await keystore.close();
-        if (orbitdb) await orbitdb.stop();
+        if (client) await client.stop();
 
         await session.stop();
     });
@@ -45,13 +45,13 @@ describe(`Set identities`, function () {
     });
 
     it("sets identity", async () => {
-        const db = await orbitdb.open(
+        const db = await client.open(
             new EventStore<string>({
                 id: "abc",
             }),
             options
         );
-        expect(db.store.identity.publicKey.equals(orbitdb.identity.publicKey));
+        expect(db.store.identity.publicKey.equals(client.identity.publicKey));
         db.store.setIdentity({
             publicKey: signKey1.keypair.publicKey,
             privateKey: signKey1.keypair.privateKey,

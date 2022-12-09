@@ -10,29 +10,26 @@ import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 describe(`Automatic Replication`, function () {
     /*  let ipfsd1: Controller, ipfsd2: Controller, ipfsd3: Controller, ipfsd4: Controller, ipfs1: IPFS, ipfs2: IPFS, ipfs3: IPFS, ipfs4: IPFS */
-    let orbitdb1: Peerbit,
-        orbitdb2: Peerbit,
-        orbitdb3: Peerbit,
-        orbitdb4: Peerbit;
+    let client1: Peerbit, client2: Peerbit, client3: Peerbit, client4: Peerbit;
     let session: LSession;
     beforeAll(async () => {
         session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
-        orbitdb1 = await Peerbit.create(session.peers[0], {});
-        orbitdb2 = await Peerbit.create(session.peers[1], {});
+        client1 = await Peerbit.create(session.peers[0], {});
+        client2 = await Peerbit.create(session.peers[1], {});
     });
 
     afterAll(async () => {
-        if (orbitdb1) {
-            await orbitdb1.stop();
+        if (client1) {
+            await client1.stop();
         }
-        if (orbitdb2) {
-            await orbitdb2.stop();
+        if (client2) {
+            await client2.stop();
         }
-        if (orbitdb3) {
-            await orbitdb3.stop();
+        if (client3) {
+            await client3.stop();
         }
-        if (orbitdb4) {
-            await orbitdb4.stop();
+        if (client4) {
+            await client4.stop();
         }
 
         await session.stop();
@@ -44,12 +41,12 @@ describe(`Automatic Replication`, function () {
 
         const topic = uuid();
 
-        const db1 = await orbitdb1.open(
+        const db1 = await client1.open(
             new EventStore<string>({ id: "replicate-automatically-tests" }),
             { topic: topic }
         );
 
-        const db3 = await orbitdb1.open(
+        const db3 = await client1.open(
             new KeyBlocks<string>({
                 id: "replicate-automatically-tests-kv",
             }),
@@ -70,9 +67,9 @@ describe(`Automatic Replication`, function () {
 
         // Open the second database
         let done = false;
-        const db2 = await orbitdb2.open<EventStore<string>>(
+        const db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._store,
+                client2._store,
                 db1.address!
             ),
             {
@@ -94,9 +91,9 @@ describe(`Automatic Replication`, function () {
             }
         );
 
-        const _db4 = await orbitdb2.open<KeyBlocks<string>>(
+        const _db4 = await client2.open<KeyBlocks<string>>(
             await KeyBlocks.load<KeyBlocks<string>>(
-                orbitdb2._store,
+                client2._store,
                 db3.address!
             ),
             {
@@ -114,7 +111,7 @@ describe(`Automatic Replication`, function () {
         const entryCount = 1;
         const entryArr: number[] = [];
         const topic = uuid();
-        const db1 = await orbitdb1.open(
+        const db1 = await client1.open(
             new EventStore<string>({ id: "replicate-automatically-tests" }),
             { topic: topic, replicate: false }
         );
@@ -128,9 +125,9 @@ describe(`Automatic Replication`, function () {
 
         // Open the second database
         let done = false;
-        const db2 = await orbitdb2.open<EventStore<string>>(
+        const db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._store,
+                client2._store,
                 db1.address!
             ),
             {

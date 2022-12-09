@@ -13,8 +13,8 @@ import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 describe(`browser`, function () {
     let session: LSession;
-    let orbitdb1: Peerbit,
-        orbitdb2: Peerbit,
+    let client1: Peerbit,
+        client2: Peerbit,
         db1: EventStore<string>,
         db2: EventStore<string>;
 
@@ -27,9 +27,9 @@ describe(`browser`, function () {
 
         if (db2) await db2.store.drop();
 
-        if (orbitdb1) await orbitdb1.stop();
+        if (client1) await client1.stop();
 
-        if (orbitdb2) await orbitdb2.stop();
+        if (client2) await client2.stop();
 
         await session.stop();
     });
@@ -37,24 +37,24 @@ describe(`browser`, function () {
     it("can replicate entries", async () => {
         session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
 
-        orbitdb1 = await Peerbit.create(session.peers[0], {
+        client1 = await Peerbit.create(session.peers[0], {
             browser: true,
         });
-        orbitdb2 = await Peerbit.create(session.peers[1], {
+        client2 = await Peerbit.create(session.peers[1], {
             browser: true,
         });
 
         let topic = uuid();
-        db1 = await orbitdb1.open(
+        db1 = await client1.open(
             new EventStore<string>({
                 id: uuid(),
             }),
             { topic: topic, replicate: true }
         );
 
-        db2 = await orbitdb2.open<EventStore<string>>(
+        db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._store,
+                client2._store,
                 db1.address!
             ),
             { topic: topic, replicate: true }
@@ -62,26 +62,26 @@ describe(`browser`, function () {
 
         await waitForPeers(
             session.peers[1],
-            [orbitdb1.id],
+            [client1.id],
             getObserverTopic(topic)
         );
         await waitForPeers(
             session.peers[0],
-            [orbitdb2.id],
+            [client2.id],
             getObserverTopic(topic)
         );
         await waitForPeers(
             session.peers[1],
-            [orbitdb1.id],
+            [client1.id],
             getReplicationTopic(topic)
         );
         await waitForPeers(
             session.peers[0],
-            [orbitdb2.id],
+            [client2.id],
             getReplicationTopic(topic)
         );
-        expect(orbitdb1._directConnections.size).toEqual(0); // since browser
-        expect(orbitdb2._directConnections.size).toEqual(0); // since browser
+        expect(client1._directConnections.size).toEqual(0); // since browser
+        expect(client2._directConnections.size).toEqual(0); // since browser
 
         await db1.add("hello");
         await db2.add("world");
@@ -115,23 +115,23 @@ describe(`browser`, function () {
         );
         await waitForPeers(session.peers[1], session.peers[2], topic);
 
-        orbitdb1 = await Peerbit.create(session.peers[0], {
+        client1 = await Peerbit.create(session.peers[0], {
             browser: true,
         });
-        orbitdb2 = await Peerbit.create(session.peers[1], {
+        client2 = await Peerbit.create(session.peers[1], {
             browser: true,
         });
 
-        db1 = await orbitdb1.open(
+        db1 = await client1.open(
             new EventStore<string>({
                 id: uuid(),
             }),
             { topic: topic, replicate: true }
         );
 
-        db2 = await orbitdb2.open<EventStore<string>>(
+        db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._store,
+                client2._store,
                 db1.address!
             ),
             { topic: topic, replicate: true }
@@ -139,17 +139,17 @@ describe(`browser`, function () {
 
         await waitForPeers(
             session.peers[2],
-            [orbitdb1.id],
+            [client1.id],
             getObserverTopic(topic)
         );
         await waitForPeers(
             session.peers[2],
-            [orbitdb2.id],
+            [client2.id],
             getObserverTopic(topic)
         );
 
-        expect(orbitdb1._directConnections.size).toEqual(0); // since browser
-        expect(orbitdb2._directConnections.size).toEqual(0); // since browser
+        expect(client1._directConnections.size).toEqual(0); // since browser
+        expect(client2._directConnections.size).toEqual(0); // since browser
 
         await db1.add("hello");
         await db2.add("world");
@@ -164,15 +164,15 @@ describe(`browser`, function () {
     it("will share entries as replicator on peer connect", async () => {
         session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
 
-        orbitdb1 = await Peerbit.create(session.peers[0], {
+        client1 = await Peerbit.create(session.peers[0], {
             browser: true,
         });
-        orbitdb2 = await Peerbit.create(session.peers[1], {
+        client2 = await Peerbit.create(session.peers[1], {
             browser: true,
         });
 
         let topic = uuid();
-        db1 = await orbitdb1.open(
+        db1 = await client1.open(
             new EventStore<string>({
                 id: uuid(),
             }),
@@ -182,9 +182,9 @@ describe(`browser`, function () {
         await db1.add("hello");
         await db1.add("world");
 
-        db2 = await orbitdb2.open<EventStore<string>>(
+        db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._store,
+                client2._store,
                 db1.address!
             ),
             { topic: topic, replicate: true }
@@ -192,26 +192,26 @@ describe(`browser`, function () {
 
         await waitForPeers(
             session.peers[1],
-            [orbitdb1.id],
+            [client1.id],
             getObserverTopic(topic)
         );
         await waitForPeers(
             session.peers[0],
-            [orbitdb2.id],
+            [client2.id],
             getObserverTopic(topic)
         );
         await waitForPeers(
             session.peers[1],
-            [orbitdb1.id],
+            [client1.id],
             getReplicationTopic(topic)
         );
         await waitForPeers(
             session.peers[0],
-            [orbitdb2.id],
+            [client2.id],
             getReplicationTopic(topic)
         );
-        expect(orbitdb1._directConnections.size).toEqual(0); // since browser
-        expect(orbitdb2._directConnections.size).toEqual(0); // since browser
+        expect(client1._directConnections.size).toEqual(0); // since browser
+        expect(client2._directConnections.size).toEqual(0); // since browser
 
         await waitFor(() => db1.store.oplog.values.length === 2);
         expect(
@@ -224,14 +224,14 @@ describe(`browser`, function () {
         let topic = uuid();
         session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
 
-        orbitdb1 = await Peerbit.create(session.peers[0], {
+        client1 = await Peerbit.create(session.peers[0], {
             browser: true,
         });
-        orbitdb2 = await Peerbit.create(session.peers[1], {
+        client2 = await Peerbit.create(session.peers[1], {
             browser: true,
         });
 
-        db1 = await orbitdb1.open(
+        db1 = await client1.open(
             new EventStore<string>({
                 id: uuid(),
             }),
@@ -241,9 +241,9 @@ describe(`browser`, function () {
         await db1.add("hello");
         await db1.add("world");
 
-        db2 = await orbitdb2.open<EventStore<string>>(
+        db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._store,
+                client2._store,
                 db1.address!
             ),
             { topic: topic, replicate: true }
@@ -251,24 +251,24 @@ describe(`browser`, function () {
 
         await waitForPeers(
             session.peers[1],
-            [orbitdb1.id],
+            [client1.id],
             getObserverTopic(topic)
         );
         await waitForPeers(
             session.peers[0],
-            [orbitdb2.id],
+            [client2.id],
             getObserverTopic(topic)
         );
         await waitForPeers(
             session.peers[0],
-            [orbitdb2.id],
+            [client2.id],
             getReplicationTopic(topic)
         );
         expect(
-            orbitdb1._topicSubscriptions.has(getReplicationTopic(topic))
+            client1._topicSubscriptions.has(getReplicationTopic(topic))
         ).toEqual(false);
-        expect(orbitdb1._directConnections.size).toEqual(0); // since browser
-        expect(orbitdb2._directConnections.size).toEqual(0); // since browser
+        expect(client1._directConnections.size).toEqual(0); // since browser
+        expect(client2._directConnections.size).toEqual(0); // since browser
 
         await waitFor(() => db1.store.oplog.values.length === 2);
         expect(

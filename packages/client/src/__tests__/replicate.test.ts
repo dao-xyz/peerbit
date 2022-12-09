@@ -14,8 +14,8 @@ describe(`Replication`, function () {
     jest.setTimeout(60000);
 
     let session: LSession;
-    let orbitdb1: Peerbit,
-        orbitdb2: Peerbit,
+    let client1: Peerbit,
+        client2: Peerbit,
         db1: EventStore<string>,
         db2: EventStore<string>;
     let topic: string;
@@ -24,12 +24,12 @@ describe(`Replication`, function () {
     beforeEach(async () => {
         session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
 
-        orbitdb1 = await Peerbit.create(session.peers[0], {});
-        orbitdb2 = await Peerbit.create(session.peers[1], {});
+        client1 = await Peerbit.create(session.peers[0], {});
+        client2 = await Peerbit.create(session.peers[1], {});
 
         options = Object.assign({}, options, {});
         topic = uuid();
-        db1 = await orbitdb1.open(new EventStore<string>({ id: "a" }), {
+        db1 = await client1.open(new EventStore<string>({ id: "a" }), {
             ...options,
             topic: topic,
         });
@@ -42,18 +42,18 @@ describe(`Replication`, function () {
 
         if (db2) await db2.drop();
 
-        if (orbitdb1) await orbitdb1.stop();
+        if (client1) await client1.stop();
 
-        if (orbitdb2) await orbitdb2.stop();
+        if (client2) await client2.stop();
         await session.stop();
     });
 
     it("replicates database of 1 entry", async () => {
         options = Object.assign({}, options);
         let done = false;
-        db2 = await orbitdb2.open<EventStore<string>>(
+        db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._store,
+                client2._store,
                 db1.address!
             ),
             {
@@ -69,14 +69,14 @@ describe(`Replication`, function () {
                         .collect();
                     expect(db1Entries.length).toEqual(1);
                     expect(
-                        await orbitdb1.findReplicators(
+                        await client1.findReplicators(
                             topic,
                             db1.address.toString(),
                             db1Entries[0].gid,
-                            orbitdb1._minReplicas
+                            client1._minReplicas
                         )
                     ).toContainValues(
-                        [orbitdb1.id, orbitdb2.id].map((p) => p.toString())
+                        [client1.id, client2.id].map((p) => p.toString())
                     );
                     expect(db1Entries[0].payload.getValue().value).toEqual(
                         value
@@ -87,14 +87,14 @@ describe(`Replication`, function () {
                         .collect();
                     expect(db2Entries.length).toEqual(1);
                     expect(
-                        await orbitdb2.findReplicators(
+                        await client2.findReplicators(
                             topic,
                             db1.address.toString(),
                             db2Entries[0].gid,
-                            orbitdb1._minReplicas
+                            client1._minReplicas
                         )
                     ).toContainValues(
-                        [orbitdb1.id, orbitdb2.id].map((p) => p.toString())
+                        [client1.id, client2.id].map((p) => p.toString())
                     );
                     expect(db2Entries[0].payload.getValue().value).toEqual(
                         value
@@ -105,16 +105,16 @@ describe(`Replication`, function () {
         );
         await waitForPeers(
             session.peers[1],
-            [orbitdb1.id],
+            [client1.id],
             getObserverTopic(topic)
         );
         await waitForPeers(
             session.peers[0],
-            [orbitdb2.id],
+            [client2.id],
             getObserverTopic(topic)
         );
-        await waitFor(() => orbitdb1._directConnections.size === 1);
-        await waitFor(() => orbitdb2._directConnections.size === 1);
+        await waitFor(() => client1._directConnections.size === 1);
+        await waitFor(() => client2._directConnections.size === 1);
 
         const value = "hello";
         await db1.add(value);
@@ -125,16 +125,16 @@ describe(`Replication`, function () {
     it("replicates database of 100 entries", async () => {
         await waitForPeers(
             session.peers[1],
-            [orbitdb1.id],
+            [client1.id],
             getReplicationTopic(topic)
         );
 
         options = Object.assign({}, options);
 
         let done = false;
-        db2 = await orbitdb2.open<EventStore<string>>(
+        db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._store,
+                client2._store,
                 db1.address!
             ),
             {
@@ -171,7 +171,7 @@ describe(`Replication`, function () {
     it("emits correct replication info", async () => {
         await waitForPeers(
             session.peers[1],
-            [orbitdb1.id],
+            [client1.id],
             getReplicationTopic(topic)
         );
 
@@ -187,9 +187,9 @@ describe(`Replication`, function () {
 
         let done = false;
 
-        db2 = await orbitdb2.open<EventStore<string>>(
+        db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._store,
+                client2._store,
                 db1.address!
             ),
             {
@@ -282,9 +282,9 @@ describe(`Replication`, function () {
         let replicatedEventCount = 0;
         let done = false;
 
-        db2 = await orbitdb2.open<EventStore<string>>(
+        db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._store,
+                client2._store,
                 db1.address!
             ),
             {
@@ -339,7 +339,7 @@ describe(`Replication`, function () {
     it("emits correct replication info in two-way replication", async () => {
         await waitForPeers(
             session.peers[1],
-            [orbitdb1.id],
+            [client1.id],
             getReplicationTopic(topic)
         );
 
@@ -369,9 +369,9 @@ describe(`Replication`, function () {
         const replicateSet = new Set();
         let done = false;
 
-        db2 = await orbitdb2.open<EventStore<string>>(
+        db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._store,
+                client2._store,
                 db1.address!
             ),
             {

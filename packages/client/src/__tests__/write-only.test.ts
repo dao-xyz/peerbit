@@ -8,8 +8,8 @@ import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 describe(`Write-only`, function () {
     let session: LSession;
-    let orbitdb1: Peerbit,
-        orbitdb2: Peerbit,
+    let client1: Peerbit,
+        client2: Peerbit,
         db1: EventStore<string>,
         db2: EventStore<string>;
     let topic: string;
@@ -27,13 +27,13 @@ describe(`Write-only`, function () {
     beforeEach(async () => {
         clearInterval(timer);
 
-        orbitdb1 = await Peerbit.create(session.peers[0], {
+        client1 = await Peerbit.create(session.peers[0], {
             waitForKeysTimout: 1000,
         });
-        orbitdb2 = await Peerbit.create(session.peers[1], {
+        client2 = await Peerbit.create(session.peers[1], {
             limitSigning: true,
         }); // limitSigning = dont sign exchange heads request
-        db1 = await orbitdb1.open(
+        db1 = await client1.open(
             new EventStore<string>({
                 id: "abc",
             }),
@@ -48,20 +48,20 @@ describe(`Write-only`, function () {
 
         if (db2) await db2.store.drop();
 
-        if (orbitdb1) await orbitdb1.stop();
+        if (client1) await client1.stop();
 
-        if (orbitdb2) await orbitdb2.stop();
+        if (client2) await client2.stop();
     });
 
     it("write 1 entry replicate false", async () => {
         await waitForPeers(
             session.peers[1],
-            [orbitdb1.id],
+            [client1.id],
             getReplicationTopic(topic)
         );
-        db2 = await orbitdb2.open<EventStore<string>>(
+        db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._store,
+                client2._store,
                 db1.address!
             ),
             { topic: topic, replicate: false }
@@ -81,16 +81,16 @@ describe(`Write-only`, function () {
     it("encrypted clock sync write 1 entry replicate false", async () => {
         await waitForPeers(
             session.peers[1],
-            [orbitdb1.id],
+            [client1.id],
             getReplicationTopic(topic)
         );
-        const encryptionKey = await orbitdb1.keystore.createEd25519Key({
+        const encryptionKey = await client1.keystore.createEd25519Key({
             id: "encryption key",
             group: topic,
         });
-        db2 = await orbitdb2.open<EventStore<string>>(
+        db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                orbitdb2._store,
+                client2._store,
                 db1.address!
             ),
             { topic: topic, replicate: false }
@@ -120,8 +120,8 @@ describe(`Write-only`, function () {
     it("will open store on exchange heads message", async () => {
         const topic = "x";
         const store = new EventStore<string>({ id: "replication-tests" });
-        await orbitdb2.subscribeToTopic(topic, true);
-        await orbitdb1.open(store, {
+        await client2.subscribeToTopic(topic, true);
+        await client1.open(store, {
             topic: topic,
             replicate: false,
         });
@@ -131,12 +131,12 @@ describe(`Write-only`, function () {
 
         expect(store.store.oplog.heads).toHaveLength(1);
 
-        await waitFor(() => orbitdb2.programs.get(topic)?.size || 0 > 0, {
+        await waitFor(() => client2.programs.get(topic)?.size || 0 > 0, {
             timeout: 20 * 1000,
             delayInterval: 50,
         });
 
-        const replicatedProgramAndStores = orbitdb2.programs
+        const replicatedProgramAndStores = client2.programs
             .get(topic)
             ?.values()
             .next().value;

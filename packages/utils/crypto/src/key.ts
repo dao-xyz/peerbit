@@ -1,8 +1,6 @@
 import { serialize } from "@dao-xyz/borsh";
 import { toBase64 } from "./utils.js";
 
-export type IdentityProviderType = "orbitdb" | "ethereum" | "solana";
-
 interface Key {
     equals(other: Key): boolean;
     get bytes(): Uint8Array;

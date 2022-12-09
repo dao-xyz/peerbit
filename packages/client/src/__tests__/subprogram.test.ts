@@ -18,8 +18,8 @@ import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 describe(`Subprogram`, function () {
     let session: LSession;
-    let orbitdb1: Peerbit,
-        orbitdb2: Peerbit,
+    let client1: Peerbit,
+        client2: Peerbit,
         db1: EventStore<string>,
         db2: EventStore<string>;
     let topic: string;
@@ -36,15 +36,15 @@ describe(`Subprogram`, function () {
     beforeEach(async () => {
         clearInterval(timer);
 
-        orbitdb1 = await Peerbit.create(session.peers[0], {
+        client1 = await Peerbit.create(session.peers[0], {
             /*  canAccessKeys: async (requester, _keyToAccess) => {
-                return requester.equals(orbitdb2.identity.publicKey); // allow orbitdb1 to share keys with orbitdb2
+                return requester.equals(client2.identity.publicKey); // allow client1 to share keys with client2
             },  */ waitForKeysTimout: 1000,
         });
-        orbitdb2 = await Peerbit.create(session.peers[1], {
+        client2 = await Peerbit.create(session.peers[1], {
             limitSigning: true,
         }); // limitSigning = dont sign exchange heads request
-        db1 = await orbitdb1.open(
+        db1 = await client1.open(
             new EventStore<string>({
                 id: "abc",
             }),
@@ -59,9 +59,9 @@ describe(`Subprogram`, function () {
 
         if (db2) await db2.store.drop();
 
-        if (orbitdb1) await orbitdb1.stop();
+        if (client1) await client1.stop();
 
-        if (orbitdb2) await orbitdb2.stop();
+        if (client2) await client2.stop();
     });
 
     @variant("program_with_subprogram")
@@ -110,9 +110,9 @@ describe(`Subprogram`, function () {
                 }),
             })
         );
-        await orbitdb2.subscribeToTopic(topic, true);
+        await client2.subscribeToTopic(topic, true);
 
-        await orbitdb1.open(store, {
+        await client1.open(store, {
             topic: topic,
             replicate: false,
         });
@@ -125,7 +125,7 @@ describe(`Subprogram`, function () {
         );
         expect(store.eventStore.store.oplog.heads).toHaveLength(2); // two independent documents
 
-        await waitFor(() => orbitdb2.programs.get(topic)?.size || 0 > 0, {
+        await waitFor(() => client2.programs.get(topic)?.size || 0 > 0, {
             timeout: 20 * 1000,
             delayInterval: 50,
         });
@@ -133,13 +133,13 @@ describe(`Subprogram`, function () {
         const eventStoreString = (
             (await eventStore.payload.getValue()) as PutOperation<any>
         ).value as EventStore<string>;
-        await orbitdb1.open(eventStoreString, {
+        await client1.open(eventStoreString, {
             topic: topic,
             replicate: false,
         });
 
         const programFromReplicator = [
-            ...orbitdb2.programs.get(topic)?.values()!,
+            ...client2.programs.get(topic)?.values()!,
         ][0].program as ProgramWithSubprogram;
         programFromReplicator.accessRequests = [];
         await eventStoreString.add("hello"); // This will exchange an head that will make client 1 open the store
@@ -147,7 +147,7 @@ describe(`Subprogram`, function () {
         expect(
             (
                 await programFromReplicator.accessRequests[0].entry.getPublicKeys()
-            )[0].equals(orbitdb1.identity.publicKey)
+            )[0].equals(client1.identity.publicKey)
         );
     });
 });

@@ -9,18 +9,15 @@ import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { field, variant } from "@dao-xyz/borsh";
 
-const dbPath = "./orbitdb/tests/persistency";
+const dbPath = "./tmp/tests/persistency";
 
-/* tests.forEach(test => {*/
 describe(`load`, () => {
-    //${test.title}
-
     jest.retryTimes(1); // TODO Side effects may cause failures
 
     const entryCount = 10;
 
     describe("load single", function () {
-        let db: EventStore<string>, address: string, orbitdb1: Peerbit;
+        let db: EventStore<string>, address: string, client1: Peerbit;
         let session: LSession;
 
         beforeAll(async () => {
@@ -32,7 +29,7 @@ describe(`load`, () => {
         });
 
         beforeEach(async () => {
-            orbitdb1 = await Peerbit.create(session.peers[0], {
+            client1 = await Peerbit.create(session.peers[0], {
                 directory: dbPath + "/" + uuid(),
                 storage: {
                     createStore: (string?: string) => createStore(string),
@@ -43,7 +40,7 @@ describe(`load`, () => {
 
             for (let i = 0; i < entryCount; i++) entryArr.push(i);
 
-            db = await orbitdb1.open(new EventStore<string>({}), {
+            db = await client1.open(new EventStore<string>({}), {
                 topic: uuid(),
             });
             address = db.address!.toString();
@@ -54,13 +51,13 @@ describe(`load`, () => {
         afterEach(async () => {
             await db?.drop();
 
-            if (orbitdb1) await orbitdb1.stop();
+            if (client1) await client1.stop();
         });
 
         it("loads database from local cache", async () => {
-            db = await orbitdb1.open(
+            db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._store,
+                    client1._store,
                     Address.parse(address)
                 ),
                 { topic: uuid() }
@@ -79,9 +76,9 @@ describe(`load`, () => {
 
         it("loads database partially", async () => {
             const amount = 3;
-            db = await orbitdb1.open(
+            db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._store,
+                    client1._store,
                     Address.parse(address)
                 ),
                 { topic: uuid() }
@@ -106,9 +103,9 @@ describe(`load`, () => {
         it("load and close several times", async () => {
             const amount = 8;
             for (let i = 0; i < amount; i++) {
-                db = await orbitdb1.open(
+                db = await client1.open(
                     await EventStore.load<EventStore<string>>(
-                        orbitdb1._store,
+                        client1._store,
                         Address.parse(address)
                     ),
                     { topic: uuid() }
@@ -131,7 +128,7 @@ describe(`load`, () => {
         });
 
         /* it('closes database while loading', async () => { TODO fix
-      db = await orbitdb1.open(address, { type: EVENT_STORE_TYPE, replicationConcurrency: 1 })
+      db = await client1.open(address, { type: EVENT_STORE_TYPE, replicationConcurrency: 1 })
       return new Promise(async (resolve, reject) => {
         // don't wait for load to finish
         db.load()
@@ -151,9 +148,9 @@ describe(`load`, () => {
         it("load, add one, close - several times", async () => {
             const amount = 8;
             for (let i = 0; i < amount; i++) {
-                db = await orbitdb1.open(
+                db = await client1.open(
                     await EventStore.load<EventStore<string>>(
-                        orbitdb1._store,
+                        client1._store,
                         Address.parse(address)
                     ),
                     { topic: uuid() }
@@ -181,9 +178,9 @@ describe(`load`, () => {
 
         it("loading a database emits 'ready' event", async () => {
             let done = false;
-            db = await orbitdb1.open(
+            db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._store,
+                    client1._store,
                     Address.parse(address)
                 ),
                 {
@@ -213,9 +210,9 @@ describe(`load`, () => {
         it("loading a database emits 'load.progress' event", async () => {
             let count = 0;
             let done = false;
-            db = await orbitdb1.open(
+            db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._store,
+                    client1._store,
                     Address.parse(address)
                 ),
                 {
@@ -258,7 +255,7 @@ describe(`load`, () => {
                 await this.db2.setup();
             }
         }
-        let db: MultipleStores, address: string, orbitdb1: Peerbit;
+        let db: MultipleStores, address: string, client1: Peerbit;
         let session: LSession;
 
         beforeAll(async () => {
@@ -270,7 +267,7 @@ describe(`load`, () => {
         });
 
         beforeEach(async () => {
-            orbitdb1 = await Peerbit.create(session.peers[0], {
+            client1 = await Peerbit.create(session.peers[0], {
                 directory: dbPath + "/" + uuid(),
                 storage: {
                     createStore: (string?: string) => createStore(string),
@@ -281,7 +278,7 @@ describe(`load`, () => {
 
             for (let i = 0; i < entryCount; i++) entryArr.push(i);
 
-            db = await orbitdb1.open(new MultipleStores(), {
+            db = await client1.open(new MultipleStores(), {
                 topic: uuid(),
             });
             address = db.address!.toString();
@@ -293,13 +290,13 @@ describe(`load`, () => {
         afterEach(async () => {
             await db?.drop();
 
-            if (orbitdb1) await orbitdb1.stop();
+            if (client1) await client1.stop();
         });
 
         it("loads database from local cache", async () => {
-            db = await orbitdb1.open(
+            db = await client1.open(
                 await MultipleStores.load<MultipleStores>(
-                    orbitdb1._store,
+                    client1._store,
                     Address.parse(address)
                 ),
                 { topic: uuid() }
@@ -333,9 +330,9 @@ describe(`load`, () => {
 
         /* it("loads database partially", async () => {
             const amount = 3;
-            db = await orbitdb1.open(
+            db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._store,
+                    client1._store,
                     Address.parse(address)
                 ),
                 { topic: uuid() }
@@ -360,9 +357,9 @@ describe(`load`, () => {
         it("load and close several times", async () => {
             const amount = 8;
             for (let i = 0; i < amount; i++) {
-                db = await orbitdb1.open(
+                db = await client1.open(
                     await EventStore.load<EventStore<string>>(
-                        orbitdb1._store,
+                        client1._store,
                         Address.parse(address)
                     ),
                     { topic: uuid() }
@@ -385,7 +382,7 @@ describe(`load`, () => {
         }); */
 
         /* it('closes database while loading', async () => { TODO fix
-      db = await orbitdb1.open(address, { type: EVENT_STORE_TYPE, replicationConcurrency: 1 })
+      db = await client1.open(address, { type: EVENT_STORE_TYPE, replicationConcurrency: 1 })
       return new Promise(async (resolve, reject) => {
         // don't wait for load to finish
         db.load()
@@ -405,9 +402,9 @@ describe(`load`, () => {
         /*  it("load, add one, close - several times", async () => {
              const amount = 8;
              for (let i = 0; i < amount; i++) {
-                 db = await orbitdb1.open(
+                 db = await client1.open(
                      await EventStore.load<EventStore<string>>(
-                         orbitdb1._store,
+                         client1._store,
                          Address.parse(address)
                      ),
                      { topic: uuid() }
@@ -435,9 +432,9 @@ describe(`load`, () => {
  
          it("loading a database emits 'ready' event", async () => {
              let done = false;
-             db = await orbitdb1.open(
+             db = await client1.open(
                  await EventStore.load<EventStore<string>>(
-                     orbitdb1._store,
+                     client1._store,
                      Address.parse(address)
                  ),
                  {
@@ -467,9 +464,9 @@ describe(`load`, () => {
          it("loading a database emits 'load.progress' event", async () => {
              let count = 0;
              let done = false;
-             db = await orbitdb1.open(
+             db = await client1.open(
                  await EventStore.load<EventStore<string>>(
-                     orbitdb1._store,
+                     client1._store,
                      Address.parse(address)
                  ),
                  {
@@ -494,7 +491,7 @@ describe(`load`, () => {
     describe("load from empty snapshot", function () {
         let db: EventStore<string>,
             address: string,
-            orbitdb1: Peerbit,
+            client1: Peerbit,
             session: LSession;
 
         beforeAll(async () => {
@@ -506,25 +503,25 @@ describe(`load`, () => {
         });
 
         beforeEach(async () => {
-            orbitdb1 = await Peerbit.create(session.peers[0], {
+            client1 = await Peerbit.create(session.peers[0], {
                 directory: dbPath + "/" + uuid(),
             });
         });
         afterEach(async () => {
             await db.drop();
-            if (orbitdb1) await orbitdb1.stop();
+            if (client1) await client1.stop();
         });
 
         it("loads database from an empty snapshot", async () => {
             const options = { topic: uuid() };
-            db = await orbitdb1.open(new EventStore<string>({}), options);
+            db = await client1.open(new EventStore<string>({}), options);
             address = db.address!.toString();
             await db.saveSnapshot();
             await db.close();
 
-            db = await orbitdb1.open(
+            db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._store,
+                    client1._store,
                     Address.parse(address)
                 ),
                 options
@@ -538,7 +535,7 @@ describe(`load`, () => {
     describe("load from snapshot", function () {
         let db: EventStore<string>,
             address: string,
-            orbitdb1: Peerbit,
+            client1: Peerbit,
             session: LSession;
 
         beforeAll(async () => {
@@ -550,7 +547,7 @@ describe(`load`, () => {
         });
 
         beforeEach(async () => {
-            orbitdb1 = await Peerbit.create(session.peers[0], {
+            client1 = await Peerbit.create(session.peers[0], {
                 directory: dbPath + "/" + uuid(),
                 storage: {
                     createStore: (string?: string) => createStore(string),
@@ -561,7 +558,7 @@ describe(`load`, () => {
 
             for (let i = 0; i < entryCount; i++) entryArr.push(i);
 
-            db = await orbitdb1.open(new EventStore<string>({}), {
+            db = await client1.open(new EventStore<string>({}), {
                 topic: uuid(),
             });
             address = db.address!.toString();
@@ -573,13 +570,13 @@ describe(`load`, () => {
         afterEach(async () => {
             await db?.drop();
 
-            if (orbitdb1) await orbitdb1.stop();
+            if (client1) await client1.stop();
         });
 
         it("loads database from snapshot", async () => {
-            db = await orbitdb1.open(
+            db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._store,
+                    client1._store,
                     Address.parse(address)
                 ),
                 { topic: uuid() }
@@ -596,9 +593,9 @@ describe(`load`, () => {
         it("load, add one and save snapshot several times", async () => {
             const amount = 4;
             for (let i = 0; i < amount; i++) {
-                db = await orbitdb1.open(
+                db = await client1.open(
                     await EventStore.load<EventStore<string>>(
-                        orbitdb1._store,
+                        client1._store,
                         Address.parse(address)
                     ),
                     { topic: uuid() }
@@ -624,18 +621,18 @@ describe(`load`, () => {
 
         it("throws an error when trying to load a missing snapshot", async () => {
             const options = { topic: uuid() };
-            db = await orbitdb1.open(
+            db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._store,
+                    client1._store,
                     Address.parse(address)
                 ),
                 options
             );
             await db.drop();
             db = null as any;
-            db = await orbitdb1.open(
+            db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._store,
+                    client1._store,
                     Address.parse(address)
                 ),
                 options
@@ -654,9 +651,9 @@ describe(`load`, () => {
 
         it("loading a database emits 'ready' event", async () => {
             let done = false;
-            db = await orbitdb1.open(
+            db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._store,
+                    client1._store,
                     Address.parse(address)
                 ),
                 {
@@ -681,9 +678,9 @@ describe(`load`, () => {
         it("loading a database emits 'load.progress' event", async () => {
             let done = false;
             let count = 0;
-            db = await orbitdb1.open(
+            db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb1._store,
+                    client1._store,
                     Address.parse(address)
                 ),
                 {

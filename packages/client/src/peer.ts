@@ -222,7 +222,7 @@ export class Peerbit {
         this.identity = identity;
         this.id = options.peerId;
 
-        this.directory = options.directory || "./orbitdb";
+        this.directory = options.directory || "./peerbit/data";
         this.storage = options.storage;
         this._directConnections = new Map();
         this.programs = new Map();
@@ -1730,7 +1730,7 @@ export class Peerbit {
 
     /**
      * Check if we have the database, or part of it, saved locally
-     * @param  {[Cache]} cache [The OrbitDBCache instance containing the local data]
+     * @param  {[Cache]} cache [The Cache instance containing the local data]
      * @param  {[Address]} dbAddress [Address of the database to check]
      * @return {[Boolean]} [Returns true if we have cached the db locally, false if not]
      */

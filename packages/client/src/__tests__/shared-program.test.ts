@@ -7,8 +7,8 @@ import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 describe(`shared`, function () {
     let session: LSession;
-    let orbitdb1: Peerbit,
-        orbitdb2: Peerbit,
+    let client1: Peerbit,
+        client2: Peerbit,
         db1: SimpleStoreContract,
         db2: SimpleStoreContract;
 
@@ -21,8 +21,8 @@ describe(`shared`, function () {
     });
 
     beforeEach(async () => {
-        orbitdb1 = await Peerbit.create(session.peers[0], {});
-        orbitdb2 = await Peerbit.create(session.peers[1], {});
+        client1 = await Peerbit.create(session.peers[0], {});
+        client2 = await Peerbit.create(session.peers[1], {});
     });
 
     afterEach(async () => {
@@ -30,20 +30,20 @@ describe(`shared`, function () {
 
         if (db2) await db2.store.drop();
 
-        if (orbitdb1) await orbitdb1.stop();
+        if (client1) await client1.stop();
 
-        if (orbitdb2) await orbitdb2.stop();
+        if (client2) await client2.stop();
     });
 
     it("open same store twice will share instance", async () => {
         const topic = "topic";
-        db1 = await orbitdb1.open(
+        db1 = await client1.open(
             new SimpleStoreContract({
                 store: new EventStore({ id: "some db" }),
             }),
             { topic: topic }
         );
-        const sameDb = await orbitdb1.open(
+        const sameDb = await client1.open(
             new SimpleStoreContract({
                 store: new EventStore({ id: "some db" }),
             }),
@@ -54,7 +54,7 @@ describe(`shared`, function () {
 
     it("can share nested stores", async () => {
         const topic = "topic";
-        db1 = await orbitdb1.open(
+        db1 = await client1.open(
             new SimpleStoreContract({
                 store: new EventStore<string>({
                     id: "event store",
@@ -62,7 +62,7 @@ describe(`shared`, function () {
             }),
             { topic: topic }
         );
-        db2 = await orbitdb1.open(
+        db2 = await client1.open(
             new SimpleStoreContract({
                 store: new EventStore<string>({
                     id: "event store",

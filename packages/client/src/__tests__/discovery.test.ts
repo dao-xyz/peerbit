@@ -10,7 +10,7 @@ describe(`discovery`, function () {
     jest.setTimeout(60 * 1000);
     jest.retryTimes(1);
     let session1: LSession, session2: LSession;
-    let orbitdb1: Peerbit, orbitdb2: Peerbit, orbitdb3: Peerbit;
+    let client1: Peerbit, client2: Peerbit, client3: Peerbit;
 
     beforeAll(async () => {
         session1 = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
@@ -23,46 +23,46 @@ describe(`discovery`, function () {
     });
 
     beforeEach(async () => {
-        orbitdb1 = await Peerbit.create(session1.peers[0], {
+        client1 = await Peerbit.create(session1.peers[0], {
             localNetwork: true,
         });
-        orbitdb2 = await Peerbit.create(session1.peers[1], {
+        client2 = await Peerbit.create(session1.peers[1], {
             localNetwork: true,
         });
-        orbitdb3 = await Peerbit.create(session2.peers[0], {
+        client3 = await Peerbit.create(session2.peers[0], {
             localNetwork: true,
         });
     });
 
     afterEach(async () => {
-        if (orbitdb1) await orbitdb1.stop();
+        if (client1) await client1.stop();
 
-        if (orbitdb2) await orbitdb2.stop();
+        if (client2) await client2.stop();
 
-        if (orbitdb3) await orbitdb3.stop();
+        if (client3) await client3.stop();
     });
 
     it("will connect to network with swarm exchange", async () => {
-        const program = await orbitdb1.open(
+        const program = await client1.open(
             new PermissionedEventStore({
                 network: new TrustedNetwork({
                     id: "network-tests",
-                    rootTrust: orbitdb1.identity.publicKey,
+                    rootTrust: client1.identity.publicKey,
                 }),
             })
         );
-        await orbitdb1.join(program);
+        await client1.join(program);
 
         // trust client 2
-        await program.network.add(orbitdb2.id); // we have to trust peer because else other party will not exchange heads
-        await program.network.add(orbitdb2.identity.publicKey); // will have to trust identity because else this can t add more idenetities
+        await program.network.add(client2.id); // we have to trust peer because else other party will not exchange heads
+        await program.network.add(client2.identity.publicKey); // will have to trust identity because else this can t add more idenetities
 
         // trust client 3
-        await program.network.add(orbitdb3.id); // we have to trust peer because else other party will not exchange heads
-        await program.network.add(orbitdb3.identity.publicKey); // will have to trust identity because else this can t add more idenetities
+        await program.network.add(client3.id); // we have to trust peer because else other party will not exchange heads
+        await program.network.add(client3.identity.publicKey); // will have to trust identity because else this can t add more idenetities
         await waitFor(() => program.network.trustGraph.index.size === 5);
 
-        await orbitdb2.open(program.address!);
+        await client2.open(program.address!);
 
         // Connect client 1 with 3, but try to connect 2 to 3 by swarm messages
         await session1.peers[0].peerStore.addressBook.set(
@@ -75,14 +75,14 @@ describe(`discovery`, function () {
             session1.peers[0],
             DEFAULT_BLOCK_TRANSPORT_TOPIC
         );
-        await orbitdb3.open(program.address!);
+        await client3.open(program.address!);
         await delay(10000);
-        await waitFor(() => orbitdb3._directConnections.size === 2);
+        await waitFor(() => client3._directConnections.size === 2);
         expect(
-            orbitdb3._directConnections.has(orbitdb1.id.toString())
+            client3._directConnections.has(client1.id.toString())
         ).toBeTrue();
         expect(
-            orbitdb3._directConnections.has(orbitdb2.id.toString())
+            client3._directConnections.has(client2.id.toString())
         ).toBeTrue();
     });
 });

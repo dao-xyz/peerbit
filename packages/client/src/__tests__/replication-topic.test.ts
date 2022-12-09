@@ -12,7 +12,7 @@ import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 describe(`Replication topic`, function () {
     let session: LSession;
-    let orbitdb1: Peerbit, orbitdb2: Peerbit, eventStore: EventStore<string>;
+    let client1: Peerbit, client2: Peerbit, eventStore: EventStore<string>;
 
     let timer: any;
 
@@ -27,8 +27,8 @@ describe(`Replication topic`, function () {
     beforeEach(async () => {
         clearInterval(timer);
 
-        orbitdb1 = await Peerbit.create(session.peers[0], {});
-        orbitdb2 = await Peerbit.create(session.peers[1], {});
+        client1 = await Peerbit.create(session.peers[0], {});
+        client2 = await Peerbit.create(session.peers[1], {});
     });
 
     afterEach(async () => {
@@ -36,24 +36,24 @@ describe(`Replication topic`, function () {
         if (eventStore) {
             await eventStore.drop();
         }
-        if (orbitdb1) await orbitdb1.stop();
+        if (client1) await client1.stop();
 
-        if (orbitdb2) await orbitdb2.stop();
+        if (client2) await client2.stop();
     });
 
     it("replicates database of 1 entry", async () => {
         const topic = uuid();
-        orbitdb2.subscribeToTopic(topic, true);
+        client2.subscribeToTopic(topic, true);
 
         eventStore = new EventStore<string>({});
-        eventStore = await orbitdb1.open(eventStore, {
+        eventStore = await client1.open(eventStore, {
             topic: topic,
         });
         eventStore.add("hello");
         await waitFor(
             () =>
                 (
-                    orbitdb2.programs
+                    client2.programs
                         .get(topic)
                         ?.get(eventStore.address!.toString())
                         ?.program as EventStore<string>

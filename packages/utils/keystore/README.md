@@ -1,2 +1,2 @@
 # peerbit-keystore
-A local key manager for orbitdb
+A local key manager

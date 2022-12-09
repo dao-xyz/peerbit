@@ -10,20 +10,20 @@ import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 describe(`Replicate and Load`, function () {
     let session: LSession;
-    let orbitdb1: Peerbit, orbitdb2: Peerbit;
+    let client1: Peerbit, client2: Peerbit;
 
     beforeAll(async () => {
         session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
-        orbitdb1 = await Peerbit.create(session.peers[0], {});
-        orbitdb2 = await Peerbit.create(session.peers[1], {});
+        client1 = await Peerbit.create(session.peers[0], {});
+        client2 = await Peerbit.create(session.peers[1], {});
 
         // Connect the peers manually to speed up test times
     });
 
     afterAll(async () => {
-        if (orbitdb1) await orbitdb1.stop();
+        if (client1) await client1.stop();
 
-        if (orbitdb2) await orbitdb2.stop();
+        if (client2) await client2.stop();
 
         await session.stop();
     });
@@ -34,16 +34,16 @@ describe(`Replicate and Load`, function () {
         const openDatabases = async () => {
             // Set write access for both clients
             topic = uuid();
-            db1 = await orbitdb1.open(
+            db1 = await client1.open(
                 new EventStore<string>({
                     id: "events",
                 }),
                 { topic: topic }
             );
             // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
-            db2 = await orbitdb2.open<EventStore<string>>(
+            db2 = await client2.open<EventStore<string>>(
                 await EventStore.load<EventStore<string>>(
-                    orbitdb2._store,
+                    client2._store,
                     db1.address!
                 ),
                 { topic: topic }
@@ -57,12 +57,12 @@ describe(`Replicate and Load`, function () {
 
             await waitForPeers(
                 session.peers[0],
-                [orbitdb2.id],
+                [client2.id],
                 getReplicationTopic(topic)
             );
             await waitForPeers(
                 session.peers[1],
-                [orbitdb1.id],
+                [client1.id],
                 getReplicationTopic(topic)
             );
         });
@@ -106,10 +106,10 @@ describe(`Replicate and Load`, function () {
 
                                 // Open the database again (this time from the disk)
                                 options = Object.assign({}, options, { directory: dbPath1, create: false })
-                                const db3 = await orbitdb1.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb1.libp2p, db1.address), { replicationTopic, ...options }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
+                                const db3 = await client1.open<EventStore<string>>(await EventStore.load<EventStore<string>>(client1.libp2p, db1.address), { replicationTopic, ...options }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
                                 // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
                                 options = Object.assign({}, options, { directory: dbPath2, localOnly: true })
-                                const db4 = await orbitdb2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(orbitdb2.libp2p, db1.address), { replicationTopic, ...options }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
+                                const db4 = await client2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(client2.libp2p, db1.address), { replicationTopic, ...options }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
 
                                 await db3.load()
                                 await db4.load()

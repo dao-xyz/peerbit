@@ -43,9 +43,9 @@ describe(`encryption`, function () {
     jest.retryTimes(1); // TODO Side effects may cause failures (or something else? Like missing await somewhere which makes this test fail if multiple tests are running and slowing down the system)
 
     let session: LSession;
-    let orbitdb1: Peerbit,
-        orbitdb2: Peerbit,
-        orbitdb3: Peerbit,
+    let client1: Peerbit,
+        client2: Peerbit,
+        client3: Peerbit,
         db1: PermissionedEventStore,
         db2: PermissionedEventStore,
         db3: PermissionedEventStore;
@@ -56,33 +56,33 @@ describe(`encryption`, function () {
     beforeEach(async () => {
         session = await LSession.connected(3, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
 
-        orbitdb1 = await Peerbit.create(session.peers[0], {
+        client1 = await Peerbit.create(session.peers[0], {
             waitForKeysTimout: 10000,
         });
-        const program = await orbitdb1.open(
+        const program = await client1.open(
             new PermissionedEventStore({
                 network: new TrustedNetwork({
                     id: "network-tests",
-                    rootTrust: orbitdb1.identity.publicKey,
+                    rootTrust: client1.identity.publicKey,
                 }),
             })
         );
-        await orbitdb1.join(program);
+        await client1.join(program);
 
         // Trusted client 2
-        orbitdb2 = await Peerbit.create(session.peers[1], {
+        client2 = await Peerbit.create(session.peers[1], {
             waitForKeysTimout: 10000,
         });
-        await program.network.add(orbitdb2.id);
-        await program.network.add(orbitdb2.identity.publicKey);
+        await program.network.add(client2.id);
+        await program.network.add(client2.identity.publicKey);
         topic = program.address!.toString();
 
         // Untrusted client 3
-        orbitdb3 = await Peerbit.create(session.peers[2], {
+        client3 = await Peerbit.create(session.peers[2], {
             waitForKeysTimout: 10000,
         });
 
-        recieverKey = await orbitdb2.keystore.createEd25519Key();
+        recieverKey = await client2.keystore.createEd25519Key();
 
         db1 = program;
     });
@@ -94,14 +94,14 @@ describe(`encryption`, function () {
 
         if (db3) await db3.drop();
 
-        if (orbitdb1) {
-            await orbitdb1.disconnect();
+        if (client1) {
+            await client1.disconnect();
         }
-        if (orbitdb2) {
-            await orbitdb2.disconnect();
+        if (client2) {
+            await client2.disconnect();
         }
-        if (orbitdb3) {
-            await orbitdb3.disconnect();
+        if (client3) {
+            await client3.disconnect();
         }
         await session.stop();
     });
@@ -111,7 +111,7 @@ describe(`encryption`, function () {
     it("replicates database of 1 entry known keys", async () => {
         let done = false;
 
-        db2 = await orbitdb2.open<PermissionedEventStore>(db1.address, {
+        db2 = await client2.open<PermissionedEventStore>(db1.address, {
             topic: topic,
             onReplicationComplete: async (_store) => {
                 await checkHello(db1);
@@ -128,9 +128,9 @@ describe(`encryption`, function () {
             session.peers[0],
             getReplicationTopic(topic)
         );
-        await orbitdb2.keystore.saveKey(recieverKey);
+        await client2.keystore.saveKey(recieverKey);
         expect(
-            await orbitdb2.keystore.getKey(recieverKey.keypair.publicKey)
+            await client2.keystore.getKey(recieverKey.keypair.publicKey)
         ).toBeDefined();
 
         await addHello(db1, recieverKey.keypair.publicKey);
@@ -140,14 +140,14 @@ describe(`encryption`, function () {
     it("replicates database of 1 entry unknown keys", async () => {
         // TODO this test is flaky when running all tests at once
 
-        const unknownKey = await orbitdb1.keystore.createEd25519Key({
+        const unknownKey = await client1.keystore.createEd25519Key({
             id: "unknown",
             group: topic,
         });
 
         // We expect during opening that keys are exchange
         let done = false;
-        db2 = await orbitdb2.open<PermissionedEventStore>(db1.address, {
+        db2 = await client2.open<PermissionedEventStore>(db1.address, {
             topic: topic,
             onReplicationComplete: async (store) => {
                 if (store === db2.store.store) {
@@ -168,13 +168,13 @@ describe(`encryption`, function () {
         );
 
         await waitFor(() => db2.network?.trustGraph.index.size >= 3);
-        await orbitdb2.join(db2);
+        await client2.join(db2);
 
-        expect(await orbitdb1.keystore.hasKey(unknownKey.keypair.publicKey));
+        expect(await client1.keystore.hasKey(unknownKey.keypair.publicKey));
         const xKey = await X25519PublicKey.from(unknownKey.keypair.publicKey);
-        const getXKEy = await orbitdb1.keystore.getKey(xKey, topic);
+        const getXKEy = await client1.keystore.getKey(xKey, topic);
         expect(getXKEy).toBeDefined();
-        expect(!(await orbitdb2.keystore.hasKey(unknownKey.keypair.publicKey)));
+        expect(!(await client2.keystore.hasKey(unknownKey.keypair.publicKey)));
 
         // ... so that append with reciever key, it the reciever will be able to decrypt
         await delay(5000);
@@ -186,17 +186,17 @@ describe(`encryption`, function () {
     it("can retrieve secret keys if trusted", async () => {
         await waitForPeers(
             session.peers[2],
-            [orbitdb1.id],
+            [client1.id],
             getReplicationTopic(topic)
         );
 
-        const db1Key = await orbitdb1.keystore.createEd25519Key({
+        const db1Key = await client1.keystore.createEd25519Key({
             id: "unknown",
             group: db1.address.toString(),
         });
 
-        // Open store from orbitdb2 so that both client 1 and 2 is listening to the replication topic
-        db2 = await orbitdb2.open<PermissionedEventStore>(db1.address!, {
+        // Open store from client2 so that both client 1 and 2 is listening to the replication topic
+        db2 = await client2.open<PermissionedEventStore>(db1.address!, {
             topic: topic,
         });
         await waitForPeers(
@@ -210,10 +210,10 @@ describe(`encryption`, function () {
             getReplicationTopic(topic)
         );
         await waitFor(() => db2.network?.trustGraph.index.size >= 3);
-        await orbitdb2.join(db2);
+        await client2.join(db2);
         await waitFor(() => db1.network?.trustGraph.index.size >= 4);
 
-        const reciever = (await orbitdb2.getEncryptionKey(
+        const reciever = (await client2.getEncryptionKey(
             topic,
             db2.address.toString()
         )) as KeyWithMeta<Ed25519Keypair>;
@@ -224,19 +224,19 @@ describe(`encryption`, function () {
     /* it("can relay with end to end encryption with public id and clock (E2EE-weak)", async () => {
         await waitForPeers(
             session.peers[2],
-            [orbitdb1.id],
+            [client1.id],
             getReplicationTopic(topic)
         );
 
-        db2 = await orbitdb2.open<PermissionedEventStore>(db1.address!, {
+        db2 = await client2.open<PermissionedEventStore>(db1.address!, {
             topic: topic,
         });
         await waitForPeers(session.peers[1], session.peers[0], getObserverTopic(topic));
         await waitForPeers(session.peers[1], session.peers[0], getReplicationTopic(topic));
         await waitFor(() => db2.network?.trustGraph.index.size >= 3);
-        await orbitdb2.join(db2);
+        await client2.join(db2);
 
-        const client3Key = await orbitdb3.keystore.createEd25519Key({
+        const client3Key = await client3.keystore.createEd25519Key({
             id: "unknown",
             group: db1.address.toString(),
         });
@@ -272,14 +272,14 @@ describe(`encryption`, function () {
 
         // Now close db2 and open db3 and make sure message are available
         await db2.drop();
-        db3 = await orbitdb3.open<PermissionedEventStore>(db1.address, {
+        db3 = await client3.open<PermissionedEventStore>(db1.address, {
             topic: topic,
             onReplicationComplete: async (store) => {
                 const entriesRelay: Entry<Operation<string>>[] = db3.store
                     .iterator({ limit: -1 })
                     .collect();
                 expect(entriesRelay.length).toEqual(1);
-                await entriesRelay[0].getPayload(); // should pass since orbitdb3 got encryption key
+                await entriesRelay[0].getPayload(); // should pass since client3 got encryption key
             },
         });
     }); */

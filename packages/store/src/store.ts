@@ -96,7 +96,7 @@ export interface IStoreOptions<T> {
     localOnly?: boolean;
 
     /**
-     * The directory where data will be stored (Default: uses directory option passed to OrbitDB constructor or ./orbitdb if none was provided).
+     * The directory where data will be stored
      */
     directory?: string;
 

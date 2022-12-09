@@ -16,9 +16,9 @@ describe(`sharding`, function () {
     jest.retryTimes(3); // TODO this test is FLAKY
 
     let session: LSession;
-    let orbitdb1: Peerbit,
-        orbitdb2: Peerbit,
-        orbitdb3: Peerbit,
+    let client1: Peerbit,
+        client2: Peerbit,
+        client3: Peerbit,
         db1: PermissionedEventStore,
         db2: PermissionedEventStore,
         db3: PermissionedEventStore;
@@ -26,39 +26,39 @@ describe(`sharding`, function () {
     beforeEach(async () => {
         session = await LSession.connected(3, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
 
-        orbitdb1 = await Peerbit.create(session.peers[0], {});
-        orbitdb2 = await Peerbit.create(session.peers[1], {});
-        orbitdb3 = await Peerbit.create(session.peers[2], {});
+        client1 = await Peerbit.create(session.peers[0], {});
+        client2 = await Peerbit.create(session.peers[1], {});
+        client3 = await Peerbit.create(session.peers[2], {});
 
         const network = new TrustedNetwork({
             id: "network-tests",
-            rootTrust: orbitdb1.identity.publicKey,
+            rootTrust: client1.identity.publicKey,
         });
-        db1 = await orbitdb1.open<PermissionedEventStore>(
+        db1 = await client1.open<PermissionedEventStore>(
             new PermissionedEventStore({ network })
         );
 
-        await orbitdb1.join(db1);
+        await client1.join(db1);
 
         // trust client 3
-        await network.add(orbitdb2.id);
-        await network.add(orbitdb2.identity.publicKey);
-        db2 = await orbitdb2.open<PermissionedEventStore>(db1.address!);
-        await network.add(orbitdb3.id);
-        await network.add(orbitdb3.identity.publicKey);
-        db3 = await orbitdb3.open<PermissionedEventStore>(db1.address!);
+        await network.add(client2.id);
+        await network.add(client2.identity.publicKey);
+        db2 = await client2.open<PermissionedEventStore>(db1.address!);
+        await network.add(client3.id);
+        await network.add(client3.identity.publicKey);
+        db3 = await client3.open<PermissionedEventStore>(db1.address!);
     });
 
     afterEach(async () => {
-        if (orbitdb1) {
-            await orbitdb1.stop();
+        if (client1) {
+            await client1.stop();
         }
 
-        if (orbitdb2) {
-            await orbitdb2.stop();
+        if (client2) {
+            await client2.stop();
         }
-        if (orbitdb3) {
-            await orbitdb3.stop();
+        if (client3) {
+            await client3.stop();
         }
         await session.stop();
     });
