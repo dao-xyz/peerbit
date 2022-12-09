@@ -16,7 +16,7 @@ import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { TimeoutError, waitForAsync } from "@dao-xyz/peerbit-time";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 
-import { Identity } from "@dao-xyz/ipfs-log";
+import { Identity } from "@dao-xyz/peerbit-log";
 
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 const logger = loggerFn({ module: "exchange-keys" });

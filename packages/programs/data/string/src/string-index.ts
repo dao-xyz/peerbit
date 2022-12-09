@@ -1,6 +1,6 @@
 import { field, option, variant } from "@dao-xyz/borsh";
-import { BORSH_ENCODING, Log } from "@dao-xyz/ipfs-log";
-import { Entry } from "@dao-xyz/ipfs-log";
+import { BORSH_ENCODING, Log } from "@dao-xyz/peerbit-log";
+import { Entry } from "@dao-xyz/peerbit-log";
 import { ComposableProgram } from "@dao-xyz/peerbit-program";
 import { Range } from "./range.js";
 

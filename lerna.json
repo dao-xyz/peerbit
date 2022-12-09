@@ -1,8 +1,8 @@
 {
     "packages": [
-        "packages/ipfs/ipfs-pubsub-direct-channel",
-        "packages/ipfs/ipfs-pubsub-peer-monitor",
-        "packages/ipfs/ipfs-log",
+        "packages/libp2p/pubsub-direct-channel",
+        "packages/libp2p/pubsub-peer-monitor",
+        "packages/log",
         "packages/client",
         "packages/server-node/frontend",
         "packages/server-node/node",

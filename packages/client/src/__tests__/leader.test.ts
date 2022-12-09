@@ -1,4 +1,4 @@
-import { DirectChannel } from "@dao-xyz/ipfs-pubsub-direct-channel";
+import { DirectChannel } from "@dao-xyz/libp2p-pubsub-direct-channel";
 import { Peerbit } from "../peer";
 import { EventStore } from "./utils/stores/event-store";
 import { v4 as uuid } from "uuid";

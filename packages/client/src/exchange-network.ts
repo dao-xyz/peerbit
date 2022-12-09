@@ -3,7 +3,7 @@ import { TransportMessage } from "./message.js";
 import { PeerIdAddress } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
-import { Identity } from "@dao-xyz/ipfs-log";
+import { Identity } from "@dao-xyz/peerbit-log";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import type { PeerId } from "@libp2p/interface-peer-id";
 import type { AddressBook } from "@libp2p/interface-peer-store";

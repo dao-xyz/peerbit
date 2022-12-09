@@ -16,7 +16,7 @@ import {
     PeerIdAddress,
 } from "@dao-xyz/peerbit-crypto";
 import { Secp256k1PublicKey } from "@dao-xyz/peerbit-crypto";
-import { Identity } from "@dao-xyz/ipfs-log";
+import { Identity } from "@dao-xyz/peerbit-log";
 import { Wallet } from "@ethersproject/wallet";
 import { createStore } from "@dao-xyz/peerbit-test-utils";
 import { AbstractLevel } from "abstract-level";

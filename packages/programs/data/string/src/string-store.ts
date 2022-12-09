@@ -10,7 +10,7 @@ import {
 import { Range } from "./range.js";
 import { field, variant } from "@dao-xyz/borsh";
 import { AddOperationOptions, Store } from "@dao-xyz/peerbit-store";
-import { CanAppend, Entry } from "@dao-xyz/ipfs-log";
+import { CanAppend, Entry } from "@dao-xyz/peerbit-log";
 import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { Program } from "@dao-xyz/peerbit-program";
 import { RPCOptions, CanRead, RPC } from "@dao-xyz/peerbit-rpc";

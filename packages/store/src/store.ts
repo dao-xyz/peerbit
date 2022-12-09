@@ -10,9 +10,12 @@ import {
     max,
     CanAppend,
     JSON_ENCODING,
-} from "@dao-xyz/ipfs-log";
-import { Encoding, EncryptionTemplateMaybeEncrypted } from "@dao-xyz/ipfs-log";
-import { Entry } from "@dao-xyz/ipfs-log";
+} from "@dao-xyz/peerbit-log";
+import {
+    Encoding,
+    EncryptionTemplateMaybeEncrypted,
+} from "@dao-xyz/peerbit-log";
+import { Entry } from "@dao-xyz/peerbit-log";
 import { Replicator } from "./replicator.js";
 import { stringifyCid, Blocks } from "@dao-xyz/peerbit-block";
 import Cache from "@dao-xyz/peerbit-cache";

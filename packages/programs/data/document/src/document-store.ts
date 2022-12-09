@@ -19,7 +19,7 @@ import {
     Encoding,
     Entry,
     Log,
-} from "@dao-xyz/ipfs-log";
+} from "@dao-xyz/peerbit-log";
 import {
     CanOpenSubPrograms,
     ComposableProgram,

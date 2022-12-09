@@ -1,7 +1,7 @@
 import { delay } from "@dao-xyz/peerbit-time";
 import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
-import { Ed25519Identity, Entry } from "@dao-xyz/ipfs-log";
+import { Ed25519Identity, Entry } from "@dao-xyz/peerbit-log";
 import { Program } from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { ClockService } from "../controller";

@@ -1,7 +1,7 @@
 import { waitForPeers } from "./wait-for-peers.js";
 import { v1 as PROTOCOL } from "./protocol.js";
 import { Libp2p } from "libp2p";
-import { IpfsPubsubPeerMonitor } from "@dao-xyz/ipfs-pubsub-peer-monitor";
+import { IpfsPubsubPeerMonitor } from "@dao-xyz/libp2p-pubsub-peer-monitor";
 import type { Message } from "@libp2p/interface-pubsub";
 import type { EventHandler } from "@libp2p/interfaces/events";
 import type { PeerId } from "@libp2p/interface-peer-id";

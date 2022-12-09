@@ -11,7 +11,7 @@ import {
     X25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
 import { RequestV0, ResponseV0, send, respond, RPC, RPCMessage } from "../";
-import { Ed25519Identity } from "@dao-xyz/ipfs-log";
+import { Ed25519Identity } from "@dao-xyz/peerbit-log";
 import { Program } from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";

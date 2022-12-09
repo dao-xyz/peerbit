@@ -14,7 +14,7 @@ import {
     PublicSignKey,
 } from "@dao-xyz/peerbit-crypto";
 import { Libp2p } from "libp2p";
-import { Identity } from "@dao-xyz/ipfs-log";
+import { Identity } from "@dao-xyz/peerbit-log";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 export const logger = loggerFn({ module: "rpc" });

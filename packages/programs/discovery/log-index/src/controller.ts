@@ -1,5 +1,5 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh";
-import { Entry, EntryEncryptionTemplate } from "@dao-xyz/ipfs-log";
+import { Entry, EntryEncryptionTemplate } from "@dao-xyz/peerbit-log";
 import { ComposableProgram } from "@dao-xyz/peerbit-program";
 import {
     CanRead,

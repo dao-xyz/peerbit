@@ -1,4 +1,4 @@
-import { IpfsPubsubPeerMonitor } from "@dao-xyz/ipfs-pubsub-peer-monitor";
+import { IpfsPubsubPeerMonitor } from "@dao-xyz/libp2p-pubsub-peer-monitor";
 import { Libp2p } from "libp2p";
 import type { Message, SignedMessage } from "@libp2p/interface-pubsub";
 import type { EventHandler } from "@libp2p/interfaces/events";

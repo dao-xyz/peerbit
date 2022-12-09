@@ -1,4 +1,4 @@
-import { Entry } from "@dao-xyz/ipfs-log";
+import { Entry } from "@dao-xyz/peerbit-log";
 import { getObserverTopic, getReplicationTopic, Peerbit } from "../peer";
 import { Operation } from "./utils/stores/event-store";
 import { Ed25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";

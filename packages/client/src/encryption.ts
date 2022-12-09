@@ -6,7 +6,7 @@ import {
 } from "@dao-xyz/peerbit-crypto";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { X25519PublicKey } from "@dao-xyz/peerbit-crypto";
-import { Identity } from "@dao-xyz/ipfs-log";
+import { Identity } from "@dao-xyz/peerbit-log";
 
 export type StorePublicKeyEncryption = (
     replicationTopic: string

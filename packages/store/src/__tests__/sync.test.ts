@@ -9,7 +9,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { AbstractLevel } from "abstract-level";
-import { Entry } from "@dao-xyz/ipfs-log";
+import { Entry } from "@dao-xyz/peerbit-log";
 import {
     LibP2PBlockStore,
     MemoryLevelBlockStore,

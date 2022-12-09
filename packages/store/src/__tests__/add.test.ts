@@ -2,7 +2,7 @@ import assert, { rejects } from "assert";
 import { Store, DefaultOptions, HeadsCache } from "../store.js";
 import { default as Cache } from "@dao-xyz/peerbit-cache";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { Entry } from "@dao-xyz/ipfs-log";
+import { Entry } from "@dao-xyz/peerbit-log";
 import { SimpleIndex } from "./utils.js";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";

@@ -15,7 +15,7 @@ import {
 import { AbstractLevel } from "abstract-level";
 import Cache from "@dao-xyz/peerbit-cache";
 import path from "path";
-import { Identity } from "@dao-xyz/ipfs-log";
+import { Identity } from "@dao-xyz/peerbit-log";
 import { Ed25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";

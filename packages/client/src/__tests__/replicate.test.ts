@@ -1,6 +1,6 @@
 import assert from "assert";
 import mapSeries from "p-each-series";
-import { Entry } from "@dao-xyz/ipfs-log";
+import { Entry } from "@dao-xyz/peerbit-log";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { jest } from "@jest/globals";
 import { getObserverTopic, getReplicationTopic, Peerbit } from "../peer";

@@ -7,7 +7,7 @@ import {
     IdentityGraph,
 } from "@dao-xyz/peerbit-trusted-network";
 import { Access, AccessType } from "./access";
-import { Entry } from "@dao-xyz/ipfs-log";
+import { Entry } from "@dao-xyz/peerbit-log";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { Program } from "@dao-xyz/peerbit-program";
 import { RPC } from "@dao-xyz/peerbit-rpc";

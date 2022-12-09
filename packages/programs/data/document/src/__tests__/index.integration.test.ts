@@ -18,7 +18,7 @@ import {
     waitForPeers,
 } from "@dao-xyz/peerbit-test-utils";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";
-import { Identity } from "@dao-xyz/ipfs-log";
+import { Identity } from "@dao-xyz/peerbit-log";
 import {
     Ed25519Keypair,
     EncryptedThing,

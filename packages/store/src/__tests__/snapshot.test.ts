@@ -1,7 +1,7 @@
 import { default as Cache } from "@dao-xyz/peerbit-cache";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Store, DefaultOptions } from "../store.js";
-import { Entry } from "@dao-xyz/ipfs-log";
+import { Entry } from "@dao-xyz/peerbit-log";
 import { SimpleIndex } from "./utils.js";
 import { createStore } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";

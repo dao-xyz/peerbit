@@ -1,5 +1,5 @@
 import { field, option, variant } from "@dao-xyz/borsh";
-import { Entry, Identity } from "@dao-xyz/ipfs-log";
+import { Entry, Identity } from "@dao-xyz/peerbit-log";
 import { IInitializationOptions, Store } from "@dao-xyz/peerbit-store";
 import { v4 as uuid } from "uuid";
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";

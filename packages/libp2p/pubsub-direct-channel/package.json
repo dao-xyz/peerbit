@@ -1,10 +1,9 @@
 {
-    "name": "@dao-xyz/ipfs-pubsub-peer-monitor",
-    "version": "0.0.18",
-    "description": "Peer monitor",
-    "type": "module",
+    "name": "@dao-xyz/libp2p-pubsub-direct-channel",
+    "version": "0.0.40",
+    "description": "1-to-1 communication channel over LibP2P Pubsub between two peers",
     "license": "MIT",
-    "main": "lib/esm/index.js",
+    "type": "module",
     "module": "lib/esm/index.js",
     "types": "lib/esm/index.d.ts",
     "exports": {
@@ -23,7 +22,19 @@
     "engines": {
         "node": ">=16.15.1"
     },
+    "keywords": [
+        "ipfs",
+        "log",
+        "crdts",
+        "crdt"
+    ],
+    "dependencies": {
+        "@dao-xyz/borsh": "^4.0.6",
+        "@dao-xyz/libp2p-pubsub-peer-monitor": "^0.0.18",
+        "@dao-xyz/peerbit-borsh-utils": "^0.0.16"
+    },
     "devDependencies": {
+        "@dao-xyz/peerbit-test-utils": "^0.0.21",
         "@dao-xyz/peerbit-time": "^0.0.19"
     },
     "scripts": {

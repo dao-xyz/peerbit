@@ -23,7 +23,7 @@ import { AbstractLevel } from "abstract-level";
 // Test utils
 import { createStore } from "@dao-xyz/peerbit-test-utils";
 
-import { Entry } from "@dao-xyz/ipfs-log";
+import { Entry } from "@dao-xyz/peerbit-log";
 import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
 

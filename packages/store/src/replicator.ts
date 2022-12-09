@@ -1,6 +1,6 @@
 import PQueue from "p-queue";
-import { CanAppend, Identity, Log } from "@dao-xyz/ipfs-log";
-import { Entry } from "@dao-xyz/ipfs-log";
+import { CanAppend, Identity, Log } from "@dao-xyz/peerbit-log";
+import { Entry } from "@dao-xyz/peerbit-log";
 import { EntryWithRefs } from "./entry-with-refs";
 import { Blocks } from "@dao-xyz/peerbit-block";
 

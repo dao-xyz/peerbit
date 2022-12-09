@@ -14,7 +14,7 @@ import {
     EntryWithRefs,
     MinReplicas,
 } from "./exchange-heads.js";
-import { Entry, Identity } from "@dao-xyz/ipfs-log";
+import { Entry, Identity } from "@dao-xyz/peerbit-log";
 import { serialize, deserialize, BorshError } from "@dao-xyz/borsh";
 import { TransportMessage } from "./message.js";
 import type {
@@ -46,7 +46,7 @@ import {
     X25519Keypair,
 } from "@dao-xyz/peerbit-crypto";
 import LRU from "lru-cache";
-import { DirectChannel } from "@dao-xyz/ipfs-pubsub-direct-channel";
+import { DirectChannel } from "@dao-xyz/libp2p-pubsub-direct-channel";
 import { encryptionWithRequestKey } from "./encryption.js";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
 import { createHash } from "crypto";
@@ -59,7 +59,7 @@ import {
 } from "@dao-xyz/peerbit-program";
 import PQueue from "p-queue";
 import { Libp2p } from "libp2p";
-import { IpfsPubsubPeerMonitor } from "@dao-xyz/ipfs-pubsub-peer-monitor";
+import { IpfsPubsubPeerMonitor } from "@dao-xyz/libp2p-pubsub-peer-monitor";
 import type { PeerId } from "@libp2p/interface-peer-id";
 import {
     exchangeSwarmAddresses,

@@ -2,7 +2,7 @@ import { field, deserialize, variant, option } from "@dao-xyz/borsh";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Program } from "@dao-xyz/peerbit-program";
 import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
-import { Entry, HLC } from "@dao-xyz/ipfs-log";
+import { Entry, HLC } from "@dao-xyz/peerbit-log";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 

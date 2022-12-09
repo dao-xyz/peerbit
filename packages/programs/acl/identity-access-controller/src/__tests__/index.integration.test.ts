@@ -16,7 +16,7 @@ import {
     FieldStringMatchQuery,
     Results,
 } from "@dao-xyz/peerbit-document";
-import type { CanAppend, Identity } from "@dao-xyz/ipfs-log";
+import type { CanAppend, Identity } from "@dao-xyz/peerbit-log";
 import { AbstractLevel } from "abstract-level";
 import { CachedValue, DefaultOptions } from "@dao-xyz/peerbit-store";
 import { fileURLToPath } from "url";

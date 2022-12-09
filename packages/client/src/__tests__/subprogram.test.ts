@@ -13,7 +13,7 @@ import {
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { CanOpenSubPrograms, Program } from "@dao-xyz/peerbit-program";
 import { RPC } from "@dao-xyz/peerbit-rpc";
-import { Entry } from "@dao-xyz/ipfs-log";
+import { Entry } from "@dao-xyz/peerbit-log";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 describe(`Subprogram`, function () {

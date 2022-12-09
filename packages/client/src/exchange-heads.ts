@@ -1,5 +1,5 @@
 import { variant, option, field, vec, serialize } from "@dao-xyz/borsh";
-import { Entry, Identity } from "@dao-xyz/ipfs-log";
+import { Entry, Identity } from "@dao-xyz/peerbit-log";
 import { TransportMessage } from "./message.js";
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";

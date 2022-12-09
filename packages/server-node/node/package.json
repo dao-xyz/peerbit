@@ -57,7 +57,7 @@
         "@dao-xyz/peerbit": "^0.0.91",
         "@libp2p/floodsub": "^5.0.0",
         "@libp2p/mplex": "^7.1.0",
-        "@libp2p/tcp": "^6.0.4",
+        "@libp2p/tcp": "^6.0.5",
         "@libp2p/websockets": "^5.0.0",
         "is-node": "^1.0.2",
         "libp2p": "^0.41.0"

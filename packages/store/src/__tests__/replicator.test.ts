@@ -1,4 +1,4 @@
-import { Log } from "@dao-xyz/ipfs-log";
+import { Log } from "@dao-xyz/peerbit-log";
 import { default as Cache } from "@dao-xyz/peerbit-cache";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 

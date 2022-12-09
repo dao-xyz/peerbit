@@ -22,7 +22,7 @@ import {
     ProgramInitializationOptions,
 } from "@dao-xyz/peerbit-program";
 import { Libp2p } from "libp2p";
-import { Identity } from "@dao-xyz/ipfs-log";
+import { Identity } from "@dao-xyz/peerbit-log";
 import { X25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { Blocks } from "@dao-xyz/peerbit-block";
 

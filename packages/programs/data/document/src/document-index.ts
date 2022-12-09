@@ -7,8 +7,8 @@ import {
     vec,
 } from "@dao-xyz/borsh";
 import { asString, Hashable } from "./utils.js";
-import { BORSH_ENCODING, Encoding, Entry } from "@dao-xyz/ipfs-log";
-import { Log } from "@dao-xyz/ipfs-log";
+import { BORSH_ENCODING, Encoding, Entry } from "@dao-xyz/peerbit-log";
+import { Log } from "@dao-xyz/peerbit-log";
 import { arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
 import { ComposableProgram } from "@dao-xyz/peerbit-program";
 import {

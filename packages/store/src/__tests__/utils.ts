@@ -1,5 +1,5 @@
-import { Entry } from "@dao-xyz/ipfs-log";
-import { Log } from "@dao-xyz/ipfs-log";
+import { Entry } from "@dao-xyz/peerbit-log";
+import { Log } from "@dao-xyz/peerbit-log";
 
 export class SimpleIndex<T> {
     _index: Entry<T>[];
