@@ -4,6 +4,7 @@ import { LibP2PBlockStore } from "../libp2p";
 import { MemoryLevelBlockStore } from "../level";
 import { stringifyCid } from "../block.js";
 import { Blocks } from "..";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 
 describe(`pubsub`, function () {
     let session: LSession, store: Blocks, store2: Blocks;
@@ -32,16 +33,42 @@ describe(`pubsub`, function () {
 
     it("rw", async () => {
         const data = new Uint8Array([1, 2, 3]);
+        (store._store as LibP2PBlockStore)._gossipCache = undefined;
+        (store2._store as LibP2PBlockStore)._gossipCache = undefined;
         const cid = await store.put(data, "raw", { pin: true });
         expect(stringifyCid(cid)).toEqual(
             "zb3wdq9czZ6jYX1DMYx3b5AhawVNWcBawniwy4TVDpqXkCHgV"
         );
-        session.peers[0].pubsub.getSubscribers("raw");
         await waitForPeers(
             session.peers[1],
             [session.peers[0].peerId],
             (store._store as LibP2PBlockStore)._transportTopic
         );
+        const readData = await store2.get<Uint8Array>(stringifyCid(cid));
+        expect(readData).toEqual(data);
+    });
+
+    it("gossip", async () => {
+        const data = new Uint8Array([1, 2, 3]);
+        await waitForPeers(
+            session.peers[1],
+            [session.peers[0].peerId],
+            (store._store as LibP2PBlockStore)._transportTopic
+        );
+
+        const cid = await store.put(data, "raw", { pin: true });
+        expect(stringifyCid(cid)).toEqual(
+            "zb3wdq9czZ6jYX1DMYx3b5AhawVNWcBawniwy4TVDpqXkCHgV"
+        );
+
+        await waitFor(
+            () => (store2._store as LibP2PBlockStore)._gossipCache!.size === 1
+        );
+
+        (store2._store as LibP2PBlockStore)._readFromPubSub = () =>
+            Promise.resolve(undefined); // make sure we only read from gossipCache
+        (store2._store as LibP2PBlockStore)._localStore = undefined; // make sure we only read from gossipCache
+
         const readData = await store2.get<Uint8Array>(stringifyCid(cid));
         expect(readData).toEqual(data);
     });

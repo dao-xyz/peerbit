@@ -4,6 +4,7 @@ import * as dagCbor from "@ipld/dag-cbor";
 import sodium from "libsodium-wrappers";
 import { from } from "multiformats/hashes/hasher";
 import { base58btc } from "multiformats/bases/base58";
+import * as Block from "multiformats/block";
 
 const defaultBase = base58btc;
 
@@ -42,4 +43,25 @@ export const stringifyCid = (cid: any): string => {
         return defaultBase.encode(cid["/"]);
     }
     return cid.toString(defaultBase);
+};
+
+export const checkDecodeBlock = async (
+    expectedCID: CID | string,
+    bytes: Uint8Array,
+    options: { hasher: any; codec?: any }
+): Promise<Block.Block<any, any, any, 1>> => {
+    const cidObject =
+        typeof expectedCID === "string"
+            ? cidifyString(expectedCID)
+            : expectedCID;
+    const codec = options.codec || codecCodes[cidObject.code];
+    const block = await Block.decode({
+        bytes: bytes,
+        codec,
+        hasher: options?.hasher || defaultHasher,
+    });
+    if (!block.cid.equals(cidObject)) {
+        throw new Error("CID does not match");
+    }
+    return block as Block.Block<any, any, any, 1>;
 };

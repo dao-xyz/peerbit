@@ -5,11 +5,14 @@ import {
     cidifyString,
     codecCodes,
     defaultHasher,
+    checkDecodeBlock,
 } from "./block.js";
 import * as Block from "multiformats/block";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { variant, field, serialize, deserialize } from "@dao-xyz/borsh";
 import type { Message } from "@libp2p/interface-pubsub";
+import LRU from "lru-cache";
+import { CID } from "multiformats/cid";
 
 export const DEFAULT_BLOCK_TRANSPORT_TOPIC = "_block";
 
@@ -46,11 +49,16 @@ export class LibP2PBlockStore implements BlockStore {
     _transportTopic: string;
     _localStore?: BlockStore;
     _eventHandler?: (evt: any) => any;
+    _gossipCache?: LRU<string, Uint8Array>;
 
     constructor(
         libp2p: Libp2p,
         localStore?: BlockStore,
-        options: { transportTopic: string; localTimeout: number } = {
+        options: {
+            transportTopic: string;
+            localTimeout: number;
+            gossip?: { cache: { max: number; ttl: number } | false };
+        } = {
             transportTopic: DEFAULT_BLOCK_TRANSPORT_TOPIC,
             localTimeout: 1000,
         }
@@ -58,6 +66,9 @@ export class LibP2PBlockStore implements BlockStore {
         this._libp2p = libp2p;
         this._transportTopic = options.transportTopic;
         this._localStore = localStore;
+        const gossipCacheOptions = (options.gossip?.cache !== false &&
+            options.gossip?.cache) || { max: 1000, ttl: 10000 }; // TODO choose default variables carefully
+        this._gossipCache = gossipCacheOptions && new LRU(gossipCacheOptions);
 
         if (
             this._libp2p.pubsub.getTopics().indexOf(options.transportTopic) ===
@@ -103,6 +114,12 @@ export class LibP2PBlockStore implements BlockStore {
                                   options.transportTopic,
                                   message
                               );
+                          } else if (decoded instanceof BlockResponse) {
+                              // TODO make sure we are not storing too much bytes in ram (like filter large blocks)
+                              this._gossipCache?.set(
+                                  decoded.cid,
+                                  decoded.bytes
+                              );
                           }
                       } catch (error) {
                           console.error(
@@ -123,29 +140,45 @@ export class LibP2PBlockStore implements BlockStore {
         if (!this._localStore) {
             throw new Error("Local store not set");
         }
+
+        // "Gossip" i.e. flood the network with blocks an assume they gonna catch them so they dont have to requrest them later
+        try {
+            await this._libp2p.pubsub.publish(
+                this._transportTopic,
+                serialize(
+                    new BlockResponse(stringifyCid(value.cid), value.bytes)
+                )
+            );
+        } catch (error) {
+            // ignore
+        }
         return this._localStore.put(value, options);
     }
 
     async get<T>(
         cid: string,
-        options?: { links?: string[]; timeout?: number }
+        options?: { links?: string[]; timeout?: number; hasher?: any }
     ): Promise<Block.Block<T, any, any, any> | undefined> {
+        const cidObject = cidifyString(cid);
+
         // locally ?
-        const value = this._localStore
-            ? await this._localStore.get<T>(cid)
-            : undefined;
+        // store/disc/mem
+        const value =
+            (await this._readFromGossip(cid, cidObject, options)) ||
+            (this._localStore
+                ? await this._localStore.get<T>(cid, options)
+                : undefined);
         if (value) {
             return value;
         }
+
         // try to get it remotelly
-        return this._read<T>(cid);
+        return this._readFromPubSub(cid, cidObject, options);
     }
 
     async rm(cid: string) {
-        if (!this._localStore) {
-            throw new Error("Local store not set");
-        }
-        return this._localStore.rm(cid);
+        this._localStore?.rm(cid);
+        this._gossipCache?.delete(cid);
     }
 
     async open(): Promise<void> {
@@ -163,42 +196,57 @@ export class LibP2PBlockStore implements BlockStore {
     }
 
     async close(): Promise<void> {
-        if (!this._localStore) {
-            throw new Error("Local store not set");
-        }
         this._libp2p.pubsub.removeEventListener("message", this._eventHandler);
-        await this._localStore.close();
+        await this._localStore?.close();
 
         // we dont cleanup subscription because we dont know if someone else is sbuscribing also
     }
 
-    async _read<T>(
-        cid: string,
-        options: { timeout?: number } = {}
-    ): Promise<Block.Block<T, any, any, any> | undefined> {
-        const promises = [this._readFromPubSub(cid, options)];
-        try {
-            const result = await Promise.any(promises);
-            if (!result) {
-                const results = await Promise.all(promises);
-                for (const result of results) {
-                    if (result) {
-                        return result as Block.Block<T, any, any, any>;
-                    }
-                }
+    /*   async _read<T>(
+          cid: string,
+          options: { timeout?: number, hasher?: any } = {}
+      ): Promise<Block.Block<T, any, any, any> | undefined> {
+          const promises = [this._readFromPubSub(cid, options)];
+          try {
+              const result = await Promise.any(promises);
+              if (!result) {
+                  const results = await Promise.all(promises);
+                  for (const result of results) {
+                      if (result) {
+                          return result as Block.Block<T, any, any, any>;
+                      }
+                  }
+              }
+              return result as Block.Block<T, any, any, any>;
+          } catch (error) {
+              return undefined; // failed to resolve
+          }
+      } */
+
+    async _readFromGossip(
+        cidString: string,
+        cidObject: CID,
+        options: { hasher?: any } = {}
+    ): Promise<Block.Block<any, any, any, 1> | undefined> {
+        const cached = this._gossipCache?.get(cidString);
+        if (cached) {
+            try {
+                const block = await checkDecodeBlock(cidObject, cached, {
+                    hasher: options.hasher,
+                });
+                return block;
+            } catch (error) {
+                this._gossipCache?.delete(cidString); // something wrong with that block, TODO make better handling here
+                return undefined;
             }
-            return result as Block.Block<T, any, any, any>;
-        } catch (error) {
-            return undefined; // failed to resolve
         }
     }
-
     async _readFromPubSub(
-        cid: string,
+        cidString: string,
+        cidObject: CID,
         options: { timeout?: number; hasher?: any } = {}
     ): Promise<Block.Block<any, any, any, 1> | undefined> {
         const timeout = options.timeout || 5000;
-        const cidObject = cidifyString(cid);
         const codec = codecCodes[cidObject.code];
         let value: Block.Block<any, any, any, 1> | undefined = undefined;
         // await libp2p.pubsub.subscribe(BLOCK_TRANSPORT_TOPIC) TODO
@@ -217,22 +265,22 @@ export class LibP2PBlockStore implements BlockStore {
 
                 const decoded = deserialize(message.data, BlockMessage);
                 if (decoded instanceof BlockResponse) {
-                    if (decoded.cid !== cid) {
+                    if (decoded.cid !== cidString) {
                         return;
                     }
                     try {
                         if (!cidObject.equals(cidifyString(decoded.cid))) {
                             return;
                         }
-                        const block = await Block.decode({
-                            bytes: decoded.bytes,
-                            codec,
-                            hasher: options?.hasher || defaultHasher,
-                        });
-                        if (!block.cid.equals(cidObject)) {
-                            return;
-                        }
-                        value = block as Block.Block<any, any, any, 1>;
+
+                        value = await checkDecodeBlock(
+                            cidObject,
+                            decoded.bytes,
+                            {
+                                codec,
+                                hasher: options?.hasher,
+                            }
+                        );
                     } catch (error) {
                         // invalid bytes like "CBOR decode error: not enough data for type"
                         return;
@@ -241,24 +289,28 @@ export class LibP2PBlockStore implements BlockStore {
             }
         };
         this._libp2p.pubsub.addEventListener("message", eventHandler);
-        await this._libp2p.pubsub.publish(
-            this._transportTopic,
-            serialize(new BlockRequest(cid))
-        );
-
         try {
-            await waitFor(() => value !== undefined, {
-                timeout,
-                delayInterval: 100,
-            });
-        } catch (error) {
-            /// TODO, timeout or?
-            const t = 123;
-        } finally {
-            await this._libp2p.pubsub.removeEventListener(
-                "message",
-                eventHandler
+            await this._libp2p.pubsub.publish(
+                this._transportTopic,
+                serialize(new BlockRequest(cidString))
             );
+
+            try {
+                await waitFor(() => value !== undefined, {
+                    timeout,
+                    delayInterval: 100,
+                });
+            } catch (error) {
+                /// TODO, timeout or?
+                const t = 123;
+            } finally {
+                await this._libp2p.pubsub.removeEventListener(
+                    "message",
+                    eventHandler
+                );
+            }
+        } catch (error) {
+            return;
         }
         return value;
     }
