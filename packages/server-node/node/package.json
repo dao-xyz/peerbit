@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-node",
-    "version": "0.0.100",
+    "version": "0.0.101",
     "author": "dao.xyz",
     "repository": "https://github.com/@dao-xyz/peerbit-node",
     "license": "Apache-2.0",
@@ -42,7 +42,7 @@
     },
     "devDependencies": {
         "@dao-xyz/peerbit-node-test-lib": "^0.0.1",
-        "@dao-xyz/peerbit-string": "^0.0.138",
+        "@dao-xyz/peerbit-string": "^0.0.139",
         "@dao-xyz/peerbit-test-utils": "^0.0.22",
         "@types/yargs": "^17.0.13",
         "aws-sdk": "^2.1259.0",
@@ -54,7 +54,7 @@
         "@aws-sdk/client-route-53": "^3.216.0",
         "@chainsafe/libp2p-gossipsub": "^5.3.0",
         "@chainsafe/libp2p-noise": "^10.2.0",
-        "@dao-xyz/peerbit": "^0.0.94",
+        "@dao-xyz/peerbit": "^0.0.95",
         "@libp2p/floodsub": "^5.0.0",
         "@libp2p/mplex": "^7.1.0",
         "@libp2p/tcp": "^6.0.5",
