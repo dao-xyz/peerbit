@@ -40,6 +40,7 @@
         "@dao-xyz/peerbit-block": "^0.0.10",
         "@dao-xyz/peerbit-cache": "^0.4.33",
         "@dao-xyz/peerbit-log": "^0.0.4",
+        "path-browserify": "^1.0.1",
         "p-each-series": "^3.0.0",
         "p-map": "^5.5.0",
         "p-queue": "^7.3.0"

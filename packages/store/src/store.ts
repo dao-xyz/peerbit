@@ -1,4 +1,3 @@
-import path from "path";
 import mapSeries from "p-each-series";
 import PQueue from "p-queue";
 import {
@@ -7,7 +6,6 @@ import {
     PruneOptions,
     LogOptions,
     Identity,
-    max,
     CanAppend,
     JSON_ENCODING,
 } from "@dao-xyz/peerbit-log";
@@ -29,6 +27,7 @@ import {
 import { EntryWithRefs } from "./entry-with-refs.js";
 import { waitForAsync } from "@dao-xyz/peerbit-time";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+import path from "path-browserify";
 const logger = loggerFn({ module: "store" });
 
 export class CachedValue {}
