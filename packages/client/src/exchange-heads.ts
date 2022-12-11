@@ -126,7 +126,7 @@ export const exchangeHeads = async (
         const refs = !includeReferences
             ? []
             : store.oplog
-                  .getPow2Refs(store.oplog.length, [head])
+                  .getPow2Refs([head], store.oplog.length)
                   .filter((r) => !headsSet.has(r)); // pick a proportional amount of refs so we can efficiently load the log. TODO should be equidistant for good performance?
         return new EntryWithRefs({
             entry: head,
