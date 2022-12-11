@@ -1,4 +1,3 @@
-import path from "path";
 import { IStoreOptions, Store } from "@dao-xyz/peerbit-store";
 import Cache from "@dao-xyz/peerbit-cache";
 import { Keystore, KeyWithMeta, StoreError } from "@dao-xyz/peerbit-keystore";
@@ -75,7 +74,7 @@ import {
 } from "@dao-xyz/peerbit-block";
 import sodium from "libsodium-wrappers";
 import { delay } from "@dao-xyz/peerbit-time";
-
+import path from "path-browserify";
 export const logger = loggerFn({ module: "peer" });
 await sodium.ready;
 
