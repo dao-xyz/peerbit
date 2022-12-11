@@ -32,7 +32,7 @@ import { Encoding, JSON_ENCODING } from "./encoding.js";
 import { Identity } from "./identity.js";
 import { logger as parentLogger } from "./logger.js";
 import { HeadsIndex } from "./heads.js";
-import { BlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import { Blocks } from "@dao-xyz/peerbit-block";
 
 const logger = parentLogger.child({ module: "ipfs-log" });
 
@@ -217,15 +217,24 @@ export class Log<T> extends GSet {
      * @returns {Array<Entry<T>>}
      */
     get values(): Entry<T>[] {
-        return Object.values(this.traverse(this.heads)).reverse();
+        return Object.values(
+            this.traverse([...this.headsIndex._index.values()])
+        ).reverse();
     }
 
     /**
      * Returns an array of heads.
      * @returns {Array<Entry<T>>}
      */
+    get headsIndex(): HeadsIndex<T> {
+        return this._headsIndex;
+    }
+
+    /**
+     * Don use this anywhere performance matters
+     */
     get heads(): Entry<T>[] {
-        return this._headsIndex.heads;
+        return this.headsIndex.array;
     }
 
     /**
@@ -350,8 +359,8 @@ export class Log<T> extends GSet {
         return result;
     }
 
-    getPow2Refs(pointerCount = 1, heads?: Entry<T>[]): Entry<T>[] {
-        const headsToUse = heads || this.heads;
+    getPow2Refs(heads: Entry<T>[], pointerCount = 1): Entry<T>[] {
+        const headsToUse = heads;
         const all = Object.values(
             this.traverse(headsToUse, Math.max(pointerCount, headsToUse.length))
         );
@@ -429,16 +438,19 @@ export class Log<T> extends GSet {
             });
         }
 
-        const currentHeads: Entry<T>[] = Object.values(
-            this.heads.reverse().reduce(uniqueEntriesReducer, {})
-        ); // TODO this invokes a double reverse
+        /*  const currentHeads: Entry<T>[] = Object.values(
+             this.heads.reverse().reduce(uniqueEntriesReducer, {})
+         ); */ // TODO this invokes a double reverse
 
-        const nexts: Entry<any>[] = options.nexts || currentHeads;
+        const hasNext = !!options.nexts;
+        const nexts: Entry<any>[] = options.nexts || [
+            ...this.headsIndex._index.values(),
+        ];
 
         // Some heads might not even be referenced by the refs, this will be merged into the headsIndex so we dont forget them
-        const keepHeads: Entry<T>[] = options.nexts
-            ? currentHeads.filter((h) => !nexts.find((e) => e.hash === h.hash))
-            : []; // TODO improve performance
+        /*  const keepHeads: Entry<T>[] = options.nexts
+             ? currentHeads.filter((h) => !nexts.find((e) => e.hash === h.hash))
+             : [];  */ // TODO improve performance
 
         // Calculate max time for log/graph
         /*  const newTime = ; */
@@ -451,8 +463,8 @@ export class Log<T> extends GSet {
         }); // TODO privacy leak?
 
         const identity = options.identity || this._identity;
-        let gidsInHeds =
-            options.onGidsShadowed && new Set(this.heads.map((h) => h.gid)); // could potentially be faster if we first groupBy
+        /*  let gidsInHeds =
+             options.onGidsShadowed && new Set(this.heads.map((h) => h.gid));  */ // could potentially be faster if we first groupBy
 
         const entry = await Entry.create<T>({
             store: this._storage,
@@ -489,8 +501,25 @@ export class Log<T> extends GSet {
             this._nextsIndex[e.hash].add(entry.hash);
         });
 
-        keepHeads.push(entry);
-        this._headsIndex.reset(keepHeads);
+        const removedGids: Set<string> = new Set();
+        if (hasNext) {
+            nexts.forEach((next) => {
+                const deletion = this._headsIndex.del(next);
+                if (deletion.lastWithGid && next.gid !== entry.gid) {
+                    removedGids.add(next.gid);
+                }
+            });
+        } else {
+            // next is all heads, which means we should just overwrite
+            for (const key of this.headsIndex.gids.keys()) {
+                if (key !== entry.gid) {
+                    removedGids.add(key);
+                }
+            }
+            this.headsIndex.reset([entry]);
+        }
+
+        this._headsIndex.put(entry);
 
         // Update the length
         this._length++;
@@ -500,20 +529,8 @@ export class Log<T> extends GSet {
         }
 
         // if next contails all gids
-        if (options.onGidsShadowed) {
-            const gidsInHeadsAfterEntry = new Set(this.heads.map((h) => h.gid)); // could potentially be faster if we first groupBy
-            gidsInHeds = gidsInHeds as Set<string>;
-            if (gidsInHeadsAfterEntry.size < gidsInHeds.size) {
-                const missingGids: string[] = [];
-                gidsInHeds.forEach((gid) => {
-                    if (!gidsInHeadsAfterEntry.has(gid)) {
-                        missingGids.push(gid);
-                    }
-                });
-
-                // Call callback
-                options.onGidsShadowed(missingGids);
-            }
+        if (options.onGidsShadowed && removedGids.size > 0) {
+            options.onGidsShadowed([...removedGids]);
         }
         entry.init({ encoding: this._encoding, encryption: this._encryption });
         return entry;
@@ -573,7 +590,9 @@ export class Log<T> extends GSet {
         if (lt && !Array.isArray(lt))
             throw LogError.LtOrLteMustBeStringOrArray();
 
-        const start = (lte || lt || this.heads).filter(isDefined);
+        const start = (lte || lt || [...this.headsIndex.index.values()]).filter(
+            isDefined
+        );
         const endHash = gte
             ? this.get(gte)!.hash
             : gt
@@ -758,7 +777,7 @@ export class Log<T> extends GSet {
 
             this._entryIndex.delete(next.hash);
             delete this._nextsIndexToHead[next.hash];
-            this._headsIndex.del(next.hash);
+            this._headsIndex.del(next);
             delete this._nextsIndex[next.hash];
             next.next.forEach((n) => {
                 const value = this.get(n);
@@ -777,7 +796,7 @@ export class Log<T> extends GSet {
     toJSON() {
         return {
             id: this._id,
-            heads: this.heads
+            heads: [...this.headsIndex.index.values()]
                 .sort(this._sortFn) // default sorting
                 .reverse() // we want the latest as the first element
                 .map(getHash), // return only the head hashes
@@ -791,7 +810,7 @@ export class Log<T> extends GSet {
     toSnapshot() {
         return {
             id: this._id,
-            heads: this.heads,
+            heads: [...this.headsIndex.index.values()],
             values: this.values,
         };
     }
@@ -1032,9 +1051,9 @@ export class Log<T> extends GSet {
             if (entryOrLog instanceof Entry) {
                 entries.push(entryOrLog);
             } else {
-                entryOrLog.heads.forEach((head) => {
+                for (const head of entryOrLog.headsIndex.index.values()) {
                     entries.push(head);
-                });
+                }
             }
         });
 
