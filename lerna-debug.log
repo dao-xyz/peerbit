@@ -1,0 +1,10 @@
+176 error Error: Command failed with exit code 1: git add -- packages/utils/test-utils/package.json packages/utils/crypto/package.json packages/utils/cache/package.json packages/utils/block/package.json packages/libp2p/pubsub-direct-channel/package.json packages/utils/keystore/package.json packages/log/package.json packages/store/package.json packages/programs/program-interface/package.json packages/programs/rpc/package.json packages/programs/discovery/log-index/package.json packages/programs/data/string/package.json packages/programs/data/document/package.json packages/programs/acl/trusted-network/package.json packages/client/package.json packages/programs/clock-service/package.json packages/programs/acl/identity-access-controller/package.json packages/server-node/node/package.json
+176 error The following paths are ignored by one of your .gitignore files:
+176 error packages/utils/keystore
+176 error hint: Use -f if you really want to add them.
+176 error hint: Turn this message off by running
+176 error hint: "git config advice.addIgnoredFile false"
+176 error     at makeError (/Users/admin/git/web3-orbit/node_modules/execa/lib/error.js:60:11)
+176 error     at handlePromise (/Users/admin/git/web3-orbit/node_modules/execa/index.js:118:26)
+176 error     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+176 error     at async Promise.all (index 0)

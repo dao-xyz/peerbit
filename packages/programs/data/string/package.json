@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-string",
-    "version": "0.0.139",
+    "version": "0.0.140",
     "description": "String store",
     "type": "module",
     "sideEffects": false,
@@ -33,9 +33,9 @@
     "dependencies": {
         "@dao-xyz/borsh": "^4.0.7",
         "@dao-xyz/peerbit-logger": "^0.0.4",
-        "@dao-xyz/peerbit-program": "^0.0.70",
-        "@dao-xyz/peerbit-rpc": "^0.0.74",
-        "@dao-xyz/peerbit-store": "^0.0.85",
+        "@dao-xyz/peerbit-program": "^0.0.71",
+        "@dao-xyz/peerbit-rpc": "^0.0.75",
+        "@dao-xyz/peerbit-store": "^0.0.86",
         "@dao-xyz/peerbit-time": "^0.0.19"
     },
     "gitHead": "bfbec720aee276ab1bc7cf4ee7a6c0e90ecb4f51"
