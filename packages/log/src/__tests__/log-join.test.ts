@@ -237,6 +237,7 @@ describe("Log - Join", function () {
 
             const item = last(log1.values);
             expect(item.next.length).toEqual(1);
+            expect(log1.heads.length).toEqual(2);
         });
 
         it("joins logs two ways", async () => {
@@ -249,10 +250,10 @@ describe("Log - Join", function () {
 
             const expectedData = ["helloA1", "helloB1", "helloA2", "helloB2"];
 
-            expect(log1.heads).toContainValues([a2, b2]);
-            expect(log2.heads).toContainValues([a2, b2]);
-            expect(a2.next).toContainValues([a1.hash]);
-            expect(b2.next).toContainValues([b1.hash]);
+            expect(log1.heads).toContainAllValues([a2, b2]);
+            expect(log2.heads).toContainAllValues([a2, b2]);
+            expect(a2.next).toContainAllValues([a1.hash]);
+            expect(b2.next).toContainAllValues([b1.hash]);
 
             expect(log1.values.map((e) => e.hash)).toEqual(
                 log2.values.map((e) => e.hash)
@@ -270,8 +271,8 @@ describe("Log - Join", function () {
             await log2.append("helloB1");
             await log2.join(log1);
 
-            await log1.append("helloA2");
-            await log2.append("helloB2");
+            const a2 = await log1.append("helloA2");
+            const b2 = await log2.append("helloB2");
             await log2.join(log1);
 
             const expectedData = ["helloA1", "helloB1", "helloA2", "helloB2"];
@@ -281,6 +282,9 @@ describe("Log - Join", function () {
                 log2.values.map((e) => e.payload.getValue()),
                 expectedData
             );
+
+            expect(log1.heads).toContainAllValues([a2]);
+            expect(log2.heads).toContainAllValues([a2, b2]);
         });
 
         it("joins 2 logs two ways", async () => {
@@ -288,8 +292,8 @@ describe("Log - Join", function () {
             await log2.append("helloB1");
             await log2.join(log1);
             await log1.join(log2);
-            await log1.append("helloA2");
-            await log2.append("helloB2");
+            const a2 = await log1.append("helloA2");
+            const b2 = await log2.append("helloB2");
             await log2.join(log1);
 
             const expectedData = ["helloA1", "helloB1", "helloA2", "helloB2"];
@@ -299,6 +303,9 @@ describe("Log - Join", function () {
                 log2.values.map((e) => e.payload.getValue()),
                 expectedData
             );
+
+            expect(log1.heads).toContainAllValues([a2]);
+            expect(log2.heads).toContainAllValues([a2, b2]);
         });
 
         it("joins 2 logs two ways and has the right heads at every step", async () => {
@@ -340,10 +347,10 @@ describe("Log - Join", function () {
             await log2.append("helloB1");
             await log3.append("helloC1");
             await log4.append("helloD1");
-            await log1.append("helloA2");
-            await log2.append("helloB2");
-            await log3.append("helloC2");
-            await log4.append("helloD2");
+            const a2 = await log1.append("helloA2");
+            const b2 = await log2.append("helloB2");
+            const c2 = await log3.append("helloC2");
+            const d2 = await log4.append("helloD2");
             await log1.join(log2);
             await log1.join(log3);
             await log1.join(log4);
@@ -363,6 +370,8 @@ describe("Log - Join", function () {
             expect(log1.values.map((e) => e.payload.getValue())).toEqual(
                 expectedData
             );
+
+            expect(log1.heads).toContainAllValues([a2, b2, c2, d2]);
         });
 
         it("joins 4 logs to one is commutative", async () => {

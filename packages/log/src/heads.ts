@@ -44,6 +44,11 @@ export class HeadsIndex<T> {
         if (!entry.hash) {
             throw new Error("Missing hash");
         }
+
+        if (this._index.has(entry.hash)) {
+            return;
+        }
+
         this._index.set(entry.hash, entry);
         if (!this._gids.has(entry.gid)) {
             this._gids.set(entry.gid, 1);

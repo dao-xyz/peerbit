@@ -9,7 +9,7 @@ export const join = async <T>(
         concurrency?: number;
         onFetched?: (entry: Entry<any>) => void;
     }
-): Promise<void> => {
+): Promise<{ change: Entry<T>[] }> => {
     // Notify the Store that we made progress
 
     const shouldFetch = (h: string) => {
@@ -67,16 +67,5 @@ export const join = async <T>(
             onFetched: options?.onFetched,
         });
     }
-    await into.join(log);
-    // Return all next pointers
-    /*   const nexts = log.values.map((e) => e.next).reduce(flatMap, []);
-      try {
-          // Add the next (hashes) to the processing queue
-          this._addToQueue(nexts); // TODO why do we do this?
-      } catch (e) {
-          console.error(e);
-          throw e;
-      }
-      // Return the log
-      return log; */
+    return into.join(log);
 };

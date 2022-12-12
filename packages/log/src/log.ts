@@ -39,8 +39,6 @@ const logger = parentLogger.child({ module: "ipfs-log" });
 const { LastWriteWins, NoZeroes } = Sorting;
 const randomId = () => new Date().getTime().toString();
 const getHash = <T>(e: Entry<T>) => e.hash;
-const flatMap = (res: any[], acc: any[]) => res.concat(acc);
-const getNextPointers = (entry: Entry<any>) => entry.next;
 /* const maxSizeReducer = <T>(res: bigint, acc: Entry<T>): bigint => bigIntMax(res, acc.cumulativeSize); */
 
 const uniqueEntriesReducer = <T>(
@@ -231,7 +229,7 @@ export class Log<T> extends GSet {
     }
 
     /**
-     * Don use this anywhere performance matters
+     * Don't use this anywhere performance matters
      */
     get heads(): Entry<T>[] {
         return this.headsIndex.array;
@@ -635,10 +633,12 @@ export class Log<T> extends GSet {
     async join(
         log: Log<T>,
         options?: { size?: number; verifySignatures?: boolean }
-    ) {
+    ): Promise<{ change: Entry<T>[] }> {
         // Get the difference of the logs
         const newItems = await Log.difference(log, this);
         /* let prevPeers = undefined; */
+
+        const nextFromNew = new Set<string>();
         for (const e of newItems.values()) {
             if (options?.verifySignatures) {
                 if (!(await e.verifySignatures())) {
@@ -663,33 +663,36 @@ export class Log<T> extends GSet {
                     this._nextsIndex[a] = nextIndexSet;
                 }
                 this._nextsIndex[a].add(e.hash);
+
+                nextFromNew.add(a);
             });
 
             const clock = await e.getClock();
             this._hlc.update(clock.timestamp);
         }
 
-        //    this._entryIndex.add(newItems)
-
         // Merge the heads
-        const nextsFromNewItems = Object.values(newItems)
-            .map(getNextPointers)
-            .reduce(flatMap, []);
         const notReferencedByNewItems = (e: Entry<any>) =>
-            !nextsFromNewItems.find((a) => a === e.hash);
-        const notInCurrentNexts = (e: Entry<any>) => !this._nextsIndex[e.hash];
-        const mergedHeads = Log.findHeads([this, log])
-            .filter(notReferencedByNewItems)
-            .filter(notInCurrentNexts)
-            .reduce(uniqueEntriesReducer, {});
+            !nextFromNew.has(e.hash);
 
-        this._headsIndex.reset(mergedHeads);
+        const notInCurrentNexts = (e: Entry<any>) => !this._nextsIndex[e.hash];
+        newItems.forEach((v, k) => {
+            if (notInCurrentNexts(v) && notReferencedByNewItems(v)) {
+                this.headsIndex.put(v);
+            }
+        });
+
+        nextFromNew.forEach((next) => {
+            this.headsIndex.del(this.get(next)!);
+        });
 
         if (typeof options?.size === "number") {
             this.prune(options.size);
         }
 
-        return this;
+        return {
+            change: [...newItems.values()],
+        };
     }
 
     getHeads(from: string): Entry<T>[] {
@@ -1111,15 +1114,15 @@ export class Log<T> extends GSet {
     }
 
     static async difference<T>(
-        a: Log<T>,
-        b: Log<T>
+        from: Log<T>,
+        into: Log<T>
     ): Promise<Map<string, Entry<T>>> {
-        const stack: string[] = [...a._headsIndex._index.keys()];
+        const stack: string[] = [...from._headsIndex._index.keys()];
         const traversed: { [key: string]: boolean } = {};
         const res: Map<string, Entry<T>> = new Map();
 
         const pushToStack = (hash: string) => {
-            if (!traversed[hash] && !b.get(hash)) {
+            if (!traversed[hash] && !into.get(hash)) {
                 stack.push(hash);
                 traversed[hash] = true;
             }
@@ -1130,16 +1133,16 @@ export class Log<T> extends GSet {
             if (!hash) {
                 throw new Error("Unexpected");
             }
-            const entry = a.get(hash);
-            if (entry && !b.get(hash)) {
+            const entry = from.get(hash);
+            if (entry && !into.get(hash)) {
                 // TODO do we need to do som GID checks?
                 res.set(entry.hash, entry);
                 traversed[entry.hash] = true;
 
                 // TODO init below is kind of flaky to do this here, but we dont want to iterate over all entries before the difference method is invoked in the join log method
                 entry.init({
-                    encryption: b._encryption,
-                    encoding: b._encoding,
+                    encryption: into._encryption,
+                    encoding: into._encoding,
                 });
                 (await entry.getNext()).forEach(pushToStack);
             }

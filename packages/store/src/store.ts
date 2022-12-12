@@ -398,18 +398,18 @@ export class Store<T> implements Initiable<T> {
 
     /**
      *
-     * @param heads
-     * @returns true, synchronization resolved in new entries
+     * @param entries
+     * @returns change
      */
     async sync(
-        heads: EntryWithRefs<T>[] | Entry<T>[] | string[],
+        entries: EntryWithRefs<T>[] | Entry<T>[] | string[],
         options: { canAppend?: CanAppend<T>; save: boolean } = { save: true }
     ): Promise<boolean> {
         this._stats.syncRequestsReceieved += 1;
         logger.debug(
-            `Sync request #${this._stats.syncRequestsReceieved} ${heads.length}`
+            `Sync request #${this._stats.syncRequestsReceieved} ${entries.length}`
         );
-        if (heads.length === 0) {
+        if (entries.length === 0) {
             return false;
         }
 
@@ -481,39 +481,38 @@ export class Store<T> implements Initiable<T> {
             return entry.entry.hash;
         };
 
-        const newHeads: (Entry<T> | EntryWithRefs<T>)[] = [];
-        for (const head of heads) {
-            const h = hash(head);
+        const newEntries: (Entry<T> | EntryWithRefs<T>)[] = [];
+        for (const entry of entries) {
+            const h = hash(entry);
             if (h && this.oplog.has(h)) {
                 continue;
             }
-            newHeads.push(
-                typeof head === "string"
-                    ? await Entry.fromMultihash(this._store, head)
-                    : head
+            newEntries.push(
+                typeof entry === "string"
+                    ? await Entry.fromMultihash(this._store, entry)
+                    : entry
             );
         }
 
-        if (newHeads.length === 0) {
+        if (newEntries.length === 0) {
             return false;
         }
 
-        const saved = await mapSeries(newHeads, handle);
-
-        await join(saved as EntryWithRefs<T>[] | Entry<T>[], this._oplog, {
-            concurrency: this._options.replicationConcurrency,
-            onFetched: (entry) =>
-                this._options.onReplicationFetch &&
-                this._options.onReplicationFetch(this, entry),
-        });
+        const saved = await mapSeries(newEntries, handle);
+        const { change } = await join(
+            saved as EntryWithRefs<T>[] | Entry<T>[],
+            this._oplog,
+            {
+                concurrency: this._options.replicationConcurrency,
+                onFetched: (entry) =>
+                    this._options.onReplicationFetch &&
+                    this._options.onReplicationFetch(this, entry),
+            }
+        );
 
         // TODO add head cache 'reset' so that it becomes more accurate over time
-        await this.updateHeadsCache(newHeads.map((x) => hash(x)));
-        await this._updateIndex(
-            newHeads.map((entry) =>
-                entry instanceof Entry ? entry : entry.entry
-            )
-        );
+        await this.updateHeadsCache(newEntries.map((x) => hash(x)));
+        await this._updateIndex(change);
         this._options.onReplicationComplete &&
             this._options.onReplicationComplete(this);
         return true;
