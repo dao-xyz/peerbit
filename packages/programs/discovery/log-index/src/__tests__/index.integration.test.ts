@@ -113,9 +113,13 @@ describe("query", () => {
             );
         }
         await waitForPeers(session.peers[1], [session.peers[0].peerId], topic);
-
+        await waitForPeers(session.peers[2], [session.peers[0].peerId], topic);
+        expect(topic).toEqual(logIndices[0].query.rpcTopic);
         expect(logIndices[0].query.rpcTopic).toEqual(
             logIndices[1].query.rpcTopic
+        );
+        expect(logIndices[1].query.rpcTopic).toEqual(
+            logIndices[2].query.rpcTopic
         );
     });
 
@@ -175,6 +179,7 @@ describe("query", () => {
 
             // read from observer 1
             const responses: HeadsMessage[] = [];
+
             await logIndices[2].query.send(
                 new LogQueryRequest({
                     queries: [
