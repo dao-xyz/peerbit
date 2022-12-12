@@ -856,19 +856,6 @@ export class Log<T> extends GSet {
         return LogIO.toMultihash(this._storage, this, options);
     }
 
-    /**
-     * Create a log from a hashes.
-     * @param {IPFS} ipfs An IPFS instance
-     * @param {Identity} identity The identity instance
-     * @param {string} hash The log hash
-     * @param {Object} options
-     * @param {AccessController} options.access The access controller instance
-     * @param {number} options.length How many items to include in the log
-     * @param {Array<Entry<T>>} options.exclude Entries to not fetch (cached)
-     * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
-     * @param {Function} options.sortFn The sort function - by default LastWriteWins
-     * @returns {Promise<Log>}
-     */
     static async fromMultihash<T>(
         store: Blocks,
         identity: Identity,
@@ -881,10 +868,10 @@ export class Log<T> extends GSet {
             hash,
             {
                 length: options?.length,
-                exclude: options?.exclude,
-                shouldExclude: options?.shouldExclude,
+                shouldFetch: options?.shouldFetch,
+                shouldQueue: options?.shouldQueue,
                 timeout: options?.timeout,
-                onProgressCallback: options?.onProgressCallback,
+                onFetched: options?.onFetched,
                 concurrency: options?.concurrency,
                 sortFn: options?.sortFn,
             }
@@ -899,20 +886,6 @@ export class Log<T> extends GSet {
         });
     }
 
-    /**
-     * Create a log from a single entry's hash.
-     * @param {IPFS} ipfs An IPFS instance
-     * @param {Identity} identity The identity instance
-     * @param {string} hash The entry's hash
-     * @param {Object} options
-     * @param {string} options.logId The ID of the log
-     * @param {AccessController} options.access The access controller instance
-     * @param {number} options.length How many entries to include in the log
-     * @param {Array<Entry<T>>} options.exclude Entries to not fetch (cached)
-     * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
-     * @param {Function} options.sortFn The sort function - by default LastWriteWins
-     * @return {Promise<Log>} New Log
-     */
     static async fromEntryHash<T>(
         store: Blocks,
         identity: Identity,
@@ -923,23 +896,22 @@ export class Log<T> extends GSet {
             logId?: string;
             length?: number;
             exclude?: any[];
-            shouldExclude?: (hash: string) => boolean;
+            shouldFetch?: (hash: string) => boolean;
             timeout?: number;
             concurrency?: number;
             sortFn?: any;
-            onProgressCallback?: any;
+            onFetched?: any;
         } = { length: -1, exclude: [] }
     ): Promise<Log<T>> {
         // TODO: need to verify the entries with 'key'
         const { entries } = await LogIO.fromEntryHash(store, hash, {
             length: options.length,
-            exclude: options.exclude,
             encryption: options?.encryption,
             encoding: options.encoding,
-            shouldExclude: options.shouldExclude,
+            shouldFetch: options.shouldFetch,
             timeout: options.timeout,
             concurrency: options.concurrency,
-            onProgressCallback: options.onProgressCallback,
+            onFetched: options.onFetched,
             sortFn: options.sortFn,
         });
         return new Log<T>(store, identity, {
@@ -959,7 +931,7 @@ export class Log<T> extends GSet {
      * @param {Object} options
      * @param {AccessController} options.access The access controller instance
      * @param {number} options.length How many entries to include in the log
-     * @param {function(hash, entry,  parent, depth)} [options.onProgressCallback]
+     * @param {function(hash, entry,  parent, depth)} [options.onFetched]
      * @param {Function} options.sortFn The sort function - by default LastWriteWins
      * @return {Promise<Log>} New Log
      */
@@ -973,7 +945,7 @@ export class Log<T> extends GSet {
             length?: number;
             timeout?: number;
             sortFn?: Sorting.ISortFunction;
-            onProgressCallback?: (entry: Entry<T>) => void;
+            onFetched?: (entry: Entry<T>) => void;
         } = { encoding: JSON_ENCODING }
     ) {
         // TODO: need to verify the entries with 'key'
@@ -982,7 +954,7 @@ export class Log<T> extends GSet {
             encryption: options?.encryption,
             encoding: options.encoding,
             timeout: options?.timeout,
-            onProgressCallback: options?.onProgressCallback,
+            onFetched: options?.onFetched,
         });
         return new Log<T>(store, identity, {
             encryption: options?.encryption,
@@ -993,25 +965,12 @@ export class Log<T> extends GSet {
         });
     }
 
-    /**
-     * Create a new log from an Entry instance.
-     * @param {IPFS} ipfs An IPFS instance
-     * @param {Identity} identity The identity instance
-     * @param {Entry|Array<Entry<T>>} sourceEntries An Entry or an array of entries to fetch a log from
-     * @param {Object} options
-     * @param {AccessController} options.access The access controller instance
-     * @param {number} options.length How many entries to include. Default: infinite.
-     * @param {Array<Entry<T>>} options.exclude Entries to not fetch (cached)
-     * @param {function(hash, entry,  parent, depth)} [options.onProgressCallback]
-     * @param {Function} options.sortFn The sort function - by default LastWriteWins
-     * @return {Promise<Log>} New Log
-     */
     static async fromEntry<T>(
         store: Blocks,
         identity: Identity,
         sourceEntries: Entry<T>[] | Entry<T>,
         options: EntryFetchOptions<T> & {
-            shouldExclude?: (hash: string) => boolean;
+            shouldFetch?: (hash: string) => boolean;
             encryption?: PublicKeyEncryptionResolver;
             sortFn?: Sorting.ISortFunction;
         }
@@ -1020,13 +979,12 @@ export class Log<T> extends GSet {
         options = strictFetchOptions(options);
         const { entries } = await LogIO.fromEntry(store, sourceEntries, {
             length: options.length,
-            exclude: options.exclude,
             encryption: options?.encryption,
             encoding: options.encoding,
             timeout: options.timeout,
             concurrency: options.concurrency,
-            shouldExclude: options.shouldExclude,
-            onProgressCallback: options.onProgressCallback,
+            shouldFetch: options.shouldFetch,
+            onFetched: options.onFetched,
         });
         return new Log<T>(store, identity, {
             encryption: options?.encryption,

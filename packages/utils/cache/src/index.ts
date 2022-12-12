@@ -77,15 +77,21 @@ export default class Cache<T> {
                         resolve(undefined);
                         return;
                     }
-                    const der = value ? deserialize(value, clazz) : undefined;
-                    resolve(der);
+                    try {
+                        const der = value
+                            ? deserialize(value, clazz)
+                            : undefined;
+                        resolve(der);
+                    } catch (error) {
+                        reject(error);
+                    }
                 }
             );
         });
     }
 
-    setBinary<B extends T>(key: string, value: B) {
-        const bytes = serialize(value);
+    setBinary<B extends T>(key: string, value: B | Uint8Array) {
+        const bytes = value instanceof Uint8Array ? value : serialize(value);
         this._store.put(key, bytes, {
             valueEncoding: "view",
         });

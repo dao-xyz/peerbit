@@ -473,7 +473,7 @@ describe("Log - Load", function () {
                         await signKey.keypair.sign(data),
                 },
                 last(items1),
-                { length: -1, exclude: [], onProgressCallback: callback }
+                { length: -1, onFetched: callback }
             );
         });
 
@@ -985,7 +985,7 @@ describe("Log - Load", function () {
                         await signKey3.keypair.sign(data),
                 },
                 last(c.values),
-                { length: -1, exclude: [] }
+                { length: -1 }
             );
             const g = await Log.fromEntry<string>(
                 store,
@@ -995,7 +995,7 @@ describe("Log - Load", function () {
                         await signKey3.keypair.sign(data),
                 },
                 last(d.values),
-                { length: -1, exclude: [] }
+                { length: -1 }
             );
 
             /*  expect(f.toString()).toEqual(bigLogString) // Ignore these for know since we have removed the clock manipulation in the loop
@@ -1795,36 +1795,6 @@ describe("Log - Load", function () {
                 );
                 expect(a.length).toEqual(amount);
                 expect(a.values[0].hash).toEqual(items1[0].hash);
-            });
-
-            it("returns all entries - including excluded entries", async () => {
-                // One entry
-                const a = await Log.fromEntry<string>(
-                    store,
-                    {
-                        ...signKey.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey.keypair.sign(data),
-                    },
-                    last(items1),
-                    { length: -1, exclude: [items1[0]] }
-                );
-                expect(a.length).toEqual(amount);
-                expect(a.values[0].hash).toEqual(items1[0].hash);
-
-                // All entries
-                const b = await Log.fromEntry<string>(
-                    store,
-                    {
-                        ...signKey.keypair,
-                        sign: async (data: Uint8Array) =>
-                            await signKey.keypair.sign(data),
-                    },
-                    last(items1),
-                    { length: -1, exclude: items1 }
-                );
-                expect(b.length).toEqual(amount);
-                expect(b.values[0].hash).toEqual(items1[0].hash);
             });
         });
     });

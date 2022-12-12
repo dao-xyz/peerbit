@@ -872,8 +872,7 @@ describe("Log", function () {
                     hash,
                     {
                         length: -1,
-                        exclude: [],
-                        onProgressCallback: loadProgressCallback,
+                        onFetched: loadProgressCallback,
                     }
                 );
 

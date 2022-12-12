@@ -246,13 +246,10 @@ export class TrustedNetwork extends Program {
                         return;
                     }
 
-                    const logs = await Promise.all(
-                        heads.heads.map((h) =>
-                            this.trustGraph.store._replicator._replicateLog(h)
-                        )
-                    );
-
-                    await this.trustGraph.store.updateStateFromLogs(logs);
+                    await this.trustGraph.store.sync(heads.heads, {
+                        canAppend: () => Promise.resolve(true),
+                        save: true,
+                    });
 
                     const isTrustedSender = await this._isTrustedLocal(
                         from,

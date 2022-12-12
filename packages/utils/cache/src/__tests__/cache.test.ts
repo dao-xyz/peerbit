@@ -84,6 +84,18 @@ describe(`Cache - level`, function () {
         assert.deepStrictEqual(val, obj);
     });
 
+    it(`get binary corrupt`, async () => {
+        class TestStruct {
+            @field({ type: "u32" })
+            number: number;
+        }
+
+        await cache.setBinary("key", new Uint8Array([254, 253, 252]));
+        await expect(() =>
+            cache.getBinary("key", TestStruct)
+        ).rejects.toThrowError();
+    });
+
     it("can create from sublevel", () => {
         const sublevel = store.sublevel("sublevel");
         const _sublevelCache = new Cache(sublevel);

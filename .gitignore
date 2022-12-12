@@ -1,4 +1,6 @@
 node_modules
+keystore
+keystore-test
 orbitdb
 /orbit-db
 orbit-db-stores

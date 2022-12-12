@@ -1,14 +1,13 @@
 import { variant, option, field, vec, serialize } from "@dao-xyz/borsh";
 import { Entry, Identity } from "@dao-xyz/peerbit-log";
-import { TransportMessage } from "./message.js";
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
-
 import { Program } from "@dao-xyz/peerbit-program";
 import { fixedUint8Array } from "@dao-xyz/peerbit-borsh-utils";
 import { Store } from "@dao-xyz/peerbit-store";
-
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+import { TransportMessage } from "./message.js";
+
 const logger = loggerFn({ module: "exchange-heads" });
 
 export class MinReplicas {
@@ -42,11 +41,9 @@ export class EntryWithRefs<T> {
     @field({ type: vec(Entry) })
     references: Entry<T>[]; // are some parents to the entry
 
-    constructor(properties?: { entry: Entry<T>; references: Entry<T>[] }) {
-        if (properties) {
-            this.entry = properties.entry;
-            this.references = properties.references;
-        }
+    constructor(properties: { entry: Entry<T>; references: Entry<T>[] }) {
+        this.entry = properties.entry;
+        this.references = properties.references;
     }
 }
 

@@ -9,8 +9,7 @@ import { Blocks } from "@dao-xyz/peerbit-block";
 export interface EntryFetchOptions<T> {
     length?: number;
     timeout?: number;
-    exclude?: any[];
-    onProgressCallback?: (entry: Entry<T>) => void;
+    onFetched?: (entry: Entry<T>) => void;
     concurrency?: number;
     encoding?: Encoding<T>;
     encryption?: PublicKeyEncryptionResolver;
@@ -18,21 +17,26 @@ export interface EntryFetchOptions<T> {
 interface EntryFetchStrictOptions<T> {
     length: number;
     timeout?: number;
-    exclude: any[];
-    onProgressCallback?: (entry: Entry<T>) => void;
+    onFetched?: (entry: Entry<T>) => void;
     concurrency: number;
     encoding?: Encoding<T>;
     encryption?: PublicKeyEncryptionResolver;
 }
 
 export interface EntryFetchAllOptions<T> extends EntryFetchOptions<T> {
-    shouldExclude?: (string: string) => boolean;
-    onStartProgressCallback?: any;
+    shouldFetch?: (string: string) => boolean;
+    shouldQueue?: (string: string) => boolean;
+    onFetch?: (hash: string) => void;
+    onQueueCallback?: (hash: string) => void;
+    cache?: Map<string, Entry<any>>;
     delay?: number;
 }
 interface EntryFetchAllStrictOptions<T> extends EntryFetchStrictOptions<T> {
-    shouldExclude?: (string: string) => boolean;
-    onStartProgressCallback?: any;
+    shouldFetch?: (string: string) => boolean;
+    shouldQueue?: (string: string) => boolean;
+    onQueueCallback?: (hash: string) => void;
+    onFetch?: (hash: string) => void;
+    cache?: Map<string, Entry<any>>;
     delay: number;
 }
 
@@ -44,9 +48,6 @@ export const strictAllFetchOptions = <T>(
     } as any;
     if (ret.length == undefined) {
         ret.length = -1;
-    }
-    if (ret.exclude == undefined) {
-        ret.exclude = [];
     }
     if (ret.concurrency == undefined) {
         ret.concurrency = 32;
@@ -65,9 +66,7 @@ export const strictFetchOptions = <T>(
     if (ret.length == undefined) {
         ret.length = -1;
     }
-    if (ret.exclude == undefined) {
-        ret.exclude = [];
-    }
+
     if (ret.concurrency == undefined) {
         ret.concurrency = 32;
     }
@@ -81,8 +80,48 @@ export class EntryIO {
         hashes: string | string[],
         options: EntryFetchAllOptions<T>
     ): Promise<Entry<T>[]> {
+        const queued = new Set<string>();
+        const fetched = new Set<string>();
+
+        const onQueueCallback = (hash: string) => {
+            queued.add(hash);
+            options.onQueueCallback && options.onQueueCallback(hash);
+        };
+
+        const onFetched = (entry: Entry<any>) => {
+            fetched.add(entry.hash);
+            options.onFetched && options.onFetched(entry);
+        };
+
+        const fetchOptions = {
+            ...options,
+            onQueueCallback,
+            onFetched,
+            shouldQueue: (hash) => {
+                if (queued.has(hash)) {
+                    return false;
+                }
+                if (options.shouldQueue) {
+                    if (!options.shouldQueue(hash)) {
+                        return false;
+                    }
+                }
+                return true;
+            },
+            shouldFetch: (hash) => {
+                if (fetched.has(hash)) {
+                    return false;
+                }
+                if (options.shouldFetch) {
+                    if (!options.shouldFetch(hash)) {
+                        return false;
+                    }
+                }
+                return true;
+            },
+        };
         const fetchOne = async (hash: string) =>
-            EntryIO.fetchAll(store, hash, options);
+            EntryIO.fetchAll(store, hash, fetchOptions);
         const concatArrays = (arr1: any[], arr2: any) => arr1.concat(arr2);
         const flatten = (arr: any[]) => arr.reduce(concatArrays, []);
         const res = await pMap(hashes, fetchOne, {
@@ -91,19 +130,6 @@ export class EntryIO {
         return flatten(res);
     }
 
-    /**
-     * Fetch log entries
-     *
-     * @param {IPFS} [ipfs] An IPFS instance
-     * @param {string} [hash] Multihash of the entry to fetch
-     * @param {string} [parent] Parent of the node to be fetched
-     * @param {Object} [all] Entries to skip
-     * @param {Number} [amount=-1] How many entries to fetch
-     * @param {Number} [depth=0] Current depth of the recursion
-     * @param {function(entry)} shouldExclude A function that can be passed to determine whether a specific hash should be excluded, ie. not fetched. The function should return true to indicate exclusion, otherwise return false.
-     * @param {function(entry)} onProgressCallback Called when an entry was fetched
-     * @returns {Promise<Array<Entry<T>>>}
-     */
     static async fetchAll<T>(
         store: Blocks,
         hashes: string | string[],
@@ -112,16 +138,17 @@ export class EntryIO {
         const options = strictAllFetchOptions(fetchOptions);
 
         const result: Entry<T>[] = [];
-        const cache: { [key: string]: any } = {};
-        const loadingCache: { [key: string]: any } = {};
+        const cache = new Set<string>();
+        const loadingCache = new Set();
         const loadingQueue: { ts: bigint; hash: string }[] =
             []; /* { [key: number | string]: string[] } =
             Array.isArray(hashes) ? { 0: hashes.slice() } : { 0: [hashes] } */
         let running = 0; // keep track of how many entries are being fetched at any time
         let maxClock = new Timestamp({ wallTime: 0n, logical: 0 }); // keep track of the latest clock time during load
         let minClock = new Timestamp({ wallTime: 0n, logical: 0 }); // keep track of the minimum clock time during load
-        const shouldExclude = options.shouldExclude || (() => false); // default fn returns false to not exclude any hash
-
+        // const shouldFetch = options.shouldFetch || (() => true); // default fn returns false to not exclude any hash
+        const shouldFetch = (hash: string) =>
+            !options.shouldFetch || options.shouldFetch(hash);
         // Does the loading queue have more to process?
         const loadingQueueHasMore = () => loadingQueue.length > 0;
         //Object.values(loadingQueue).find(hasItems) !== undefined;
@@ -129,12 +156,16 @@ export class EntryIO {
         // Add a multihash to the loading queue
         const addToLoadingQueue = (e: Entry<T> | string, ts: bigint) => {
             const hash = e instanceof Entry ? e.hash : e;
-            if (!loadingCache[hash] && !shouldExclude(hash)) {
+            if (
+                !loadingCache.has(hash) &&
+                (!options.shouldQueue || options.shouldQueue(hash))
+            ) {
+                options.onQueueCallback && options.onQueueCallback(hash);
                 loadingQueue.push({ hash, ts });
                 loadingQueue.sort((a, b) =>
                     a.ts > b.ts ? -1 : a.ts === b.ts ? 0 : 1
                 ); // ascending
-                loadingCache[hash] = true;
+                loadingCache.add(hash);
             }
         };
 
@@ -149,15 +180,87 @@ export class EntryIO {
                 .map((x) => x.hash);
         };
 
-        // Add entries that we don't need to fetch to the "cache"
-        const addToExcludeCache = (e: Entry<any> | string) => {
-            cache[e instanceof Entry ? e.hash : e] = true;
+        const addToResults = async (entry: Entry<T>) => {
+            if (!cache.has(entry.hash) && shouldFetch(entry.hash)) {
+                entry.init({
+                    encryption: options.encryption,
+                    encoding: options.encoding || JSON_ENCODING,
+                });
+
+                // Todo check bigint conversions
+                const ts = (await entry.getClock()).timestamp;
+
+                // Update min/max clocks'
+                maxClock = Timestamp.bigger(maxClock, ts);
+                minClock =
+                    result.length > 0
+                        ? Timestamp.bigger(
+                              (await result[result.length - 1].metadata).clock
+                                  .timestamp,
+                              minClock
+                          )
+                        : maxClock;
+
+                const isLater =
+                    result.length >= options.length && ts >= minClock;
+
+                // Add the entry to the results if
+                // 1) we're fetching all entries
+                // 2) results is not filled yet
+                // the clock of the entry is later than current known minimum clock time
+                if (
+                    (options.length < 0 ||
+                        result.length < options.length ||
+                        isLater) &&
+                    shouldFetch(entry.hash) &&
+                    !cache.has(entry.hash)
+                ) {
+                    result.push(entry);
+                    cache.add(entry.hash);
+                }
+                const nextSorted = [...entry.next].sort();
+                if (options.length < 0) {
+                    // If we're fetching all entries (length === -1), adds nexts and refs to the queue
+                    nextSorted.forEach((e) =>
+                        addToLoadingQueue(e, ts.wallTime)
+                    );
+                } else {
+                    // If we're fetching entries up to certain length,
+                    // fetch the next if result is filled up, to make sure we "check"
+                    // the next entry if its clock is later than what we have in the result
+                    if (
+                        result.length < options.length ||
+                        ts.compare(minClock) > 0 ||
+                        (ts.compare(minClock) === 0 &&
+                            !cache.has(entry.hash) &&
+                            shouldFetch(entry.hash))
+                    ) {
+                        nextSorted.forEach(
+                            (e) =>
+                                addToLoadingQueue(
+                                    e,
+                                    ts.wallTime
+                                    /* ,
+                                    maxClock.wallTime - ts.wallTime */
+                                ) // approximation, we ignore logical
+                        );
+                    }
+                }
+            }
         };
 
         // Fetch one entry and add it to the results
         const fetchEntry = async (hash: string) => {
-            if (!hash || cache[hash] || shouldExclude(hash)) {
+            if (!hash || cache.has(hash) || !shouldFetch(hash)) {
                 return;
+            }
+
+            if (options.cache) {
+                const entry = options.cache.get(hash);
+                if (entry) {
+                    await addToResults(entry);
+                    return;
+                }
             }
 
             /* eslint-disable no-async-promise-executor */
@@ -174,86 +277,8 @@ export class EntryIO {
                           }, options.timeout)
                         : null;
 
-                const addToResults = async (entry: Entry<T>) => {
-                    if (!cache[entry.hash] && !shouldExclude(entry.hash)) {
-                        entry.init({
-                            encryption: options.encryption,
-                            encoding: options.encoding || JSON_ENCODING,
-                        });
-
-                        // Todo check bigint conversions
-                        const ts = (await entry.getClock()).timestamp;
-
-                        // Update min/max clocks'
-                        maxClock = Timestamp.bigger(maxClock, ts);
-                        minClock =
-                            result.length > 0
-                                ? Timestamp.bigger(
-                                      (await result[result.length - 1].metadata)
-                                          .clock.timestamp,
-                                      minClock
-                                  )
-                                : maxClock;
-
-                        const isLater =
-                            result.length >= options.length && ts >= minClock;
-
-                        // Add the entry to the results if
-                        // 1) we're fetching all entries
-                        // 2) results is not filled yet
-                        // the clock of the entry is later than current known minimum clock time
-                        if (
-                            (options.length < 0 ||
-                                result.length < options.length ||
-                                isLater) &&
-                            !shouldExclude(entry.hash) &&
-                            !cache[entry.hash]
-                        ) {
-                            result.push(entry);
-                            cache[entry.hash] = true;
-
-                            if (options.onProgressCallback) {
-                                options.onProgressCallback(entry);
-                            }
-                        }
-                        const nextSorted = [...entry.next].sort();
-                        if (options.length < 0) {
-                            // If we're fetching all entries (length === -1), adds nexts and refs to the queue
-                            nextSorted.forEach((e) =>
-                                addToLoadingQueue(e, ts.wallTime)
-                            );
-                        } else {
-                            // If we're fetching entries up to certain length,
-                            // fetch the next if result is filled up, to make sure we "check"
-                            // the next entry if its clock is later than what we have in the result
-                            if (
-                                result.length < options.length ||
-                                ts.compare(minClock) > 0 ||
-                                (ts.compare(minClock) === 0 &&
-                                    !cache[entry.hash] &&
-                                    !shouldExclude(entry.hash))
-                            ) {
-                                nextSorted.forEach(
-                                    (e) =>
-                                        addToLoadingQueue(
-                                            e,
-                                            ts.wallTime
-                                            /* ,
-                                            maxClock.wallTime - ts.wallTime */
-                                        ) // approximation, we ignore logical
-                                );
-                            }
-                        }
-                    }
-                };
-
-                if (options.onStartProgressCallback) {
-                    options.onStartProgressCallback(
-                        hash,
-                        null,
-                        0,
-                        result.length
-                    );
+                if (options.onFetch) {
+                    options.onFetch(hash);
                 }
 
                 try {
@@ -267,6 +292,9 @@ export class EntryIO {
                     }
                     // Add it to the results
                     await addToResults(entry);
+                    if (options.onFetched) {
+                        options.onFetched(entry);
+                    }
                     resolve(undefined);
                 } catch (e: any) {
                     reject(e);
@@ -287,9 +315,6 @@ export class EntryIO {
                 running -= nexts.length;
             }
         };
-
-        // Add entries to exclude from processing to the cache before we start
-        options.exclude.forEach(addToExcludeCache);
 
         // Fetch entries
         await pDoWhilst(_processQueue, loadingQueueHasMore);

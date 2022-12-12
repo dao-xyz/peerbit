@@ -7,7 +7,7 @@ import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { jest } from "@jest/globals";
 import { fileURLToPath } from "url";
 import path from "path";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { AbstractLevel } from "abstract-level";
 import { Entry } from "@dao-xyz/peerbit-log";
 import {
@@ -118,7 +118,7 @@ describe(`Sync`, () => {
         const index2 = new SimpleIndex();
         const store2 = new Store({ storeIndex: 1 });
 
-        const progressCallbackEntries: Entry<any>[] = [];
+        const fetchCallBackEntries: Entry<any>[] = [];
 
         blockStore2 = new Blocks(
             new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
@@ -137,8 +137,8 @@ describe(`Sync`, () => {
                 replicationConcurrency: 123,
                 resolveCache: () => Promise.resolve(cache),
                 onUpdate: index2.updateIndex.bind(index2),
-                onReplicationProgress: (store, entry) => {
-                    progressCallbackEntries.push(entry);
+                onReplicationFetch: (store, entry) => {
+                    fetchCallBackEntries.push(entry);
                 },
             }
         );
@@ -157,10 +157,10 @@ describe(`Sync`, () => {
             },
         ]);
         await waitFor(() => store2.oplog.values.length == entryCount);
-        expect(progressCallbackEntries).toHaveLength(10);
-        expect(progressCallbackEntries[0].payload.getValue()).toEqual(9); // because head
-        expect(progressCallbackEntries[1].payload.getValue()).toEqual(3); // because first reference
-        expect(progressCallbackEntries[2].payload.getValue()).toEqual(6); // because second reference
+        expect(fetchCallBackEntries).toHaveLength(10);
+        expect(fetchCallBackEntries[0].payload.getValue()).toEqual(9); // because head
+        expect(fetchCallBackEntries[1].payload.getValue()).toEqual(3); // because first reference
+        expect(fetchCallBackEntries[2].payload.getValue()).toEqual(6); // because second reference
 
         // the order of the rest is kind of random because we do Log.fromEntry/fromEntryHash which loads concurrently so we dont know what entries arrive firs
         expect(store2.oplog.heads).toHaveLength(1);

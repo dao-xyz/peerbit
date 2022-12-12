@@ -230,8 +230,11 @@ export class LogIndex extends ComposableProgram {
         if (query.size) {
             results = results.slice(0, Number(query.size));
         }
-        return new HeadsMessage({
-            heads: results,
-        });
+        if (results.length > 0) {
+            return new HeadsMessage({
+                heads: results,
+            });
+        }
+        return undefined;
     }
 }

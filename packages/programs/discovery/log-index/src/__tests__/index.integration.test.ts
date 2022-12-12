@@ -25,21 +25,21 @@ import { fileURLToPath } from "url";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Address } from "@dao-xyz/peerbit-program";
-import { jest } from "@jest/globals";
 import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
 
 describe("query", () => {
     let session: LSession,
-        cacheStores: AbstractLevel<any, string, Uint8Array>[] = [],
-        logIndices: LogIndex[] = [],
+        cacheStores: AbstractLevel<any, string, Uint8Array>[],
+        logIndices: LogIndex[],
         headsCount = 3,
         peersCount = 3;
-    jest.setTimeout(120 * 1000);
 
     const __filename = fileURLToPath(import.meta.url);
 
-    beforeAll(async () => {
+    beforeEach(async () => {
         session = await LSession.connected(peersCount);
+        cacheStores = [];
+        logIndices = [];
         for (let i = 0; i < peersCount; i++) {
             cacheStores.push(
                 await createStore(path.join(__filename, "cache-" + i))
@@ -119,7 +119,7 @@ describe("query", () => {
         );
     });
 
-    afterAll(async () => {
+    afterEach(async () => {
         await session.stop();
         await Promise.all(logIndices.map((l) => l.drop()));
         await Promise.all(logIndices.map((l) => l._store.drop()));

@@ -16,7 +16,7 @@ const __filenameBase = path.parse(__filename).base;
 // Test utils
 import { createStore } from "@dao-xyz/peerbit-test-utils";
 import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
-describe(`addOperation`, function () {
+describe(`load`, function () {
     let blockStore: Blocks,
         signKey: KeyWithMeta<Ed25519Keypair>,
         identityStore: AbstractLevel<any, string, Uint8Array>,
@@ -55,27 +55,10 @@ describe(`addOperation`, function () {
         await cacheStore.clear();
     });
 
-    it("adds an operation and triggers the write event", async () => {
+    it("closes and loads", async () => {
         index = new SimpleIndex();
         const cache = new Cache(cacheStore);
         let done = false;
-        const onWrite = async (store: Store<any>, entry: Entry<any>) => {
-            const heads = await store.oplog.heads;
-            expect(heads.length).toEqual(1);
-            assert.deepStrictEqual(entry.payload.getValue(), data);
-            assert.deepStrictEqual(index._index, heads);
-            store.getCachedHeads().then((localHeads) => {
-                if (!localHeads) {
-                    fail();
-                }
-                assert.deepStrictEqual(localHeads[0], entry.hash);
-                expect(localHeads[0]).toEqual(heads[0].hash);
-                expect(heads.length).toEqual(1);
-                expect(localHeads.length).toEqual(1);
-                done = true;
-            });
-        };
-
         store = new Store({ storeIndex: 0 });
         await store.init(
             blockStore,
@@ -88,44 +71,29 @@ describe(`addOperation`, function () {
                 ...DefaultOptions,
                 resolveCache: () => Promise.resolve(cache),
                 onUpdate: index.updateIndex.bind(index),
-                onWrite: onWrite,
+                onWrite: () => {
+                    done = true;
+                },
             }
         );
 
         const data = { data: 12345 };
-
         await store._addOperation(data).then((entry) => {
             expect(entry).toBeInstanceOf(Entry);
         });
 
         await waitFor(() => done);
+
+        await store.close();
+        await store.load();
+        expect(store.oplog.values.length).toEqual(1);
     });
 
-    it("adds multiple operations and triggers multiple write events", async () => {
-        const writes = 3;
-        let eventsFired = 0;
-
+    it("loads when missing cache", async () => {
         index = new SimpleIndex();
         const cache = new Cache(cacheStore);
         let done = false;
-        const onWrite = async (store: Store<any>, entry: Entry<any>) => {
-            eventsFired++;
-            if (eventsFired === writes) {
-                const heads = store.oplog.heads;
-                expect(heads.length).toEqual(1);
-                expect(index._index.length).toEqual(writes);
-                store.getCachedHeads().then((localHeads) => {
-                    if (!localHeads) {
-                        fail();
-                    }
-                    expect(localHeads).toHaveLength(1);
-                    expect(localHeads[0]).toEqual(index._index[2].hash);
-                    done = true;
-                });
-            }
-        };
-
-        store = new Store({ storeIndex: 1 });
+        store = new Store({ storeIndex: 0 });
         await store.init(
             blockStore,
             {
@@ -137,42 +105,30 @@ describe(`addOperation`, function () {
                 ...DefaultOptions,
                 resolveCache: () => Promise.resolve(cache),
                 onUpdate: index.updateIndex.bind(index),
-                onWrite: onWrite,
+                onWrite: () => {
+                    done = true;
+                },
             }
         );
 
-        for (let i = 0; i < writes; i++) {
-            await store._addOperation({ step: i });
-        }
+        const data = { data: 12345 };
+        await store._addOperation(data).then((entry) => {
+            expect(entry).toBeInstanceOf(Entry);
+        });
 
         await waitFor(() => done);
+
+        await store.close();
+        await store._cache.del(store.headsPath);
+        await store.load();
+        expect(store.oplog.values.length).toEqual(0);
     });
 
-    it("can add as unique heads", async () => {
-        const writes = 3;
-        let eventsFired = 0;
-
+    it("loads when corrupt cache", async () => {
         index = new SimpleIndex();
         const cache = new Cache(cacheStore);
         let done = false;
-        const allAddedEntries: string[] = [];
-        const onWrite = async (store: Store<any>, entry: Entry<any>) => {
-            eventsFired++;
-            if (eventsFired === writes) {
-                const heads = store.oplog.heads;
-                expect(heads.length).toEqual(3);
-                expect(index._index.length).toEqual(writes);
-                store.getCachedHeads().then((localHeads) => {
-                    if (!localHeads) {
-                        fail();
-                    }
-                    expect(localHeads).toContainAllValues(allAddedEntries);
-                    done = true;
-                });
-            }
-        };
-
-        store = new Store({ storeIndex: 1 });
+        store = new Store({ storeIndex: 0 });
         await store.init(
             blockStore,
             {
@@ -184,16 +140,22 @@ describe(`addOperation`, function () {
                 ...DefaultOptions,
                 resolveCache: () => Promise.resolve(cache),
                 onUpdate: index.updateIndex.bind(index),
-                onWrite: onWrite,
+                onWrite: () => {
+                    done = true;
+                },
             }
         );
 
-        for (let i = 0; i < writes; i++) {
-            allAddedEntries.push(
-                (await store._addOperation({ step: i }, { nexts: [] })).hash
-            );
-        }
+        const data = { data: 12345 };
+        await store._addOperation(data).then((entry) => {
+            expect(entry).toBeInstanceOf(Entry);
+        });
 
         await waitFor(() => done);
+
+        await store.close();
+        const headsPath = (await store._cache.get<string>(store.headsPath))!;
+        await store._cache.set(headsPath, new Uint8Array([255]));
+        await expect(() => store.load()).rejects.toThrowError();
     });
 });

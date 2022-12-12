@@ -8,6 +8,7 @@ import {
 import { default as Cache } from "@dao-xyz/peerbit-cache";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import {
+    EncryptedThing,
     PublicKeyEncryptionResolver,
     X25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
@@ -104,32 +105,22 @@ describe(`addOperation`, function () {
                   expect(store.replicationStatus.max).toEqual(1n); */
                 assert.deepStrictEqual(index._index, heads);
                 await delay(5000); // seems because write is async?
-                await waitForAsync(
-                    async () =>
-                        (await store._cache.getBinary(
-                            store.headsPath,
-                            HeadsCache
-                        )) !== undefined
-                );
-                const localHeads = await store._cache.getBinary(
-                    store.headsPath,
-                    HeadsCache
-                );
+                const localHeads = await store.getCachedHeads();
                 if (!localHeads) {
                     fail();
                 }
-                localHeads.heads[0].init({
+                const firstHead = store.oplog.get(localHeads[0])!;
+                (firstHead._payload as EncryptedThing<any>)._decrypted =
+                    undefined;
+                firstHead.init({
                     encryption: store.oplog._encryption,
                     encoding: store.oplog._encoding,
                 });
-                await localHeads.heads[0].getPayload();
-                assert.deepStrictEqual(
-                    localHeads.heads[0].payload.getValue(),
-                    data
-                );
-                assert(localHeads.heads[0].equals(heads[0]));
+                await firstHead.getPayload();
+                assert.deepStrictEqual(firstHead.payload.getValue(), data);
+                assert(firstHead.equals(heads[0]));
                 expect(heads.length).toEqual(1);
-                expect(localHeads.heads.length).toEqual(1);
+                expect(localHeads.length).toEqual(1);
                 done = true;
             } catch (error) {
                 throw error;
@@ -178,28 +169,20 @@ describe(`addOperation`, function () {
             /* expect(store.replicationStatus.progress).toEqual(1n);
             expect(store.replicationStatus.max).toEqual(1n); */
             assert.deepStrictEqual(index._index, heads);
-            await waitForAsync(
-                async () =>
-                    (await store._cache.getBinary(
-                        store.headsPath,
-                        HeadsCache
-                    )) !== undefined
-            );
-            const localHeads = await store._cache.getBinary(
-                store.headsPath,
-                HeadsCache
-            );
+            const localHeads = await store.getCachedHeads();
 
             if (!localHeads) {
                 fail();
             }
 
-            localHeads.heads[0].init({
+            const firstHead = store.oplog.get(localHeads[0])!;
+            (firstHead._payload as EncryptedThing<any>)._decrypted = undefined;
+            firstHead.init({
                 encryption: store.oplog._encryption,
                 encoding: store.oplog._encoding,
             });
             try {
-                await localHeads.heads[0].getPayload();
+                await firstHead.getPayload();
                 assert(false);
             } catch (error) {
                 if (error instanceof AccessError === false) {
@@ -207,9 +190,9 @@ describe(`addOperation`, function () {
                 }
                 expect(error).toBeInstanceOf(AccessError);
             }
-            assert(localHeads.heads[0].equals(heads[0]));
+            assert(firstHead.equals(heads[0]));
             expect(heads.length).toEqual(1);
-            expect(localHeads.heads.length).toEqual(1);
+            expect(localHeads.length).toEqual(1);
             done = true;
         };
 

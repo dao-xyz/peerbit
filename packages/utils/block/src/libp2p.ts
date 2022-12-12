@@ -50,87 +50,104 @@ export class LibP2PBlockStore implements BlockStore {
     _localStore?: BlockStore;
     _eventHandler?: (evt: any) => any;
     _gossipCache?: LRU<string, Uint8Array>;
+    _gossip = false;
 
     constructor(
         libp2p: Libp2p,
         localStore?: BlockStore,
-        options: {
-            transportTopic: string;
-            localTimeout: number;
-            gossip?: { cache: { max: number; ttl: number } | false };
-        } = {
-            transportTopic: DEFAULT_BLOCK_TRANSPORT_TOPIC,
-            localTimeout: 1000,
+        options?: {
+            transportTopic?: string;
+            localTimeout?: number;
+            gossip?: { cache: { max?: number; ttl?: number } | false };
         }
     ) {
         this._libp2p = libp2p;
-        this._transportTopic = options.transportTopic;
-        this._localStore = localStore;
-        const gossipCacheOptions = (options.gossip?.cache !== false &&
-            options.gossip?.cache) || { max: 1000, ttl: 10000 }; // TODO choose default variables carefully
-        this._gossipCache = gossipCacheOptions && new LRU(gossipCacheOptions);
+        this._transportTopic =
+            options?.transportTopic || DEFAULT_BLOCK_TRANSPORT_TOPIC;
+        const localTimeout = options?.localTimeout || 1000;
 
-        if (
-            this._libp2p.pubsub.getTopics().indexOf(options.transportTopic) ===
-            -1
-        ) {
-            this._libp2p.pubsub.subscribe(options.transportTopic);
+        this._localStore = localStore;
+
+        if (options?.gossip) {
+            this._gossip = true;
+            const gossipCacheOptions =
+                options.gossip?.cache !== false
+                    ? {
+                          max: options.gossip?.cache.max || 1000,
+                          ttl: options.gossip?.cache.ttl || 10000,
+                      }
+                    : undefined; // TODO choose default variables carefully
+            this._gossipCache =
+                gossipCacheOptions && new LRU(gossipCacheOptions);
         }
 
-        this._eventHandler = this._localStore
-            ? async (evt: CustomEvent<Message>) => {
-                  if (!evt) {
-                      return;
-                  }
-                  const message = evt.detail;
-                  if (
-                      message.type === "signed" &&
-                      message.topic === this._transportTopic
-                  ) {
-                      if (message.from.equals(libp2p.peerId)) {
+        if (
+            this._libp2p.pubsub.getTopics().indexOf(this._transportTopic) === -1
+        ) {
+            this._libp2p.pubsub.subscribe(this._transportTopic);
+        }
+
+        this._eventHandler =
+            this._localStore || this._gossipCache
+                ? async (evt: CustomEvent<Message>) => {
+                      if (!evt) {
                           return;
                       }
-
-                      try {
-                          const decoded = deserialize(
-                              message.data,
-                              BlockMessage
-                          );
-                          if (decoded instanceof BlockRequest) {
-                              const cid = stringifyCid(decoded.cid);
-                              const block = await this._localStore!.get<any>(
-                                  cid,
-                                  {
-                                      timeout: options.localTimeout,
-                                  }
-                              );
-                              if (!block) {
-                                  return;
-                              }
-                              const message = serialize(
-                                  new BlockResponse(cid, block.bytes)
-                              );
-                              await libp2p.pubsub.publish(
-                                  options.transportTopic,
-                                  message
-                              );
-                          } else if (decoded instanceof BlockResponse) {
-                              // TODO make sure we are not storing too much bytes in ram (like filter large blocks)
-                              this._gossipCache?.set(
-                                  decoded.cid,
-                                  decoded.bytes
-                              );
+                      const message = evt.detail;
+                      if (
+                          message.type === "signed" &&
+                          message.topic === this._transportTopic
+                      ) {
+                          if (message.from.equals(libp2p.peerId)) {
+                              return;
                           }
-                      } catch (error) {
-                          console.error(
-                              "Got error for libp2p block transport: ",
-                              error
-                          );
-                          return; // timeout o r invalid cid
+
+                          try {
+                              const decoded = deserialize(
+                                  message.data,
+                                  BlockMessage
+                              );
+                              if (
+                                  decoded instanceof BlockRequest &&
+                                  this._localStore
+                              ) {
+                                  const cid = stringifyCid(decoded.cid);
+                                  const block = await this._localStore.get<any>(
+                                      cid,
+                                      {
+                                          timeout: localTimeout,
+                                      }
+                                  );
+                                  if (!block) {
+                                      return;
+                                  }
+                                  const message = serialize(
+                                      new BlockResponse(cid, block.bytes)
+                                  );
+                                  await libp2p.pubsub.publish(
+                                      this._transportTopic,
+                                      message
+                                  );
+                              } else if (
+                                  decoded instanceof BlockResponse &&
+                                  this._gossipCache
+                              ) {
+                                  // TODO make sure we are not storing too much bytes in ram (like filter large blocks)
+                                  this._gossipCache.set(
+                                      decoded.cid,
+                                      decoded.bytes
+                                  );
+                              }
+                          } catch (error) {
+                              console.error(
+                                  "Got error for libp2p block transport: ",
+                                  error
+                              );
+                              return; // timeout o r invalid cid
+                          }
                       }
                   }
-              }
-            : undefined;
+                : undefined;
     }
 
     async put(
@@ -143,12 +160,13 @@ export class LibP2PBlockStore implements BlockStore {
 
         // "Gossip" i.e. flood the network with blocks an assume they gonna catch them so they dont have to requrest them later
         try {
-            await this._libp2p.pubsub.publish(
-                this._transportTopic,
-                serialize(
-                    new BlockResponse(stringifyCid(value.cid), value.bytes)
-                )
-            );
+            if (this._gossip)
+                await this._libp2p.pubsub.publish(
+                    this._transportTopic,
+                    serialize(
+                        new BlockResponse(stringifyCid(value.cid), value.bytes)
+                    )
+                );
         } catch (error) {
             // ignore
         }
@@ -182,9 +200,6 @@ export class LibP2PBlockStore implements BlockStore {
     }
 
     async open(): Promise<void> {
-        if (!this._localStore) {
-            throw new Error("Local store not set");
-        }
         const hasTopic = this._libp2p.pubsub
             .getTopics()
             .indexOf(this._transportTopic);
@@ -192,7 +207,7 @@ export class LibP2PBlockStore implements BlockStore {
             this._libp2p.pubsub.subscribe(this._transportTopic);
         }
         this._libp2p.pubsub.addEventListener("message", this._eventHandler!);
-        await this._localStore.open();
+        await this._localStore?.open();
     }
 
     async close(): Promise<void> {
@@ -201,27 +216,6 @@ export class LibP2PBlockStore implements BlockStore {
 
         // we dont cleanup subscription because we dont know if someone else is sbuscribing also
     }
-
-    /*   async _read<T>(
-          cid: string,
-          options: { timeout?: number, hasher?: any } = {}
-      ): Promise<Block.Block<T, any, any, any> | undefined> {
-          const promises = [this._readFromPubSub(cid, options)];
-          try {
-              const result = await Promise.any(promises);
-              if (!result) {
-                  const results = await Promise.all(promises);
-                  for (const result of results) {
-                      if (result) {
-                          return result as Block.Block<T, any, any, any>;
-                      }
-                  }
-              }
-              return result as Block.Block<T, any, any, any>;
-          } catch (error) {
-              return undefined; // failed to resolve
-          }
-      } */
 
     async _readFromGossip(
         cidString: string,

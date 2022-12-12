@@ -9,7 +9,7 @@ import { databases } from "./utils";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
-const dbPath = "./tmp/tests/customKeystore";
+const dbPath = "./tmp/tests/customCache";
 
 describe(`Use a Custom Cache`, function () {
     jest.setTimeout(20000);
@@ -18,7 +18,7 @@ describe(`Use a Custom Cache`, function () {
 
     beforeAll(async () => {
         session = await LSession.connected(1, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
-        store = await createStore("local");
+        store = await createStore("local" + +new Date());
         const cache = new CustomCache(store);
 
         rmrf.sync(dbPath);
@@ -35,17 +35,24 @@ describe(`Use a Custom Cache`, function () {
     });
 
     describe("allows orbit to use a custom cache with different store types", function () {
-        for (let database of databases) {
-            it(database.type + " allows custom cache", async () => {
-                const db1 = await database.create(client1, "custom-keystore");
-                await database.tryInsert(db1);
+        it("allows custom cache", async () => {
+            for (let database of databases) {
+                try {
+                    const db1 = await database.create(
+                        client1,
+                        "custom-keystore"
+                    );
+                    await database.tryInsert(db1);
 
-                assert.deepEqual(
-                    database.getTestValue(db1),
-                    database.expectedValue
-                );
-                await db1.store.close();
-            });
-        }
+                    assert.deepEqual(
+                        database.getTestValue(db1),
+                        database.expectedValue
+                    );
+                    await db1.store.close();
+                } catch (error) {
+                    const e = 123;
+                }
+            }
+        });
     });
 });

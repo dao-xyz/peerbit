@@ -209,7 +209,7 @@ describe(`Replication`, function () {
                         );
                     }
                 },
-                onReplicationProgress: (store, entry) => {
+                onReplicationFetch: (store, entry) => {
                     progressEvents += 1;
                     progressEventsEntries.push(entry);
                 },
@@ -241,14 +241,6 @@ describe(`Replication`, function () {
         );
         // progress events should increase monotonically
         expect(progressEvents).toEqual(entryCount);
-
-        // Verify replicator state
-        expect(db2.store._replicator.tasksRunning).toEqual(0);
-        expect(db2.store._replicator.tasksQueued).toEqual(0);
-        expect(db2.store._replicator.unfinished.length).toEqual(0);
-        // Replicator's internal caches should be empty
-        expect(db2.store._replicator._logs.length).toEqual(0);
-        expect(Object.keys(db2.store._replicator._fetching).length).toEqual(0);
     });
 
     it("emits correct replication info on fresh replication", async () => {
@@ -302,7 +294,7 @@ describe(`Replication`, function () {
                         );
                     }
                 },
-                onReplicationProgress: (store, entry) => {
+                onReplicationFetch: (store, entry) => {
                     progressEvents += 1;
                 },
                 onReplicationComplete: (store) => {
@@ -326,14 +318,6 @@ describe(`Replication`, function () {
 
         // progress events should (increase monotonically)
         expect(progressEvents).toEqual(entryCount);
-
-        // Verify replicator state
-        expect(db2.store._replicator.tasksRunning).toEqual(0);
-        expect(db2.store._replicator.tasksQueued).toEqual(0);
-        expect(db2.store._replicator.unfinished.length).toEqual(0);
-        // Replicator's internal caches should be empty
-        expect(db2.store._replicator._logs.length).toEqual(0);
-        expect(Object.keys(db2.store._replicator._fetching).length).toEqual(0);
     });
 
     it("emits correct replication info in two-way replication", async () => {
@@ -428,13 +412,5 @@ describe(`Replication`, function () {
         // All entries should be in the database
         expect(values1.length).toEqual(entryCount * 2);
         expect(values2.length).toEqual(entryCount * 2);
-
-        // Verify replicator state
-        expect(db2.store._replicator.tasksRunning).toEqual(0);
-        expect(db2.store._replicator.tasksQueued).toEqual(0);
-        expect(db2.store._replicator.unfinished.length).toEqual(0);
-        // Replicator's internal caches should be empty
-        expect(db2.store._replicator._logs.length).toEqual(0);
-        expect(Object.keys(db2.store._replicator._fetching).length).toEqual(0);
     });
 });

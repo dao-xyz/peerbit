@@ -56,7 +56,6 @@ export class EventStore<T> extends Program {
     add(
         data: T,
         options?: {
-            onProgressCallback?: (any: any) => void;
             pin?: boolean;
             reciever?: EncryptionTemplateMaybeEncrypted;
             nexts?: Entry<any>[];
@@ -67,7 +66,7 @@ export class EventStore<T> extends Program {
                 op: "ADD",
                 value: data,
             },
-            { ...options }
+            options
         );
     }
 

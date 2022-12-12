@@ -44,15 +44,6 @@ export class LogIO {
         });
     }
 
-    /**
-     * Create a log from a hashes.
-     * @param {IPFS} ipfs An IPFS instance
-     * @param {string} hash The hash of the log
-     * @param {Object} options
-     * @param {number} options.length How many items to include in the log
-     * @param {Array<Entry<T>>} options.exclude Entries to not fetch (cached)
-     * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
-     */
     static async fromMultihash<T>(
         store: Blocks,
         hash: string,
@@ -86,15 +77,6 @@ export class LogIO {
         return { logId, entries, heads };
     }
 
-    /**
-     * Create a log from an entry hash.
-     * @param {IPFS} ipfs An IPFS instance
-     * @param {string} hash The hash of the entry
-     * @param {Object} options
-     * @param {number} options.length How many items to include in the log
-     * @param {Array<Entry<T>>} options.exclude Entries to not fetch (cached)
-     * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
-     */
     static async fromEntryHash<T>(
         store: Blocks,
         hash: string[] | string,
@@ -129,7 +111,7 @@ export class LogIO {
      * @param {json} json A json object containing valid log data
      * @param {Object} options
      * @param {number} options.length How many entries to include
-     * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
+     * @param {function(hash, entry,  parent, depth)} options.onFetched
      **/
     static async fromJSON<T>(
         store: Blocks,
@@ -146,15 +128,6 @@ export class LogIO {
         return { logId: id, entries, heads };
     }
 
-    /**
-     * Create a new log starting from an entry.
-     * @param {IPFS} ipfs An IPFS instance
-     * @param {Entry|Array<Entry<T>>} sourceEntries An entry or an array of entries to fetch a log from
-     * @param {Object} options
-     * @param {number} options.length How many entries to include
-     * @param {Array<Entry<T>>} options.exclude Entries to not fetch (cached)
-     * @param {function(hash, entry,  parent, depth)} options.onProgressCallback
-     */
     static async fromEntry<T>(
         store: Blocks,
         sourceEntries: Entry<T>[] | Entry<T>,
@@ -175,34 +148,39 @@ export class LogIO {
 
         // Make sure we pass hashes instead of objects to the fetcher function
         let hashes: string[] = [];
+        const cache = options.cache || new Map<string, Entry<any>>();
         for (const e of sourceEntries) {
             e.init({
                 encryption: options.encryption,
                 encoding: options.encoding || JSON_ENCODING,
             });
+
+            cache.set(e.hash, e);
             (await e.getNext()).forEach((n) => {
                 hashes.push(n);
             });
         }
 
-        if (options.shouldExclude) {
-            hashes = hashes.filter(
-                (h) => !(options.shouldExclude as (h: string) => boolean)(h)
+        if (options.shouldFetch) {
+            hashes = hashes.filter((h) =>
+                (options.shouldFetch as (h: string) => boolean)(h)
             );
         }
-        if (options.onProgressCallback) {
+
+        if (options.onFetched) {
             for (const entry of sourceEntries) {
-                options.onProgressCallback(entry);
+                options.onFetched(entry);
             }
         }
 
         // Fetch the entries
-        const all = await EntryIO.fetchParallel(store, hashes, options);
+        const all = await EntryIO.fetchParallel(store, hashes, {
+            ...options,
+            cache,
+        });
 
         // Combine the fetches with the source entries and take only uniques
-        const combined = sourceEntries
-            .concat(all)
-            .concat(options.exclude || []);
+        const combined = sourceEntries.concat(all);
         const uniques = findUniques(combined, "hash").sort(Entry.compare);
 
         // Cap the result at the right size by taking the last n entries

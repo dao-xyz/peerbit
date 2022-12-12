@@ -1648,9 +1648,9 @@ export class Peerbit {
                                 options.onReplicationComplete(store);
                             }
                         },
-                        onReplicationProgress: async (store, entry) => {
-                            if (options.onReplicationProgress) {
-                                options.onReplicationProgress(store, entry);
+                        onReplicationFetch: async (store, entry) => {
+                            if (options.onReplicationFetch) {
+                                options.onReplicationFetch(store, entry);
                             }
                         },
                         onReplicationQueued: async (store, entry) => {

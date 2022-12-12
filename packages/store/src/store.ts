@@ -14,10 +14,9 @@ import {
     EncryptionTemplateMaybeEncrypted,
 } from "@dao-xyz/peerbit-log";
 import { Entry } from "@dao-xyz/peerbit-log";
-import { Replicator } from "./replicator.js";
 import { stringifyCid, Blocks } from "@dao-xyz/peerbit-block";
 import Cache from "@dao-xyz/peerbit-cache";
-import { variant, field, vec, Constructor } from "@dao-xyz/borsh";
+import { variant, option, field, vec, Constructor } from "@dao-xyz/borsh";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { Snapshot } from "./snapshot.js";
 import {
@@ -28,6 +27,9 @@ import { EntryWithRefs } from "./entry-with-refs.js";
 import { waitForAsync } from "@dao-xyz/peerbit-time";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import path from "path-browserify";
+import { v4 as uuid } from "uuid";
+import { join } from "./replicator.js";
+
 const logger = loggerFn({ module: "store" });
 
 export class CachedValue {}
@@ -36,7 +38,6 @@ export type AddOperationOptions<T> = {
     skipCanAppendCheck?: boolean;
     identity?: Identity;
     nexts?: Entry<T>[];
-    onProgressCallback?: (any: any) => void;
     pin?: boolean;
     reciever?: EncryptionTemplateMaybeEncrypted;
 };
@@ -69,24 +70,18 @@ export class UnsfinishedReplication extends CachedValue {
 
 @variant(2)
 export class HeadsCache<T> extends CachedValue {
-    @field({ type: vec(Entry) })
-    heads: Entry<T>[];
+    @field({ type: vec("string") })
+    heads: string[];
 
-    constructor(opts?: { heads: Entry<T>[] }) {
+    @field({ type: option("string") })
+    last?: string;
+
+    constructor(heads: string[], last?: string) {
         super();
-        if (opts) {
-            this.heads = opts.heads;
-        }
+        this.heads = heads;
+        this.last = last;
     }
 }
-
-/* {
-  encrypt: (bytes: Uint8Array, reciever: X25519PublicKey) => Promise<{
-    data: Uint8Array
-    senderPublicKey: X25519PublicKey
-  }>,
-  decrypt: (data: Uint8Array, senderPublicKey: X25519PublicKey, recieverPublicKey: X25519PublicKey) => Promise<Uint8Array | undefined>
-} */
 
 export interface IStoreOptions<T> {
     /**
@@ -111,7 +106,7 @@ export interface IStoreOptions<T> {
     onWrite?: (store: Store<T>, _entry: Entry<T>) => void;
     onOpen?: (store: Store<any>) => Promise<void>;
     onReplicationQueued?: (store: Store<any>, entry: Entry<T>) => void;
-    onReplicationProgress?: (store: Store<any>, entry: Entry<T>) => void;
+    onReplicationFetch?: (store: Store<any>, entry: Entry<T>) => void;
     onReplicationComplete?: (store: Store<any>) => void;
     onReady?: (store: Store<T>) => void;
     saveFile?: (file: any) => Promise<string>;
@@ -176,7 +171,6 @@ export class Store<T> implements Initiable<T> {
      */
     headsPath: string;
     snapshotPath: string;
-    queuePath: string;
     initialized: boolean;
     encoding: Encoding<T> = JSON_ENCODING;
 
@@ -184,10 +178,7 @@ export class Store<T> implements Initiable<T> {
     _cache: Cache<CachedValue>;
     _oplog: Log<T>;
     _queue: PQueue<any, any>;
-    /*     _replicationStatus: ReplicationInfo; */
     _stats: any;
-    _replicator: Replicator<T>;
-    _loader: Replicator<T>;
     _key: string;
 
     _saveFile: (file: any) => Promise<string>;
@@ -236,7 +227,6 @@ export class Store<T> implements Initiable<T> {
         /* this.events = new EventEmitter() */
         this.headsPath = path.join(this.id, "_heads");
         this.snapshotPath = path.join(this.id, "snapshot");
-        this.queuePath = path.join(this.id, "queue");
 
         // External dependencies
         this._cache = await this._options.resolveCache(this);
@@ -249,74 +239,12 @@ export class Store<T> implements Initiable<T> {
         // between writes and joins (coming from Replicator)
         this._queue = new PQueue({ concurrency: 1 });
 
-        // Replication progress info
-        /*         this._replicationStatus = new ReplicationInfo();
-         */
-        // Statistics
         this._stats = {
             snapshot: {
                 bytesLoaded: -1,
             },
             syncRequestsReceieved: 0,
         };
-
-        try {
-            const onReplicationQueued = async (entry: Entry<T>) => {
-                // Update the latest entry state (latest is the entry with largest clock time)
-                const e = entry;
-                try {
-                    await e.getClock();
-                    /* this._recalculateReplicationMax(e.metadata.maxChainLength); */
-                    this._options.onReplicationQueued &&
-                        this._options.onReplicationQueued(this, e);
-                } catch (error) {
-                    if (error instanceof AccessError) {
-                        logger.info(
-                            "Failed to access clock of entry: " + e.hash
-                        );
-                        return; // Ignore, we cant access clock
-                    }
-                    throw error;
-                }
-            };
-
-            const onReplicationProgress = async (entry: Entry<T>) => {
-                const log = this._oplog;
-                if (!log) {
-                    logger.warn(
-                        "Recieved replication event after close: " + entry.hash
-                    );
-                    return; // closed
-                }
-                this._options.onReplicationProgress &&
-                    this._options.onReplicationProgress(this, entry);
-            };
-
-            // Create the replicator
-            this._replicator = new Replicator(
-                this,
-                this._options.replicationConcurrency
-            );
-            // For internal backwards compatibility,
-            // to be removed in future releases
-            this._loader = this._replicator;
-            // Hook up the callbacks to the Replicator
-            this._replicator.onReplicationQueued = onReplicationQueued;
-            this._replicator.onReplicationProgress = onReplicationProgress;
-            this._replicator.onReplicationComplete = (logs: Log<T>[]) => {
-                this._queue.add(
-                    (() => this.updateStateFromLogs(logs)).bind(this)
-                );
-            };
-        } catch (e) {
-            console.error("Store Error:", e);
-        }
-
-        /* this.events.on('write', (topic, address, entry, heads) => {
-      if (this.options.onWrite) {
-        this.options.onWrite(topic, address, entry, heads);
-      }
-    }) */
 
         if (this._options.onOpen) {
             await this._options.onOpen(this);
@@ -326,42 +254,18 @@ export class Store<T> implements Initiable<T> {
         return this;
     }
 
-    async updateStateFromLogs(logs: Log<T>[]) {
-        if (this._oplog && logs.length > 0) {
-            try {
-                for (const log of logs) {
-                    await this._oplog.join(log);
-                }
-            } catch (error: any) {
-                if (error instanceof AccessError) {
-                    logger.info(error.message);
-                    return;
-                }
-                throw error;
-            }
+    async updateHeadsCache(newHeads: string[], reset?: boolean) {
+        // If 'reset' then dont keep references to old heads caches, assume new cache will fully describe all heads
+        const last = reset
+            ? undefined
+            : await this._cache.get<string>(this.headsPath);
+        const newHeadsPath = path.join(this.headsPath, uuid());
+        await this._cache.set(this.headsPath, newHeadsPath);
 
-            // only store heads that has been verified and merges
-            const heads = this._oplog.heads;
-            await this._cache.setBinary(
-                this.headsPath,
-                new HeadsCache({ heads })
-            );
-            logger.debug(
-                `Saved heads ${heads.length} [${heads
-                    .map((e) => e.hash)
-                    .join(", ")}]`
-            );
-
-            // update the store's index after joining the logs
-            // and persisting the latest heads
-            await this._updateIndex();
-
-            /*   if (this._oplog.length > this.replicationStatus.progress) {
-                  this._recalculateReplicationStatus(heads, BigInt(this._oplog.length));
-              } */
-            this._options.onReplicationComplete &&
-                this._options.onReplicationComplete(this);
-        }
+        await this._cache.setBinary(
+            newHeadsPath,
+            new HeadsCache(newHeads, last)
+        );
     }
 
     get id(): string {
@@ -389,14 +293,6 @@ export class Store<T> implements Initiable<T> {
         };
     }
 
-    /**
-     * Returns the database's current replication status information
-     * @return {[Object]} [description]
-     */
-    /*     get replicationStatus() {
-            return this._replicationStatus;
-        } */
-
     setIdentity(identity: Identity) {
         this.identity = identity;
         this._oplog.setIdentity(identity);
@@ -419,17 +315,11 @@ export class Store<T> implements Initiable<T> {
             return;
         }
 
-        // Stop the Replicator
-        await this._replicator?.stop();
-
         // Wait for the operations queue to finish processing
         // to make sure everything that all operations that have
         // been queued will be written to disk
         await this._queue?.onIdle();
 
-        // Reset replication statistics
-        /*  this._replicationStatus?.reset();
-         */
         // Reset database statistics
         this._stats = {
             snapshot: {
@@ -463,7 +353,6 @@ export class Store<T> implements Initiable<T> {
 
         await this._cache.del(this.headsPath);
         await this._cache.del(this.snapshotPath);
-        await this._cache.del(this.queuePath);
 
         await this.close();
 
@@ -488,16 +377,14 @@ export class Store<T> implements Initiable<T> {
             await this._options.onLoad(this);
         }
 
-        const heads: Entry<any>[] =
-            (await this._cache.getBinary(this.headsPath, HeadsCache))?.heads ||
-            [];
+        const heads = await this.getCachedHeads();
 
         // Load the log
-        const log = await Log.fromEntry(this._store, this.identity, heads, {
+        const log = await Log.fromEntryHash(this._store, this.identity, heads, {
             ...this.logOptions,
             length: amount,
             timeout: fetchEntryTimeout,
-            onProgressCallback: this._onLoadProgress.bind(this),
+            onFetched: this._onLoadProgress.bind(this),
             concurrency: this._options.replicationConcurrency,
         });
 
@@ -508,7 +395,6 @@ export class Store<T> implements Initiable<T> {
             await this._updateIndex();
         }
 
-        this._replicator.start();
         this._options.onReady && this._options.onReady(this);
     }
 
@@ -518,7 +404,7 @@ export class Store<T> implements Initiable<T> {
      * @returns true, synchronization resolved in new entries
      */
     async sync(
-        heads: (EntryWithRefs<T> | Entry<T>)[],
+        heads: EntryWithRefs<T>[] | Entry<T>[] | string[],
         options: { canAppend?: CanAppend<T>; save: boolean } = { save: true }
     ): Promise<boolean> {
         this._stats.syncRequestsReceieved += 1;
@@ -546,6 +432,10 @@ export class Store<T> implements Initiable<T> {
                 headToHandle instanceof Entry
                     ? headToHandle
                     : headToHandle.entry;
+
+            this._options.onReplicationQueued &&
+                this._options.onReplicationQueued(this, entry);
+
             const canAppend = options?.canAppend || this.canAppend;
             if (canAppend && !(await canAppend(entry))) {
                 logger.debug("Not allowd to append head " + entry.hash);
@@ -584,42 +474,74 @@ export class Store<T> implements Initiable<T> {
 
             return headToHandle;
         };
-        const hash = (entry: EntryWithRefs<T> | Entry<T>) => {
+        const hash = (entry: EntryWithRefs<T> | Entry<T> | string) => {
             if (entry instanceof Entry) {
                 return entry.hash;
+            } else if (typeof entry === "string") {
+                return entry;
             }
             return entry.entry.hash;
         };
-        const newHeads = heads.filter(
-            (e) => !hash(e) || !this.oplog.has(hash(e))
-        );
+
+        const newHeads: (Entry<T> | EntryWithRefs<T>)[] = [];
+        for (const head of heads) {
+            const h = hash(head);
+            if (h && this.oplog.has(h)) {
+                continue;
+            }
+            newHeads.push(
+                typeof head === "string"
+                    ? await Entry.fromMultihash(this._store, head)
+                    : head
+            );
+        }
+
         if (newHeads.length === 0) {
             return false;
         }
-        await mapSeries(newHeads, handle).then(async (saved) => {
-            return this._replicator.load(saved.filter((e) => e !== null));
-        });
-        return true;
-    }
 
-    loadMoreFrom(entries: string[] | Entry<any>[] | EntryWithRefs<any>[]) {
-        this._replicator.load(entries);
+        const saved = await mapSeries(newHeads, handle);
+
+        await join(saved as EntryWithRefs<T>[] | Entry<T>[], this._oplog, {
+            concurrency: this._options.replicationConcurrency,
+            onFetched: (entry) =>
+                this._options.onReplicationFetch &&
+                this._options.onReplicationFetch(this, entry),
+        });
+
+        // TODO add head cache 'reset' so that it becomes more accurate over time
+        await this.updateHeadsCache(newHeads.map((x) => hash(x)));
+        await this._updateIndex(
+            newHeads.map((entry) =>
+                entry instanceof Entry ? entry : entry.entry
+            )
+        );
+        this._options.onReplicationComplete &&
+            this._options.onReplicationComplete(this);
+        return true;
     }
 
     get replicate(): boolean {
         return !!this._options.replicate;
     }
 
-    async getCachedHeads(): Promise<Entry<T>[]> {
+    async getCachedHeads(): Promise<string[]> {
         if (!this._cache) {
             return [];
         }
-        return ((await this._cache.getBinary(this.headsPath, HeadsCache))
-            ?.heads || []) as Entry<T>[];
+        const result: string[] = [];
+        let next = await this._cache.get<string>(this.headsPath);
+        while (next) {
+            const cache = await this._cache.getBinary(next, HeadsCache);
+            next = cache?.last;
+            cache?.heads.forEach((head) => {
+                result.push(head);
+            });
+        }
+        return result;
     }
 
     async saveSnapshot() {
-        const unfinished = this._replicator.unfinished;
         const snapshotData = this._oplog.toSnapshot();
         const buf = serialize(
             new Snapshot({
@@ -631,15 +553,11 @@ export class Store<T> implements Initiable<T> {
         );
 
         const snapshot = await this._saveFile(buf);
-
         await this._cache.setBinary(
             this.snapshotPath,
             new CID({ hash: snapshot })
         );
-        await this._cache.setBinary(
-            this.queuePath,
-            new UnsfinishedReplication({ hashes: unfinished })
-        );
+
         await waitForAsync(
             async () =>
                 (await this._cache.getBinary(this.snapshotPath, CID)) !==
@@ -647,9 +565,7 @@ export class Store<T> implements Initiable<T> {
             { delayInterval: 200, timeout: 10 * 1000 }
         );
 
-        logger.debug(
-            `Saved snapshot: ${snapshot}, queue length: ${unfinished.length}`
-        );
+        logger.debug(`Saved snapshot: ${snapshot}`);
         return [snapshot];
     }
 
@@ -658,13 +574,6 @@ export class Store<T> implements Initiable<T> {
             await this._options.onLoad(this);
         }
         await this.sync([]);
-
-        const queue = (
-            await this._cache.getBinary(this.queuePath, UnsfinishedReplication)
-        )?.hashes as string[];
-        if (queue?.length > 0) {
-            this._replicator.load(queue);
-        }
 
         const snapshotCID = await this._cache.getBinary(this.snapshotPath, CID);
         if (snapshotCID) {
@@ -676,9 +585,6 @@ export class Store<T> implements Initiable<T> {
 
             // Fetch the entries
             // Timeout 1 sec to only load entries that are already fetched (in order to not get stuck at loading)
-            /*   this._recalculateReplicationMax(
-                  snapshotData.values.reduce(maxChainLength, 0n)
-              ); */
             if (snapshotData) {
                 this._oplog = await Log.fromEntry(
                     this._store,
@@ -688,7 +594,7 @@ export class Store<T> implements Initiable<T> {
                         sortFn: this._options.sortFn,
                         length: -1,
                         timeout: 1000,
-                        onProgressCallback: this._onLoadProgress.bind(this),
+                        onFetched: this._onLoadProgress.bind(this),
                     }
                 );
                 await this._updateIndex();
@@ -733,13 +639,11 @@ export class Store<T> implements Initiable<T> {
     }
 
     async syncLocal() {
-        const heads =
-            (await this._cache.getBinary(this.headsPath, HeadsCache))?.heads ||
-            [];
+        const heads = await this.getCachedHeads();
         const headsHashes = new Set(this._oplog.heads.map((h) => h.hash));
         for (let i = 0; i < heads.length; i++) {
             const head = heads[i];
-            if (!headsHashes.has(head.hash)) {
+            if (!headsHashes.has(head)) {
                 await this.load();
                 break;
             }
@@ -750,38 +654,29 @@ export class Store<T> implements Initiable<T> {
         data: T,
         options?: AddOperationOptions<T>
     ): Promise<Entry<T>> {
-        const addOperation = async () => {
-            // check local cache for latest heads
-            if (this._options.syncLocal) {
-                await this.syncLocal();
-            }
+        // check local cache for latest heads
+        if (this._options.syncLocal) {
+            await this.syncLocal();
+        }
+        const isReferencingAllHeads = !options?.nexts;
+        const entry = await this._oplog.append(data, {
+            nexts: options?.nexts,
+            pin: options?.pin,
+            reciever: options?.reciever,
+            canAppend: options?.skipCanAppendCheck ? undefined : this.canAppend,
+            identity: options?.identity,
+        });
+        logger.debug("Appended entry with hash: " + entry.hash);
+        await this.updateHeadsCache([entry.hash], isReferencingAllHeads);
+        await this._updateIndex([entry]);
 
-            const entry = await this._oplog.append(data, {
-                nexts: options?.nexts,
-                pin: options?.pin,
-                reciever: options?.reciever,
-                canAppend: options?.skipCanAppendCheck
-                    ? undefined
-                    : this.canAppend,
-                identity: options?.identity,
-            });
-            logger.debug("Appended entry with hash: " + entry.hash);
-            await this._cache.setBinary(
-                this.headsPath,
-                new HeadsCache({ heads: [...this._oplog.heads] }) // TODO make more efficient, and maybe "forget"
-            );
-            await this._updateIndex([entry]);
-
-            // The row below will emit an "event", which is subscribed to on the orbit-db client (confusing enough)
-            // there, the write is binded to the pubsub publish, with the entry. Which will send this entry
-            // to all the connected peers to tell them that a new entry has been added
-            // TODO: don't use events, or make it more transparent that there is a vital subscription in the background
-            // that is handling replication
-            this._options.onWrite && this._options.onWrite(this, entry);
-            if (options?.onProgressCallback) options.onProgressCallback(entry);
-            return entry;
-        };
-        return this._queue.add(addOperation.bind(this));
+        // The row below will emit an "event", which is subscribed to on the orbit-db client (confusing enough)
+        // there, the write is binded to the pubsub publish, with the entry. Which will send this entry
+        // to all the connected peers to tell them that a new entry has been added
+        // TODO: don't use events, or make it more transparent that there is a vital subscription in the background
+        // that is handling replication
+        this._options.onWrite && this._options.onWrite(this, entry);
+        return entry;
     }
 
     /* Loading progress callback */

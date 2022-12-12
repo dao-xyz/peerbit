@@ -9,9 +9,7 @@ import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { MemoryLevel } from "memory-level";
 
-export const createStore = (
-    path = "./keystore"
-): MemoryLevel<string, Uint8Array> => {
+export const createStore = (): MemoryLevel<string, Uint8Array> => {
     return new MemoryLevel<string, Uint8Array>({ valueEncoding: "view" });
 };
 

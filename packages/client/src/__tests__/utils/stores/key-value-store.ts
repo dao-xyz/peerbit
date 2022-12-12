@@ -72,7 +72,6 @@ export class KeyBlocks<T> extends Program {
         key: string,
         data: any,
         options?: {
-            onProgressCallback?: (any: any) => void;
             pin?: boolean;
             reciever?: EncryptionTemplateMaybeEncrypted;
         }
@@ -84,7 +83,6 @@ export class KeyBlocks<T> extends Program {
         key: string,
         data: any,
         options?: {
-            onProgressCallback?: (any: any) => void;
             pin?: boolean;
             reciever?: EncryptionTemplateMaybeEncrypted;
         }
@@ -102,7 +100,6 @@ export class KeyBlocks<T> extends Program {
     del(
         key: string,
         options?: {
-            onProgressCallback?: (any: any) => void;
             pin?: boolean;
             reciever?: EncryptionTemplateMaybeEncrypted;
         }
