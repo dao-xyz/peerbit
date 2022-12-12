@@ -111,12 +111,10 @@ export interface IStoreOptions<T> {
     onReady?: (store: Store<T>) => void;
     saveFile?: (file: any) => Promise<string>;
     loadFile?: (cid: string) => Promise<Uint8Array>;
-
     encryption?: PublicKeyEncryptionResolver;
     maxHistory?: number;
     fetchEntryTimeout?: number;
     replicationConcurrency?: number;
-    syncLocal?: boolean;
     sortFn?: ISortFunction;
     prune?: PruneOptions;
     onUpdate?: (oplog: Log<T>, entries?: Entry<T>[]) => void;
@@ -638,26 +636,10 @@ export class Store<T> implements Initiable<T> {
         }
     }
 
-    async syncLocal() {
-        const heads = await this.getCachedHeads();
-        const headsHashes = new Set(this._oplog.heads.map((h) => h.hash));
-        for (let i = 0; i < heads.length; i++) {
-            const head = heads[i];
-            if (!headsHashes.has(head)) {
-                await this.load();
-                break;
-            }
-        }
-    }
-
     async _addOperation(
         data: T,
         options?: AddOperationOptions<T>
     ): Promise<Entry<T>> {
-        // check local cache for latest heads
-        if (this._options.syncLocal) {
-            await this.syncLocal();
-        }
         const isReferencingAllHeads = !options?.nexts;
         const entry = await this._oplog.append(data, {
             nexts: options?.nexts,
