@@ -169,16 +169,18 @@ export class DocumentIndex<T> extends ComposableProgram {
         return this._index.size;
     }
 
-    async updateIndex(oplog: Log<Operation<T>>) {
+    async updateIndex(
+        oplog: Log<Operation<T>>,
+        entries?: Entry<Operation<T>>[]
+    ) {
         if (!this.type) {
             throw new Error("Not initialized");
         }
 
         const handled: { [key: string]: boolean } = {};
-        const values = oplog.values;
-        for (let i = values.length - 1; i >= 0; i--) {
+        const values = entries ? entries.sort(oplog._sortFn) : oplog.values;
+        for (const item of values) {
             try {
-                const item = values[i];
                 const payload = await item.getPayloadValue();
                 if (payload instanceof PutAllOperation) {
                     for (const doc of payload.docs) {

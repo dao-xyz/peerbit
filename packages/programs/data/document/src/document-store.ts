@@ -95,8 +95,8 @@ export class Documents<T> extends ComposableProgram {
                 oplog: Log<Operation<T>>,
                 entries?: Entry<Operation<T>>[] | undefined
             ) => {
-                await this.handleDeletions(oplog);
-                await this._index.updateIndex(oplog);
+                await this.handleDeletions(oplog, entries);
+                await this._index.updateIndex(oplog, entries);
             },
         });
         await this._logIndex.setup({
@@ -296,16 +296,20 @@ export class Documents<T> extends ComposableProgram {
         );
     }
 
-    async handleDeletions(log: Log<Operation<T>>): Promise<void> {
-        const heads = log.heads;
-        for (let i = heads.length - 1; i >= 0; i--) {
+    async handleDeletions(
+        log: Log<Operation<T>>,
+        entries?: Entry<Operation<T>>[]
+    ): Promise<void> {
+        entries = entries
+            ? entries.sort(this.store.oplog._sortFn)
+            : this.store.oplog.values; // TODO assume sorting is done earlier (?)
+        for (const entry of entries) {
             try {
-                const item = heads[i];
-                const payload = await item.getPayloadValue();
+                const payload = await entry.getPayloadValue();
                 if (payload instanceof DeleteOperation) {
                     if (payload.permanently) {
                         // delete all nexts recursively (but dont delete the DELETE record (because we might want to share this with others))
-                        const nexts = item.next
+                        const nexts = entry.next
                             .map((n) => log.get(n))
                             .filter((x) => !!x) as Entry<any>[];
                         await Promise.all(
@@ -322,5 +326,32 @@ export class Documents<T> extends ComposableProgram {
                 throw error;
             }
         }
+        // Find unique tails, and update state forwards
+
+        /*  const heads = log.heads;
+         for (let i = heads.length - 1; i >= 0; i--) {
+             try {
+                 const item = heads[i];
+                 const payload = await item.getPayloadValue();
+                 if (payload instanceof DeleteOperation) {
+                     if (payload.permanently) {
+                         // delete all nexts recursively (but dont delete the DELETE record (because we might want to share this with others))
+                         const nexts = item.next
+                             .map((n) => log.get(n))
+                             .filter((x) => !!x) as Entry<any>[];
+                         await Promise.all(
+                             nexts.map((n) => log.deleteRecursively(n))
+                         );
+                     }
+                 } else {
+                     // Unknown operation
+                 }
+             } catch (error) {
+                 if (error instanceof AccessError) {
+                     continue;
+                 }
+                 throw error;
+             }
+         } */
     }
 }
