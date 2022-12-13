@@ -72,22 +72,22 @@ class SlowBlockStore extends Blocks {
 
 describe("Log - Load", function () {
     const firstWriteExpectedData = [
-        "entryA6",
-        "entryA7",
-        "entryA8",
-        "entryA9",
         "entryA10",
-        "entryB1",
-        "entryB2",
-        "entryB3",
-        "entryB4",
-        "entryB5",
-        "entryA1",
-        "entryA2",
-        "entryA3",
-        "entryA4",
-        "entryA5",
+        "entryA9",
+        "entryA8",
+        "entryA7",
         "entryC0",
+        "entryA6",
+        "entryB5",
+        "entryA5",
+        "entryB4",
+        "entryA4",
+        "entryB3",
+        "entryA3",
+        "entryB2",
+        "entryA2",
+        "entryB1",
+        "entryA1",
     ];
 
     let keystore: Keystore;
@@ -185,8 +185,7 @@ describe("Log - Load", function () {
             );
 
             expect(log.length).toEqual(16);
-            assert.deepStrictEqual(
-                log.values.map((e) => e.payload.getValue()),
+            expect(log.values.map((e) => e.payload.getValue())).toEqual(
                 firstWriteExpectedData
             );
         });
@@ -1338,12 +1337,9 @@ describe("Log - Load", function () {
                 },
                 { logId: "X", sortFn: BadComparatorReturnsZero }
             );
-            await firstWriteWinsLog.join(testLog.log);
-            assert.throws(
-                () => firstWriteWinsLog.values,
-                Error,
-                "Error Thrown"
-            );
+            await expect(() =>
+                firstWriteWinsLog.join(testLog.log)
+            ).rejects.toThrow();
         });
 
         it("retrieves partially joined log deterministically - single next pointer", async () => {

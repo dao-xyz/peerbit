@@ -18,22 +18,17 @@ import path from "path";
 import { Identity } from "../identity.js";
 import { LamportClock, Timestamp } from "../clock.js";
 import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
-import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
+import {
+    identityFromSignKey,
+    signingKeysFixturesPath,
+    testKeyStorePath,
+} from "./utils.js";
 import { createStore } from "./utils.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 
-const identityFromSignKey = (key: KeyWithMeta<Ed25519Keypair>): Identity => {
-    if (!key) {
-        throw new Error("Key not defined");
-    }
-    return {
-        ...key.keypair,
-        sign: async (data: Uint8Array) => await key.keypair.sign(data),
-    };
-};
 const API = "js-ipfs";
 
 describe("Entry", function () {

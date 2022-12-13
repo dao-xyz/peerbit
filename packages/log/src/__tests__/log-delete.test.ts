@@ -65,12 +65,21 @@ describe("Log - Delete", function () {
         const e1 = await log.append("hello1");
         const e2 = await log.append("hello2");
         const e3 = await log.append("hello3");
+
         await log.deleteRecursively(e2);
+        expect(Object.keys(log._nextsIndex).length).toEqual(0);
+        expect(log.values.length).toEqual(1);
         expect(log.get(e1.hash)).toBeUndefined();
         expect(await blockExists(e1.hash)).toBeFalse();
         expect(log.get(e2.hash)).toBeUndefined();
         expect(await blockExists(e2.hash)).toBeFalse();
         expect(log.get(e3.hash)).toBeDefined();
         expect(await blockExists(e3.hash)).toBeTrue();
+
+        await log.deleteRecursively(e3);
+        expect(log.values.length).toEqual(0);
+        expect(log.heads).toHaveLength(0);
+        expect(Object.keys(log._nextsIndex).length).toEqual(0);
+        expect(log._entryIndex.length).toEqual(0);
     });
 });

@@ -5439,6 +5439,11 @@
   dependencies:
     "@types/node" "*"
 
+"@types/yallist@^4.0.1":
+  version "4.0.1"
+  resolved "https://registry.yarnpkg.com/@types/yallist/-/yallist-4.0.1.tgz#f10e7bdc591bf28297720d08cfeba0f018f929cf"
+  integrity sha512-G3FNJfaYtN8URU6wd6+uwFI62KO79j7n3XTYcwcFncP8gkfoi0b821GoVVt0oqKVnCqKYOMNKIGpakPoFhzAGA==
+
 "@types/yargs-parser@*":
   version "21.0.0"
   resolved "https://registry.yarnpkg.com/@types/yargs-parser/-/yargs-parser-21.0.0.tgz#0c60e537fa790f5f9472ed2776c2b71ec117351b"

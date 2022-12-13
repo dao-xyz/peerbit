@@ -17,7 +17,7 @@ const __dirname = dirname(__filename);
 
 let signKey: KeyWithMeta<Ed25519Keypair>;
 
-describe("Log - Cut", function () {
+describe("Append prune", function () {
     let keystore: Keystore, store: Blocks;
 
     beforeAll(async () => {
@@ -55,7 +55,7 @@ describe("Log - Cut", function () {
                 sign: async (data: Uint8Array) =>
                     await signKey.keypair.sign(data),
             },
-            { logId: "A", prune: { maxLength: 1, cutToLength: 1 } }
+            { logId: "A", prune: { from: 1, to: 1 } }
         );
         await log.append("hello1");
         await log.append("hello2");
@@ -72,14 +72,48 @@ describe("Log - Cut", function () {
                 sign: async (data: Uint8Array) =>
                     await signKey.keypair.sign(data),
             },
-            { logId: "A", prune: { maxLength: 3, cutToLength: 1 } }
+            { logId: "A", prune: { from: 3, to: 1 } } // when length > 3 cut back to 1
         );
-        await log.append("hello1");
-        await log.append("hello2");
-        await log.append("hello3");
+        const a1 = await log.append("hello1");
+        const a2 = await log.append("hello2");
+        const a3 = await log.append("hello3");
+        expect(await log._storage.get(a1.hash)).toBeDefined();
+        expect(await log._storage.get(a2.hash)).toBeDefined();
+        expect(await log._storage.get(a3.hash)).toBeDefined();
         expect(log.length).toEqual(3);
-        await log.append("hello4");
-        expect(log.length).toEqual(1); // We exceed 'maxLength' and cut back to 'cutToLength'
+        const a4 = await log.append("hello4");
+        expect(log.length).toEqual(1);
+        expect(await log._storage.get(a1.hash)).toBeUndefined();
+        expect(await log._storage.get(a2.hash)).toBeUndefined();
+        expect(await log._storage.get(a3.hash)).toBeUndefined();
+        expect(await log._storage.get(a4.hash)).toBeDefined();
         expect(log.values[0].payload.getValue()).toEqual("hello4");
+    });
+
+    it("cut back to bytelength", async () => {
+        const log = new Log<string>(
+            store,
+            {
+                ...signKey.keypair,
+                sign: async (data: Uint8Array) =>
+                    await signKey.keypair.sign(data),
+            },
+            { logId: "A", prune: { bytelength: 15 } } // bytelength is 15 so for every new helloX we hav eto delete the previous helloY
+        );
+        const a1 = await log.append("hello1");
+        expect(await log._storage.get(a1.hash)).toBeDefined();
+        expect(log.values.map((x) => x.payload.getValue())).toEqual(["hello1"]);
+        const a2 = await log.append("hello2");
+        expect(await log._storage.get(a2.hash)).toBeDefined();
+        expect(log.values.map((x) => x.payload.getValue())).toEqual(["hello2"]);
+        const a3 = await log.append("hello3");
+        expect(await log._storage.get(a3.hash)).toBeDefined();
+        expect(log.values.map((x) => x.payload.getValue())).toEqual(["hello3"]);
+        const a4 = await log.append("hello4");
+        expect(log.values.map((x) => x.payload.getValue())).toEqual(["hello4"]);
+        expect(await log._storage.get(a1.hash)).toBeUndefined();
+        expect(await log._storage.get(a2.hash)).toBeUndefined();
+        expect(await log._storage.get(a3.hash)).toBeUndefined();
+        expect(await log._storage.get(a4.hash)).toBeDefined();
     });
 });

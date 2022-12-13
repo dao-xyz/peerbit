@@ -33,6 +33,7 @@ import { Identity } from "./identity.js";
 import { logger as parentLogger } from "./logger.js";
 import { HeadsIndex } from "./heads.js";
 import { Blocks } from "@dao-xyz/peerbit-block";
+import { Values } from "./values.js";
 
 const logger = parentLogger.child({ module: "ipfs-log" });
 
@@ -41,18 +42,14 @@ const randomId = () => new Date().getTime().toString();
 const getHash = <T>(e: Entry<T>) => e.hash;
 /* const maxSizeReducer = <T>(res: bigint, acc: Entry<T>): bigint => bigIntMax(res, acc.cumulativeSize); */
 
-const uniqueEntriesReducer = <T>(
-    res: { [key: string]: Entry<T> },
-    acc: Entry<T>
-) => {
-    res[acc.hash] = acc;
+const uniqueEntriesReducer = <T>(res: Map<string, Entry<T>>, acc: Entry<T>) => {
+    res.set(acc.hash, acc);
     return res;
 };
 
-export interface PruneOptions {
-    maxLength: number; // Max length of oplog before cutting
-    cutToLength: number; // When oplog shorter, cut to length
-}
+export type PruneToLengthOption = { to: number; from?: number };
+export type PruneToByteLengthOption = { bytelength: number };
+export type PruneOptions = PruneToByteLengthOption | PruneToLengthOption;
 
 export type LogOptions<T> = {
     encryption?: PublicKeyEncryptionResolver;
@@ -65,6 +62,7 @@ export type LogOptions<T> = {
     concurrency?: number;
     prune?: PruneOptions;
 };
+
 /**
  * @description
  * Log implements a G-Set CRDT and adds ordering.
@@ -83,18 +81,18 @@ export class Log<T> extends GSet {
     // Identity
     _identity: Identity;
 
-    // Add entries to the internal cache
+    // Keeping track of entries
     _entryIndex: EntryIndex<T>;
     _headsIndex: HeadsIndex<T>;
+    _values: Values<T>;
 
     // Index of all next pointers in this log
     _nextsIndex: { [key: string]: Set<string> };
 
     // next -> entry
-    _nextsIndexToHead: { [key: string]: Set<string> }; // TODO make to LRU since this will become invalid quickly (and potentially huge)
+    /*     _nextsIndexToHead: { [key: string]: Set<string> }; */ // TODO make to LRU since this will become invalid quickly (and potentially huge)
 
     // Set the length, we calculate the length manually internally
-    _length: number; // Total amount of elements in the log
     /*  _clock: Clock; */
     _prune?: PruneOptions;
     _encryption?: PublicKeyEncryptionResolver;
@@ -151,9 +149,12 @@ export class Log<T> extends GSet {
         this._encoding = encoding || JSON_ENCODING;
 
         // Add entries to the internal cache
-        const uniqueEntries = (entries || []).reduce(uniqueEntriesReducer, {});
+        const uniqueEntries = (entries || []).reduce(
+            uniqueEntriesReducer,
+            new Map()
+        );
         this._entryIndex = new EntryIndex(uniqueEntries);
-        entries = Object.values(uniqueEntries) || [];
+        entries = [...uniqueEntries.values()];
 
         // Init io for entries (as these are not created with the append method)
         entries.map((e) => {
@@ -164,12 +165,12 @@ export class Log<T> extends GSet {
         heads = heads || Log.findHeads(entries);
         this._headsIndex = new HeadsIndex({
             sortFn: this._sortFn,
-            entries: heads.reduce(uniqueEntriesReducer, {}),
+            entries: heads.reduce(uniqueEntriesReducer, new Map()),
         });
+        this._values = new Values(this._sortFn, entries);
 
         // Index of all next pointers in this log
         this._nextsIndex = {};
-        this._nextsIndexToHead = {};
 
         // Clock
         this._hlc = new HLC();
@@ -188,7 +189,6 @@ export class Log<T> extends GSet {
         entries.forEach(addToNextsIndex);
 
         // Set the length, we calculate the length manually internally
-        this._length = entries.length;
 
         // Set the clock
         /*  const maxTime = bigIntMax(clock ? clock.time : 0n, this.heads.reduce(maxClockTimeReducer, 0n)) */
@@ -207,17 +207,22 @@ export class Log<T> extends GSet {
      * @return {number} Length
      */
     get length() {
-        return this._length;
+        return this._entryIndex.length;
     }
 
     /**
      * Returns the values in the log.
      * @returns {Array<Entry<T>>}
      */
-    get values(): Entry<T>[] {
+    /* get values(): Entry<T>[] {
         return Object.values(
             this.traverse([...this.headsIndex._index.values()])
         ).reverse();
+    }
+     */
+
+    get values(): Entry<T>[] {
+        return this._values.toArray();
     }
 
     /**
@@ -384,7 +389,7 @@ export class Log<T> extends GSet {
         return [...references];
     }
 
-    getHeadsFromHashes(refs: string[]): Entry<T>[] {
+    /* getHeadsFromHashes(refs: string[]): Entry<T>[] {
         const headsFromRefs = new Map<string, Entry<T>>();
         refs.forEach((ref) => {
             const headsFromRef = this.getHeads(ref); // TODO allow forks
@@ -394,7 +399,7 @@ export class Log<T> extends GSet {
         });
         const nexts = [...headsFromRefs.values()].sort(this._sortFn);
         return nexts;
-    }
+    } */
 
     /**
      * Append an entry to the log.
@@ -413,6 +418,7 @@ export class Log<T> extends GSet {
             reciever?: EncryptionTemplateMaybeEncrypted;
             onGidsShadowed?: (gids: string[]) => void;
             timestamp?: Timestamp;
+            prune?: PruneOptions;
         } = { pin: false }
     ) {
         if (options.reciever && !this._encryption) {
@@ -435,10 +441,6 @@ export class Log<T> extends GSet {
                     );
             });
         }
-
-        /*  const currentHeads: Entry<T>[] = Object.values(
-             this.heads.reverse().reduce(uniqueEntriesReducer, {})
-         ); */ // TODO this invokes a double reverse
 
         const hasNext = !!options.nexts;
         const nexts: Entry<any>[] = options.nexts || [
@@ -489,7 +491,6 @@ export class Log<T> extends GSet {
             throw new Error("Unexpected");
         }
 
-        this._entryIndex.set(entry.hash, entry);
         nexts.forEach((e) => {
             let nextIndexSet = this._nextsIndex[e.hash];
             if (!nextIndexSet) {
@@ -517,13 +518,13 @@ export class Log<T> extends GSet {
             this.headsIndex.reset([entry]);
         }
 
+        this._entryIndex.set(entry.hash, entry);
         this._headsIndex.put(entry);
+        this._values.put(entry);
 
-        // Update the length
-        this._length++;
-
-        if (this._prune && this.length > this._prune.maxLength) {
-            this.prune(this._prune.cutToLength);
+        const prune = options?.prune || this._prune;
+        if (prune) {
+            await this.prune(prune);
         }
 
         // if next contails all gids
@@ -632,7 +633,7 @@ export class Log<T> extends GSet {
      */
     async join(
         log: Log<T>,
-        options?: { size?: number; verifySignatures?: boolean }
+        options?: { prune?: PruneOptions; verifySignatures?: boolean }
     ): Promise<{ change: Entry<T>[] }> {
         // Get the difference of the logs
         const newItems = await Log.difference(log, this);
@@ -654,7 +655,7 @@ export class Log<T> extends GSet {
             if (!entry) {
                 // Update the internal entry index
                 this._entryIndex.set(e.hash, e);
-                this._length++; /* istanbul ignore else */
+                this._values.put(e);
             }
             e.next.forEach((a) => {
                 let nextIndexSet = this._nextsIndex[a];
@@ -686,8 +687,9 @@ export class Log<T> extends GSet {
             this.headsIndex.del(this.get(next)!);
         });
 
-        if (typeof options?.size === "number") {
-            this.prune(options.size);
+        const prune = options?.prune || this._prune;
+        if (prune) {
+            await this.prune(prune);
         }
 
         return {
@@ -695,12 +697,11 @@ export class Log<T> extends GSet {
         };
     }
 
-    getHeads(from: string): Entry<T>[] {
+    /* getHeads(from: string): Entry<T>[] {
         const stack = [from];
         const traversed = new Set<string>();
         const res = new Set<string>();
 
-        /*  let startSize = this.get(from).cumulativeSize; */
         const pushToStack = (hash: string) => {
             if (!traversed.has(hash)) {
                 stack.push(hash);
@@ -715,7 +716,6 @@ export class Log<T> extends GSet {
                 continue;
             }
             const links = this._nextsIndex[hash];
-            /*     const currentSize = this.get(hash).cumulativeSize; */
             const isConstrainedBySize = false; // currentSize - startSize > options.maxSize;
             if (!links || isConstrainedBySize) {
                 // is head or we have to fork because of size constaint
@@ -737,60 +737,98 @@ export class Log<T> extends GSet {
         return [...res]
             .map((h) => this.get(h))
             .filter((x) => !!x) as Entry<T>[];
-    }
-
-    async deleteRecursively(from: Entry<any>) {
-        const stack = [from];
-        while (stack.length > 0) {
-            const entry = stack.pop()!;
-            await entry.delete(this._storage);
-            this._entryIndex.delete(entry.hash);
-            for (const next of entry.next) {
-                const ne = this.get(next);
-                if (ne) {
-                    stack.push(ne);
-                }
-            }
-        }
-    }
+    } */
 
     /**
      * Cut log to size
      * @param size
      */
-    prune(size: number) {
+    async prune(options: PruneOptions) {
         // Slice to the requested size
-        let tmp = this.values;
-        tmp = tmp.slice(-size);
-        this._entryIndex = new EntryIndex(tmp.reduce(uniqueEntriesReducer, {}));
-        this._headsIndex.reset(
-            Log.findHeads(tmp).reduce(uniqueEntriesReducer, {})
-        );
-        this._length = this._entryIndex.length;
-    }
-
-    removeAll(heads: Entry<any>[]) {
-        const stack: Entry<any>[] = [...heads];
-        while (stack.length > 0) {
-            const next = stack.shift();
-            if (!next) {
-                logger.error("Tried to remove null head");
-                continue;
+        const promises: Promise<void>[] = [];
+        if (typeof (options as PruneToLengthOption).to === "number") {
+            const to = (options as PruneToLengthOption).to;
+            const from = (options as PruneToLengthOption).from || to;
+            if (this.length <= from) {
+                return;
             }
 
-            this._entryIndex.delete(next.hash);
-            delete this._nextsIndexToHead[next.hash];
-            this._headsIndex.del(next);
-            delete this._nextsIndex[next.hash];
-            next.next.forEach((n) => {
-                const value = this.get(n);
-                if (value) {
-                    stack.push(value);
+            // prune to length
+            const len = this.length;
+            for (let i = 0; i < len - to; i++) {
+                const entry = this._values.pop();
+                if (!entry) {
+                    return;
                 }
-            });
+                this._entryIndex.delete(entry.hash);
+                this._headsIndex.del(entry);
+                promises.push(this._storage.rm(entry.hash));
+            }
+        } else if (
+            typeof (options as PruneToByteLengthOption).bytelength === "number"
+        ) {
+            // prune to max sum payload sizes in bytes
+            const byteLength = (options as PruneToByteLengthOption).bytelength;
+            while (this._values.byteLength > byteLength && this.length > 0) {
+                const entry = this._values.pop();
+                if (!entry) {
+                    return;
+                }
+                this._entryIndex.delete(entry.hash);
+                this._headsIndex.del(entry);
+                promises.push(this._storage.rm(entry.hash));
+            }
+        } else {
+            throw new Error("Invalid prune options");
         }
-        this._length = this._entryIndex.length;
+        await Promise.all(promises);
     }
+
+    async deleteRecursively(from: Entry<any> | Entry<any>[]) {
+        const stack = Array.isArray(from) ? from : [from];
+        const promises: Promise<void>[] = [];
+        while (stack.length > 0) {
+            const entry = stack.pop()!;
+            this._values.delete(entry);
+            this._entryIndex.delete(entry.hash);
+            this._headsIndex.del(entry);
+            this._nextsIndex[entry.hash] && delete this._nextsIndex[entry.hash];
+
+            for (const next of entry.next) {
+                const ne = this.get(next);
+                if (ne) {
+                    this._nextsIndex[next].delete(entry.hash);
+                    stack.push(ne);
+                }
+            }
+            promises.push(entry.delete(this._storage));
+        }
+
+        await Promise.all(promises);
+    }
+
+    /*     removeAll(heads: Entry<any>[]) {
+            const stack: Entry<any>[] = [...heads];
+            while (stack.length > 0) {
+                const next = stack.shift();
+                if (!next) {
+                    logger.error("Tried to remove null head");
+                    continue;
+                }
+    
+                this._entryIndex.delete(next.hash);
+                delete this._nextsIndexToHead[next.hash];
+                this._headsIndex.del(next);
+                delete this._nextsIndex[next.hash];
+                next.next.forEach((n) => {
+                    const value = this.get(n);
+                    if (value) {
+                        stack.push(value);
+                    }
+                });
+            }
+            this._length = this._entryIndex.length;
+        } */
 
     /**
      * Get the log in JSON format.

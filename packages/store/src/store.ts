@@ -38,6 +38,7 @@ export type AddOperationOptions<T> = {
     skipCanAppendCheck?: boolean;
     identity?: Identity;
     nexts?: Entry<T>[];
+    prune?: PruneOptions;
     pin?: boolean;
     reciever?: EncryptionTemplateMaybeEncrypted;
 };
@@ -646,6 +647,7 @@ export class Store<T> implements Initiable<T> {
             reciever: options?.reciever,
             canAppend: options?.skipCanAppendCheck ? undefined : this.canAppend,
             identity: options?.identity,
+            prune: options?.prune,
         });
         logger.debug("Appended entry with hash: " + entry.hash);
         await this.updateHeadsCache([entry.hash], isReferencingAllHeads);

@@ -10,7 +10,7 @@ export class HeadsIndex<T> {
 
     constructor(properties: {
         sortFn: ISortFunction;
-        entries: { [key: string]: Entry<any> };
+        entries: Map<string, Entry<T>>;
     }) {
         this._gids = new Map();
         this._sortFn = properties.sortFn;
@@ -25,15 +25,12 @@ export class HeadsIndex<T> {
         return this._gids;
     }
 
-    reset(entries: { [key: string]: Entry<any> } | Entry<T>[]) {
+    reset(entries: Map<string, Entry<T>> | Entry<T>[]) {
         this._index.clear();
         this._gids = new Map();
-        (Array.isArray(entries) ? entries : Object.values(entries)).forEach(
-            (entry) => {
-                this.put(entry);
-            }
-        );
-        //    this._headsCache = undefined;
+        entries.forEach((v) => {
+            this.put(v);
+        });
     }
 
     get(hash: string) {

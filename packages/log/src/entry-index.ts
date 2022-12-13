@@ -1,27 +1,23 @@
 import { Entry } from "./entry.js";
 export class EntryIndex<T> {
-    _cache: { [key: string]: Entry<T> };
-    constructor(entries = {}) {
+    _cache: Map<string, Entry<T>>;
+    constructor(entries = new Map<string, Entry<T>>()) {
         this._cache = entries;
     }
 
     set(k: string, v: Entry<T>) {
-        this._cache[k] = v;
+        this._cache.set(k, v);
     }
 
     get(k: string): Entry<T> | undefined {
-        return this._cache[k];
+        return this._cache.get(k);
     }
 
     delete(k: string) {
-        return delete this._cache[k];
-    }
-
-    add(newItems: { [key: string]: Entry<T> }) {
-        this._cache = Object.assign(this._cache, newItems);
+        return this._cache.delete(k);
     }
 
     get length(): number {
-        return Object.values(this._cache).length;
+        return this._cache.size;
     }
 }

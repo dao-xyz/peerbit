@@ -631,7 +631,7 @@ describe("Log - Join", function () {
             });
 
             it("joins only specified amount of entries - one entry", async () => {
-                await log1.join(log2, { size: 1 });
+                await log1.join(log2, { prune: { to: 1 } });
 
                 const expectedData = ["helloB2"];
                 const lastEntry = last(log1.values);
@@ -645,7 +645,7 @@ describe("Log - Join", function () {
             });
 
             it("joins only specified amount of entries - two entries", async () => {
-                await log1.join(log2, { size: 2 });
+                await log1.join(log2, { prune: { to: 2 } });
 
                 const expectedData = ["helloA2", "helloB2"];
                 const lastEntry = last(log1.values);
@@ -658,7 +658,7 @@ describe("Log - Join", function () {
             });
 
             it("joins only specified amount of entries - three entries", async () => {
-                await log1.join(log2, { size: 3 });
+                await log1.join(log2, { prune: { to: 3 } });
 
                 const expectedData = ["helloB1", "helloA2", "helloB2"];
                 const lastEntry = last(log1.values);
@@ -671,7 +671,7 @@ describe("Log - Join", function () {
             });
 
             it("joins only specified amount of entries - (all) four entries", async () => {
-                await log1.join(log2, { size: 4 });
+                await log1.join(log2, { prune: { to: 4 } });
 
                 const expectedData = [
                     "helloA1",

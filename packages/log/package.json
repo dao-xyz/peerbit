@@ -40,11 +40,13 @@
         "p-do-whilst": "^1.1.0",
         "p-each-series": "^3.0.0",
         "p-map": "^5.5.0",
-        "p-whilst": "^3.0.0"
+        "p-whilst": "^3.0.0",
+        "yallist": "^4.0.0"
     },
     "devDependencies": {
         "@dao-xyz/peerbit-keystore": "^0.0.44",
         "@dao-xyz/peerbit-test-utils": "^0.0.24",
+        "@types/yallist": "^4.0.1",
         "assert": "^2.0.0",
         "fs-extra": "^10.0.1",
         "is-node": "^1.0.2",
