@@ -192,6 +192,8 @@ export class Peerbit {
         entryTopReplicate?: Entry<any>
     ) => Promise<boolean>;
     _openProgramQueue: PQueue;
+    _reorgQueue: PQueue;
+
     _disconnected = false;
     _disconnecting = false;
     _encryption: PublicKeyEncryptionResolver;
@@ -267,6 +269,7 @@ export class Peerbit {
             this._waitForKeysTimeout = options.waitForKeysTimout;
         }
         this._openProgramQueue = new PQueue({ concurrency: 1 });
+        this._reorgQueue = new PQueue({ concurrency: 1 });
 
         this._topicSubscriptions = new Map();
     }
@@ -1035,7 +1038,7 @@ export class Peerbit {
                             ) {
                                 // delete entries since we are not suppose to replicate this anymore
                                 // TODO add delay? freeze time? (to ensure resiliance for bad io)
-                                store.oplog.removeAll(entries);
+                                await store.oplog.deleteRecursively(entries);
 
                                 // TODO if length === 0 maybe close store?
                             }
@@ -1089,7 +1092,9 @@ export class Peerbit {
                                 ?.close(channel.recieverId.toString());
 
                             // Then perform replication reorg
-                            this.replicationReorganization(channel);
+                            this._reorgQueue.add(() =>
+                                this.replicationReorganization(channel)
+                            );
                         },
                         onNewPeerCallback: (channel) => {
                             // First modify direct connections
@@ -1112,7 +1117,9 @@ export class Peerbit {
                             }
 
                             // Then perform replication reorg
-                            this.replicationReorganization(channel);
+                            this._reorgQueue.add(() =>
+                                this.replicationReorganization(channel)
+                            );
                         },
                     }
                 );
