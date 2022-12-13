@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-identity-access-controller",
-    "version": "0.0.112",
+    "version": "0.0.113",
     "description": "Access controller that operates on a DB",
     "type": "module",
     "sideEffects": false,
@@ -32,8 +32,8 @@
     "license": "MIT",
     "dependencies": {
         "@dao-xyz/borsh": "^4.0.7",
-        "@dao-xyz/peerbit-document": "^0.0.154",
-        "@dao-xyz/peerbit-trusted-network": "^0.0.110",
+        "@dao-xyz/peerbit-document": "^0.0.155",
+        "@dao-xyz/peerbit-trusted-network": "^0.0.111",
         "p-map": "~1.1.1",
         "uuid": "^8.3.2"
     },
