@@ -33,7 +33,7 @@ export type GetEncryptionKeypair =
     | Ed25519Keypair;
 
 @variant(0)
-export class MaybeEncrypted<T> {
+export abstract class MaybeEncrypted<T> {
     /**
      * Will throw error if not decrypted
      */
@@ -56,6 +56,8 @@ export class MaybeEncrypted<T> {
     clear() {
         throw new Error("Not implemented");
     }
+
+    abstract get byteLength(): number;
 }
 
 @variant(0)
@@ -150,6 +152,10 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 
     clear() {
         this._value = undefined;
+    }
+
+    get byteLength() {
+        return this._data!.byteLength;
     }
 }
 
@@ -375,5 +381,9 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
 
     clear() {
         this._decrypted = undefined;
+    }
+
+    get byteLength() {
+        return this._encrypted.byteLength; // ignore other metdata for now in the size calculation
     }
 }
