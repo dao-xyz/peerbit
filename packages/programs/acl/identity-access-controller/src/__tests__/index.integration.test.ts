@@ -102,7 +102,8 @@ describe("index", () => {
         i: number,
         options: {
             topic: string;
-            store: { replicate: boolean };
+            replicate: boolean;
+            store: {};
             canRead?: CanRead;
             canAppend?: CanAppend<T>;
         }
@@ -159,7 +160,8 @@ describe("index", () => {
         const s = new TestStore({ identity: identity(0) });
         const options = {
             topic: uuid(),
-            store: { replicate: true },
+            replicate: true,
+            store: {},
         };
         const l0a = await init(s, 0, options);
 
@@ -215,7 +217,8 @@ describe("index", () => {
         it("publickey", async () => {
             const options = {
                 topic: uuid(),
-                store: { replicate: true },
+                replicate: true,
+                store: {},
             };
 
             const l0a = await init(
@@ -269,7 +272,8 @@ describe("index", () => {
         it("through trust chain", async () => {
             const options = {
                 topic: uuid(),
-                store: { replicate: true },
+                replicate: true,
+                store: {},
             };
 
             const l0a = await init(
@@ -361,7 +365,8 @@ describe("index", () => {
         it("any access", async () => {
             const options = {
                 topic: uuid(),
-                store: { replicate: true },
+                replicate: true,
+                store: {},
             };
 
             const l0a = await init(
@@ -415,7 +420,8 @@ describe("index", () => {
         it("read access", async () => {
             const options = {
                 topic: uuid(),
-                store: { replicate: true },
+                replicate: true,
+                store: {},
             };
 
             const l0a = await init(
@@ -485,7 +491,8 @@ describe("index", () => {
     it("manifests are unique", async () => {
         const options = {
             topic: uuid(),
-            store: { replicate: true },
+            replicate: true,
+            store: {},
         };
 
         const l0a = await init(
@@ -504,7 +511,8 @@ describe("index", () => {
     it("can query", async () => {
         const options = {
             topic: uuid(),
-            store: { replicate: true },
+            replicate: true,
+            store: {},
         };
 
         const l0a = await init(new TestStore({ identity: identity(0) }), 0, {
@@ -525,7 +533,8 @@ describe("index", () => {
 
         const l0b = await init(dbb, 1, {
             ...options,
-            store: { replicate: false },
+            replicate: false,
+            store: {},
             canRead: () => Promise.resolve(true),
         });
 

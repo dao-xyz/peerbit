@@ -71,13 +71,13 @@ describe("query", () => {
         );
         await writeStore.init(writer, blockStore, await createIdentity(), {
             topic,
+            replicate: true,
             store: {
                 ...DefaultOptions,
                 encryption: {
                     getAnyKeypair: (_) => Promise.resolve(undefined),
                     getEncryptionKeypair: () => Ed25519Keypair.create(),
                 },
-                replicate: true,
                 resolveCache: () => new Cache(cacheStore1),
             },
         });
@@ -236,13 +236,13 @@ describe("query", () => {
             await createIdentity(),
             {
                 topic: uuid(),
+                replicate: true,
                 store: {
                     ...DefaultOptions,
                     encryption: {
                         getAnyKeypair: (_) => Promise.resolve(undefined),
                         getEncryptionKeypair: () => Ed25519Keypair.create(),
                     },
-                    replicate: true,
                     resolveCache: () => new Cache(cacheStore1),
                 },
             }

@@ -210,6 +210,7 @@ export type ProgramInitializationOptions = {
     store: IInitializationOptions<any>;
     parent?: AbstractProgram;
     topic: string;
+    replicate?: boolean;
     onClose?: () => void;
     onDrop?: () => void;
 };
@@ -227,8 +228,9 @@ export abstract class AbstractProgram {
     _encryption?: PublicKeyEncryptionResolver;
     _onClose?: () => void;
     _onDrop?: () => void;
-    _initialized = false;
+    _initialized?: boolean;
     _initializationPromise: Promise<void>;
+    _replicate?: boolean;
     parentProgram: Program;
 
     get initialized() {
@@ -240,6 +242,10 @@ export abstract class AbstractProgram {
 
     get programIndex(): number | undefined {
         return this._programIndex;
+    }
+
+    get replicate() {
+        return this._replicate;
     }
 
     async init(
@@ -258,6 +264,7 @@ export abstract class AbstractProgram {
             this._encryption = options.store.encryption;
             this._onClose = options.onClose;
             this._onDrop = options.onDrop;
+            this._replicate = options.replicate;
 
             const nexts = this.programs;
             for (const next of nexts) {

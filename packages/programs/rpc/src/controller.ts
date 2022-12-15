@@ -178,7 +178,7 @@ export class RPC<Q, R> extends ComposableProgram {
     ): Promise<this> {
         await super.init(libp2p, store, identity, options);
         this._topic = options.topic;
-        if (options.store.replicate) {
+        if (options.replicate) {
             this._subscribe();
         }
         return this;

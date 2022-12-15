@@ -90,7 +90,6 @@ describe("query", () => {
                 {
                     ...DefaultOptions,
                     encryption,
-                    replicate: i === 0,
                     resolveCache: () => Promise.resolve(cache),
                 }
             );
@@ -103,10 +102,10 @@ describe("query", () => {
                 },
                 {
                     topic,
+                    replicate: i === 0,
                     store: {
                         ...DefaultOptions,
                         encryption,
-                        replicate: i === 0,
                         resolveCache: () => Promise.resolve(cache),
                     },
                 }

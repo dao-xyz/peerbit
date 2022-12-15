@@ -68,7 +68,8 @@ describe("rpc", () => {
             await createIdentity(),
             {
                 topic,
-                store: { replicate: true } as any,
+                replicate: true,
+                store: {} as any,
             } as any
         );
         reader = deserialize(serialize(responder), RPCTest);

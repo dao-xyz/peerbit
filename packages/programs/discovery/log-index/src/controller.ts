@@ -138,7 +138,7 @@ export class LogIndex extends ComposableProgram {
     }
 
     responseHandler(query: LogQueryRequest): HeadsMessage | undefined {
-        if (!this._store.replicate) {
+        if (!this.replicate) {
             return undefined; // we do this because we might not have all the heads
         }
         let results = this._queryEntries((entry) => {

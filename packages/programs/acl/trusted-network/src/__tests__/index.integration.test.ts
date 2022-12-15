@@ -78,14 +78,19 @@ describe("index", () => {
     const init = (
         store: Program,
         i: number,
-        options: { topic: string; store?: IStoreOptions<any> }
+        options: {
+            topic: string;
+            replicate?: boolean;
+            store?: IStoreOptions<any>;
+        }
     ) =>
         store.init &&
         store.init(session.peers[i], stores[i], identites[i], {
             ...options,
+            replicate:
+                options.replicate !== undefined ? options.replicate : true,
             store: {
                 ...DefaultOptions,
-                replicate: true,
                 resolveCache: async () => new Cache<CachedValue>(cacheStore[i]),
                 ...options.store,
             },
@@ -381,7 +386,8 @@ describe("index", () => {
             )) as any;
             await init(l0observer, 1, {
                 topic,
-                store: { replicate: false },
+                replicate: false,
+                store: {},
             });
             expect(
                 await l0observer.isTrusted(identity(2).publicKey)

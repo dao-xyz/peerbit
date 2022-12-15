@@ -67,10 +67,10 @@ describe("clock", () => {
             responderIdentity,
             {
                 topic,
+                replicate: true,
                 store: {
                     resolveCache: () =>
                         Promise.resolve(new Cache(new MemoryLevel())),
-                    replicate: true,
                 } as any,
             } as any
         );

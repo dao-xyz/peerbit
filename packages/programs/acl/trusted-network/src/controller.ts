@@ -235,7 +235,7 @@ export class TrustedNetwork extends Program {
         if (trustee.equals(this.rootTrust)) {
             return true;
         }
-        if (this.trustGraph.store.replicate) {
+        if (this.trustGraph.replicate) {
             return this._isTrustedLocal(trustee, truster);
         } else {
             let trusted = false;

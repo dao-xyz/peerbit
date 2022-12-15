@@ -143,9 +143,9 @@ describe("index", () => {
                 await createIdentity(),
                 {
                     topic: topic,
+                    replicate: i === 0,
                     store: {
                         ...DefaultOptions,
-                        replicate: i === 0,
                         encryption: {
                             getEncryptionKeypair: () => keypair,
                             getAnyKeypair: async (
@@ -232,37 +232,15 @@ describe("index", () => {
                     }),
                 }),
             });
-            const keypair = await X25519Keypair.create();
             await store.init(
                 session.peers[0],
                 new Blocks(new MemoryLevelBlockStore()),
                 await createIdentity(),
                 {
                     topic: "topic",
+                    replicate: true,
                     store: {
                         ...DefaultOptions,
-                        replicate: true,
-                        encryption: {
-                            getEncryptionKeypair: () => keypair,
-                            getAnyKeypair: async (
-                                publicKeys: X25519PublicKey[]
-                            ) => {
-                                for (let i = 0; i < publicKeys.length; i++) {
-                                    if (
-                                        publicKeys[i].equals(
-                                            (keypair as X25519Keypair).publicKey
-                                        )
-                                    ) {
-                                        return {
-                                            index: i,
-                                            keypair: keypair as
-                                                | Ed25519Keypair
-                                                | X25519Keypair,
-                                        };
-                                    }
-                                }
-                            },
-                        },
                         resolveCache: () => new Cache(cacheStores[0]),
                     },
                 }
@@ -277,14 +255,14 @@ describe("index", () => {
                 name: "Hello world",
             });
 
-            const putOperation = await store.docs.put(doc);
+            const putOperation = (await store.docs.put(doc)).entry;
             expect(store.docs._index.size).toEqual(1);
-            const putOperation2 = await store.docs.put(doc2);
+            const putOperation2 = (await store.docs.put(doc2)).entry;
             expect(store.docs._index.size).toEqual(2);
             expect(putOperation2.next).toContainAllValues([]); // because doc 2 is independent of doc 1
 
             // delete 1
-            const deleteOperation = await store.docs.del(doc.id);
+            const deleteOperation = (await store.docs.del(doc.id)).entry;
             expect(deleteOperation.next).toContainAllValues([
                 putOperation.hash,
             ]); // because delete is dependent on put
@@ -300,37 +278,16 @@ describe("index", () => {
                     canEdit: true,
                 }),
             });
-            const keypair = await X25519Keypair.create();
             await store.init(
                 session.peers[0],
                 new Blocks(new MemoryLevelBlockStore()),
                 await createIdentity(),
                 {
                     topic: "topic",
+                    replicate: true,
                     store: {
                         ...DefaultOptions,
-                        replicate: true,
-                        encryption: {
-                            getEncryptionKeypair: () => keypair,
-                            getAnyKeypair: async (
-                                publicKeys: X25519PublicKey[]
-                            ) => {
-                                for (let i = 0; i < publicKeys.length; i++) {
-                                    if (
-                                        publicKeys[i].equals(
-                                            (keypair as X25519Keypair).publicKey
-                                        )
-                                    ) {
-                                        return {
-                                            index: i,
-                                            keypair: keypair as
-                                                | Ed25519Keypair
-                                                | X25519Keypair,
-                                        };
-                                    }
-                                }
-                            },
-                        },
+
                         resolveCache: () => new Cache(cacheStores[0]),
                     },
                 }
@@ -345,20 +302,61 @@ describe("index", () => {
                 name: "Hello world 2",
             });
 
-            const putOperation = await store.docs.put(doc);
+            const _putOperation = await store.docs.put(doc);
             expect(store.docs._index.size).toEqual(1);
-            const putOperation2 = await store.docs.put(editDoc);
+            const putOperation2 = (await store.docs.put(editDoc)).entry;
             expect(store.docs._index.size).toEqual(1);
             expect(putOperation2.next).toHaveLength(1);
 
             // delete 1
-            const deleteOperation = await store.docs.del(doc.id, {
-                permanent: true,
-            });
+            const deleteOperation = (
+                await store.docs.del(doc.id, {
+                    permanent: true,
+                })
+            ).entry;
             expect(store.docs._index.size).toEqual(0);
             expect(store.docs.store.oplog.values.map((x) => x.hash)).toEqual([
                 deleteOperation.hash,
             ]); // the delete operation
+        });
+        it("trim and update index", async () => {
+            const store = new TestStore({
+                docs: new Documents<Document>({
+                    index: new DocumentIndex({
+                        indexBy: "id",
+                    }),
+                    canEdit: true,
+                }),
+            });
+
+            await store.init(
+                session.peers[0],
+                new Blocks(new MemoryLevelBlockStore()),
+                await createIdentity(),
+                {
+                    topic: "topic",
+                    replicate: true,
+                    store: {
+                        ...DefaultOptions,
+
+                        resolveCache: () => new Cache(cacheStores[0]),
+                    },
+                }
+            );
+
+            for (let i = 0; i < 100; i++) {
+                await store.docs.put(
+                    new Document({
+                        id: String(i),
+                        name: "Hello world " + String(i),
+                    }),
+                    { trim: { to: 10 }, nexts: [] }
+                );
+            }
+
+            expect(store.docs.index.size).toEqual(10);
+            expect(store.docs.store.oplog.values.length).toEqual(10);
+            expect(store.docs.store.oplog._headsIndex._index.size).toEqual(10);
         });
     });
 
@@ -723,14 +721,16 @@ describe("index", () => {
                 });
 
                 // write from 1
-                const entry = await stores[1].docs.put(doc, {
-                    reciever: {
-                        payload: [someKey],
-                        metadata: undefined,
-                        next: undefined,
-                        signatures: undefined,
-                    },
-                });
+                const entry = (
+                    await stores[1].docs.put(doc, {
+                        reciever: {
+                            payload: [someKey],
+                            metadata: undefined,
+                            next: undefined,
+                            signatures: undefined,
+                        },
+                    })
+                ).entry;
                 expect(
                     (
                         stores[1].docs.store.oplog.heads[0]
