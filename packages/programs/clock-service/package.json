@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-clock-service",
-    "version": "0.0.39",
+    "version": "0.0.40",
     "description": "Clock signing",
     "type": "module",
     "sideEffects": false,
@@ -32,8 +32,8 @@
     "license": "MIT",
     "dependencies": {
         "@dao-xyz/peerbit-logger": "^0.0.4",
-        "@dao-xyz/peerbit-rpc": "^0.0.77",
-        "@dao-xyz/peerbit-trusted-network": "^0.0.111"
+        "@dao-xyz/peerbit-rpc": "^0.0.78",
+        "@dao-xyz/peerbit-trusted-network": "^0.0.112"
     },
     "devDependencies": {
         "memory-level": "^1.0.0"

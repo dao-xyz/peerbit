@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/peerbit-logindex",
-    "version": "0.0.61",
+    "version": "0.0.62",
     "description": "Simple log index",
     "type": "module",
     "sideEffects": false,
@@ -33,9 +33,9 @@
     "dependencies": {
         "@dao-xyz/borsh": "^4.0.7",
         "@dao-xyz/peerbit-crypto": "^0.0.33",
-        "@dao-xyz/peerbit-log": "^0.0.8",
+        "@dao-xyz/peerbit-log": "^0.0.9",
         "@dao-xyz/peerbit-logger": "^0.0.4",
-        "@dao-xyz/peerbit-rpc": "^0.0.77",
+        "@dao-xyz/peerbit-rpc": "^0.0.78",
         "@dao-xyz/peerbit-time": "^0.0.19",
         "uuid": "^8.3.2"
     },
