@@ -396,7 +396,7 @@ describe("Log - Heads and Tails", function () {
                     sign: async (data: Uint8Array) =>
                         await signKey.keypair.sign(data),
                 },
-                { logId: "A" }
+                { logId: "A", trim: { to: 2 } }
             );
             const log2 = new Log(
                 store,
@@ -405,13 +405,14 @@ describe("Log - Heads and Tails", function () {
                     sign: async (data: Uint8Array) =>
                         await signKey.keypair.sign(data),
                 },
-                { logId: "A" }
+                { logId: "A", trim: { to: 2 } }
             );
-            const a1 = await log1.append("helloA1");
-            const b1 = await log2.append("helloB1");
-            const a2 = await log1.append("helloA2");
-            const b2 = await log2.append("helloB2");
-            await log1.join(log2, { prune: { from: 2, to: 2 } });
+            const { entry: a1 } = await log1.append("helloA1");
+            const { entry: b1 } = await log2.append("helloB1");
+            const { entry: a2 } = await log1.append("helloA2");
+            const { entry: b2 } = await log2.append("helloB2");
+            await log1.join(log2);
+
             // the joined log will only contain the last two entries a2, b2
             expect(log1.values.map((x) => x.hash)).toContainAllValues([
                 a2.hash,

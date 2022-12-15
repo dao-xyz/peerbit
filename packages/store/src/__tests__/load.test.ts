@@ -79,7 +79,7 @@ describe(`load`, function () {
 
         const data = { data: 12345 };
         await store._addOperation(data).then((entry) => {
-            expect(entry).toBeInstanceOf(Entry);
+            expect(entry.entry).toBeInstanceOf(Entry);
         });
 
         await waitFor(() => done);
@@ -113,7 +113,7 @@ describe(`load`, function () {
 
         const data = { data: 12345 };
         await store._addOperation(data).then((entry) => {
-            expect(entry).toBeInstanceOf(Entry);
+            expect(entry.entry).toBeInstanceOf(Entry);
         });
 
         await waitFor(() => done);
@@ -148,7 +148,7 @@ describe(`load`, function () {
 
         const data = { data: 12345 };
         await store._addOperation(data).then((entry) => {
-            expect(entry).toBeInstanceOf(Entry);
+            expect(entry.entry).toBeInstanceOf(Entry);
         });
 
         await waitFor(() => done);

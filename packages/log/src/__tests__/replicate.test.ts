@@ -208,12 +208,16 @@ describe("ipfs-log - Replication", function () {
             let prev1: Entry<any> = undefined as any;
             let prev2: Entry<any> = undefined as any;
             for (let i = 1; i <= amount; i++) {
-                prev1 = await input1.append("A" + i, {
-                    nexts: prev1 ? [prev1] : undefined,
-                });
-                prev2 = await input2.append("B" + i, {
-                    nexts: prev2 ? [prev2] : undefined,
-                });
+                prev1 = (
+                    await input1.append("A" + i, {
+                        nexts: prev1 ? [prev1] : undefined,
+                    })
+                ).entry;
+                prev2 = (
+                    await input2.append("B" + i, {
+                        nexts: prev2 ? [prev2] : undefined,
+                    })
+                ).entry;
                 const hash1 = await input1.toMultihash();
                 const hash2 = await input2.toMultihash();
                 await session.peers[0].pubsub.publish(

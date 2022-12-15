@@ -20,7 +20,7 @@ let signKey: KeyWithMeta<Ed25519Keypair>,
     signKey2: KeyWithMeta<Ed25519Keypair>,
     signKey3: KeyWithMeta<Ed25519Keypair>;
 
-describe("Log - Iterator", function () {
+describe("Log - GetPow2Refs", function () {
     let keystore: Keystore, store: Blocks;
 
     beforeAll(async () => {
@@ -34,13 +34,8 @@ describe("Log - Iterator", function () {
         keystore = new Keystore(
             await createStore(testKeyStorePath(__filenameBase))
         );
-
         //@ts-ignore
         signKey = await keystore.getKey(new Uint8Array([3]));
-        //@ts-ignore
-        signKey2 = await keystore.getKey(new Uint8Array([2]));
-        //@ts-ignore
-        signKey3 = await keystore.getKey(new Uint8Array([1]));
         store = new Blocks(new MemoryLevelBlockStore());
         await store.open();
     });
@@ -71,53 +66,28 @@ describe("Log - Iterator", function () {
                 await log1.append("entry" + i);
             }
         });
-
-        it("returns a Symbol.iterator object", async () => {
-            const it = log1.iterator({
-                amount: 0,
-            });
-
-            expect(typeof it[Symbol.iterator]).toEqual("function");
-            assert.deepStrictEqual(it.next(), {
-                value: undefined,
-                done: true,
-            });
-        });
-
-        it("returns length from tail and amount", async () => {
-            const amount = 10;
-            const it = log1.iterator({
-                amount: amount,
-            });
-            const length = [...it].length;
-            expect(length).toEqual(10);
-            let i = 0;
-            for (const entry of it) {
-                expect(entry.payload.getValue()).toEqual("entry" + i++);
+        it("get refs one", async () => {
+            const heads = log1.heads;
+            expect(heads).toHaveLength(1);
+            const refs = log1.getPow2Refs(1);
+            expect(refs).toHaveLength(1);
+            for (const head of heads) {
+                expect(refs.find((x) => x.hash === head.hash)).toBeDefined();
             }
         });
 
-        it("returns length from head and amount", async () => {
-            const amount = 10;
-            const it = log1.iterator({
-                amount: amount,
-                from: "head",
-            });
-            const length = [...it].length;
-            expect(length).toEqual(10);
-            let i = 0;
-            for (const entry of it) {
-                expect(entry.payload.getValue()).toEqual("entry" + (100 - i++));
+        it("get refs 8", async () => {
+            const heads = log1.heads;
+            const refs = log1.getPow2Refs(8);
+            expect(refs).toHaveLength(3); // 2**3 = 8
+            for (const head of heads) {
+                expect(refs.find((x) => x.hash === head.hash));
             }
-        });
-
-        it("returns all", async () => {
-            const it = log1.iterator();
-            const length = [...it].length;
-            expect(length).toEqual(101);
             let i = 0;
-            for (const entry of it) {
-                expect(entry.payload.getValue()).toEqual("entry" + i++);
+            for (const entry of refs) {
+                expect(entry.payload.getValue()).toEqual(
+                    "entry" + (100 + 1 - 2 ** i++)
+                );
             }
         });
     });

@@ -29,7 +29,9 @@ export class Values<T> {
     get tail() {
         return this._values.tail;
     }
-
+    get length() {
+        return this._values.length;
+    }
     put(value: Entry<T>) {
         // assume we want to insert at head (or somehere close)
         let walker = this._values.head;

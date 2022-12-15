@@ -1,5 +1,4 @@
 import { EntryIndex } from "./entry-index.js";
-import { GSet } from "./g-set.js";
 import { LogIO } from "./log-io.js";
 import * as LogError from "./log-errors.js";
 import * as Sorting from "./log-sorting.js";
@@ -35,7 +34,7 @@ import { HeadsIndex } from "./heads.js";
 import { Blocks } from "@dao-xyz/peerbit-block";
 import { Values } from "./values.js";
 
-const logger = parentLogger.child({ module: "ipfs-log" });
+const logger = parentLogger.child({ module: "log" });
 
 const { LastWriteWins, NoZeroes } = Sorting;
 const randomId = () => new Date().getTime().toString();
@@ -47,9 +46,13 @@ const uniqueEntriesReducer = <T>(res: Map<string, Entry<T>>, acc: Entry<T>) => {
     return res;
 };
 
-export type PruneToLengthOption = { to: number; from?: number };
-export type PruneToByteLengthOption = { bytelength: number };
-export type PruneOptions = PruneToByteLengthOption | PruneToLengthOption;
+export type TrimToLengthOption = { to: number; from?: number };
+export type TrimToByteLengthOption = { bytelength: number };
+export type TrimOptions =
+    | (TrimToByteLengthOption | TrimToLengthOption)[]
+    | TrimToByteLengthOption
+    | TrimToLengthOption;
+export type Change<T> = { added: Entry<T>[]; removed?: Entry<T>[] };
 
 export type LogOptions<T> = {
     encryption?: PublicKeyEncryptionResolver;
@@ -60,7 +63,7 @@ export type LogOptions<T> = {
     clock?: LamportClock;
     sortFn?: Sorting.ISortFunction;
     concurrency?: number;
-    prune?: PruneOptions;
+    trim?: TrimOptions;
 };
 
 /**
@@ -72,11 +75,13 @@ export type LogOptions<T> = {
  * https://hal.inria.fr/inria-00555588
  */
 
-export class Log<T> extends GSet {
+export class Log<T> {
     _sortFn: Sorting.ISortFunction;
     _storage: Blocks;
     _id: string;
     /*   _rootGid: string; */
+
+    _hlc: HLC;
 
     // Identity
     _identity: Identity;
@@ -85,19 +90,12 @@ export class Log<T> extends GSet {
     _entryIndex: EntryIndex<T>;
     _headsIndex: HeadsIndex<T>;
     _values: Values<T>;
-
     // Index of all next pointers in this log
-    _nextsIndex: { [key: string]: Set<string> };
+    _nextsIndex: Map<string, Set<string>>;
 
-    // next -> entry
-    /*     _nextsIndexToHead: { [key: string]: Set<string> }; */ // TODO make to LRU since this will become invalid quickly (and potentially huge)
-
-    // Set the length, we calculate the length manually internally
-    /*  _clock: Clock; */
-    _prune?: PruneOptions;
+    _trim: TrimOptions = [];
     _encryption?: PublicKeyEncryptionResolver;
     _encoding: Encoding<T>;
-    _hlc: HLC;
 
     joinConcurrency: number;
 
@@ -114,7 +112,7 @@ export class Log<T> extends GSet {
             throw new Error("Identity is required");
         }
         //
-        const { logId, encoding, concurrency, prune, encryption } = options;
+        const { logId, encoding, concurrency, trim, encryption } = options;
         let { sortFn, entries, heads } = options;
 
         if (isDefined(entries) && !Array.isArray(entries)) {
@@ -131,8 +129,6 @@ export class Log<T> extends GSet {
             sortFn = LastWriteWins;
         }
         sortFn = sortFn as Sorting.ISortFunction;
-
-        super();
 
         this._sortFn = NoZeroes(sortFn);
 
@@ -170,19 +166,21 @@ export class Log<T> extends GSet {
         this._values = new Values(this._sortFn, entries);
 
         // Index of all next pointers in this log
-        this._nextsIndex = {};
+        this._nextsIndex = new Map();
 
         // Clock
         this._hlc = new HLC();
 
         const addToNextsIndex = (e: Entry<T>) => {
             e.next.forEach((a) => {
-                let nextIndexSet = this._nextsIndex[a];
+                let nextIndexSet = this._nextsIndex.get(a);
                 if (!nextIndexSet) {
                     nextIndexSet = new Set();
-                    this._nextsIndex[a] = nextIndexSet;
+                    nextIndexSet.add(e.hash);
+                    this._nextsIndex.set(a, nextIndexSet);
+                } else {
+                    nextIndexSet.add(e.hash);
                 }
-                this._nextsIndex[a].add(e.hash);
             });
         };
 
@@ -191,43 +189,26 @@ export class Log<T> extends GSet {
         // Set the length, we calculate the length manually internally
 
         // Set the clock
-        /*  const maxTime = bigIntMax(clock ? clock.time : 0n, this.heads.reduce(maxClockTimeReducer, 0n)) */
-        // Take the given key as the clock id is it's a Key instance,
-        // otherwise if key was given, take whatever it is,
-        // and if it was null, take the given id as the clock id
-        /*     this._clock = new Clock(new Uint8Array(serialize(publicKey)), maxTime) */
-
         this.joinConcurrency = concurrency || 16;
-
-        this._prune = prune;
+        this._trim = trim ? (Array.isArray(trim) ? trim : [trim]) : [];
     }
 
     /**
      * Returns the length of the log.
-     * @return {number} Length
      */
     get length() {
         return this._entryIndex.length;
     }
 
     /**
-     * Returns the values in the log.
-     * @returns {Array<Entry<T>>}
+     * Get all entries sorted
      */
-    /* get values(): Entry<T>[] {
-        return Object.values(
-            this.traverse([...this.headsIndex._index.values()])
-        ).reverse();
-    }
-     */
-
     get values(): Entry<T>[] {
         return this._values.toArray();
     }
 
     /**
-     * Returns an array of heads.
-     * @returns {Array<Entry<T>>}
+     * Returns the head index
      */
     get headsIndex(): HeadsIndex<T> {
         return this._headsIndex;
@@ -362,30 +343,46 @@ export class Log<T> extends GSet {
         return result;
     }
 
-    getPow2Refs(heads: Entry<T>[], pointerCount = 1): Entry<T>[] {
-        const headsToUse = heads;
-        const all = Object.values(
-            this.traverse(headsToUse, Math.max(pointerCount, headsToUse.length))
-        );
-
+    getPow2Refs(pointerCount = 1): Entry<T>[] {
         // If pointer count is 4, returns 2
         // If pointer count is 8, returns 3 references
         // If pointer count is 512, returns 9 references
         // If pointer count is 2048, returns 11 references
         const getEveryPow2 = (maxDistance: number) => {
             const entries = new Set<Entry<T>>();
-            for (let i = 1; i <= maxDistance; i *= 2) {
-                const index = Math.min(i - 1, all.length - 1);
-                entries.add(all[index]);
+
+            if (maxDistance === 0) {
+                return entries;
+            }
+
+            let next = this._values.head;
+            if (next) {
+                entries.add(next.value);
+            }
+
+            let prev = 1;
+            outer: for (let i = 2; i <= maxDistance - 1; i *= 2) {
+                for (let j = prev; j < i; j++) {
+                    if (!next) {
+                        break outer;
+                    }
+                    next = next?.next;
+                }
+                prev = i;
+                if (next) {
+                    entries.add(next?.value);
+                }
             }
             return entries;
         };
-        const references = getEveryPow2(Math.min(pointerCount, all.length));
+        const references = getEveryPow2(
+            Math.min(pointerCount, this._values.length)
+        );
 
         // Always include the last known reference
-        if (all.length < pointerCount && all[all.length - 1]) {
-            references.add(all[all.length - 1]); // TODO can this yield a publicate?
-        }
+        /* if (all.length < pointerCount && all[all.length - 1]) {
+            references.add(all[all.length - 1]); // TODO can this yield a duplicate?
+        } */
         return [...references];
     }
 
@@ -417,20 +414,15 @@ export class Log<T> extends GSet {
             signers?: ((data: Uint8Array) => Promise<SignatureWithKey>)[];
             reciever?: EncryptionTemplateMaybeEncrypted;
             onGidsShadowed?: (gids: string[]) => void;
+            trim?: TrimOptions;
             timestamp?: Timestamp;
-            prune?: PruneOptions;
         } = { pin: false }
-    ) {
+    ): Promise<{ entry: Entry<T>; removed: Entry<T>[] }> {
         if (options.reciever && !this._encryption) {
             throw new Error(
                 "Message is intended to be encrypted but no encryption methods are provided for the log"
             );
         }
-
-        // nextsreolver
-        // 1. all heads
-        // 2. all heads that are references
-        // 3. next = refs if length of refs = 1
 
         // Update the clock (find the latest clock)
         if (options.nexts) {
@@ -447,24 +439,13 @@ export class Log<T> extends GSet {
             ...this.headsIndex._index.values(),
         ];
 
-        // Some heads might not even be referenced by the refs, this will be merged into the headsIndex so we dont forget them
-        /*  const keepHeads: Entry<T>[] = options.nexts
-             ? currentHeads.filter((h) => !nexts.find((e) => e.hash === h.hash))
-             : [];  */ // TODO improve performance
-
         // Calculate max time for log/graph
-        /*  const newTime = ; */
-        /*    nexts?.length > 0
-               ? this.heads.concat(nexts).reduce(maxClockTimeReducer, 0n) + 1n
-               : 0n; */
         const clock = new Clock({
             id: new Uint8Array(serialize(this._identity.publicKey)),
             timestamp: options.timestamp || this._hlc.now(),
-        }); // TODO privacy leak?
+        });
 
         const identity = options.identity || this._identity;
-        /*  let gidsInHeds =
-             options.onGidsShadowed && new Set(this.heads.map((h) => h.gid));  */ // could potentially be faster if we first groupBy
 
         const entry = await Entry.create<T>({
             store: this._storage,
@@ -492,12 +473,14 @@ export class Log<T> extends GSet {
         }
 
         nexts.forEach((e) => {
-            let nextIndexSet = this._nextsIndex[e.hash];
+            let nextIndexSet = this._nextsIndex.get(e.hash);
             if (!nextIndexSet) {
                 nextIndexSet = new Set();
-                this._nextsIndex[e.hash] = nextIndexSet;
+                nextIndexSet.add(entry.hash);
+                this._nextsIndex.set(e.hash, nextIndexSet);
+            } else {
+                nextIndexSet.add(entry.hash);
             }
-            this._nextsIndex[e.hash].add(entry.hash);
         });
 
         const removedGids: Set<string> = new Set();
@@ -522,100 +505,36 @@ export class Log<T> extends GSet {
         this._headsIndex.put(entry);
         this._values.put(entry);
 
-        const prune = options?.prune || this._prune;
-        if (prune) {
-            await this.prune(prune);
-        }
-
         // if next contails all gids
         if (options.onGidsShadowed && removedGids.size > 0) {
             options.onGidsShadowed([...removedGids]);
         }
+
         entry.init({ encoding: this._encoding, encryption: this._encryption });
-        return entry;
+
+        const removed = await this.trim(options?.trim);
+        return { entry, removed };
     }
 
-    /*
-     * Creates a javscript iterator over log entries
-     *
-     * @param {Object} options
-     * @param {string|Array} options.gt Beginning hash of the iterator, non-inclusive
-     * @param {string|Array} options.gte Beginning hash of the iterator, inclusive
-     * @param {string|Array} options.lt Ending hash of the iterator, non-inclusive
-     * @param {string|Array} options.lte Ending hash of the iterator, inclusive
-     * @param {amount} options.amount Number of entried to return to / from the gte / lte hash
-     * @returns {Symbol.Iterator} Iterator object containing log entries
-     *
-     * @examples
-     *
-     * (async () => {
-     *   log1 = new Log(ipfs, testIdentity, { gid:  'X' })
-     *
-     *   for (let i = 0; i <= 100; i++) {
-     *     await log1.append('entry' + i)
-     *   }
-     *
-     *   let it = log1.iterator({
-     *     lte: 'zdpuApFd5XAPkCTmSx7qWQmQzvtdJPtx2K5p9to6ytCS79bfk',
-     *     amount: 10
-     *   })
-     *
-     *   [...it].length // 10
-     * })()
-     *
-     *
-     */
-    iterator(options: {
-        gt?: string;
-        gte?: string;
-        lt?: Entry<T>[] | string;
-        lte?: Entry<T>[] | string;
+    iterator(options?: {
+        from?: "tail" | "head";
         amount?: number;
     }): IterableIterator<Entry<T>> {
-        if (options.amount === undefined) {
-            options.amount = -1;
-        }
-        let { lt, lte } = options;
-        const { gt, gte, amount } = options;
-
-        // TODO make failsafe for missing log values
-
-        if (amount === 0) return [][Symbol.iterator]();
-        if (typeof lte === "string") lte = [this.get(lte)!];
-        if (typeof lt === "string") lt = [this.get(this.get(lt)!.next[0])!];
-
-        if (lte && !Array.isArray(lte))
-            throw LogError.LtOrLteMustBeStringOrArray();
-        if (lt && !Array.isArray(lt))
-            throw LogError.LtOrLteMustBeStringOrArray();
-
-        const start = (lte || lt || [...this.headsIndex.index.values()]).filter(
-            isDefined
-        );
-        const endHash = gte
-            ? this.get(gte)!.hash
-            : gt
-            ? this.get(gt)!.hash
-            : undefined;
-        const count = endHash ? -1 : amount || -1;
-
-        const entries = this.traverse(start, count, endHash);
-        let entryValues = Object.values(entries);
-
-        // Strip off last entry if gt is non-inclusive
-        if (gt) entryValues.pop();
-
-        // Deal with the amount argument working backwards from gt/gte
-        if ((gt || gte) && amount > -1) {
-            entryValues = entryValues.slice(
-                entryValues.length - amount,
-                entryValues.length
-            );
-        }
-
+        const from = options?.from || "tail";
+        const amount =
+            typeof options?.amount === "number" ? options?.amount : -1;
+        let next = from === "tail" ? this._values.tail : this._values.head;
+        const nextFn = from === "tail" ? (e) => e.prev : (e) => e.next;
         return (function* () {
-            for (const i in entryValues) {
-                yield entryValues[i];
+            let counter = 0;
+            while (next) {
+                if (amount >= 0 && counter >= amount) {
+                    return;
+                }
+                yield next.value;
+                counter++;
+
+                next = nextFn(next);
             }
         })();
     }
@@ -633,12 +552,10 @@ export class Log<T> extends GSet {
      */
     async join(
         log: Log<T>,
-        options?: { prune?: PruneOptions; verifySignatures?: boolean }
-    ): Promise<{ change: Entry<T>[] }> {
+        options?: { verifySignatures?: boolean; trim?: TrimOptions }
+    ): Promise<Change<T>> {
         // Get the difference of the logs
         const newItems = await Log.difference(log, this);
-        /* let prevPeers = undefined; */
-
         const nextFromNew = new Set<string>();
         for (const e of newItems.values()) {
             if (options?.verifySignatures) {
@@ -661,10 +578,11 @@ export class Log<T> extends GSet {
                 let nextIndexSet = this._nextsIndex[a];
                 if (!nextIndexSet) {
                     nextIndexSet = new Set();
+                    nextIndexSet.add(a);
                     this._nextsIndex[a] = nextIndexSet;
+                } else {
+                    nextIndexSet.add(a);
                 }
-                this._nextsIndex[a].add(e.hash);
-
                 nextFromNew.add(a);
             });
 
@@ -676,7 +594,8 @@ export class Log<T> extends GSet {
         const notReferencedByNewItems = (e: Entry<any>) =>
             !nextFromNew.has(e.hash);
 
-        const notInCurrentNexts = (e: Entry<any>) => !this._nextsIndex[e.hash];
+        const notInCurrentNexts = (e: Entry<any>) =>
+            !this._nextsIndex.has(e.hash);
         newItems.forEach((v, k) => {
             if (notInCurrentNexts(v) && notReferencedByNewItems(v)) {
                 this.headsIndex.put(v);
@@ -687,70 +606,39 @@ export class Log<T> extends GSet {
             this.headsIndex.del(this.get(next)!);
         });
 
-        const prune = options?.prune || this._prune;
-        if (prune) {
-            await this.prune(prune);
-        }
+        const removed = await this.trim(options?.trim);
 
         return {
-            change: [...newItems.values()],
+            added: [...newItems.values()],
+            removed,
         };
     }
 
-    /* getHeads(from: string): Entry<T>[] {
-        const stack = [from];
-        const traversed = new Set<string>();
-        const res = new Set<string>();
-
-        const pushToStack = (hash: string) => {
-            if (!traversed.has(hash)) {
-                stack.push(hash);
-                traversed.add(hash);
-            }
-        };
-
-        while (stack.length > 0) {
-            const hash = stack.shift();
-            if (!hash) {
-                logger.error("Missing hash when `getHeads`");
-                continue;
-            }
-            const links = this._nextsIndex[hash];
-            const isConstrainedBySize = false; // currentSize - startSize > options.maxSize;
-            if (!links || isConstrainedBySize) {
-                // is head or we have to fork because of size constaint
-                if (from !== hash && !isConstrainedBySize) {
-                    let invertedMapToHead = this._nextsIndexToHead[from];
-                    if (!invertedMapToHead) {
-                        invertedMapToHead = new Set();
-                        this._nextsIndexToHead[from] = invertedMapToHead;
-                    }
-                    invertedMapToHead.add(hash);
-                }
-                res.add(hash);
-                traversed.add(hash);
-            } else {
-                const shortCutLinks = this._nextsIndexToHead[hash];
-                (shortCutLinks || links).forEach(pushToStack);
-            }
-        }
-        return [...res]
-            .map((h) => this.get(h))
-            .filter((x) => !!x) as Entry<T>[];
-    } */
-
     /**
-     * Cut log to size
-     * @param size
+     * @param options
+     * @returns deleted entries
      */
-    async prune(options: PruneOptions) {
+    async trim(option: TrimOptions = this._trim): Promise<Entry<T>[]> {
+        if (!option) {
+            throw new Error("Prune options missing");
+        }
+
+        if (Array.isArray(option)) {
+            const deleted: Entry<T>[] = [];
+            for (const o of option) {
+                deleted.push(...(await this.trim(o)));
+            }
+            return deleted;
+        }
+
+        const deleted: Entry<any>[] = [];
         // Slice to the requested size
         const promises: Promise<void>[] = [];
-        if (typeof (options as PruneToLengthOption).to === "number") {
-            const to = (options as PruneToLengthOption).to;
-            const from = (options as PruneToLengthOption).from || to;
+        if (typeof (option as TrimToLengthOption).to === "number") {
+            const to = (option as TrimToLengthOption).to;
+            const from = (option as TrimToLengthOption).from || to;
             if (this.length <= from) {
-                return;
+                return deleted;
             }
 
             // prune to length
@@ -758,30 +646,33 @@ export class Log<T> extends GSet {
             for (let i = 0; i < len - to; i++) {
                 const entry = this._values.pop();
                 if (!entry) {
-                    return;
+                    break;
                 }
+                deleted.push(entry);
                 this._entryIndex.delete(entry.hash);
                 this._headsIndex.del(entry);
+                this._nextsIndex.delete(entry.hash);
                 promises.push(this._storage.rm(entry.hash));
             }
         } else if (
-            typeof (options as PruneToByteLengthOption).bytelength === "number"
+            typeof (option as TrimToByteLengthOption).bytelength === "number"
         ) {
             // prune to max sum payload sizes in bytes
-            const byteLength = (options as PruneToByteLengthOption).bytelength;
+            const byteLength = (option as TrimToByteLengthOption).bytelength;
             while (this._values.byteLength > byteLength && this.length > 0) {
                 const entry = this._values.pop();
                 if (!entry) {
-                    return;
+                    break;
                 }
+                deleted.push(entry);
                 this._entryIndex.delete(entry.hash);
                 this._headsIndex.del(entry);
+                this._nextsIndex.delete(entry.hash);
                 promises.push(this._storage.rm(entry.hash));
             }
-        } else {
-            throw new Error("Invalid prune options");
         }
         await Promise.all(promises);
+        return deleted;
     }
 
     async deleteRecursively(from: Entry<any> | Entry<any>[]) {
@@ -789,15 +680,14 @@ export class Log<T> extends GSet {
         const promises: Promise<void>[] = [];
         while (stack.length > 0) {
             const entry = stack.pop()!;
+
             this._values.delete(entry);
             this._entryIndex.delete(entry.hash);
             this._headsIndex.del(entry);
-            this._nextsIndex[entry.hash] && delete this._nextsIndex[entry.hash];
-
+            this._nextsIndex.delete(entry.hash);
             for (const next of entry.next) {
                 const ne = this.get(next);
                 if (ne) {
-                    this._nextsIndex[next].delete(entry.hash);
                     stack.push(ne);
                 }
             }
@@ -807,28 +697,23 @@ export class Log<T> extends GSet {
         await Promise.all(promises);
     }
 
-    /*     removeAll(heads: Entry<any>[]) {
-            const stack: Entry<any>[] = [...heads];
-            while (stack.length > 0) {
-                const next = stack.shift();
-                if (!next) {
-                    logger.error("Tried to remove null head");
-                    continue;
+    async delete(entry: Entry<any>) {
+        this._values.delete(entry);
+        this._entryIndex.delete(entry.hash);
+        this._headsIndex.del(entry);
+        this._nextsIndex.delete(entry.hash);
+        for (const next of entry.next) {
+            const ne = this.get(next);
+            if (ne) {
+                const nexts = this._nextsIndex.get(next)!;
+                nexts.delete(entry.hash);
+                if (nexts.size === 0) {
+                    this._headsIndex.put(ne);
                 }
-    
-                this._entryIndex.delete(next.hash);
-                delete this._nextsIndexToHead[next.hash];
-                this._headsIndex.del(next);
-                delete this._nextsIndex[next.hash];
-                next.next.forEach((n) => {
-                    const value = this.get(n);
-                    if (value) {
-                        stack.push(value);
-                    }
-                });
             }
-            this._length = this._entryIndex.length;
-        } */
+        }
+        return entry.delete(this._storage);
+    }
 
     /**
      * Get the log in JSON format.

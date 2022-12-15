@@ -1,4 +1,4 @@
-import { Log } from "@dao-xyz/peerbit-log";
+import { Change, Log } from "@dao-xyz/peerbit-log";
 import { Entry } from "@dao-xyz/peerbit-log";
 import { EntryWithRefs } from "./entry-with-refs";
 
@@ -9,7 +9,7 @@ export const join = async <T>(
         concurrency?: number;
         onFetched?: (entry: Entry<any>) => void;
     }
-): Promise<{ change: Entry<T>[] }> => {
+): Promise<Change<T>> => {
     // Notify the Store that we made progress
 
     const shouldFetch = (h: string) => {

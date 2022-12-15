@@ -1,4 +1,4 @@
-import { Entry } from "@dao-xyz/peerbit-log";
+import { Change, Entry } from "@dao-xyz/peerbit-log";
 import { Log } from "@dao-xyz/peerbit-log";
 
 export class SimpleIndex<T> {
@@ -9,7 +9,7 @@ export class SimpleIndex<T> {
         this._index = [];
     }
 
-    async updateIndex(oplog: Log<T>, entries?: Entry<T>[]) {
+    async updateIndex(oplog: Log<T>, change: Change<T>) {
         this._index = oplog.values;
     }
 }

@@ -16,6 +16,7 @@ import { AddOperationOptions, Store } from "@dao-xyz/peerbit-store";
 import {
     BORSH_ENCODING,
     CanAppend,
+    Change,
     Encoding,
     Entry,
     Log,
@@ -93,10 +94,10 @@ export class Documents<T> extends ComposableProgram {
             canAppend: this.canAppend.bind(this),
             onUpdate: async (
                 oplog: Log<Operation<T>>,
-                entries?: Entry<Operation<T>>[] | undefined
+                change: Change<Operation<T>>
             ) => {
-                await this.handleDeletions(oplog, entries);
-                await this._index.updateIndex(oplog, entries);
+                await this.handleDeletions(oplog, change);
+                await this._index.updateIndex(oplog, change);
             },
         });
         await this._logIndex.setup({
@@ -149,7 +150,7 @@ export class Documents<T> extends ComposableProgram {
                     )
                 ).filter((x) => !!x) as Entry<any>[];
                 await this.store.sync(entries, {
-                    save: this.store.replicate,
+                    save: !!this.replicate,
                     canAppend:
                         this._optionCanAppend?.bind(this) || (() => true),
                 });
@@ -298,11 +299,9 @@ export class Documents<T> extends ComposableProgram {
 
     async handleDeletions(
         log: Log<Operation<T>>,
-        entries?: Entry<Operation<T>>[]
+        change: Change<Operation<T>>
     ): Promise<void> {
-        entries = entries
-            ? entries.sort(this.store.oplog._sortFn)
-            : this.store.oplog.values; // TODO assume sorting is done earlier (?)
+        const entries = change.added.sort(log._sortFn).reverse();
         for (const entry of entries) {
             try {
                 const payload = await entry.getPayloadValue();

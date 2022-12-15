@@ -1,4 +1,3 @@
-import rmrf from "rimraf";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { getReplicationTopic, Peerbit } from "../peer";
 import { EventStore } from "./utils/stores/event-store";
@@ -126,8 +125,8 @@ describe(`Write-only`, function () {
             replicate: false,
         });
 
-        const hello = await store.add("hello", { nexts: [] });
-        const world = await store.add("world", { nexts: [hello] });
+        const { entry: hello } = await store.add("hello", { nexts: [] });
+        const { entry: world } = await store.add("world", { nexts: [hello] });
 
         expect(store.store.oplog.heads).toHaveLength(1);
 

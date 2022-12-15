@@ -117,7 +117,7 @@ describe(`Subprogram`, function () {
             replicate: false,
         });
 
-        const eventStore = await store.eventStore.put(
+        const { entry: eventStore } = await store.eventStore.put(
             new EventStore({ id: "store 1" })
         );
         const _eventStore2 = await store.eventStore.put(

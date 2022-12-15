@@ -110,10 +110,12 @@ describe("Log - Append", function () {
             );
             let prev: any = undefined;
             for (let i = 0; i < amount; i++) {
-                prev = await log.append("hello" + i, {
-                    pin: false,
-                    nexts: prev ? [prev] : undefined,
-                }); //,  refs: log.getPow2Refs(nextPointerAmount) })
+                prev = (
+                    await log.append("hello" + i, {
+                        pin: false,
+                        nexts: prev ? [prev] : undefined,
+                    })
+                ).entry;
                 // Make sure the log has the right heads after each append
                 const values = log.values;
                 expect(log.heads.length).toEqual(1);

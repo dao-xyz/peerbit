@@ -62,12 +62,12 @@ describe("Log - Delete", function () {
             },
             { logId: "A" }
         );
-        const e1 = await log.append("hello1");
-        const e2 = await log.append("hello2");
-        const e3 = await log.append("hello3");
+        const { entry: e1 } = await log.append("hello1");
+        const { entry: e2 } = await log.append("hello2");
+        const { entry: e3 } = await log.append("hello3");
 
         await log.deleteRecursively(e2);
-        expect(Object.keys(log._nextsIndex).length).toEqual(0);
+        expect(log._nextsIndex.size).toEqual(0);
         expect(log.values.length).toEqual(1);
         expect(log.get(e1.hash)).toBeUndefined();
         expect(await blockExists(e1.hash)).toBeFalse();
@@ -79,7 +79,7 @@ describe("Log - Delete", function () {
         await log.deleteRecursively(e3);
         expect(log.values.length).toEqual(0);
         expect(log.heads).toHaveLength(0);
-        expect(Object.keys(log._nextsIndex).length).toEqual(0);
+        expect(log._nextsIndex.size).toEqual(0);
         expect(log._entryIndex.length).toEqual(0);
     });
 });

@@ -75,6 +75,7 @@ import {
 import sodium from "libsodium-wrappers";
 import { delay } from "@dao-xyz/peerbit-time";
 import path from "path-browserify";
+import { waitFor, TimeoutError } from "@dao-xyz/peerbit-time";
 export const logger = loggerFn({ module: "peer" });
 await sodium.ready;
 
@@ -120,9 +121,10 @@ export type CreateInstanceOptions = {
     localNetwork?: boolean;
     browser?: boolean;
 } & OptionalCreateOptions;
-export type OpenStoreOptions = {
+export type OpenOptions = {
     identity?: Identity;
     entryToReplicate?: Entry<any>;
+    replicate?: boolean;
     directory?: string;
     timeout?: number;
     minReplicas?: MinReplicas;
@@ -493,7 +495,7 @@ export class Peerbit {
                   }
                 : undefined;
         let send = sendAll;
-        if (!this.browser && store.replicate) {
+        if (!this.browser && program.replicate) {
             // send to peers directly
             send = async (data: Uint8Array) => {
                 const minReplicas = this.programs
@@ -909,7 +911,10 @@ export class Peerbit {
                 ] of programs.entries()) {
                     for (const [_, store] of programAndStores.program
                         .allStoresMap) {
-                        if (!this.browser && store.replicate) {
+                        if (
+                            !this.browser &&
+                            programAndStores.program.replicate
+                        ) {
                             // create a channel for sending/receiving messages
 
                             await initializeAsNonBrowser();
@@ -999,37 +1004,52 @@ export class Peerbit {
                                     // second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
 
                                     // send heads to the new peer
-                                    const channel =
-                                        this._directConnections.get(
-                                            newPeer
-                                        )?.channel;
-                                    if (!channel) {
-                                        logger.error(
-                                            "Missing channel when reorg to peer: " +
-                                                newPeer.toString()
+                                    try {
+                                        const channel = await waitFor(
+                                            () =>
+                                                this._directConnections.get(
+                                                    newPeer
+                                                )?.channel
                                         );
-                                        continue;
+                                        if (!channel) {
+                                            logger.error(
+                                                "Missing channel when reorg to peer: " +
+                                                    newPeer.toString()
+                                            );
+                                            continue;
+                                        }
+
+                                        logger.debug(
+                                            `${this.id}: Exchange heads ${
+                                                entries.length === 1
+                                                    ? entries[0].hash
+                                                    : "#" + entries.length
+                                            }  on rebalance ${topic}`
+                                        );
+
+                                        await exchangeHeads(
+                                            async (message) => {
+                                                await channel.send(message);
+                                            },
+                                            store,
+                                            programInfo.program,
+                                            entries,
+                                            topic,
+                                            true,
+                                            this.limitSigning
+                                                ? undefined
+                                                : this.identity
+                                        );
+                                    } catch (error) {
+                                        if (error instanceof TimeoutError) {
+                                            logger.error(
+                                                "Missing channel when reorg to peer: " +
+                                                    newPeer.toString()
+                                            );
+                                            continue;
+                                        }
+                                        throw error;
                                     }
-                                    logger.debug(
-                                        `${this.id}: Exchange heads ${
-                                            entries.length === 1
-                                                ? entries[0].hash
-                                                : "#" + entries.length
-                                        }  on rebalance ${topic}`
-                                    );
-                                    await exchangeHeads(
-                                        async (message) => {
-                                            await channel.send(message);
-                                        },
-                                        store,
-                                        programInfo.program,
-                                        entries,
-                                        topic,
-                                        true,
-                                        this.limitSigning
-                                            ? undefined
-                                            : this.identity
-                                    );
                                 }
                             }
 
@@ -1088,8 +1108,8 @@ export class Peerbit {
                         onPeerLeaveCallback: (channel) => {
                             // First modify direct connections
                             this._directConnections
-                                .get(channel.recieverId.toString())
-                                ?.close(channel.recieverId.toString());
+                                .get(channel.recieverId.toString())!
+                                .close(channel.recieverId.toString());
 
                             // Then perform replication reorg
                             this._reorgQueue.add(() =>
@@ -1098,11 +1118,10 @@ export class Peerbit {
                         },
                         onNewPeerCallback: (channel) => {
                             // First modify direct connections
-                            if (
-                                !this._directConnections.has(
-                                    channel.recieverId.toString()
-                                )
-                            ) {
+                            const sharedChannel = this._directConnections.get(
+                                channel.recieverId.toString()
+                            );
+                            if (!sharedChannel) {
                                 this._directConnections.set(
                                     channel.recieverId.toString(),
                                     new SharedChannel(
@@ -1111,9 +1130,7 @@ export class Peerbit {
                                     )
                                 );
                             } else {
-                                this._directConnections
-                                    .get(channel.recieverId.toString())
-                                    ?.dependencies.add(fromTopic);
+                                sharedChannel.dependencies.add(fromTopic);
                             }
 
                             // Then perform replication reorg
@@ -1448,7 +1465,7 @@ export class Peerbit {
 
     async open<S extends Program>(
         storeOrAddress: /* string | Address |  */ S | Address | string,
-        options: OpenStoreOptions = {}
+        options: OpenOptions = {}
     ): Promise<S> {
         if (this._disconnected || this._disconnecting) {
             throw new Error("Can not open a store while disconnected");
@@ -1602,10 +1619,9 @@ export class Peerbit {
                     topic: definedTopic,
                     onClose: () => this._onProgamClose(program, definedTopic!),
                     onDrop: () => this._onProgamClose(program, definedTopic!),
-
+                    replicate,
                     store: {
                         ...options,
-                        replicate,
                         resolveCache: (store) => {
                             const programAddress = program.address?.toString();
                             if (!programAddress) {

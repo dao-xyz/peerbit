@@ -1,4 +1,4 @@
-import { JSON_ENCODING, Log } from "@dao-xyz/peerbit-log";
+import { Change, JSON_ENCODING, Log } from "@dao-xyz/peerbit-log";
 import { Entry } from "@dao-xyz/peerbit-log";
 import { Store } from "@dao-xyz/peerbit-store";
 import { EncryptionTemplateMaybeEncrypted } from "@dao-xyz/peerbit-log";
@@ -24,10 +24,7 @@ export class EventIndex<T> {
         return this._index ? this._index.values : [];
     }
 
-    async updateIndex(
-        oplog: Log<Operation<T>>,
-        entries?: Entry<Operation<T>>[] | undefined
-    ) {
+    async updateIndex(oplog: Log<Operation<T>>, change: Change<Operation<T>>) {
         this._index = oplog;
     }
 }

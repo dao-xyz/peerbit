@@ -241,10 +241,10 @@ describe("Log - Join", function () {
         });
 
         it("joins logs two ways", async () => {
-            const a1 = await log1.append("helloA1");
-            const b1 = await log2.append("helloB1");
-            const a2 = await log1.append("helloA2");
-            const b2 = await log2.append("helloB2");
+            const { entry: a1 } = await log1.append("helloA1");
+            const { entry: b1 } = await log2.append("helloB1");
+            const { entry: a2 } = await log1.append("helloA2");
+            const { entry: b2 } = await log2.append("helloB2");
             await log1.join(log2);
             await log2.join(log1);
 
@@ -271,8 +271,8 @@ describe("Log - Join", function () {
             await log2.append("helloB1");
             await log2.join(log1);
 
-            const a2 = await log1.append("helloA2");
-            const b2 = await log2.append("helloB2");
+            const { entry: a2 } = await log1.append("helloA2");
+            const { entry: b2 } = await log2.append("helloB2");
             await log2.join(log1);
 
             const expectedData = ["helloA1", "helloB1", "helloA2", "helloB2"];
@@ -292,8 +292,8 @@ describe("Log - Join", function () {
             await log2.append("helloB1");
             await log2.join(log1);
             await log1.join(log2);
-            const a2 = await log1.append("helloA2");
-            const b2 = await log2.append("helloB2");
+            const { entry: a2 } = await log1.append("helloA2");
+            const { entry: b2 } = await log2.append("helloB2");
             await log2.join(log1);
 
             const expectedData = ["helloA1", "helloB1", "helloA2", "helloB2"];
@@ -347,10 +347,10 @@ describe("Log - Join", function () {
             await log2.append("helloB1");
             await log3.append("helloC1");
             await log4.append("helloD1");
-            const a2 = await log1.append("helloA2");
-            const b2 = await log2.append("helloB2");
-            const c2 = await log3.append("helloC2");
-            const d2 = await log4.append("helloD2");
+            const { entry: a2 } = await log1.append("helloA2");
+            const { entry: b2 } = await log2.append("helloB2");
+            const { entry: c2 } = await log3.append("helloC2");
+            const { entry: d2 } = await log4.append("helloD2");
             await log1.join(log2);
             await log1.join(log3);
             await log1.join(log4);
@@ -398,11 +398,11 @@ describe("Log - Join", function () {
         });
 
         it("joins logs and updates clocks", async () => {
-            const a1 = await log1.append("helloA1");
-            const b1 = await log2.append("helloB1");
+            const { entry: a1 } = await log1.append("helloA1");
+            const { entry: b1 } = await log2.append("helloB1");
             await log2.join(log1);
-            const a2 = await log1.append("helloA2");
-            const b2 = await log2.append("helloB2");
+            const { entry: a2 } = await log1.append("helloA2");
+            const { entry: b2 } = await log2.append("helloB2");
 
             expect(a2.metadata.clock.id).toEqual(
                 signKey.keypair.publicKey.bytes
@@ -420,27 +420,27 @@ describe("Log - Join", function () {
             await log3.join(log1);
 
             await log3.append("helloC1");
-            const c2 = await log3.append("helloC2");
+            const { entry: c2 } = await log3.append("helloC2");
             await log1.join(log3);
             await log1.join(log2);
             await log4.append("helloD1");
-            const d2 = await log4.append("helloD2");
+            const { entry: d2 } = await log4.append("helloD2");
             await log4.join(log2);
             await log4.join(log1);
             await log4.join(log3);
-            const d3 = await log4.append("helloD3");
+            const { entry: d3 } = await log4.append("helloD3");
             expect(d3.gid).toEqual(c2.gid); // because c2 is the longest
             await log4.append("helloD4");
             await log1.join(log4);
             await log4.join(log1);
-            const d5 = await log4.append("helloD5");
+            const { entry: d5 } = await log4.append("helloD5");
             expect(d5.gid).toEqual(c2.gid); // because c2 previously
 
-            const a5 = await log1.append("helloA5");
+            const { entry: a5 } = await log1.append("helloA5");
             expect(a5.gid).toEqual(c2.gid); // because log1 joined with lgo4 and log4 was c2 (and len log4 > log1)
 
             await log4.join(log1);
-            const d6 = await log4.append("helloD6");
+            const { entry: d6 } = await log4.append("helloD6");
             expect(d5.gid).toEqual(a5.gid);
             expect(d6.gid).toEqual(a5.gid);
 
@@ -512,12 +512,12 @@ describe("Log - Join", function () {
         });
 
         it("joins logs from 4 logs", async () => {
-            const a1 = await log1.append("helloA1");
+            const { entry: a1 } = await log1.append("helloA1");
             await log1.join(log2);
-            const b1 = await log2.append("helloB1");
+            const { entry: b1 } = await log2.append("helloB1");
             await log2.join(log1);
-            const a2 = await log1.append("helloA2");
-            const b2 = await log2.append("helloB2");
+            const { entry: a2 } = await log1.append("helloA2");
+            await log2.append("helloB2");
 
             await log1.join(log3);
             // Sometimes failes because of clock ids are random TODO Fix
@@ -542,7 +542,7 @@ describe("Log - Join", function () {
             await log4.join(log1);
             await log4.join(log3);
             await log4.append("helloD3");
-            const d4 = await log4.append("helloD4");
+            const { entry: d4 } = await log4.append("helloD4");
 
             expect(d4.metadata.clock.id).toEqual(
                 signKey4.keypair.publicKey.bytes
@@ -580,10 +580,14 @@ describe("Log - Join", function () {
                 └──────┘
                 */
 
-                const a1 = await log1.append("helloA1", { nexts: [] });
-                const b1 = await log1.append("helloB1", { nexts: [] });
+                const { entry: a1 } = await log1.append("helloA1", {
+                    nexts: [],
+                });
+                const { entry: b1 } = await log1.append("helloB1", {
+                    nexts: [],
+                });
                 let callbackValue: string[] = undefined as any;
-                const ab1 = await log1.append("helloAB1", {
+                const { entry: ab1 } = await log1.append("helloAB1", {
                     nexts: [a1, b1],
                     onGidsShadowed: (gids) => (callbackValue = gids),
                 });
@@ -607,22 +611,30 @@ describe("Log - Join", function () {
                     └─────┘   
                 */
 
-                const a0 = await log1.append("helloA0", { nexts: [] });
-                const a1 = await log1.append("helloA1", { nexts: [a0] });
-                const b1 = await log1.append("helloB1", { nexts: [] });
-                const b2 = await log1.append("helloB2", { nexts: [b1] });
+                const { entry: a0 } = await log1.append("helloA0", {
+                    nexts: [],
+                });
+                const { entry: a1 } = await log1.append("helloA1", {
+                    nexts: [a0],
+                });
+                const { entry: b1 } = await log1.append("helloB1", {
+                    nexts: [],
+                });
+                await log1.append("helloB2", { nexts: [b1] });
 
                 let callbackValue: any;
                 // make sure gid is choosen from 1 bs
 
-                const a2 = await log1.append("helloA2", {
+                await log1.append("helloA2", {
                     nexts: [a1, b1],
                     onGidsShadowed: (gids) => (callbackValue = gids),
                 });
                 expect(callbackValue).toBeUndefined();
             });
         });
-        describe("takes length as an argument", () => {
+
+        // TODO move this into the prune test file
+        describe("join and prune", () => {
             beforeEach(async () => {
                 await log1.append("helloA1");
                 await log2.append("helloB1");
@@ -631,7 +643,8 @@ describe("Log - Join", function () {
             });
 
             it("joins only specified amount of entries - one entry", async () => {
-                await log1.join(log2, { prune: { to: 1 } });
+                await log1.join(log2);
+                await log1.trim({ to: 1 });
 
                 const expectedData = ["helloB2"];
                 const lastEntry = last(log1.values);
@@ -645,7 +658,8 @@ describe("Log - Join", function () {
             });
 
             it("joins only specified amount of entries - two entries", async () => {
-                await log1.join(log2, { prune: { to: 2 } });
+                await log1.join(log2);
+                await log1.trim({ to: 2 });
 
                 const expectedData = ["helloA2", "helloB2"];
                 const lastEntry = last(log1.values);
@@ -658,7 +672,8 @@ describe("Log - Join", function () {
             });
 
             it("joins only specified amount of entries - three entries", async () => {
-                await log1.join(log2, { prune: { to: 3 } });
+                await log1.join(log2);
+                await log1.trim({ to: 3 });
 
                 const expectedData = ["helloB1", "helloA2", "helloB2"];
                 const lastEntry = last(log1.values);
@@ -671,7 +686,8 @@ describe("Log - Join", function () {
             });
 
             it("joins only specified amount of entries - (all) four entries", async () => {
-                await log1.join(log2, { prune: { to: 4 } });
+                await log1.join(log2);
+                await log1.trim({ to: 4 });
 
                 const expectedData = [
                     "helloA1",

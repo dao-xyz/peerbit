@@ -3,11 +3,14 @@ import PQueue from "p-queue";
 import {
     Log,
     ISortFunction,
-    PruneOptions,
+    TrimOptions,
     LogOptions,
     Identity,
     CanAppend,
     JSON_ENCODING,
+    Change,
+    TrimToLengthOption,
+    TrimToByteLengthOption,
 } from "@dao-xyz/peerbit-log";
 import {
     Encoding,
@@ -33,12 +36,11 @@ import { join } from "./replicator.js";
 const logger = loggerFn({ module: "store" });
 
 export class CachedValue {}
-
 export type AddOperationOptions<T> = {
     skipCanAppendCheck?: boolean;
     identity?: Identity;
     nexts?: Entry<T>[];
-    prune?: PruneOptions;
+    trim?: TrimOptions | TrimToByteLengthOption | TrimToLengthOption;
     pin?: boolean;
     reciever?: EncryptionTemplateMaybeEncrypted;
 };
@@ -94,12 +96,6 @@ export interface IStoreOptions<T> {
      * The directory where data will be stored
      */
     directory?: string;
-
-    /**
-     * Replicate the database with peers, requires IPFS PubSub. (Default: true)
-     */
-    replicate?: boolean;
-
     onClose?: (store: Store<T>) => void;
     onDrop?: (store: Store<T>) => void;
     onLoad?: (store: Store<T>) => void;
@@ -117,8 +113,8 @@ export interface IStoreOptions<T> {
     fetchEntryTimeout?: number;
     replicationConcurrency?: number;
     sortFn?: ISortFunction;
-    prune?: PruneOptions;
-    onUpdate?: (oplog: Log<T>, entries?: Entry<T>[]) => void;
+    trim?: TrimOptions;
+    onUpdate?: (oplog: Log<T>, change: Change<T>) => void;
 }
 
 export interface IInitializationOptions<T>
@@ -155,19 +151,16 @@ export class Store<T> implements Initiable<T> {
     _storeIndex: number; // how to ensure unqiueness
 
     _canAppend?: CanAppend<T>;
-    _onUpdate?: (oplog: Log<T>, entries?: Entry<T>[]) => Promise<void> | void;
+    _onUpdate?: (oplog: Log<T>, change: Change<T>) => Promise<void> | void;
     _onUpdateOption?: (
         oplog: Log<T>,
-        entries?: Entry<T>[]
+        change: Change<T>
     ) => Promise<void> | void;
 
     // An access controller that is note part of the store manifest, usefull for circular store -> access controller -> store structures
 
     _options: IInitializationOptions<T>;
     identity: Identity;
-
-    /*   events: EventEmitter;
-     */
     headsPath: string;
     snapshotPath: string;
     initialized: boolean;
@@ -192,7 +185,7 @@ export class Store<T> implements Initiable<T> {
     setup(properties: {
         encoding: Encoding<T>;
         canAppend: CanAppend<T>;
-        onUpdate: (oplog: Log<T>, entries?: Entry<T>[]) => void;
+        onUpdate: (oplog: Log<T>, change: Change<T>) => void;
     }) {
         this.encoding = properties.encoding;
         this.onUpdate = properties.onUpdate;
@@ -235,7 +228,6 @@ export class Store<T> implements Initiable<T> {
 
         // _addOperation and log-joins queue. Adding ops and joins to the queue
         // makes sure they get processed sequentially to avoid race conditions
-        // between writes and joins (coming from Replicator)
         this._queue = new PQueue({ concurrency: 1 });
 
         this._stats = {
@@ -288,7 +280,7 @@ export class Store<T> implements Initiable<T> {
             encryption: this._options.encryption,
             encoding: this.encoding,
             sortFn: this._options.sortFn,
-            prune: this._options.prune,
+            trim: this._options.trim,
         };
     }
 
@@ -305,7 +297,7 @@ export class Store<T> implements Initiable<T> {
         return this._canAppend;
     }
 
-    set onUpdate(onUpdate: (oplog: Log<T>, entries?: Entry<T>[]) => void) {
+    set onUpdate(onUpdate: (oplog: Log<T>, change: Change<T>) => void) {
         this._onUpdate = onUpdate;
     }
 
@@ -391,10 +383,33 @@ export class Store<T> implements Initiable<T> {
 
         // Update the index
         if (heads.length > 0) {
-            await this._updateIndex();
+            await this._updateIndex({ added: log.values });
         }
 
         this._options.onReady && this._options.onReady(this);
+    }
+
+    async _addOperation(
+        data: T,
+        options?: AddOperationOptions<T>
+    ): Promise<{ entry: Entry<T>; removed: Entry<T>[] }> {
+        const isReferencingAllHeads = !options?.nexts;
+        const change = await this._oplog.append(data, {
+            nexts: options?.nexts,
+            pin: options?.pin,
+            reciever: options?.reciever,
+            canAppend: options?.skipCanAppendCheck ? undefined : this.canAppend,
+            identity: options?.identity,
+            trim: options?.trim,
+        });
+        logger.debug("Appended entry with hash: " + change.entry.hash);
+        await this.updateHeadsCache([change.entry.hash], isReferencingAllHeads);
+        await this._updateIndex({
+            added: [change.entry],
+            removed: change.removed,
+        });
+        this._options.onWrite && this._options.onWrite(this, change.entry);
+        return change;
     }
 
     /**
@@ -500,7 +515,7 @@ export class Store<T> implements Initiable<T> {
         }
 
         const saved = await mapSeries(newEntries, handle);
-        const { change } = await join(
+        const change = await join(
             saved as EntryWithRefs<T>[] | Entry<T>[],
             this._oplog,
             {
@@ -517,10 +532,6 @@ export class Store<T> implements Initiable<T> {
         this._options.onReplicationComplete &&
             this._options.onReplicationComplete(this);
         return true;
-    }
-
-    get replicate(): boolean {
-        return !!this._options.replicate;
     }
 
     async getCachedHeads(): Promise<string[]> {
@@ -595,7 +606,7 @@ export class Store<T> implements Initiable<T> {
                         onFetched: this._onLoadProgress.bind(this),
                     }
                 );
-                await this._updateIndex();
+                await this._updateIndex({ added: this._oplog.values });
                 this._options.onReplicationComplete &&
                     this._options.onReplicationComplete(this);
             }
@@ -607,16 +618,16 @@ export class Store<T> implements Initiable<T> {
         return this;
     }
 
-    async _updateIndex(entries?: Entry<T>[]) {
+    async _updateIndex(change: Change<T>) {
         // TODO add better error handling
         try {
             if (this._onUpdate) {
-                await this._onUpdate(this._oplog, entries);
+                await this._onUpdate(this._oplog, change);
             }
         } catch (error) {
             if (error instanceof AccessError) {
                 // fail silently for now
-                logger.info("Could not update index due to AccessError");
+                logger.info("Could not _onUpdate due to AccessError");
             } else {
                 throw error;
             }
@@ -624,42 +635,16 @@ export class Store<T> implements Initiable<T> {
 
         try {
             if (this._onUpdateOption) {
-                await this._onUpdateOption(this._oplog, entries);
+                await this._onUpdateOption(this._oplog, change);
             }
         } catch (error) {
             if (error instanceof AccessError) {
                 // fail silently for now
-                logger.info("Could not update index due to AccessError");
+                logger.info("Could not _onUpdateOption due to AccessError");
             } else {
                 throw error;
             }
         }
-    }
-
-    async _addOperation(
-        data: T,
-        options?: AddOperationOptions<T>
-    ): Promise<Entry<T>> {
-        const isReferencingAllHeads = !options?.nexts;
-        const entry = await this._oplog.append(data, {
-            nexts: options?.nexts,
-            pin: options?.pin,
-            reciever: options?.reciever,
-            canAppend: options?.skipCanAppendCheck ? undefined : this.canAppend,
-            identity: options?.identity,
-            prune: options?.prune,
-        });
-        logger.debug("Appended entry with hash: " + entry.hash);
-        await this.updateHeadsCache([entry.hash], isReferencingAllHeads);
-        await this._updateIndex([entry]);
-
-        // The row below will emit an "event", which is subscribed to on the orbit-db client (confusing enough)
-        // there, the write is binded to the pubsub publish, with the entry. Which will send this entry
-        // to all the connected peers to tell them that a new entry has been added
-        // TODO: don't use events, or make it more transparent that there is a vital subscription in the background
-        // that is handling replication
-        this._options.onWrite && this._options.onWrite(this, entry);
-        return entry;
     }
 
     /* Loading progress callback */

@@ -7,7 +7,7 @@ import {
     vec,
 } from "@dao-xyz/borsh";
 import { asString, Hashable } from "./utils.js";
-import { BORSH_ENCODING, Encoding, Entry } from "@dao-xyz/peerbit-log";
+import { BORSH_ENCODING, Change, Encoding, Entry } from "@dao-xyz/peerbit-log";
 import { Log } from "@dao-xyz/peerbit-log";
 import { arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
 import { ComposableProgram } from "@dao-xyz/peerbit-program";
@@ -71,7 +71,7 @@ export class PutOperation<T> extends Operation<T> {
     }
 }
 
-@variant(1)
+/* @variant(1)
 export class PutAllOperation<T> extends Operation<T> {
     @field({ type: vec(PutOperation) })
     docs: PutOperation<T>[];
@@ -83,7 +83,7 @@ export class PutAllOperation<T> extends Operation<T> {
         }
     }
 }
-
+ */
 @variant(2)
 export class DeleteOperation extends Operation<any> {
     @field({ type: "string" })
@@ -169,20 +169,21 @@ export class DocumentIndex<T> extends ComposableProgram {
         return this._index.size;
     }
 
-    async updateIndex(
-        oplog: Log<Operation<T>>,
-        entries?: Entry<Operation<T>>[]
-    ) {
+    async updateIndex(oplog: Log<Operation<T>>, change: Change<Operation<T>>) {
         if (!this.type) {
             throw new Error("Not initialized");
         }
 
-        const handled: { [key: string]: boolean } = {};
-        const values = entries ? entries.sort(oplog._sortFn) : oplog.values;
-        for (const item of values) {
+        const removed = [...(change.removed || [])];
+        const removedSet = new Set<string>(removed.map((x) => x.hash));
+        const entries = [...change.added, ...(change.removed || [])]
+            .sort(oplog._sortFn)
+            .reverse();
+
+        for (const item of entries) {
             try {
                 const payload = await item.getPayloadValue();
-                if (payload instanceof PutAllOperation) {
+                /* if (payload instanceof PutAllOperation) {
                     for (const doc of payload.docs) {
                         if (doc && handled[doc.key] !== true) {
                             handled[doc.key] = true;
@@ -202,10 +203,12 @@ export class DocumentIndex<T> extends ComposableProgram {
                             });
                         }
                     }
-                } else if (payload instanceof PutOperation) {
+                } else  */
+                if (payload instanceof PutOperation) {
                     const key = payload.key;
-                    if (handled[key] !== true) {
-                        handled[key] = true;
+                    if (removedSet.has(item.hash)) {
+                        this._index.delete(key);
+                    } else {
                         this._index.set(key, {
                             entry: item,
                             key: payload.key,
@@ -221,10 +224,11 @@ export class DocumentIndex<T> extends ComposableProgram {
                         });
                     }
                 } else if (payload instanceof DeleteOperation) {
-                    const key = payload.key;
-                    if (handled[key] !== true) {
-                        handled[key] = true;
+                    if (!removedSet.has(item.hash)) {
+                        const key = payload.key;
                         this._index.delete(key);
+                    } else {
+                        // TODO, a delete operation entry has been removed, this means that an entry should not be deleted, however, the inverse of deletion is to do nothing.. (?)
                     }
                 } else {
                     // Unknown operation
