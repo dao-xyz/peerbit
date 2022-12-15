@@ -47,6 +47,10 @@ describe(`sharding`, function () {
         await network.add(client3.id);
         await network.add(client3.identity.publicKey);
         db3 = await client3.open<PermissionedEventStore>(db1.address!);
+
+        await waitFor(() => client1._directConnections.size == 2);
+        await waitFor(() => client2._directConnections.size == 2);
+        await waitFor(() => client3._directConnections.size == 2);
     });
 
     afterEach(async () => {
@@ -65,7 +69,7 @@ describe(`sharding`, function () {
 
     it("can distribute evenly among peers", async () => {
         // TODO this test is flaky, because it sometimes timeouts because distribution of data among peers is random for small entry counts
-        const entryCount = 60;
+        const entryCount = 100;
 
         // expect min replicas 2 with 3 peers, this means that 66% of entries (ca) will be at peer 2 and 3, and peer1 will have all of them since 1 is the creator
         const promises: Promise<any>[] = [];
@@ -103,4 +107,6 @@ describe(`sharding`, function () {
             delayInterval: 5000,
         });
     });
+
+    // TODO add tests for late joining and leaving peers
 });
