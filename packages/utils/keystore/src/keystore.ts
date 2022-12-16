@@ -216,25 +216,6 @@ export class Keystore {
         } = {}
     ): Promise<KeyWithMeta<T>> {
         await sodium.ready;
-        /*  let key: { secretKey: X25519SecretKey, publicKey: X25519PublicKey } | { secretKey: Ed25519PrivateKey, publicKey: Ed25519PublicKey } = undefined; */
-        /* 
-        if (type as any === BoxKeyWithMeta) { // TODO fix types
-          let kp = await sodium.crypto_box_keypair();
-          key = {
-            secretKey: new X25519SecretKey({ secretKey: kp.privateKey }),
-            publicKey: new X25519PublicKey({ publicKey: kp.publicKey }),
-          }
-        }
-        else if (type as any === KeyWithMeta<Ed25519Keypair>) { // TODO fix types
-          let kp = await sodium.crypto_sign_keypair()
-          key = {
-            secretKey: new Ed25519PrivateKey({ secretKey: kp.privateKey }),
-            publicKey: new Ed25519PublicKey({ publicKey: kp.publicKey }),
-          }
-        }
-        else {
-          throw new Error("Unuspported")
-        } */
         const keyWithMeta = new KeyWithMeta({
             timestamp: BigInt(+new Date()),
             group: options.group || DEFAULT_KEY_GROUP,
