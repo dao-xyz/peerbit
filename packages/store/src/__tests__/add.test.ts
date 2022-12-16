@@ -94,7 +94,7 @@ describe(`addOperation`, function () {
 
         const data = { data: 12345 };
 
-        await store._addOperation(data).then((entry) => {
+        await store.addOperation(data).then((entry) => {
             expect(entry.entry).toBeInstanceOf(Entry);
         });
 
@@ -142,7 +142,7 @@ describe(`addOperation`, function () {
         );
 
         for (let i = 0; i < writes; i++) {
-            await store._addOperation({ step: i });
+            await store.addOperation({ step: i });
         }
 
         await waitFor(() => done);
@@ -190,7 +190,7 @@ describe(`addOperation`, function () {
 
         for (let i = 0; i < writes; i++) {
             allAddedEntries.push(
-                (await store._addOperation({ step: i }, { nexts: [] })).entry
+                (await store.addOperation({ step: i }, { nexts: [] })).entry
                     .hash
             );
         }

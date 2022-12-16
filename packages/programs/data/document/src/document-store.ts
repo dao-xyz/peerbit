@@ -266,7 +266,7 @@ export class Documents<T> extends ComposableProgram {
         const ser = serialize(doc);
         const existingDocument = this._index.get(key);
 
-        return this.store._addOperation(
+        return this.store.addOperation(
             new PutOperation({
                 key: asString((doc as any)[this._index.indexBy]),
                 data: ser,
@@ -288,7 +288,7 @@ export class Documents<T> extends ComposableProgram {
             throw new Error(`No entry with key '${key}' in the database`);
         }
 
-        return this.store._addOperation(
+        return this.store.addOperation(
             new DeleteOperation({
                 key: asString(key),
                 permanently: options?.permanent,
@@ -311,9 +311,10 @@ export class Documents<T> extends ComposableProgram {
                         const nexts = entry.next
                             .map((n) => log.get(n))
                             .filter((x) => !!x) as Entry<any>[];
-                        await Promise.all(
-                            nexts.map((n) => log.deleteRecursively(n))
-                        );
+
+                        await this.store.removeOperation(nexts, {
+                            recursively: true,
+                        });
                     }
                 } else {
                     // Unknown operation

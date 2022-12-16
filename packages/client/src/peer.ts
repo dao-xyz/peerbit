@@ -1058,7 +1058,9 @@ export class Peerbit {
                             ) {
                                 // delete entries since we are not suppose to replicate this anymore
                                 // TODO add delay? freeze time? (to ensure resiliance for bad io)
-                                await store.oplog.deleteRecursively(entries);
+                                await store.removeOperation(entries, {
+                                    recursively: true,
+                                });
 
                                 // TODO if length === 0 maybe close store?
                             }
@@ -1622,6 +1624,7 @@ export class Peerbit {
                     replicate,
                     store: {
                         ...options,
+                        cacheId: programAddress,
                         resolveCache: (store) => {
                             const programAddress = program.address?.toString();
                             if (!programAddress) {

@@ -146,7 +146,7 @@ describe(`addOperation`, function () {
             options
         );
 
-        await store._addOperation(data, {
+        await store.addOperation(data, {
             reciever: {
                 metadata: undefined,
                 next: recieverKey.keypair.publicKey,
@@ -216,7 +216,7 @@ describe(`addOperation`, function () {
         );
 
         const reciever = await keystore.createEd25519Key();
-        await store._addOperation(data, {
+        await store.addOperation(data, {
             reciever: {
                 metadata: undefined,
                 next: reciever.keypair.publicKey,

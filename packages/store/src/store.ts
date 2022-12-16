@@ -79,10 +79,14 @@ export class HeadsCache<T> extends CachedValue {
     @field({ type: option("string") })
     last?: string;
 
-    constructor(heads: string[], last?: string) {
+    @field({ type: "u64" })
+    counter: bigint;
+
+    constructor(heads: string[], counter: bigint, last?: string) {
         super();
         this.heads = heads;
         this.last = last;
+        this.counter = counter;
     }
 }
 
@@ -129,11 +133,13 @@ interface IInitializationOptionsDefault<T> {
     maxHistory?: number;
     replicationConcurrency?: number;
     typeMap?: { [key: string]: Constructor<any> };
+    cacheId: string;
 }
 
 export const DefaultOptions: IInitializationOptionsDefault<any> = {
     maxHistory: -1,
     replicationConcurrency: 32,
+    cacheId: "id",
     typeMap: {},
 };
 
@@ -162,6 +168,7 @@ export class Store<T> implements Initiable<T> {
     _options: IInitializationOptions<T>;
     identity: Identity;
     headsPath: string;
+    removedHeadsPath: string;
     snapshotPath: string;
     initialized: boolean;
     encoding: Encoding<T> = JSON_ENCODING;
@@ -170,7 +177,6 @@ export class Store<T> implements Initiable<T> {
     _cache: Cache<CachedValue>;
     _oplog: Log<T>;
     _queue: PQueue<any, any>;
-    _stats: any;
     _key: string;
 
     _saveFile: (file: any) => Promise<string>;
@@ -216,9 +222,13 @@ export class Store<T> implements Initiable<T> {
         this.identity = identity;
         this._onUpdateOption = options.onUpdate;
 
-        /* this.events = new EventEmitter() */
-        this.headsPath = path.join(this.id, "_heads");
-        this.snapshotPath = path.join(this.id, "snapshot");
+        this.headsPath = path.join(options.cacheId, this.id, "_heads");
+        this.removedHeadsPath = path.join(
+            options.cacheId,
+            this.id,
+            "_heads_removed"
+        );
+        this.snapshotPath = path.join(options.cacheId, this.id, "snapshot");
 
         // External dependencies
         this._cache = await this._options.resolveCache(this);
@@ -226,16 +236,9 @@ export class Store<T> implements Initiable<T> {
         // Create the operations log
         this._oplog = new Log<T>(this._store, identity, this.logOptions);
 
-        // _addOperation and log-joins queue. Adding ops and joins to the queue
+        // addOperation and log-joins queue. Adding ops and joins to the queue
         // makes sure they get processed sequentially to avoid race conditions
         this._queue = new PQueue({ concurrency: 1 });
-
-        this._stats = {
-            snapshot: {
-                bytesLoaded: -1,
-            },
-            syncRequestsReceieved: 0,
-        };
 
         if (this._options.onOpen) {
             await this._options.onOpen(this);
@@ -245,18 +248,119 @@ export class Store<T> implements Initiable<T> {
         return this;
     }
 
-    async updateHeadsCache(newHeads: string[], reset?: boolean) {
-        // If 'reset' then dont keep references to old heads caches, assume new cache will fully describe all heads
-        const last = reset
-            ? undefined
-            : await this._cache.get<string>(this.headsPath);
-        const newHeadsPath = path.join(this.headsPath, uuid());
-        await this._cache.set(this.headsPath, newHeadsPath);
+    async updateCachedHeads(
+        change: {
+            added: (Entry<T> | string)[];
+            removed: (Entry<T> | string)[];
+        },
+        reset?: boolean
+    ) {
+        if (typeof reset !== "boolean") {
+            let isAllHeads = true;
+            const heads: string[] = [];
+            for (const entry of change.added) {
+                const hash = typeof entry === "string" ? entry : entry.hash;
+                if (!this.oplog.headsIndex.get(hash)) {
+                    isAllHeads = false;
+                } else {
+                    heads.push(hash);
+                }
+            }
+            reset =
+                isAllHeads &&
+                this.oplog.headsIndex.index.size === change.added.length;
+        }
 
-        await this._cache.setBinary(
-            newHeadsPath,
-            new HeadsCache(newHeads, last)
-        );
+        // If 'reset' then dont keep references to old heads caches, assume new cache will fully describe all heads
+        const updateHashes = async (headsPath: string, hashes: string[]) => {
+            const last = reset
+                ? undefined
+                : await this._cache.get<string>(headsPath);
+
+            const newHeadsPath = path.join(headsPath, uuid());
+            const counter =
+                (last
+                    ? (await this._cache.getBinary(last, HeadsCache))
+                          ?.counter || 0n
+                    : 0n) + BigInt(hashes.length);
+            await Promise.all([
+                this._cache.set(headsPath, newHeadsPath),
+                this._cache.setBinary(
+                    newHeadsPath,
+                    new HeadsCache(hashes, counter, last)
+                ),
+            ]);
+            return counter;
+        };
+        if (reset) {
+            const promises: Promise<any>[] = [];
+            promises.push(this._cache.deleteByPrefix(this.headsPath));
+            promises.push(this._cache.deleteByPrefix(this.removedHeadsPath));
+            await Promise.all(promises);
+        }
+
+        const getCount = async (headPath: string) => {
+            const p = await this._cache.get<string>(headPath);
+            if (!p) {
+                return 0n;
+            }
+            return (await this._cache.getBinary(p, HeadsCache))?.counter || 0n;
+        };
+
+        const addedHeadsCount =
+            change.added.length > 0
+                ? await updateHashes(
+                      this.headsPath,
+                      change.added.map((x) =>
+                          typeof x === "string" ? x : x.hash
+                      )
+                  )
+                : await getCount(this.headsPath);
+        if (await this._cache.get<string>(this.headsPath)) {
+            // only add removed heads if we actually have added heads, else these are pointless
+            const removedCount =
+                change.removed.length > 0
+                    ? await updateHashes(
+                          this.removedHeadsPath,
+                          change.removed.map((x) =>
+                              typeof x === "string" ? x : x.hash
+                          )
+                      )
+                    : await getCount(this.removedHeadsPath);
+            if (removedCount > 0n && 2n * removedCount >= addedHeadsCount) {
+                const resetToHeads = await this.getCachedHeads();
+                await this.updateCachedHeads(
+                    { added: resetToHeads, removed: [] },
+                    true
+                );
+            }
+        }
+    }
+
+    async getCachedHeads(): Promise<string[]> {
+        if (!this._cache) {
+            return [];
+        }
+        const getHashes = async (headsPath: string, filter?: Set<string>) => {
+            const result: string[] = [];
+            let next = await this._cache.get<string>(headsPath);
+            while (next) {
+                const cache = await this._cache.getBinary(next, HeadsCache);
+                next = cache?.last;
+                cache?.heads.forEach((head) => {
+                    if (filter && filter.has(head)) {
+                        return;
+                    }
+
+                    result.push(head);
+                });
+            }
+            return result;
+        };
+
+        const removedHeads = new Set(await getHashes(this.removedHeadsPath));
+        const heads = await getHashes(this.headsPath, removedHeads);
+        return heads; // Saved heads - removed heads
     }
 
     get id(): string {
@@ -310,14 +414,6 @@ export class Store<T> implements Initiable<T> {
         // to make sure everything that all operations that have
         // been queued will be written to disk
         await this._queue?.onIdle();
-
-        // Reset database statistics
-        this._stats = {
-            snapshot: {
-                bytesLoaded: -1,
-            },
-            syncRequestsReceieved: 0,
-        };
 
         if (this._options.onClose) {
             await this._options.onClose(this);
@@ -383,17 +479,16 @@ export class Store<T> implements Initiable<T> {
 
         // Update the index
         if (heads.length > 0) {
-            await this._updateIndex({ added: log.values });
+            await this._updateIndex({ added: log.values, removed: [] });
         }
 
         this._options.onReady && this._options.onReady(this);
     }
 
-    async _addOperation(
+    async addOperation(
         data: T,
         options?: AddOperationOptions<T>
     ): Promise<{ entry: Entry<T>; removed: Entry<T>[] }> {
-        const isReferencingAllHeads = !options?.nexts;
         const change = await this._oplog.append(data, {
             nexts: options?.nexts,
             pin: options?.pin,
@@ -403,12 +498,42 @@ export class Store<T> implements Initiable<T> {
             trim: options?.trim,
         });
         logger.debug("Appended entry with hash: " + change.entry.hash);
-        await this.updateHeadsCache([change.entry.hash], isReferencingAllHeads);
-        await this._updateIndex({
+        const changes: Change<T> = {
             added: [change.entry],
             removed: change.removed,
-        });
+        };
+        await this.updateCachedHeads(changes);
+        await this._updateIndex(changes);
         this._options.onWrite && this._options.onWrite(this, change.entry);
+        return change;
+    }
+
+    async removeOperation(
+        entry: Entry<T> | Entry<T>[],
+        options?: { recursively?: boolean }
+    ): Promise<Change<T>> {
+        const entries = Array.isArray(entry) ? entry : [entry];
+        if (entries.length === 0) {
+            return {
+                added: [],
+                removed: [],
+            };
+        }
+
+        if (options?.recursively) {
+            await this.oplog.deleteRecursively(entry);
+        } else {
+            for (const entry of entries) {
+                await this.oplog.delete(entry);
+            }
+        }
+        const change: Change<T> = {
+            added: [],
+            removed: Array.isArray(entry) ? entry : [entry],
+        };
+
+        await this.updateCachedHeads(change);
+        await this._updateIndex(change);
         return change;
     }
 
@@ -421,10 +546,7 @@ export class Store<T> implements Initiable<T> {
         entries: EntryWithRefs<T>[] | Entry<T>[] | string[],
         options: { canAppend?: CanAppend<T>; save: boolean } = { save: true }
     ): Promise<boolean> {
-        this._stats.syncRequestsReceieved += 1;
-        logger.debug(
-            `Sync request #${this._stats.syncRequestsReceieved} ${entries.length}`
-        );
+        logger.debug(`Sync request #${entries.length}`);
         if (entries.length === 0) {
             return false;
         }
@@ -527,27 +649,11 @@ export class Store<T> implements Initiable<T> {
         );
 
         // TODO add head cache 'reset' so that it becomes more accurate over time
-        await this.updateHeadsCache(newEntries.map((x) => hash(x)));
+        await this.updateCachedHeads(change);
         await this._updateIndex(change);
         this._options.onReplicationComplete &&
             this._options.onReplicationComplete(this);
         return true;
-    }
-
-    async getCachedHeads(): Promise<string[]> {
-        if (!this._cache) {
-            return [];
-        }
-        const result: string[] = [];
-        let next = await this._cache.get<string>(this.headsPath);
-        while (next) {
-            const cache = await this._cache.getBinary(next, HeadsCache);
-            next = cache?.last;
-            cache?.heads.forEach((head) => {
-                result.push(head);
-            });
-        }
-        return result;
     }
 
     async saveSnapshot() {
@@ -606,7 +712,10 @@ export class Store<T> implements Initiable<T> {
                         onFetched: this._onLoadProgress.bind(this),
                     }
                 );
-                await this._updateIndex({ added: this._oplog.values });
+                await this._updateIndex({
+                    added: this._oplog.values,
+                    removed: [],
+                });
                 this._options.onReplicationComplete &&
                     this._options.onReplicationComplete(this);
             }

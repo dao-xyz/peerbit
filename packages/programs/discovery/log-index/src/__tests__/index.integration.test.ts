@@ -132,7 +132,7 @@ describe("query", () => {
     describe("any", () => {
         it("will return all entries if pass empty querey", async () => {
             for (let i = 0; i < headsCount; i++) {
-                await logIndices[0].store._addOperation(i, { nexts: [] });
+                await logIndices[0].store.addOperation(i, { nexts: [] });
             }
             const responses: HeadsMessage[] = [];
             await logIndices[1].query.send(
@@ -153,7 +153,7 @@ describe("query", () => {
         it("can query by payload key", async () => {
             // send from 1 to 2
             for (let i = 0; i < headsCount; i++) {
-                await logIndices[1].store._addOperation(i, {
+                await logIndices[1].store.addOperation(i, {
                     nexts: [],
                     reciever: {
                         payload: await X25519PublicKey.from(

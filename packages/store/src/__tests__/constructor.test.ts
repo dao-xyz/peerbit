@@ -47,6 +47,7 @@ describe(`Constructor`, function () {
             blockStore,
             {
                 ...signKey.keypair,
+
                 sign: async (data: Uint8Array) =>
                     await signKey.keypair.sign(data),
             },
@@ -66,7 +67,6 @@ describe(`Constructor`, function () {
         expect(typeof store._store).toEqual("object");
         expect(typeof store._cache).toEqual("object");
         expect(typeof store._oplog).toEqual("object");
-        expect(typeof store._stats).toEqual("object");
     });
 
     it("properly defines a cache", async () => {

@@ -69,6 +69,7 @@ describe("clock", () => {
                 topic,
                 replicate: true,
                 store: {
+                    cacheId: "id",
                     resolveCache: () =>
                         Promise.resolve(new Cache(new MemoryLevel())),
                 } as any,
@@ -88,6 +89,7 @@ describe("clock", () => {
             {
                 topic,
                 store: {
+                    cacheId: "id",
                     resolveCache: () =>
                         Promise.resolve(new Cache(new MemoryLevel())),
                 } as any,

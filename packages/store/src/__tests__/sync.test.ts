@@ -64,6 +64,7 @@ describe(`Sync`, () => {
                 replicationConcurrency: 123,
                 resolveCache: () => Promise.resolve(cache),
                 onUpdate: index.updateIndex.bind(index),
+                cacheId: "id",
             }
         );
     });
@@ -98,12 +99,13 @@ describe(`Sync`, () => {
                 replicationConcurrency: 123,
                 resolveCache: () => Promise.resolve(cache),
                 onUpdate: index2.updateIndex.bind(index2),
+                cacheId: "id",
             }
         );
 
         const entryCount = 10;
         for (let i = 0; i < entryCount; i++) {
-            await store._addOperation("i: " + i);
+            await store.addOperation("i: " + i);
         }
 
         expect(store.oplog.heads.length).toEqual(1);
@@ -137,6 +139,7 @@ describe(`Sync`, () => {
                 replicationConcurrency: 123,
                 resolveCache: () => Promise.resolve(cache),
                 onUpdate: index2.updateIndex.bind(index2),
+                cacheId: "id",
                 onReplicationFetch: (store, entry) => {
                     fetchCallBackEntries.push(entry);
                 },
@@ -145,7 +148,7 @@ describe(`Sync`, () => {
 
         const entryCount = 10;
         for (let i = 0; i < entryCount; i++) {
-            await store._addOperation(i);
+            await store.addOperation(i);
         }
 
         expect(store.oplog.heads.length).toEqual(1);
