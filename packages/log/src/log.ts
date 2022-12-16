@@ -52,7 +52,7 @@ export type TrimOptions =
     | (TrimToByteLengthOption | TrimToLengthOption)[]
     | TrimToByteLengthOption
     | TrimToLengthOption;
-export type Change<T> = { added: Entry<T>[]; removed?: Entry<T>[] };
+export type Change<T> = { added: Entry<T>[]; removed: Entry<T>[] };
 
 export type LogOptions<T> = {
     encryption?: PublicKeyEncryptionResolver;
