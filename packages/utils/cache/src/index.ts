@@ -90,6 +90,36 @@ export default class Cache<T> {
         });
     }
 
+    async getBinaryPrefix<B extends T>(
+        prefix: string,
+        clazz: Constructor<B>
+    ): Promise<B[]> {
+        const iterator = this._store.iterator<any, Uint8Array>({
+            gte: prefix,
+            lte: prefix + "\xFF",
+            valueEncoding: "view",
+        });
+        const ret: B[] = [];
+        for await (const [_key, value] of iterator) {
+            ret.push(deserialize(value, clazz));
+        }
+
+        return ret;
+    }
+
+    async deleteByPrefix(prefix: string): Promise<void[]> {
+        const iterator = this._store.iterator<any, Uint8Array>({
+            gte: prefix,
+            lte: prefix + "\xFF",
+            valueEncoding: "view",
+        });
+        const promises: Promise<any>[] = [];
+        for await (const [key, _value] of iterator) {
+            promises.push(this.del(key));
+        }
+        return Promise.all(promises);
+    }
+
     setBinary<B extends T>(key: string, value: B | Uint8Array) {
         const bytes = value instanceof Uint8Array ? value : serialize(value);
         this._store.put(key, bytes, {
