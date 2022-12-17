@@ -31,6 +31,11 @@ export default class Cache<T> {
         }
     }
 
+    /**
+     * get JSON value encoded value
+     * @param key
+     * @returns
+     */
     async get<T>(key: string): Promise<T | undefined> {
         return new Promise((resolve, reject) => {
             this._store.get(key, (err, value) => {
@@ -41,7 +46,11 @@ export default class Cache<T> {
                     }
                     resolve(undefined);
                 }
-                resolve(value ? JSON.parse(value) : null);
+                try {
+                    resolve(value ? JSON.parse(value) : null);
+                } catch (error) {
+                    reject(error);
+                }
             });
         });
     }
@@ -49,13 +58,17 @@ export default class Cache<T> {
     // Set value in the cache and return the new value
     set(key: string, value: T) {
         return new Promise((resolve, reject) => {
-            this._store.put(key, JSON.stringify(value), (err) => {
-                if (err) {
-                    return reject(err);
-                }
-                log.debug(`cache: Set ${key} to ${JSON.stringify(value)}`);
-                resolve(true);
-            });
+            try {
+                this._store.put(key, JSON.stringify(value), (err) => {
+                    if (err) {
+                        return reject(err);
+                    }
+                    log.debug(`cache: Set ${key} to ${JSON.stringify(value)}`);
+                    resolve(true);
+                });
+            } catch (error) {
+                reject(error);
+            }
         });
     }
 
@@ -107,17 +120,17 @@ export default class Cache<T> {
         return ret;
     }
 
-    async deleteByPrefix(prefix: string): Promise<void[]> {
+    async deleteByPrefix(prefix: string): Promise<boolean> {
         const iterator = this._store.iterator<any, Uint8Array>({
             gte: prefix,
             lte: prefix + "\xFF",
             valueEncoding: "view",
         });
-        const promises: Promise<any>[] = [];
+        const keys: string[] = [];
         for await (const [key, _value] of iterator) {
-            promises.push(this.del(key));
+            keys.push(key);
         }
-        return Promise.all(promises);
+        return this.delAll(keys);
     }
 
     setBinary<B extends T>(key: string, value: B | Uint8Array) {
@@ -146,6 +159,35 @@ export default class Cache<T> {
                 }
                 resolve(true);
             });
+        });
+    }
+
+    async delAll(keys: string[]) {
+        return new Promise<boolean>((resolve, reject) => {
+            this._store.batch(
+                keys.map((key) => {
+                    return {
+                        type: "del",
+                        key,
+                    };
+                }),
+                (err) => {
+                    if (err) {
+                        // Ignore error if key was not found
+                        if (
+                            err
+                                .toString()
+                                .indexOf(
+                                    "NotFoundError: Key not found in database"
+                                ) === -1 &&
+                            err.toString().indexOf("NotFound") === -1
+                        ) {
+                            return reject(err);
+                        }
+                    }
+                    resolve(true);
+                }
+            );
         });
     }
 }
