@@ -9,8 +9,7 @@ import {
     vec,
     fixedArray,
 } from "@dao-xyz/borsh";
-import { Blocks } from "@dao-xyz/peerbit-block";
-import { arraysCompare, arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
+
 import {
     DecryptedThing,
     MaybeEncrypted,
@@ -21,12 +20,15 @@ import {
     AccessError,
     Ed25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
+import { verify, toBase64 } from "@dao-xyz/peerbit-crypto";
+import { Blocks } from "@dao-xyz/peerbit-block";
+import { arraysCompare, arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
 import sodium from "libsodium-wrappers";
 import { Encoding, JSON_ENCODING } from "./encoding.js";
 import { Identity } from "./identity.js";
-import { verify, toBase64 } from "@dao-xyz/peerbit-crypto";
 import { StringArray } from "./types.js";
 import { logger } from "./logger.js";
+await sodium.ready;
 
 export type MaybeEncryptionPublicKey =
     | X25519PublicKey
@@ -433,13 +435,9 @@ export class Entry<T>
         await store.rm(this.hash);
     }
 
-    static async createGid(seed?: string): Promise<string> {
-        await sodium.ready;
+    static createGid(seed?: string): string {
         return toBase64(
-            await sodium.crypto_generichash(
-                32,
-                seed || (await sodium.randombytes_buf(32))
-            )
+            sodium.crypto_generichash(32, seed || sodium.randombytes_buf(32))
         );
     }
 
@@ -599,12 +597,12 @@ export class Entry<T>
                 throw new Error("Unexpected behaviour, could not find gid");
             }
         } else {
-            gid = properties.gid || (await Entry.createGid(properties.gidSeed));
+            gid = properties.gid || Entry.createGid(properties.gidSeed);
         }
 
         maxChainLength += 1n; // include this
 
-        const metadataEncrypted = await maybeEncrypt(
+        const metadataEncrypted = maybeEncrypt(
             new Metadata({
                 maxChainLength,
                 clock,
@@ -620,7 +618,7 @@ export class Entry<T>
             }
         });
 
-        const nextEncrypted = await maybeEncrypt(
+        const nextEncrypted = maybeEncrypt(
             new StringArray({
                 arr: next,
             }),
@@ -664,12 +662,9 @@ export class Entry<T>
             const encryption = encryptAllSignaturesWithSameKey
                 ? properties.encryption?.reciever?.signatures
                 : properties.encryption?.reciever?.signatures?.[
-                      await signature.publicKey.hashcode()
+                      signature.publicKey.hashcode()
                   ];
-            const signatureEncrypted = await maybeEncrypt(
-                signature,
-                encryption
-            );
+            const signatureEncrypted = maybeEncrypt(signature, encryption);
             encryptedSignatures.push(signatureEncrypted);
         }
 
