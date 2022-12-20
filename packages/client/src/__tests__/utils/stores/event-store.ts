@@ -15,17 +15,13 @@ export interface Operation<T> {
 const encoding = JSON_ENCODING;
 
 export class EventIndex<T> {
-    _index: Log<Operation<T>>;
-    constructor() {
-        this._index = null as any;
+    _store: Store<Operation<T>>;
+    constructor(store: Store<Operation<T>>) {
+        this._store = store;
     }
 
     get() {
-        return this._index ? this._index.values : [];
-    }
-
-    async updateIndex(oplog: Log<Operation<T>>, change: Change<Operation<T>>) {
-        this._index = oplog;
+        return this._store ? this._store.oplog.values : [];
     }
 }
 
@@ -42,9 +38,9 @@ export class EventStore<T> extends Program {
     }
 
     async setup() {
-        this._index = new EventIndex();
+        this._index = new EventIndex(this.store);
         this.store.setup({
-            onUpdate: this._index.updateIndex.bind(this._index),
+            onUpdate: () => undefined,
             encoding,
             canAppend: () => Promise.resolve(true),
         });

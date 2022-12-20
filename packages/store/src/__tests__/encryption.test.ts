@@ -47,7 +47,6 @@ describe(`addOperation`, function () {
         cacheStore = await createStore(path.join(__filename, "cache" + uuid()));
         keystore = new Keystore(identityStore);
         signKey = await keystore.createEd25519Key();
-        index = new SimpleIndex();
         senderKey = await keystore.createEd25519Key();
         recieverKey = await keystore.createEd25519Key();
         encryption = {
@@ -126,6 +125,8 @@ describe(`addOperation`, function () {
                 throw error;
             }
         };
+        store = new Store({ storeIndex: 0 });
+        index = new SimpleIndex(store);
 
         const cache = new Cache(cacheStore);
         const options: IInitializationOptions<any> = {
@@ -135,7 +136,7 @@ describe(`addOperation`, function () {
             encryption,
             onWrite,
         };
-        store = new Store({ storeIndex: 0 });
+
         await store.init(
             blockStore,
             {
@@ -197,6 +198,9 @@ describe(`addOperation`, function () {
         };
 
         const cache = new Cache(cacheStore);
+        store = new Store({ storeIndex: 0 });
+        index = new SimpleIndex(store);
+
         const options: IInitializationOptions<any> = {
             ...DefaultOptions,
             resolveCache: () => Promise.resolve(cache),
@@ -204,7 +208,7 @@ describe(`addOperation`, function () {
             encryption,
             onWrite,
         };
-        store = new Store({ storeIndex: 0 });
+
         await store.init(
             blockStore,
             {

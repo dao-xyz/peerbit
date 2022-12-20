@@ -1,9 +1,12 @@
 import { createLibp2p } from "libp2p";
 import { noise } from "@chainsafe/libp2p-noise";
 import { mplex } from "@libp2p/mplex";
+
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
 import { gossipsub } from "@chainsafe/libp2p-gossipsub";
+import { floodsub } from "@libp2p/floodsub";
+
 import { peerIdFromKeys } from "@libp2p/peer-id";
 import { Ed25519Keypair, fromBase64, toBase64 } from "@dao-xyz/peerbit-crypto";
 import { supportedKeys } from "@libp2p/crypto/keys";
@@ -72,15 +75,18 @@ export const createNode = async () => {
     const node = await createLibp2p({
         peerId,
         connectionManager: {
-            autoDial: false,
+            maxConnections: Infinity,
+            minConnections: 0,
+            pollInterval: 2000,
         },
         addresses: {
             listen: ["/ip4/127.0.0.1/tcp/8001", "/ip4/127.0.0.1/tcp/8002/ws"],
         },
+
         transports: [tcp(), webSockets()],
         connectionEncryption: [noise()],
         streamMuxers: [mplex()],
-        pubsub: gossipsub({ canRelayMessage: true }),
+        pubsub: floodsub(), // gossipsub({ canRelayMessage: true }),
     });
     await node.start();
     return node;

@@ -40,12 +40,13 @@ describe(`Snapshots`, function () {
         await blockStore.open();
 
         const cache = new Cache(cacheStore);
-        index = new SimpleIndex();
+        store = new Store({ storeIndex: 0 });
+        index = new SimpleIndex(store);
         const options = Object.assign({}, DefaultOptions, {
             resolveCache: () => Promise.resolve(cache),
             onUpdate: index.updateIndex.bind(index),
         });
-        store = new Store({ storeIndex: 0 });
+
         await store.init(
             blockStore,
             {

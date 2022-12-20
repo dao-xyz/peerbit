@@ -1,7 +1,8 @@
 import { field, option, variant } from "@dao-xyz/borsh";
-import { BORSH_ENCODING, Log } from "@dao-xyz/peerbit-log";
+import { BORSH_ENCODING, Change, Log } from "@dao-xyz/peerbit-log";
 import { Entry } from "@dao-xyz/peerbit-log";
 import { ComposableProgram } from "@dao-xyz/peerbit-program";
+import { Store } from "@dao-xyz/peerbit-store";
 import { Range } from "./range.js";
 
 @variant(0)
@@ -24,6 +25,7 @@ export const encoding = BORSH_ENCODING(StringOperation);
 @variant("string_index")
 export class StringIndex extends ComposableProgram {
     _string: string;
+    _store: Store<StringOperation>;
     constructor() {
         super();
         this._string = "";
@@ -32,9 +34,12 @@ export class StringIndex extends ComposableProgram {
     get string(): string {
         return this._string;
     }
+    async setup(store: Store<StringOperation>) {
+        this._store = store;
+    }
 
-    async updateIndex(oplog: Log<StringOperation>) {
-        this._string = await applyOperations("", oplog.values);
+    async updateIndex(_change: Change<StringOperation>) {
+        this._string = await applyOperations("", this._store.oplog.values); // TODO improve performance
     }
 }
 

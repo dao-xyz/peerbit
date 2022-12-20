@@ -17,6 +17,7 @@ const checkHashes = async (
     headsPath: string,
     hashes: string[][]
 ) => {
+    await store.idle();
     let cachePath = await store._cache.get<string>(headsPath);
     let nextPath = cachePath!;
     let ret: string[] = [];
@@ -33,7 +34,11 @@ const checkHashes = async (
             }
         }
     } else {
-        expect(cachePath).toBeUndefined();
+        if (cachePath) {
+            expect(
+                await store._cache.getBinary(cachePath, HeadsCache)
+            ).toBeUndefined();
+        }
     }
 
     return ret;
@@ -75,10 +80,11 @@ describe(`load`, function () {
     });
 
     it("closes and loads", async () => {
-        index = new SimpleIndex();
         const cache = new Cache(cacheStore);
         let done = false;
         store = new Store({ storeIndex: 0 });
+        index = new SimpleIndex(store);
+
         await store.init(
             blockStore,
             {
@@ -109,10 +115,11 @@ describe(`load`, function () {
     });
 
     it("loads when missing cache", async () => {
-        index = new SimpleIndex();
         const cache = new Cache(cacheStore);
         let done = false;
         store = new Store({ storeIndex: 0 });
+        index = new SimpleIndex(store);
+
         await store.init(
             blockStore,
             {
@@ -144,10 +151,11 @@ describe(`load`, function () {
     });
 
     it("loads when corrupt cache", async () => {
-        index = new SimpleIndex();
         const cache = new Cache(cacheStore);
         let done = false;
         store = new Store({ storeIndex: 0 });
+        index = new SimpleIndex(store);
+
         await store.init(
             blockStore,
             {
@@ -180,10 +188,11 @@ describe(`load`, function () {
     });
 
     it("will respect deleted heads", async () => {
-        index = new SimpleIndex();
         const cache = new Cache(cacheStore);
         let done = false;
         store = new Store({ storeIndex: 0 });
+        index = new SimpleIndex(store);
+
         await store.init(
             blockStore,
             {
@@ -266,10 +275,11 @@ describe(`load`, function () {
     });
 
     it("resets heads eventually", async () => {
-        index = new SimpleIndex();
         const cache = new Cache(cacheStore);
         let done = false;
         store = new Store({ storeIndex: 0 });
+        index = new SimpleIndex(store);
+
         await store.init(
             blockStore,
             {
@@ -309,10 +319,11 @@ describe(`load`, function () {
     });
 
     it("resets heads when referencing all", async () => {
-        index = new SimpleIndex();
         const cache = new Cache(cacheStore);
         let done = false;
         store = new Store({ storeIndex: 0 });
+        index = new SimpleIndex(store);
+
         await store.init(
             blockStore,
             {

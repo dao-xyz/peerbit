@@ -92,12 +92,9 @@ export class Documents<T> extends ComposableProgram {
         await this.store.setup({
             encoding: BORSH_ENCODING(Operation),
             canAppend: this.canAppend.bind(this),
-            onUpdate: async (
-                oplog: Log<Operation<T>>,
-                change: Change<Operation<T>>
-            ) => {
-                await this.handleDeletions(oplog, change);
-                await this._index.updateIndex(oplog, change);
+            onUpdate: async (change: Change<Operation<T>>) => {
+                await this.handleDeletions(change);
+                await this._index.updateIndex(change);
             },
         });
         await this._logIndex.setup({
@@ -107,6 +104,7 @@ export class Documents<T> extends ComposableProgram {
         });
         await this._index.setup({
             type: this._clazz,
+            store: this.store,
             canRead: options.canRead || (() => Promise.resolve(true)),
             sync: async (result: Results<T>) => {
                 const entries = (
@@ -297,11 +295,8 @@ export class Documents<T> extends ComposableProgram {
         );
     }
 
-    async handleDeletions(
-        log: Log<Operation<T>>,
-        change: Change<Operation<T>>
-    ): Promise<void> {
-        const entries = change.added.sort(log._sortFn).reverse();
+    async handleDeletions(change: Change<Operation<T>>): Promise<void> {
+        const entries = change.added.sort(this.store.oplog._sortFn).reverse();
         for (const entry of entries) {
             try {
                 const payload = await entry.getPayloadValue();
@@ -309,7 +304,7 @@ export class Documents<T> extends ComposableProgram {
                     if (payload.permanently) {
                         // delete all nexts recursively (but dont delete the DELETE record (because we might want to share this with others))
                         const nexts = entry.next
-                            .map((n) => log.get(n))
+                            .map((n) => this.store.oplog.get(n))
                             .filter((x) => !!x) as Entry<any>[];
 
                         await this.store.removeOperation(nexts, {
@@ -326,32 +321,5 @@ export class Documents<T> extends ComposableProgram {
                 throw error;
             }
         }
-        // Find unique tails, and update state forwards
-
-        /*  const heads = log.heads;
-         for (let i = heads.length - 1; i >= 0; i--) {
-             try {
-                 const item = heads[i];
-                 const payload = await item.getPayloadValue();
-                 if (payload instanceof DeleteOperation) {
-                     if (payload.permanently) {
-                         // delete all nexts recursively (but dont delete the DELETE record (because we might want to share this with others))
-                         const nexts = item.next
-                             .map((n) => log.get(n))
-                             .filter((x) => !!x) as Entry<any>[];
-                         await Promise.all(
-                             nexts.map((n) => log.deleteRecursively(n))
-                         );
-                     }
-                 } else {
-                     // Unknown operation
-                 }
-             } catch (error) {
-                 if (error instanceof AccessError) {
-                     continue;
-                 }
-                 throw error;
-             }
-         } */
     }
 }

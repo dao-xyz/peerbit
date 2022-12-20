@@ -46,8 +46,9 @@ describe(`Sync`, () => {
 
     beforeEach(async () => {
         const cache = new Cache(cacheStore);
-        index = new SimpleIndex();
         store = new Store({ storeIndex: 0 });
+        index = new SimpleIndex(store);
+
         blockStore = new Blocks(
             new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
         );
@@ -80,7 +81,7 @@ describe(`Sync`, () => {
 
     it("syncs normally", async () => {
         const cache = new Cache(cacheStore);
-        const index2 = new SimpleIndex();
+        const index2 = new SimpleIndex(store);
         const store2 = new Store({ storeIndex: 1 });
         blockStore2 = new Blocks(
             new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
@@ -117,7 +118,7 @@ describe(`Sync`, () => {
 
     it("syncs with references", async () => {
         const cache = new Cache(cacheStore);
-        const index2 = new SimpleIndex();
+        const index2 = new SimpleIndex(store);
         const store2 = new Store({ storeIndex: 1 });
 
         const fetchCallBackEntries: Entry<any>[] = [];

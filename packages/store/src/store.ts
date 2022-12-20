@@ -118,7 +118,7 @@ export interface IStoreOptions<T> {
     replicationConcurrency?: number;
     sortFn?: ISortFunction;
     trim?: TrimOptions;
-    onUpdate?: (oplog: Log<T>, change: Change<T>) => void;
+    onUpdate?: (change: Change<T>) => void;
 }
 
 export interface IInitializationOptions<T>
@@ -157,16 +157,15 @@ export class Store<T> implements Initiable<T> {
     _storeIndex: number; // how to ensure unqiueness
 
     _canAppend?: CanAppend<T>;
-    _onUpdate?: (oplog: Log<T>, change: Change<T>) => Promise<void> | void;
-    _onUpdateOption?: (
-        oplog: Log<T>,
-        change: Change<T>
-    ) => Promise<void> | void;
+    _onUpdate?: (change: Change<T>) => Promise<void> | void;
+    _onUpdateOption?: (change: Change<T>) => Promise<void> | void;
 
     // An access controller that is note part of the store manifest, usefull for circular store -> access controller -> store structures
 
     _options: IInitializationOptions<T>;
     identity: Identity;
+
+    _headsPathCounter = 0;
     headsPath: string;
     _lastHeadsPath?: string;
     _lastHeadsCount = 0n;
@@ -174,6 +173,8 @@ export class Store<T> implements Initiable<T> {
     removedHeadsPath: string;
     _lastRemovedHeadsPath?: string;
     _lastRemovedHeadsCount = 0n;
+
+    _asyncJobs: Promise<void[] | void>;
 
     snapshotPath: string;
     initialized: boolean;
@@ -183,6 +184,8 @@ export class Store<T> implements Initiable<T> {
     _cache: Cache<CachedValue>;
     _oplog: Log<T>;
     _queue: PQueue<any, any>;
+    _txsQueue: PQueue<any, any>;
+
     _key: string;
 
     _saveFile: (file: any) => Promise<string>;
@@ -197,7 +200,7 @@ export class Store<T> implements Initiable<T> {
     setup(properties: {
         encoding: Encoding<T>;
         canAppend: CanAppend<T>;
-        onUpdate: (oplog: Log<T>, change: Change<T>) => void;
+        onUpdate: (change: Change<T>) => void;
     }) {
         this.encoding = properties.encoding;
         this.onUpdate = properties.onUpdate;
@@ -247,7 +250,7 @@ export class Store<T> implements Initiable<T> {
         // addOperation and log-joins queue. Adding ops and joins to the queue
         // makes sure they get processed sequentially to avoid race conditions
         this._queue = new PQueue({ concurrency: 1 });
-
+        this._txsQueue = new PQueue({ concurrency: 2 });
         if (this._options.onOpen) {
             await this._options.onOpen(this);
         }
@@ -286,7 +289,11 @@ export class Store<T> implements Initiable<T> {
             lastCounter: bigint,
             hashes: string[]
         ): Promise<{ counter: bigint; newPath: string }> => {
-            const newHeadsPath = path.join(headsPath, uuid());
+            const newHeadsPath = path.join(
+                headsPath,
+                String(this._headsPathCounter),
+                uuid()
+            );
             const counter = lastCounter + BigInt(hashes.length);
             await this._cache._store.batch([
                 {
@@ -308,16 +315,31 @@ export class Store<T> implements Initiable<T> {
 
         // TODO dont delete old before saving new
         if (reset) {
-            const promises: Promise<any>[] = [];
-            promises.push(this._cache.deleteByPrefix(this.headsPath));
-            promises.push(this._cache.deleteByPrefix(this.removedHeadsPath));
-            await Promise.all(promises);
+            const paths = [
+                path.join(this.headsPath, String(this._headsPathCounter)),
+                path.join(
+                    this.removedHeadsPath,
+                    String(this._headsPathCounter)
+                ),
+            ];
+            for (const p of paths) {
+                this._txsQueue.add(async () => {
+                    await this._cache.deleteByPrefix(p + "/");
+                });
+            }
+
+            this._lastHeadsPath = undefined;
+            this._lastRemovedHeadsPath = undefined;
+            this._lastHeadsCount = 0n;
+            this._lastRemovedHeadsCount = 0n;
+
+            this._headsPathCounter += 1;
         }
 
         if (change.added.length > 0) {
             const update = await updateHashes(
                 this.headsPath,
-                reset ? undefined : this._lastHeadsPath,
+                this._lastHeadsPath,
                 this._lastHeadsCount,
                 change.added.map((x) => (typeof x === "string" ? x : x.hash))
             );
@@ -353,6 +375,14 @@ export class Store<T> implements Initiable<T> {
                 }
             }
         }
+    }
+
+    async idle(): Promise<any> {
+        // Wait for the operations queue to finish processing
+        // to make sure everything that all operations that have
+        // been queued will be written to disk
+        await this._queue?.onIdle();
+        return this._txsQueue?.onIdle();
     }
 
     async getCachedHeads(
@@ -425,7 +455,7 @@ export class Store<T> implements Initiable<T> {
         return this._canAppend;
     }
 
-    set onUpdate(onUpdate: (oplog: Log<T>, change: Change<T>) => void) {
+    set onUpdate(onUpdate: (change: Change<T>) => void) {
         this._onUpdate = onUpdate;
     }
 
@@ -434,10 +464,7 @@ export class Store<T> implements Initiable<T> {
             return;
         }
 
-        // Wait for the operations queue to finish processing
-        // to make sure everything that all operations that have
-        // been queued will be written to disk
-        await this._queue?.onIdle();
+        await this.idle();
 
         if (this._options.onClose) {
             await this._options.onClose(this);
@@ -790,7 +817,7 @@ export class Store<T> implements Initiable<T> {
         // TODO add better error handling
         try {
             if (this._onUpdate) {
-                await this._onUpdate(this._oplog, change);
+                await this._onUpdate(change);
             }
         } catch (error) {
             if (error instanceof AccessError) {
@@ -803,7 +830,7 @@ export class Store<T> implements Initiable<T> {
 
         try {
             if (this._onUpdateOption) {
-                await this._onUpdateOption(this._oplog, change);
+                await this._onUpdateOption(change);
             }
         } catch (error) {
             if (error instanceof AccessError) {

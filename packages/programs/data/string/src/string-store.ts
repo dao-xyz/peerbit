@@ -73,6 +73,7 @@ export class DString extends Program {
             this.store.canAppend = options.canAppend;
         }
 
+        await this._index.setup(this.store);
         await this.query.setup({
             ...options,
             context: () => this.address,

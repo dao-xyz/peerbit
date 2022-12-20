@@ -3982,6 +3982,26 @@
     uint8arrays "^4.0.2"
     varint "^6.0.0"
 
+"@libp2p/mplex@^7.1.1":
+  version "7.1.1"
+  resolved "https://registry.yarnpkg.com/@libp2p/mplex/-/mplex-7.1.1.tgz#557567fb6575c471eaa283175c2305d3ef6045fb"
+  integrity sha512-0owK1aWgXXtjiohXtjwLV7Ehjdj96eBtsapVt7AzlHA+W8uYnI+x058thq3MisyMDlHiiE3BTh6fEf+t2/0dUw==
+  dependencies:
+    "@libp2p/interface-connection" "^3.0.1"
+    "@libp2p/interface-stream-muxer" "^3.0.0"
+    "@libp2p/logger" "^2.0.0"
+    abortable-iterator "^4.0.2"
+    any-signal "^3.0.0"
+    benchmark "^2.1.4"
+    err-code "^3.0.1"
+    it-batched-bytes "^1.0.0"
+    it-pushable "^3.1.0"
+    it-stream-types "^1.0.4"
+    rate-limiter-flexible "^2.3.9"
+    uint8arraylist "^2.1.1"
+    uint8arrays "^4.0.2"
+    varint "^6.0.0"
+
 "@libp2p/multistream-select@^3.0.0":
   version "3.1.0"
   resolved "https://registry.yarnpkg.com/@libp2p/multistream-select/-/multistream-select-3.1.0.tgz#d1e877c126feaea09461ce23f7b363a9d34f3a6c"
@@ -4114,10 +4134,10 @@
     uint8arraylist "^2.0.0"
     uint8arrays "^4.0.2"
 
-"@libp2p/tcp@^6.0.5":
-  version "6.0.5"
-  resolved "https://registry.yarnpkg.com/@libp2p/tcp/-/tcp-6.0.5.tgz#c531f5c352719d0eba2f84ad0f73b6b621e99f13"
-  integrity sha512-R75VrTgFq98PhzZso5ppieXUCddIFIHQCkwK8Upbxjg/n30XrF1v40fYVKS4/uQQIRwXjHYBaQTkbkYB5pPWEg==
+"@libp2p/tcp@^6.0.8":
+  version "6.0.8"
+  resolved "https://registry.yarnpkg.com/@libp2p/tcp/-/tcp-6.0.8.tgz#fb8fe292cf339f1eabb9795c913386c8f20661f7"
+  integrity sha512-4AiRnEUnqnLBCNiDjhdcqEp8P2QEHobW1GpjA7rJtmUniVVYXgLMmOI7NdZ2w5HVkvAEIXi4yHBngOyiXaBhKw==
   dependencies:
     "@libp2p/interface-connection" "^3.0.2"
     "@libp2p/interface-metrics" "^4.0.0"
@@ -4127,7 +4147,6 @@
     "@libp2p/utils" "^3.0.2"
     "@multiformats/mafmt" "^11.0.3"
     "@multiformats/multiaddr" "^11.0.0"
-    abortable-iterator "^4.0.2"
     err-code "^3.0.1"
     stream-to-it "^0.2.2"
 
@@ -4166,10 +4185,10 @@
     private-ip "^2.1.1"
     uint8arraylist "^2.3.2"
 
-"@libp2p/websockets@^5.0.0":
-  version "5.0.0"
-  resolved "https://registry.yarnpkg.com/@libp2p/websockets/-/websockets-5.0.0.tgz#239aa0c46c97e16bcebbf2dc40580065861b3f2b"
-  integrity sha512-aQ1aVIuLXuUrjWIug9rJ3iLwyaJ1zgcHQfSGg0eE3a2DE1zpFgFyH0hK6zN+PT23GY/BFmNk/zlilKnA6ayatQ==
+"@libp2p/websockets@^5.0.2":
+  version "5.0.2"
+  resolved "https://registry.yarnpkg.com/@libp2p/websockets/-/websockets-5.0.2.tgz#2fde23fa5851a7877013491194f1c61bd28ac1a9"
+  integrity sha512-bQIGylJfpAeBaRLYN8KiwbD75qXgKKlK/zgH5hiVfCqFHwchEbr2c1Smf86YsX2Ay07jRqQkrJbJFM72ryePoA==
   dependencies:
     "@libp2p/interface-connection" "^3.0.2"
     "@libp2p/interface-transport" "^2.0.0"
@@ -4181,7 +4200,7 @@
     "@multiformats/multiaddr-to-uri" "^9.0.2"
     abortable-iterator "^4.0.2"
     err-code "^3.0.1"
-    it-ws "^5.0.0"
+    it-ws "^5.0.6"
     p-defer "^4.0.0"
     p-timeout "^6.0.0"
     wherearewe "^2.0.1"
@@ -10552,10 +10571,10 @@ it-take@^1.0.1:
   resolved "https://registry.yarnpkg.com/it-take/-/it-take-1.0.2.tgz#b5f1570014db7c3454897898b69bb7ac9c3bffc1"
   integrity sha512-u7I6qhhxH7pSevcYNaMECtkvZW365ARqAIt9K+xjdK1B2WUDEjQSfETkOCT8bxFq/59LqrN3cMLUtTgmDBaygw==
 
-it-ws@^5.0.0:
-  version "5.0.3"
-  resolved "https://registry.yarnpkg.com/it-ws/-/it-ws-5.0.3.tgz#7859641a964981116c2e9a567b5d8ef6424c29e9"
-  integrity sha512-xdkVWNOY41Qfw3zggqQX+JoQxtb6AHmt/ns26nJfBZaDFnYno6KAeU7E+hiHyvtheuE2IXRxVaF+w63Jmfhl5g==
+it-ws@^5.0.6:
+  version "5.0.6"
+  resolved "https://registry.yarnpkg.com/it-ws/-/it-ws-5.0.6.tgz#9b69ff2ef9d08fda18ef2db604acf972d0fedded"
+  integrity sha512-TEEJQaGtkxgP/nGVq8dq48nPT85Afu8kwwvtDFLj4rQLWRhZcb26RWdXLdn9qhXkWPiWbK5H7JWBW1Bebj/SuQ==
   dependencies:
     event-iterator "^2.0.0"
     iso-url "^1.1.2"

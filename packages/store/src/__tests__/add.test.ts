@@ -56,7 +56,6 @@ describe(`addOperation`, function () {
     });
 
     it("adds an operation and triggers the write event", async () => {
-        index = new SimpleIndex();
         const cache = new Cache(cacheStore);
         let done = false;
         const onWrite = async (store: Store<any>, entry: Entry<any>) => {
@@ -77,6 +76,8 @@ describe(`addOperation`, function () {
         };
 
         store = new Store({ storeIndex: 0 });
+        index = new SimpleIndex(store);
+
         await store.init(
             blockStore,
             {
@@ -105,7 +106,6 @@ describe(`addOperation`, function () {
         const writes = 3;
         let eventsFired = 0;
 
-        index = new SimpleIndex();
         const cache = new Cache(cacheStore);
         let done = false;
         const onWrite = async (store: Store<any>, entry: Entry<any>) => {
@@ -126,6 +126,8 @@ describe(`addOperation`, function () {
         };
 
         store = new Store({ storeIndex: 1 });
+        index = new SimpleIndex(store);
+
         await store.init(
             blockStore,
             {
@@ -152,7 +154,6 @@ describe(`addOperation`, function () {
         const writes = 3;
         let eventsFired = 0;
 
-        index = new SimpleIndex();
         const cache = new Cache(cacheStore);
         let done = false;
         const allAddedEntries: string[] = [];
@@ -173,6 +174,8 @@ describe(`addOperation`, function () {
         };
 
         store = new Store({ storeIndex: 1 });
+        index = new SimpleIndex(store);
+
         await store.init(
             blockStore,
             {

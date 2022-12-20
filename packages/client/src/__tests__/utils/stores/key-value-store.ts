@@ -7,6 +7,7 @@ import { Operation } from "@dao-xyz/peerbit-document";
 
 export class KeyValueIndex {
     _index: any;
+    _store: Store<any>;
     constructor() {
         this._index = {};
     }
@@ -15,8 +16,12 @@ export class KeyValueIndex {
         return this._index[key];
     }
 
-    updateIndex(oplog: Log<any>) {
-        const values = oplog.values;
+    setup(store: Store<any>) {
+        this._store = store;
+    }
+
+    updateIndex() {
+        const values = this._store.oplog.values;
         const handled: { [key: string]: boolean } = {};
         for (let i = values.length - 1; i >= 0; i--) {
             const item = values[i];

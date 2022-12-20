@@ -37,7 +37,7 @@
         "@chainsafe/libp2p-gossipsub": "^5.3.0",
         "@chainsafe/libp2p-noise": "^10.2.0",
         "@libp2p/mplex": "^7.1.0",
-        "@libp2p/tcp": "^6.0.5",
+        "@libp2p/tcp": "^6.0.8",
         "libp2p": "^0.41.0",
         "memory-level": "^1.0.0"
     },

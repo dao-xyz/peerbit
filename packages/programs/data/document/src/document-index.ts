@@ -29,6 +29,7 @@ import { AccessError, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { CanRead, RPC, QueryContext, RPCOptions } from "@dao-xyz/peerbit-rpc";
 import { Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+import { Store } from "@dao-xyz/peerbit-store";
 const logger = loggerFn({ module: "document-index" });
 
 @variant(0)
@@ -57,7 +58,7 @@ export class PutOperation<T> extends Operation<T> {
 
     get value(): T | undefined {
         if (!this._value) {
-            throw new Error("Unexpected");
+            throw new Error("Value not decoded, invoke getValue(...) once");
         }
         return this._value;
     }
@@ -119,6 +120,7 @@ export class DocumentIndex<T> extends ComposableProgram {
     _sync: (result: Results<T>) => Promise<void>;
     _index: Map<string, IndexedValue<T>>;
     type: Constructor<T>;
+    _store: Store<Operation<T>>;
 
     constructor(properties: {
         query?: RPC<DocumentQueryRequest, Results<T>>;
@@ -131,10 +133,12 @@ export class DocumentIndex<T> extends ComposableProgram {
 
     async setup(properties: {
         type: Constructor<T>;
+        store: Store<Operation<T>>;
         canRead: CanRead;
         sync: (result: Results<T>) => Promise<void>;
     }) {
         this._index = new Map();
+        this._store = properties.store;
         this.type = properties.type;
         this._sync = properties.sync;
         await this._query.setup({
@@ -169,7 +173,7 @@ export class DocumentIndex<T> extends ComposableProgram {
         return this._index.size;
     }
 
-    async updateIndex(oplog: Log<Operation<T>>, change: Change<Operation<T>>) {
+    async updateIndex(change: Change<Operation<T>>) {
         if (!this.type) {
             throw new Error("Not initialized");
         }
@@ -177,7 +181,7 @@ export class DocumentIndex<T> extends ComposableProgram {
         const removed = [...(change.removed || [])];
         const removedSet = new Set<string>(removed.map((x) => x.hash));
         const entries = [...change.added, ...(change.removed || [])]
-            .sort(oplog._sortFn)
+            .sort(this._store.oplog._sortFn)
             .reverse();
 
         for (const item of entries) {

@@ -1,15 +1,19 @@
 import { Change, Entry } from "@dao-xyz/peerbit-log";
 import { Log } from "@dao-xyz/peerbit-log";
+import { Store } from "../store";
 
 export class SimpleIndex<T> {
     _index: Entry<T>[];
-    id?: any;
-    constructor(id?: string) {
-        this.id = id;
+    _store: Store<T>;
+    constructor(store: Store<T>) {
+        if (!store) {
+            throw new Error("Unexpected");
+        }
         this._index = [];
+        this._store = store;
     }
 
-    async updateIndex(oplog: Log<T>, change: Change<T>) {
-        this._index = oplog.values;
+    async updateIndex(change: Change<T>) {
+        this._index = this._store.oplog.values;
     }
 }
