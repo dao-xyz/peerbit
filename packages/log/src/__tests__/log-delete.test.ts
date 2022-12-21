@@ -48,6 +48,7 @@ describe("Log - Delete", function () {
     it("deletes recursively", async () => {
         const blockExists = async (hash: string): Promise<boolean> => {
             try {
+                await store.idle();
                 return !!(await store.get(hash, { timeout: 3000 }));
             } catch (error) {
                 return false;

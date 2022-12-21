@@ -4,7 +4,6 @@ import {
     stringifyCid,
     cidifyString,
     codecCodes,
-    defaultHasher,
     checkDecodeBlock,
 } from "./block.js";
 import * as Block from "multiformats/block";
@@ -51,7 +50,7 @@ export class LibP2PBlockStore implements BlockStore {
     _eventHandler?: (evt: any) => any;
     _gossipCache?: LRU<string, Uint8Array>;
     _gossip = false;
-
+    _open = false;
     constructor(
         libp2p: Libp2p,
         localStore?: BlockStore,
@@ -208,11 +207,13 @@ export class LibP2PBlockStore implements BlockStore {
         }
         this._libp2p.pubsub.addEventListener("message", this._eventHandler!);
         await this._localStore?.open();
+        this._open = true;
     }
 
     async close(): Promise<void> {
         this._libp2p.pubsub.removeEventListener("message", this._eventHandler);
         await this._localStore?.close();
+        this._open = false;
 
         // we dont cleanup subscription because we dont know if someone else is sbuscribing also
     }
@@ -307,5 +308,20 @@ export class LibP2PBlockStore implements BlockStore {
             return;
         }
         return value;
+    }
+
+    async idle(): Promise<void> {
+        return;
+    }
+
+    get status() {
+        if (this._open) {
+            return (
+                this._localStore?.status ||
+                (this._libp2p.isStarted() ? "open" : "closed")
+            );
+        } else {
+            return "closed";
+        }
     }
 }

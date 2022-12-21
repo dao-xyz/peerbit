@@ -1,10 +1,9 @@
-// Test utils
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 import { LibP2PBlockStore } from "../libp2p";
 import { MemoryLevelBlockStore } from "../level";
 import { stringifyCid } from "../block.js";
 import { Blocks } from "..";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 
 describe(`pubsub`, function () {
     let session: LSession, store: Blocks, store2: Blocks;

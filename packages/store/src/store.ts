@@ -212,6 +212,8 @@ export class Store<T> implements Initiable<T> {
         identity: Identity,
         options: IInitializationOptions<T>
     ): Promise<this> {
+        await store.open();
+
         if (this.initialized) {
             throw new Error("Already initialized");
         }

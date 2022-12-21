@@ -1,10 +1,11 @@
-import { BlockStore, prepareBlockWrite } from "./store.js";
+import { BlockStore, prepareBlockWrite, StoreStatus } from "./store.js";
 export * from "./store.js";
 import { codecMap, defaultHasher, stringifyCid } from "./block.js";
 import * as Block from "multiformats/block";
 import * as dagCbor from "@ipld/dag-cbor";
 import * as raw from "multiformats/codecs/raw";
 import type { MultihashHasher } from "multiformats/hashes/hasher";
+import { waitFor } from "@dao-xyz/peerbit-time";
 export { cidifyString, stringifyCid } from "./block.js";
 export const getBlockValue = async <T>(
     block: Block.Block<T, any, any, any>,
@@ -88,11 +89,27 @@ export class Blocks {
     }
 
     async open(): Promise<void> {
-        return this._store.open();
+        if (
+            this._store.status === "closed" ||
+            this._store.status === "closing"
+        ) {
+            return this._store.open();
+        } else if (this._store.status === "opening") {
+            await waitFor(() => this._store.status === "open");
+            return;
+        }
     }
 
     async close(): Promise<void> {
+        await this.idle();
         return this._store.close();
+    }
+    async idle(): Promise<void> {
+        await this._store.idle();
+    }
+
+    get status(): StoreStatus {
+        return this._store.status;
     }
 }
 

@@ -1,16 +1,16 @@
 import rmrf from "rimraf";
 import fs from "fs-extra";
 import { Log } from "../log.js";
-import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 
+import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
+import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
-
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
@@ -88,6 +88,7 @@ describe("Append trim", function () {
         const { entry: a4, removed } = await log.append("hello4");
         expect(removed).toContainAllValues([a1, a2, a3]);
         expect(log.length).toEqual(1);
+        await log._storage.idle();
         expect(await log._storage.get(a1.hash)).toBeUndefined();
         expect(await log._storage.get(a2.hash)).toBeUndefined();
         expect(await log._storage.get(a3.hash)).toBeUndefined();
@@ -120,6 +121,7 @@ describe("Append trim", function () {
         const { entry: a4, removed: r4 } = await log.append("hello4");
         expect(r4).toContainAllValues([a3]);
         expect(log.values.map((x) => x.payload.getValue())).toEqual(["hello4"]);
+        await log._storage.idle();
         expect(await log._storage.get(a1.hash)).toBeUndefined();
         expect(await log._storage.get(a2.hash)).toBeUndefined();
         expect(await log._storage.get(a3.hash)).toBeUndefined();

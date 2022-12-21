@@ -14,6 +14,7 @@ import path from "path";
 import { CID } from "multiformats/cid";
 import { Blocks } from "@dao-xyz/peerbit-block";
 import { Libp2p } from "libp2p";
+import { waitFor } from "@dao-xyz/peerbit-time";
 export * from "./protocol-message.js";
 
 const notEmpty = (e: string) => e !== "" && e !== " ";
@@ -507,6 +508,7 @@ export abstract class Program
             timeout?: number;
         }
     ): Promise<Address> {
+        await store.open();
         this.setupIndices();
         const existingAddress = this._address;
         const address = await save(store, this, options);

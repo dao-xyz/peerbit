@@ -13,6 +13,7 @@ export type PutOptions = {
     hasher?: MultihashHasher<number>;
 };
 
+export type StoreStatus = "open" | "opening" | "closed" | "closing";
 export interface BlockStore {
     get<T>(
         cid: string,
@@ -25,53 +26,8 @@ export interface BlockStore {
     rm(cid: string): Promise<void>;
     open(): Promise<void>;
     close(): Promise<void>;
-}
-
-export class FallbackBlockStore implements BlockStore {
-    _stores: BlockStore[];
-    constructor(stores: BlockStore[]) {
-        this._stores = stores;
-    }
-
-    async get<T>(
-        cid: string,
-        options?: GetOptions
-    ): Promise<Block.Block<T, any, any, any> | undefined> {
-        const promises = this._stores.map((s) => s.get<T>(cid, options));
-        const result = await Promise.any(promises);
-        if (!result) {
-            const results = await Promise.all(promises);
-            for (const result of results) {
-                if (result) {
-                    return result;
-                }
-            }
-        }
-        return result;
-    }
-
-    async put(value: any, options?: PutOptions | undefined): Promise<string> {
-        const cids = await Promise.all(
-            this._stores.map((x) => x.put(value, options))
-        );
-        for (let i = 1; i < cids.length; i++) {
-            if (cids[i] === cids[0]) {
-                throw new Error("Expecting CIDs to be equal");
-            }
-        }
-        return cids[0];
-    }
-    async rm(cid: string): Promise<void> {
-        await Promise.all(this._stores.map((x) => x.rm(cid)));
-    }
-
-    async open(): Promise<void> {
-        await Promise.all(this._stores.map((s) => s.open()));
-    }
-
-    async close(): Promise<void> {
-        await Promise.all(this._stores.map((s) => s.close()));
-    }
+    idle(): Promise<void>;
+    get status(): StoreStatus;
 }
 
 export const prepareBlockWrite = (value: any, codec: any, links?: string[]) => {
