@@ -79,7 +79,7 @@
         "gh-pages": "^4.0.0",
         "dotenv": "^16.0.3",
         "jest": "^29.3.1",
-        "jest-extended": "^3.1.0",
+        "jest-extended": "^3.2.0",
         "json": "^11.0.0",
         "lerna": "^5.5.1",
         "prettier": "^2.8.1",
