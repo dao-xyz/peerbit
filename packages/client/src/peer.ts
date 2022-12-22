@@ -76,6 +76,9 @@ import sodium from "libsodium-wrappers";
 import { delay } from "@dao-xyz/peerbit-time";
 import path from "path-browserify";
 import { waitFor, TimeoutError } from "@dao-xyz/peerbit-time";
+import { PubSub } from "@libp2p/interface-pubsub";
+import { GossipsubEvents, GossipsubMessage } from "@chainsafe/libp2p-gossipsub";
+
 export const logger = loggerFn({ module: "peer" });
 await sodium.ready;
 
@@ -161,8 +164,10 @@ export const isReplicationTopic = (topic: string) => {
     return topic.endsWith("!");
 };
 
+export type LibP2PGossipSub = Libp2p & { pubsub: PubSub<GossipsubEvents> };
+
 export class Peerbit {
-    _libp2p: Libp2p;
+    _libp2p: LibP2PGossipSub;
     _store: Blocks;
     _directConnections: Map<string, SharedChannel<DirectChannel>>;
     _topicSubscriptions: Map<string, SharedChannel<SharedIPFSChannel>>;
@@ -199,6 +204,7 @@ export class Peerbit {
     _disconnected = false;
     _disconnecting = false;
     _encryption: PublicKeyEncryptionResolver;
+    _sentMessages: LRU<string, string> = new LRU({ max: 1000, ttl: 10000 });
 
     constructor(libp2p: Libp2p, identity: Identity, options: CreateOptions) {
         if (!isDefined(libp2p)) {
@@ -274,65 +280,6 @@ export class Peerbit {
         this._reorgQueue = new PQueue({ concurrency: 1 });
 
         this._topicSubscriptions = new Map();
-    }
-
-    get libp2p(): Libp2p {
-        return this._libp2p;
-    }
-
-    get cacheDir() {
-        return this.directory || "./cache";
-    }
-
-    get cache() {
-        return this.caches[this.cacheDir].cache;
-    }
-
-    get encryption() {
-        if (!this._encryption) {
-            throw new Error("Unexpected");
-        }
-        return this._encryption;
-    }
-    async getEncryption(): Promise<PublicKeyEncryptionResolver> {
-        this._encryption = await encryptionWithRequestKey(
-            this.identity,
-            this.keystore
-        );
-        return this._encryption;
-    }
-
-    async decryptedSignedThing(
-        data: Uint8Array
-    ): Promise<DecryptedThing<MaybeSigned<Uint8Array>>> {
-        const signedMessage = await new MaybeSigned({ data }).sign(
-            async (data) => {
-                return {
-                    publicKey: this.identity.publicKey,
-                    signature: await this.identity.sign(data),
-                };
-            }
-        );
-        return new DecryptedThing({
-            data: serialize(signedMessage),
-        });
-    }
-
-    async enryptedSignedThing(
-        data: Uint8Array,
-        reciever: X25519PublicKey
-    ): Promise<EncryptedThing<MaybeSigned<Uint8Array>>> {
-        const signedMessage = await new MaybeSigned({ data }).sign(
-            async (data) => {
-                return {
-                    publicKey: this.identity.publicKey,
-                    signature: await this.identity.sign(data),
-                };
-            }
-        );
-        return new DecryptedThing<MaybeSigned<Uint8Array>>({
-            data: serialize(signedMessage),
-        }).encrypt(this.encryption.getEncryptionKeypair, reciever);
     }
 
     static async create(libp2p: Libp2p, options: CreateInstanceOptions = {}) {
@@ -414,6 +361,64 @@ export class Peerbit {
         await peer.getEncryption();
         return peer;
     }
+    get libp2p(): Libp2p {
+        return this._libp2p;
+    }
+
+    get cacheDir() {
+        return this.directory || "./cache";
+    }
+
+    get cache() {
+        return this.caches[this.cacheDir].cache;
+    }
+
+    get encryption() {
+        if (!this._encryption) {
+            throw new Error("Unexpected");
+        }
+        return this._encryption;
+    }
+    async getEncryption(): Promise<PublicKeyEncryptionResolver> {
+        this._encryption = await encryptionWithRequestKey(
+            this.identity,
+            this.keystore
+        );
+        return this._encryption;
+    }
+
+    async decryptedSignedThing(
+        data: Uint8Array
+    ): Promise<DecryptedThing<MaybeSigned<Uint8Array>>> {
+        const signedMessage = await new MaybeSigned({ data }).sign(
+            async (data) => {
+                return {
+                    publicKey: this.identity.publicKey,
+                    signature: await this.identity.sign(data),
+                };
+            }
+        );
+        return new DecryptedThing({
+            data: serialize(signedMessage),
+        });
+    }
+
+    async enryptedSignedThing(
+        data: Uint8Array,
+        reciever: X25519PublicKey
+    ): Promise<EncryptedThing<MaybeSigned<Uint8Array>>> {
+        const signedMessage = await new MaybeSigned({ data }).sign(
+            async (data) => {
+                return {
+                    publicKey: this.identity.publicKey,
+                    signature: await this.identity.sign(data),
+                };
+            }
+        );
+        return new DecryptedThing<MaybeSigned<Uint8Array>>({
+            data: serialize(signedMessage),
+        }).encrypt(this.encryption.getEncryptionKeypair, reciever);
+    }
 
     async disconnect() {
         this._disconnecting = true;
@@ -487,26 +492,29 @@ export class Peerbit {
         const observerTopic = getObserverTopic(topic);
         const sendAll =
             this._libp2p.pubsub.getSubscribers(observerTopic)?.length > 0
-                ? (data: Uint8Array): Promise<any> => {
-                      return this.libp2p.pubsub.publish(
-                          getObserverTopic(topic),
-                          data
-                      );
+                ? (id: string, data: Uint8Array): Promise<any> => {
+                      {
+                          this._sentMessages.set(id, id);
+                          return this.libp2p.pubsub.publish(
+                              getObserverTopic(topic),
+                              data
+                          );
+                      }
                   }
                 : undefined;
-        let send = sendAll;
+        const send = sendAll;
         if (!this.browser && program.replicate) {
             // send to peers directly
-            send = async (data: Uint8Array) => {
+            /* send = async (id: string, data: Uint8Array) => {
                 const minReplicas = this.programs
                     .get(topic)
                     ?.get(programAddress)?.minReplicas.value;
                 if (typeof minReplicas !== "number") {
                     throw new Error(
                         "Min replicas info not found for: " +
-                            topic +
-                            "/" +
-                            programAddress
+                        topic +
+                        "/" +
+                        programAddress
                     );
                 }
 
@@ -528,7 +536,7 @@ export class Peerbit {
                             .length === 0
                     ) {
                         // we are missing a channel, send to all instead as fallback
-                        return sendAll && sendAll(data);
+                        return sendAll && sendAll(id + replicator, data);
                     } else {
                         channels.push(channel);
                     }
@@ -537,7 +545,7 @@ export class Peerbit {
                     channels.map((channel) => channel.channel.send(data))
                 );
                 return;
-            };
+            }; */
         }
         if (send) {
             exchangeHeads(
@@ -588,10 +596,10 @@ export class Peerbit {
         }
 
         try {
-            const peer =
-                message.type === "signed"
-                    ? (message as SignedPubSubMessage).from
-                    : undefined;
+            /*   const peer =
+                  message.type === "signed"
+                      ? (message as SignedPubSubMessage).from
+                      : undefined; */
             const maybeEncryptedMessage = deserialize(
                 message.data,
                 MaybeEncrypted
@@ -813,10 +821,10 @@ export class Peerbit {
                  * Someone is requesting X25519 Secret keys for me so that they can open encrypted messages (and encrypt)
                  *
                  */
-                if (!peer) {
-                    logger.error("Execting a sigmed pubsub message");
-                    return;
-                }
+                /*   if (!peer) {
+                      logger.error("Execting a sigmed pubsub message");
+                      return;
+                  } */
 
                 if (!sender) {
                     logger.info("Expecing sender when recieving key info");
@@ -841,11 +849,13 @@ export class Peerbit {
                     throw new Error("Unexpected message");
                 }
 
-                const send = (data: Uint8Array) =>
-                    this._libp2p.pubsub.publish(
+                const send = (id: string, data: Uint8Array) => {
+                    this._sentMessages.set(id, id);
+                    return this._libp2p.pubsub.publish(
                         message.topic, // DirectChannel.getTopic([peer.toString()]),
                         data
                     );
+                };
                 await exchangeKeys(
                     send,
                     msg,
@@ -884,11 +894,14 @@ export class Peerbit {
                 // Should subscription to a replication be a proof of "REPLICATING?"
                 const initializeAsNonBrowser = async () => {
                     await exchangeSwarmAddresses(
-                        (data) =>
-                            this.libp2p.pubsub.publish(
+                        (id, data) => {
+                            this._sentMessages.set(id, id);
+                            return this.libp2p.pubsub.publish(
                                 getReplicationTopic(topic),
                                 data
-                            ),
+                            );
+                        },
+
                         this.identity,
                         peer,
                         this._libp2p.pubsub.getPeers(),
@@ -924,11 +937,13 @@ export class Peerbit {
                         } else {
                             // If replicate false, we are in write mode. Means we should exchange all heads
                             // Because we dont know anything about whom are to store data, so we assume all peers might have responsibility
-                            const send = (data: Uint8Array) =>
-                                this._libp2p.pubsub.publish(
+                            const send = (id: string, data: Uint8Array) => {
+                                this._sentMessages.set(id, id);
+                                return this._libp2p.pubsub.publish(
                                     getObserverTopic(topic), // DirectChannel.getTopic([peer.toString()]),
                                     data
                                 );
+                            };
                             const headsToExchange = store.oplog.heads;
                             logger.debug(
                                 `${this.id}: Exchange heads ${
@@ -1028,7 +1043,8 @@ export class Peerbit {
                                         );
 
                                         await exchangeHeads(
-                                            async (message) => {
+                                            async (id, message) => {
+                                                this._sentMessages.set(id, id);
                                                 await channel.send(message);
                                             },
                                             store,
@@ -1284,7 +1300,7 @@ export class Peerbit {
         numberOfLeaders: number
     ): Promise<string[]> {
         // Hash the time, and find the closest peer id to this hash
-        const h = (h: string) => sodium.crypto_generichash(32, h, null, "hex");
+        const h = (h: string) => sodium.crypto_generichash(16, h, null, "hex");
         const slotHash = h(slot.toString());
 
         // Assumption: All peers wanting to replicate on topic has direct connections with me (Fully connected network)
@@ -1306,14 +1322,15 @@ export class Peerbit {
         const hashToPeer: Map<string, string> = new Map();
         const peerHashed: string[] = [];
 
-        if (peers.length === 0) {
-            return [this.id.toString()];
-        }
-
         // Add self
         const iAmReplicating = this._topicSubscriptions.has(
             getReplicationTopic(topic)
         ); // TODO add conditional whether this represents a network (I am not replicating if I am not trusted (pointless))
+
+        if (peers.length === 0) {
+            return iAmReplicating ? [this.id.toString()] : peers;
+        }
+
         if (iAmReplicating) {
             peers.push(this.id.toString());
         }
@@ -1793,11 +1810,13 @@ export class Peerbit {
 
         const promise = new Promise<KeyWithMeta<T>[] | undefined>(
             (resolve, reject) => {
-                const send = (message: Uint8Array) =>
-                    this._libp2p.pubsub.publish(
+                const send = (id: string, message: Uint8Array) => {
+                    this._sentMessages.set(id, id);
+                    return this._libp2p.pubsub.publish(
                         getReplicationTopic(topic),
                         message
                     );
+                };
                 requestAndWaitForKeys(
                     condition,
                     send,

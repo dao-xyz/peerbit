@@ -86,7 +86,10 @@ export const createNode = async () => {
         transports: [tcp(), webSockets()],
         connectionEncryption: [noise()],
         streamMuxers: [mplex()],
-        pubsub: floodsub(), // gossipsub({ canRelayMessage: true }),
+        pubsub: gossipsub({
+            canRelayMessage: true,
+            globalSignaturePolicy: "StrictNoSign",
+        }),
     });
     await node.start();
     return node;

@@ -80,6 +80,7 @@ describe(`sharding`, function () {
         await Promise.all(promises);
         await waitFor(() => db1.store.store.oplog.values.length === entryCount);
 
+        /*  await delay(20000); */
         // this could failed, if we are unlucky probability wise
         await waitFor(
             () =>
@@ -94,18 +95,26 @@ describe(`sharding`, function () {
 
         const checkConverged = async (db: EventStore<any>) => {
             const a = db.store.oplog.values.length;
-            await delay(5000); // arb delay
+            await delay(2500); // arb delay
             return a === db.store.oplog.values.length;
         };
 
         await waitForAsync(() => checkConverged(db2.store), {
             timeout: 20000,
-            delayInterval: 5000,
+            delayInterval: 500,
         });
         await waitForAsync(() => checkConverged(db3.store), {
             timeout: 20000,
-            delayInterval: 5000,
+            delayInterval: 500,
         });
+        expect(
+            db2.store.store.oplog.values.length > entryCount * 0.5 &&
+                db2.store.store.oplog.values.length < entryCount * 0.85
+        ).toBeTrue();
+        expect(
+            db3.store.store.oplog.values.length > entryCount * 0.5 &&
+                db3.store.store.oplog.values.length < entryCount * 0.85
+        ).toBeTrue();
     });
 
     // TODO add tests for late joining and leaving peers

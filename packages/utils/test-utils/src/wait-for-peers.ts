@@ -1,8 +1,9 @@
 import type { PeerId } from "@libp2p/interface-peer-id";
 import { Libp2p } from "libp2p";
-
+import { PubSub } from "@libp2p/interface-pubsub";
+import { GossipsubEvents } from "@chainsafe/libp2p-gossipsub";
 const waitForPeers = (
-    libp2p: Libp2p | any,
+    libp2p: (Libp2p & { pubsub: PubSub<GossipsubEvents> }) | any,
     peersToWait: (PeerId | string | Libp2p)[] | PeerId | string | Libp2p,
     topic: string
 ) => {

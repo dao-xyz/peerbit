@@ -212,12 +212,13 @@ export class RPC<Q, R> extends ComposableProgram {
     }
 
     async _onMessage(evt: CustomEvent<Message>): Promise<void> {
-        if (evt.detail.type === "signed") {
+        //if (evt.detail.type === "signed")
+        {
             const message = evt.detail;
             if (message) {
-                if (message.from.equals(this._libp2p.peerId)) {
-                    return;
-                }
+                /*  if (message.from.equals(this._libp2p.peerId)) {
+                     return;
+                 } */
                 try {
                     try {
                         const { result: request, from } =

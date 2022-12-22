@@ -35,7 +35,7 @@
         "@dao-xyz/peerbit-crypto": "^0.0.34",
         "@dao-xyz/peerbit-time": "^0.0.19",
         "level": "^8.0.0",
-        "lru-cache": "^7.14.0",
+        "lru-cache": "^7.14.1",
         "reachdown": "^1.1.0",
         "safe-buffer": "^5.2.1"
     },

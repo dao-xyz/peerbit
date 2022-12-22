@@ -1,4 +1,4 @@
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { getReplicationTopic, Peerbit } from "../peer";
 import { EventStore } from "./utils/stores/event-store";
 import { v4 as uuid } from "uuid";
@@ -67,7 +67,7 @@ describe(`Write-only`, function () {
         );
 
         await db1.add("hello");
-        /*   await waitFor(() => db2._oplog.clock.time > 0); */
+        await delay(5000);
         await db2.add("world");
 
         await waitFor(() => db1.store.oplog.values.length === 2);

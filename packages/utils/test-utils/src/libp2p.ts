@@ -5,11 +5,13 @@ import { tcp } from "@libp2p/tcp";
 import { gossipsub } from "@chainsafe/libp2p-gossipsub";
 import waitForPeers from "./wait-for-peers";
 import { setMaxListeners } from "events";
+import { PubSub } from "@libp2p/interface-pubsub";
+import { GossipsubEvents } from "@chainsafe/libp2p-gossipsub";
 
 export class LSession {
-    peers: Libp2p[];
+    peers: (Libp2p & { pubsub: PubSub<GossipsubEvents> })[];
 
-    constructor(peers: Libp2p[]) {
+    constructor(peers: (Libp2p & { pubsub: PubSub<GossipsubEvents> })[]) {
         this.peers = peers;
     }
 
@@ -61,6 +63,7 @@ export class LSession {
         const promises: Promise<Libp2p>[] = [];
         for (let i = 0; i < n; i++) {
             const result = async () => {
+                let msgCounter = 0;
                 const node = await createLibp2p({
                     connectionManager: {
                         autoDial: false,
@@ -71,7 +74,10 @@ export class LSession {
                     transports: [tcp()],
                     connectionEncryption: [noise()],
                     streamMuxers: [mplex()],
-                    pubsub: gossipsub(),
+                    pubsub: gossipsub({
+                        emitSelf: false,
+                        globalSignaturePolicy: "StrictNoSign",
+                    }),
                 });
                 await node.start();
                 return node;

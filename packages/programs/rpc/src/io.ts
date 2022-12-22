@@ -48,12 +48,13 @@ export const send = async (
     // send query and wait for replies in a generator like behaviour
     let results = 0;
     const _responseHandler = async (evt: CustomEvent<Message>) => {
-        if (evt.detail.type === "signed") {
+        //  if (evt.detail.type === "signed")
+        {
             const message = evt.detail;
             if (message) {
-                if (message.from.equals(libp2p.peerId)) {
-                    return;
-                }
+                /*    if (message.from.equals(libp2p.peerId)) {
+                       return;
+                   } */
                 try {
                     const { result, from } = await decryptVerifyInto(
                         message.data,

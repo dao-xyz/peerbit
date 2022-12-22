@@ -86,7 +86,12 @@ export class LogIO {
         const length = options.length || -1;
 
         // Convert input hash(s) to an array
-        const hashes = Array.isArray(hash) ? hash : [hash];
+        let hashes = Array.isArray(hash) ? hash : [hash];
+
+        if (options.shouldFetch) {
+            hashes = hashes.filter((hash) => options.shouldFetch!(hash));
+        }
+
         // Fetch given length, return size at least the given input entries
         if (length > -1) {
             options = {
@@ -146,8 +151,14 @@ export class LogIO {
             };
         }
 
+        if (options.shouldFetch) {
+            sourceEntries = sourceEntries.filter((e) =>
+                options.shouldFetch!(e.hash)
+            );
+        }
+
         // Make sure we pass hashes instead of objects to the fetcher function
-        let hashes: string[] = [];
+        const hashes: string[] = [];
         const cache = options.cache || new Map<string, Entry<any>>();
         for (const e of sourceEntries) {
             e.init({
@@ -157,14 +168,10 @@ export class LogIO {
 
             cache.set(e.hash, e);
             (await e.getNext()).forEach((n) => {
-                hashes.push(n);
+                if (!options.shouldFetch || options.shouldFetch(n)) {
+                    hashes.push(n);
+                }
             });
-        }
-
-        if (options.shouldFetch) {
-            hashes = hashes.filter((h) =>
-                (options.shouldFetch as (h: string) => boolean)(h)
-            );
         }
 
         if (options.onFetched) {

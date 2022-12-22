@@ -7,6 +7,7 @@ import { fixedUint8Array } from "@dao-xyz/peerbit-borsh-utils";
 import { Store } from "@dao-xyz/peerbit-store";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { TransportMessage } from "./message.js";
+import { v4 as uuid } from "uuid";
 
 const logger = loggerFn({ module: "exchange-heads" });
 
@@ -70,25 +71,22 @@ export class ExchangeHeadsMessage<T> extends TransportMessage {
     @field({ type: fixedUint8Array(4) })
     reserved: Uint8Array = new Uint8Array(4);
 
-    constructor(props?: {
+    constructor(props: {
         topic: string;
         programIndex?: number;
         programAddress: string;
         storeIndex: number;
-
         heads: EntryWithRefs<T>[];
         minReplicas?: MinReplicas;
     }) {
         super();
-        if (props) {
-            /* this.resourceRequirements = props.resourceRequirements || []; */
-            this.topic = props.topic;
-            this.storeIndex = props.storeIndex;
-            this.programIndex = props.programIndex;
-            this.programAddress = props.programAddress;
-            this.heads = props.heads;
-            this.minReplicas = props.minReplicas;
-        }
+        this.id = uuid();
+        this.topic = props.topic;
+        this.storeIndex = props.storeIndex;
+        this.programIndex = props.programIndex;
+        this.programAddress = props.programAddress;
+        this.heads = props.heads;
+        this.minReplicas = props.minReplicas;
     }
 }
 
@@ -100,7 +98,7 @@ export class RequestHeadsMessage extends TransportMessage {
     @field({ type: "string" })
     address: string;
 
-    constructor(props?: { topic: string; address: string }) {
+    constructor(props: { topic: string; address: string }) {
         super();
         if (props) {
             this.topic = props.topic;
@@ -110,7 +108,7 @@ export class RequestHeadsMessage extends TransportMessage {
 }
 
 export const exchangeHeads = async (
-    send: (message: Uint8Array) => Promise<any>,
+    send: (id: string, message: Uint8Array) => Promise<any>,
     store: Store<any>,
     program: Program,
     heads: Entry<any>[],
@@ -156,6 +154,6 @@ export const exchangeHeads = async (
             data: serialize(signedMessage),
         }); // TODO encryption?
         const serializedMessage = serialize(decryptedMessage);
-        await send(serializedMessage);
+        await send(message.id, serializedMessage);
     }
 };

@@ -55,7 +55,8 @@
         "@ipld/dag-cbor": "^7.0.3",
         "abstract-level": "^1.0.3",
         "libp2p": "^0.41.0",
-        "lru-cache": "^7.14.0",
-        "memory-level": "^1.0.0"
+        "lru-cache": "^7.14.1",
+        "memory-level": "^1.0.0",
+        "uuid": "^8.3.2"
     }
 }

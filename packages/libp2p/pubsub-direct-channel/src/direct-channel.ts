@@ -179,8 +179,9 @@ export class DirectChannel {
                 `Recieved message on channel: ${this._id} with size ${evt.detail.data.byteLength}`
             );
             const message = evt.detail;
-            if (message.type === "signed" && this._id === message.topic) {
-                if (message.from.equals(this._receiverID)) {
+            if (/* message.type === "signed" && */ this._id === message.topic) {
+                /* if (message.from.equals(this._receiverID))  */
+                {
                     let data: Uint8Array = message.data;
                     if (data.constructor !== Uint8Array) {
                         if (data instanceof Uint8Array) {

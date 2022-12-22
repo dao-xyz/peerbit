@@ -4,18 +4,20 @@ import { Log } from "../log.js";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import { Entry } from "../entry.js";
-import path from "path";
 import {
     LibP2PBlockStore,
     MemoryLevelBlockStore,
     Blocks,
     DEFAULT_BLOCK_TRANSPORT_TOPIC,
 } from "@dao-xyz/peerbit-block";
+
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+import { Entry } from "../entry.js";
+import path from "path";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
+import { Message } from "@libp2p/interface-pubsub";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -90,11 +92,8 @@ describe("ipfs-log - Replication", function () {
         const buffer2: string[] = [];
         let processing = 0;
 
-        const handleMessage = async (message: any, topic: string) => {
-            if (
-                session.peers[0].peerId.equals(message.from) ||
-                message.topic !== topic
-            ) {
+        const handleMessage = async (message: Message, topic: string) => {
+            if (message.topic !== topic) {
                 return;
             }
             const hash = Buffer.from(message.data).toString();
@@ -118,11 +117,8 @@ describe("ipfs-log - Replication", function () {
             processing--;
         };
 
-        const handleMessage2 = async (message: any, topic: string) => {
-            if (
-                session.peers[1].peerId.equals(message.from) ||
-                message.topic !== topic
-            ) {
+        const handleMessage2 = async (message: Message, topic: string) => {
+            if (message.topic !== topic) {
                 return;
             }
             const hash = Buffer.from(message.data).toString();

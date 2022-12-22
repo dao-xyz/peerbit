@@ -123,18 +123,17 @@ describe(`DirectChannel`, function () {
                 session.peers[0],
                 session.peers[1].peerId,
                 (m) => {
-                    if (m.type === "signed") {
-                        expect(
-                            m.from.equals(session.peers[1].peerId.toString())
-                        );
-                        expect(new Uint8Array(m.data)).toEqual(
-                            new Uint8Array([1])
-                        );
-                        expect(m.topic).toEqual(c1.id);
-                        expect(m.topic).toEqual(c2.id);
-                    } else {
-                        expect(false);
-                    }
+                    /*  if (m.type === "signed"
+                     ) { */
+                    /*    expect(
+                           m.from.equals(session.peers[1].peerId.toString())
+                       ); */
+                    expect(new Uint8Array(m.data)).toEqual(new Uint8Array([1]));
+                    expect(m.topic).toEqual(c1.id);
+                    expect(m.topic).toEqual(c2.id);
+                    /*   } else {
+                          expect(false);
+                      } */
 
                     c1.close();
                     c2.close();
@@ -145,18 +144,16 @@ describe(`DirectChannel`, function () {
                 session.peers[1],
                 session.peers[0].peerId,
                 (m) => {
-                    if (m.type === "signed") {
-                        expect(
-                            m.from.equals(session.peers[0].peerId.toString())
-                        );
-                        expect(new Uint8Array(m.data)).toEqual(
-                            new Uint8Array([0])
-                        );
-                        expect(m.topic).toEqual(c1.id);
-                        expect(m.topic).toEqual(c2.id);
-                    } else {
-                        expect(false);
-                    }
+                    /* if (m.type === "signed") { */
+                    /*    expect(
+                           m.from.equals(session.peers[0].peerId.toString())
+                       ); */
+                    expect(new Uint8Array(m.data)).toEqual(new Uint8Array([0]));
+                    expect(m.topic).toEqual(c1.id);
+                    expect(m.topic).toEqual(c2.id);
+                    /*  } else {
+                         expect(false);
+                     } */
 
                     c2.send(new Uint8Array([1]));
                 }
@@ -307,18 +304,16 @@ describe(`DirectChannel`, function () {
                 session.peers[0],
                 session.peers[1].peerId,
                 (m) => {
-                    if (m.type === "signed") {
-                        expect(
-                            m.from.equals(session.peers[1].peerId.toString())
-                        );
-                        expect(new Uint8Array(m.data)).toEqual(
-                            new Uint8Array([0])
-                        );
-                        expect(m.topic).toEqual(c1.id);
-                        expect(m.topic).toEqual(c2.id);
-                    } else {
+                    /*  if (m.type === "signed") {
+                         expect(
+                             m.from.equals(session.peers[1].peerId.toString())
+                         ); */
+                    expect(new Uint8Array(m.data)).toEqual(new Uint8Array([0]));
+                    expect(m.topic).toEqual(c1.id);
+                    expect(m.topic).toEqual(c2.id);
+                    /* } else {
                         expect(false);
-                    }
+                    } */
                 }
             );
             const c2 = await Channel.open(

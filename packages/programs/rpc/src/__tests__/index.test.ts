@@ -180,12 +180,13 @@ describe("rpc", () => {
             session.peers[i].pubsub.addEventListener(
                 "message",
                 async (evt: CustomEvent<Message>) => {
-                    if (evt.detail.type === "signed") {
+                    // if (evt.detail.type === "signed")
+                    {
                         const message = evt.detail;
                         if (message) {
-                            if (message.from.equals(session.peers[i].peerId)) {
-                                return;
-                            }
+                            /*  if (message.from.equals(session.peers[i].peerId)) {
+                                 return;
+                             } */
                             try {
                                 let { result: request } =
                                     await decryptVerifyInto(
@@ -264,12 +265,13 @@ describe("rpc", () => {
         session.peers[1].pubsub.addEventListener(
             "message",
             async (evt: CustomEvent<Message>) => {
-                if (evt.detail.type === "signed") {
+                // if (evt.detail.type === "signed")
+                {
                     const message = evt.detail;
                     if (message) {
-                        if (message.from.equals(session.peers[1].peerId)) {
-                            return;
-                        }
+                        /*  if (message.from.equals(session.peers[1].peerId)) {
+                             return;
+                         } */
                         try {
                             let { result: request, from } =
                                 await decryptVerifyInto(
@@ -357,12 +359,13 @@ describe("rpc", () => {
         session.peers[1].pubsub.addEventListener(
             "message",
             async (evt: CustomEvent<Message>) => {
-                if (evt.detail.type === "signed") {
+                //  if (evt.detail.type === "signed")
+                {
                     const message = evt.detail;
                     if (message) {
-                        if (message.from.equals(session.peers[1].peerId)) {
+                        /* if (message.from.equals(session.peers[1].peerId)) {
                             return;
-                        }
+                        } */
                         try {
                             let { result: request } = await decryptVerifyInto(
                                 message.data,

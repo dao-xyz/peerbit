@@ -41,7 +41,7 @@
         "@dao-xyz/peerbit-trusted-network": "^0.0.116",
         "is-node": "^1.0.2",
         "level": "^8.0.0",
-        "lru-cache": "^7.14.0",
+        "lru-cache": "^7.14.1",
         "memory-level": "^1.0.0",
         "p-queue": "^7.3.0",
         "wherearewe": "^2.0.1"

@@ -65,19 +65,20 @@ export class SharedIPFSChannel implements Closable {
                 return;
             }
 
-            if (message.type === "signed") {
+            /*    if (message.type === "signed")  */
+            {
                 const signedMessage = message as SignedMessage;
-                if (signedMessage.from.equals(this._id)) {
-                    return;
-                }
+                /*    if (signedMessage.from.equals(this._id)) {
+                       return;
+                   } */
                 if (signedMessage.topic !== this._topic) {
                     return;
                 }
 
                 messageCallback(message);
-            } else {
+            } /*  else {
                 // unsigned message
-            }
+            } */
         };
     }
 

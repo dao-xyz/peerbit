@@ -7,11 +7,14 @@ import {
     checkDecodeBlock,
 } from "./block.js";
 import * as Block from "multiformats/block";
-import { waitFor } from "@dao-xyz/peerbit-time";
 import { variant, field, serialize, deserialize } from "@dao-xyz/borsh";
-import type { Message } from "@libp2p/interface-pubsub";
 import LRU from "lru-cache";
 import { CID } from "multiformats/cid";
+import { v4 as uuid } from "uuid";
+import { PubSub } from "@libp2p/interface-pubsub";
+import { GossipsubEvents, GossipsubMessage } from "@chainsafe/libp2p-gossipsub";
+import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+const logger = loggerFn({ module: "blocks-libp2p" });
 
 export const DEFAULT_BLOCK_TRANSPORT_TOPIC = "_block";
 
@@ -20,16 +23,23 @@ export class BlockMessage {}
 @variant(0)
 export class BlockRequest extends BlockMessage {
     @field({ type: "string" })
+    id: string;
+
+    @field({ type: "string" })
     cid: string;
 
     constructor(cid: string) {
         super();
+        this.id = uuid();
         this.cid = cid;
     }
 }
 
 @variant(1)
 export class BlockResponse extends BlockMessage {
+    @field({ type: "string" })
+    id: string;
+
     @field({ type: "string" })
     cid: string;
 
@@ -38,16 +48,17 @@ export class BlockResponse extends BlockMessage {
 
     constructor(cid: string, bytes: Uint8Array) {
         super();
+        this.id = uuid();
         this.cid = cid;
         this.bytes = bytes;
     }
 }
 
 export class LibP2PBlockStore implements BlockStore {
-    _libp2p: Libp2p;
+    _libp2p: Libp2p & { pubsub: PubSub<GossipsubEvents> };
     _transportTopic: string;
     _localStore?: BlockStore;
-    _eventHandler?: (evt: any) => any;
+    _eventHandler?: (evt: CustomEvent<GossipsubMessage>) => any;
     _gossipCache?: LRU<string, Uint8Array>;
     _gossip = false;
     _open = false;
@@ -88,22 +99,22 @@ export class LibP2PBlockStore implements BlockStore {
 
         this._eventHandler =
             this._localStore || this._gossipCache
-                ? async (evt: CustomEvent<Message>) => {
+                ? async (evt: CustomEvent<GossipsubMessage>) => {
                       if (!evt) {
                           return;
                       }
                       const message = evt.detail;
                       if (
-                          message.type === "signed" &&
-                          message.topic === this._transportTopic
+                          /*    message.type === "signed" && */
+                          message.msg.topic === this._transportTopic
                       ) {
-                          if (message.from.equals(libp2p.peerId)) {
-                              return;
-                          }
+                          /*    if (message.from.equals(libp2p.peerId)) {
+                               return;
+                           } */
 
                           try {
                               const decoded = deserialize(
-                                  message.data,
+                                  message.msg.data,
                                   BlockMessage
                               );
                               if (
@@ -120,12 +131,12 @@ export class LibP2PBlockStore implements BlockStore {
                                   if (!block) {
                                       return;
                                   }
-                                  const message = serialize(
+                                  const response = serialize(
                                       new BlockResponse(cid, block.bytes)
                                   );
                                   await libp2p.pubsub.publish(
                                       this._transportTopic,
-                                      message
+                                      response
                                   );
                               } else if (
                                   decoded instanceof BlockResponse &&
@@ -205,17 +216,12 @@ export class LibP2PBlockStore implements BlockStore {
         if (!hasTopic) {
             this._libp2p.pubsub.subscribe(this._transportTopic);
         }
-        this._libp2p.pubsub.addEventListener("message", this._eventHandler!);
+        this._libp2p.pubsub.addEventListener(
+            "gossipsub:message",
+            this._eventHandler!
+        );
         await this._localStore?.open();
         this._open = true;
-    }
-
-    async close(): Promise<void> {
-        this._libp2p.pubsub.removeEventListener("message", this._eventHandler);
-        await this._localStore?.close();
-        this._open = false;
-
-        // we dont cleanup subscription because we dont know if someone else is sbuscribing also
     }
 
     async _readFromGossip(
@@ -241,77 +247,97 @@ export class LibP2PBlockStore implements BlockStore {
         cidObject: CID,
         options: { timeout?: number; hasher?: any } = {}
     ): Promise<Block.Block<any, any, any, 1> | undefined> {
-        const timeout = options.timeout || 5000;
-        const codec = codecCodes[cidObject.code];
-        let value: Block.Block<any, any, any, 1> | undefined = undefined;
-        // await libp2p.pubsub.subscribe(BLOCK_TRANSPORT_TOPIC) TODO
-        const eventHandler = async (evt) => {
-            if (value) {
-                return;
-            }
-            const message = evt.detail;
-            if (
-                message.type === "signed" &&
-                message.topic === this._transportTopic
-            ) {
-                if (message.from.equals(this._libp2p.peerId)) {
-                    return;
-                }
+        return new Promise<Block.Block<any, any, any, 1> | undefined>(
+            (r, _reject) => {
+                const timeout = options.timeout || 5000;
 
-                const decoded = deserialize(message.data, BlockMessage);
-                if (decoded instanceof BlockResponse) {
-                    if (decoded.cid !== cidString) {
+                const codec = codecCodes[cidObject.code];
+                let value: Block.Block<any, any, any, 1> | undefined =
+                    undefined;
+
+                const eventHandler = async (
+                    evt: CustomEvent<GossipsubMessage>
+                ) => {
+                    if (value) {
                         return;
                     }
-                    try {
-                        if (!cidObject.equals(cidifyString(decoded.cid))) {
-                            return;
-                        }
-
-                        value = await checkDecodeBlock(
-                            cidObject,
-                            decoded.bytes,
-                            {
-                                codec,
-                                hasher: options?.hasher,
-                            }
+                    const message = evt.detail;
+                    if (message.msg.topic === this._transportTopic) {
+                        const decoded = deserialize(
+                            message.msg.data,
+                            BlockMessage
                         );
-                    } catch (error) {
-                        // invalid bytes like "CBOR decode error: not enough data for type"
-                        return;
-                    }
-                }
-            }
-        };
-        this._libp2p.pubsub.addEventListener("message", eventHandler);
-        try {
-            await this._libp2p.pubsub.publish(
-                this._transportTopic,
-                serialize(new BlockRequest(cidString))
-            );
+                        if (decoded instanceof BlockResponse) {
+                            if (decoded.cid !== cidString) {
+                                return;
+                            }
+                            try {
+                                if (
+                                    !cidObject.equals(cidifyString(decoded.cid))
+                                ) {
+                                    return;
+                                }
 
-            try {
-                await waitFor(() => value !== undefined, {
-                    timeout,
-                    delayInterval: 100,
-                });
-            } catch (error) {
-                /// TODO, timeout or?
-                const t = 123;
-            } finally {
-                await this._libp2p.pubsub.removeEventListener(
-                    "message",
+                                value = await checkDecodeBlock(
+                                    cidObject,
+                                    decoded.bytes,
+                                    {
+                                        codec,
+                                        hasher: options?.hasher,
+                                    }
+                                );
+
+                                resolve(value);
+                            } catch (error: any) {
+                                // invalid bytes like "CBOR decode error: not enough data for type"
+                                // ignore error
+                                // TODO add logging
+                                logger.info(error?.message);
+                            }
+                        }
+                    }
+                };
+                const resolve = async (resolvedValue) => {
+                    await this._libp2p.pubsub.removeEventListener(
+                        "gossipsub:message",
+                        eventHandler
+                    );
+                    r(resolvedValue);
+                };
+                this._libp2p.pubsub.addEventListener(
+                    "gossipsub:message",
                     eventHandler
                 );
+                setTimeout(() => {
+                    resolve(undefined);
+                }, timeout);
+
+                this._libp2p.pubsub
+                    .publish(
+                        this._transportTopic,
+                        serialize(new BlockRequest(cidString))
+                    )
+                    .catch((error) => {
+                        // usually insufficient peers error is the reason why we come here
+                        logger.warn(error?.message);
+                    });
             }
-        } catch (error) {
-            return;
-        }
-        return value;
+        );
     }
 
     async idle(): Promise<void> {
         return;
+    }
+
+    async close(): Promise<void> {
+        this._libp2p.pubsub.removeEventListener(
+            "gossipsub:message",
+            this._eventHandler
+        );
+        await this._localStore?.close();
+        this._open = false;
+
+        // we dont cleanup subscription because we dont know if someone else is sbuscribing also
     }
 
     get status() {

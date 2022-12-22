@@ -43,7 +43,7 @@ export class ExchangeSwarmMessage extends TransportMessage {
 }
 
 export const exchangeSwarmAddresses = async (
-    send: (data: Uint8Array) => Promise<any>,
+    send: (id: string, data: Uint8Array) => Promise<any>,
     identity: Identity,
     peerReciever: string,
     peers: PeerId[],
@@ -93,13 +93,13 @@ export const exchangeSwarmAddresses = async (
         return;
     }
 
-    const message = serialize(
-        new ExchangeSwarmMessage({
-            info: filteredAddresses,
-        })
-    );
+    const resp = new ExchangeSwarmMessage({
+        info: filteredAddresses,
+    });
+    const message = serialize(resp);
     const signatureResult = await identity.sign(message);
     await send(
+        resp.id,
         serialize(
             await new DecryptedThing<ExchangeSwarmMessage>({
                 data: serialize(

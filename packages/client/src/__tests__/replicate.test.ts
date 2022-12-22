@@ -1,7 +1,7 @@
 import assert from "assert";
 import mapSeries from "p-each-series";
 import { Entry } from "@dao-xyz/peerbit-log";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { jest } from "@jest/globals";
 import { getObserverTopic, getReplicationTopic, Peerbit } from "../peer";
 import { EventStore, Operation } from "./utils/stores/event-store";
@@ -183,7 +183,7 @@ describe(`Replication`, function () {
         // Verify that progress count increases monotonically by saving
         // each event's current progress into an array
         let progressEvents: number = 0;
-        const progressEventsEntries: any[] = [];
+        const progressEventsEntries: Entry<any>[] = [];
 
         let done = false;
 
@@ -224,7 +224,6 @@ describe(`Replication`, function () {
         );
 
         const entryCount = 99;
-
         // Trigger replication
         let adds: number[] = [];
         for (let i = 0; i < entryCount; i++) {
@@ -239,6 +238,7 @@ describe(`Replication`, function () {
         expect(db2.iterator({ limit: -1 }).collect().length).toEqual(
             entryCount
         );
+
         // progress events should increase monotonically
         expect(progressEvents).toEqual(entryCount);
     });

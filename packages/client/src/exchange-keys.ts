@@ -192,7 +192,7 @@ export const requestAndWaitForKeys = async <
     T extends Ed25519Keypair | X25519Keypair
 >(
     condition: RequestKeyCondition,
-    send: (message: Uint8Array) => any | Promise<any>,
+    send: (id: string, message: Uint8Array) => any | Promise<any>,
     keystore: Keystore,
     identity: Identity,
     timeout = 10000
@@ -248,7 +248,7 @@ export const requestAndWaitForKeys = async <
 
 export const requestKeys = async (
     condition: RequestKeyCondition,
-    send: (message: Uint8Array) => void | Promise<void>,
+    send: (id: string, message: Uint8Array) => void | Promise<void>,
     keystore: Keystore,
     identity: Identity
 ) => {
@@ -271,16 +271,15 @@ export const requestKeys = async (
         return;
     }
     const pk = (key.keypair as Ed25519Keypair | X25519Keypair).publicKey;
+    const message = new RequestKeyMessage({
+        condition,
+        encryptionKey:
+            pk instanceof Ed25519PublicKey
+                ? await X25519PublicKey.from(pk)
+                : pk,
+    });
     const signedMessage = await new MaybeSigned<RequestKeyMessage>({
-        data: serialize(
-            new RequestKeyMessage({
-                condition,
-                encryptionKey:
-                    pk instanceof Ed25519PublicKey
-                        ? await X25519PublicKey.from(pk)
-                        : pk,
-            })
-        ),
+        data: serialize(message),
     }).sign(async (bytes) => {
         return {
             signature: await identity.sign(bytes),
@@ -290,11 +289,11 @@ export const requestKeys = async (
     const unencryptedMessage = new DecryptedThing({
         data: serialize(signedMessage),
     });
-    await send(serialize(unencryptedMessage));
+    await send(message.id, serialize(unencryptedMessage));
 };
 
 export const exchangeKeys = async <T extends Ed25519Keypair | X25519Keypair>(
-    send: (data: Uint8Array) => Promise<any>,
+    send: (id: string, data: Uint8Array) => Promise<any>,
     request: RequestKeyMessage,
     canAccessKey: KeyAccessCondition,
     keystore: Keystore,
@@ -333,15 +332,14 @@ export const exchangeKeys = async <T extends Ed25519Keypair | X25519Keypair>(
     if (mappedKeys.length === 0) {
         return;
     }
-
-    const secretKeyResponseMessage = serialize(
-        new KeyResponseMessage({
-            keys: mappedKeys,
-        })
-    );
+    const resp = new KeyResponseMessage({
+        keys: mappedKeys,
+    });
+    const secretKeyResponseMessage = serialize(resp);
 
     const signatureResult = await identity.sign(secretKeyResponseMessage);
     await send(
+        resp.id,
         serialize(
             await new DecryptedThing<KeyResponseMessage>({
                 data: serialize(
