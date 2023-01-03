@@ -1,8 +1,6 @@
 import { Peerbit } from "../peer";
-
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { EventStore } from "./utils/stores";
-
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 
 // Include test utilities

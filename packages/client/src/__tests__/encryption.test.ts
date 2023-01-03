@@ -1,5 +1,5 @@
 import { Entry } from "@dao-xyz/peerbit-log";
-import { getObserverTopic, getReplicationTopic, Peerbit } from "../peer";
+import { Peerbit } from "../peer";
 import { Operation } from "./utils/stores/event-store";
 import { Ed25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
 import { jest } from "@jest/globals";
@@ -8,7 +8,6 @@ import { delay, waitFor } from "@dao-xyz/peerbit-time";
 
 // Include test utilities
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
-import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { PermissionedEventStore } from "./utils/stores/test-store";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
@@ -52,46 +51,36 @@ describe(`encryption`, function () {
     let recieverKey: KeyWithMeta<Ed25519Keypair>;
     let topic: string;
 
-    beforeAll(async () => {});
+    beforeAll(async () => { });
     beforeEach(async () => {
-        session = await LSession.connected(3, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(3);
 
         client1 = await Peerbit.create(session.peers[0], {
             waitForKeysTimout: 10000,
         });
         const program = await client1.open(
             new PermissionedEventStore({
-                network: new TrustedNetwork({
-                    id: "network-tests",
-                    rootTrust: client1.identity.publicKey,
-                }),
+                trusted: [client1.id, client1.identity.publicKey, client2.id, client2.identity.publicKey]
             })
         );
-        await client1.join(program);
 
         // Trusted client 2
         client2 = await Peerbit.create(session.peers[1], {
             waitForKeysTimout: 10000,
         });
-        await program.network.add(client2.id);
-        await program.network.add(client2.identity.publicKey);
         topic = program.address!.toString();
 
         // Untrusted client 3
         client3 = await Peerbit.create(session.peers[2], {
             waitForKeysTimout: 10000,
         });
-
         recieverKey = await client2.keystore.createEd25519Key();
-
         db1 = program;
     });
 
     afterEach(async () => {
         if (db1) await db1.drop();
-
         if (db2) await db2.drop();
-
         if (db3) await db3.drop();
 
         if (client1) {
@@ -106,28 +95,19 @@ describe(`encryption`, function () {
         await session.stop();
     });
 
-    afterAll(async () => {});
+    afterAll(async () => { });
 
     it("replicates database of 1 entry known keys", async () => {
         let done = false;
 
         db2 = await client2.open<PermissionedEventStore>(db1.address, {
-            topic: topic,
             onReplicationComplete: async (_store) => {
                 await checkHello(db1);
                 done = true;
             },
         });
-        await waitForPeers(
-            session.peers[1],
-            session.peers[0],
-            getObserverTopic(topic)
-        );
-        await waitForPeers(
-            session.peers[1],
-            session.peers[0],
-            getReplicationTopic(topic)
-        );
+        await waitForPeers(session.peers[1], session.peers[0], topic);
+        await waitForPeers(session.peers[1], session.peers[0], topic);
         await client2.keystore.saveKey(recieverKey);
         expect(
             await client2.keystore.getKey(recieverKey.keypair.publicKey)
@@ -148,7 +128,6 @@ describe(`encryption`, function () {
         // We expect during opening that keys are exchange
         let done = false;
         db2 = await client2.open<PermissionedEventStore>(db1.address, {
-            topic: topic,
             onReplicationComplete: async (store) => {
                 if (store === db2.store.store) {
                     await checkHello(db1);
@@ -156,19 +135,8 @@ describe(`encryption`, function () {
                 }
             },
         });
-        await waitForPeers(
-            session.peers[1],
-            session.peers[0],
-            getObserverTopic(topic)
-        );
-        await waitForPeers(
-            session.peers[1],
-            session.peers[0],
-            getReplicationTopic(topic)
-        );
 
-        await waitFor(() => db2.network?.trustGraph.index.size >= 3);
-        await client2.join(db2);
+        await waitForPeers(session.peers[1], session.peers[0], topic);
 
         expect(await client1.keystore.hasKey(unknownKey.keypair.publicKey));
         const xKey = await X25519PublicKey.from(unknownKey.keypair.publicKey);
@@ -184,11 +152,7 @@ describe(`encryption`, function () {
     });
 
     it("can retrieve secret keys if trusted", async () => {
-        await waitForPeers(
-            session.peers[2],
-            [client1.id],
-            getReplicationTopic(topic)
-        );
+        await waitForPeers(session.peers[2], [client1.id], topic);
 
         const db1Key = await client1.keystore.createEd25519Key({
             id: "unknown",
@@ -196,22 +160,9 @@ describe(`encryption`, function () {
         });
 
         // Open store from client2 so that both client 1 and 2 is listening to the replication topic
-        db2 = await client2.open<PermissionedEventStore>(db1.address!, {
-            topic: topic,
-        });
-        await waitForPeers(
-            session.peers[1],
-            session.peers[0],
-            getObserverTopic(topic)
-        );
-        await waitForPeers(
-            session.peers[1],
-            session.peers[0],
-            getReplicationTopic(topic)
-        );
-        await waitFor(() => db2.network?.trustGraph.index.size >= 3);
-        await client2.join(db2);
-        await waitFor(() => db1.network?.trustGraph.index.size >= 4);
+        db2 = await client2.open<PermissionedEventStore>(db1.address!);
+        await waitForPeers(session.peers[1], session.peers[0], topic);
+        await waitForPeers(session.peers[1], session.peers[0], topic);
 
         const reciever = (await client2.getEncryptionKey(
             topic,
@@ -225,14 +176,14 @@ describe(`encryption`, function () {
         await waitForPeers(
             session.peers[2],
             [client1.id],
-            getReplicationTopic(topic)
+            topic
         );
 
         db2 = await client2.open<PermissionedEventStore>(db1.address!, {
             topic: topic,
         });
-        await waitForPeers(session.peers[1], session.peers[0], getObserverTopic(topic));
-        await waitForPeers(session.peers[1], session.peers[0], getReplicationTopic(topic));
+        await waitForPeers(session.peers[1], session.peers[0], topic);
+        await waitForPeers(session.peers[1], session.peers[0], topic);
         await waitFor(() => db2.network?.trustGraph.index.size >= 3);
         await client2.join(db2);
 

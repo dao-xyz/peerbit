@@ -24,7 +24,7 @@ import { jest } from "@jest/globals";
 import { fileURLToPath } from "url";
 import { Libp2p } from "libp2p";
 import {
-    DEFAULT_BLOCK_TRANSPORT_TOPIC,
+
     LibP2PBlockStore,
     MemoryLevelBlockStore,
     Blocks,
@@ -49,7 +49,7 @@ describe("query", () => {
         cacheStore2: AbstractLevel<any, string, Uint8Array>;
 
     beforeAll(async () => {
-        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(2);
         observer = session.peers[0];
         writer = session.peers[1];
     });

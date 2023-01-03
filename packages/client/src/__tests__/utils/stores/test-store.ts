@@ -1,30 +1,37 @@
-import { field, variant } from "@dao-xyz/borsh";
-import { Program } from "@dao-xyz/peerbit-program";
-import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
-import { network } from "../../../network";
+import { field, variant, vec } from "@dao-xyz/borsh";
+import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import { CanTrust, Program } from "@dao-xyz/peerbit-program";
 import { EventStore } from "./event-store";
+import type { PeerId } from "@libp2p/interface-peer-id";
+import {} from "@libp2p/peer-id";
+import { Ed25519PublicKey } from "@dao-xyz/peerbit-crypto";
 
 @variant("permissioned_program")
-@network({ property: "_network" })
-export class PermissionedEventStore extends Program {
+export class PermissionedEventStore extends Program implements CanTrust {
     @field({ type: EventStore })
     _store: EventStore<string>;
 
-    @field({ type: TrustedNetwork })
-    _network: TrustedNetwork;
+    @field({ type: vec(PublicSignKey) })
+    trusted: PublicSignKey[];
 
     constructor(properties: {
         store?: EventStore<string>;
-        network: TrustedNetwork;
+        trusted: (PublicSignKey | PeerId)[];
     }) {
         super();
-        this._network = properties.network;
-        this._store =
-            properties.store || new EventStore({ id: this._network.id });
+        this._store = properties.store || new EventStore({ id: this.id });
+        this.trusted = properties.trusted.map((x) =>
+            x instanceof PublicSignKey ? x : Ed25519PublicKey.from(x)
+        );
     }
 
-    get network(): TrustedNetwork {
-        return this._network;
+    isTrusted(key: PublicSignKey): boolean | Promise<boolean> {
+        for (const t of this.trusted) {
+            if (t.equals(key)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     get store(): EventStore<string> {
@@ -33,6 +40,5 @@ export class PermissionedEventStore extends Program {
 
     async setup(): Promise<void> {
         await this._store.setup();
-        await this._network.setup();
     }
 }

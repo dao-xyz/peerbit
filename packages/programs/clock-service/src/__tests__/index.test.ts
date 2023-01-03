@@ -10,7 +10,7 @@ import { MemoryLevel } from "memory-level";
 import { default as Cache } from "@dao-xyz/peerbit-cache";
 import { v4 as uuid } from "uuid";
 import {
-    DEFAULT_BLOCK_TRANSPORT_TOPIC,
+
     LibP2PBlockStore,
     MemoryLevelBlockStore,
     Blocks,
@@ -46,7 +46,7 @@ class P extends Program {
 describe("clock", () => {
     let session: LSession, responder: P, reader: P, readerStore: Blocks;
     beforeAll(async () => {
-        session = await LSession.connected(3, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(3);
         const responderIdentity = await createIdentity();
         const topic = uuid();
         responder = new P({

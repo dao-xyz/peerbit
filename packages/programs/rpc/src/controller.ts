@@ -51,7 +51,7 @@ export const getDiscriminatorApproximation = (
         } else {
             throw new Error(
                 "Can not resolve discriminator for variant with type: " +
-                    typeof variant
+                typeof variant
             );
         }
     }
@@ -137,7 +137,6 @@ export class RPC<Q, R> extends ComposableProgram {
     _responseHandler: ResponseHandler<Q, (R | undefined) | R>;
     _requestType: AbstractType<Q>;
     _responseType: AbstractType<R>;
-    _topic: string;
     _context: SearchContext;
 
     public setup(options: RPCInitializationOptions<Q, R>) {
@@ -145,8 +144,8 @@ export class RPC<Q, R> extends ComposableProgram {
             if (
                 !!(options.rpcTopic as { rpcRegion }).rpcRegion &&
                 !!(options.rpcTopic as { rpcRegion }).rpcRegion ==
-                    !!(options.rpcTopic as { queryAddressSuffix })
-                        .queryAddressSuffix
+                !!(options.rpcTopic as { queryAddressSuffix })
+                    .queryAddressSuffix
             ) {
                 throw new Error(
                     "Expected either rpcRegion or queryAddressSuffix or none"
@@ -177,7 +176,6 @@ export class RPC<Q, R> extends ComposableProgram {
         options: ProgramInitializationOptions
     ): Promise<this> {
         await super.init(libp2p, store, identity, options);
-        this._topic = options.topic;
         if (options.replicate) {
             this._subscribe();
         }
@@ -226,7 +224,7 @@ export class RPC<Q, R> extends ComposableProgram {
                                 message.data,
                                 RPCMessage,
                                 this._encryption?.getAnyKeypair ||
-                                    (() => Promise.resolve(undefined)),
+                                (() => Promise.resolve(undefined)),
                                 {
                                     isTrusted: (key) =>
                                         Promise.resolve(
@@ -250,9 +248,9 @@ export class RPC<Q, R> extends ComposableProgram {
                                 (this._requestType as any) === Uint8Array
                                     ? (request.request as Q)
                                     : deserialize(
-                                          request.request,
-                                          this._requestType
-                                      ),
+                                        request.request,
+                                        this._requestType
+                                    ),
                                 {
                                     address: this.contextAddress,
                                     from,
@@ -291,9 +289,9 @@ export class RPC<Q, R> extends ComposableProgram {
 
                         logger.error(
                             "Error handling query: " +
-                                (error?.message
-                                    ? error?.message?.toString()
-                                    : error)
+                            (error?.message
+                                ? error?.message?.toString()
+                                : error)
                         );
                         throw error;
                     }
@@ -312,7 +310,6 @@ export class RPC<Q, R> extends ComposableProgram {
         responseHandler: (response: R, from?: PublicSignKey) => void,
         options?: RPCOptions
     ): Promise<void> {
-        logger.trace("Querying topic: " + this.rpcTopic);
         // We are generatinga new encryption keypair for each send, so we now that when we get the responses, they are encrypted specifcally for me, and for this request
         // this allows us to easily disregard a bunch of message just beacuse they are for a different reciever!
         const keypair = await X25519Keypair.create();
@@ -349,7 +346,7 @@ export class RPC<Q, R> extends ComposableProgram {
             : this._context().toString();
     }
 
-    public get rpcTopic(): string {
+    /* public get rpcTopic(): string {
         if (!this._topic) {
             throw new Error("Not initialized");
         }
@@ -365,5 +362,5 @@ export class RPC<Q, R> extends ComposableProgram {
     public getRpcResponseTopic(_request: RequestV0): string {
         const topic = this.rpcTopic;
         return topic;
-    }
+    } */
 }

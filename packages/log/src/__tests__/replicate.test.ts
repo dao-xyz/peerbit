@@ -7,8 +7,7 @@ import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import {
     LibP2PBlockStore,
     MemoryLevelBlockStore,
-    Blocks,
-    DEFAULT_BLOCK_TRANSPORT_TOPIC,
+    Blocks
 } from "@dao-xyz/peerbit-block";
 
 import { dirname } from "path";
@@ -41,7 +40,7 @@ describe("ipfs-log - Replication", function () {
         );
 
         // Start two connected IPFS instances
-        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(2);
 
         keystore = new Keystore(
             await createStore(testKeyStorePath(__filenameBase))

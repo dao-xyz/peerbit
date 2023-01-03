@@ -1,9 +1,9 @@
-import { getReplicationTopic, Peerbit } from "../peer";
+import { Peerbit } from "../peer";
 import { EventStore } from "./utils/stores";
 import { jest } from "@jest/globals";
 import { v4 as uuid } from "uuid";
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { delay } from "@dao-xyz/peerbit-time";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 describe(`Multiple Databases`, function () {
@@ -20,7 +20,7 @@ describe(`Multiple Databases`, function () {
 
     // Create two IPFS instances and two client instances (2 nodes/peers)
     beforeAll(async () => {
-        session = await LSession.connected(3, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(3);
 
         client1 = await Peerbit.create(session.peers[0], {});
         client2 = await Peerbit.create(session.peers[1], {});
@@ -50,7 +50,7 @@ describe(`Multiple Databases`, function () {
         for (let i = 0; i < dbCount; i++) {
             const db = await client1.open(
                 new EventStore<string>({ id: "local-" + i }),
-                { ...options, topic: topic }
+                { ...options }
             );
             localDatabases.push(db);
         }
@@ -60,7 +60,7 @@ describe(`Multiple Databases`, function () {
                     client2._store,
                     localDatabases[i].address!
                 ),
-                { topic: topic, ...options }
+                { ...options }
             );
             remoteDatabasesA.push(db);
         }
@@ -71,31 +71,15 @@ describe(`Multiple Databases`, function () {
                     client3._store,
                     localDatabases[i].address!
                 ),
-                { topic: topic, ...options }
+                { ...options }
             );
             remoteDatabasesB.push(db);
         }
 
         // Wait for the peers to connect
-        await waitForPeers(
-            session.peers[0],
-            [client2.id],
-            getReplicationTopic(topic)
-        );
-        await waitForPeers(
-            session.peers[1],
-            [client1.id],
-            getReplicationTopic(topic)
-        );
-        await waitForPeers(
-            session.peers[2],
-            [client1.id],
-            getReplicationTopic(topic)
-        );
-
-        await waitFor(() => client1._directConnections.size === 2);
-        await waitFor(() => client2._directConnections.size === 2);
-        await waitFor(() => client3._directConnections.size === 2);
+        await waitForPeers(session.peers[0], [client2.id], topic);
+        await waitForPeers(session.peers[1], [client1.id], topic);
+        await waitForPeers(session.peers[2], [client1.id], topic);
     });
 
     afterEach(async () => {

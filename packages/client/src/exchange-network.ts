@@ -4,11 +4,11 @@ import { PeerIdAddress } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { Identity } from "@dao-xyz/peerbit-log";
-import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import type { PeerId } from "@libp2p/interface-peer-id";
 import type { AddressBook } from "@libp2p/interface-peer-store";
 import { multiaddr } from "@multiformats/multiaddr";
 import { peerIdFromString } from "@libp2p/peer-id";
+import { CanTrust } from "@dao-xyz/peerbit-program";
 
 @variant(0)
 export class PeerInfo {
@@ -43,12 +43,12 @@ export class ExchangeSwarmMessage extends TransportMessage {
 }
 
 export const exchangeSwarmAddresses = async (
-    send: (id: string, data: Uint8Array) => Promise<any>,
+    send: (data: Uint8Array) => Promise<any>,
     identity: Identity,
     peerReciever: string,
     peers: PeerId[],
     addressBook: AddressBook,
-    network?: TrustedNetwork,
+    network?: CanTrust,
     localNetwork?: boolean
 ) => {
     let trustedAddresses: PeerId[];
@@ -99,7 +99,6 @@ export const exchangeSwarmAddresses = async (
     const message = serialize(resp);
     const signatureResult = await identity.sign(message);
     await send(
-        resp.id,
         serialize(
             await new DecryptedThing<ExchangeSwarmMessage>({
                 data: serialize(

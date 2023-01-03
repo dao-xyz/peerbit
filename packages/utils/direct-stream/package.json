@@ -1,0 +1,69 @@
+{
+	"name": "@dao-xyz/libp2p-direct-stream",
+	"version": "0.0.1",
+	"description": "Direct streaming for libp2p",
+	"type": "module",
+	"sideEffects": false,
+	"private": false,
+	"publishConfig": {
+		"access": "public"
+	},
+	"module": "lib/esm/index.js",
+	"types": "lib/esm/index.d.ts",
+	"exports": {
+		"import": "./lib/esm/index.js"
+	},
+	"scripts": {
+		"clean": "shx rm -rf lib/*",
+		"build": "yarn clean && tsc -p tsconfig.json",
+		"postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
+		"test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
+		"test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
+		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
+	},
+	"files": [
+		"lib",
+		"src",
+		"!src/**/__tests__",
+		"!lib/**/__tests__",
+		"!src/**/_benchmark__",
+		"!lib/**/_benchmark__",
+		"LICENSE"
+	],
+	"engines": {
+		"node": ">=16.15.1"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git"
+	},
+	"keywords": [
+		"peerbit"
+	],
+	"author": "dao.xyz",
+	"license": "MIT",
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme",
+	"localMaintainers": [
+		"dao.xyz"
+	],
+	"devDependencies": {
+		"@dao-xyz/peerbit-test-utils": "^0.0.25"
+	},
+	"dependencies": {
+		"@dao-xyz/borsh": "^4.0.7",
+		"@dao-xyz/peerbit-crypto": "^0.0.34",
+		"@ipld/dag-cbor": "^7.0.3",
+		"abstract-level": "^1.0.3",
+		"libp2p": "^0.41.0",
+		"@isaacs/ttlcache": "^1.2.1",
+		"lru-cache": "^7.14.1",
+		"memory-level": "^1.0.0",
+		"uuid": "^8.3.2",
+		"ngraph.path": "^1.4.0",
+		"ngraph.graph": "^20.0.1",
+		"uint8arrays": "^4.0.2"
+	}
+}

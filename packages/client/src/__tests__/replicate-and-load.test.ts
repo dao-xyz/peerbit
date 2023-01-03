@@ -1,10 +1,9 @@
-import { getReplicationTopic, Peerbit } from "../peer";
+import { Peerbit } from "../peer";
 import { EventStore } from "./utils/stores/event-store";
 import mapSeries from "p-each-series";
 
 // Include test utilities
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
-// @ts-ignore
 import { v4 as uuid } from "uuid";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
@@ -13,7 +12,7 @@ describe(`Replicate and Load`, function () {
     let client1: Peerbit, client2: Peerbit;
 
     beforeAll(async () => {
-        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(2);
         client1 = await Peerbit.create(session.peers[0], {});
         client2 = await Peerbit.create(session.peers[1], {});
 
@@ -37,16 +36,14 @@ describe(`Replicate and Load`, function () {
             db1 = await client1.open(
                 new EventStore<string>({
                     id: "events",
-                }),
-                { topic: topic }
+                })
             );
             // Set 'localOnly' flag on and it'll error if the database doesn't exist locally
             db2 = await client2.open<EventStore<string>>(
                 await EventStore.load<EventStore<string>>(
                     client2._store,
                     db1.address!
-                ),
-                { topic: topic }
+                )
             );
         };
 
@@ -55,16 +52,8 @@ describe(`Replicate and Load`, function () {
 
             expect(db1.address!.toString()).toEqual(db2.address!.toString());
 
-            await waitForPeers(
-                session.peers[0],
-                [client2.id],
-                getReplicationTopic(topic)
-            );
-            await waitForPeers(
-                session.peers[1],
-                [client1.id],
-                getReplicationTopic(topic)
-            );
+            await waitForPeers(session.peers[0], [client2.id], topic);
+            await waitForPeers(session.peers[1], [client1.id], topic);
         });
 
         afterAll(async () => {

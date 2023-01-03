@@ -2,21 +2,26 @@ import { CID } from "multiformats/cid";
 import * as raw from "multiformats/codecs/raw";
 import * as dagCbor from "@ipld/dag-cbor";
 import sodium from "libsodium-wrappers";
-import { from } from "multiformats/hashes/hasher";
+import { from, } from "multiformats/hashes/hasher";
+import { sha256 } from "multiformats/hashes/sha2";
 import { base58btc } from "multiformats/bases/base58";
 import * as Block from "multiformats/block";
 
-const defaultBase = base58btc;
+await sodium.ready;
+
 
 export const blake2b = from({
-    name: "blake2b",
+    name: "blake2b-32",
     code: 0x42,
     encode: async (input) => {
         await sodium.ready;
         return sodium.crypto_generichash(32, input);
     },
-});
-export const defaultHasher = blake2b;
+});;
+const defaultBase = base58btc;
+
+export const defaultHasher = sha256;
+
 export const codecCodes = {
     [dagCbor.code]: dagCbor,
     [raw.code]: raw,
@@ -31,7 +36,7 @@ export const cidifyString = (str: string): CID => {
         return str as any as CID; // TODO fix types
     }
 
-    return CID.parse(str);
+    return CID.parse(str, defaultBase);
 };
 
 export const stringifyCid = (cid: any): string => {

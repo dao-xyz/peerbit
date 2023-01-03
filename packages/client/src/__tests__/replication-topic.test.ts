@@ -1,6 +1,4 @@
-import rmrf from "rimraf";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import { jest } from "@jest/globals";
 import { Peerbit } from "../peer";
 
 import { EventStore } from "./utils/stores/event-store";
@@ -17,7 +15,7 @@ describe(`Replication topic`, function () {
     let timer: any;
 
     beforeAll(async () => {
-        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(2);
     });
 
     afterAll(async () => {
@@ -26,9 +24,10 @@ describe(`Replication topic`, function () {
 
     beforeEach(async () => {
         clearInterval(timer);
+        const topic = uuid();
 
-        client1 = await Peerbit.create(session.peers[0], {});
-        client2 = await Peerbit.create(session.peers[1], {});
+        client1 = await Peerbit.create(session.peers[0], { topic });
+        client2 = await Peerbit.create(session.peers[1], { topic });
     });
 
     afterEach(async () => {
@@ -41,21 +40,17 @@ describe(`Replication topic`, function () {
         if (client2) await client2.stop();
     });
 
-    it("replicates database of 1 entry", async () => {
-        const topic = uuid();
-        client2.subscribeToTopic(topic, true);
+    // TODO rm
+    it("will open program if subscribing to replication topic", async () => {
+        client2.subscribeToTopic();
 
         eventStore = new EventStore<string>({});
-        eventStore = await client1.open(eventStore, {
-            topic: topic,
-        });
+        eventStore = await client1.open(eventStore);
         eventStore.add("hello");
         await waitFor(
             () =>
                 (
-                    client2.programs
-                        .get(topic)
-                        ?.get(eventStore.address!.toString())
+                    client2.programs.get(eventStore.address!.toString())
                         ?.program as EventStore<string>
                 )?.store?.oplog.values.length === 1
         );

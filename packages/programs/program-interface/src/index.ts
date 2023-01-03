@@ -2,7 +2,10 @@ import { field, option, variant } from "@dao-xyz/borsh";
 import { Entry, Identity } from "@dao-xyz/peerbit-log";
 import { IInitializationOptions, Store } from "@dao-xyz/peerbit-store";
 import { v4 as uuid } from "uuid";
-import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
+import {
+    PublicKeyEncryptionResolver,
+    PublicSignKey,
+} from "@dao-xyz/peerbit-crypto";
 import { getValuesWithType } from "./utils.js";
 import {
     serialize,
@@ -14,7 +17,6 @@ import path from "path";
 import { CID } from "multiformats/cid";
 import { Blocks } from "@dao-xyz/peerbit-block";
 import { Libp2p } from "libp2p";
-import { waitFor } from "@dao-xyz/peerbit-time";
 export * from "./protocol-message.js";
 
 const notEmpty = (e: string) => e !== "" && e !== " ";
@@ -210,7 +212,6 @@ export const load = async <S extends Addressable>(
 export type ProgramInitializationOptions = {
     store: IInitializationOptions<any>;
     parent?: AbstractProgram;
-    topic: string;
     replicate?: boolean;
     onClose?: () => void;
     onDrop?: () => void;
@@ -305,6 +306,7 @@ export abstract class AbstractProgram {
         if (!this.initialized) {
             return;
         }
+        this._onDrop && this._onDrop();
         const promises: Promise<void>[] = [];
         for (const store of this.stores.values()) {
             promises.push(store.drop());
@@ -314,7 +316,6 @@ export abstract class AbstractProgram {
         }
         await Promise.all(promises);
         this._initialized = false;
-        this._onDrop && this._onDrop();
     }
 
     get libp2p(): Libp2p {
@@ -417,11 +418,14 @@ export interface CanOpenSubPrograms {
     canOpen(programToOpen: Program, fromEntry: Entry<any>): Promise<boolean>;
 }
 
+export interface CanTrust {
+    isTrusted(key: PublicSignKey): Promise<boolean> | boolean;
+}
+
 @variant(0)
 export abstract class Program
     extends AbstractProgram
-    implements Addressable, Saveable
-{
+    implements Addressable, Saveable {
     @field({ type: "string" })
     id: string;
 
@@ -546,4 +550,4 @@ export abstract class Program
  * Building block, but not something you use as a standalone
  */
 @variant(1)
-export abstract class ComposableProgram extends AbstractProgram {}
+export abstract class ComposableProgram extends AbstractProgram { }

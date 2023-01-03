@@ -48,7 +48,7 @@ describe("Log - GetPow2Refs", function () {
         await keystore?.close();
     });
 
-    describe("Basic iterator functionality", () => {
+    describe("Single log", () => {
         let log1: Log<string>;
 
         beforeEach(async () => {
@@ -69,16 +69,31 @@ describe("Log - GetPow2Refs", function () {
         it("get refs one", async () => {
             const heads = log1.heads;
             expect(heads).toHaveLength(1);
-            const refs = log1.getPow2Refs(1);
+            const refs = log1.getReferenceSamples(heads[0], { pointerCount: 1 });
             expect(refs).toHaveLength(1);
             for (const head of heads) {
                 expect(refs.find((x) => x.hash === head.hash)).toBeDefined();
             }
         });
 
+        it("get refs 4", async () => {
+            const heads = log1.heads;
+            const refs = log1.getReferenceSamples(heads[0], { pointerCount: 4 });
+            expect(refs).toHaveLength(2); // 2**2 = 4
+            for (const head of heads) {
+                expect(refs.find((x) => x.hash === head.hash));
+            }
+            let i = 0;
+            for (const entry of refs) {
+                expect(entry.payload.getValue()).toEqual(
+                    "entry" + (100 + 1 - 2 ** i++)
+                );
+            }
+        });
+
         it("get refs 8", async () => {
             const heads = log1.heads;
-            const refs = log1.getPow2Refs(8);
+            const refs = log1.getReferenceSamples(heads[0], { pointerCount: 8 });
             expect(refs).toHaveLength(3); // 2**3 = 8
             for (const head of heads) {
                 expect(refs.find((x) => x.hash === head.hash));
@@ -90,5 +105,46 @@ describe("Log - GetPow2Refs", function () {
                 );
             }
         });
+
+        it("get refs with memory limit", async () => {
+            const heads = log1.heads;
+            expect(heads).toHaveLength(1);
+            const refs = log1.getReferenceSamples(heads[0], { pointerCount: Number.MAX_SAFE_INTEGER, memoryLimit: 100 });
+            const sum = refs.map(r => r._payload.byteLength).reduce((sum, current) => {
+                sum = sum || 0;
+                sum += current
+                return sum;
+            })
+            expect(sum).toBeLessThan(100);
+            expect(sum).toBeGreaterThan(80);
+        });
     });
+
+    describe("multiple heads", () => {
+        let log1: Log<string>;
+
+        beforeEach(async () => {
+            log1 = new Log(
+                store,
+                {
+                    ...signKey.keypair,
+                    sign: async (data: Uint8Array) =>
+                        await signKey.keypair.sign(data),
+                },
+                { logId: "X" }
+            );
+
+            for (let i = 0; i <= 10; i++) {
+                await log1.append("entry" + i, { nexts: [] });
+            }
+        });
+
+        it("no refs if no nexts", async () => {
+            const heads = log1.heads;
+            const refs = log1.getReferenceSamples(heads[0], { pointerCount: 8 });
+            expect(refs).toHaveLength(1); // because heads[0] has no nexts (all commits are roots)
+            expect(heads[0].hash).toEqual(refs[0].hash)
+        });
+    });
+
 });

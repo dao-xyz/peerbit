@@ -1,95 +1,100 @@
 import { createLibp2p, Libp2p } from "libp2p";
+import { Components } from 'libp2p/src/components'
 import { noise } from "@chainsafe/libp2p-noise";
 import { mplex } from "@libp2p/mplex";
 import { tcp } from "@libp2p/tcp";
 import { gossipsub } from "@chainsafe/libp2p-gossipsub";
 import waitForPeers from "./wait-for-peers";
 import { setMaxListeners } from "events";
-import { PubSub } from "@libp2p/interface-pubsub";
-import { GossipsubEvents } from "@chainsafe/libp2p-gossipsub";
+import { kadDHT } from "@libp2p/kad-dht";
+import { LevelDatastore } from 'datastore-level';
+import { RecursivePartial } from '@libp2p/interfaces'
+import { Datastore } from 'interface-datastore'
+import type { DualDHT, QueryEvent, SingleDHT } from '@libp2p/interface-dht'
 
+export type LibP2POptions = { datastore?: RecursivePartial<Datastore> | undefined, dht: RecursivePartial<((components: Components) => DualDHT) | undefined> };
 export class LSession {
-    peers: (Libp2p & { pubsub: PubSub<GossipsubEvents> })[];
+	peers: Libp2p[];
 
-    constructor(peers: (Libp2p & { pubsub: PubSub<GossipsubEvents> })[]) {
-        this.peers = peers;
-    }
+	constructor(peers: Libp2p[]) {
+		this.peers = peers;
+	}
 
-    static async connected(n: number, pubsubTopics?: string[]) {
-        // Allow more than 11 listneers
-        setMaxListeners(Infinity);
+	async connect(groups?: Libp2p[][]) {
+		// Connect the nodes
+		const connectPromises: Promise<any>[] = [];
+		if (!groups) {
+			groups = [this.peers];
+		}
+		for (const group of groups) {
+			for (let i = 0; i < group.length - 1; i++) {
+				for (let j = i + 1; j < group.length; j++) {
+					await group[i].peerStore.addressBook.set(
+						group[j].peerId,
+						group[j].getMultiaddrs()
+					);
+					connectPromises.push(group[i].dial(group[j].peerId));
+				}
+			}
+		}
 
-        const libs = (await LSession.disconnected(n)).peers;
+		await Promise.all(connectPromises);
 
-        // Connect the nodes
-        const connectPromises: Promise<any>[] = [];
-        for (let i = 0; i < n - 1; i++) {
-            for (let j = i + 1; j < n; j++) {
-                await libs[i].peerStore.addressBook.set(
-                    libs[j].peerId,
-                    libs[j].getMultiaddrs()
-                );
-                connectPromises.push(libs[i].dial(libs[j].peerId));
-            }
-        }
+		// Subscribe to initial topics
+		/*  if (pubsubTopics) {
+			 for (const topic of pubsubTopics) {
+				 for (const lib of this.peers) {
+					 lib.pubsub.subscribe(topic);
+				 }
+				 for (let i = 0; i < this.peers.length - 1; i++) {
+					 for (let j = i + 1; j < this.peers.length; j++) {
+						 await waitForPeers(this.peers[i], this.peers[j], topic);
+					 }
+				 }
+			 }
+		 } */
+		return this;
 
-        await Promise.all(connectPromises);
-        const peers: Libp2p[] = [];
-        for (let i = 0; i < libs.length; i++) {
-            peers.push(libs[i]);
-        }
+	}
+	static async connected(n: number) {
+		const libs = (await LSession.disconnected(n)).peers;
+		return (new LSession(libs)).connect();
+	}
 
-        // Subscribe to initial topics
-        if (pubsubTopics) {
-            for (const topic of pubsubTopics) {
-                for (const lib of libs) {
-                    lib.pubsub.subscribe(topic);
-                }
-                for (let i = 0; i < n - 1; i++) {
-                    for (let j = i + 1; j < n; j++) {
-                        await waitForPeers(libs[i], libs[j], topic);
-                    }
-                }
-            }
-        }
-        return new LSession(peers);
-    }
+	static async disconnected(n: number, options?: LibP2POptions) {
+		// Allow more than 11 listneers
+		setMaxListeners(Infinity);
 
-    static async disconnected(n: number) {
-        // Allow more than 11 listneers
-        setMaxListeners(Infinity);
+		// create nodes
+		const promises: Promise<Libp2p>[] = [];
+		for (let i = 0; i < n; i++) {
+			const result = async () => {
+				let msgCounter = 0;
+				const node = await createLibp2p({
+					connectionManager: {
+						autoDial: false,
+					},
+					addresses: {
+						listen: ["/ip4/127.0.0.1/tcp/0"],
+					},
+					dht: options?.dht,
+					datastore: options?.datastore,
+					transports: [tcp()],
+					connectionEncryption: [noise()],
+					streamMuxers: [mplex()],
 
-        // create nodes
-        const promises: Promise<Libp2p>[] = [];
-        for (let i = 0; i < n; i++) {
-            const result = async () => {
-                let msgCounter = 0;
-                const node = await createLibp2p({
-                    connectionManager: {
-                        autoDial: false,
-                    },
-                    addresses: {
-                        listen: ["/ip4/127.0.0.1/tcp/0"],
-                    },
-                    transports: [tcp()],
-                    connectionEncryption: [noise()],
-                    streamMuxers: [mplex()],
-                    pubsub: gossipsub({
-                        emitSelf: false,
-                        globalSignaturePolicy: "StrictNoSign",
-                    }),
-                });
-                await node.start();
-                return node;
-            };
-            promises.push(result());
-        }
+				});
+				await node.start();
+				return node;
+			};
+			promises.push(result());
+		}
 
-        const libs = await Promise.all(promises);
-        return new LSession(libs);
-    }
+		const libs = await Promise.all(promises);
+		return new LSession(libs);
+	}
 
-    stop(): Promise<any> {
-        return Promise.all(this.peers.map((p) => p.stop()));
-    }
+	stop(): Promise<any> {
+		return Promise.all(this.peers.map(async (p) => { return p.stop() }));
+	}
 }

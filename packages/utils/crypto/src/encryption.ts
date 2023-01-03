@@ -1,5 +1,6 @@
 export * from "./errors.js";
 import {
+    AbstractType,
     Constructor,
     deserialize,
     field,
@@ -76,7 +77,7 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
     }
 
     _value?: T;
-    getValue(clazz: Constructor<T>): T {
+    getValue(clazz: AbstractType<T>): T {
         if (this._value) {
             return this._value;
         }

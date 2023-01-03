@@ -13,9 +13,11 @@ describe(`Automatic Replication`, function () {
     let client1: Peerbit, client2: Peerbit, client3: Peerbit, client4: Peerbit;
     let session: LSession;
     beforeAll(async () => {
-        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
-        client1 = await Peerbit.create(session.peers[0], {});
-        client2 = await Peerbit.create(session.peers[1], {});
+
+        const topic = uuid();
+        session = await LSession.connected(2);
+        client1 = await Peerbit.create(session.peers[0], { topic });
+        client2 = await Peerbit.create(session.peers[1], { topic });
     });
 
     afterAll(async () => {
@@ -39,11 +41,9 @@ describe(`Automatic Replication`, function () {
         const entryCount = 33;
         const entryArr: number[] = [];
 
-        const topic = uuid();
 
         const db1 = await client1.open(
-            new EventStore<string>({ id: "replicate-automatically-tests" }),
-            { topic: topic }
+            new EventStore<string>({ id: "replicate-automatically-tests" })
         );
 
         const db3 = await client1.open(
@@ -51,7 +51,6 @@ describe(`Automatic Replication`, function () {
                 id: "replicate-automatically-tests-kv",
             }),
             {
-                topic: topic,
                 onReplicationComplete: (_) => {
                     fail();
                 },
@@ -73,7 +72,6 @@ describe(`Automatic Replication`, function () {
                 db1.address!
             ),
             {
-                topic: topic,
                 onReplicationComplete: (_) => {
                     // Listen for the 'replicated' events and check that all the entries
                     // were replicated to the second database
@@ -97,7 +95,6 @@ describe(`Automatic Replication`, function () {
                 db3.address!
             ),
             {
-                topic: topic,
                 onReplicationComplete: (_) => {
                     fail();
                 },
@@ -113,7 +110,7 @@ describe(`Automatic Replication`, function () {
         const topic = uuid();
         const db1 = await client1.open(
             new EventStore<string>({ id: "replicate-automatically-tests" }),
-            { topic: topic, replicate: false }
+            { replicate: false }
         );
 
         // Create the entries in the first database
@@ -131,7 +128,6 @@ describe(`Automatic Replication`, function () {
                 db1.address!
             ),
             {
-                topic: topic,
                 onReplicationComplete: (_) => {
                     // Listen for the 'replicated' events and check that all the entries
                     // were replicated to the second database

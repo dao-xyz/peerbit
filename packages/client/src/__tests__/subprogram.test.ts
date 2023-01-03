@@ -1,4 +1,3 @@
-import rmrf from "rimraf";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { variant, field } from "@dao-xyz/borsh";
 import { Peerbit } from "../peer";
@@ -16,7 +15,7 @@ import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Entry } from "@dao-xyz/peerbit-log";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
-describe(`Subprogram`, function () {
+describe(`Subprogram`, () => {
     let session: LSession;
     let client1: Peerbit,
         client2: Peerbit,
@@ -26,7 +25,7 @@ describe(`Subprogram`, function () {
     let timer: any;
 
     beforeAll(async () => {
-        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(2);
     });
 
     afterAll(async () => {
@@ -47,8 +46,7 @@ describe(`Subprogram`, function () {
         db1 = await client1.open(
             new EventStore<string>({
                 id: "abc",
-            }),
-            { topic: topic }
+            })
         );
     });
 
@@ -110,10 +108,9 @@ describe(`Subprogram`, function () {
                 }),
             })
         );
-        await client2.subscribeToTopic(topic, true);
+        await client2.subscribeToTopic();
 
         await client1.open(store, {
-            topic: topic,
             replicate: false,
         });
 
@@ -125,7 +122,7 @@ describe(`Subprogram`, function () {
         );
         expect(store.eventStore.store.oplog.heads).toHaveLength(2); // two independent documents
 
-        await waitFor(() => client2.programs.get(topic)?.size || 0 > 0, {
+        await waitFor(() => client2.programs.size || 0 > 0, {
             timeout: 20 * 1000,
             delayInterval: 50,
         });
@@ -134,12 +131,11 @@ describe(`Subprogram`, function () {
             (await eventStore.payload.getValue()) as PutOperation<any>
         ).value as EventStore<string>;
         await client1.open(eventStoreString, {
-            topic: topic,
             replicate: false,
         });
 
         const programFromReplicator = [
-            ...client2.programs.get(topic)?.values()!,
+            ...client2.programs.values()!,
         ][0].program as ProgramWithSubprogram;
         programFromReplicator.accessRequests = [];
         await eventStoreString.add("hello"); // This will exchange an head that will make client 1 open the store

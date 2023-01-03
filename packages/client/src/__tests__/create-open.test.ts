@@ -17,7 +17,7 @@ import { createStore, LSession } from "@dao-xyz/peerbit-test-utils";
 import { Program } from "@dao-xyz/peerbit-program";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import {
-    DEFAULT_BLOCK_TRANSPORT_TOPIC,
+
     LevelBlockStore,
     LibP2PBlockStore,
 } from "@dao-xyz/peerbit-block";
@@ -67,7 +67,6 @@ describe(`Create & Open`, function () {
                 db = await client.open(
                     new KeyBlocks<string>({ id: "second" }),
                     {
-                        topic: uuid(),
                         directory: localDataPath,
                         replicate: false,
                     }
@@ -125,7 +124,6 @@ describe(`Create & Open`, function () {
             it("can pass local database directory as an option", async () => {
                 const dir = "./peerbit/tests/another-feed-" + uuid();
                 const db2 = await client.open(new EventStore({ id: "third" }), {
-                    topic: uuid(),
                     directory: dir,
                 });
                 expect(fs.existsSync(dir)).toEqual(true);
@@ -154,9 +152,7 @@ describe(`Create & Open`, function () {
 
         it("opens a database - name only", async () => {
             const topic = uuid();
-            const db = await client.open(new EventStore({}), {
-                topic: topic,
-            });
+            const db = await client.open(new EventStore({}));
             assert.equal(db.address!.toString().indexOf("/peerbit"), 0);
             assert.equal(db.address!.toString().indexOf("zd"), 9);
             await db.drop();
@@ -166,7 +162,6 @@ describe(`Create & Open`, function () {
             const signKey = await client.keystore.createEd25519Key();
             const topic = uuid();
             const db = await client.open(new EventStore({}), {
-                topic: topic,
                 identity: {
                     ...signKey.keypair,
                     sign: (data) => signKey.keypair.sign(data),
@@ -184,15 +179,13 @@ describe(`Create & Open`, function () {
             const signKey = await client.keystore.createEd25519Key();
             const topic = uuid();
             const db = await client.open(new EventStore({}), {
-                topic: topic,
                 identity: {
                     ...signKey.keypair,
                     sign: (data) => signKey.keypair.sign(data),
                 },
             });
             const db2 = await client.open(
-                await Program.load(client._store, db.address!),
-                { topic: topic }
+                await Program.load(client._store, db.address!)
             );
             assert.equal(db2.address!.toString().indexOf("/peerbit"), 0);
             assert.equal(db2.address!.toString().indexOf("zd"), 9);
@@ -202,9 +195,7 @@ describe(`Create & Open`, function () {
 
         it("doesn't open a database if we don't have it locally", async () => {
             const topic = uuid();
-            const db = await client.open(new EventStore({}), {
-                topic: topic,
-            });
+            const db = await client.open(new EventStore({}));
             const address = new Address({
                 cid: db.address!.cid.slice(0, -1) + "A",
             });
@@ -263,7 +254,6 @@ describe(`Create & Open`, function () {
             const directory = path.join(dbPath, "custom-store");
             const replicationTopic = uuid();
             const db = await client.open(new EventStore({}), {
-                topic: replicationTopic,
                 directory,
             });
             try {
@@ -292,24 +282,17 @@ describe(`Create & Open`, function () {
             const directory2 = path.join(dbPath, "custom-store2");
 
             const topic = uuid();
-            const db1 = await client.open(new EventStore({ id: "xyz1" }), {
-                topic: topic,
-            });
+            const db1 = await client.open(new EventStore({ id: "xyz1" }));
             const db2 = await client.open(new EventStore({ id: "xyz2" }), {
-                topic: topic,
                 directory,
             });
             const db3 = await client.open(new EventStore({ id: "xyz3" }), {
-                topic: topic,
                 directory,
             });
             const db4 = await client.open(new EventStore({ id: "xyz4" }), {
-                topic: topic,
                 directory: directory2,
             });
-            const db5 = await client.open(new EventStore({ id: "xyz5" }), {
-                topic: topic,
-            });
+            const db5 = await client.open(new EventStore({ id: "xyz5" }));
             try {
                 await db1.close();
                 await db2.close();

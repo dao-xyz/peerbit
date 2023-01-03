@@ -150,6 +150,46 @@ describe(`addOperation`, function () {
         await waitFor(() => done);
     });
 
+    it("adds multiple operations concurrently", async () => {
+        const writes = 100;
+        let eventsFired = 0;
+
+        const cache = new Cache(cacheStore);
+        let done = false;
+        const onWrite = async (store: Store<any>, entry: Entry<any>) => {
+            eventsFired++;
+            if (eventsFired === writes) {
+                done = true;
+            }
+        };
+
+        store = new Store({ storeIndex: 1 });
+        index = new SimpleIndex(store);
+        await store.init(
+            blockStore,
+            {
+                ...signKey.keypair,
+                sign: async (data: Uint8Array) =>
+                    await signKey.keypair.sign(data),
+            },
+            {
+                ...DefaultOptions,
+                resolveCache: () => Promise.resolve(cache),
+                onUpdate: index.updateIndex.bind(index),
+                onWrite: onWrite,
+            }
+        );
+
+        const promises: Promise<any>[] = [];
+        for (let i = 0; i < writes; i++) {
+            promises.push(store.addOperation({ step: i }, { nexts: [] }));
+        }
+        await Promise.all(promises)
+        await waitFor(() => done);
+        expect(store.oplog.values.length).toEqual(writes);
+    });
+
+
     it("can add as unique heads", async () => {
         const writes = 3;
         let eventsFired = 0;

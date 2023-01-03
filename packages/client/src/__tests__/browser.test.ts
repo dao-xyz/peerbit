@@ -1,5 +1,5 @@
 import { waitFor } from "@dao-xyz/peerbit-time";
-import { getObserverTopic, getReplicationTopic, Peerbit } from "../peer";
+import { Peerbit } from "../peer";
 import { EventStore } from "./utils/stores/event-store";
 import { v4 as uuid } from "uuid";
 
@@ -18,9 +18,9 @@ describe(`browser`, function () {
         db1: EventStore<string>,
         db2: EventStore<string>;
 
-    afterAll(async () => {});
+    afterAll(async () => { });
 
-    beforeEach(async () => {});
+    beforeEach(async () => { });
 
     afterEach(async () => {
         if (db1) await db1.store.drop();
@@ -35,7 +35,7 @@ describe(`browser`, function () {
     });
 
     it("can replicate entries", async () => {
-        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(2);
 
         client1 = await Peerbit.create(session.peers[0], {
             browser: true,
@@ -49,7 +49,7 @@ describe(`browser`, function () {
             new EventStore<string>({
                 id: uuid(),
             }),
-            { topic: topic, replicate: true }
+            { replicate: true }
         );
 
         db2 = await client2.open<EventStore<string>>(
@@ -57,32 +57,16 @@ describe(`browser`, function () {
                 client2._store,
                 db1.address!
             ),
-            { topic: topic, replicate: true }
+            { replicate: true }
         );
 
-        await waitForPeers(
-            session.peers[1],
-            [client1.id],
-            getObserverTopic(topic)
-        );
-        await waitForPeers(
-            session.peers[0],
-            [client2.id],
-            getObserverTopic(topic)
-        );
-        await waitForPeers(
-            session.peers[1],
-            [client1.id],
-            getReplicationTopic(topic)
-        );
-        await waitForPeers(
-            session.peers[0],
-            [client2.id],
-            getReplicationTopic(topic)
-        );
-        expect(client1._directConnections.size).toEqual(0); // since browser
+        await waitForPeers(session.peers[1], [client1.id], topic);
+        await waitForPeers(session.peers[0], [client2.id], topic);
+        await waitForPeers(session.peers[1], [client1.id], topic);
+        await waitForPeers(session.peers[0], [client2.id], topic);
+        /* expect(client1._directConnections.size).toEqual(0); // since browser
         expect(client2._directConnections.size).toEqual(0); // since browser
-
+ */
         await db1.add("hello");
         await db2.add("world");
 
@@ -126,7 +110,7 @@ describe(`browser`, function () {
             new EventStore<string>({
                 id: uuid(),
             }),
-            { topic: topic, replicate: true }
+            { replicate: true }
         );
 
         db2 = await client2.open<EventStore<string>>(
@@ -134,23 +118,15 @@ describe(`browser`, function () {
                 client2._store,
                 db1.address!
             ),
-            { topic: topic, replicate: true }
+            { replicate: true }
         );
 
-        await waitForPeers(
-            session.peers[2],
-            [client1.id],
-            getObserverTopic(topic)
-        );
-        await waitForPeers(
-            session.peers[2],
-            [client2.id],
-            getObserverTopic(topic)
-        );
-
-        expect(client1._directConnections.size).toEqual(0); // since browser
-        expect(client2._directConnections.size).toEqual(0); // since browser
-
+        await waitForPeers(session.peers[2], [client1.id], topic);
+        await waitForPeers(session.peers[2], [client2.id], topic);
+        /* 
+            expect(client1._directConnections.size).toEqual(0); // since browser
+                expect(client2._directConnections.size).toEqual(0); // since browser
+         */
         await db1.add("hello");
         await db2.add("world");
 
@@ -162,7 +138,7 @@ describe(`browser`, function () {
     });
 
     it("will share entries as replicator on peer connect", async () => {
-        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(2);
 
         client1 = await Peerbit.create(session.peers[0], {
             browser: true,
@@ -176,7 +152,7 @@ describe(`browser`, function () {
             new EventStore<string>({
                 id: uuid(),
             }),
-            { topic: topic, replicate: true }
+            { replicate: true }
         );
 
         await db1.add("hello");
@@ -187,32 +163,16 @@ describe(`browser`, function () {
                 client2._store,
                 db1.address!
             ),
-            { topic: topic, replicate: true }
+            { replicate: true }
         );
 
-        await waitForPeers(
-            session.peers[1],
-            [client1.id],
-            getObserverTopic(topic)
-        );
-        await waitForPeers(
-            session.peers[0],
-            [client2.id],
-            getObserverTopic(topic)
-        );
-        await waitForPeers(
-            session.peers[1],
-            [client1.id],
-            getReplicationTopic(topic)
-        );
-        await waitForPeers(
-            session.peers[0],
-            [client2.id],
-            getReplicationTopic(topic)
-        );
-        expect(client1._directConnections.size).toEqual(0); // since browser
-        expect(client2._directConnections.size).toEqual(0); // since browser
-
+        await waitForPeers(session.peers[1], [client1.id], topic);
+        await waitForPeers(session.peers[0], [client2.id], topic);
+        await waitForPeers(session.peers[1], [client1.id], topic);
+        await waitForPeers(session.peers[0], [client2.id], topic);
+        /*   expect(client1._directConnections.size).toEqual(0); // since browser
+          expect(client2._directConnections.size).toEqual(0); // since browser
+   */
         await waitFor(() => db1.store.oplog.values.length === 2);
         expect(
             db1.store.oplog.values.map((x) => x.payload.getValue().value)
@@ -222,7 +182,7 @@ describe(`browser`, function () {
 
     it("will share entries as observer on peer connect", async () => {
         let topic = uuid();
-        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(2);
 
         client1 = await Peerbit.create(session.peers[0], {
             browser: true,
@@ -235,7 +195,7 @@ describe(`browser`, function () {
             new EventStore<string>({
                 id: uuid(),
             }),
-            { topic: topic, replicate: false }
+            { replicate: false }
         );
 
         await db1.add("hello");
@@ -246,30 +206,16 @@ describe(`browser`, function () {
                 client2._store,
                 db1.address!
             ),
-            { topic: topic, replicate: true }
+            { replicate: true }
         );
 
-        await waitForPeers(
-            session.peers[1],
-            [client1.id],
-            getObserverTopic(topic)
-        );
-        await waitForPeers(
-            session.peers[0],
-            [client2.id],
-            getObserverTopic(topic)
-        );
-        await waitForPeers(
-            session.peers[0],
-            [client2.id],
-            getReplicationTopic(topic)
-        );
-        expect(
-            client1._topicSubscriptions.has(getReplicationTopic(topic))
-        ).toEqual(false);
-        expect(client1._directConnections.size).toEqual(0); // since browser
-        expect(client2._directConnections.size).toEqual(0); // since browser
-
+        await waitForPeers(session.peers[1], [client1.id], topic);
+        await waitForPeers(session.peers[0], [client2.id], topic);
+        await waitForPeers(session.peers[0], [client2.id], topic);
+        expect(client1._topicSubscriptions.has(topic)).toEqual(false);
+        /*  expect(client1._directConnections.size).toEqual(0); // since browser
+         expect(client2._directConnections.size).toEqual(0); // since browser
+  */
         await waitFor(() => db1.store.oplog.values.length === 2);
         expect(
             db1.store.oplog.values.map((x) => x.payload.getValue().value)

@@ -93,6 +93,7 @@ export abstract class RequestKeyCondition {
 export class RequestKeysByAddress extends RequestKeyCondition {
     @field({ type: "u8" })
     keyType: number; // 0 sign key, 1 encryption key
+
     @field({ type: "string" })
     address: string;
 
@@ -118,23 +119,27 @@ export class RequestKeysByAddress extends RequestKeyCondition {
 
 @variant(1)
 export class RequestKeysByKey extends RequestKeyCondition {
+    @field({ type: "string" })
+    address: string;
+
     @field({ type: RequestKeyType })
     _key: RequestKeyType; // publci key
 
-    constructor(props?: { key: X25519PublicKey | Ed25519PublicKey }) {
+    constructor(props: {
+        address: string;
+        key: X25519PublicKey | Ed25519PublicKey;
+    }) {
         super();
-        if (props) {
-            if (props.key instanceof X25519PublicKey) {
-                this._key = new RequestEncrpytionKeyType({
-                    publicKey: props.key,
-                });
-            } else if (props.key instanceof Ed25519PublicKey) {
-                this._key = new RequestSignKeyType({
-                    publicKey: props.key,
-                });
-            } else {
-                throw new Error("Unexpected");
-            }
+        if (props.key instanceof X25519PublicKey) {
+            this._key = new RequestEncrpytionKeyType({
+                publicKey: props.key,
+            });
+        } else if (props.key instanceof Ed25519PublicKey) {
+            this._key = new RequestSignKeyType({
+                publicKey: props.key,
+            });
+        } else {
+            throw new Error("Unexpected");
         }
     }
 
@@ -192,7 +197,7 @@ export const requestAndWaitForKeys = async <
     T extends Ed25519Keypair | X25519Keypair
 >(
     condition: RequestKeyCondition,
-    send: (id: string, message: Uint8Array) => any | Promise<any>,
+    send: (message: Uint8Array) => any | Promise<any>,
     keystore: Keystore,
     identity: Identity,
     timeout = 10000
@@ -220,7 +225,7 @@ export const requestAndWaitForKeys = async <
             }
             throw error;
         }
-    } else if (condition instanceof RequestKeysByKey) {
+    } /*  else if (condition instanceof RequestKeysByKey) {
         try {
             const key = await waitForAsync(
                 () => keystore.getKey<T>(condition.key.publicKey),
@@ -243,12 +248,12 @@ export const requestAndWaitForKeys = async <
             }
             throw error;
         }
-    }
+    } */
 };
 
 export const requestKeys = async (
     condition: RequestKeyCondition,
-    send: (id: string, message: Uint8Array) => void | Promise<void>,
+    send: (message: Uint8Array) => void | Promise<void>,
     keystore: Keystore,
     identity: Identity
 ) => {
@@ -289,11 +294,11 @@ export const requestKeys = async (
     const unencryptedMessage = new DecryptedThing({
         data: serialize(signedMessage),
     });
-    await send(message.id, serialize(unencryptedMessage));
+    await send(serialize(unencryptedMessage));
 };
 
 export const exchangeKeys = async <T extends Ed25519Keypair | X25519Keypair>(
-    send: (id: string, data: Uint8Array) => Promise<any>,
+    send: (data: Uint8Array) => Promise<any>,
     request: RequestKeyMessage,
     canAccessKey: KeyAccessCondition,
     keystore: Keystore,
@@ -311,13 +316,13 @@ export const exchangeKeys = async <T extends Ed25519Keypair | X25519Keypair>(
             return;
         }
         secretKeys = keys;
-    } else if (request.condition instanceof RequestKeysByKey) {
+    } /* else if (request.condition instanceof RequestKeysByKey) {
         const key = await keystore.getKey<T>(request.condition.key.publicKey);
         if (key) {
             group = key.group;
         }
         secretKeys = key ? [key] : [];
-    } else {
+    } */ else {
         throw new Error("Unsupported");
     }
 
@@ -339,7 +344,6 @@ export const exchangeKeys = async <T extends Ed25519Keypair | X25519Keypair>(
 
     const signatureResult = await identity.sign(secretKeyResponseMessage);
     await send(
-        resp.id,
         serialize(
             await new DecryptedThing<KeyResponseMessage>({
                 data: serialize(

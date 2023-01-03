@@ -175,12 +175,12 @@ export class Signatures {
 @variant(0)
 export class Entry<T>
     implements
-        EntryEncryptionTemplate<
-            Metadata,
-            Payload<T>,
-            SignatureWithKey[],
-            Array<string>
-        >
+    EntryEncryptionTemplate<
+        Metadata,
+        Payload<T>,
+        SignatureWithKey[],
+        Array<string>
+    >
 {
     @field({ type: MaybeEncrypted })
     _metadata: MaybeEncrypted<Metadata>;
@@ -205,8 +205,9 @@ export class Entry<T>
 
     _encryption?: PublicKeyEncryptionResolver;
     _encoding?: Encoding<T>;
+    createdLocally?: boolean;
 
-    constructor(obj?: {
+    constructor(obj: {
         payload: MaybeEncrypted<Payload<T>>;
         signatures?: Signatures;
         metadata: MaybeEncrypted<Metadata>;
@@ -214,27 +215,27 @@ export class Entry<T>
         fork?: MaybeEncrypted<StringArray>; //  (not used)
         reserved?: number[]; // intentational type 0  (not used)h
         hash?: string;
+        createdLocally?: boolean
     }) {
-        if (obj) {
-            this._metadata = obj.metadata;
-            this._payload = obj.payload;
-            this._signatures = obj.signatures;
-            this._next = obj.next;
-            this._fork =
-                obj.fork ||
-                new DecryptedThing({
-                    data: serialize(new StringArray({ arr: [] })),
-                });
-            this._reserved = obj.reserved || [0, 0, 0, 0];
-        }
+        this._metadata = obj.metadata;
+        this._payload = obj.payload;
+        this._signatures = obj.signatures;
+        this._next = obj.next;
+        this._fork =
+            obj.fork ||
+            new DecryptedThing({
+                data: serialize(new StringArray({ arr: [] })),
+            });
+        this._reserved = obj.reserved || [0, 0, 0, 0];
+        this.createdLocally = obj.createdLocally;
     }
 
     init(
         props:
             | {
-                  encryption?: PublicKeyEncryptionResolver;
-                  encoding: Encoding<T>;
-              }
+                encryption?: PublicKeyEncryptionResolver;
+                encoding: Encoding<T>;
+            }
             | Entry<T>
     ): Entry<T> {
         const encryption =
@@ -259,7 +260,7 @@ export class Entry<T>
     async getMetadata(): Promise<Metadata> {
         await this._metadata.decrypt(
             this._encryption?.getAnyKeypair ||
-                (() => Promise.resolve(undefined))
+            (() => Promise.resolve(undefined))
         );
         return this.metadata;
     }
@@ -291,7 +292,7 @@ export class Entry<T>
     async getPayload(): Promise<Payload<T>> {
         await this._payload.decrypt(
             this._encryption?.getAnyKeypair ||
-                (() => Promise.resolve(undefined))
+            (() => Promise.resolve(undefined))
         );
         return this.payload;
     }
@@ -317,7 +318,7 @@ export class Entry<T>
     async getNext(): Promise<string[]> {
         await this._next.decrypt(
             this._encryption?.getAnyKeypair ||
-                (() => Promise.resolve(undefined))
+            (() => Promise.resolve(undefined))
         );
         return this.next;
     }
@@ -350,7 +351,7 @@ export class Entry<T>
             this._signatures!.signatures.map((x) =>
                 x.decrypt(
                     this._encryption?.getAnyKeypair ||
-                        (() => Promise.resolve(undefined))
+                    (() => Promise.resolve(undefined))
                 )
             )
         );
@@ -539,9 +540,9 @@ export class Entry<T>
                 ) {
                     throw new Error(
                         "Expecting next(s) to happen before entry, got: " +
-                            n.metadata.clock.timestamp +
-                            " > " +
-                            cv.timestamp
+                        n.metadata.clock.timestamp +
+                        " > " +
+                        cv.timestamp
                     );
                 }
             });
@@ -635,6 +636,7 @@ export class Entry<T>
             metadata: metadataEncrypted,
             signatures: undefined,
             fork: forks,
+            createdLocally: true,
             next: nextEncrypted, // Array of hashes
             /* refs: properties.refs, */
         });
@@ -662,8 +664,8 @@ export class Entry<T>
             const encryption = encryptAllSignaturesWithSameKey
                 ? properties.encryption?.reciever?.signatures
                 : properties.encryption?.reciever?.signatures?.[
-                      signature.publicKey.hashcode()
-                  ];
+                signature.publicKey.hashcode()
+                ];
             const signatureEncrypted = maybeEncrypt(signature, encryption);
             encryptedSignatures.push(signatureEncrypted);
         }

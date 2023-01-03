@@ -40,9 +40,7 @@ describe(`load`, () => {
 
             for (let i = 0; i < entryCount; i++) entryArr.push(i);
 
-            db = await client1.open(new EventStore<string>({}), {
-                topic: uuid(),
-            });
+            db = await client1.open(new EventStore<string>({}));
             address = db.address!.toString();
             await mapSeries(entryArr, (i) => db.add("hello" + i));
             await db.close();
@@ -59,8 +57,7 @@ describe(`load`, () => {
                 await EventStore.load<EventStore<string>>(
                     client1._store,
                     Address.parse(address)
-                ),
-                { topic: uuid() }
+                )
             );
             await db.load();
             await waitFor(
@@ -80,8 +77,7 @@ describe(`load`, () => {
                 await EventStore.load<EventStore<string>>(
                     client1._store,
                     Address.parse(address)
-                ),
-                { topic: uuid() }
+                )
             );
             await db.store.load(amount);
             await waitFor(
@@ -107,8 +103,7 @@ describe(`load`, () => {
                     await EventStore.load<EventStore<string>>(
                         client1._store,
                         Address.parse(address)
-                    ),
-                    { topic: uuid() }
+                    )
                 );
                 await db.load();
                 await waitFor(
@@ -152,8 +147,7 @@ describe(`load`, () => {
                     await EventStore.load<EventStore<string>>(
                         client1._store,
                         Address.parse(address)
-                    ),
-                    { topic: uuid() }
+                    )
                 );
                 await db.load();
                 await waitFor(
@@ -184,7 +178,6 @@ describe(`load`, () => {
                     Address.parse(address)
                 ),
                 {
-                    topic: uuid(),
                     onReady: async (store) => {
                         await waitFor(
                             () =>
@@ -216,7 +209,6 @@ describe(`load`, () => {
                     Address.parse(address)
                 ),
                 {
-                    topic: uuid(),
                     onLoadProgress: (store, entry) => {
                         count++;
                         expect(address).toEqual(db.address!.toString());
@@ -278,9 +270,7 @@ describe(`load`, () => {
 
             for (let i = 0; i < entryCount; i++) entryArr.push(i);
 
-            db = await client1.open(new MultipleStores(), {
-                topic: uuid(),
-            });
+            db = await client1.open(new MultipleStores());
             address = db.address!.toString();
             await mapSeries(entryArr, (i) => db.db.add("a" + i));
             await mapSeries(entryArr, (i) => db.db2.add("b" + i));
@@ -298,8 +288,7 @@ describe(`load`, () => {
                 await MultipleStores.load<MultipleStores>(
                     client1._store,
                     Address.parse(address)
-                ),
-                { topic: uuid() }
+                )
             );
             await db.load();
             await waitFor(
@@ -513,8 +502,7 @@ describe(`load`, () => {
         });
 
         it("loads database from an empty snapshot", async () => {
-            const options = { topic: uuid() };
-            db = await client1.open(new EventStore<string>({}), options);
+            db = await client1.open(new EventStore<string>({}));
             address = db.address!.toString();
             await db.saveSnapshot();
             await db.close();
@@ -523,8 +511,7 @@ describe(`load`, () => {
                 await EventStore.load<EventStore<string>>(
                     client1._store,
                     Address.parse(address)
-                ),
-                options
+                )
             );
             await db.loadFromSnapshot();
             const items = db.iterator({ limit: -1 }).collect();
@@ -558,9 +545,7 @@ describe(`load`, () => {
 
             for (let i = 0; i < entryCount; i++) entryArr.push(i);
 
-            db = await client1.open(new EventStore<string>({}), {
-                topic: uuid(),
-            });
+            db = await client1.open(new EventStore<string>({}));
             address = db.address!.toString();
             await mapSeries(entryArr, (i) => db.add("hello" + i));
             await db.saveSnapshot();
@@ -578,8 +563,7 @@ describe(`load`, () => {
                 await EventStore.load<EventStore<string>>(
                     client1._store,
                     Address.parse(address)
-                ),
-                { topic: uuid() }
+                )
             );
             await db.loadFromSnapshot();
             const items = db.iterator({ limit: -1 }).collect();
@@ -597,8 +581,7 @@ describe(`load`, () => {
                     await EventStore.load<EventStore<string>>(
                         client1._store,
                         Address.parse(address)
-                    ),
-                    { topic: uuid() }
+                    )
                 );
                 await db.loadFromSnapshot();
                 const expectedCount = entryCount + i;
@@ -620,13 +603,11 @@ describe(`load`, () => {
         });
 
         it("throws an error when trying to load a missing snapshot", async () => {
-            const options = { topic: uuid() };
             db = await client1.open(
                 await EventStore.load<EventStore<string>>(
                     client1._store,
                     Address.parse(address)
-                ),
-                options
+                )
             );
             await db.drop();
             db = null as any;
@@ -634,8 +615,7 @@ describe(`load`, () => {
                 await EventStore.load<EventStore<string>>(
                     client1._store,
                     Address.parse(address)
-                ),
-                options
+                )
             );
 
             let err;
@@ -657,7 +637,6 @@ describe(`load`, () => {
                     Address.parse(address)
                 ),
                 {
-                    topic: uuid(),
                     onReady: (store) => {
                         const items = db.iterator({ limit: -1 }).collect();
                         expect(items.length).toEqual(entryCount);
@@ -684,7 +663,6 @@ describe(`load`, () => {
                     Address.parse(address)
                 ),
                 {
-                    topic: uuid(),
                     onLoadProgress: (store, entry) => {
                         count++;
                         expect(address).toEqual(db.address!.toString());

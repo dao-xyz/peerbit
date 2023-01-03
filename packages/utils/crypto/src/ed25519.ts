@@ -5,6 +5,11 @@ import sodium from "libsodium-wrappers";
 import { Signer, SignWithKey } from "./signer.js";
 import { SignatureWithKey } from "./signature.js";
 import { toHexString } from "./utils.js";
+import { peerIdFromKeys } from "@libp2p/peer-id";
+import { supportedKeys } from "@libp2p/crypto/keys";
+import { PeerId } from "@libp2p/interface-peer-id";
+import { coerce } from "./bytes.js";
+
 await sodium.ready;
 @variant(0)
 export class Ed25519PublicKey extends PublicSignKey {
@@ -27,6 +32,23 @@ export class Ed25519PublicKey extends PublicSignKey {
     toString(): string {
         return "ed25119p/" + toHexString(this.publicKey);
     }
+
+    toPeerId() {
+        return peerIdFromKeys(
+            new supportedKeys["ed25519"].Ed25519PublicKey(this.publicKey).bytes
+        );
+    }
+    static from(id: PeerId) {
+        if (!id.publicKey) {
+            throw new Error("Missing public key");
+        }
+        if (id.type === "Ed25519") {
+            return new Ed25519PublicKey({
+                publicKey: coerce(id.publicKey!.slice(4)),
+            });
+        }
+        throw new Error("Unsupported key type: " + id.type);
+    }
 }
 
 @variant(0)
@@ -47,6 +69,7 @@ export class Ed25519PrivateKey extends PrivateSignKey {
         }
         return false;
     }
+
     toString(): string {
         return "ed25119s/" + toHexString(this.privateKey);
     }
@@ -82,6 +105,7 @@ export class Ed25519Keypair extends Keypair implements Signer {
         });
         return kp;
     }
+
     sign(data: Uint8Array): Uint8Array {
         return sign(data, this.privateKey);
     }

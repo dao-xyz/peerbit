@@ -27,7 +27,7 @@ import {
     PublicKeyEncryptionResolver,
 } from "@dao-xyz/peerbit-crypto";
 import { EntryWithRefs } from "./entry-with-refs.js";
-import { waitForAsync } from "@dao-xyz/peerbit-time";
+import { delay, waitForAsync } from "@dao-xyz/peerbit-time";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import path from "path-browserify";
 import { v4 as uuid } from "uuid";
@@ -35,7 +35,7 @@ import { join } from "./replicator.js";
 
 const logger = loggerFn({ module: "store" });
 
-export class CachedValue {}
+export class CachedValue { }
 export type AddOperationOptions<T> = {
     skipCanAppendCheck?: boolean;
     identity?: Identity;
@@ -123,7 +123,7 @@ export interface IStoreOptions<T> {
 
 export interface IInitializationOptions<T>
     extends IStoreOptions<T>,
-        IInitializationOptionsDefault<T> {
+    IInitializationOptionsDefault<T> {
     resolveCache: (
         store: Store<any>
     ) => Promise<Cache<CachedValue>> | Cache<CachedValue>;
@@ -630,7 +630,7 @@ export class Store<T> implements Initiable<T> {
      * @returns change
      */
     async sync(
-        entries: EntryWithRefs<T>[] | Entry<T>[] | string[],
+        entries: (EntryWithRefs<T> | Entry<T> | string)[],
         options: { canAppend?: CanAppend<T>; save: boolean } = { save: true }
     ): Promise<boolean> {
         logger.debug(`Sync request #${entries.length}`);
@@ -672,13 +672,13 @@ export class Store<T> implements Initiable<T> {
                         const hash = options?.save
                             ? await this._store.put(serialize(head), "raw")
                             : stringifyCid(
-                                  (
-                                      await this._store.block(
-                                          serialize(head),
-                                          "raw"
-                                      )
-                                  ).cid
-                              );
+                                (
+                                    await this._store.block(
+                                        serialize(head),
+                                        "raw"
+                                    )
+                                ).cid
+                            );
                         head.hash = headHash;
                         if (head.hash === undefined) {
                             head.hash = hash; // can happen if you sync entries that you load directly from ipfs

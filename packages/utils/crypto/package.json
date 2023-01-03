@@ -37,7 +37,9 @@
         "@dao-xyz/borsh": "^4.0.7",
         "@dao-xyz/peerbit-borsh-utils": "^0.0.18",
         "@ethersproject/wallet": "^5.7.0",
-        "libsodium-wrappers": "^0.7.10"
+        "libsodium-wrappers": "^0.7.10",
+        "@libp2p/crypto": "^1.0.10",
+        "@libp2p/peer-id": "^1.1.18"
     },
     "gitHead": "bfbec720aee276ab1bc7cf4ee7a6c0e90ecb4f51"
 }

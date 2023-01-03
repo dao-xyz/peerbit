@@ -37,7 +37,7 @@ import {
 } from "@dao-xyz/peerbit-document";
 import { v4 as uuid } from "uuid";
 import {
-    DEFAULT_BLOCK_TRANSPORT_TOPIC,
+
     LibP2PBlockStore,
     MemoryLevelBlockStore,
     Blocks,
@@ -96,7 +96,7 @@ describe("index", () => {
             },
         });
     beforeAll(async () => {
-        session = await LSession.connected(4, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(4);
         identites = [];
         cacheStore = [];
         stores = [];

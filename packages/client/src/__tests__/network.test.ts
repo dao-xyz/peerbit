@@ -7,11 +7,6 @@ import { jest } from "@jest/globals";
 
 // Include test utilities
 import { LSession } from "@dao-xyz/peerbit-test-utils";
-
-import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
-import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { PermissionedEventStore } from "./utils/stores/test-store";
 import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 describe(`network`, function () {
@@ -24,7 +19,7 @@ describe(`network`, function () {
         db3: EventStore<string>;
 
     beforeAll(async () => {
-        session = await LSession.connected(3, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(3);
     });
 
     afterAll(async () => {
@@ -50,7 +45,7 @@ describe(`network`, function () {
 
         if (client3) await client3.stop();
     });
-    it("_", () => {});
+    it("_", () => { });
 
     /*  TODO
     

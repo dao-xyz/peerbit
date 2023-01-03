@@ -41,7 +41,7 @@ describe("libp2p only", () => {
             // not peerbit, so should not succeed
         }
         expect(await c.topics.get(false)).toContainAllValues([
-            "_block",
+            "_",
             "1",
             "2",
         ]);

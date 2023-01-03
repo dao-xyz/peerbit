@@ -25,6 +25,7 @@ export class Secp256k1PublicKey extends PublicSignKey {
         }
         return false;
     }
+
     toString(): string {
         return "sepc256k1/" + new TextDecoder().decode(this.address);
     }

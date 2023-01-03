@@ -13,7 +13,7 @@ describe(`discovery`, function () {
     let client1: Peerbit, client2: Peerbit, client3: Peerbit;
 
     beforeAll(async () => {
-        session1 = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session1 = await LSession.connected(2);
         session2 = await LSession.connected(1, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
     });
 
@@ -76,13 +76,8 @@ describe(`discovery`, function () {
             DEFAULT_BLOCK_TRANSPORT_TOPIC
         );
         await client3.open(program.address!);
-        await delay(10000);
-        await waitFor(() => client3._directConnections.size === 2);
-        expect(
-            client3._directConnections.has(client1.id.toString())
-        ).toBeTrue();
-        expect(
-            client3._directConnections.has(client2.id.toString())
-        ).toBeTrue();
+
+        expect(client3.libp2p.peerStore.has(client1.id)).toBeTrue();
+        expect(client3.libp2p.peerStore.has(client1.id)).toBeTrue();
     });
 });

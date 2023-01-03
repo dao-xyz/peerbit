@@ -1,191 +1,210 @@
-import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { LibP2PBlockStore } from "../libp2p";
 import { MemoryLevelBlockStore } from "../level";
 import { stringifyCid } from "../block.js";
 import { Blocks } from "..";
 import { waitFor, delay } from "@dao-xyz/peerbit-time";
-import crypto from "crypto";
+import { waitForPeers } from "./utils";
+import crypto from 'crypto'
 
-describe(`pubsub`, function () {
-    let session: LSession, store: Blocks, store2: Blocks;
 
-    beforeAll(async () => {
-        session = await LSession.connected(2);
-    });
+describe('transport', function () {
+	let session: LSession, store: Blocks, store2: Blocks;
 
-    afterEach(async () => {
-        await store.close();
-        await store2.close();
-    });
-    afterAll(async () => {
-        await session.stop();
-    });
 
-    it("large", async () => {
-        store = new Blocks(
-            new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
-        );
-        await store.open();
+	beforeEach(async () => {
+		session = await LSession.connected(2);
+	})
 
-        store2 = new Blocks(
-            new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
-        );
+	afterEach(async () => {
+		await store?.close();
+		await store2?.close();
+		await session.stop();
 
-        expect((store._store as LibP2PBlockStore)._gossipCache).toBeUndefined();
-        expect((store._store as LibP2PBlockStore)._gossip).toBeFalse();
+	});
 
-        await store2.open();
+	it('can restart', async () => {
+		store = new Blocks(
+			new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
+		);
+		await store.open();
+		store2 = new Blocks(
+			new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
+		);
 
-        const cids: string[] = [];
+		await store2.open();
 
-        const rnds: Uint8Array[] = [];
-        let len = 3900000;
-        const t1 = +new Date();
-        for (let i = 0; i < 100; i++) {
-            rnds.push(crypto.randomBytes(len));
-        }
+		await waitForPeers(store, store2);
+		await store.close();
+		await store2.close();
 
-        for (let i = 0; i < 100; i++) {
-            cids.push(await store.put(rnds[i], "raw", { pin: true }));
-        }
+		await delay(1000); // Some delay seems to be necessary TODO fix
+		await store.open()
+		await store2.open();
+		await waitForPeers(store, store2)
 
-        for (const [i, cid] of cids.entries()) {
-            const readData = await store2.get<Uint8Array>(stringifyCid(cid));
-            expect(readData).toHaveLength(len);
-        }
-        const t2 = +new Date();
-        console.log("Large", t2 - t1);
-    });
+	})
 
-    it("small", async () => {
-        store = new Blocks(
-            new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
-        );
-        await store.open();
+	it("rw", async () => {
+		store = new Blocks(
+			new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
+		);
 
-        store2 = new Blocks(
-            new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
-        );
+		store2 = new Blocks(
+			new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
+		);
 
-        expect((store._store as LibP2PBlockStore)._gossipCache).toBeUndefined();
-        expect((store._store as LibP2PBlockStore)._gossip).toBeFalse();
+		expect((store._store as LibP2PBlockStore)._gossipCache).toBeUndefined();
+		expect((store._store as LibP2PBlockStore)._gossip).toBeFalse();
 
-        await store2.open();
+		await store.open();
+		await store2.open();
+		await session.connect();
+		await waitForPeers(store, store2);
 
-        const cids: string[] = [];
 
-        const rnds: Uint8Array[] = [];
-        let len = 100;
-        const t1 = +new Date();
-        for (let i = 0; i < 5000; i++) {
-            rnds.push(crypto.randomBytes(len));
-        }
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store.put(data, "raw", { pin: true });
 
-        for (let i = 0; i < 5000; i++) {
-            cids.push(await store.put(rnds[i], "raw", { pin: true }));
-        }
+		expect(stringifyCid(cid)).toEqual(
+			"zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J"
+		);
+		const readData = await store2.get<Uint8Array>(stringifyCid(cid));
+		expect(readData).toEqual(data);
+	});
 
-        for (const [i, cid] of cids.entries()) {
-            const readData = await store2.get<Uint8Array>(stringifyCid(cid));
-            expect(readData).toHaveLength(len);
-        }
-        const t2 = +new Date();
-        console.log("Small", t2 - t1);
-    });
+	it("timeout", async () => {
+		store = new Blocks(
+			new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
+		);
+		await store.open();
+		store2 = new Blocks(
+			new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
+		);
+		await store2.open();
 
-    it("rw", async () => {
-        store = new Blocks(
-            new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
-        );
-        await store.open();
+		// await session.connect();
+		await waitForPeers(store, store2);
 
-        store2 = new Blocks(
-            new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
-        );
 
-        expect((store._store as LibP2PBlockStore)._gossipCache).toBeUndefined();
-        expect((store._store as LibP2PBlockStore)._gossip).toBeFalse();
+		const t1 = +new Date();
+		const readData = await store.get<Uint8Array>(
+			"zb3we1BmfxpFg6bCXmrsuEo8JuQrGEf7RyFBdRxEHLuqc4CSr",
+			{ timeout: 3000 }
+		);
+		const t2 = +new Date();
+		expect(readData).toBeUndefined();
+		expect(t2 - t1 < 3100);
+	});
 
-        await store2.open();
+	it("gossip", async () => {
+		store = new Blocks(
+			new LibP2PBlockStore(
+				session.peers[0],
+				new MemoryLevelBlockStore(),
+				{ gossip: { cache: {} } }
+			)
+		);
+		await store.open();
 
-        const data = new Uint8Array([5, 4, 3]);
-        const cid = await store.put(data, "raw", { pin: true });
-        expect(stringifyCid(cid)).toEqual(
-            "zb3we1BmfxpFg6bCXmrsuEo8JuQrGEf7RyFBdRxEHLuqc4CSr"
-        );
-        await waitForPeers(
-            session.peers[1],
-            [session.peers[0].peerId],
-            (store._store as LibP2PBlockStore)._transportTopic
-        );
-        const readData = await store2.get<Uint8Array>(stringifyCid(cid));
-        expect(readData).toEqual(data);
-    });
-    it("timeout", async () => {
-        store = new Blocks(
-            new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
-        );
-        await store.open();
-        store2 = new Blocks(
-            new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
-        );
-        await store2.open();
+		store2 = new Blocks(
+			new LibP2PBlockStore(session.peers[1], undefined, {
+				gossip: { cache: {} },
+			})
+		);
+		await store2.open();
+		// await session.connect();
+		await waitForPeers(store, store2);
 
-        await waitForPeers(
-            session.peers[1],
-            [session.peers[0].peerId],
-            (store._store as LibP2PBlockStore)._transportTopic
-        );
+		const data = new Uint8Array([1, 2, 3]);
 
-        const t1 = +new Date();
-        const readData = await store.get<Uint8Array>(
-            "zb3we1BmfxpFg6bCXmrsuEo8JuQrGEf7RyFBdRxEHLuqc4CSr",
-            { timeout: 3000 }
-        );
-        const t2 = +new Date();
-        expect(readData).toBeUndefined();
-        expect(t2 - t1 < 3100);
-    });
 
-    it("gossip", async () => {
-        store = new Blocks(
-            new LibP2PBlockStore(
-                session.peers[0],
-                new MemoryLevelBlockStore(),
-                { gossip: { cache: {} } }
-            )
-        );
-        await store.open();
+		const cid = await store.put(data, "raw", { pin: true });
+		expect(stringifyCid(cid)).toEqual(
+			"zb2rhWtC5SY6zV1y2SVN119ofpxsbEtpwiqSoK77bWVzHqeWU"
+		);
 
-        store2 = new Blocks(
-            new LibP2PBlockStore(session.peers[1], undefined, {
-                gossip: { cache: {} },
-            })
-        );
-        await store2.open();
+		await delay(5000);
 
-        const data = new Uint8Array([1, 2, 3]);
-        await waitForPeers(
-            session.peers[1],
-            [session.peers[0].peerId],
-            (store._store as LibP2PBlockStore)._transportTopic
-        );
+		await waitFor(
+			() => (store2._store as LibP2PBlockStore)._gossipCache!.size === 1
+		);
 
-        const cid = await store.put(data, "raw", { pin: true });
-        expect(stringifyCid(cid)).toEqual(
-            "zb3wdq9czZ6jYX1DMYx3b5AhawVNWcBawniwy4TVDpqXkCHgV"
-        );
+		(store2._store as LibP2PBlockStore)._readFromPeers = () =>
+			Promise.resolve(undefined); // make sure we only read from gossipCache
 
-        await delay(5000);
+		const readData = await store2.get<Uint8Array>(stringifyCid(cid));
+		expect(readData).toEqual(data);
+	});
 
-        await waitFor(
-            () => (store2._store as LibP2PBlockStore)._gossipCache!.size === 1
-        );
+	it("large", async () => {
+		store = new Blocks(
+			new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
+		);
+		await store.open();
 
-        (store2._store as LibP2PBlockStore)._readFromPubSub = () =>
-            Promise.resolve(undefined); // make sure we only read from gossipCache
+		store2 = new Blocks(
+			new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
+		);
+		await store2.open();
+		await session.connect();
+		await waitForPeers(store, store2);
+		await delay(1000)
+		const cids: string[] = [];
 
-        const readData = await store2.get<Uint8Array>(stringifyCid(cid));
-        expect(readData).toEqual(data);
-    });
+		const rnds: Uint8Array[] = [];
+		let len = 3900000;
+		for (let i = 0; i < 100; i++) {
+			rnds.push(crypto.randomBytes(len));
+		}
+
+		const t1 = +new Date();
+		for (let i = 0; i < 100; i++) {
+			cids.push(await store.put(rnds[i], "raw", { pin: true }));
+		}
+		const t2 = +new Date();
+
+		for (const [i, cid] of cids.entries()) {
+			const readData = await store2.get<Uint8Array>(stringifyCid(cid));
+			expect(readData).toHaveLength(len);
+		}
+		const t3 = +new Date();
+		console.log("Large", t3 - t1, t2 - t1, t3 - t2);
+	});
+
+
+	it("small", async () => {
+		store = new Blocks(
+			new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
+		);
+		await store.open();
+
+		store2 = new Blocks(
+			new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
+		);
+
+		await store2.open();
+		await session.connect();
+		await waitForPeers(store, store2);
+
+		const cids: string[] = [];
+
+		const rnds: Uint8Array[] = [];
+		let len = 100;
+		const t1 = +new Date();
+		for (let i = 0; i < 5000; i++) {
+			rnds.push(crypto.randomBytes(len));
+		}
+
+		for (let i = 0; i < 5000; i++) {
+			cids.push(await store.put(rnds[i], "raw", { pin: true }));
+		}
+
+		for (const [i, cid] of cids.entries()) {
+			const readData = await store2.get<Uint8Array>(stringifyCid(cid));
+			expect(readData).toHaveLength(len);
+		}
+		const t2 = +new Date();
+		console.log("Small", t2 - t1);
+	});
 });

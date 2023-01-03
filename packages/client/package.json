@@ -29,7 +29,6 @@
     },
     "dependencies": {
         "@dao-xyz/borsh": "^4.0.7",
-        "@dao-xyz/libp2p-pubsub-direct-channel": "^0.0.45",
         "@dao-xyz/libp2p-pubsub-peer-monitor": "^0.0.19",
         "@dao-xyz/peerbit-block": "^0.0.15",
         "@dao-xyz/peerbit-cache": "^0.4.38",
@@ -38,13 +37,13 @@
         "@dao-xyz/peerbit-logger": "^0.0.4",
         "@dao-xyz/peerbit-program": "^0.0.78",
         "@dao-xyz/peerbit-store": "^0.0.93",
-        "@dao-xyz/peerbit-trusted-network": "^0.0.116",
         "is-node": "^1.0.2",
         "level": "^8.0.0",
         "lru-cache": "^7.14.1",
         "memory-level": "^1.0.0",
         "p-queue": "^7.3.0",
-        "wherearewe": "^2.0.1"
+        "wherearewe": "^2.0.1",
+        "bloom-filters": "^3.0.0"
     },
     "devDependencies": {
         "@dao-xyz/peerbit-document": "^0.0.160",

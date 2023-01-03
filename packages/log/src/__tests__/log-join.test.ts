@@ -14,7 +14,7 @@ import {
     LibP2PBlockStore,
     MemoryLevelBlockStore,
     Blocks,
-    DEFAULT_BLOCK_TRANSPORT_TOPIC,
+
 } from "@dao-xyz/peerbit-block";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
@@ -69,7 +69,7 @@ describe("Log - Join", function () {
         signKey2 = keys[1];
         signKey3 = keys[2];
         signKey4 = keys[3];
-        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(2);
         store = new Blocks(
             new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
         );
