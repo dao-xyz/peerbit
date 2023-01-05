@@ -11,9 +11,9 @@ EventEmitter.prototype.addListener = function (type, ...args) {
   const max = typeof (this as any)._maxListeners === 'number' ? (this as any)._maxListeners : 10;
 
   if (max !== 0 && numListeners > max) {
-    const error = new Error('Too many listeners of type "' + type.toString() + '" added to EventEmitter. Max is ' + max + " and we've added " + numListeners + '.');
-    console.error(error);
-    throw error;
+	const error = new Error('Too many listeners of type "' + type.toString() + '" added to EventEmitter. Max is ' + max + " and we've added " + numListeners + '.');
+	console.error(error);
+	throw error;
   }
   return originalAddListener.apply(this, [type, ...args])
 }; */

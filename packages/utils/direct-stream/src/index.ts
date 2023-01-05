@@ -150,7 +150,7 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 		this.inboundStream = abortableSource(
 			pipe(
 				this._rawInboundStream,
-				lp.decode({ maxLengthLength: 16, maxDataLength: 1e7 })
+				lp.decode({ maxDataLength: 100001000 })
 			),
 			this._inboundAbortController.signal,
 			{
@@ -531,13 +531,16 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 				stream,
 				async (source) => {
 					for await (const data of source) {
+
 						const msgId = this.getMsgId(data)
 						if (this.seenCache.has(msgId)) {
+
 							return
 						}
 						this.seenCache.set(msgId, true)
 						this.processRpc(peerId, peerStreams, data)
 							.catch(err => logger.info(err))
+
 					}
 				}
 			)
@@ -564,7 +567,7 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 				return false
 			}
 
-			this.queue.add(async () => {
+			await this.queue.add(async () => {
 				try {
 					await this.processMessage(from, message)
 				} catch (err: any) {

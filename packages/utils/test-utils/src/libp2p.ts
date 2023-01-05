@@ -1,6 +1,6 @@
 import { createLibp2p, Libp2p } from "libp2p";
 import { Components } from 'libp2p/src/components'
-import { noise } from "@chainsafe/libp2p-noise";
+import { noise } from "@dao-xyz/libp2p-noise";
 import { mplex } from "@libp2p/mplex";
 import { tcp } from "@libp2p/tcp";
 import { gossipsub } from "@chainsafe/libp2p-gossipsub";

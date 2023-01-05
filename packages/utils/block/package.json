@@ -60,6 +60,7 @@
 		"libp2p": "^0.41.0",
 		"lru-cache": "^7.14.1",
 		"memory-level": "^1.0.0",
-		"uuid": "^8.3.2"
+		"uuid": "^8.3.2",
+		"it-pushable": "^3.1.2"
 	}
 }

@@ -13,11 +13,14 @@ import { CID } from "multiformats/cid";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import crypto from 'crypto';
 import { DirectStream, DataMessage } from '@dao-xyz/libp2p-direct-stream';
+import { pushable, Pushable } from 'it-pushable'
+
+
 const logger = loggerFn({ module: "blocks-libp2p" });
 
-class BlockStream extends DirectStream {
-	constructor(libp2p: Libp2p, options: { messageProcessingConcurrency?: number, canRelayMessage: boolean, emitSelf: boolean }) {
-		super(libp2p, ['blockstream/1.0.0'], options)
+export class BlockStream extends DirectStream {
+	constructor(libp2p: Libp2p, options: { messageProcessingConcurrency?: number, canRelayMessage: boolean }) {
+		super(libp2p, ['blockstream/1.0.0'], { emitSelf: false, ...options })
 	}
 }
 
@@ -66,6 +69,7 @@ export class LibP2PBlockStore implements BlockStore {
 	_blockSub: BlockStream;
 	_localStore?: BlockStore;
 	_responseHandler?: (evt: CustomEvent<DataMessage>) => any;
+	_pushable: Map<string, Pushable<Uint8Array>>
 	_gossipCache?: LRU<string, Uint8Array>;
 	_gossip = false;
 	_open = false;
@@ -97,59 +101,62 @@ export class LibP2PBlockStore implements BlockStore {
 				gossipCacheOptions && new LRU(gossipCacheOptions);
 		}
 
-		this._blockSub = new BlockStream(this._libp2p, { messageProcessingConcurrency: 10, canRelayMessage: true, emitSelf: true })
-
-		this._responseHandler =
-			this._localStore || this._gossipCache
-				? async (evt: CustomEvent<DataMessage>) => {
-					if (!evt) {
+		this._blockSub = new BlockStream(this._libp2p, { messageProcessingConcurrency: 10, canRelayMessage: true })
+		this._pushable = new Map()
+		this._responseHandler = async (evt: CustomEvent<DataMessage>) => {
+			if (!evt) {
+				return;
+			}
+			const message = evt.detail;
+			try {
+				const decoded = deserialize(
+					message.data,
+					BlockMessage
+				);
+				if (
+					decoded instanceof BlockRequest &&
+					this._localStore
+				) {
+					const cid = stringifyCid(decoded.cid);
+					const block = await this._localStore.get<any>(
+						cid,
+						{
+							timeout: localTimeout,
+						}
+					);
+					if (!block) {
 						return;
 					}
-					const message = evt.detail;
-					try {
-						const decoded = deserialize(
-							message.data,
-							BlockMessage
-						);
-						if (
-							decoded instanceof BlockRequest &&
-							this._localStore
-						) {
-							const cid = stringifyCid(decoded.cid);
-							const block = await this._localStore.get<any>(
-								cid,
-								{
-									timeout: localTimeout,
-								}
-							);
-							if (!block) {
-								return;
-							}
-							const response = serialize(
-								new BlockResponse(cid, block.bytes)
-							);
-							await this._blockSub.publish(
-								response
-							);
-						} else if (
-							decoded instanceof BlockResponse &&
-							this._gossipCache
-						) {
-							// TODO make sure we are not storing too much bytes in ram (like filter large blocks)
-							this._gossipCache.set(
-								decoded.cid,
-								decoded.bytes
-							);
-						}
-					} catch (error) {
-						console.error(
-							"Got error for libp2p block transport: ",
-							error
-						);
-						return; // timeout o r invalid cid
+					const response = serialize(
+						new BlockResponse(cid, block.bytes)
+					);
+					await this._blockSub.publish(
+						response
+					);
+				} else if (
+					decoded instanceof BlockResponse
+				) {
+					// TODO make sure we are not storing too much bytes in ram (like filter large blocks)
+					this._gossipCache && this._gossipCache.set(
+						decoded.cid,
+						decoded.bytes
+					);
+
+					const blockPush = this._pushable.get(decoded.cid);
+					if (!blockPush) {
+
+						return;
 					}
+					blockPush.push(decoded.bytes)
 				}
-				: undefined;
+			} catch (error) {
+				console.error(
+					"Got error for libp2p block transport: ",
+					error
+				);
+				return; // timeout o r invalid cid
+			}
+		}
 	}
 
 	async put(
@@ -232,9 +239,52 @@ export class LibP2PBlockStore implements BlockStore {
 	async _readFromPeers(
 		cidString: string,
 		cidObject: CID,
-		options: { timeout?: number; hasher?: any } = {}
+		options: { timeout?: number; hasher?: any } = {},
 	): Promise<Block.Block<any, any, any, 1> | undefined> {
-		return new Promise<Block.Block<any, any, any, 1> | undefined>(
+		const p = pushable();
+		this._pushable.set(cidString, p);
+		const codec = codecCodes[cidObject.code];
+		this._blockSub
+			.publish(
+				serialize(new BlockRequest(cidString))
+			)
+
+		const end = () => {
+			/**
+			 * TODO synchronize this block across all events
+			 */
+			const p2 = this._pushable.get(cidString);
+			if (p2 === p) {
+				this._pushable.delete(cidString);
+			}
+			clearTimeout(timeoutCallback)
+			p.end();
+
+		}
+		const timeoutCallback = setTimeout(() => {
+			console.log('timeout!')
+			end();
+		}, options.timeout || 130000);
+		for await (const bytes of p) {
+			try {
+				const value = await checkDecodeBlock(
+					cidObject,
+					bytes,
+					{
+						codec,
+						hasher: options?.hasher,
+					}
+				);
+				end();
+				return value;
+			} catch (error: any) {
+				logger.error(error?.message);
+				continue;
+			}
+		}
+
+		return undefined;
+		/* return new Promise<Block.Block<any, any, any, 1> | undefined>(
 			(r, _reject) => {
 				const timeout = options.timeout || 5000;
 				const t1 = +new Date
@@ -310,7 +360,7 @@ export class LibP2PBlockStore implements BlockStore {
 						logger.warn(error?.message);
 					});
 			}
-		);
+		); */
 	}
 
 	async idle(): Promise<void> {
@@ -322,8 +372,14 @@ export class LibP2PBlockStore implements BlockStore {
 			"data",
 			this._responseHandler
 		);
+
+
 		await this._localStore?.close();
 		await this._blockSub.stop();
+		this._pushable.forEach((v, k) => {
+			v.end()
+		})
+		this._pushable.clear()
 		this._open = false;
 
 

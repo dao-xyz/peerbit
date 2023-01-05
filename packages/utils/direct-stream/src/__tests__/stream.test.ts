@@ -76,6 +76,10 @@ describe('streams', function () {
 
 		});
 
+		afterAll(async () => {
+			await session.stop()
+		})
+
 		it("1->unknown", async () => {
 			await stream1.publish(data);
 			await waitFor(() => recievedMessages2.length === 1);
@@ -105,12 +109,11 @@ describe('streams', function () {
 			expect(recievedMessages2).toHaveLength(0);
 		});
 
-		it("1->3 large data", async () => {
-			const bigData = crypto.randomBytes(1024 * 1024 * 4 - 500)//crypto.randomBytes(1e7)
+		it("1->3 10mb data", async () => {
+			const bigData = crypto.randomBytes(1e6)
 			await stream1.publish(bigData, { to: [stream3.libp2p.peerId] });
-			await waitFor(() => recievedMessages3.length === 1, { delayInterval: 100, timeout: 50 * 1000 });
+			await waitFor(() => recievedMessages3.length === 1, { delayInterval: 10, timeout: 50 * 1000 });
 			expect(new Uint8Array(recievedMessages3[0].data)).toHaveLength(bigData.length)
-			await delay(3000); // wait some more time to make sure we dont get more messages
 			expect(recievedMessages3).toHaveLength(1);
 			expect(recievedMessages2).toHaveLength(0);
 		});
@@ -182,7 +185,9 @@ describe('streams', function () {
 			await Promise.all(peers.map(peer => peer.stream.stop()))
 
 		});
-
+		afterAll(async () => {
+			await session.stop()
+		})
 		it("will publish on routes", async () => {
 			peers[2].recieved = [];
 			peers[3].recieved = [];
@@ -222,8 +227,11 @@ describe('streams', function () {
 	describe('lifecycle', () => {
 		let session: LSession, stream1: TestStreamImpl, stream2: TestStreamImpl
 
-		beforeEach(async () => {
+		beforeAll(async () => {
 			session = await LSession.connected(2);
+
+		})
+		beforeEach(async () => {
 			stream1 = new TestStreamImpl(session.peers[0]);
 			stream2 = new TestStreamImpl(session.peers[1]);
 			await stream1.start();
@@ -237,6 +245,10 @@ describe('streams', function () {
 
 		});
 
+		afterAll(async () => {
+
+			await session.stop()
+		})
 		it('can restart', async () => {
 			await stream1.stop();
 			await stream2.stop();

@@ -1,7 +1,4 @@
-import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { LibP2PBlockStore } from "../libp2p";
-import { MemoryLevelBlockStore } from "../level";
-import { stringifyCid } from "../block.js";
 import { Blocks } from "..";
 import { waitFor, delay } from "@dao-xyz/peerbit-time";
 
