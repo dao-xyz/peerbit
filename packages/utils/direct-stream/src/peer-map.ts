@@ -1,3 +1,4 @@
+import { PublicSignKey } from '@dao-xyz/peerbit-crypto'
 import type { PeerId } from '@libp2p/interface-peer-id'
 import { peerIdFromString } from '@libp2p/peer-id'
 
@@ -21,28 +22,28 @@ export class PeerMap<T> {
 		this.map.clear()
 	}
 
-	delete(peer: PeerId): void {
-		this.map.delete(peer.toString())
+	delete(peer): void {
+		this.map.delete(peer)
 	}
 
 
 
-	forEach(fn: (value: T, key: PeerId, map: PeerMap<T>) => void): void {
+	forEach(fn: (value: T, key: string, map: PeerMap<T>) => void): void {
 		this.map.forEach((value, key) => {
-			fn(value, peerIdFromString(key), this)
+			fn(value, key, this)
 		})
 	}
 
-	get(peer: PeerId | string): T | undefined {
-		return this.map.get(peer.toString())
+	get(peer: string): T | undefined {
+		return this.map.get(peer)
 	}
 
-	has(peer: PeerId | string): boolean {
-		return this.map.has(peer.toString())
+	has(peer: | string): boolean {
+		return this.map.has(peer)
 	}
 
-	set(peer: PeerId | string, value: T): void {
-		this.map.set(peer.toString(), value)
+	set(peer: string, value: T): void {
+		this.map.set(peer, value)
 	}
 
 	values(): IterableIterator<T> {

@@ -54,11 +54,12 @@ support library is itself covered by the above license.
  */
 
 import { Uint8ArrayList } from 'uint8arraylist'
+import { Uint8ArrayView } from './view';
 
 export const length = function utf8_length(string: string) {
-	var len = 0,
+	let len = 0,
 		c = 0;
-	for (var i = 0; i < string.length; ++i) {
+	for (let i = 0; i < string.length; ++i) {
 		c = string.charCodeAt(i);
 		if (c < 128)
 			len += 1;
@@ -80,11 +81,11 @@ export const length = function utf8_length(string: string) {
  * @param {number} end Source end
  * @returns {string} String read
  */
-export const read = function utf8_read(buffer: Uint8ArrayList, start: number, end: number) {
-	var len = end - start;
+export const read = function utf8_read(buffer: Uint8ArrayList | Uint8ArrayView, start: number, end: number) {
+	const len = end - start;
 	if (len < 1)
 		return "";
-	var parts: [] | null = null,
+	let parts: [] | null = null,
 		chunk: number[] = [],
 		i = 0, // char offset
 		t;     // temporary
@@ -121,10 +122,10 @@ export const read = function utf8_read(buffer: Uint8ArrayList, start: number, en
  * @returns {number} Bytes written
  */
 export const write = function utf8_write(string: string, buffer: Uint8Array, offset: number) {
-	var start = offset,
+	let start = offset,
 		c1, // character 1
 		c2; // character 2
-	for (var i = 0; i < string.length; ++i) {
+	for (let i = 0; i < string.length; ++i) {
 		c1 = string.charCodeAt(i);
 		if (c1 < 128) {
 			buffer[offset++] = c1;
