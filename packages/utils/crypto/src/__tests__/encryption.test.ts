@@ -5,6 +5,7 @@ import {
 	verifySignatureEd25519,
 	Ed25519Keypair,
 	X25519Keypair,
+	verify,
 } from "../index.js";
 import sodium from "libsodium-wrappers";
 import { createEd25519PeerId } from "@libp2p/peer-id-factory";
@@ -99,12 +100,12 @@ describe("ed25519", function () {
 		const senderKey = Ed25519Keypair.create();
 		const signature = senderKey.sign(data);
 		expect(signature).toHaveLength(64); // detached
-		const verify = verifySignatureEd25519(
+		const v = verify(
 			signature,
-			senderKey.publicKey.publicKey,
+			senderKey.publicKey,
 			data
 		);
-		expect(verify);
+		expect(v).toBeTrue();
 	});
 
 	it('from PeerId', async () => {

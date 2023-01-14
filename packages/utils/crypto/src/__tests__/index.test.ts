@@ -5,6 +5,8 @@ import {
 	verifySignatureEd25519,
 	Secp256k1Keccak256PublicKey,
 	Sec256k1Keccak256Keypair,
+	verify,
+	Ed25519PublicKey,
 } from "../index.js";
 import sodium from "libsodium-wrappers";
 import { deserialize, serialize } from "@dao-xyz/borsh";
@@ -14,6 +16,7 @@ import { PeerIdAddress } from "../libp2p.js";
 await sodium.ready;
 import { createSecp256k1PeerId } from '@libp2p/peer-id-factory'
 import { supportedKeys } from "@libp2p/crypto/keys";
+import crypto from 'crypto';
 
 describe("Ed25519", () => {
 	it("ser/der", () => {
@@ -22,24 +25,20 @@ describe("Ed25519", () => {
 		expect(derser.publicKey.publicKey).toEqual(keypair.publicKey.publicKey);
 	});
 
-	/*   it('size', async () => {
-		  const kp = await Ed25519Keypair.create();
-		  expect(serialize(kp.publicKey)).toHaveLength(PUBLIC_KEY_WIDTH);
-	  }) */
-
 	it("verify native", () => {
 		const keypair = sodium.crypto_sign_keypair();
 		const data = new Uint8Array([1, 2, 3]);
 		const signature = sodium.crypto_sign_detached(data, keypair.privateKey);
 		const isVerified = verifySignatureEd25519(
 			signature,
-			keypair.publicKey,
+			new Ed25519PublicKey({ publicKey: keypair.publicKey }),
 			data
 		);
 		expect(isVerified).toBeTrue();
 	});
 
-	it("verify primitve", () => {
+	it("verify", () => {
+		const kp = crypto.generateKeyPairSync('ed25519').privateKey.export({ format: 'der', type: 'pkcs8' });
 		const keypair = Ed25519Keypair.create();
 		const data = new Uint8Array([1, 2, 3]);
 		const signature = keypair.sign(data);
@@ -50,10 +49,31 @@ describe("Ed25519", () => {
 		);
 		expect(isVerified).toBeTrue();
 
-		const isNotVerified = verifySignatureEd25519(
+		const isNotVerified = verify(
 			signature,
 			keypair.publicKey,
 			data.reverse()
+		);
+		expect(isNotVerified).toBeFalse();
+	});
+
+	it("verify hashed", () => {
+		const keypair = Ed25519Keypair.create();
+		const data = new Uint8Array([1, 2, 3]);
+		const signature = keypair.sign(data, true);
+		const isVerified = verify(
+			signature,
+			keypair.publicKey,
+			data,
+			true
+		);
+		expect(isVerified).toBeTrue();
+
+		const isNotVerified = verifySignatureEd25519(
+			signature,
+			keypair.publicKey,
+			data.reverse(),
+			true
 		);
 		expect(isNotVerified).toBeFalse();
 	});

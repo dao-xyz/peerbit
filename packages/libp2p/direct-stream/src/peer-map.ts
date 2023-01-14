@@ -1,15 +1,3 @@
-import { PublicSignKey } from '@dao-xyz/peerbit-crypto'
-import type { PeerId } from '@libp2p/interface-peer-id'
-import { peerIdFromString } from '@libp2p/peer-id'
-
-/**
- * We can't use PeerIds as map keys because map keys are
- * compared using same-value-zero equality, so this is just
- * a map that stringifies the PeerIds before storing them.
- *
- * PeerIds cache stringified versions of themselves so this
- * should be a cheap operation.
- */
 export class PeerMap<T> {
 	private readonly map: Map<string, T>
 

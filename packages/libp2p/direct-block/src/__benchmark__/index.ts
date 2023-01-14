@@ -20,7 +20,7 @@ export const waitForPeers = async (...libs: BlockStream[]) => {
 				if (i === j) {
 					continue;
 				}
-				if (!libs[i].peers.has(libs[j].libp2p.peerId)) {
+				if (!libs[i].peers.has(libs[j].publicKeyHash)) {
 					return false;
 				}
 			}
@@ -35,7 +35,7 @@ export const waitForPeers = async (...libs: BlockStream[]) => {
 
 
 
-let session: LSession = await LSession.disconnected(2);;
+const session: LSession = await LSession.disconnected(2);
 
 /* 
 ┌─┐

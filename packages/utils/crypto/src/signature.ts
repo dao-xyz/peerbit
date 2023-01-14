@@ -107,15 +107,16 @@ export class MaybeSigned<T> {
 export const verify = (
 	signature: Uint8Array,
 	publicKey: PublicSignKey,
-	data: Uint8Array
+	data: Uint8Array,
+	signedHash?: boolean
 ) => {
 	if (!signature) {
 		return true;
 	}
 	if (publicKey instanceof Ed25519PublicKey) {
-		return verifySignatureEd25519(signature, publicKey, data);
+		return verifySignatureEd25519(signature, publicKey, data, signedHash);
 	} else if (publicKey instanceof Secp256k1Keccak256PublicKey) {
-		return verifySignatureSecp256k1(signature, publicKey, data);
+		return verifySignatureSecp256k1(signature, publicKey, data, signedHash);
 	}
 	return false;
 };

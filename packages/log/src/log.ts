@@ -362,7 +362,7 @@ export class Log<T> {
                     if (next.size === 0) {
                         break outer;
                     }
-                    let nextNext = new Set<string>();
+                    const nextNext = new Set<string>();
                     next.forEach((n) => {
                         this.get(n)?.next?.forEach((n2) => {
                             nextNext.add(n2);

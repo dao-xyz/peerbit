@@ -26,6 +26,8 @@ const jestConfig: JestConfigWithTsJest = {
 	moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
 	testTimeout: 60000,
 	setupFilesAfterEnv: ["jest-extended/all"],
+	/* 	detectOpenHandles: true,
+		watch: true */
 	/*   coverageReporters: ["lcov"]
 	 */
 };

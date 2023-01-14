@@ -8,7 +8,7 @@ import { Blocks, LibP2PBlockStore, MemoryLevelBlockStore, stringifyCid } from '.
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/e2e.ts"
 
-let session: LSession = await LSession.disconnected(2);;
+const session: LSession = await LSession.disconnected(2);
 
 /* 
 ┌─┐

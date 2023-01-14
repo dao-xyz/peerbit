@@ -31,18 +31,56 @@ else {
 
 export const ID_LENGTH = 32;
 
-interface MessagHeader {
-	get timestamp(): bigint;
+const WEEK_MS = 7 * 24 * 60 * 60 + 1000;
+
+@variant(0)
+class MessageHeader {
+
+	@field({ type: fixedArray('u8', ID_LENGTH) })
+	private _id: Uint8Array
+
+	@field({ type: 'u64' })
+	private _timestamp: bigint
+	@field({ type: 'u64' })
+	private _expires: bigint
+
+
+	constructor(properties?: { expires?: bigint, id?: Uint8Array }) {
+		this._id = properties?.id || crypto.randomBytes(ID_LENGTH);
+		this._expires = properties?.expires || BigInt(+new Date + WEEK_MS);
+		this._timestamp = BigInt(+new Date);
+
+	}
+
+	get id() {
+		return this._id;
+	}
+
+	get expires() {
+		return this._expires;
+	}
+
+	get timetamp() {
+		return this._timestamp;
+	}
+
+	equals(other: MessageHeader) {
+		return this._expires === other.expires && equals(this._id, other.id)
+	}
+
+	verify() {
+		return this.expires >= +new Date
+	}
 }
 
-const verifyHeader = (header: MessagHeader, options: { maxAhead: number, maxBehind: number } = { maxAhead: 100 * 1000, maxBehind: 300 * 1e3 }) => {
-	const timestamp = header.timestamp;
-	const thisTime = +new Date;
-	if (timestamp > thisTime + options.maxAhead || timestamp < thisTime - options.maxBehind) {
-		return false;
+class PublicKeys {
+	@field({ type: vec(PublicSignKey) })
+	keys: PublicSignKey[]
+	constructor(keys: PublicSignKey[]) {
+		this.keys = keys;
 	}
-	return true;
 }
+
 
 @variant(0)
 export class Signatures {
@@ -54,19 +92,28 @@ export class Signatures {
 	}
 
 	equals(other: Signatures) {
-		return this.signatures.every((value, i) => other.signatures[i].equals(value))
+		return this.signatures.length === other.signatures.length && this.signatures.every((value, i) => other.signatures[i].equals(value))
+	}
+
+	get publicKeys(): PublicSignKey[] {
+		return this.signatures.map(x => x.publicKey)
+	}
+
+	hashPublicKeys(): string {
+		return crypto.createHash('sha256').update(serialize(new PublicKeys(this.publicKeys))).digest('base64')
 	}
 }
 
+const keyMap: Map<string, PublicSignKey> = new Map();
 interface Signed {
 	get signatures(): Signatures
 }
 
-const verifyMultiSig = (message: Signed & Prefixed) => {
+const verifyMultiSig = (message: Signed & Prefixed, expectSignatures: boolean = true) => {
 	const signatures = message.signatures.signatures;
 
-	if (signatures == null) {
-		throw new Error("Unexpected")
+	if (signatures.length === 0 && expectSignatures) {
+		return false;
 	}
 
 	const dataGenerator = getMultiSigDataToSignHistory(message, 0);
@@ -118,53 +165,22 @@ export abstract class Message {
 		{
 			return Goodbye.deserialize(bytes)
 		}
-		else if (bytes.get(0) === 3) // Connections
-		{
-			return NetworkInfo.deserialize(bytes)
-		}
+		/* 	else if (bytes.get(0) === 3) // Connections
+			{
+				return NetworkInfo.deserialize(bytes)
+			} */
 		throw new Error("Unsupported")
 	}
 
 	abstract serialize(): Uint8ArrayList | Uint8Array
 	abstract equals(other: Message): boolean;
-	abstract verify(): boolean
+	abstract verify(): boolean;
+	abstract get header(): MessageHeader;
+	abstract get signatures(): Signatures
 
 
 }
 
-
-
-@variant(0)
-class DataMessageHeader {
-
-	@field({ type: fixedArray('u8', ID_LENGTH) })
-	private _id: Uint8Array | Uint8ArrayView
-
-	@field({ type: 'u64' })
-	private _timestamp: bigint
-
-	@field({ type: vec(PublicSignKey) })
-	private _to: PublicSignKey[]
-
-
-	constructor(properties: { timestamp?: bigint, id?: Uint8Array, signatures?: Signatures, to?: PublicSignKey[] }) {
-		this._id = properties.id || crypto.randomBytes(ID_LENGTH);
-		this._to = properties?.to || [];
-		this._timestamp = properties.timestamp || BigInt(+new Date);
-	}
-
-	get id() {
-		return this._id;
-	}
-
-	get timestamp() {
-		return this._timestamp;
-	}
-
-	get to() {
-		return this._to;
-	}
-}
 
 
 // I pack data with this message
@@ -172,23 +188,24 @@ const DATA_VARIANT = 0;
 @variant(DATA_VARIANT)
 export class DataMessage extends Message {
 
-	@field({ type: DataMessageHeader })
-	_header: DataMessageHeader
+	@field({ type: MessageHeader })
+	_header: MessageHeader
 
-	@field({ type: Uint8Array })
-	private _data: Uint8Array | Uint8ArrayView
+	@field({ type: vec('string') })
+	private _to: string[] // not signed! TODO should we sign this?
 
 	@field({ type: Signatures })
 	private _signatures: Signatures
 
-	constructor(properties: { to?: PublicSignKey[], data: Uint8Array | Uint8ArrayView, signatures?: Signatures }) {
+	@field({ type: Uint8Array })
+	private _data: Uint8Array | Uint8ArrayView
+
+	constructor(properties: { to?: string[], data: Uint8Array | Uint8ArrayView, signatures?: Signatures }) {
 		super();
 		this._data = properties.data;
-		this._header = new DataMessageHeader({ to: properties.to });
+		this._header = new MessageHeader();
+		this._to = properties.to || [];
 		this._signatures = properties.signatures || new Signatures()
-		if (this.to.length > 255) {
-			throw new Error("Can send to at most 255 peers")
-		}
 	}
 
 	get id(): Uint8Array | Uint8ArrayView {
@@ -199,15 +216,17 @@ export class DataMessage extends Message {
 		return this._signatures;
 	}
 
-
-	get to(): PublicSignKey[] {
-		return this._header.to;
+	get header(): MessageHeader {
+		return this._header;
 	}
-	set to(to: PublicSignKey[]) {
+
+	get to(): string[] {
+		return this._to;
+	}
+	set to(to: string[]) {
 		this._serialized = undefined;
-		this.to = to;
+		this._to = to;
 	}
-
 
 	get data(): Uint8Array | Uint8ArrayView {
 		return this._data;
@@ -227,8 +246,9 @@ export class DataMessage extends Message {
 
 	_prefix: Uint8Array | undefined
 	get prefix(): Uint8Array {
-		if (this._prefix)
+		if (this._prefix) {
 			return this._prefix
+		}
 		const headerSer = serialize(this._header);
 		const hashBytes = crypto.createHash('sha256').update(this.dataBytes).digest();
 		this._prefix = concatBytes([new Uint8Array([DATA_VARIANT]), headerSer, hashBytes], 1 + headerSer.length + hashBytes.length);
@@ -238,13 +258,12 @@ export class DataMessage extends Message {
 	sign(sign: (bytes: Uint8Array) => SignatureWithKey) {
 		this._serialized = undefined; // because we will change this object, so the serialized version will not be applicable anymore
 		this.signatures.signatures.push(sign(getMultiSigDataToSignHistory(this, this.signatures.signatures.length).next().value!));
+		return this;
 	}
 
 	verify(): boolean {
-		return verifyHeader(this._header) && verifyMultiSig(this)
+		return this._header.verify() && verifyMultiSig(this)
 	}
-
-
 
 	/** Manually ser/der for performance gains */
 	serialize() {
@@ -253,6 +272,7 @@ export class DataMessage extends Message {
 		}
 		return serialize(this);
 	}
+
 	static deserialize(bytes: Uint8ArrayList): DataMessage {
 		if (bytes.get(0) !== 0) {
 			throw new Error("Unsupported")
@@ -281,29 +301,14 @@ export class DataMessage extends Message {
 }
 
 
-@variant(0)
-class HelloHeader {
-
-	@field({ type: fixedArray('u8', ID_LENGTH) })
-	id: Uint8Array
-
-	@field({ type: 'u64' })
-	timestamp: bigint
-
-	constructor() {
-		this.id = crypto.randomBytes(ID_LENGTH);
-		this.timestamp = BigInt(+new Date);
-	}
-}
-
 
 // I send this too all my peers
 const HELLO_VARIANT = 1;
 @variant(HELLO_VARIANT)
 export class Hello extends Message {
 
-	@field({ type: HelloHeader })
-	header: HelloHeader
+	@field({ type: MessageHeader })
+	header: MessageHeader
 
 	@field({ type: option(Uint8Array) })
 	data?: Uint8Array
@@ -313,10 +318,14 @@ export class Hello extends Message {
 
 	constructor(options?: { data?: Uint8Array }) {
 		super();
-		this.header = new HelloHeader();
+		this.header = new MessageHeader();
 		this.data = options?.data;
 		this.signatures = new Signatures()
 
+	}
+
+	get sender(): PublicSignKey | undefined {
+		return this.signatures.signatures[0]?.publicKey;
 	}
 
 	serialize() {
@@ -344,7 +353,7 @@ export class Hello extends Message {
 	}
 
 	verify(): boolean {
-		return verifyHeader(this.header) && verifyMultiSig(this)
+		return this.header.verify() && verifyMultiSig(this)
 	}
 
 
@@ -355,30 +364,13 @@ export class Hello extends Message {
 			if (!dataEquals) {
 				return false;
 			}
-			if (!equals(this.header.id, other.header.id) || this.header.timestamp !== other.header.timestamp)
-				return false;
 
-			return this.signatures.equals(other.signatures);
+			return this.header.equals(other.header) && this.signatures.equals(other.signatures);
 		}
 		return false;
 	}
 }
 
-
-@variant(0)
-class GoodbyeHeader {
-
-	@field({ type: fixedArray('u8', ID_LENGTH) })
-	id: Uint8Array
-
-	@field({ type: 'u64' })
-	timestamp: bigint
-
-	constructor() {
-		this.id = crypto.randomBytes(ID_LENGTH);
-		this.timestamp = BigInt(+new Date);
-	}
-}
 
 
 
@@ -387,8 +379,8 @@ const GOODBYE_VARIANT = 2;
 @variant(GOODBYE_VARIANT)
 export class Goodbye extends Message {
 
-	@field({ type: GoodbyeHeader })
-	header: GoodbyeHeader
+	@field({ type: MessageHeader })
+	header: MessageHeader
 
 	@field({ type: 'bool' })
 	early?: boolean; // is early goodbye, I send this to my peers so when I disconnect, they can relay the message for me
@@ -401,16 +393,16 @@ export class Goodbye extends Message {
 	signatures: Signatures
 
 
-	constructor(properties?: { header?: GoodbyeHeader, data?: Uint8Array, early?: boolean }) { // disconnected: PeerId | string,
+	constructor(properties?: { header?: MessageHeader, data?: Uint8Array, early?: boolean }) { // disconnected: PeerId | string,
 		super();
-		this.header = properties?.header || new GoodbyeHeader();
+		this.header = properties?.header || new MessageHeader();
 		this.data = properties?.data;
 		this.early = properties?.early;
 		this.signatures = new Signatures()
 
 	}
 
-	get disconnected(): PublicSignKey | undefined {
+	get sender(): PublicSignKey | undefined {
 		return this.signatures.signatures[0]?.publicKey
 	}
 
@@ -438,7 +430,7 @@ export class Goodbye extends Message {
 	}
 
 	verify(): boolean {
-		return verifyHeader(this.header) && verifyMultiSig(this)
+		return this.header.verify() && verifyMultiSig(this)
 	}
 
 
@@ -452,10 +444,7 @@ export class Goodbye extends Message {
 			if (!dataEquals) {
 				return false;
 			}
-			if (!equals(this.header.id, other.header.id) || this.header.timestamp !== other.header.timestamp)
-				return false;
-
-			return this.signatures.equals(other.signatures);
+			return this.header.equals(other.header) && this.signatures.equals(other.signatures);
 
 		}
 		return false;
@@ -516,12 +505,12 @@ export class Connections {
 }
 
 // Share connections
-const NETWORK_INFO_VARIANT = 3;
+/* const NETWORK_INFO_VARIANT = 3;
 @variant(NETWORK_INFO_VARIANT)
 export class NetworkInfo extends Message {
 
-	@field({ type: NetworkInfoHeader })
-	header: NetworkInfoHeader;
+	@field({ type: MessageHeader })
+	header: MessageHeader;
 
 	@field({ type: Connections })
 	connections: Connections;
@@ -533,7 +522,7 @@ export class NetworkInfo extends Message {
 
 	constructor(connections: [string, string][]) {
 		super();
-		this.header = new NetworkInfoHeader();
+		this.header = new MessageHeader();
 		this.connections = new Connections(connections);
 		this.signatures = new Signatures()
 	}
@@ -558,7 +547,7 @@ export class NetworkInfo extends Message {
 	}
 
 	verify(): boolean {
-		return verifyHeader(this.header) && verifyMultiSig(this)
+		return this.header.verify() && verifyMultiSig(this)
 	}
 
 
@@ -571,7 +560,7 @@ export class NetworkInfo extends Message {
 
 	equals(other: Message) {
 		if (other instanceof NetworkInfo) {
-			if (!equals(this.header.id, other.header.id) || this.header.timestamp !== other.header.timestamp) { // TODO fix uneccessary copy
+			if (!equals(this.header.id, other.header.id) || !this.header.equals(other.header)) { // TODO fix uneccessary copy
 				return false;
 			}
 
@@ -584,3 +573,4 @@ export class NetworkInfo extends Message {
 	}
 }
 
+ */

@@ -3,7 +3,6 @@ import type { PeerId } from '@libp2p/interface-peer-id'
  */
 import { default as path, PathFinder } from 'ngraph.path';
 import createGraph, { Graph } from 'ngraph.graph';
-import { PublicSignKey } from '@dao-xyz/peerbit-crypto';
 /* const lruKey = (a: string, b: string) => {
 	if (a < b) {
 		return a + b;

@@ -6,6 +6,8 @@ interface Key {
 	get bytes(): Uint8Array;
 	hashcode(): string;
 	toString(): string;
+	_hashcode: string
+
 }
 
 export abstract class Keypair {
@@ -20,12 +22,14 @@ export abstract class Keypair {
 // ---- SIGNATURE KEYS -----
 export interface PublicSignKey extends Key { }
 export abstract class PublicSignKey implements Key {
+
+
 	get bytes(): Uint8Array {
 		return serialize(this);
 	}
 
 	hashcode(): string {
-		return crypto.createHash('sha256').update(this.bytes).digest('base64')
+		return this._hashcode || (this._hashcode = crypto.createHash('sha256').update(this.bytes).digest('base64'))
 	}
 
 
@@ -39,8 +43,9 @@ export abstract class PrivateSignKey implements Key {
 	}
 
 	hashcode(): string {
-		return crypto.createHash('sha256').update(this.bytes).digest('base64')
+		return this._hashcode || (this._hashcode = crypto.createHash('sha256').update(this.bytes).digest('base64'))
 	}
+
 }
 
 // ---- PUBLIC KEY ENCRYPTION -----
@@ -50,8 +55,9 @@ export abstract class PublicKeyEncryptionKey implements Key {
 		return serialize(this);
 	}
 
+
 	hashcode(): string {
-		return crypto.createHash('sha256').update(this.bytes).digest('base64')
+		return this._hashcode || (this._hashcode = crypto.createHash('sha256').update(this.bytes).digest('base64'))
 	}
 }
 export interface PrivateEncryptionKey extends Key { }
@@ -61,7 +67,7 @@ export abstract class PrivateEncryptionKey implements Key {
 	}
 
 	hashcode(): string {
-		return crypto.createHash('sha256').update(this.bytes).digest('base64')
+		return this._hashcode || (this._hashcode = crypto.createHash('sha256').update(this.bytes).digest('base64'))
 	}
 }
 
@@ -72,7 +78,8 @@ export abstract class PlainKey implements Key {
 		return serialize(this);
 	}
 
+
 	hashcode(): string {
-		return crypto.createHash('sha256').update(this.bytes).digest('base64')
+		return this._hashcode || (this._hashcode = crypto.createHash('sha256').update(this.bytes).digest('base64'))
 	}
 }

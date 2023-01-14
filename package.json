@@ -9,6 +9,9 @@
 		"packages": [
 			"packages/libp2p/pubsub-direct-channel",
 			"packages/libp2p/pubsub-peer-monitor",
+			"packages/libp2p/direct-block",
+			"packages/libp2p/direct-stream",
+			"packages/libp2p/direct-sub",
 			"packages/log",
 			"packages/client",
 			"packages/server-node/frontend",
@@ -25,14 +28,12 @@
 			"packages/programs/data/document",
 			"packages/programs/data/string",
 			"packages/store",
-			"packages/utils/block",
 			"packages/utils/test-utils",
 			"packages/utils/cache",
 			"packages/utils/borsh-utils",
 			"packages/utils/time",
 			"packages/utils/logger",
-			"packages/utils/lazy-level",
-			"packages/utils/direct-stream"
+			"packages/utils/lazy-level"
 		],
 		"nohoist": [
 			"**/@babel/preset-env",
@@ -95,6 +96,7 @@
 		"rimraf": "^3.0.2",
 		"fs-extra": "^10.1.0",
 		"benchmark": "^2.1.4",
-		"@types/benchmark": "^2.1.2"
+		"@types/benchmark": "^2.1.2",
+		"why-is-node-running": "^2.2.2"
 	}
 }

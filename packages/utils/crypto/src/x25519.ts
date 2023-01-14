@@ -66,7 +66,7 @@ export class X25519SecretKey extends PrivateEncryptionKey {
 
 	equals(other: PublicKeyEncryptionKey): boolean {
 		if (other instanceof X25519SecretKey) {
-			return arraysCompare(this.secretKey, other.secretKey) === 0;
+			return arraysCompare(this.secretKey, (other as X25519SecretKey).secretKey) === 0;
 		}
 		return false;
 	}
@@ -128,7 +128,7 @@ export class X25519Keypair extends Keypair {
 		if (other instanceof X25519Keypair) {
 			return (
 				this.publicKey.equals(other.publicKey) &&
-				this.secretKey.equals(other.secretKey)
+				this.secretKey.equals((other as X25519Keypair).secretKey as X25519SecretKey as any)
 			);
 		}
 		return false;

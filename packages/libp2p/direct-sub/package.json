@@ -1,7 +1,7 @@
 {
-	"name": "@dao-xyz/peerbit-block",
-	"version": "0.0.15",
-	"description": "Block store for Peerbit",
+	"name": "@dao-xyz/direct-sub",
+	"version": "0.0.1",
+	"description": "Direct streaming for libp2p",
 	"type": "module",
 	"sideEffects": false,
 	"private": false,
@@ -53,14 +53,16 @@
 		"@dao-xyz/peerbit-test-utils": "^0.0.25"
 	},
 	"dependencies": {
-		"@dao-xyz/borsh": "^4.0.7",
 		"@dao-xyz/libp2p-direct-stream": "^0.0.1",
-		"@ipld/dag-cbor": "^7.0.3",
+		"@dao-xyz/peerbit-logger": "^0.0.4",
 		"abstract-level": "^1.0.3",
 		"libp2p": "^0.41.0",
+		"@isaacs/ttlcache": "^1.2.1",
 		"lru-cache": "^7.14.1",
 		"memory-level": "^1.0.0",
 		"uuid": "^8.3.2",
-		"it-pushable": "^3.1.2"
+		"ngraph.path": "^1.4.0",
+		"ngraph.graph": "^20.0.1",
+		"uint8arrays": "^4.0.2"
 	}
 }

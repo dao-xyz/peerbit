@@ -1,19 +1,19 @@
 import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
 import {
-    IdentityRelation,
-    createIdentityGraphStore,
-    getFromByTo,
-    getPathGenerator,
-    getToByFrom,
-    TrustedNetwork,
-    KEY_OFFSET,
-    OFFSET_TO_KEY,
+	IdentityRelation,
+	createIdentityGraphStore,
+	getFromByTo,
+	getPathGenerator,
+	getToByFrom,
+	TrustedNetwork,
+	KEY_OFFSET,
+	OFFSET_TO_KEY,
 } from "..";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import {
-    AccessError,
-    Ed25519Keypair,
-    PeerIdAddress,
+	AccessError,
+	Ed25519Keypair,
+	PeerIdAddress,
 } from "@dao-xyz/peerbit-crypto";
 import { Secp256k1PublicKey } from "@dao-xyz/peerbit-crypto";
 import { Identity } from "@dao-xyz/peerbit-log";
@@ -23,446 +23,446 @@ import { AbstractLevel } from "abstract-level";
 import { fileURLToPath } from "url";
 import path from "path";
 import {
-    CachedValue,
-    DefaultOptions,
-    IStoreOptions,
+	CachedValue,
+	DefaultOptions,
+	IStoreOptions,
 } from "@dao-xyz/peerbit-store";
 import Cache from "@dao-xyz/peerbit-cache";
 import { field, serialize, variant } from "@dao-xyz/borsh";
 import { Program } from "@dao-xyz/peerbit-program";
 import {
-    Documents,
-    DocumentQueryRequest,
-    Results,
+	Documents,
+	DocumentQueryRequest,
+	Results,
 } from "@dao-xyz/peerbit-document";
 import { v4 as uuid } from "uuid";
 import {
 
-    LibP2PBlockStore,
-    MemoryLevelBlockStore,
-    Blocks,
+	LibP2PBlockStore,
+	MemoryLevelBlockStore,
+	Blocks,
 } from "@dao-xyz/peerbit-block";
 
 const __filename = fileURLToPath(import.meta.url);
 
 const createIdentity = async () => {
-    const ed = await Ed25519Keypair.create();
-    return {
-        publicKey: ed.publicKey,
-        sign: (data) => ed.sign(data),
-    } as Identity;
+	const ed = await Ed25519Keypair.create();
+	return {
+		publicKey: ed.publicKey,
+		sign: (data) => ed.sign(data),
+	} as Identity;
 };
 
 @variant("identity_graph")
 class IdentityGraph extends Program {
-    @field({ type: Documents })
-    store: Documents<IdentityRelation>;
+	@field({ type: Documents })
+	store: Documents<IdentityRelation>;
 
-    constructor(properties?: { store: Documents<IdentityRelation> }) {
-        super();
-        if (properties) {
-            this.store = properties.store;
-        }
-    }
-    async setup(): Promise<void> {
-        await this.store.setup({ type: IdentityRelation });
-    }
+	constructor(properties?: { store: Documents<IdentityRelation> }) {
+		super();
+		if (properties) {
+			this.store = properties.store;
+		}
+	}
+	async setup(): Promise<void> {
+		await this.store.setup({ type: IdentityRelation });
+	}
 }
 describe("index", () => {
-    let session: LSession,
-        stores: Blocks[],
-        identites: Identity[],
-        cacheStore: AbstractLevel<any, string, Uint8Array>[];
+	let session: LSession,
+		stores: Blocks[],
+		identites: Identity[],
+		cacheStore: AbstractLevel<any, string, Uint8Array>[];
 
-    const identity = (i: number) => identites[i];
-    const init = (
-        store: Program,
-        i: number,
-        options: {
-            topic: string;
-            replicate?: boolean;
-            store?: IStoreOptions<any>;
-        }
-    ) =>
-        store.init &&
-        store.init(session.peers[i], stores[i], identites[i], {
-            ...options,
-            replicate:
-                options.replicate !== undefined ? options.replicate : true,
-            store: {
-                ...DefaultOptions,
-                resolveCache: async () => new Cache<CachedValue>(cacheStore[i]),
-                ...options.store,
-            },
-        });
-    beforeAll(async () => {
-        session = await LSession.connected(4);
-        identites = [];
-        cacheStore = [];
-        stores = [];
-        for (let i = 0; i < session.peers.length; i++) {
-            identites.push(await createIdentity());
-            cacheStore.push(
-                await createStore(
-                    path.join(__filename, "/cache/" + i.toString())
-                )
-            );
-            const store = new Blocks(
-                new LibP2PBlockStore(
-                    session.peers[i],
-                    new MemoryLevelBlockStore()
-                )
-            );
-            await store.open();
-            stores.push(store);
-        }
-    });
+	const identity = (i: number) => identites[i];
+	const init = (
+		store: Program,
+		i: number,
+		options: {
+			topic: string;
+			replicate?: boolean;
+			store?: IStoreOptions<any>;
+		}
+	) =>
+		store.init &&
+		store.init(session.peers[i], stores[i], identites[i], {
+			...options,
+			replicate:
+				options.replicate !== undefined ? options.replicate : true,
+			store: {
+				...DefaultOptions,
+				resolveCache: async () => new Cache<CachedValue>(cacheStore[i]),
+				...options.store,
+			},
+		});
+	beforeAll(async () => {
+		session = await LSession.connected(4);
+		identites = [];
+		cacheStore = [];
+		stores = [];
+		for (let i = 0; i < session.peers.length; i++) {
+			identites.push(await createIdentity());
+			cacheStore.push(
+				await createStore(
+					path.join(__filename, "/cache/" + i.toString())
+				)
+			);
+			const store = new Blocks(
+				new LibP2PBlockStore(
+					session.peers[i],
+					new MemoryLevelBlockStore()
+				)
+			);
+			await store.open();
+			stores.push(store);
+		}
+	});
 
-    afterAll(async () => {
-        await session.stop();
-        await Promise.all(cacheStore?.map((c) => c.close()));
-        await Promise.all(stores?.map((c) => c.close()));
-    });
-    describe("identity-graph", () => {
-        it("serializes relation with right padding ed25519", async () => {
-            const from = (await Ed25519Keypair.create()).publicKey;
-            const to = (await Ed25519Keypair.create()).publicKey;
-            const relation = new IdentityRelation({ from, to });
-            const serRelation = serialize(relation);
-            const serFrom = serialize(from);
-            const serTo = serialize(to);
+	afterAll(async () => {
+		await session.stop();
+		await Promise.all(cacheStore?.map((c) => c.close()));
+		await Promise.all(stores?.map((c) => c.close()));
+	});
+	describe("identity-graph", () => {
+		it("serializes relation with right padding ed25519", async () => {
+			const from = (await Ed25519Keypair.create()).publicKey;
+			const to = (await Ed25519Keypair.create()).publicKey;
+			const relation = new IdentityRelation({ from, to });
+			const serRelation = serialize(relation);
+			const serFrom = serialize(from);
+			const serTo = serialize(to);
 
-            expect(
-                serRelation.slice(KEY_OFFSET, KEY_OFFSET + serFrom.length)
-            ).toEqual(serFrom); // From key has a fixed offset from 0
-            expect(serRelation.slice(KEY_OFFSET + OFFSET_TO_KEY)).toEqual(
-                serTo
-            ); // To key has a fixed offset from 0
-        });
+			expect(
+				serRelation.slice(KEY_OFFSET, KEY_OFFSET + serFrom.length)
+			).toEqual(serFrom); // From key has a fixed offset from 0
+			expect(serRelation.slice(KEY_OFFSET + OFFSET_TO_KEY)).toEqual(
+				serTo
+			); // To key has a fixed offset from 0
+		});
 
-        it("serializes relation with right padding sepc256k1", async () => {
-            const from = new Secp256k1PublicKey({
-                address: await Wallet.createRandom().getAddress(),
-            });
-            const to = (await Ed25519Keypair.create()).publicKey;
-            const relation = new IdentityRelation({ from, to });
-            const serRelation = serialize(relation);
-            const serFrom = serialize(from);
-            const serTo = serialize(to);
+		it("serializes relation with right padding sepc256k1", async () => {
+			const from = new Secp256k1PublicKey({
+				address: await Wallet.createRandom().getAddress(),
+			});
+			const to = (await Ed25519Keypair.create()).publicKey;
+			const relation = new IdentityRelation({ from, to });
+			const serRelation = serialize(relation);
+			const serFrom = serialize(from);
+			const serTo = serialize(to);
 
-            expect(
-                serRelation.slice(KEY_OFFSET, KEY_OFFSET + serFrom.length)
-            ).toEqual(serFrom); // From key has a fixed offset from 0
-            expect(serRelation.slice(KEY_OFFSET + OFFSET_TO_KEY)).toEqual(
-                serTo
-            ); // To key has a fixed offset from 0
-        });
+			expect(
+				serRelation.slice(KEY_OFFSET, KEY_OFFSET + serFrom.length)
+			).toEqual(serFrom); // From key has a fixed offset from 0
+			expect(serRelation.slice(KEY_OFFSET + OFFSET_TO_KEY)).toEqual(
+				serTo
+			); // To key has a fixed offset from 0
+		});
 
-        it("serializes relation with right padding ipfs address", async () => {
-            const from = new Secp256k1PublicKey({
-                address: await Wallet.createRandom().getAddress(),
-            });
-            const to = new PeerIdAddress({ address: "abc123" });
-            const relation = new IdentityRelation({ from, to });
-            const serRelation = serialize(relation);
-            const serFrom = serialize(from);
-            const serTo = serialize(to);
+		it("serializes relation with right padding ipfs address", async () => {
+			const from = new Secp256k1PublicKey({
+				address: await Wallet.createRandom().getAddress(),
+			});
+			const to = new PeerIdAddress({ address: "abc123" });
+			const relation = new IdentityRelation({ from, to });
+			const serRelation = serialize(relation);
+			const serFrom = serialize(from);
+			const serTo = serialize(to);
 
-            expect(
-                serRelation.slice(KEY_OFFSET, KEY_OFFSET + serFrom.length)
-            ).toEqual(serFrom); // From key has a fixed offset from 0
-            expect(serRelation.slice(KEY_OFFSET + OFFSET_TO_KEY)).toEqual(
-                serTo
-            ); // To key has a fixed offset from 0
-        });
+			expect(
+				serRelation.slice(KEY_OFFSET, KEY_OFFSET + serFrom.length)
+			).toEqual(serFrom); // From key has a fixed offset from 0
+			expect(serRelation.slice(KEY_OFFSET + OFFSET_TO_KEY)).toEqual(
+				serTo
+			); // To key has a fixed offset from 0
+		});
 
-        it("path", async () => {
-            const a = (await Ed25519Keypair.create()).publicKey;
-            const b = new Secp256k1PublicKey({
-                address: await Wallet.createRandom().getAddress(),
-            });
-            const c = (await Ed25519Keypair.create()).publicKey;
+		it("path", async () => {
+			const a = (await Ed25519Keypair.create()).publicKey;
+			const b = new Secp256k1PublicKey({
+				address: await Wallet.createRandom().getAddress(),
+			});
+			const c = (await Ed25519Keypair.create()).publicKey;
 
-            const store = new IdentityGraph({
-                store: createIdentityGraphStore({
-                    id: session.peers[0].peerId.toString(),
-                }),
-            });
-            await init(store, 0, { topic: uuid() });
+			const store = new IdentityGraph({
+				store: createIdentityGraphStore({
+					id: session.peers[0].peerId.toString(),
+				}),
+			});
+			await init(store, 0, { topic: uuid() });
 
-            const ab = new IdentityRelation({
-                to: b,
-                from: a,
-            });
-            const bc = new IdentityRelation({
-                to: c,
-                from: b,
-            });
-            await store.store.put(ab);
-            await store.store.put(bc);
+			const ab = new IdentityRelation({
+				to: b,
+				from: a,
+			});
+			const bc = new IdentityRelation({
+				to: c,
+				from: b,
+			});
+			await store.store.put(ab);
+			await store.store.put(bc);
 
-            // Get relations one by one
-            const trustingC = await getFromByTo.resolve(c, store.store);
-            expect(trustingC).toHaveLength(1);
-            expect(trustingC[0].id).toEqual(bc.id);
+			// Get relations one by one
+			const trustingC = await getFromByTo.resolve(c, store.store);
+			expect(trustingC).toHaveLength(1);
+			expect(trustingC[0].id).toEqual(bc.id);
 
-            const bIsTrusting = await getToByFrom.resolve(b, store.store);
-            expect(bIsTrusting).toHaveLength(1);
-            expect(bIsTrusting[0].id).toEqual(bc.id);
+			const bIsTrusting = await getToByFrom.resolve(b, store.store);
+			expect(bIsTrusting).toHaveLength(1);
+			expect(bIsTrusting[0].id).toEqual(bc.id);
 
-            const trustingB = await getFromByTo.resolve(b, store.store);
-            expect(trustingB).toHaveLength(1);
-            expect(trustingB[0].id).toEqual(ab.id);
+			const trustingB = await getFromByTo.resolve(b, store.store);
+			expect(trustingB).toHaveLength(1);
+			expect(trustingB[0].id).toEqual(ab.id);
 
-            const aIsTrusting = await getToByFrom.resolve(a, store.store);
-            expect(aIsTrusting).toHaveLength(1);
-            expect(aIsTrusting[0].id).toEqual(ab.id);
+			const aIsTrusting = await getToByFrom.resolve(a, store.store);
+			expect(aIsTrusting).toHaveLength(1);
+			expect(aIsTrusting[0].id).toEqual(ab.id);
 
-            // Test generator
-            const relationsFromGeneratorFromByTo: IdentityRelation[] = [];
-            for await (const relation of getPathGenerator(
-                c,
-                store.store,
-                getFromByTo
-            )) {
-                relationsFromGeneratorFromByTo.push(relation);
-            }
-            expect(relationsFromGeneratorFromByTo).toHaveLength(2);
-            expect(relationsFromGeneratorFromByTo[0].id).toEqual(bc.id);
-            expect(relationsFromGeneratorFromByTo[1].id).toEqual(ab.id);
+			// Test generator
+			const relationsFromGeneratorFromByTo: IdentityRelation[] = [];
+			for await (const relation of getPathGenerator(
+				c,
+				store.store,
+				getFromByTo
+			)) {
+				relationsFromGeneratorFromByTo.push(relation);
+			}
+			expect(relationsFromGeneratorFromByTo).toHaveLength(2);
+			expect(relationsFromGeneratorFromByTo[0].id).toEqual(bc.id);
+			expect(relationsFromGeneratorFromByTo[1].id).toEqual(ab.id);
 
-            const relationsFromGeneratorToByFrom: IdentityRelation[] = [];
-            for await (const relation of getPathGenerator(
-                a,
-                store.store,
-                getToByFrom
-            )) {
-                relationsFromGeneratorToByFrom.push(relation);
-            }
-            expect(relationsFromGeneratorToByFrom).toHaveLength(2);
-            expect(relationsFromGeneratorToByFrom[0].id).toEqual(ab.id);
-            expect(relationsFromGeneratorToByFrom[1].id).toEqual(bc.id);
-        });
+			const relationsFromGeneratorToByFrom: IdentityRelation[] = [];
+			for await (const relation of getPathGenerator(
+				a,
+				store.store,
+				getToByFrom
+			)) {
+				relationsFromGeneratorToByFrom.push(relation);
+			}
+			expect(relationsFromGeneratorToByFrom).toHaveLength(2);
+			expect(relationsFromGeneratorToByFrom[0].id).toEqual(ab.id);
+			expect(relationsFromGeneratorToByFrom[1].id).toEqual(bc.id);
+		});
 
-        it("can revoke", async () => {
-            const a = (await Ed25519Keypair.create()).publicKey;
-            const b = new Secp256k1PublicKey({
-                address: await Wallet.createRandom().getAddress(),
-            });
+		it("can revoke", async () => {
+			const a = (await Ed25519Keypair.create()).publicKey;
+			const b = new Secp256k1PublicKey({
+				address: await Wallet.createRandom().getAddress(),
+			});
 
-            const store = new IdentityGraph({
-                store: createIdentityGraphStore({
-                    id: session.peers[0].peerId.toString(),
-                }),
-            });
-            const topic = uuid();
-            await init(store, 0, { topic });
+			const store = new IdentityGraph({
+				store: createIdentityGraphStore({
+					id: session.peers[0].peerId.toString(),
+				}),
+			});
+			const topic = uuid();
+			await init(store, 0, { topic });
 
-            const ab = new IdentityRelation({
-                to: b,
-                from: a,
-            });
+			const ab = new IdentityRelation({
+				to: b,
+				from: a,
+			});
 
-            await store.store.put(ab);
+			await store.store.put(ab);
 
-            let trustingB = await getFromByTo.resolve(b, store.store);
-            expect(trustingB).toHaveLength(1);
-            expect(trustingB[0].id).toEqual(ab.id);
+			let trustingB = await getFromByTo.resolve(b, store.store);
+			expect(trustingB).toHaveLength(1);
+			expect(trustingB[0].id).toEqual(ab.id);
 
-            await store.store.del(ab.id);
-            trustingB = await getFromByTo.resolve(b, store.store);
-            expect(trustingB).toHaveLength(0);
-        });
-    });
+			await store.store.del(ab.id);
+			trustingB = await getFromByTo.resolve(b, store.store);
+			expect(trustingB).toHaveLength(0);
+		});
+	});
 
-    describe("TrustedNetwork", () => {
-        it("can be deterministic", async () => {
-            const key = (await Ed25519Keypair.create()).publicKey;
-            const t1 = new TrustedNetwork({ id: "x", rootTrust: key });
-            const t2 = new TrustedNetwork({ id: "x", rootTrust: key });
-            t1.setupIndices();
-            t2.setupIndices();
+	describe("TrustedNetwork", () => {
+		it("can be deterministic", async () => {
+			const key = (await Ed25519Keypair.create()).publicKey;
+			const t1 = new TrustedNetwork({ id: "x", rootTrust: key });
+			const t2 = new TrustedNetwork({ id: "x", rootTrust: key });
+			t1.setupIndices();
+			t2.setupIndices();
 
-            expect(serialize(t1)).toEqual(serialize(t2));
-        });
+			expect(serialize(t1)).toEqual(serialize(t2));
+		});
 
-        it("trusted by chain", async () => {
-            // TODO make this test in parts instead (very bloaty atm)
+		it("trusted by chain", async () => {
+			// TODO make this test in parts instead (very bloaty atm)
 
-            const l0a = new TrustedNetwork({
-                rootTrust: identity(0).publicKey,
-            });
+			const l0a = new TrustedNetwork({
+				rootTrust: identity(0).publicKey,
+			});
 
-            const topic = uuid();
+			const topic = uuid();
 
-            await init(l0a, 0, { topic });
-            await l0a.add(identity(1).publicKey);
+			await init(l0a, 0, { topic });
+			await l0a.add(identity(1).publicKey);
 
-            await delay(1000);
-            let l0b: TrustedNetwork = (await TrustedNetwork.load(
-                stores[1],
-                l0a.address!
-            )) as any;
-            await init(l0b, 1, { topic });
+			await delay(1000);
+			let l0b: TrustedNetwork = (await TrustedNetwork.load(
+				stores[1],
+				l0a.address!
+			)) as any;
+			await init(l0b, 1, { topic });
 
-            await l0b.trustGraph.store.sync(l0a.trustGraph.store.oplog.heads);
+			await l0b.trustGraph.store.sync(l0a.trustGraph.store.oplog.heads);
 
-            await waitFor(() => l0b.trustGraph.index.size == 1);
+			await waitFor(() => l0b.trustGraph.index.size == 1);
 
-            await l0b.add(identity(2).publicKey); // Will only work if peer2 is trusted
+			await l0b.add(identity(2).publicKey); // Will only work if peer2 is trusted
 
-            await l0a.trustGraph.store.sync(l0b.trustGraph.store.oplog.heads);
+			await l0a.trustGraph.store.sync(l0b.trustGraph.store.oplog.heads);
 
-            await waitFor(() => l0b.trustGraph.index.size == 2);
-            await waitFor(() => l0a.trustGraph.index.size == 2);
+			await waitFor(() => l0b.trustGraph.index.size == 2);
+			await waitFor(() => l0a.trustGraph.index.size == 2);
 
-            await waitForPeers(
-                session.peers[2],
-                [session.peers[0], session.peers[1]],
-                l0b.trustGraph.index._query.rpcTopic
-            );
+			await waitForPeers(
+				session.peers[2],
+				[session.peers[0], session.peers[1]],
+				l0b.trustGraph.index._query.rpcTopic
+			);
 
-            // Try query with trusted
-            let responses: Results<IdentityRelation>[] = [];
-            let l0c: TrustedNetwork = (await TrustedNetwork.load(
-                stores[2],
-                l0a.address!
-            )) as any;
-            await init(l0c, 2, { topic });
+			// Try query with trusted
+			let responses: Results<IdentityRelation>[] = [];
+			let l0c: TrustedNetwork = (await TrustedNetwork.load(
+				stores[2],
+				l0a.address!
+			)) as any;
+			await init(l0c, 2, { topic });
 
-            await l0c.trustGraph.index.query(
-                new DocumentQueryRequest({
-                    queries: [],
-                }),
-                (response) => {
-                    responses.push(response);
-                },
-                {
-                    remote: {
-                        signer: identity(2),
-                        timeout: 20000,
-                        amount: 2, // response from peer and peer2
-                    },
-                    local: false,
-                }
-            );
+			await l0c.trustGraph.index.query(
+				new DocumentQueryRequest({
+					queries: [],
+				}),
+				(response) => {
+					responses.push(response);
+				},
+				{
+					remote: {
+						signer: identity(2),
+						timeout: 20000,
+						amount: 2, // response from peer and peer2
+					},
+					local: false,
+				}
+			);
 
-            expect(responses).toHaveLength(2);
+			expect(responses).toHaveLength(2);
 
-            // Try query with untrusted
-            let l0d: TrustedNetwork = (await TrustedNetwork.load(
-                stores[3],
-                l0a.address!
-            )) as any;
-            await init(l0d, 3, { topic });
+			// Try query with untrusted
+			let l0d: TrustedNetwork = (await TrustedNetwork.load(
+				stores[3],
+				l0a.address!
+			)) as any;
+			await init(l0d, 3, { topic });
 
-            let untrustedResponse: any = undefined;
-            await l0d.trustGraph.index.query(
-                new DocumentQueryRequest({
-                    queries: [],
-                }),
-                (response) => {
-                    untrustedResponse = response;
-                },
-                {
-                    remote: { timeout: 3000, signer: identity(3) },
-                }
-            );
+			let untrustedResponse: any = undefined;
+			await l0d.trustGraph.index.query(
+				new DocumentQueryRequest({
+					queries: [],
+				}),
+				(response) => {
+					untrustedResponse = response;
+				},
+				{
+					remote: { timeout: 3000, signer: identity(3) },
+				}
+			);
 
-            expect(untrustedResponse).toBeUndefined();
+			expect(untrustedResponse).toBeUndefined();
 
-            // now check if peer3 is trusted from peer perspective
-            expect(await l0a.isTrusted(identity(2).publicKey)).toBeTrue();
+			// now check if peer3 is trusted from peer perspective
+			expect(await l0a.isTrusted(identity(2).publicKey)).toBeTrue();
 
-            // check if peer3 is trusted from a peer that is not replicating
-            let l0observer: TrustedNetwork = (await TrustedNetwork.load(
-                new Blocks(
-                    new LibP2PBlockStore(
-                        session.peers[1],
-                        new MemoryLevelBlockStore()
-                    )
-                ),
-                l0a.address!
-            )) as any;
-            await init(l0observer, 1, {
-                topic,
-                replicate: false,
-                store: {},
-            });
-            expect(
-                await l0observer.isTrusted(identity(2).publicKey)
-            ).toBeTrue();
-            expect(
-                await l0observer.isTrusted(identity(3).publicKey)
-            ).toBeFalse();
+			// check if peer3 is trusted from a peer that is not replicating
+			let l0observer: TrustedNetwork = (await TrustedNetwork.load(
+				new Blocks(
+					new LibP2PBlockStore(
+						session.peers[1],
+						new MemoryLevelBlockStore()
+					)
+				),
+				l0a.address!
+			)) as any;
+			await init(l0observer, 1, {
+				topic,
+				replicate: false,
+				store: {},
+			});
+			expect(
+				await l0observer.isTrusted(identity(2).publicKey)
+			).toBeTrue();
+			expect(
+				await l0observer.isTrusted(identity(3).publicKey)
+			).toBeFalse();
 
-            const trusted = await l0a.getTrusted();
-            expect(trusted.map((k) => k.bytes)).toContainAllValues([
-                identity(0).publicKey.bytes,
-                identity(1).publicKey.bytes,
-                identity(2).publicKey.bytes,
-            ]);
-        });
+			const trusted = await l0a.getTrusted();
+			expect(trusted.map((k) => k.bytes)).toContainAllValues([
+				identity(0).publicKey.bytes,
+				identity(1).publicKey.bytes,
+				identity(2).publicKey.bytes,
+			]);
+		});
 
-        it("has relation", async () => {
-            const l0a = new TrustedNetwork({
-                rootTrust: identity(0).publicKey,
-            });
+		it("has relation", async () => {
+			const l0a = new TrustedNetwork({
+				rootTrust: identity(0).publicKey,
+			});
 
-            await init(l0a, 0, { topic: uuid() });
+			await init(l0a, 0, { topic: uuid() });
 
-            await l0a.add(identity(1).publicKey);
-            expect(
-                l0a.hasRelation(identity(0).publicKey, identity(1).publicKey)
-            ).toBeFalse();
-            expect(
-                l0a.hasRelation(identity(1).publicKey, identity(0).publicKey)
-            ).toBeTrue();
-        });
+			await l0a.add(identity(1).publicKey);
+			expect(
+				l0a.hasRelation(identity(0).publicKey, identity(1).publicKey)
+			).toBeFalse();
+			expect(
+				l0a.hasRelation(identity(1).publicKey, identity(0).publicKey)
+			).toBeTrue();
+		});
 
-        it("can not append with wrong truster", async () => {
-            let l0a = new TrustedNetwork({
-                rootTrust: identity(0).publicKey,
-            });
-            await init(l0a, 0, { topic: uuid() });
+		it("can not append with wrong truster", async () => {
+			let l0a = new TrustedNetwork({
+				rootTrust: identity(0).publicKey,
+			});
+			await init(l0a, 0, { topic: uuid() });
 
-            expect(
-                l0a.trustGraph.put(
-                    new IdentityRelation({
-                        to: new Secp256k1PublicKey({
-                            address: await Wallet.createRandom().getAddress(),
-                        }),
-                        from: new Secp256k1PublicKey({
-                            address: await Wallet.createRandom().getAddress(),
-                        }),
-                    })
-                )
-            ).rejects.toBeInstanceOf(AccessError);
-        });
+			expect(
+				l0a.trustGraph.put(
+					new IdentityRelation({
+						to: new Secp256k1PublicKey({
+							address: await Wallet.createRandom().getAddress(),
+						}),
+						from: new Secp256k1PublicKey({
+							address: await Wallet.createRandom().getAddress(),
+						}),
+					})
+				)
+			).rejects.toBeInstanceOf(AccessError);
+		});
 
-        it("untrusteed by chain", async () => {
-            let l0a = new TrustedNetwork({
-                rootTrust: identity(0).publicKey,
-            });
-            const topic = uuid();
+		it("untrusteed by chain", async () => {
+			let l0a = new TrustedNetwork({
+				rootTrust: identity(0).publicKey,
+			});
+			const topic = uuid();
 
-            await init(l0a, 0, { topic });
+			await init(l0a, 0, { topic });
 
-            let l0b: TrustedNetwork = (await TrustedNetwork.load(
-                new Blocks(
-                    new LibP2PBlockStore(
-                        session.peers[1],
-                        new MemoryLevelBlockStore()
-                    )
-                ),
-                l0a.address!
-            )) as any;
-            await init(l0b, 1, { topic });
+			let l0b: TrustedNetwork = (await TrustedNetwork.load(
+				new Blocks(
+					new LibP2PBlockStore(
+						session.peers[1],
+						new MemoryLevelBlockStore()
+					)
+				),
+				l0a.address!
+			)) as any;
+			await init(l0b, 1, { topic });
 
-            // Can not append peer3Key since its not trusted by the root
-            await expect(l0b.add(identity(2).publicKey)).rejects.toBeInstanceOf(
-                AccessError
-            );
-        });
-    });
+			// Can not append peer3Key since its not trusted by the root
+			await expect(l0b.add(identity(2).publicKey)).rejects.toBeInstanceOf(
+				AccessError
+			);
+		});
+	});
 });

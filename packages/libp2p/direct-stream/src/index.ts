@@ -10,76 +10,28 @@ import { pushable } from 'it-pushable'
 import type { Stream } from '@libp2p/interface-connection'
 import { Uint8ArrayList } from 'uint8arraylist'
 import type { PeerStreamEvents } from '@libp2p/interface-pubsub'
-import { logger as logFn } from '@dao-xyz/peerbit-logger'
 import { abortableSource } from 'abortable-iterator'
 import * as lp from 'it-length-prefixed'
 import { Libp2p } from 'libp2p'
 import { Routes } from './routes.js'
 import LRU from "lru-cache";
 import { PeerMap } from './peer-map.js'
-import { Hello, DataMessage, Message, ID_LENGTH, NetworkInfo, Goodbye } from './encoding.js'
+import { Hello, DataMessage, Message, Goodbye } from './encoding.js'
 import { Uint8ArrayView, viewAsArray, viewFromBytes } from './view.js';
 import { waitFor } from '@dao-xyz/peerbit-time'
 import { getKeypairFromPeerId, getPublicKeyFromPeerId, PublicSignKey, SignatureWithKey } from '@dao-xyz/peerbit-crypto'
-
 export type { Uint8ArrayView };
-export { Message as Message, Goodbye as ConnectionClosed, Hello as ConnectionOpen, NetworkInfo as Connections, DataMessage } from './encoding.js';
+export { Message as Message, Goodbye as ConnectionClosed, Hello as ConnectionOpen, DataMessage } from './encoding.js';
 export { viewAsArray, viewFromBytes };
-
 export * as utf8 from './utf8.js';
-const logger = logFn({ module: 'trace-messages', level: 'warn' })
-function uint6ToB64(nUint6) {
-	return nUint6 < 26
-		? nUint6 + 65
-		: nUint6 < 52
-			? nUint6 + 71
-			: nUint6 < 62
-				? nUint6 - 4
-				: nUint6 === 62
-					? 43
-					: nUint6 === 63
-						? 47
-						: 65;
-}
-
-function base64EncArr(aBytes: Uint8ArrayList | Uint8Array, offset: number, length: number) {
-
-	let nMod3 = 2;
-	let sB64Enc = "";
-
-	const nLen = length;
-	let nUint24 = 0;
-	const get = aBytes instanceof Uint8ArrayList ? (i: number) => aBytes.get(i) : (i: number) => aBytes[i]
-	for (let nIdx = 0; nIdx < nLen - offset; nIdx++) {
-		nMod3 = nIdx % 3;
-		if (nIdx > 0 && ((nIdx * 4) / 3) % 76 === 0) {
-			sB64Enc += "\r\n";
-		}
-		nUint24 |= get(nIdx + offset) << ((16 >>> nMod3) & 24);
-		if (nMod3 === 2 || nLen - nIdx === 1) {
-			sB64Enc += String.fromCodePoint(
-				uint6ToB64((nUint24 >>> 18) & 63),
-				uint6ToB64((nUint24 >>> 12) & 63),
-				uint6ToB64((nUint24 >>> 6) & 63),
-				uint6ToB64(nUint24 & 63)
-			);
-			nUint24 = 0;
-		}
-	}
-	return (
-		sB64Enc.substr(0, sB64Enc.length - 2 + nMod3) +
-		(nMod3 === 2 ? "" : nMod3 === 1 ? "=" : "==")
-	);
-}
-
-
-
+import crypto from 'crypto';
+import { logger } from './logger.js'
+export { logger };
 export interface PeerStreamsInit {
 	peerId: PeerId
 	publicKey: PublicSignKey
 	protocol: string
 }
-
 
 
 /**
@@ -141,6 +93,7 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 	 */
 	write(data: Uint8Array | Uint8ArrayList) {
 		if (this.outboundStream == null) {
+			logger.error('No writable connection to ' + this.peerId.toString());
 			throw new Error('No writable connection to ' + this.peerId.toString())
 		}
 		this.outboundStream.push(data instanceof Uint8Array ? new Uint8ArrayList(data) : data)
@@ -273,8 +226,9 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 	public emitSelf: boolean
 	public queue: Queue
 	public multicodecs: string[]
-	public seenCache: LRU<string, boolean>
+	public seenCache: LRU<string, true>
 	public earlyGoodbyes: Map<string, Goodbye>;
+	public hellosToReplay: Map<string, Map<string, Hello>>; // key is hash of publicKey, value is map whey key is hash of signature bytes, and value is latest Hello
 	private _registrarTopologyIds: string[] | undefined
 	private readonly maxInboundStreams: number
 	private readonly maxOutboundStreams: number
@@ -302,17 +256,19 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 		this.multicodecs = multicodecs
 		this.started = false
 		this.peers = new PeerMap<PeerStreams>()
+		this.hellosToReplay = new Map();
 		this.routes = new Routes(this.publicKeyHash, { ttl: 10000 * 1000 })
 		this.canRelayMessage = canRelayMessage
 		this.emitSelf = emitSelf
 		this.queue = new Queue({ concurrency: messageProcessingConcurrency })
+		// this.helloGoodbyeQueue = new Queue({ concurrency: 1 }) // we want single thread this because else we might not share correct hellos, goodbye with peers if two connect to us simultanously
 		this.earlyGoodbyes = new Map();
 		this.maxInboundStreams = maxInboundStreams
 		this.maxOutboundStreams = maxOutboundStreams
 		this.seenCache = new LRU({ ttl: 60 * 1000 })
 		this._onIncomingStream = this._onIncomingStream.bind(this)
-		this._onPeerConnected = this._onPeerConnected.bind(this)
-		this._onPeerDisconnected = this._onPeerDisconnected.bind(this)
+		this.onPeerConnected = this.onPeerConnected.bind(this)
+		this.onPeerDisconnected = this.onPeerDisconnected.bind(this)
 
 
 	}
@@ -325,6 +281,7 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 		logger.info('starting')
 
 		const registrar = this.libp2p.registrar
+
 		// Incoming streams
 		// Called after a peer dials us
 		await Promise.all(this.multicodecs.map(multicodec => registrar.handle(multicodec, this._onIncomingStream, {
@@ -335,8 +292,8 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 		// register protocol with topology
 		// Topology callbacks called on connection manager changes
 		const topology = createTopology({
-			onConnect: this._onPeerConnected,
-			onDisconnect: this._onPeerDisconnected
+			onConnect: this.onPeerConnected,
+			onDisconnect: this.onPeerDisconnected
 		})
 		this._registrarTopologyIds = await Promise.all(this.multicodecs.map(async multicodec => await registrar.register(multicodec, topology)))
 
@@ -346,7 +303,7 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 
 
 		// All existing connections are like new ones for us
-		this.libp2p.getConnections().forEach(conn => this._onPeerConnected(conn.remotePeer, conn))
+		this.libp2p.getConnections().forEach(conn => this.onPeerConnected(conn.remotePeer, conn))
 
 
 	}
@@ -375,9 +332,10 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 		logger.info('stopping')
 		for (const peerStreams of this.peers.values()) {
 			peerStreams.close()
-
 		}
 
+		this.queue.clear();
+		this.hellosToReplay.clear();
 		this.earlyGoodbyes.clear();
 		this.peers.clear()
 		this.seenCache.clear();
@@ -415,8 +373,8 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 	/**
 	 * Registrar notifies an established connection with pubsub protocol
 	 */
-	protected async _onPeerConnected(peerId: PeerId, conn: Connection) {
-		logger.info('connected %p', peerId)
+	public async onPeerConnected(peerId: PeerId, conn: Connection) {
+		logger.info('connected ' + peerId)
 		try {
 
 			for (const existingStreams of conn.streams) {
@@ -432,15 +390,13 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 			}
 
 			const peerKey = getPublicKeyFromPeerId(peerId);
+			const peerKeyHash = peerKey.hashcode();
 			const peer = this.addPeer(peerId, peerKey, stream.stat.protocol)
 			await peer.attachOutboundStream(stream)
-			this.routes.add(this.publicKeyHash, peerKey.hashcode());
+			this.routes.add(this.publicKeyHash, peerKeyHash);
+
 
 			const promises: Promise<any>[] = [];
-
-
-
-
 			// Notify network (other peers than the one we are connecting to)
 			/* 		const others = [...this.peers.values()].filter(peer => !peer.id.equals(peerId));
 					if (others.length > 0) {
@@ -449,37 +405,49 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 			// Say hello
 			promises.push(this.publishMessage(this.libp2p.peerId, new Hello().sign(this.sign), [peer]))
 
-
 			// Send my goodbye early if I disconnect for some reason, (so my peer can say goodbye for me)
 			// TODO add custom condition fn for doing below
 			promises.push(this.publishMessage(this.libp2p.peerId, new Goodbye({ early: true }).sign(this.sign), [peer]))
 
 
-
-			const routesToShare = this.routes.links; /* .filter(arr => arr[0] !== peerIdStr && arr[1] !== peerIdStr) */
-			if (routesToShare.length > 0) {
-				// Share my connections with this peer, except info about the connection that exist between me and 'peer' (its already known)
-				// TODO add custom condition fn for doing below
-				promises.push(this.publishMessage(this.libp2p.peerId, new NetworkInfo(routesToShare).sign(this.sign), [peer]));
+			// replay all hellos
+			for (const [sender, hellos] of this.hellosToReplay) {
+				if (sender === peerKeyHash) { // Don't say hellos from sender to same sender (uneccessary)
+					continue;
+				}
+				for (const [key, hello] of hellos) {
+					if (!hello.header.verify()) {
+						hellos.delete(key);
+					}
+					promises.push(this.publishMessage(this.libp2p.peerId, hello, [peer]));
+				}
 			}
 
+			/* 	const routesToShare = this.routes.links; /* .filter(arr => arr[0] !== peerIdStr && arr[1] !== peerIdStr) 
+				if (routesToShare.length > 0) {
+					// Share my connections with this peer, except info about the connection that exist between me and 'peer' (its already known)
+					// TODO add custom condition fn for doing below
+					promises.push(this.publishMessage(this.libp2p.peerId, new NetworkInfo(routesToShare).sign(this.sign), [peer]));
+				}
+	 */
 
 
 			const resolved = await Promise.all(promises)
 			return resolved;
 
 		} catch (err: any) {
+			logger.error(err)
+
 			if (err.code === 'ERR_UNSUPPORTED_PROTOCOL') {
 				return;
 			}
-			logger.error(err)
 		}
 	}
 
 	/**
 	 * Registrar notifies a closing connection with pubsub protocol
 	 */
-	protected async _onPeerDisconnected(peerId: PeerId) {
+	protected async onPeerDisconnected(peerId: PeerId) {
 		// PeerId could be me, if so, it means that I am disconnecting
 		const peerKey = getPublicKeyFromPeerId(peerId);
 		const peerKeyHash = peerKey.hashcode();
@@ -550,6 +518,7 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 		return peerStreams
 	}
 
+
 	// MESSAGE METHODS
 
 	/**
@@ -561,13 +530,36 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 				stream,
 				async (source) => {
 					for await (const data of source) {
-
 						const msgId = this.getMsgId(data)
-						if (this.seenCache.has(msgId)) {
 
-							return
+
+						if (this.seenCache.has(msgId)) { // we got message that WE sent? 
+
+							/**
+							 * Most propobable reason why we arrive  here is a race condition/issue
+							
+							┌─┐
+							│0│
+							└△┘
+							┌▽┐
+							│1│
+							└△┘
+							┌▽┐
+							│2│
+							└─┘
+							
+							from 2s perspective, 
+
+							if everyone conents to each other at the same time, then 0 will say hello to 1 and 1 will save that hello to resend to 2 if 2 ever connects
+							but two is already connected by onPeerConnected has not been invoked yet, so the hello message gets forwarded,
+							and later onPeerConnected gets invoked on 1, and the same message gets resent to 2
+							 */
+
+							//console.log('already seen!', msgId, this.publicKeyHash, abc123.signatures.signatures.map(k => k.publicKey.hashcode()));
+							continue;
 						}
-						this.seenCache.set(msgId, true)
+
+						this.seenCache.set(msgId, true);
 						this.processRpc(peerId, peerStreams, data)
 							.catch(err => logger.info(err))
 
@@ -576,7 +568,7 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 			)
 		} catch (err: any) {
 			logger.error('error on processing messages to id: ' + peerStreams.peerId.toString() + ". " + err?.message)
-			this._onPeerDisconnected(peerStreams.peerId)
+			this.onPeerDisconnected(peerStreams.peerId)
 		}
 	}
 
@@ -589,18 +581,13 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 			return false
 		}
 
-		logger.info('rpc from %p', from)
+		logger.info('rpc from ' + from + ", " + this.peerIdStr)
 
 		if (message.length > 0) {
-			logger.info('messages from %p', from)
-			if (!this.canRelayMessage) {
-				logger.info('received message we didn\'t subscribe to. Dropping.')
-				return false
-			}
-
+			logger.info('messages from ' + from)
 			await this.queue.add(async () => {
 				try {
-					await this.processMessage(from, message)
+					await this.processMessage(from, peerStreams, message)
 				} catch (err: any) {
 					logger.error(err)
 				}
@@ -615,7 +602,7 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 	/**
 	 * Handles a message from a peer
 	 */
-	async processMessage(from: PeerId, msg: Uint8ArrayList) {
+	async processMessage(from: PeerId, peerStream: PeerStreams, msg: Uint8ArrayList) {
 		if (!from.publicKey) {
 			return;
 		}
@@ -627,60 +614,104 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 		// Ensure the message is valid before processing it
 		const message: Message | undefined = Message.deserialize(msg);
 
+
 		this.dispatchEvent(new CustomEvent('message', {
 			detail: message
 		}))
 
-		if (!message.verify()) {
-			logger.warn("Recieved message with invalid signature or timestamp")
-			return;
-		}
 
 		if (message instanceof DataMessage) {
-			await this.onDataMessage(from, message);
+			await this.onDataMessage(from, peerStream, message);
 		}
 		else if (message instanceof Hello) {
-			await this.onHello(from, message)
+			await this.onHello(from, peerStream, message)
 		}
 		else if (message instanceof Goodbye) {
-			await this.onGoodbye(from, message)
+			await this.onGoodbye(from, peerStream, message)
 		}
-		else if (message instanceof NetworkInfo) {
+		/* else if (message instanceof NetworkInfo) {
 			await this.onNetworkInfo(from, message)
-		}
+		} */
 	}
 
-	async onDataMessage(from: PeerId, message: DataMessage) {
+	async onDataMessage(from: PeerId, peerStream: PeerStreams, message: DataMessage) {
 		const isFromSelf = this.libp2p.peerId.equals(from)
 		if (!isFromSelf || this.emitSelf) {
 			const isForAll = message.to.length === 0;
-			const isForMe = !isForAll && message.to.find(x => x.equals(this.publicKey))
-			if (isForAll || isForMe)
+			const isForMe = !isForAll && message.to.find(x => x === this.publicKeyHash)
+			if (isForAll || isForMe) {
+				if (!message.verify()) { // we don't verify messages we don't dispatch because of the performance penalty // TODO add opts for this
+					logger.warn("Recieved message with invalid signature or timestamp")
+					return;
+				}
+
 				this.dispatchEvent(new CustomEvent('data', {
 					detail: message
 				}))
-
+			}
 			if (isForMe && message.to.length === 1) {
 				// dont forward this message anymore because it was meant ONLY for me
 				return;
 			}
 		}
 		// Forward
-		await this.publishMessage(from, message)
+		await this.relayMessage(from, message)
+
+
 	}
-	async onHello(from: PeerId, message: Hello) {
+	async onHello(from: PeerId, peerStream: PeerStreams, message: Hello) {
+		if (!message.verify()) {
+			logger.warn("Recieved message with invalid signature or timestamp")
+			return;
+		}
+
+		let sender = message.sender?.hashcode();
+		if (!sender) {
+			logger.warn("Recieved hello without sender")
+			return
+		}
+
 		const signatures = message.signatures;
 		for (let i = 0; i < signatures.signatures.length - 1; i++) {
+			//	console.log('add route', this.publicKeyHash, signatures.signatures[i].publicKey.hashcode(), signatures.signatures[i + 1].publicKey.hashcode())
 			this.routes.add(signatures.signatures[i].publicKey.hashcode(), signatures.signatures[i + 1].publicKey.hashcode());
 		}
 
 		message.sign(this.sign) // sign it so othere peers can now I have seen it (and can build a network graph from trace info)
 
+		let hellos = this.hellosToReplay.get(sender);
+		if (!hellos) {
+			hellos = new Map();
+			this.hellosToReplay.set(sender, hellos)
+		}
+
+		let helloSignaturHash = message.signatures.hashPublicKeys();
+		let existingHello = hellos.get(helloSignaturHash);
+		if (existingHello) {
+			if (existingHello.header.expires < message.header.expires) {
+				hellos.set(helloSignaturHash, message)
+			}
+		}
+		else {
+			hellos.set(helloSignaturHash, message)
+		}
+
 		// Forward
-		await this.publishMessage(from, message)
+		await this.relayMessage(from, message)
 	}
 
-	async onGoodbye(from: PeerId, message: Goodbye) {
+	async onGoodbye(from: PeerId, peerStream: PeerStreams, message: Goodbye) {
+		if (!message.verify()) {
+			logger.warn("Recieved message with invalid signature or timestamp")
+			return;
+		}
+
+		let sender = message.sender?.hashcode();
+		if (!sender) {
+			logger.warn("Recieved hello without sender")
+			return
+		}
+
 		const peerKey = getPublicKeyFromPeerId(from);
 		const peerKeyHash = peerKey.hashcode();
 		if (message.early) {
@@ -698,32 +729,28 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 
 			message.sign(this.sign) // sign it so othere peers can now I have seen it (and can build a network graph from trace info)
 
+			let hellos = this.hellosToReplay.get(sender);
+			if (hellos) {
+				let helloSignaturHash = message.signatures.hashPublicKeys()
+				hellos.delete(helloSignaturHash)
+			}
+
 			// Forward
-			await this.publishMessage(from, message)
+			await this.relayMessage(from, message)
 		}
 	}
-
-	async onNetworkInfo(from: PeerId, message: NetworkInfo) {
-		message.connections.connections.forEach(([a, b]) => {
-			this.routes.add(a, b);
-		})
-
-		// Forward
-		await this.publishMessage(from, message)
-	}
-
 
 	/**
 	 * The default msgID implementation
 	 * Child class can override this.
 	 */
-	getMsgId(msg: Uint8ArrayList | Uint8Array) {
+	public getMsgId(msg: Uint8ArrayList | Uint8Array) {
 
 		// first bytes is discriminator, 
 		// next 32 bytes should be an id
 		//return  Buffer.from(msg.slice(0, 33)).toString('base64');
 
-		return base64EncArr(msg, 0, ID_LENGTH + 1);
+		return crypto.createHash('sha256').update(msg.subarray(0, 33)).digest('base64') // base64EncArr(msg, 0, ID_LENGTH + 1);
 	}
 
 	/**
@@ -737,13 +764,32 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 	/**
 	 * Publishes messages to all peers
 	 */
-	async publish(data: Uint8Array | Uint8ArrayList, options?: { to?: (PublicSignKey | PeerId)[] }): Promise<void> {
+	async publish(data: Uint8Array | Uint8ArrayList, options?: { to?: (string | PublicSignKey | PeerId)[] | Set<string> }): Promise<void> {
 		if (!this.started) {
 			throw new Error('Not started')
 		}
 
 		// dispatch the event if we are interested
-		const message = new DataMessage({ data, to: options?.to?.map(x => (x instanceof PublicSignKey ? x : getPublicKeyFromPeerId(x))) });
+		let toHashes: string[];
+		if (options?.to) {
+			if (options.to instanceof Set) {
+				toHashes = new Array(options.to.size)
+
+			}
+			else {
+				toHashes = new Array(options.to.length);
+			}
+
+			let i = 0;
+			for (const to of options.to) {
+				toHashes[i++] = (to instanceof PublicSignKey ? to.hashcode() : (typeof to === 'string' ? to : getPublicKeyFromPeerId(to).hashcode()));
+			}
+		}
+		else {
+			toHashes = [];
+		}
+
+		const message = new DataMessage({ data, to: toHashes }).sign(this.sign);
 		if (this.emitSelf) {
 			super.dispatchEvent(new CustomEvent('data', {
 				detail: message
@@ -752,7 +798,7 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 		}
 
 		// send to all the other peers
-		await this.publishMessage(this.libp2p.peerId, message)
+		await this.publishMessage(this.libp2p.peerId, message, undefined)
 
 	}
 
@@ -766,6 +812,14 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 	}
 
 
+	public async relayMessage(from: PeerId, message: Message, to?: PeerStreams[] | PeerMap<PeerStreams>) {
+		if (this.canRelayMessage) {
+			return this.publishMessage(from, message, to)
+		}
+		else {
+			logger.info('received message we didn\'t subscribe to. Dropping.')
+		}
+	}
 	public async publishMessage(from: PeerId, message: Message, to?: PeerStreams[] | PeerMap<PeerStreams>): Promise<void> {
 
 		let peers: PeerStreams[] | PeerMap<PeerStreams>;
@@ -774,7 +828,7 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 				peers = [];
 				for (const to of message.to) {
 					try {
-						const path = this.routes.getPath(this.publicKeyHash, to.hashcode());
+						const path = this.routes.getPath(this.publicKeyHash, to);
 						if (path && path.length > 0) {
 							const stream = this.peers.get(path[1].id.toString());
 							if (stream) {
@@ -800,33 +854,41 @@ export abstract class DirectStream<Events extends { [s: string]: any } = StreamE
 		else {
 			peers = to;
 		}
+		if (message instanceof DataMessage) {
+
+			let meTo = message.to.findIndex((value) => value === this.publicKeyHash);
+			if (meTo >= 0) {
+				message.to.splice(meTo, 1) // Delete me from to list
+			}
+		}
+
 		if (peers == null || peers.length === 0) {
 			logger.info('no peers are subscribed')
 			return
 		}
 
 		const bytes = message.serialize()
-
-		const msgId = this.getMsgId(bytes);
-		this.seenCache.set(msgId, true);
+		this.seenCache.set(this.getMsgId(bytes), true);
 
 		peers.forEach(stream => {
 			const id = stream as PeerStreams;
+
 			if (this.libp2p.peerId.equals(id.peerId)) {
-				logger.info('not sending message to myself')
+				logger.trace('not sending message to myself')
 				return
 			}
 
 			if (id.peerId.equals(from)) {
-				logger.info('not sending messageto sender', id.peerId)
+				logger.trace('not sending message to sender: ' + id.peerId)
 				return
 			}
 
-			logger.info('publish msgs on %p', id)
+			logger.info('publish msgs on: ' + id.peerId + " from " + this.peerIdStr)
 			if (!id.isWritable) {
 				logger.error('Cannot send RPC to %p as there is no open stream to it available', id.peerId)
 				return
 			}
+
 
 			id.write(bytes)
 		})

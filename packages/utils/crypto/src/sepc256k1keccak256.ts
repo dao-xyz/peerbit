@@ -60,7 +60,7 @@ export class Secp256k1Keccak256PrivateKey extends PrivateSignKey {
 		this.privateKey = properties.privateKey;
 	}
 
-	equals(other: PublicSignKey): boolean {
+	equals(other: Secp256k1Keccak256PrivateKey): boolean {
 		if (other instanceof Secp256k1Keccak256PrivateKey) {
 			return arraysCompare(this.privateKey, other.privateKey) === 0;
 		}

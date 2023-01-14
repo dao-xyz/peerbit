@@ -3,9 +3,7 @@ import { LSession } from '@dao-xyz/peerbit-test-utils';
 import { Libp2p } from 'libp2p';
 import { DirectStream, waitForPeers } from '../index.js';
 import { delay } from '@dao-xyz/peerbit-time';
-import { Message } from '../encoding.js';
 import crypto from 'crypto';
-import { equals } from 'uint8arrays'
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
 
@@ -47,41 +45,37 @@ await waitForPeers(streams[1], streams[2]);
 await waitForPeers(streams[2], streams[3]);
 await delay(6000);
 
-const suite = new B.Suite()
+let suite = new B.Suite()
 
-const large = crypto.randomBytes(1e6); //  1mb
+var listener: ((msg: any) => any) | undefined = undefined;
+var msgMap: Map<string, { resolve: () => any }> = new Map();
+let msgIdFn = (msg: Uint8Array) => crypto.createHash('sha1').update(msg.subarray(0, 20)).digest('base64')
 
-suite.add("small", {
-	defer: true, fn: (deferred) => {
-		const small = crypto.randomBytes(1e3); // 1kb
-		const published = crypto.createHash('sha1').update(small).digest('hex');
-		const listener = (msg) => {
-			if (crypto.createHash('sha1').update(msg.detail.dataBytes).digest('hex') === published) {
-				streams[streams.length - 1].removeEventListener('data', listener);
-				deferred.resolve()
+let sizes = [1e3, 1e6];
+for (const size of sizes) {
+	suite = suite.add("size: " + (size / 1e3) + "kb", {
+		defer: true, fn: (deferred) => {
+			const small = crypto.randomBytes(size); // 1kb
+			msgMap.set(msgIdFn(small), deferred)
+			streams[0].publish(small, { to: [streams[streams.length - 1].publicKey] })
+		},
+		setup: () => {
+			listener = (msg) => {
+				msgMap.get(msgIdFn(msg.detail.dataBytes))!.resolve();
 			}
-		}
-		streams[streams.length - 1].addEventListener('data', listener)
-		streams[0].publish(small)
 
-	}
-}).add("large", {
-	defer: true, fn: (deferred) => {
-		const small = crypto.randomBytes(1e6); // 1mb
-		const published = crypto.createHash('sha1').update(small).digest('hex');
-		const listener = (msg) => {
-			if (crypto.createHash('sha1').update(msg.detail.dataBytes).digest('hex') === published) {
-				streams[streams.length - 1].removeEventListener('data', listener);
-				deferred.resolve()
-			}
+			streams[streams.length - 1].addEventListener('data', listener)
+			msgMap.clear()
+
+		},
+		teardown: () => {
+			streams[streams.length - 1].removeEventListener('data', listener)
 		}
-		streams[streams.length - 1].addEventListener('data', listener)
-		streams[0].publish(small)
-	}
-}).on('cycle', (event: any) => {
+	})
+}
+suite.on('cycle', (event: any) => {
 	console.log(String(event.target));
 }).on('complete', function (this: any, ...args: any[]) {
 	streams.forEach((stream) => stream.stop())
 	session.stop();
 }).run(({ async: true }))
-

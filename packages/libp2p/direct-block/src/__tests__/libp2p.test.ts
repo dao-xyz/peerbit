@@ -169,7 +169,7 @@ describe('transport', function () {
 		const t3 = +new Date();
 		console.log("xxx", t3 - t1);
 	})
-	/* it("large", async () => {
+	it("large", async () => {
 		store = new Blocks(
 			new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
 		);
@@ -214,40 +214,40 @@ describe('transport', function () {
 		console.log("Large", t3 - t1, t2 - t1, t3 - t2);
 
 	});
-
-
-	it("small", async () => {
-		store = new Blocks(
-			new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
-		);
-		await store.open();
-
-		store2 = new Blocks(
-			new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
-		);
-
-		await store2.open();
-		await session.connect();
-		await waitForPeers(store, store2);
-
-		const cids: string[] = [];
-
-		const rnds: Uint8Array[] = [];
-		let len = 100;
-		const t1 = +new Date();
-		for (let i = 0; i < 5000; i++) {
-			rnds.push(crypto.randomBytes(len));
-		}
-
-		for (let i = 0; i < 5000; i++) {
-			cids.push(await store.put(rnds[i], "raw", { pin: true }));
-		}
-
-		for (const [i, cid] of cids.entries()) {
-			const readData = await store2.get<Uint8Array>(stringifyCid(cid));
-			expect(readData).toHaveLength(len);
-		}
-		const t2 = +new Date();
-		console.log("Small", t2 - t1);
-	}); */
+	/* 
+	
+		it("small", async () => {
+			store = new Blocks(
+				new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
+			);
+			await store.open();
+	
+			store2 = new Blocks(
+				new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
+			);
+	
+			await store2.open();
+			await session.connect();
+			await waitForPeers(store, store2);
+	
+			const cids: string[] = [];
+	
+			const rnds: Uint8Array[] = [];
+			let len = 100;
+			const t1 = +new Date();
+			for (let i = 0; i < 5000; i++) {
+				rnds.push(crypto.randomBytes(len));
+			}
+	
+			for (let i = 0; i < 5000; i++) {
+				cids.push(await store.put(rnds[i], "raw", { pin: true }));
+			}
+	
+			for (const [i, cid] of cids.entries()) {
+				const readData = await store2.get<Uint8Array>(stringifyCid(cid));
+				expect(readData).toHaveLength(len);
+			}
+			const t2 = +new Date();
+			console.log("Small", t2 - t1);
+		}); */
 });

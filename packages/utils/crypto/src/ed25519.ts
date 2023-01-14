@@ -26,18 +26,39 @@ const alg = { name: 'Ed25519' };
 crypto.sign(alg, new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 3])) 
 */
 
-const sign = (
-	data: Uint8Array,
-	privateKey: Ed25519PrivateKey,
-	signedHash = false
-) => {
-	const signedData = signedHash ? sodium.crypto_generichash(32, data) : data;
-	const signature = sodium.crypto_sign_detached(
-		signedData,
-		privateKey.privateKey
-	);
-	return signature;
-};
+function toDER(key: Uint8Array, p: boolean = false) {
+	if (p) {
+
+		return Buffer.concat([Buffer.from([48, 46, 2, 1, 0, 48, 5, 6, 3, 43, 101, 112, 4, 34, 4, 32]), key]);
+	}
+
+	// Ed25519's OID
+	const oid = Buffer.from([0x06, 0x03, 0x2B, 0x65, 0x70])
+
+	// Create a byte sequence containing the OID and key
+	const elements = Buffer.concat([
+		Buffer.concat([
+			Buffer.from([0x30]), // Sequence tag
+			Buffer.from([oid.length]),
+			oid,
+		]),
+		Buffer.concat([
+			Buffer.from([0x03]), // Bit tag
+			Buffer.from([key.length + 1]),
+			Buffer.from([0x00]), // Zero bit
+			key,
+		]),
+	])
+
+	// Wrap up by creating a sequence of elements
+	const der = Buffer.concat([
+		Buffer.from([0x30]), // Sequence tag
+		Buffer.from([elements.length]),
+		elements,
+	])
+
+	return der
+}
 
 @variant(0)
 export class Ed25519PublicKey extends PublicSignKey {
@@ -66,6 +87,19 @@ export class Ed25519PublicKey extends PublicSignKey {
 			new supportedKeys["ed25519"].Ed25519PublicKey(this.publicKey).bytes
 		);
 	}
+
+
+	private _keyObject: crypto.KeyObject;
+	get keyObject() {
+		return this._keyObject || (this._keyObject = crypto.createPublicKey(
+			{
+				format: 'der',
+				type: 'spki',
+				key: toDER(this.publicKey)
+			}
+		))
+	}
+
 	static from(id: PeerId) {
 		if (!id.publicKey) {
 			throw new Error("Missing public key");
@@ -92,7 +126,7 @@ export class Ed25519PrivateKey extends PrivateSignKey {
 		}
 	}
 
-	equals(other: PublicSignKey): boolean {
+	equals(other: Ed25519PrivateKey): boolean {
 		if (other instanceof Ed25519PrivateKey) {
 			return arraysCompare(this.privateKey, other.privateKey) === 0;
 		}
@@ -102,6 +136,18 @@ export class Ed25519PrivateKey extends PrivateSignKey {
 	toString(): string {
 		return "ed25119s/" + toHexString(this.privateKey);
 	}
+
+	private _keyObject: crypto.KeyObject;
+	get keyObject() {
+		return this._keyObject || (this._keyObject = crypto.createPrivateKey(
+			{
+				format: 'der',
+				type: 'pkcs8',
+				key: toDER(this.privateKey, true)
+			}
+		))
+	}
+
 
 	static from(id: PeerId) {
 		if (!id.privateKey) {
@@ -147,8 +193,10 @@ export class Ed25519Keypair extends Keypair implements Signer {
 		return kp;
 	}
 
-	sign(data: Uint8Array): Uint8Array {
-		return sign(data, this.privateKey);
+
+
+	sign(data: Uint8Array, hash: boolean = false): Uint8Array {
+		return sign(data, this.privateKey, hash);
 	}
 
 	signer(): SignWithKey {
@@ -178,16 +226,33 @@ export class Ed25519Keypair extends Keypair implements Signer {
 	}
 }
 
+const sign = (
+	data: Uint8Array,
+	privateKey: Ed25519PrivateKey,
+	signedHash = false
+) => {
+	const signedData = signedHash ? crypto.createHash('sha256').update(data).digest() : data;
+	/* const signature = sodium.crypto_sign_detached(
+		signedData,
+		privateKey.privateKey
+	);
+	return signature 
+ */
+	return crypto.sign(null, signedData, privateKey.keyObject)
+};
+
 
 export const verifySignatureEd25519 = (
 	signature: Uint8Array,
-	publicKey: Ed25519PublicKey | Uint8Array,
+	publicKey: Ed25519PublicKey,
 	data: Uint8Array,
 	signedHash = false
 ) => {
 	let res = false;
 	try {
 		const hashedData = signedHash ? crypto.createHash('sha256').update(data).digest() : data;
+
+		/* 	return crypto.verify(null, hashedData, publicKey.keyObject, signature); */
 		const verified = sodium.crypto_sign_verify_detached(
 			signature,
 			hashedData,

@@ -17,7 +17,7 @@ export const blake2b = from({
 		await sodium.ready;
 		return sodium.crypto_generichash(32, input);
 	},
-});;
+});
 const defaultBase = base58btc;
 
 export const defaultHasher = sha256;

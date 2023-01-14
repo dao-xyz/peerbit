@@ -20,7 +20,7 @@ const logger = loggerFn({ module: "blocks-libp2p" });
 
 export class BlockStream extends DirectStream {
 	constructor(libp2p: Libp2p, options: { messageProcessingConcurrency?: number, canRelayMessage: boolean }) {
-		super(libp2p, ['blockstream/1.0.0'], { emitSelf: false, ...options })
+		super(libp2p, ['direct-block/1.0.0'], { emitSelf: false, ...options })
 	}
 }
 
@@ -110,7 +110,7 @@ export class LibP2PBlockStore implements BlockStore {
 			const message = evt.detail;
 			try {
 				const decoded = deserialize(
-					message.data,
+					message.data instanceof Uint8Array ? message.data : message.data.subarray(),
 					BlockMessage
 				);
 				if (
