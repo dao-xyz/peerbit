@@ -5,10 +5,9 @@ import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import {
-    LibP2PBlockStore,
+    BlockStore,
     MemoryLevelBlockStore,
-    Blocks
-} from "@dao-xyz/peerbit-block";
+} from "@dao-xyz/libp2p-direct-block";
 
 import { dirname } from "path";
 import { fileURLToPath } from "url";
@@ -16,7 +15,7 @@ import { Entry } from "../entry.js";
 import path from "path";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
-import { Message } from "@libp2p/interface-pubsub";
+import { PubSubData } from "@dao-xyz/libp2p-direct-sub";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -24,8 +23,6 @@ const __dirname = dirname(__filename);
 
 describe("ipfs-log - Replication", function () {
     let session: LSession,
-        store: Blocks,
-        store2: Blocks,
         signKey: KeyWithMeta<Ed25519Keypair>,
         signKey2: KeyWithMeta<Ed25519Keypair>;
 
@@ -59,22 +56,11 @@ describe("ipfs-log - Replication", function () {
         ) {
             signKey = [signKey2, (signKey2 = signKey)][0];
         }
-        store = new Blocks(
-            new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
-        );
-        await store.open();
-        store2 = new Blocks(
-            new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
-        );
-        await store2.open();
     });
 
     afterAll(async () => {
-        await store.close();
-        await store2.close();
         rmrf.sync(testKeyStorePath(__filenameBase));
         await session.stop();
-
         await keystore?.close();
     });
 
@@ -91,8 +77,8 @@ describe("ipfs-log - Replication", function () {
         const buffer2: string[] = [];
         let processing = 0;
 
-        const handleMessage = async (message: Message, topic: string) => {
-            if (message.topic !== topic) {
+        const handleMessage = async (message: PubSubData, topic: string) => {
+            if (!message.topics.includes(topic)) {
                 return;
             }
             const hash = Buffer.from(message.data).toString();
@@ -103,7 +89,7 @@ describe("ipfs-log - Replication", function () {
                 `> Buffer1: ${buffer1.length} - Buffer2: ${buffer2.length}`
             );
             const log = await Log.fromMultihash<string>(
-                store,
+                session.peers[0].directblock,
                 {
                     ...signKey.keypair,
                     sign: async (data: Uint8Array) =>
@@ -116,8 +102,8 @@ describe("ipfs-log - Replication", function () {
             processing--;
         };
 
-        const handleMessage2 = async (message: Message, topic: string) => {
-            if (message.topic !== topic) {
+        const handleMessage2 = async (message: PubSubData, topic: string) => {
+            if (!message.topics.includes(topic)) {
                 return;
             }
             const hash = Buffer.from(message.data).toString();
@@ -128,7 +114,7 @@ describe("ipfs-log - Replication", function () {
                 `> Buffer1: ${buffer1.length} - Buffer2: ${buffer2.length}`
             );
             const log = await Log.fromMultihash<string>(
-                store2,
+                session.peers[1].directblock,
                 {
                     ...signKey2.keypair,
                     sign: async (data: Uint8Array) =>
@@ -143,7 +129,7 @@ describe("ipfs-log - Replication", function () {
 
         beforeEach(async () => {
             log1 = new Log(
-                store,
+                session.peers[0].directblock,
                 {
                     ...signKey.keypair,
                     sign: async (data: Uint8Array) =>
@@ -152,7 +138,7 @@ describe("ipfs-log - Replication", function () {
                 { logId }
             );
             log2 = new Log(
-                store2,
+                session.peers[1].directblock,
                 {
                     ...signKey2.keypair,
                     sign: async (data: Uint8Array) =>
@@ -161,7 +147,7 @@ describe("ipfs-log - Replication", function () {
                 { logId }
             );
             input1 = new Log(
-                store,
+                session.peers[0].directblock,
                 {
                     ...signKey.keypair,
                     sign: async (data: Uint8Array) =>
@@ -170,7 +156,7 @@ describe("ipfs-log - Replication", function () {
                 { logId }
             );
             input2 = new Log(
-                store2,
+                session.peers[1].directblock,
                 {
                     ...signKey2.keypair,
                     sign: async (data: Uint8Array) =>
@@ -178,20 +164,20 @@ describe("ipfs-log - Replication", function () {
                 },
                 { logId }
             );
-            session.peers[0].pubsub.subscribe(channel);
-            session.peers[1].pubsub.subscribe(channel);
+            session.peers[0].directsub.subscribe(channel);
+            session.peers[1].directsub.subscribe(channel);
 
-            await session.peers[0].pubsub.addEventListener("message", (evt) => {
+            await session.peers[0].directsub.addEventListener("data", (evt) => {
                 handleMessage(evt.detail, channel);
             });
-            await session.peers[1].pubsub.addEventListener("message", (evt) => {
+            await session.peers[1].directsub.addEventListener("data", (evt) => {
                 handleMessage2(evt.detail, channel);
             });
         });
 
         afterEach(async () => {
-            await session.peers[0].pubsub.unsubscribe(channel);
-            await session.peers[1].pubsub.unsubscribe(channel);
+            await session.peers[0].directsub.unsubscribe(channel);
+            await session.peers[1].directsub.unsubscribe(channel);
         });
         // TODO why is this test doing a lot of unchaught rejections? (Reproduce in VSCODE tick `Uncaught exceptions`)
         it("replicates logs", async () => {
@@ -215,14 +201,12 @@ describe("ipfs-log - Replication", function () {
                 ).entry;
                 const hash1 = await input1.toMultihash();
                 const hash2 = await input2.toMultihash();
-                await session.peers[0].pubsub.publish(
-                    channel,
-                    Buffer.from(hash1)
-                );
-                await session.peers[1].pubsub.publish(
-                    channel,
-                    Buffer.from(hash2)
-                );
+                await session.peers[0].directsub.publish(Buffer.from(hash1), {
+                    topics: [channel],
+                });
+                await session.peers[1].directsub.publish(Buffer.from(hash2), {
+                    topics: [channel],
+                });
             }
 
             console.log("\nAll messages sent");
@@ -250,7 +234,7 @@ describe("ipfs-log - Replication", function () {
             await whileProcessingMessages(5000);
 
             const result = new Log<string>(
-                store,
+                session.peers[0].directblock,
                 {
                     ...signKey.keypair,
                     sign: async (data: Uint8Array) =>

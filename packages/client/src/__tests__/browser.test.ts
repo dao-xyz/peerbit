@@ -5,7 +5,6 @@ import { v4 as uuid } from "uuid";
 
 // Include test utilities
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 /**
  * Tests that are relavent for browser environments
@@ -18,9 +17,9 @@ describe(`browser`, function () {
         db1: EventStore<string>,
         db2: EventStore<string>;
 
-    afterAll(async () => { });
+    afterAll(async () => {});
 
-    beforeEach(async () => { });
+    beforeEach(async () => {});
 
     afterEach(async () => {
         if (db1) await db1.store.drop();
@@ -64,9 +63,7 @@ describe(`browser`, function () {
         await waitForPeers(session.peers[0], [client2.id], topic);
         await waitForPeers(session.peers[1], [client1.id], topic);
         await waitForPeers(session.peers[0], [client2.id], topic);
-        /* expect(client1._directConnections.size).toEqual(0); // since browser
-        expect(client2._directConnections.size).toEqual(0); // since browser
- */
+
         await db1.add("hello");
         await db2.add("world");
 
@@ -124,9 +121,9 @@ describe(`browser`, function () {
         await waitForPeers(session.peers[2], [client1.id], topic);
         await waitForPeers(session.peers[2], [client2.id], topic);
         /* 
-            expect(client1._directConnections.size).toEqual(0); // since browser
-                expect(client2._directConnections.size).toEqual(0); // since browser
-         */
+			expect(client1._directConnections.size).toEqual(0); // since browser
+				expect(client2._directConnections.size).toEqual(0); // since browser
+		 */
         await db1.add("hello");
         await db2.add("world");
 
@@ -171,7 +168,7 @@ describe(`browser`, function () {
         await waitForPeers(session.peers[1], [client1.id], topic);
         await waitForPeers(session.peers[0], [client2.id], topic);
         /*   expect(client1._directConnections.size).toEqual(0); // since browser
-          expect(client2._directConnections.size).toEqual(0); // since browser
+		  expect(client2._directConnections.size).toEqual(0); // since browser
    */
         await waitFor(() => db1.store.oplog.values.length === 2);
         expect(
@@ -214,7 +211,7 @@ describe(`browser`, function () {
         await waitForPeers(session.peers[0], [client2.id], topic);
         expect(client1._topicSubscriptions.has(topic)).toEqual(false);
         /*  expect(client1._directConnections.size).toEqual(0); // since browser
-         expect(client2._directConnections.size).toEqual(0); // since browser
+		 expect(client2._directConnections.size).toEqual(0); // since browser
   */
         await waitFor(() => db1.store.oplog.values.length === 2);
         expect(

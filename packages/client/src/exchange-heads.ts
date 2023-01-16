@@ -50,7 +50,6 @@ export class EntryWithRefs<T> {
 
 @variant([0, 0])
 export class ExchangeHeadsMessage<T> extends TransportMessage {
-
     @field({ type: "string" })
     programAddress: string;
 
@@ -63,7 +62,6 @@ export class ExchangeHeadsMessage<T> extends TransportMessage {
     @field({ type: option("u32") })
     programIndex?: number;
 
-
     @field({ type: option(MinReplicas) })
     minReplicas?: MinReplicas;
 
@@ -72,8 +70,6 @@ export class ExchangeHeadsMessage<T> extends TransportMessage {
 
     @field({ type: fixedUint8Array(4) })
     reserved: Uint8Array = new Uint8Array(4);
-
-
 
     constructor(props: {
         programIndex?: number;
@@ -96,7 +92,6 @@ export class ExchangeHeadsMessage<T> extends TransportMessage {
 
 @variant([0, 1])
 export class RequestHeadsMessage extends TransportMessage {
-
     @field({ type: "string" })
     address: string;
 
@@ -115,16 +110,18 @@ export const exchangeHeads = async (
     heads: Entry<any>[],
     includeReferences: boolean,
     identity: Identity | undefined,
-    replicating: boolean,
-
+    replicating: boolean
 ) => {
     const headsSet = new Set(heads);
     const headsWithRefs = heads.map((head) => {
         const refs = !includeReferences
             ? []
             : store.oplog
-                .getReferenceSamples(head, { pointerCount: 8, memoryLimit: 1e6 / heads.length }) // 1mb total limit split on all heads
-                .filter((r) => !headsSet.has(r)); // pick a proportional amount of refs so we can efficiently load the log. TODO should be equidistant for good performance?
+                  .getReferenceSamples(head, {
+                      pointerCount: 8,
+                      memoryLimit: 1e6 / heads.length,
+                  }) // 1mb total limit split on all heads
+                  .filter((r) => !headsSet.has(r)); // pick a proportional amount of refs so we can efficiently load the log. TODO should be equidistant for good performance?
         return new EntryWithRefs({
             entry: head,
             references: refs,
@@ -138,7 +135,7 @@ export const exchangeHeads = async (
             programAddress: (program.address ||
                 program.parentProgram.address)!.toString(),
             heads: headsWithRefs,
-            replicating
+            replicating,
         });
         const maybeSigned = new MaybeSigned({ data: serialize(message) });
         let signedMessage: MaybeSigned<any> = maybeSigned;

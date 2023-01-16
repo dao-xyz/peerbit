@@ -1,11 +1,10 @@
-import assert, { rejects } from "assert";
 import { Store, DefaultOptions, HeadsCache } from "../store.js";
 import { default as Cache } from "@dao-xyz/peerbit-cache";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Entry } from "@dao-xyz/peerbit-log";
 import { SimpleIndex } from "./utils.js";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import { fileURLToPath } from "url";
 import path from "path";
 import { AbstractLevel } from "abstract-level";
@@ -46,9 +45,12 @@ const checkHashes = async (
 
 // Test utils
 import { createStore } from "@dao-xyz/peerbit-test-utils";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 describe(`load`, function () {
-    let blockStore: Blocks,
+    let blockStore: BlockStore,
         signKey: KeyWithMeta<Ed25519Keypair>,
         identityStore: AbstractLevel<any, string, Uint8Array>,
         store: Store<any>,
@@ -62,7 +64,7 @@ describe(`load`, function () {
 
         signKey = await keystore.createEd25519Key();
 
-        blockStore = new Blocks(new MemoryLevelBlockStore());
+        blockStore = new MemoryLevelBlockStore();
         await blockStore.open();
 
         cacheStore = await createStore(path.join(__filename, "cache"));

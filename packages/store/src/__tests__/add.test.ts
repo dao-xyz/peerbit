@@ -15,9 +15,12 @@ const __filenameBase = path.parse(__filename).base;
 
 // Test utils
 import { createStore } from "@dao-xyz/peerbit-test-utils";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 describe(`addOperation`, function () {
-    let blockStore: Blocks,
+    let blockStore: BlockStore,
         signKey: KeyWithMeta<Ed25519Keypair>,
         identityStore: AbstractLevel<any, string, Uint8Array>,
         store: Store<any>,
@@ -38,7 +41,7 @@ describe(`addOperation`, function () {
 
         signKey = await keystore.createEd25519Key();
 
-        blockStore = new Blocks(new MemoryLevelBlockStore());
+        blockStore = new MemoryLevelBlockStore();
         await blockStore.open();
 
         cacheStore = await createStore(path.join(__filename, "cache"));
@@ -184,11 +187,10 @@ describe(`addOperation`, function () {
         for (let i = 0; i < writes; i++) {
             promises.push(store.addOperation({ step: i }, { nexts: [] }));
         }
-        await Promise.all(promises)
+        await Promise.all(promises);
         await waitFor(() => done);
         expect(store.oplog.values.length).toEqual(writes);
     });
-
 
     it("can add as unique heads", async () => {
         const writes = 3;

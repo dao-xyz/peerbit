@@ -9,7 +9,7 @@ import { delay, waitFor } from "@dao-xyz/peerbit-time";
 // Include test utilities
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 import { PermissionedEventStore } from "./utils/stores/test-store";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/libp2p-direct-block";
 
 const addHello = async (
     db: PermissionedEventStore,
@@ -51,7 +51,7 @@ describe(`encryption`, function () {
     let recieverKey: KeyWithMeta<Ed25519Keypair>;
     let topic: string;
 
-    beforeAll(async () => { });
+    beforeAll(async () => {});
     beforeEach(async () => {
         session = await LSession.connected(3);
 
@@ -60,7 +60,12 @@ describe(`encryption`, function () {
         });
         const program = await client1.open(
             new PermissionedEventStore({
-                trusted: [client1.id, client1.identity.publicKey, client2.id, client2.identity.publicKey]
+                trusted: [
+                    client1.id,
+                    client1.identity.publicKey,
+                    client2.id,
+                    client2.identity.publicKey,
+                ],
             })
         );
 
@@ -95,7 +100,7 @@ describe(`encryption`, function () {
         await session.stop();
     });
 
-    afterAll(async () => { });
+    afterAll(async () => {});
 
     it("replicates database of 1 entry known keys", async () => {
         let done = false;
@@ -173,65 +178,65 @@ describe(`encryption`, function () {
     });
 
     /* it("can relay with end to end encryption with public id and clock (E2EE-weak)", async () => {
-        await waitForPeers(
-            session.peers[2],
-            [client1.id],
-            topic
-        );
+		await waitForPeers(
+			session.peers[2],
+			[client1.id],
+			topic
+		);
 
-        db2 = await client2.open<PermissionedEventStore>(db1.address!, {
-            topic: topic,
-        });
-        await waitForPeers(session.peers[1], session.peers[0], topic);
-        await waitForPeers(session.peers[1], session.peers[0], topic);
-        await waitFor(() => db2.network?.trustGraph.index.size >= 3);
-        await client2.join(db2);
+		db2 = await client2.open<PermissionedEventStore>(db1.address!, {
+			topic: topic,
+		});
+		await waitForPeers(session.peers[1], session.peers[0], topic);
+		await waitForPeers(session.peers[1], session.peers[0], topic);
+		await waitFor(() => db2.network?.trustGraph.index.size >= 3);
+		await client2.join(db2);
 
-        const client3Key = await client3.keystore.createEd25519Key({
-            id: "unknown",
-            group: db1.address.toString(),
-        });
+		const client3Key = await client3.keystore.createEd25519Key({
+			id: "unknown",
+			group: db1.address.toString(),
+		});
 
-        await db2.store.add("hello", {
-            reciever: {
-                metadata: undefined,
-                next: undefined,
-                signatures: undefined,
-                payload: client3Key.keypair.publicKey,
-            },
-        });
+		await db2.store.add("hello", {
+			reciever: {
+				metadata: undefined,
+				next: undefined,
+				signatures: undefined,
+				payload: client3Key.keypair.publicKey,
+			},
+		});
 
-        // Wait for db1 (the relay) to get entry
-        await waitFor(() => db1.store.store.oplog.values.length === 1);
-        const entriesRelay: Entry<Operation<string>>[] = db1.store
-            .iterator({ limit: -1 })
-            .collect();
-        expect(entriesRelay.length).toEqual(1);
-        try {
-            await entriesRelay[0].getPayload(); // should fail, since relay can not see the message
-            assert(false);
-        } catch (error) {
-            expect(error).toBeInstanceOf(AccessError);
-        }
+		// Wait for db1 (the relay) to get entry
+		await waitFor(() => db1.store.store.oplog.values.length === 1);
+		const entriesRelay: Entry<Operation<string>>[] = db1.store
+			.iterator({ limit: -1 })
+			.collect();
+		expect(entriesRelay.length).toEqual(1);
+		try {
+			await entriesRelay[0].getPayload(); // should fail, since relay can not see the message
+			assert(false);
+		} catch (error) {
+			expect(error).toBeInstanceOf(AccessError);
+		}
 
-        const sender: Entry<Operation<string>>[] = db2.store
-            .iterator({ limit: -1 })
-            .collect();
-        expect(sender.length).toEqual(1);
-        await sender[0].getPayload();
-        expect(sender[0].payload.getValue().value).toEqual("hello");
+		const sender: Entry<Operation<string>>[] = db2.store
+			.iterator({ limit: -1 })
+			.collect();
+		expect(sender.length).toEqual(1);
+		await sender[0].getPayload();
+		expect(sender[0].payload.getValue().value).toEqual("hello");
 
-        // Now close db2 and open db3 and make sure message are available
-        await db2.drop();
-        db3 = await client3.open<PermissionedEventStore>(db1.address, {
-            topic: topic,
-            onReplicationComplete: async (store) => {
-                const entriesRelay: Entry<Operation<string>>[] = db3.store
-                    .iterator({ limit: -1 })
-                    .collect();
-                expect(entriesRelay.length).toEqual(1);
-                await entriesRelay[0].getPayload(); // should pass since client3 got encryption key
-            },
-        });
-    }); */
+		// Now close db2 and open db3 and make sure message are available
+		await db2.drop();
+		db3 = await client3.open<PermissionedEventStore>(db1.address, {
+			topic: topic,
+			onReplicationComplete: async (store) => {
+				const entriesRelay: Entry<Operation<string>>[] = db3.store
+					.iterator({ limit: -1 })
+					.collect();
+				expect(entriesRelay.length).toEqual(1);
+				await entriesRelay[0].getPayload(); // should pass since client3 got encryption key
+			},
+		});
+	}); */
 });

@@ -15,9 +15,11 @@ import sodium from "libsodium-wrappers";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
-import { Identity } from "../identity.js";
 import { LamportClock, Timestamp } from "../clock.js";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 import {
     identityFromSignKey,
     signingKeysFixturesPath,
@@ -32,7 +34,7 @@ const __dirname = dirname(__filename);
 const API = "js-ipfs";
 
 describe("Entry", function () {
-    let store: Blocks;
+    let store: BlockStore;
 
     let keystore: Keystore, signKey: KeyWithMeta<Ed25519Keypair>;
 
@@ -53,7 +55,7 @@ describe("Entry", function () {
             new Uint8Array([0])
         )) as KeyWithMeta<Ed25519Keypair>;
 
-        store = new Blocks(new MemoryLevelBlockStore());
+        store = new MemoryLevelBlockStore();
         await store.open();
     });
 
@@ -196,9 +198,11 @@ describe("Entry", function () {
             );
             assert.deepStrictEqual(
                 entry.metadata.clock.id,
-                new Ed25519PublicKey({
-                    publicKey: signKey.keypair.publicKey.publicKey,
-                }).bytes
+                new Uint8Array(
+                    new Ed25519PublicKey({
+                        publicKey: signKey.keypair.publicKey.publicKey,
+                    }).bytes
+                )
             );
             expect(entry.metadata.clock.timestamp.logical).toEqual(0);
             expect(entry.next.length).toEqual(0);
@@ -484,17 +488,17 @@ describe("Entry", function () {
 
         /*  TODO what is the point of this test?
     
-    it('throws an error if the object being passed is invalid', async () => {
-      let err
-      try {
-        const entry = await Entry.create({ store, identity: identityFromSignKey(signKey), gidSeed:   'A', data: 'hello', next: [] })
-        delete ((entry.metadata as MetadataSecure)._metadata as DecryptedThing<Metadata>)
-        await Entry.toMultihash(store, entry)
-      } catch (e: any) {
-        err = e
-      }
-      expect(err.message).toEqual('Invalid object format, cannot generate entry hash')
-    }) */
+	it('throws an error if the object being passed is invalid', async () => {
+	  let err
+	  try {
+		const entry = await Entry.create({ store, identity: identityFromSignKey(signKey), gidSeed:   'A', data: 'hello', next: [] })
+		delete ((entry.metadata as MetadataSecure)._metadata as DecryptedThing<Metadata>)
+		await Entry.toMultihash(store, entry)
+	  } catch (e: any) {
+		err = e
+	  }
+	  expect(err.message).toEqual('Invalid object format, cannot generate entry hash')
+	}) */
     });
 
     describe("fromMultihash", () => {

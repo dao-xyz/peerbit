@@ -26,7 +26,10 @@ import { createStore } from "@dao-xyz/peerbit-test-utils";
 
 import { Entry } from "@dao-xyz/peerbit-log";
 import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 
 describe(`addOperation`, function () {
     let signKey: KeyWithMeta<Ed25519Keypair>,
@@ -37,7 +40,7 @@ describe(`addOperation`, function () {
         senderKey: KeyWithMeta<Ed25519Keypair>,
         recieverKey: KeyWithMeta<Ed25519Keypair>,
         encryption: PublicKeyEncryptionResolver,
-        blockStore: Blocks;
+        blockStore: BlockStore;
     let index: SimpleIndex<string>;
 
     beforeEach(async () => {
@@ -80,7 +83,7 @@ describe(`addOperation`, function () {
                 }
             },
         };
-        blockStore = new Blocks(new MemoryLevelBlockStore());
+        blockStore = new MemoryLevelBlockStore();
         await blockStore.open();
     });
 
@@ -101,7 +104,7 @@ describe(`addOperation`, function () {
                 expect(heads.length).toEqual(1);
                 assert.deepStrictEqual(entry.payload.getValue(), data);
                 /*   expect(store.replicationStatus.progress).toEqual(1n);
-                  expect(store.replicationStatus.max).toEqual(1n); */
+				  expect(store.replicationStatus.max).toEqual(1n); */
                 assert.deepStrictEqual(index._index, heads);
                 await delay(5000); // seems because write is async?
                 const localHeads = await store.getCachedHeads();
@@ -168,7 +171,7 @@ describe(`addOperation`, function () {
             expect(heads.length).toEqual(1);
             assert.deepStrictEqual(entry.payload.getValue(), data);
             /* expect(store.replicationStatus.progress).toEqual(1n);
-            expect(store.replicationStatus.max).toEqual(1n); */
+			expect(store.replicationStatus.max).toEqual(1n); */
             assert.deepStrictEqual(index._index, heads);
             const localHeads = await store.getCachedHeads();
 

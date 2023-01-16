@@ -11,10 +11,14 @@ import {
     X25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
 import { RequestV0, ResponseV0, send, respond, RPC, RPCMessage } from "../";
-import { Ed25519Identity } from "@dao-xyz/peerbit-log";
+import { Ed25519Identity, Identity } from "@dao-xyz/peerbit-log";
 import { Program } from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
+import { PubSubData } from "@dao-xyz/libp2p-direct-sub";
 
 const createIdentity = async () => {
     const ed = await Ed25519Keypair.create();
@@ -62,26 +66,16 @@ describe("rpc", () => {
         responder = new RPCTest();
         responder.query = new RPC();
         const topic = uuid();
-        await responder.init(
-            session.peers[0],
-            new Blocks(new MemoryLevelBlockStore()),
-            await createIdentity(),
-            {
-                topic,
-                replicate: true,
-                store: {} as any,
-            } as any
-        );
+        await responder.init(session.peers[0], await createIdentity(), {
+            topic,
+            replicate: true,
+            store: {} as any,
+        });
         reader = deserialize(serialize(responder), RPCTest);
-        await reader.init(
-            session.peers[1],
-            new Blocks(new MemoryLevelBlockStore()),
-            await createIdentity(),
-            {
-                topic,
-                store: {} as any,
-            } as any
-        );
+        await reader.init(session.peers[1], await createIdentity(), {
+            topic,
+            store: {} as any,
+        } as any);
 
         await waitForPeers(
             session.peers[1],
@@ -176,17 +170,17 @@ describe("rpc", () => {
         const kp = await X25519Keypair.create();
 
         for (let i = 1; i < 3; i++) {
-            session.peers[i].pubsub.subscribe(topic);
-            session.peers[i].pubsub.addEventListener(
-                "message",
-                async (evt: CustomEvent<Message>) => {
+            session.peers[i].directsub.subscribe(topic);
+            session.peers[i].directsub.addEventListener(
+                "data",
+                async (evt: CustomEvent<PubSubData>) => {
                     // if (evt.detail.type === "signed")
                     {
                         const message = evt.detail;
                         if (message) {
                             /*  if (message.from.equals(session.peers[i].peerId)) {
-                                 return;
-                             } */
+								 return;
+							 } */
                             try {
                                 let { result: request } =
                                     await decryptVerifyInto(
@@ -261,17 +255,17 @@ describe("rpc", () => {
         const sender = await createIdentity();
         const responder = await createIdentity();
         const topic = uuid();
-        await session.peers[1].pubsub.subscribe(topic);
-        session.peers[1].pubsub.addEventListener(
-            "message",
-            async (evt: CustomEvent<Message>) => {
+        await session.peers[1].directsub.subscribe(topic);
+        session.peers[1].directsub.addEventListener(
+            "data",
+            async (evt: CustomEvent<PubSubData>) => {
                 // if (evt.detail.type === "signed")
                 {
                     const message = evt.detail;
                     if (message) {
                         /*  if (message.from.equals(session.peers[1].peerId)) {
-                             return;
-                         } */
+							 return;
+						 } */
                         try {
                             let { result: request, from } =
                                 await decryptVerifyInto(
@@ -355,17 +349,17 @@ describe("rpc", () => {
         const responder = await createIdentity();
         const requester = await createIdentity();
         const topic = uuid();
-        await session.peers[1].pubsub.subscribe(topic);
-        session.peers[1].pubsub.addEventListener(
-            "message",
-            async (evt: CustomEvent<Message>) => {
+        await session.peers[1].directsub.subscribe(topic);
+        session.peers[1].directsub.addEventListener(
+            "data",
+            async (evt: CustomEvent<PubSubData>) => {
                 //  if (evt.detail.type === "signed")
                 {
                     const message = evt.detail;
                     if (message) {
                         /* if (message.from.equals(session.peers[1].peerId)) {
-                            return;
-                        } */
+							return;
+						} */
                         try {
                             let { result: request } = await decryptVerifyInto(
                                 message.data,

@@ -7,7 +7,7 @@ import CustomCache from "@dao-xyz/peerbit-cache";
 import { jest } from "@jest/globals";
 import { databases } from "./utils";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/libp2p-direct-block";
 
 const dbPath = "./tmp/tests/customCache";
 

@@ -2,7 +2,10 @@ import rmrf from "rimraf";
 import fs from "fs-extra";
 import { Log } from "../log.js";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
@@ -18,7 +21,7 @@ let signKey: KeyWithMeta<Ed25519Keypair>;
 
 describe("Log - Delete", function () {
     let keystore: Keystore;
-    let store: Blocks;
+    let store: BlockStore;
 
     beforeAll(async () => {
         rmrf.sync(testKeyStorePath(__filenameBase));
@@ -35,7 +38,7 @@ describe("Log - Delete", function () {
         //@ts-ignore
         signKey = await keystore.getKey(new Uint8Array([0]));
 
-        store = new Blocks(new MemoryLevelBlockStore());
+        store = new MemoryLevelBlockStore();
         await store.open();
     });
 
@@ -48,7 +51,7 @@ describe("Log - Delete", function () {
     it("deletes recursively", async () => {
         const blockExists = async (hash: string): Promise<boolean> => {
             try {
-                await store.idle();
+                await (store as MemoryLevelBlockStore).idle();
                 return !!(await store.get(hash, { timeout: 3000 }));
             } catch (error) {
                 return false;

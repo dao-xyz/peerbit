@@ -1,25 +1,22 @@
-import { LibP2PBlockStore } from "../libp2p";
-import { Blocks } from "..";
+import { DirectBlock } from "../libp2p";
 import { waitFor, delay } from "@dao-xyz/peerbit-time";
 
-
-export const waitForPeers = async (...stores: Blocks[]) => {
-	for (let i = 0; i < stores.length; i++) {
-		await waitFor(() => {
-
-			for (let j = 0; j < stores.length; j++) {
-				if (i === j) {
-					continue;
-				}
-				if (!(stores[i]._store as LibP2PBlockStore)._blockSub.peers.has((stores[j]._store as LibP2PBlockStore)._blockSub.libp2p.peerId)) {
-					return false;
-				}
-			}
-			return true;
-		});
-		const peers = (stores[i]._store as LibP2PBlockStore)._blockSub.peers;
-		for (const peer of peers.values()) {
-			await waitFor(() => peer.isReadable && peer.isWritable)
-		}
-	}
-}
+export const waitForPeers = async (...stores: DirectBlock[]) => {
+    for (let i = 0; i < stores.length; i++) {
+        await waitFor(() => {
+            for (let j = 0; j < stores.length; j++) {
+                if (i === j) {
+                    continue;
+                }
+                if (!stores[i].peers.has(stores[j].publicKeyHash)) {
+                    return false;
+                }
+            }
+            return true;
+        });
+        const peers = stores[i].peers;
+        for (const peer of peers.values()) {
+            await waitFor(() => peer.isReadable && peer.isWritable);
+        }
+    }
+};

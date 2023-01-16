@@ -1,9 +1,8 @@
-import { Peerbit } from "../peer";
+import { Peerbit } from "../peer.js";
 import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 import { jest } from "@jest/globals";
 
 describe(`discovery`, function () {

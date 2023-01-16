@@ -6,14 +6,13 @@ import mapSeries from "p-each-series";
 import { v4 as uuid } from "uuid";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/libp2p-direct-block";
 
 describe(`Automatic Replication`, function () {
     /*  let ipfsd1: Controller, ipfsd2: Controller, ipfsd3: Controller, ipfsd4: Controller, ipfs1: IPFS, ipfs2: IPFS, ipfs3: IPFS, ipfs4: IPFS */
     let client1: Peerbit, client2: Peerbit, client3: Peerbit, client4: Peerbit;
     let session: LSession;
     beforeAll(async () => {
-
         const topic = uuid();
         session = await LSession.connected(2);
         client1 = await Peerbit.create(session.peers[0], { topic });
@@ -40,7 +39,6 @@ describe(`Automatic Replication`, function () {
     it("starts replicating the database when peers connect", async () => {
         const entryCount = 33;
         const entryArr: number[] = [];
-
 
         const db1 = await client1.open(
             new EventStore<string>({ id: "replicate-automatically-tests" })

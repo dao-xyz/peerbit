@@ -8,13 +8,16 @@ import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { AbstractLevel } from "abstract-level";
 import { fileURLToPath } from "url";
 import path from "path";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 
 describe(`Constructor`, function () {
-    let blockStore: Blocks,
+    let blockStore: BlockStore,
         signKey: KeyWithMeta<Ed25519Keypair>,
         identityStore: AbstractLevel<any, string, Uint8Array>,
         store: Store<any>,
@@ -36,7 +39,7 @@ describe(`Constructor`, function () {
 
         signKey = await keystore.createEd25519Key();
 
-        blockStore = new Blocks(new MemoryLevelBlockStore());
+        blockStore = new MemoryLevelBlockStore();
         await blockStore.open();
 
         const options = Object.assign({}, DefaultOptions, {

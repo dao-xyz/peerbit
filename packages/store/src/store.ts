@@ -17,7 +17,7 @@ import {
     EncryptionTemplateMaybeEncrypted,
 } from "@dao-xyz/peerbit-log";
 import { Entry } from "@dao-xyz/peerbit-log";
-import { stringifyCid, Blocks } from "@dao-xyz/peerbit-block";
+import { BlockStore, stringifyCid } from "@dao-xyz/libp2p-direct-block";
 import Cache from "@dao-xyz/peerbit-cache";
 import { variant, option, field, vec, Constructor } from "@dao-xyz/borsh";
 import { serialize, deserialize } from "@dao-xyz/borsh";
@@ -27,21 +27,21 @@ import {
     PublicKeyEncryptionResolver,
 } from "@dao-xyz/peerbit-crypto";
 import { EntryWithRefs } from "./entry-with-refs.js";
-import { delay, waitForAsync } from "@dao-xyz/peerbit-time";
+import { waitForAsync } from "@dao-xyz/peerbit-time";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import path from "path-browserify";
 import { v4 as uuid } from "uuid";
 import { join } from "./replicator.js";
+import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
 
 const logger = loggerFn({ module: "store" });
 
-export class CachedValue { }
+export class CachedValue {}
 export type AddOperationOptions<T> = {
     skipCanAppendCheck?: boolean;
     identity?: Identity;
     nexts?: Entry<T>[];
     trim?: TrimOptions | TrimToByteLengthOption | TrimToLengthOption;
-    pin?: boolean;
     reciever?: EncryptionTemplateMaybeEncrypted;
 };
 
@@ -123,7 +123,7 @@ export interface IStoreOptions<T> {
 
 export interface IInitializationOptions<T>
     extends IStoreOptions<T>,
-    IInitializationOptionsDefault<T> {
+        IInitializationOptionsDefault<T> {
     resolveCache: (
         store: Store<any>
     ) => Promise<Cache<CachedValue>> | Cache<CachedValue>;
@@ -145,7 +145,7 @@ export const DefaultOptions: IInitializationOptionsDefault<any> = {
 
 export interface Initiable<T> {
     init?(
-        blockStore: Blocks,
+        blockstore: BlockStore,
         identity: Identity,
         options: IInitializationOptions<T>
     ): Promise<this>;
@@ -180,7 +180,7 @@ export class Store<T> implements Initiable<T> {
     initialized: boolean;
     encoding: Encoding<T> = JSON_ENCODING;
 
-    _store: Blocks;
+    _store: BlockStore;
     _cache: Cache<CachedValue>;
     _oplog: Log<T>;
     _queue: PQueue<any, any>;
@@ -208,7 +208,7 @@ export class Store<T> implements Initiable<T> {
     }
 
     async init(
-        store: Blocks,
+        store: BlockStore,
         identity: Identity,
         options: IInitializationOptions<T>
     ): Promise<this> {
@@ -219,8 +219,17 @@ export class Store<T> implements Initiable<T> {
         }
 
         this._saveFile =
-            options.saveFile || ((file) => store.put(file, "dag-cbor"));
-        this._loadFile = options.loadFile || ((file) => store.get(file));
+            options.saveFile ||
+            (async (file) => store.put(await createBlock(file, "dag-cbor")));
+        this._loadFile =
+            options.loadFile ||
+            (async (file) => {
+                const block = await store.get<Uint8Array>(file);
+                if (block) {
+                    return getBlockValue<Uint8Array>(block);
+                }
+                return undefined;
+            });
 
         // Set ipfs since we are to save the store
         this._store = store;
@@ -574,7 +583,6 @@ export class Store<T> implements Initiable<T> {
     ): Promise<{ entry: Entry<T>; removed: Entry<T>[] }> {
         const change = await this._oplog.append(data, {
             nexts: options?.nexts,
-            pin: options?.pin,
             reciever: options?.reciever,
             canAppend: options?.skipCanAppendCheck ? undefined : this.canAppend,
             identity: options?.identity,
@@ -669,16 +677,10 @@ export class Store<T> implements Initiable<T> {
                     const headHash = head.hash;
                     head.hash = undefined as any;
                     try {
+                        const block = await createBlock(serialize(head), "raw");
                         const hash = options?.save
-                            ? await this._store.put(serialize(head), "raw")
-                            : stringifyCid(
-                                (
-                                    await this._store.block(
-                                        serialize(head),
-                                        "raw"
-                                    )
-                                ).cid
-                            );
+                            ? await this._store.put(block)
+                            : stringifyCid(block.cid);
                         head.hash = headHash;
                         if (head.hash === undefined) {
                             head.hash = hash; // can happen if you sync entries that you load directly from ipfs

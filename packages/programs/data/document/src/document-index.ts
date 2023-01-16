@@ -74,15 +74,15 @@ export class PutOperation<T> extends Operation<T> {
 
 /* @variant(1)
 export class PutAllOperation<T> extends Operation<T> {
-    @field({ type: vec(PutOperation) })
-    docs: PutOperation<T>[];
+	@field({ type: vec(PutOperation) })
+	docs: PutOperation<T>[];
 
-    constructor(props?: { docs: PutOperation<T>[] }) {
-        super();
-        if (props) {
-            this.docs = props.docs;
-        }
-    }
+	constructor(props?: { docs: PutOperation<T>[] }) {
+		super();
+		if (props) {
+			this.docs = props.docs;
+		}
+	}
 }
  */
 @variant(2)
@@ -188,26 +188,26 @@ export class DocumentIndex<T> extends ComposableProgram {
             try {
                 const payload = await item.getPayloadValue();
                 /* if (payload instanceof PutAllOperation) {
-                    for (const doc of payload.docs) {
-                        if (doc && handled[doc.key] !== true) {
-                            handled[doc.key] = true;
-                            this._index.set(doc.key, {
-                                key: asString(doc.key),
-                                value: this.deserializeOrPass(doc),
-                                entry: item,
-                                context: new Context({
-                                    created:
-                                        this._index.get(doc.key)?.context
-                                            .created ||
-                                        item.metadata.clock.timestamp.wallTime,
-                                    modified:
-                                        item.metadata.clock.timestamp.wallTime,
-                                    head: item.hash,
-                                }),
-                            });
-                        }
-                    }
-                } else  */
+					for (const doc of payload.docs) {
+						if (doc && handled[doc.key] !== true) {
+							handled[doc.key] = true;
+							this._index.set(doc.key, {
+								key: asString(doc.key),
+								value: this.deserializeOrPass(doc),
+								entry: item,
+								context: new Context({
+									created:
+										this._index.get(doc.key)?.context
+											.created ||
+										item.metadata.clock.timestamp.wallTime,
+									modified:
+										item.metadata.clock.timestamp.wallTime,
+									head: item.hash,
+								}),
+							});
+						}
+					}
+				} else  */
                 if (payload instanceof PutOperation) {
                     const key = payload.key;
                     if (removedSet.has(item.hash)) {

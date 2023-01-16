@@ -13,7 +13,7 @@ import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { CanOpenSubPrograms, Program } from "@dao-xyz/peerbit-program";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Entry } from "@dao-xyz/peerbit-log";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/libp2p-direct-block";
 
 describe(`Subprogram`, () => {
     let session: LSession;
@@ -134,9 +134,8 @@ describe(`Subprogram`, () => {
             replicate: false,
         });
 
-        const programFromReplicator = [
-            ...client2.programs.values()!,
-        ][0].program as ProgramWithSubprogram;
+        const programFromReplicator = [...client2.programs.values()!][0]
+            .program as ProgramWithSubprogram;
         programFromReplicator.accessRequests = [];
         await eventStoreString.add("hello"); // This will exchange an head that will make client 1 open the store
         await waitFor(() => programFromReplicator.accessRequests.length === 1); // one for checking 'can open store'

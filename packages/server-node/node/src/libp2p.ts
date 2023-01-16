@@ -86,7 +86,7 @@ export const createNode = async () => {
         transports: [tcp(), webSockets()],
         connectionEncryption: [noise()],
         streamMuxers: [mplex()],
-        pubsub: floodsub()
+        pubsub: floodsub(),
         /*  pubsub: gossipsub({
              canRelayMessage: true, */
         //  globalSignaturePolicy: "StrictNoSign", // will not be backwards compatible with networks globalSignaturePolicy is the default StrictSign

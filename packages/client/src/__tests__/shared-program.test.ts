@@ -2,7 +2,7 @@ import { Peerbit } from "../peer";
 import { EventStore } from "./utils/stores/event-store";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { SimpleStoreContract } from "./utils/access";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/libp2p-direct-block";
 
 describe(`shared`, () => {
     let session: LSession;

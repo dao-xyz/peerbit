@@ -17,6 +17,8 @@ import { Libp2p } from "libp2p";
 import { Identity } from "@dao-xyz/peerbit-log";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+import { LibP2PExtended } from "@dao-xyz/peerbit-program";
+import { PubSubData } from "@dao-xyz/libp2p-direct-sub";
 export const logger = loggerFn({ module: "rpc" });
 export type RPCOptions = {
     signer?: Identity;
@@ -33,7 +35,7 @@ export type RPCOptions = {
 };
 
 export const send = async (
-    libp2p: Libp2p,
+    libp2p: LibP2PExtended,
     topic: string,
     responseTopic: string,
     query: RequestV0,
@@ -47,14 +49,14 @@ export const send = async (
 
     // send query and wait for replies in a generator like behaviour
     let results = 0;
-    const _responseHandler = async (evt: CustomEvent<Message>) => {
+    const _responseHandler = async (evt: CustomEvent<PubSubData>) => {
         //  if (evt.detail.type === "signed")
         {
             const message = evt.detail;
             if (message) {
                 /*    if (message.from.equals(libp2p.peerId)) {
-                       return;
-                   } */
+					   return;
+				   } */
                 try {
                     const { result, from } = await decryptVerifyInto(
                         message.data,
@@ -89,8 +91,8 @@ export const send = async (
         }
     };
     try {
-        libp2p.pubsub.subscribe(responseTopic);
-        libp2p.pubsub.addEventListener("message", _responseHandler);
+        libp2p.directsub.subscribe(responseTopic);
+        libp2p.directsub.addEventListener("data", _responseHandler);
     } catch (error: any) {
         // timeout
         if (error.constructor.name != "TimeoutError") {
@@ -126,7 +128,9 @@ export const send = async (
         );
     }
 
-    await libp2p.pubsub.publish(topic, serialize(maybeEncryptedMessage));
+    await libp2p.directsub.publish(serialize(maybeEncryptedMessage), {
+        topics: [topic],
+    });
 
     if (options.amount != undefined) {
         await waitFor(() => results >= (options.amount as number), {
@@ -137,8 +141,8 @@ export const send = async (
         await delay(options.timeout);
     }
     try {
-        //  await libp2p.pubsub.unsubscribe(topic); TODO should we?
-        await libp2p.pubsub.removeEventListener("message", _responseHandler);
+        //  await libp2p.directsub.unsubscribe(topic); TODO should we?
+        await libp2p.directsub.removeEventListener("data", _responseHandler);
     } catch (error: any) {
         if (
             error?.constructor?.name === "NotStartedError" ||
@@ -153,7 +157,7 @@ export const send = async (
 };
 
 export const respond = async (
-    libp2p: Libp2p,
+    libp2p: LibP2PExtended,
     responseTopic: string,
     request: RequestV0,
     response: ResponseV0,
@@ -194,8 +198,7 @@ export const respond = async (
         request.respondTo
     );
 
-    await libp2p.pubsub.publish(
-        responseTopic,
-        serialize(maybeEncryptedMessage)
-    );
+    await libp2p.directsub.publish(serialize(maybeEncryptedMessage), {
+        topics: [responseTopic],
+    });
 };

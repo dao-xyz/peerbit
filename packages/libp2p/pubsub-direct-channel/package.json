@@ -1,55 +1,55 @@
 {
-	"name": "@dao-xyz/libp2p-pubsub-direct-channel",
-	"version": "0.0.45",
-	"description": "1-to-1 communication channel over LibP2P Pubsub between two peers",
-	"license": "MIT",
-	"type": "module",
-	"module": "lib/esm/index.js",
-	"types": "lib/esm/index.d.ts",
-	"exports": {
-		"import": "./lib/esm/index.js"
-	},
-	"files": [
-		"lib",
-		"src",
-		"!src/**/__tests__",
-		"!lib/**/__tests__",
-		"LICENSE"
-	],
-	"publishConfig": {
-		"access": "public"
-	},
-	"engines": {
-		"node": ">=16.15.1"
-	},
-	"keywords": [
-		"ipfs",
-		"log",
-		"crdts",
-		"crdt"
-	],
-	"dependencies": {
-		"@dao-xyz/borsh": "^5.1.0",
-		"@dao-xyz/libp2p-pubsub-peer-monitor": "^0.0.19",
-		"@dao-xyz/peerbit-borsh-utils": "^0.0.18"
-	},
-	"devDependencies": {
-		"@dao-xyz/peerbit-test-utils": "^0.0.25",
-		"@dao-xyz/peerbit-time": "^0.0.19"
-	},
-	"scripts": {
-		"clean": "shx rm -rf lib/*",
-		"build": "yarn clean && tsc -p tsconfig.json",
-		"postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
-		"test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
-		"test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
-		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit",
-		"test:browser": "npm run build:tests && mocha-headless-chrome -t 360000 -f ./test/browser/index.html -a no-sandbox",
-		"benchmark": "nyc  --require ts-node/register benchmark-runner -r -b --baselineLimit 1000",
-		"benchmark:stress": "benchmark-runner -r --grep stress"
-	},
-	"localMaintainers": [
-		"dao.xyz"
-	],
-	"gitHead": "bfbec720aee276ab1bc7cf4ee7a6c0e90ecb4f51"
+    "name": "@dao-xyz/libp2p-pubsub-direct-channel",
+    "version": "0.0.45",
+    "description": "1-to-1 communication channel over LibP2P Pubsub between two peers",
+    "license": "MIT",
+    "type": "module",
+    "module": "lib/esm/index.js",
+    "types": "lib/esm/index.d.ts",
+    "exports": {
+        "import": "./lib/esm/index.js"
+    },
+    "files": [
+        "lib",
+        "src",
+        "!src/**/__tests__",
+        "!lib/**/__tests__",
+        "LICENSE"
+    ],
+    "publishConfig": {
+        "access": "public"
+    },
+    "engines": {
+        "node": ">=16.15.1"
+    },
+    "keywords": [
+        "ipfs",
+        "log",
+        "crdts",
+        "crdt"
+    ],
+    "dependencies": {
+        "@dao-xyz/borsh": "^5.1.2",
+        "@dao-xyz/libp2p-pubsub-peer-monitor": "^0.0.19",
+        "@dao-xyz/peerbit-borsh-utils": "^0.0.18"
+    },
+    "devDependencies": {
+        "@dao-xyz/peerbit-test-utils": "^0.0.25",
+        "@dao-xyz/peerbit-time": "^0.0.19"
+    },
+    "scripts": {
+        "clean": "shx rm -rf lib/*",
+        "build": "yarn clean && tsc -p tsconfig.json",
+        "postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
+        "test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
+        "test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
+        "test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit",
+        "test:browser": "npm run build:tests && mocha-headless-chrome -t 360000 -f ./test/browser/index.html -a no-sandbox",
+        "benchmark": "nyc  --require ts-node/register benchmark-runner -r -b --baselineLimit 1000",
+        "benchmark:stress": "benchmark-runner -r --grep stress"
+    },
+    "localMaintainers": [
+        "dao.xyz"
+    ],
+    "gitHead": "bfbec720aee276ab1bc7cf4ee7a6c0e90ecb4f51"
 }

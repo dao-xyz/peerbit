@@ -6,12 +6,13 @@ import {
 } from "./entry-io.js";
 import { ISortFunction, LastWriteWins, NoZeroes } from "./log-sorting.js";
 import * as LogError from "./log-errors.js";
-import { Blocks } from "@dao-xyz/peerbit-block";
+import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { isDefined } from "./is-defined.js";
 import { findUniques } from "./find-uniques.js";
 import { difference } from "./difference.js";
 import { Log } from "./log.js";
 import { JSON_ENCODING } from "./encoding.js";
+import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
 
 const IPLD_LINKS = ["heads"];
 
@@ -28,7 +29,7 @@ export class LogIO {
      * @deprecated
      */
     static async toMultihash(
-        store: Blocks,
+        store: BlockStore,
         log: Log<any>,
         options: { format?: string } = {}
     ) {
@@ -39,21 +40,25 @@ export class LogIO {
         if (log.values.length < 1)
             throw new Error("Can't serialize an empty log");
 
-        return store.put(log.toJSON(), format!, {
-            links: IPLD_LINKS,
-        });
+        return store.put(
+            await createBlock(log.toJSON(), format!, {
+                links: IPLD_LINKS,
+            })
+        );
     }
 
     static async fromMultihash<T>(
-        store: Blocks,
+        store: BlockStore,
         hash: string,
         options: EntryFetchAllOptions<T> & { sortFn: any }
     ) {
         if (!isDefined(hash)) throw new Error(`Invalid hash: ${hash}`);
 
-        const logData = await store.get<{ id: string; heads: string[] }>(hash, {
-            links: IPLD_LINKS,
-        });
+        const block = await store.get<{ id: string; heads: string[] }>(hash);
+        if (!block) {
+            throw new Error("Not found");
+        }
+        const logData = await getBlockValue(block, IPLD_LINKS);
 
         if (!logData) {
             throw new Error("Not found");
@@ -78,7 +83,7 @@ export class LogIO {
     }
 
     static async fromEntryHash<T>(
-        store: Blocks,
+        store: BlockStore,
         hash: string[] | string,
         options: EntryFetchAllOptions<T> & { sortFn?: ISortFunction }
     ) {
@@ -119,7 +124,7 @@ export class LogIO {
      * @param {function(hash, entry,  parent, depth)} options.onFetched
      **/
     static async fromJSON<T>(
-        store: Blocks,
+        store: BlockStore,
         json: { id: string; heads: string[] },
         options: EntryFetchAllOptions<T>
     ) {
@@ -134,7 +139,7 @@ export class LogIO {
     }
 
     static async fromEntry<T>(
-        store: Blocks,
+        store: BlockStore,
         sourceEntries: Entry<T>[] | Entry<T>,
         options: EntryFetchAllOptions<T>
     ): Promise<{ entries: Entry<T>[] }> {

@@ -31,6 +31,7 @@ import { LogIndex } from "@dao-xyz/peerbit-logindex";
 import { AccessError } from "@dao-xyz/peerbit-crypto";
 import { Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+import { getBlockValue } from "@dao-xyz/libp2p-direct-block/lib/esm/block.js";
 
 const logger = loggerFn({ module: "document" });
 
@@ -114,7 +115,7 @@ export class Documents<T> extends ComposableProgram {
                                 .get<Uint8Array>(result.context.head, {
                                     timeout: 10 * 10000,
                                 })
-                                .then((bytes) => {
+                                .then(async (bytes) => {
                                     if (!bytes) {
                                         logger.error(
                                             "Faield to resolve block: ",
@@ -123,7 +124,10 @@ export class Documents<T> extends ComposableProgram {
                                         return;
                                     }
 
-                                    const entry = deserialize(bytes, Entry);
+                                    const entry = deserialize(
+                                        await getBlockValue(bytes),
+                                        Entry
+                                    );
                                     if (!this._optionCanAppend) {
                                         return entry;
                                     }

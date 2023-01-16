@@ -10,11 +10,10 @@ import { MemoryLevel } from "memory-level";
 import { default as Cache } from "@dao-xyz/peerbit-cache";
 import { v4 as uuid } from "uuid";
 import {
-
     LibP2PBlockStore,
     MemoryLevelBlockStore,
     Blocks,
-} from "@dao-xyz/peerbit-block";
+} from "@dao-xyz/libp2p-direct-block";
 
 const createIdentity = async () => {
     const ed = await Ed25519Keypair.create();
@@ -44,7 +43,7 @@ class P extends Program {
 }
 
 describe("clock", () => {
-    let session: LSession, responder: P, reader: P, readerStore: Blocks;
+    let session: LSession, responder: P, reader: P, readerstore: BlockStore;
     beforeAll(async () => {
         session = await LSession.connected(3);
         const responderIdentity = await createIdentity();

@@ -8,7 +8,7 @@ import { EventStore, Operation } from "./utils/stores/event-store";
 import { IStoreOptions } from "@dao-xyz/peerbit-store";
 import { v4 as uuid } from "uuid";
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/libp2p-direct-block";
 
 describe(`Replication`, function () {
     jest.setTimeout(60000);
@@ -30,7 +30,7 @@ describe(`Replication`, function () {
 
         options = Object.assign({}, options, {});
         db1 = await client1.open(new EventStore<string>({ id: "a" }), {
-            ...options
+            ...options,
         });
     });
 
@@ -178,9 +178,9 @@ describe(`Replication`, function () {
                         fail(
                             new Error(
                                 "Shouldn't have started replication twice for entry " +
-                                entry.hash +
-                                "\n" +
-                                entry.payload.getValue().value
+                                    entry.hash +
+                                    "\n" +
+                                    entry.payload.getValue().value
                             )
                         );
                     }
@@ -264,7 +264,7 @@ describe(`Replication`, function () {
                         fail(
                             new Error(
                                 "Shouldn't have started replication twice for entry " +
-                                entry.hash
+                                    entry.hash
                             )
                         );
                     }
@@ -344,7 +344,7 @@ describe(`Replication`, function () {
                         fail(
                             new Error(
                                 "Shouldn't have started replication twice for entry " +
-                                entry.hash
+                                    entry.hash
                             )
                         );
                     }

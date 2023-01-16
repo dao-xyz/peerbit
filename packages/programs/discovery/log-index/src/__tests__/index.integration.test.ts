@@ -25,7 +25,10 @@ import { fileURLToPath } from "url";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Address } from "@dao-xyz/peerbit-program";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 
 describe("query", () => {
     let session: LSession,
@@ -52,7 +55,6 @@ describe("query", () => {
             const signKey = await Ed25519Keypair.create();
             const cache = new Cache(cacheStores[i]);
             const logIndex = new LogIndex({ query: new RPC() });
-            const blockStore = new Blocks(new MemoryLevelBlockStore());
             logIndex.query.parentProgram = {
                 address: new Address({ cid: "1" }),
             } as any; // because query topic needs a parent with address
@@ -82,7 +84,7 @@ describe("query", () => {
                 },
             };
             await store.init(
-                blockStore,
+                session.peers[i].directblock,
                 {
                     ...signKey,
                     sign: async (data: Uint8Array) => await signKey.sign(data),
@@ -95,7 +97,6 @@ describe("query", () => {
             );
             await logIndex.init(
                 session.peers[i],
-                blockStore,
                 {
                     ...signKey,
                     sign: async (data: Uint8Array) => await signKey.sign(data),

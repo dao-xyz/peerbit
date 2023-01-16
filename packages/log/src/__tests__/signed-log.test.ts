@@ -8,7 +8,10 @@ import { Ed25519Keypair, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
 
@@ -21,7 +24,7 @@ describe("Signed Log", function () {
         signKey2: KeyWithMeta<Ed25519Keypair>;
 
     let keystore: Keystore;
-    let store: Blocks;
+    let store: BlockStore;
 
     beforeAll(async () => {
         rmrf.sync(testKeyStorePath(__filenameBase));
@@ -42,7 +45,7 @@ describe("Signed Log", function () {
             new Uint8Array([1])
         )) as KeyWithMeta<Ed25519Keypair>;
 
-        store = new Blocks(new MemoryLevelBlockStore());
+        store = new MemoryLevelBlockStore();
         await store.open();
     });
 
@@ -160,23 +163,23 @@ describe("Signed Log", function () {
     // This test is not expected anymore (TODO what is the expected behaviour, enforce arbitrary conditions or put responibility on user)
     /* it('doesn\'t join logs with different IDs ', async () => {
   const log1 = new Log<string>(store, {
-    ...signKey.keypair,
-    sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
+	...signKey.keypair,
+	sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
   }, { logId: 'A' })
   const log2 = new Log<string>(store, {
-    ...signKey2.keypair,
-    sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
+	...signKey2.keypair,
+	sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
   }, { logId: 'B' })
 
   let err
   try {
-    await log1.append('one')
-    await log2.append('two')
-    await log2.append('three')
-    await log1.join(log2)
+	await log1.append('one')
+	await log2.append('two')
+	await log2.append('three')
+	await log1.join(log2)
   } catch (e: any) {
-    err = e.toString()
-    throw e
+	err = e.toString()
+	throw e
   }
 
   expect(err).toEqual(undefined)
@@ -229,46 +232,46 @@ describe("Signed Log", function () {
     /* 
 it('throws an error if entry doesn\'t have append access', async () => {
   const log1 = new Log<string>(store, {
-    ...signKey.keypair,
-    sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
+	...signKey.keypair,
+	sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
   }, { logId: 'A' })
   const log2 = new Log<string>(store, {
-    ...signKey2.keypair,
-    sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
+	...signKey2.keypair,
+	sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
   }, { logId: 'A' })
 
   let err
   try {
-    await log1.append('one')
-    await log2.append('two')
-    await log1.join(log2)
+	await log1.append('one')
+	await log2.append('two')
+	await log1.join(log2)
   } catch (e: any) {
-    err = e.toString()
+	err = e.toString()
   }
 
   expect(err).toEqual(`Error: Could not append entry, key "${signKey2.keypair.publicKey}" is not allowed to write to the log`)
 })
 
 it('throws an error upon join if entry doesn\'t have append access', async () => {
-    const canAppend: CanAppend<any> = async (_entry: any, signature: MaybeEncrypted<SignatureWithKey>) => signature.decrypted.getValue(SignatureWithKey).publicKey.equals(signKey.keypair.publicKey);
-    const log1 = new Log<string>(store, {
-      ...signKey.keypair,
-      sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
-    }, { logId: 'A' })
-    const log2 = new Log<string>(store, {
-      ...signKey2.keypair,
-      sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
-    }, { logId: 'A' })
+	const canAppend: CanAppend<any> = async (_entry: any, signature: MaybeEncrypted<SignatureWithKey>) => signature.decrypted.getValue(SignatureWithKey).publicKey.equals(signKey.keypair.publicKey);
+	const log1 = new Log<string>(store, {
+	  ...signKey.keypair,
+	  sign: async (data: Uint8Array) => (await signKey.keypair.sign(data))
+	}, { logId: 'A' })
+	const log2 = new Log<string>(store, {
+	  ...signKey2.keypair,
+	  sign: async (data: Uint8Array) => (await signKey2.keypair.sign(data))
+	}, { logId: 'A' })
 
-    let err
-    try {
-      await log1.append('one')
-      await log2.append('two')
-      await log1.join(log2)
-    } catch (e: any) {
-      err = e.toString()
-    }
+	let err
+	try {
+	  await log1.append('one')
+	  await log2.append('two')
+	  await log1.join(log2)
+	} catch (e: any) {
+	  err = e.toString()
+	}
 
-    expect(err).toEqual(`Error: Could not append Entry<T>, key "${signKey2.keypair.publicKey}" is not allowed to write to the log`)
+	expect(err).toEqual(`Error: Could not append Entry<T>, key "${signKey2.keypair.publicKey}" is not allowed to write to the log`)
   }) */
 });

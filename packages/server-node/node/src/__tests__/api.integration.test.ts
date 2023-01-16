@@ -40,11 +40,7 @@ describe("libp2p only", () => {
         } catch (error) {
             // not peerbit, so should not succeed
         }
-        expect(await c.topics.get(false)).toContainAllValues([
-            "_",
-            "1",
-            "2",
-        ]);
+        expect(await c.topics.get(false)).toContainAllValues(["_", "1", "2"]);
     });
 });
 describe("server", () => {

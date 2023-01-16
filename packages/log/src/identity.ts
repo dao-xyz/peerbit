@@ -1,14 +1,14 @@
 import {
     Ed25519PrivateKey,
     Ed25519PublicKey,
-    Secp256k1PublicKey,
+    Secp256k1Keccak256PublicKey,
 } from "@dao-xyz/peerbit-crypto";
 
 /**
  * Can sign
  */
 export type Secp256k1Identity = {
-    publicKey: Secp256k1PublicKey;
+    publicKey: Secp256k1Keccak256PublicKey;
     sign: (data: Uint8Array) => Promise<Uint8Array> | Uint8Array;
 };
 

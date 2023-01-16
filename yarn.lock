@@ -1966,10 +1966,10 @@
   dependencies:
     "@jridgewell/trace-mapping" "0.3.9"
 
-"@dao-xyz/borsh@^5.1.0":
-  version "5.1.0"
-  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-5.1.0.tgz#c121cd926ca37e1990bc0648b1e508607f9e3563"
-  integrity sha512-KSdUuYR+aW1Yr6WX8f4HdvTIKegI0bdv48djukChDRrjoC5etxN0qoeuTNnsW9PFny1GNsq9KmUMLstujl1fDQ==
+"@dao-xyz/borsh@^5.1.2":
+  version "5.1.2"
+  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-5.1.2.tgz#3083d9c3593f36c23689ff605a3eb17ec78e1a1a"
+  integrity sha512-F2OlpTwJKEYYGhlLz2oPpF9SCfPnZvdTsl/L6o+6qCzKbJWQuShxzlZYMKsrgxRESeZwslQjMLgz4PNy6Q0qbA==
   dependencies:
     "@protobufjs/float" "^1.0.2"
     "@protobufjs/utf8" "^1.1.0"
@@ -8520,11 +8520,6 @@ it-pushable@^3.0.0, it-pushable@^3.1.0:
   version "3.1.0"
   resolved "https://registry.yarnpkg.com/it-pushable/-/it-pushable-3.1.0.tgz#2fba7aaca189595e64e042ac947c6748ece2eb6b"
   integrity sha512-sEAdT86u6aIWvLkH4hlOmgvHpRyUOUG22HD365H+Dh67zYpaPdILmT4Om7Wjdb+m/SjEB81z3nYCoIrgVYpOFA==
-
-it-pushable@^3.1.2:
-  version "3.1.2"
-  resolved "https://registry.yarnpkg.com/it-pushable/-/it-pushable-3.1.2.tgz#6f2420fb192f637613c561720945a36b6d9160ae"
-  integrity sha512-zU9FbeoGT0f+yobwm8agol2OTMXbq4ZSWLEi7hug6TEZx4qVhGhGyp31cayH04aBYsIoO2Nr5kgMjH/oWj2BJQ==
 
 it-reader@^6.0.1:
   version "6.0.1"

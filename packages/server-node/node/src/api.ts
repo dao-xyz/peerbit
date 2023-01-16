@@ -8,7 +8,6 @@ import { multiaddr } from "@multiformats/multiaddr";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { v4 as uuid } from "uuid";
 import { Libp2p } from "libp2p";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 import { getConfigDir, getCredentialsPath, NotFoundError } from "./config.js";
 import { setMaxListeners } from "events";
 import { createNode } from "./libp2p.js";
@@ -59,8 +58,8 @@ export const createPassword = async (): Promise<string> => {
     if (await checkExistPath(credentialsPath)) {
         throw new Error(
             "Config path for credentials: " +
-            credentialsPath +
-            ", already exist"
+                credentialsPath +
+                ", already exist"
         );
     }
     console.log(`Creating config folder ${configDir}`);
@@ -155,7 +154,7 @@ export const startServer = async (
     let err: any = undefined;
     for (let i = 0; i < 3; i++) {
         try {
-            await libp2p.pubsub.subscribe(DEFAULT_BLOCK_TRANSPORT_TOPIC);
+            await libp2p.directsub.subscribe(DEFAULT_BLOCK_TRANSPORT_TOPIC);
             err = undefined;
             break;
         } catch (error) {
@@ -209,7 +208,6 @@ export const startServer = async (
             if (p) {
                 return p.program;
             }
-
         } else {
             throw new Error(notPeerBitError);
         }
@@ -290,7 +288,7 @@ export const startServer = async (
                                     } else {
                                         res.write(
                                             JSON.stringify(
-                                                libp2p.pubsub.getTopics()
+                                                libp2p.directsub.getTopics()
                                             )
                                         );
                                         res.end();
@@ -329,10 +327,10 @@ export const startServer = async (
                                             res.writeHead(400);
                                             res.end(
                                                 "Invalid topic: " +
-                                                JSON.stringify(topic)
+                                                    JSON.stringify(topic)
                                             );
                                         } else if (!replicate) {
-                                            libp2p.pubsub.subscribe(topic);
+                                            libp2p.directsub.subscribe(topic);
                                             res.writeHead(200);
                                             res.end();
                                         } else {
@@ -417,7 +415,7 @@ export const startServer = async (
                                                 (client as Peerbit)
                                                     .open(parsed, {
                                                         /*    topic:
-                                                               topic || undefined, */
+															   topic || undefined, */
                                                     })
                                                     .then((program) => {
                                                         res.writeHead(200);
@@ -429,7 +427,7 @@ export const startServer = async (
                                                         res.writeHead(400);
                                                         res.end(
                                                             "Failed to open program: " +
-                                                            error.toString()
+                                                                error.toString()
                                                         );
                                                     });
                                             } catch (error) {
@@ -484,28 +482,28 @@ export const startServer = async (
                                     const program = getProgramFromPath(req, 2);
                                     if (program) {
                                         /*  const network = getNetwork(program);
-                                         if (network) {
-                                             res.setHeader(
-                                                 "Content-Type",
-                                                 "application/json"
-                                             );
-                                             res.writeHead(200);
-                                             res.write(
-                                                 JSON.stringify(
-                                                     [
-                                                         ...network.trustGraph._index._index.values(),
-                                                     ].map((x) =>
-                                                         toBase64(
-                                                             serialize(x.value)
-                                                         )
-                                                     )
-                                                 )
-                                             );
-                                             res.end();
-                                         } else {
-                                             res.writeHead(400);
-                                             res.end("Program is not in a VPC");
-                                         } */
+										 if (network) {
+											 res.setHeader(
+												 "Content-Type",
+												 "application/json"
+											 );
+											 res.writeHead(200);
+											 res.write(
+												 JSON.stringify(
+													 [
+														 ...network.trustGraph._index._index.values(),
+													 ].map((x) =>
+														 toBase64(
+															 serialize(x.value)
+														 )
+													 )
+												 )
+											 );
+											 res.end();
+										 } else {
+											 res.writeHead(400);
+											 res.end("Program is not in a VPC");
+										 } */
                                     } else {
                                         res.writeHead(404);
                                         res.end();
@@ -536,46 +534,46 @@ export const startServer = async (
                                         );
                                         if (program) {
                                             /*  const network = getNetwork(program);
-                                             if (network) {
-                                                 try {
-                                                     const reciever =
-                                                         deserialize(
-                                                             fromBase64(body),
-                                                             PublicSignKey
-                                                         );
-                                                     network
-                                                         .add(reciever)
-                                                         .then((r) => {
-                                                             res.writeHead(200);
-                                                             res.end(
-                                                                 toBase64(
-                                                                     serialize(r)
-                                                                 )
-                                                             );
-                                                         })
-                                                         .catch(
-                                                             (error?: any) => {
-                                                                 res.writeHead(
-                                                                     400
-                                                                 );
-                                                                 res.end(
-                                                                     "Failed to add relation: " +
-                                                                         typeof error.message ===
-                                                                         "string"
-                                                                         ? error.message
-                                                                         : JSON.stringify(
-                                                                             error.message
-                                                                         )
-                                                                 );
-                                                             }
-                                                         );
-                                                 } catch (error) {
-                                                     res.writeHead(400);
-                                                     res.end(
-                                                         "Invalid base64 program binary"
-                                                     );
-                                                 }
-                                             } */
+											 if (network) {
+												 try {
+													 const reciever =
+														 deserialize(
+															 fromBase64(body),
+															 PublicSignKey
+														 );
+													 network
+														 .add(reciever)
+														 .then((r) => {
+															 res.writeHead(200);
+															 res.end(
+																 toBase64(
+																	 serialize(r)
+																 )
+															 );
+														 })
+														 .catch(
+															 (error?: any) => {
+																 res.writeHead(
+																	 400
+																 );
+																 res.end(
+																	 "Failed to add relation: " +
+																		 typeof error.message ===
+																		 "string"
+																		 ? error.message
+																		 : JSON.stringify(
+																			 error.message
+																		 )
+																 );
+															 }
+														 );
+												 } catch (error) {
+													 res.writeHead(400);
+													 res.end(
+														 "Invalid base64 program binary"
+													 );
+												 }
+											 } */
                                         } else {
                                             res.writeHead(404);
                                             res.end();
@@ -730,9 +728,9 @@ export const client = async (
                 const result = getBodyByStatus<string, any>(
                     await axios.get(
                         endpoint +
-                        PROGRAM_PATH +
-                        "/" +
-                        encodeURIComponent(address.toString()),
+                            PROGRAM_PATH +
+                            "/" +
+                            encodeURIComponent(address.toString()),
                         { validateStatus, headers: await getHeaders() }
                     )
                 );
@@ -757,8 +755,8 @@ export const client = async (
                 const resp = throwIfNot200(
                     await axios.put(
                         endpoint +
-                        PROGRAM_PATH +
-                        (topic ? "?topic=" + topic : ""),
+                            PROGRAM_PATH +
+                            (topic ? "?topic=" + topic : ""),
                         base64,
                         { validateStatus, headers: await getHeaders() }
                     )
@@ -786,17 +784,17 @@ export const client = async (
                     const result = getBodyByStatus(
                         await axios.get(
                             endpoint +
-                            NETWORK_PEERS_PATH +
-                            "/" +
-                            encodeURIComponent(address.toString()),
+                                NETWORK_PEERS_PATH +
+                                "/" +
+                                encodeURIComponent(address.toString()),
                             { validateStatus, headers: await getHeaders() }
                         )
                     );
                     return !result
                         ? undefined
                         : (result as string[]).map((r) =>
-                            deserialize(fromBase64(r), IdentityRelation)
-                        );
+                              deserialize(fromBase64(r), IdentityRelation)
+                          );
                 },
             },
             peer: {
@@ -808,9 +806,9 @@ export const client = async (
                     const resp = throwIfNot200(
                         await axios.put(
                             endpoint +
-                            NETWORK_PEER_PATH +
-                            "/" +
-                            encodeURIComponent(address.toString()),
+                                NETWORK_PEER_PATH +
+                                "/" +
+                                encodeURIComponent(address.toString()),
                             base64,
                             { validateStatus, headers: await getHeaders() }
                         )

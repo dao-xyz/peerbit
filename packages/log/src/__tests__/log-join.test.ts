@@ -10,12 +10,6 @@ import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
-import {
-    LibP2PBlockStore,
-    MemoryLevelBlockStore,
-    Blocks,
-
-} from "@dao-xyz/peerbit-block";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
 
@@ -35,8 +29,6 @@ const last = (arr: any[]) => {
 describe("Log - Join", function () {
     let keystore: Keystore;
     let session: LSession;
-    let store: Blocks;
-    let store2: Blocks;
 
     beforeAll(async () => {
         rmrf.sync(testKeyStorePath(__filenameBase));
@@ -70,19 +62,9 @@ describe("Log - Join", function () {
         signKey3 = keys[2];
         signKey4 = keys[3];
         session = await LSession.connected(2);
-        store = new Blocks(
-            new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
-        );
-        await store.open();
-        store2 = new Blocks(
-            new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
-        );
-        await store2.open();
     });
 
     afterAll(async () => {
-        await store.close();
-        await store2.close();
         await session.stop();
         rmrf.sync(testKeyStorePath(__filenameBase));
 
@@ -97,7 +79,7 @@ describe("Log - Join", function () {
 
         beforeEach(async () => {
             log1 = new Log(
-                store,
+                session.peers[0].directblock,
                 {
                     ...signKey.keypair,
                     sign: async (data: Uint8Array) =>
@@ -106,7 +88,7 @@ describe("Log - Join", function () {
                 { logId: "X" }
             );
             log2 = new Log(
-                store,
+                session.peers[0].directblock,
                 {
                     ...signKey2.keypair,
                     sign: async (data: Uint8Array) =>
@@ -115,7 +97,7 @@ describe("Log - Join", function () {
                 { logId: "X" }
             );
             log3 = new Log(
-                store2,
+                session.peers[1].directblock,
                 {
                     ...signKey3.keypair,
                     sign: async (data: Uint8Array) =>
@@ -124,7 +106,7 @@ describe("Log - Join", function () {
                 { logId: "X" }
             );
             log4 = new Log(
-                store2,
+                session.peers[1].directblock,
                 {
                     ...signKey4.keypair,
                     sign: async (data: Uint8Array) =>
@@ -145,7 +127,7 @@ describe("Log - Join", function () {
                 const prev2 = last(items2);
                 const prev3 = last(items3);
                 const n1 = await Entry.create({
-                    store,
+                    store: session.peers[0].directblock,
                     identity: {
                         ...signKey.keypair,
                         sign: async (data: Uint8Array) =>
@@ -156,7 +138,7 @@ describe("Log - Join", function () {
                     next: prev1 ? [prev1] : undefined,
                 });
                 const n2 = await Entry.create({
-                    store,
+                    store: session.peers[0].directblock,
                     identity: {
                         ...signKey2.keypair,
                         sign: async (data: Uint8Array) =>
@@ -166,7 +148,7 @@ describe("Log - Join", function () {
                     next: prev2 ? [prev2, n1] : [n1],
                 });
                 const n3 = await Entry.create({
-                    store: store2,
+                    store: session.peers[1].directblock,
                     identity: {
                         ...signKey3.keypair,
                         sign: async (data: Uint8Array) =>
@@ -183,7 +165,7 @@ describe("Log - Join", function () {
             // Here we're creating a log from entries signed by A and B
             // but we accept entries from C too
             const logA = await Log.fromEntry(
-                store,
+                session.peers[0].directblock,
                 {
                     ...signKey3.keypair,
                     sign: async (data: Uint8Array) =>
@@ -196,7 +178,7 @@ describe("Log - Join", function () {
             // Here we're creating a log from entries signed by peer A, B and C
             // "logA" accepts entries from peer C so we can join logs A and B
             const logB = await Log.fromEntry(
-                store2,
+                session.peers[1].directblock,
                 {
                     ...signKey3.keypair,
                     sign: async (data: Uint8Array) =>
@@ -405,10 +387,10 @@ describe("Log - Join", function () {
             const { entry: b2 } = await log2.append("helloB2");
 
             expect(a2.metadata.clock.id).toEqual(
-                signKey.keypair.publicKey.bytes
+                new Uint8Array(signKey.keypair.publicKey.bytes)
             );
             expect(b2.metadata.clock.id).toEqual(
-                signKey2.keypair.publicKey.bytes
+                new Uint8Array(signKey2.keypair.publicKey.bytes)
             );
             expect(
                 a2.metadata.clock.timestamp.compare(a1.metadata.clock.timestamp)
@@ -523,7 +505,7 @@ describe("Log - Join", function () {
             // Sometimes failes because of clock ids are random TODO Fix
             expect(log1.heads[log1.heads.length - 1].gid).toEqual(a1.gid);
             expect(a2.metadata.clock.id).toEqual(
-                signKey.keypair.publicKey.bytes
+                new Uint8Array(signKey.keypair.publicKey.bytes)
             );
             expect(
                 a2.metadata.clock.timestamp.compare(a1.metadata.clock.timestamp)
@@ -545,7 +527,7 @@ describe("Log - Join", function () {
             const { entry: d4 } = await log4.append("helloD4");
 
             expect(d4.metadata.clock.id).toEqual(
-                signKey4.keypair.publicKey.bytes
+                new Uint8Array(signKey4.keypair.publicKey.bytes)
             );
 
             const expectedData = [
@@ -571,14 +553,14 @@ describe("Log - Join", function () {
         describe("gid shadow callback", () => {
             it("it emits callback when gid is shadowed, triangle shape", async () => {
                 /*  
-                Either A or B shaded
-                ┌─┐┌─┐  
-                │a││b│  
-                └┬┘└┬┘  
-                ┌▽──▽──┐
-                │a or b│
-                └──────┘
-                */
+				Either A or B shaded
+				┌─┐┌─┐  
+				│a││b│  
+				└┬┘└┬┘  
+				┌▽──▽──┐
+				│a or b│
+				└──────┘
+				*/
 
                 const { entry: a1 } = await log1.append("helloA1", {
                     nexts: [],
@@ -599,17 +581,17 @@ describe("Log - Join", function () {
 
             it("it emits callback when gid is shadowed, N shape", async () => {
                 /*  
-                    No shadows
-                    ┌──┐┌───┐ 
-                    │a0││b1 │ 
-                    └┬─┘└┬─┬┘ 
-                    ┌▽─┐ │┌▽─┐
-                    │a1│ ││b2│
-                    └┬─┘ │└──┘
-                    ┌▽───▽┐   
-                    │a2   │   
-                    └─────┘   
-                */
+					No shadows
+					┌──┐┌───┐ 
+					│a0││b1 │ 
+					└┬─┘└┬─┬┘ 
+					┌▽─┐ │┌▽─┐
+					│a1│ ││b2│
+					└┬─┘ │└──┘
+					┌▽───▽┐   
+					│a2   │   
+					└─────┘   
+				*/
 
                 const { entry: a0 } = await log1.append("helloA0", {
                     nexts: [],

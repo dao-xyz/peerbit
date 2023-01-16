@@ -1,16 +1,11 @@
 import {
     AbstractType,
-    BinaryWriter,
     BorshError,
-    Constructor,
     deserialize,
-    field,
-    getSchemasBottomUp,
     serialize,
     variant,
 } from "@dao-xyz/borsh";
-import type { Message } from "@libp2p/interface-pubsub";
-import { PublicSignKey, toBase64 } from "@dao-xyz/peerbit-crypto";
+import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
 import { send, RPCOptions, respond, logger } from "./io.js";
@@ -18,57 +13,14 @@ import {
     AbstractProgram,
     Address,
     ComposableProgram,
-    Program,
+    LibP2PExtended,
     ProgramInitializationOptions,
 } from "@dao-xyz/peerbit-program";
-import { Libp2p } from "libp2p";
 import { Identity } from "@dao-xyz/peerbit-log";
 import { X25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { Blocks } from "@dao-xyz/peerbit-block";
+import { PubSubData } from "@dao-xyz/libp2p-direct-sub";
 
 export type SearchContext = (() => Address) | AbstractProgram | string;
-
-export const getDiscriminatorApproximation = (
-    constructor: Constructor<any>
-): Uint8Array => {
-    const schemas = getSchemasBottomUp(constructor);
-    // assume ordered
-    const writer = new BinaryWriter();
-    for (let i = 0; i < schemas.length; i++) {
-        const clazz = schemas[i];
-        const variant = clazz.schema.variant;
-        if (variant == undefined) {
-            continue;
-        }
-        if (typeof variant === "string") {
-            writer.string(variant);
-        } else if (typeof variant === "number") {
-            writer.u8(variant);
-        } else if (Array.isArray(variant)) {
-            variant.forEach((v) => {
-                writer.u8(v);
-            });
-        } else {
-            throw new Error(
-                "Can not resolve discriminator for variant with type: " +
-                typeof variant
-            );
-        }
-    }
-
-    return writer.toArray();
-};
-
-export const getSubprogramTopic = (
-    parentProgram: Program,
-    region: string
-): string => {
-    const disriminator = getDiscriminatorApproximation(
-        parentProgram.constructor as Constructor<any>
-    );
-    return region + "/" + toBase64(disriminator) + "/?";
-};
-
 export type CanRead = (key?: PublicSignKey) => Promise<boolean> | boolean;
 export type RPCTopicOption =
     | { queryAddressSuffix: string }
@@ -89,79 +41,80 @@ export type ResponseHandler<Q, R> = (
     query: Q,
     context: QueryContext
 ) => Promise<R | undefined> | R | undefined;
-
+/* 
 export abstract class RPCTopic {
-    abstract from(address: Address): string;
+	abstract from(address: Address): string;
 }
 
 @variant(0)
 export class RPCRegion extends RPCTopic {
-    @field({ type: "string" })
-    id: string;
+	@field({ type: "string" })
+	id: string;
 
-    constructor(properties?: { id: string }) {
-        super();
-        if (properties) {
-            this.id = properties.id;
-        }
-    }
+	constructor(properties?: { id: string }) {
+		super();
+		if (properties) {
+			this.id = properties.id;
+		}
+	}
 
-    from(_address: Address) {
-        return this.id;
-    }
+	from(_address: Address) {
+		return this.id;
+	}
 }
 
 @variant(1)
 export class RPCAddressSuffix extends RPCTopic {
-    @field({ type: "string" })
-    suffix: string;
-    constructor(properties?: { suffix: string }) {
-        super();
-        if (properties) {
-            this.suffix = properties.suffix;
-        }
-    }
+	@field({ type: "string" })
+	suffix: string;
+	constructor(properties?: { suffix: string }) {
+		super();
+		if (properties) {§
+			this.suffix = properties.suffix;
+		}
+	}
 
-    from(address: Address) {
-        return address.toString() + "/" + this.suffix;
-    }
+	from(address: Address) {
+		return address.toString() + "/" + this.suffix;
+	}
 }
-
+ */
 @variant("rpc")
 export class RPC<Q, R> extends ComposableProgram {
-    rpcRegion?: RPCTopic;
+    /* rpcRegion?: RPCTopic; */
     canRead: CanRead;
 
     _subscribed = false;
-    _onMessageBinded: (evt: CustomEvent<Message>) => any;
+    _onMessageBinded: (evt: CustomEvent<PubSubData>) => any;
     _responseHandler: ResponseHandler<Q, (R | undefined) | R>;
     _requestType: AbstractType<Q>;
     _responseType: AbstractType<R>;
+    _topic: string | undefined;
     _context: SearchContext;
 
     public setup(options: RPCInitializationOptions<Q, R>) {
-        if (options.rpcTopic) {
-            if (
-                !!(options.rpcTopic as { rpcRegion }).rpcRegion &&
-                !!(options.rpcTopic as { rpcRegion }).rpcRegion ==
-                !!(options.rpcTopic as { queryAddressSuffix })
-                    .queryAddressSuffix
-            ) {
-                throw new Error(
-                    "Expected either rpcRegion or queryAddressSuffix or none"
-                );
-            }
-            if ((options.rpcTopic as { rpcRegion }).rpcRegion) {
-                this.rpcRegion = new RPCRegion({
-                    id: (options.rpcTopic as { rpcRegion }).rpcRegion,
-                });
-            } else if (options.rpcTopic as { queryAddressSuffix }) {
-                this.rpcRegion = new RPCAddressSuffix({
-                    suffix: (options.rpcTopic as { queryAddressSuffix })
-                        .queryAddressSuffix,
-                });
-            }
-        }
+        /* if (options.rpcTopic) {
+			if (
+				!!(options.rpcTopic as { rpcRegion }).rpcRegion &&
+				!!(options.rpcTopic as { rpcRegion }).rpcRegion ==
+				!!(options.rpcTopic as { queryAddressSuffix })
+					.queryAddressSuffix
+			) {
+				throw new Error(
+					"Expected either rpcRegion or queryAddressSuffix or none"
+				);
+			}
+			if ((options.rpcTopic as { rpcRegion }).rpcRegion) {
+				this.rpcRegion = new RPCRegion({
+					id: (options.rpcTopic as { rpcRegion }).rpcRegion,
+				});
+			} else if (options.rpcTopic as { queryAddressSuffix }) {
+				this.rpcRegion = new RPCAddressSuffix({
+					suffix: (options.rpcTopic as { queryAddressSuffix })
+						.queryAddressSuffix,
+				});
+			}
+		} */
         this._context = options.context;
         this._responseHandler = options.responseHandler;
         this._requestType = options.queryType;
@@ -170,12 +123,12 @@ export class RPC<Q, R> extends ComposableProgram {
     }
 
     async init(
-        libp2p: Libp2p,
-        store: Blocks,
+        libp2p: LibP2PExtended,
         identity: Identity,
         options: ProgramInitializationOptions
     ): Promise<this> {
-        await super.init(libp2p, store, identity, options);
+        await super.init(libp2p, identity, options);
+        this._topic = options.topic;
         if (options.replicate) {
             this._subscribe();
         }
@@ -185,12 +138,12 @@ export class RPC<Q, R> extends ComposableProgram {
     public async close(): Promise<void> {
         await this._initializationPromise;
 
-        /*     await this._libp2p.pubsub.unsubscribe(
-                this.rpcTopic
-            );  should we? */
+        /*     await this._libp2p.directsub.unsubscribe(
+				this.rpcTopic
+			);  should we? */
 
-        await this._libp2p.pubsub.addEventListener(
-            "message",
+        await this._libp2p.directsub.addEventListener(
+            "data",
             this._onMessageBinded
         );
         this._subscribed = false;
@@ -202,21 +155,20 @@ export class RPC<Q, R> extends ComposableProgram {
         }
 
         this._onMessageBinded = this._onMessage.bind(this);
-        this._libp2p.pubsub.subscribe(this.rpcTopic);
-
-        this._libp2p.pubsub.addEventListener("message", this._onMessageBinded);
+        this._libp2p.directsub.subscribe(this.rpcTopic);
+        this._libp2p.directsub.addEventListener("data", this._onMessageBinded);
         logger.debug("subscribing to query topic: " + this.rpcTopic);
         this._subscribed = true;
     }
 
-    async _onMessage(evt: CustomEvent<Message>): Promise<void> {
+    async _onMessage(evt: CustomEvent<PubSubData>): Promise<void> {
         //if (evt.detail.type === "signed")
         {
             const message = evt.detail;
             if (message) {
                 /*  if (message.from.equals(this._libp2p.peerId)) {
-                     return;
-                 } */
+					 return;
+				 } */
                 try {
                     try {
                         const { result: request, from } =
@@ -224,7 +176,7 @@ export class RPC<Q, R> extends ComposableProgram {
                                 message.data,
                                 RPCMessage,
                                 this._encryption?.getAnyKeypair ||
-                                (() => Promise.resolve(undefined)),
+                                    (() => Promise.resolve(undefined)),
                                 {
                                     isTrusted: (key) =>
                                         Promise.resolve(
@@ -248,9 +200,9 @@ export class RPC<Q, R> extends ComposableProgram {
                                 (this._requestType as any) === Uint8Array
                                     ? (request.request as Q)
                                     : deserialize(
-                                        request.request,
-                                        this._requestType
-                                    ),
+                                          request.request,
+                                          this._requestType
+                                      ),
                                 {
                                     address: this.contextAddress,
                                     from,
@@ -289,9 +241,9 @@ export class RPC<Q, R> extends ComposableProgram {
 
                         logger.error(
                             "Error handling query: " +
-                            (error?.message
-                                ? error?.message?.toString()
-                                : error)
+                                (error?.message
+                                    ? error?.message?.toString()
+                                    : error)
                         );
                         throw error;
                     }
@@ -346,21 +298,20 @@ export class RPC<Q, R> extends ComposableProgram {
             : this._context().toString();
     }
 
-    /* public get rpcTopic(): string {
+    public get rpcTopic(): string {
         if (!this._topic) {
             throw new Error("Not initialized");
         }
-        if (this.rpcRegion) {
-            if (!this.parentProgram.address) {
-                throw new Error("Not initialized");
-            }
-            return this.rpcRegion.from(this.parentProgram.address);
-        }
+        /* 	if (this.rpcRegion) {
+				if (!this.parentProgram.address) {
+					throw new Error("Not initialized");
+				}
+				return this.rpcRegion.from(this.parentProgram.address);
+			} */
         return this._topic;
     }
 
     public getRpcResponseTopic(_request: RequestV0): string {
-        const topic = this.rpcTopic;
-        return topic;
-    } */
+        return this.rpcTopic;
+    }
 }

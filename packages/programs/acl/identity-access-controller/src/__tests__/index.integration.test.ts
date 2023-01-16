@@ -27,11 +27,10 @@ import { Program } from "@dao-xyz/peerbit-program";
 import { IdentityAccessController } from "../acl-db";
 import { v4 as uuid } from "uuid";
 import {
-
     LibP2PBlockStore,
     MemoryLevelBlockStore,
     Blocks,
-} from "@dao-xyz/peerbit-block";
+} from "@dao-xyz/libp2p-direct-block";
 
 @variant("document")
 class Document {
@@ -471,7 +470,7 @@ describe("index", () => {
                 );
                 try {
                     await waitFor(() => !!results);
-                } catch (error) { }
+                } catch (error) {}
                 return results;
             };
 

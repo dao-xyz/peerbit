@@ -15,8 +15,11 @@ import {
 } from "@dao-xyz/borsh";
 import path from "path";
 import { CID } from "multiformats/cid";
-import { Blocks } from "@dao-xyz/peerbit-block";
+import { BlockStore, DirectBlock } from "@dao-xyz/libp2p-direct-block";
 import { Libp2p } from "libp2p";
+import type { DirectSub } from "@dao-xyz/libp2p-direct-sub";
+import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
+import { Libp2pExtended } from "@dao-xyz/peerbit-test-utils/lib/esm/session.js";
 export * from "./protocol-message.js";
 
 const notEmpty = (e: string) => e !== "" && e !== " ";
@@ -179,31 +182,32 @@ export interface Saveable {
 }
 
 export const save = async (
-    store: Blocks,
+    store: BlockStore,
     thing: Addressable,
-    options: { format?: string; pin?: boolean; timeout?: number } = {}
+    options: { format?: string; timeout?: number } = {}
 ): Promise<Address> => {
     const manifest: Manifest = {
         data: serialize(thing),
     };
     const hash = await store.put(
-        manifest,
-        options.format || "dag-cbor",
+        await createBlock(manifest, options.format || "dag-cbor"),
         options
     );
     return Address.parse(Address.join(hash));
 };
 
 export const load = async <S extends Addressable>(
-    store: Blocks,
+    store: BlockStore,
     address: Address,
     into: Constructor<S> | AbstractType<S>,
     options: { timeout?: number } = {}
 ): Promise<S | undefined> => {
-    const manifest = await store.get<Manifest>(address.cid, options);
-    if (!manifest) {
+    const manifestBlock = await store.get<Manifest>(address.cid, options);
+    if (!manifestBlock) {
         return undefined;
     }
+
+    const manifest = await getBlockValue(manifestBlock);
     const der = deserialize(manifest.data, into);
     der.address = Address.parse(Address.join(address.cid));
     return der;
@@ -212,9 +216,15 @@ export const load = async <S extends Addressable>(
 export type ProgramInitializationOptions = {
     store: IInitializationOptions<any>;
     parent?: AbstractProgram;
+    topic?: string;
     replicate?: boolean;
     onClose?: () => void;
     onDrop?: () => void;
+};
+
+export type LibP2PExtended = Libp2p & {
+    directsub: DirectSub;
+    directblock: DirectBlock;
 };
 
 @variant(0)
@@ -225,7 +235,7 @@ export abstract class AbstractProgram {
     @field({ type: option("string") })
     owner?: string; // Will control whether this program can be opened or not
 
-    _libp2p: Libp2p;
+    _libp2p: LibP2PExtended;
     _identity: Identity;
     _encryption?: PublicKeyEncryptionResolver;
     _onClose?: () => void;
@@ -251,8 +261,7 @@ export abstract class AbstractProgram {
     }
 
     async init(
-        libp2p: Libp2p,
-        store: Blocks,
+        libp2p: LibP2PExtended,
         identity: Identity,
         options: ProgramInitializationOptions
     ): Promise<this> {
@@ -270,14 +279,16 @@ export abstract class AbstractProgram {
 
             const nexts = this.programs;
             for (const next of nexts) {
-                await next.init(libp2p, store, identity, {
+                await next.init(libp2p, identity, {
                     ...options,
                     parent: this,
                 });
             }
 
             await Promise.all(
-                this.stores.map((s) => s.init(store, identity, options.store))
+                this.stores.map((s) =>
+                    s.init(libp2p.directblock, identity, options.store)
+                )
             );
 
             this._initialized = true;
@@ -425,7 +436,8 @@ export interface CanTrust {
 @variant(0)
 export abstract class Program
     extends AbstractProgram
-    implements Addressable, Saveable {
+    implements Addressable, Saveable
+{
     @field({ type: "string" })
     id: string;
 
@@ -469,18 +481,17 @@ export abstract class Program
     }
 
     async init(
-        libp2p: Libp2p,
-        store: Blocks,
+        libp2p: Libp2pExtended,
         identity: Identity,
         options: ProgramInitializationOptions
     ): Promise<this> {
         // TODO, determine whether setup should be called before or after save
         if (this.parentProgram === undefined) {
-            await this.save(store);
+            await this.save(libp2p.directblock);
         }
 
         await this.setup();
-        await super.init(libp2p, store, identity, options);
+        await super.init(libp2p, identity, options);
         if (this.parentProgram != undefined && this._address) {
             throw new Error(
                 "Expecting address to be undefined as this program is part of another program"
@@ -505,7 +516,7 @@ export abstract class Program
     }
 
     async save(
-        store: Blocks,
+        store: BlockStore,
         options?: {
             format?: string;
             pin?: boolean;
@@ -531,7 +542,7 @@ export abstract class Program
     }
 
     static load<S extends Program>(
-        store: Blocks,
+        store: BlockStore,
         address: Address | string,
         options?: {
             timeout?: number;
@@ -550,4 +561,4 @@ export abstract class Program
  * Building block, but not something you use as a standalone
  */
 @variant(1)
-export abstract class ComposableProgram extends AbstractProgram { }
+export abstract class ComposableProgram extends AbstractProgram {}

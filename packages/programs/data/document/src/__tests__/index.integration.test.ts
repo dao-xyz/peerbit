@@ -38,11 +38,7 @@ import {
     LogEntryEncryptionQuery,
     LogQueryRequest,
 } from "@dao-xyz/peerbit-logindex";
-import {
-    LibP2PBlockStore,
-    MemoryLevelBlockStore,
-    Blocks,
-} from "@dao-xyz/peerbit-block";
+import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
 
 const __filename = fileURLToPath(import.meta.url);
 
@@ -108,24 +104,16 @@ describe("index", () => {
         const topic = uuid();
         // Create store
         for (let i = 0; i < peersCount; i++) {
-            const blockStore = new Blocks(
-                new LibP2PBlockStore(
-                    session.peers[i],
-                    new MemoryLevelBlockStore()
-                )
-            );
-            await blockStore.open();
             if (i > 0) {
-                await waitForPeers(
-                    session.peers[i],
-                    session.peers[0].peerId,
-                    (blockStore._store as LibP2PBlockStore)._transportTopic
+                await waitForPeersStreams(
+                    session.peers[i].directblock,
+                    session.peers[0].directblock
                 );
             }
             const store =
                 i > 0
                     ? await TestStore.load<TestStore>(
-                          blockStore,
+                          session.peers[i].directblock,
                           stores[0].address!
                       )
                     : new TestStore({
@@ -137,40 +125,35 @@ describe("index", () => {
                           }),
                       });
             const keypair = await X25519Keypair.create();
-            await store.init(
-                session.peers[i],
-                blockStore,
-                await createIdentity(),
-                {
-                    topic: topic,
-                    replicate: i === 0,
-                    store: {
-                        ...DefaultOptions,
-                        encryption: {
-                            getEncryptionKeypair: () => keypair,
-                            getAnyKeypair: async (
-                                publicKeys: X25519PublicKey[]
-                            ) => {
-                                for (let i = 0; i < publicKeys.length; i++) {
-                                    if (
-                                        publicKeys[i].equals(
-                                            (keypair as X25519Keypair).publicKey
-                                        )
-                                    ) {
-                                        return {
-                                            index: i,
-                                            keypair: keypair as
-                                                | Ed25519Keypair
-                                                | X25519Keypair,
-                                        };
-                                    }
+            await store.init(session.peers[i], await createIdentity(), {
+                topic: topic,
+                replicate: i === 0,
+                store: {
+                    ...DefaultOptions,
+                    encryption: {
+                        getEncryptionKeypair: () => keypair,
+                        getAnyKeypair: async (
+                            publicKeys: X25519PublicKey[]
+                        ) => {
+                            for (let i = 0; i < publicKeys.length; i++) {
+                                if (
+                                    publicKeys[i].equals(
+                                        (keypair as X25519Keypair).publicKey
+                                    )
+                                ) {
+                                    return {
+                                        index: i,
+                                        keypair: keypair as
+                                            | Ed25519Keypair
+                                            | X25519Keypair,
+                                    };
                                 }
-                            },
+                            }
                         },
-                        resolveCache: () => new Cache(cacheStores[i]),
                     },
-                }
-            );
+                    resolveCache: () => new Cache(cacheStores[i]),
+                },
+            });
             stores.push(store);
         }
         writeStore = stores[0];
@@ -232,19 +215,14 @@ describe("index", () => {
                     }),
                 }),
             });
-            await store.init(
-                session.peers[0],
-                new Blocks(new MemoryLevelBlockStore()),
-                await createIdentity(),
-                {
-                    topic: "topic",
-                    replicate: true,
-                    store: {
-                        ...DefaultOptions,
-                        resolveCache: () => new Cache(cacheStores[0]),
-                    },
-                }
-            );
+            await store.init(session.peers[0], await createIdentity(), {
+                topic: "topic",
+                replicate: true,
+                store: {
+                    ...DefaultOptions,
+                    resolveCache: () => new Cache(cacheStores[0]),
+                },
+            });
 
             let doc = new Document({
                 id: uuid(),
@@ -278,20 +256,15 @@ describe("index", () => {
                     canEdit: true,
                 }),
             });
-            await store.init(
-                session.peers[0],
-                new Blocks(new MemoryLevelBlockStore()),
-                await createIdentity(),
-                {
-                    topic: "topic",
-                    replicate: true,
-                    store: {
-                        ...DefaultOptions,
+            await store.init(session.peers[0], await createIdentity(), {
+                topic: "topic",
+                replicate: true,
+                store: {
+                    ...DefaultOptions,
 
-                        resolveCache: () => new Cache(cacheStores[0]),
-                    },
-                }
-            );
+                    resolveCache: () => new Cache(cacheStores[0]),
+                },
+            });
 
             let doc = new Document({
                 id: uuid(),
@@ -329,20 +302,15 @@ describe("index", () => {
                 }),
             });
 
-            await store.init(
-                session.peers[0],
-                new Blocks(new MemoryLevelBlockStore()),
-                await createIdentity(),
-                {
-                    topic: "topic",
-                    replicate: true,
-                    store: {
-                        ...DefaultOptions,
+            await store.init(session.peers[0], await createIdentity(), {
+                topic: "topic",
+                replicate: true,
+                store: {
+                    ...DefaultOptions,
 
-                        resolveCache: () => new Cache(cacheStores[0]),
-                    },
-                }
-            );
+                    resolveCache: () => new Cache(cacheStores[0]),
+                },
+            });
 
             for (let i = 0; i < 100; i++) {
                 await store.docs.put(

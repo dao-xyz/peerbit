@@ -3,7 +3,10 @@ import { Store } from "@dao-xyz/peerbit-store";
 import { ComposableProgram, Program } from "..";
 import { getValuesWithType } from "../utils.js";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 
 @variant(0)
 class P1 extends ComposableProgram {}
@@ -78,7 +81,7 @@ describe("program", () => {
     it("create subprogram address", async () => {
         const store = new Store();
         const p = new P2(store);
-        await p.save(new Blocks(new MemoryLevelBlockStore()));
+        await p.save(new MemoryLevelBlockStore());
         expect(p.program.address.toString()).toEndWith("/0");
     });
 
@@ -113,7 +116,7 @@ describe("program", () => {
         }
 
         const pr = new ProgramC();
-        await pr.save(new Blocks(new MemoryLevelBlockStore()));
+        await pr.save(new MemoryLevelBlockStore());
 
         expect(pr._programIndex).toBeUndefined();
         expect(pr.programA._programIndex).toEqual(0);

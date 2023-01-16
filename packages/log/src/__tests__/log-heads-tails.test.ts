@@ -8,7 +8,10 @@ import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
 
@@ -26,7 +29,7 @@ const last = (arr: any[]) => {
 };
 
 describe("Log - Heads and Tails", function () {
-    let keystore: Keystore, store: Blocks;
+    let keystore: Keystore, store: BlockStore;
 
     beforeAll(async () => {
         rmrf.sync(testKeyStorePath(__filenameBase));
@@ -64,7 +67,7 @@ describe("Log - Heads and Tails", function () {
         // @ts-ignore
         signKey4 = keys[3];
 
-        store = new Blocks(new MemoryLevelBlockStore());
+        store = new MemoryLevelBlockStore();
         await store.open();
     });
 
@@ -532,13 +535,13 @@ describe("Log - Heads and Tails", function () {
             expect(log4.tails.length).toEqual(3);
 
             expect(log4.tails[0].metadata.clock.id).toEqual(
-                signKey.keypair.publicKey.bytes
+                new Uint8Array(signKey.keypair.publicKey.bytes)
             );
             expect(log4.tails[1].metadata.clock.id).toEqual(
-                signKey2.keypair.publicKey.bytes
+                new Uint8Array(signKey2.keypair.publicKey.bytes)
             );
             expect(log4.tails[2].metadata.clock.id).toEqual(
-                signKey3.keypair.publicKey.bytes
+                new Uint8Array(signKey3.keypair.publicKey.bytes)
             );
         });
     });

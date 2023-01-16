@@ -1,13 +1,12 @@
 import { Peerbit } from "../peer";
 import { EventStore } from "./utils/stores/event-store";
 
-
 // Include test utilities
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
-import { v4 as uuid } from 'uuid';
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/libp2p-direct-block";
+import { v4 as uuid } from "uuid";
 
 describe(`sharding`, () => {
     // jest.retryTimes(3); // TODO this test is FLAKY
@@ -22,27 +21,25 @@ describe(`sharding`, () => {
 
     beforeAll(async () => {
         session = await LSession.connected(3);
-
-    })
+    });
 
     beforeEach(async () => {
-
         const topic = uuid();
         client1 = await Peerbit.create(session.peers[0], { topic });
         client2 = await Peerbit.create(session.peers[1], { topic });
         client3 = await Peerbit.create(session.peers[2], { topic });
 
         db1 = await client1.open<PermissionedEventStore>(
-            new PermissionedEventStore({ trusted: [client1.id, client2.id, client3.id] })
+            new PermissionedEventStore({
+                trusted: [client1.id, client2.id, client3.id],
+            })
         );
-
     });
 
     afterEach(async () => {
         await db1?.drop();
         await db2?.drop();
         await db3?.drop();
-
 
         if (client1) {
             await client1.stop();
@@ -53,20 +50,26 @@ describe(`sharding`, () => {
         if (client3) {
             await client3.stop();
         }
-
     });
 
     afterAll(async () => {
         await session.stop();
-
-    })
+    });
 
     it("can distribute evenly among peers", async () => {
         // TODO this test is flaky, because it sometimes timeouts because distribution of data among peers is random for small entry counts
         db2 = await client2.open<PermissionedEventStore>(db1.address!);
         db3 = await client3.open<PermissionedEventStore>(db1.address!);
-        await waitFor(() => client2.programs.get(db1.address!.toString())?.replicators?.size === 2);
-        await waitFor(() => client3.programs.get(db1.address!.toString())?.replicators?.size === 2);
+        await waitFor(
+            () =>
+                client2.programs.get(db1.address!.toString())?.replicators
+                    ?.size === 2
+        );
+        await waitFor(
+            () =>
+                client3.programs.get(db1.address!.toString())?.replicators
+                    ?.size === 2
+        );
 
         const entryCount = 100;
         //await delay(5000);
@@ -110,11 +113,11 @@ describe(`sharding`, () => {
         });
         expect(
             db2.store.store.oplog.values.length > entryCount * 0.5 &&
-            db2.store.store.oplog.values.length < entryCount * 0.85
+                db2.store.store.oplog.values.length < entryCount * 0.85
         ).toBeTrue();
         expect(
             db3.store.store.oplog.values.length > entryCount * 0.5 &&
-            db3.store.store.oplog.values.length < entryCount * 0.85
+                db3.store.store.oplog.values.length < entryCount * 0.85
         ).toBeTrue();
     });
 
@@ -122,13 +125,17 @@ describe(`sharding`, () => {
 
     it("will distribute to joining peers", async () => {
         db2 = await client2.open<PermissionedEventStore>(db1.address!);
-        await waitFor(() => client2.programs.get(db1.address!.toString())?.replicators?.size === 1);
+        await waitFor(
+            () =>
+                client2.programs.get(db1.address!.toString())?.replicators
+                    ?.size === 1
+        );
 
         const entryCount = 100;
         const promises: Promise<any>[] = [];
         for (let i = 0; i < entryCount; i++) {
             // db1.store.add(i.toString(), { nexts: [] });
-            //  await 
+            //  await
             //   await delay(2000);
             promises.push(db1.store.add(i.toString(), { nexts: [] }));
         }
@@ -138,17 +145,36 @@ describe(`sharding`, () => {
         await waitFor(() => db2.store.store.oplog.values.length === entryCount);
 
         db3 = await client3.open<PermissionedEventStore>(db1.address!);
-        await waitFor(() => client1.programs.get(db1.address!.toString())?.replicators?.size === 2);
-        await waitFor(() => client2.programs.get(db1.address!.toString())?.replicators?.size === 2);
-        await waitFor(() => client3.programs.get(db1.address!.toString())?.replicators?.size === 2);
-
+        await waitFor(
+            () =>
+                client1.programs.get(db1.address!.toString())?.replicators
+                    ?.size === 2
+        );
+        await waitFor(
+            () =>
+                client2.programs.get(db1.address!.toString())?.replicators
+                    ?.size === 2
+        );
+        await waitFor(
+            () =>
+                client3.programs.get(db1.address!.toString())?.replicators
+                    ?.size === 2
+        );
 
         let isLeader: boolean[] = [];
         for (const v of db3.store.store.oplog.heads) {
-            isLeader.push(!!(await client3.findLeaders(db3.address.toString(), v.gid, 2)).find(x => x === client3.id.toString()));
+            isLeader.push(
+                !!(
+                    await client3.findLeaders(db3.address.toString(), v.gid, 2)
+                ).find((x) => x === client3.id.toString())
+            );
         }
 
-        await waitFor(() => db3.store.store.oplog.values.length > entryCount * 0.5 && db3.store.store.oplog.values.length < entryCount * 0.85);
+        await waitFor(
+            () =>
+                db3.store.store.oplog.values.length > entryCount * 0.5 &&
+                db3.store.store.oplog.values.length < entryCount * 0.85
+        );
 
         const checkConverged = async (db: EventStore<any>) => {
             const a = db.store.oplog.values.length;
@@ -166,19 +192,27 @@ describe(`sharding`, () => {
         });
         expect(
             db2.store.store.oplog.values.length > entryCount * 0.5 &&
-            db2.store.store.oplog.values.length < entryCount * 0.85
+                db2.store.store.oplog.values.length < entryCount * 0.85
         ).toBeTrue();
         expect(
             db3.store.store.oplog.values.length > entryCount * 0.5 &&
-            db3.store.store.oplog.values.length < entryCount * 0.85
+                db3.store.store.oplog.values.length < entryCount * 0.85
         ).toBeTrue();
     });
 
     it("will distribute when peers leave", async () => {
         db2 = await client2.open<PermissionedEventStore>(db1.address!);
         db3 = await client3.open<PermissionedEventStore>(db1.address!);
-        await waitFor(() => client2.programs.get(db1.address!.toString())?.replicators?.size === 2);
-        await waitFor(() => client3.programs.get(db1.address!.toString())?.replicators?.size === 2);
+        await waitFor(
+            () =>
+                client2.programs.get(db1.address!.toString())?.replicators
+                    ?.size === 2
+        );
+        await waitFor(
+            () =>
+                client3.programs.get(db1.address!.toString())?.replicators
+                    ?.size === 2
+        );
 
         const entryCount = 100;
         const promises: Promise<any>[] = [];
@@ -203,11 +237,5 @@ describe(`sharding`, () => {
         await db3.close();
 
         await waitFor(() => db2.store.store.oplog.values.length === entryCount);
-
-
-
     });
-
-
-
 });

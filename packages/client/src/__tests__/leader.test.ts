@@ -4,7 +4,7 @@ import { v4 as uuid } from "uuid";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/libp2p-direct-block";
 
 describe(`leaders`, function () {
     let session: LSession;
@@ -55,8 +55,16 @@ describe(`leaders`, function () {
             program.address!
         );
 
-        await waitFor(() => client1.programs.get(program.address!.toString())!.replicators.size === 1);
-        await waitFor(() => client2.programs.get(program.address!.toString())!.replicators.size === 1);
+        await waitFor(
+            () =>
+                client1.programs.get(program.address!.toString())!.replicators
+                    .size === 1
+        );
+        await waitFor(
+            () =>
+                client2.programs.get(program.address!.toString())!.replicators
+                    .size === 1
+        );
 
         // now find 3 leaders from the network with 2 trusted participants (should return 2 leaders if trust control works correctly)
         const leadersFrom1 = await client1.findLeaders(
@@ -82,7 +90,8 @@ describe(`leaders`, function () {
         // perhaps do an event based get peers using the pubsub peers api
 
         db1 = await client1.open(
-            new EventStore<string>({ id: "replication-tests" }));
+            new EventStore<string>({ id: "replication-tests" })
+        );
 
         const isLeaderAOneLeader = client1.isLeader(
             await client1.findLeaders(db1.address!.toString(), 123, 1)
@@ -95,25 +104,25 @@ describe(`leaders`, function () {
 
         db2 = await client2.open<EventStore<string>>(db1.address!);
 
-        await waitFor(() => client1.programs.get(db1.address!.toString())?.replicators?.size === 1);
-        await waitFor(() => client2.programs.get(db1.address!.toString())?.replicators?.size === 1);
+        await waitFor(
+            () =>
+                client1.programs.get(db1.address!.toString())?.replicators
+                    ?.size === 1
+        );
+        await waitFor(
+            () =>
+                client2.programs.get(db1.address!.toString())?.replicators
+                    ?.size === 1
+        );
 
         // leader rotation is kind of random, so we do a sequence of tests
         for (let slot = 0; slot < 3; slot++) {
             // One leader
             const isLeaderAOneLeader = client1.isLeader(
-                await client1.findLeaders(
-                    db1.address!.toString(),
-                    slot,
-                    1
-                )
+                await client1.findLeaders(db1.address!.toString(), slot, 1)
             );
             const isLeaderBOneLeader = client2.isLeader(
-                await client2.findLeaders(
-                    db1.address!.toString(),
-                    slot,
-                    1
-                )
+                await client2.findLeaders(db1.address!.toString(), slot, 1)
             );
             expect([isLeaderAOneLeader, isLeaderBOneLeader]).toContainAllValues(
                 [false, true]
@@ -121,18 +130,10 @@ describe(`leaders`, function () {
 
             // Two leaders
             const isLeaderATwoLeaders = client1.isLeader(
-                await client1.findLeaders(
-                    db1.address!.toString(),
-                    slot,
-                    2
-                )
+                await client1.findLeaders(db1.address!.toString(), slot, 2)
             );
             const isLeaderBTwoLeaders = client2.isLeader(
-                await client2.findLeaders(
-                    db1.address!.toString(),
-                    slot,
-                    2
-                )
+                await client2.findLeaders(db1.address!.toString(), slot, 2)
             );
             expect([
                 isLeaderATwoLeaders,
@@ -183,9 +184,16 @@ describe(`leaders`, function () {
         db2 = await client2.open<EventStore<string>>(db1.address!);
         db3 = await client3.open<EventStore<string>>(db1.address!);
 
-        await waitFor(() => client2.programs.get(db1.address!.toString())!.replicators.size === 1);
-        await waitFor(() => client3.programs.get(db1.address!.toString())!.replicators.size === 1);
-
+        await waitFor(
+            () =>
+                client2.programs.get(db1.address!.toString())!.replicators
+                    .size === 1
+        );
+        await waitFor(
+            () =>
+                client3.programs.get(db1.address!.toString())!.replicators
+                    .size === 1
+        );
 
         // One leader
         const slot = 0;
@@ -216,10 +224,21 @@ describe(`leaders`, function () {
         db2 = await client2.open<EventStore<string>>(db1.address!);
         db3 = await client3.open<EventStore<string>>(db1.address!);
 
-        await waitFor(() => client1.programs.get(db1.address!.toString())!.replicators.size === 2);
-        await waitFor(() => client2.programs.get(db1.address!.toString())!.replicators.size === 2);
-        await waitFor(() => client3.programs.get(db1.address!.toString())!.replicators.size === 2);
-
+        await waitFor(
+            () =>
+                client1.programs.get(db1.address!.toString())!.replicators
+                    .size === 2
+        );
+        await waitFor(
+            () =>
+                client2.programs.get(db1.address!.toString())!.replicators
+                    .size === 2
+        );
+        await waitFor(
+            () =>
+                client3.programs.get(db1.address!.toString())!.replicators
+                    .size === 2
+        );
 
         // One leader
         const slot = 0;

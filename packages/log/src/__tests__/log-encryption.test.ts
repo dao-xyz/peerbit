@@ -13,7 +13,10 @@ import {
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
 
@@ -31,7 +34,7 @@ describe("Log - Encryption", function () {
     let keystore: Keystore,
         senderKey: KeyWithMeta<X25519Keypair>,
         recieverKey: KeyWithMeta<X25519Keypair>,
-        store: Blocks;
+        store: BlockStore;
 
     beforeAll(async () => {
         rmrf.sync(testKeyStorePath(__filenameBase));
@@ -62,7 +65,7 @@ describe("Log - Encryption", function () {
             new Uint8Array([1])
         )) as KeyWithMeta<Ed25519Keypair>;
 
-        store = new Blocks(new MemoryLevelBlockStore());
+        store = new MemoryLevelBlockStore();
         await store.open();
     });
 

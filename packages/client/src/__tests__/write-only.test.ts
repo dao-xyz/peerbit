@@ -3,7 +3,7 @@ import { Peerbit } from "../peer";
 import { EventStore } from "./utils/stores/event-store";
 import { v4 as uuid } from "uuid";
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/libp2p-direct-block";
 
 describe(`Write-only`, () => {
     let session: LSession;
@@ -124,7 +124,8 @@ describe(`Write-only`, () => {
             delayInterval: 50,
         });
 
-        const replicatedProgramAndStores = client2.programs.values()
+        const replicatedProgramAndStores = client2.programs
+            .values()
             .next().value;
         const replicatedStore = replicatedProgramAndStores.program.stores[0];
         await waitFor(() => replicatedStore.oplog.values.length == 2);

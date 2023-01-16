@@ -5,7 +5,10 @@ import { LamportClock as Clock, Timestamp } from "../clock.js";
 import { Log } from "../log.js";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import fs from "fs-extra";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 
 import { LastWriteWins } from "../log-sorting.js";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
@@ -15,6 +18,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 import { arraysCompare } from "@dao-xyz/peerbit-borsh-utils";
 import { createStore } from "./utils.js";
+import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -29,7 +33,7 @@ let signKey: KeyWithMeta<Ed25519Keypair>,
 
 describe("Log", function () {
     let keystore: Keystore;
-    let store: Blocks;
+    let store: BlockStore;
     beforeAll(async () => {
         await fs.copy(
             signingKeysFixturesPath(__dirname),
@@ -59,7 +63,7 @@ describe("Log", function () {
         signKey2 = signKeys[1];
         // @ts-ignore
         signKey3 = signKeys[2];
-        store = new Blocks(new MemoryLevelBlockStore());
+        store = new MemoryLevelBlockStore();
         await store.open();
     });
 
@@ -378,7 +382,7 @@ describe("Log", function () {
         it("changes identity", async () => {
             assert.deepStrictEqual(
                 log.values[0].metadata.clock.id,
-                signKey.keypair.publicKey.bytes
+                new Uint8Array(signKey.keypair.publicKey.bytes)
             );
             log.setIdentity({
                 ...signKey2.keypair,
@@ -387,7 +391,7 @@ describe("Log", function () {
             await log.append("two", { gidSeed: "a" });
             assert.deepStrictEqual(
                 log.values[1].metadata.clock.id,
-                signKey2.keypair.publicKey.bytes
+                new Uint8Array(signKey2.keypair.publicKey.bytes)
             );
             log.setIdentity({
                 ...signKey3.keypair,
@@ -396,7 +400,7 @@ describe("Log", function () {
             await log.append("three", { gidSeed: "a" });
             assert.deepStrictEqual(
                 log.values[2].metadata.clock.id,
-                signKey3.keypair.publicKey.bytes
+                new Uint8Array(signKey3.keypair.publicKey.bytes)
             );
         });
     });
@@ -517,7 +521,9 @@ describe("Log", function () {
                 });
                 const hash = await log.toMultihash();
                 expect(hash).toMatchSnapshot();
-                const result = (await store.get(hash)) as Log<any>;
+                const result = (await getBlockValue(
+                    (await store.get(hash))!
+                )) as Log<any>;
                 const heads = result.heads.map((head) => head.toString()); // base58btc
                 expect(heads).toMatchSnapshot();
             });
@@ -568,7 +574,7 @@ describe("Log", function () {
                 expect(res.length).toEqual(1);
                 expect(res.values[0].payload.getValue()).toEqual("one");
                 expect(res.values[0].metadata.clock.id).toEqual(
-                    signKey.keypair.publicKey.bytes
+                    new Uint8Array(signKey.keypair.publicKey.bytes)
                 );
                 expect(res.values[0].metadata.clock.timestamp.logical).toEqual(
                     0
@@ -622,7 +628,7 @@ describe("Log", function () {
                 expect(res.length).toEqual(1);
                 expect(res.values[0].payload.getValue()).toEqual("one");
                 expect(res.values[0].metadata.clock.id).toEqual(
-                    signKey.keypair.publicKey.bytes
+                    new Uint8Array(signKey.keypair.publicKey.bytes)
                 );
                 expect(res.values[0].metadata.clock.timestamp.logical).toEqual(
                     0
@@ -812,7 +818,7 @@ describe("Log", function () {
             });
 
             it("throws an error when data from CID is not instance of Log", async () => {
-                const hash = await store.put({}, "dag-cbor");
+                const hash = await store.put(await createBlock({}, "dag-cbor"));
                 let err;
                 try {
                     await Log.fromMultihash(

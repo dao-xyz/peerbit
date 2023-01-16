@@ -22,13 +22,7 @@ import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { v4 as uuid } from "uuid";
 import { jest } from "@jest/globals";
 import { fileURLToPath } from "url";
-import { Libp2p } from "libp2p";
-import {
-
-    LibP2PBlockStore,
-    MemoryLevelBlockStore,
-    Blocks,
-} from "@dao-xyz/peerbit-block";
+import { LibP2PExtended } from "@dao-xyz/peerbit-program";
 const createIdentity = async () => {
     const ed = await Ed25519Keypair.create();
     return {
@@ -41,8 +35,8 @@ describe("query", () => {
     jest.setTimeout(120 * 1000);
 
     let session: LSession,
-        observer: Libp2p,
-        writer: Libp2p,
+        observer: LibP2PExtended,
+        writer: LibP2PExtended,
         writeStore: DString,
         observerStore: DString,
         cacheStore1: AbstractLevel<any, string, Uint8Array>,
@@ -66,10 +60,7 @@ describe("query", () => {
         // Create store
         writeStore = new DString({});
         const topic = uuid();
-        const blockStore = new Blocks(
-            new LibP2PBlockStore(writer, new MemoryLevelBlockStore())
-        );
-        await writeStore.init(writer, blockStore, await createIdentity(), {
+        await writeStore.init(writer, await createIdentity(), {
             topic,
             replicate: true,
             store: {
@@ -83,23 +74,16 @@ describe("query", () => {
         });
 
         observerStore = (await DString.load(
-            blockStore,
+            writer.directblock,
             writeStore.address!
         )) as DString;
-        await observerStore.init(
-            observer,
-            new Blocks(
-                new LibP2PBlockStore(observer, new MemoryLevelBlockStore())
-            ),
-            await createIdentity(),
-            {
-                topic,
-                store: {
-                    ...DefaultOptions,
-                    resolveCache: () => new Cache(cacheStore2),
-                },
-            }
-        );
+        await observerStore.init(observer, await createIdentity(), {
+            topic,
+            store: {
+                ...DefaultOptions,
+                resolveCache: () => new Cache(cacheStore2),
+            },
+        });
 
         await waitForPeers(
             session.peers[0],
@@ -228,25 +212,18 @@ describe("query", () => {
 
     it("handles AccessError gracefully", async () => {
         const store = new DString({});
-        await store.init(
-            writer,
-            new Blocks(
-                new LibP2PBlockStore(writer, new MemoryLevelBlockStore())
-            ),
-            await createIdentity(),
-            {
-                topic: uuid(),
-                replicate: true,
-                store: {
-                    ...DefaultOptions,
-                    encryption: {
-                        getAnyKeypair: (_) => Promise.resolve(undefined),
-                        getEncryptionKeypair: () => Ed25519Keypair.create(),
-                    },
-                    resolveCache: () => new Cache(cacheStore1),
+        await store.init(writer, await createIdentity(), {
+            topic: uuid(),
+            replicate: true,
+            store: {
+                ...DefaultOptions,
+                encryption: {
+                    getAnyKeypair: (_) => Promise.resolve(undefined),
+                    getEncryptionKeypair: () => Ed25519Keypair.create(),
                 },
-            }
-        );
+                resolveCache: () => new Cache(cacheStore1),
+            },
+        });
 
         await store.add(
             "hello",

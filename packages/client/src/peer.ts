@@ -54,6 +54,7 @@ import {
 	Program,
 	Address,
 	CanTrust,
+	LibP2PExtended,
 } from "@dao-xyz/peerbit-program";
 import PQueue from "p-queue";
 import { Libp2p } from "libp2p";
@@ -66,11 +67,9 @@ import {
 import isNode from "is-node";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import {
-	LibP2PBlockStore,
 	LevelBlockStore,
-	Blocks,
 	BlockStore,
-} from "@dao-xyz/peerbit-block";
+} from "@dao-xyz/libp2p-direct-block";
 import sodium from "libsodium-wrappers";
 import path from "path-browserify";
 import { TimeoutError } from "@dao-xyz/peerbit-time";
@@ -92,7 +91,7 @@ const MIN_REPLICAS = 2;
 interface ProgramWithMetadata {
 	program: Program;
 	minReplicas: MinReplicas;
-	replicators: Set<string>
+	replicators: Set<string>;
 }
 
 export type StoreOperations = "write" | "all";
@@ -110,7 +109,7 @@ export type OptionalCreateOptions = {
 		entryToReplicate?: Entry<any>
 	): Promise<boolean>;
 	topic?: string;
-	refreshIntreval?: number
+	refreshIntreval?: number;
 };
 export type CreateOptions = {
 	keystore: Keystore;
@@ -142,7 +141,7 @@ export type OpenOptions = {
 	verifyCanOpen?: boolean;
 } & IStoreOptions<any>;
 
-const groupByGid = async <T extends (Entry<any> | EntryWithRefs<any>)>(
+const groupByGid = async <T extends Entry<any> | EntryWithRefs<any>>(
 	entries: T[]
 ): Promise<Map<string, T[]>> => {
 	const groupByGid: Map<string, T[]> = new Map();
@@ -160,12 +159,10 @@ const groupByGid = async <T extends (Entry<any> | EntryWithRefs<any>)>(
 	return groupByGid;
 };
 
-export type LibP2PGossipSub = Libp2p & { pubsub: PubSub<GossipsubEvents> };
 export const DEFAULT_TOPIC = "_";
 export class Peerbit {
-
-	_libp2p: LibP2PGossipSub;
-	_store: Blocks;
+	_libp2p: LibP2PExtended;
+	_store: BlockStore;
 	_topicSubscriptions: Map<string, SharedChannel<SharedIPFSChannel>>;
 
 	// User id
@@ -210,7 +207,11 @@ export class Peerbit {
 	_programsByReplicator: Map<string, Set<string>> = new Map();
 	_refreshInterval: any;
 
-	constructor(libp2p: Libp2p, identity: Identity, options: CreateOptions) {
+	constructor(
+		libp2p: LibP2PExtended,
+		identity: Identity,
+		options: CreateOptions
+	) {
 		if (!isDefined(libp2p)) {
 			throw new Error("Libp2p required");
 		}
@@ -245,7 +246,6 @@ export class Peerbit {
 			);
 		}
 
-
 		if (!this.id.privateKey) {
 			throw new Error("Expecting private key to be defined");
 		}
@@ -259,8 +259,8 @@ export class Peerbit {
 		});
 		this.idIdentity = {
 			...this.idKey,
-			sign: (data) => this.idKey.sign(data)
-		}
+			sign: (data) => this.idKey.sign(data),
+		};
 
 		this.directory = options.directory || "./peerbit/data";
 		this.storage = options.storage;
@@ -318,10 +318,13 @@ export class Peerbit {
 			promise = this.replicationReorganization([...this.programs.keys()]);
 			await promise;
 			promise = undefined;
-		}, refreshInterval)
+		}, refreshInterval);
 	}
 
-	static async create(libp2p: Libp2p, options: CreateInstanceOptions = {}) {
+	static async create(
+		libp2p: LibP2PExtended,
+		options: CreateInstanceOptions = {}
+	) {
 		const id: Ed25519PeerId = libp2p.peerId as Ed25519PeerId;
 		if (id.type !== "Ed25519") {
 			throw new Error(
@@ -406,7 +409,7 @@ export class Peerbit {
 		await peer.getEncryption();
 		return peer;
 	}
-	get libp2p(): Libp2p {
+	get libp2p(): LibP2PExtended {
 		return this._libp2p;
 	}
 
@@ -489,14 +492,16 @@ export class Peerbit {
 			await channel.close();
 		}
 
-		this._refreshInterval && clearInterval(this._refreshInterval)
+		this._refreshInterval && clearInterval(this._refreshInterval);
 
 		// close keystore
 		await this.keystore.close();
 
 		// Close all open databases
 		await Promise.all(
-			[...this.programs.values()].map((program) => program.program.close())
+			[...this.programs.values()].map((program) =>
+				program.program.close()
+			)
 		);
 
 		const caches = Object.keys(this.caches);
@@ -524,25 +529,24 @@ export class Peerbit {
 	}
 
 	// Callback for local writes to the database. We the update to pubsub.
-	onWrite<T>(
-		program: Program,
-		store: Store<any>,
-		entry: Entry<T>
-	): void {
+	onWrite<T>(program: Program, store: Store<any>, entry: Entry<T>): void {
 		const programAddress =
 			program.address?.toString() ||
 			program.parentProgram.address!.toString();
-		const storeInfo = this.programs.get(programAddress)
+		const storeInfo = this.programs
+			.get(programAddress)
 			?.program.allStoresMap.get(store._storeIndex);
 		if (!storeInfo) {
 			throw new Error("Missing store info");
 		}
 		const sendAll =
-			this._libp2p.pubsub.getSubscribers(this.topic)?.length > 0
+			this._libp2p.directsub.getSubscribers(this.topic)?.size > 0
 				? (data: Uint8Array): Promise<any> => {
 					{
 						return ignoreInsufficientPeers(async () =>
-							this.libp2p.pubsub.publish(this.topic, data)
+							this.libp2p.directsub.publish(data, {
+								topics: [this.topic],
+							})
 						);
 					}
 				}
@@ -577,7 +581,7 @@ export class Peerbit {
 					const channel = this._directConnections.get(replicator);
 					if (
 						!channel ||
-						this.libp2p.pubsub.getSubscribers(channel.channel._id)
+						this.libp2p.directsub.getSubscribers(channel.channel._id)
 							.length === 0
 					) {
 						// we are missing a channel, send to all instead as fallback
@@ -718,7 +722,8 @@ export class Peerbit {
 				 * I can use them to load associated logs and join/sync them with the data stores I own
 				 */
 
-				let { storeIndex, programAddress, heads, replicating } = msg;
+				const { storeIndex, programAddress, replicating } = msg;
+				let { heads } = msg;
 				// replication topic === trustedNetwork address
 
 				const pstores = this.programs;
@@ -770,16 +775,17 @@ export class Peerbit {
 						}
 					}
 
-					const programInfo = this.programs
-						.get(paddress)!;
+					const programInfo = this.programs.get(paddress)!;
 
 					if (!programInfo) {
 						return;
 					}
 
 					if (replicating) {
-						const peerId = await (sender as Ed25519PublicKey).toPeerId(); // TODO make more performant
-						programInfo.replicators.add(peerId.toString())
+						const peerId = await (
+							sender as Ed25519PublicKey
+						).toPeerId(); // TODO make more performant
+						programInfo.replicators.add(peerId.toString());
 					}
 
 					const storeInfo =
@@ -793,19 +799,21 @@ export class Peerbit {
 						);
 						return;
 					}
-					const toMerge: (EntryWithRefs<any>)[] = [];
+					const toMerge: EntryWithRefs<any>[] = [];
 
 					await programInfo.program.initializationPromise; // Make sure it is ready
 
-					heads = heads.filter(head => !storeInfo.oplog.has(head.entry.hash)).map((head) => {
-						head.entry.init({
-							encryption: storeInfo.oplog._encryption,
-							encoding: storeInfo.oplog._encoding,
-						})
-						return head;
-					}); // we need to init because we perhaps need to decrypt gid
+					heads = heads
+						.filter((head) => !storeInfo.oplog.has(head.entry.hash))
+						.map((head) => {
+							head.entry.init({
+								encryption: storeInfo.oplog._encryption,
+								encoding: storeInfo.oplog._encoding,
+							});
+							return head;
+						}); // we need to init because we perhaps need to decrypt gid
 
-					const abc = [...(programInfo.replicators || [])]
+					const abc = [...(programInfo.replicators || [])];
 					for (const [gid, value] of await groupByGid(heads)) {
 						const leaders =
 							leaderCache.get(gid) ||
@@ -863,7 +871,6 @@ export class Peerbit {
 							 }
 						 }) */
 					}
-
 				}
 				logger.debug(
 					`${this.id}: Synced ${heads.length} heads for '${paddress}/${storeIndex}':\n`,
@@ -903,9 +910,7 @@ export class Peerbit {
 				}
 
 				if (ownedAddresses.length > 0) {
-					this.replicationReorganization(
-						ownedAddresses
-					);
+					this.replicationReorganization(ownedAddresses);
 				}
 			} else if (msg instanceof CloseEvent) {
 				if (!sender) {
@@ -940,11 +945,10 @@ export class Peerbit {
 				if (msg.addresses.length > 0) {
 					for (const address of msg.addresses) {
 						this.programs
-							.get(address)?.replicators?.delete(closingPeerId.toString());
+							.get(address)
+							?.replicators?.delete(closingPeerId.toString());
 					}
-					await this.replicationReorganization(
-						msg.addresses
-					);
+					await this.replicationReorganization(msg.addresses);
 				}
 			} else if (msg instanceof RequestReplicationInfo) {
 				const ownedSet: string[] = [];
@@ -956,14 +960,16 @@ export class Peerbit {
 				}
 				/// TODO encryption
 				await ignoreInsufficientPeers(async () =>
-					this.libp2p.pubsub.publish(
-						message.topic,
+					this.libp2p.directsub.publish(
 						serialize(
 							await this.decryptedSignedThing(
 								serialize(new OpenEvent(ownedSet)),
 								{ signWithPeerId: true }
 							)
-						)
+						),
+						{
+							topics: [message.topic],
+						}
 					)
 				);
 			} else if (msg instanceof KeyResponseMessage) {
@@ -1045,10 +1051,9 @@ export class Peerbit {
 				}
 
 				const send = (data: Uint8Array) => {
-					return this._libp2p.pubsub.publish(
-						message.topic, // DirectChannel.getTopic([peer.toString()]),
-						data
-					);
+					return this._libp2p.directsub.publish(data, {
+						topics: [message.topic],
+					});
 				};
 				await exchangeKeys(
 					send,
@@ -1105,12 +1110,12 @@ export class Peerbit {
 							/** 
 							 *   await exchangeSwarmAddresses(
 									(data) => {
-										return this.libp2p.pubsub.publish(topic, data);
+										return this.libp2p.directsub.publish(topic, data);
 									},
 
 									this.identity,
 									peer,
-									this._libp2p.pubsub.getPeers(),
+									this._libp2p.directsub.getPeers(),
 									this._libp2p.peerStore.addressBook,
 									this._getNetwork(topic),
 									this.localNetwork
@@ -1122,7 +1127,7 @@ export class Peerbit {
 							// If replicate false, we are in write mode. Means we should exchange all heads
 							// Because we dont know anything about whom are to store data, so we assume all peers might have responsibility
 							/*    const send = (data: Uint8Array) => {
-								   return this._libp2p.pubsub.publish(
+								   return this._libp2p.directsub.publish(
 									   topic, // DirectChannel.getTopic([peer.toString()]),
 									   data
 								   );
@@ -1161,15 +1166,12 @@ export class Peerbit {
 	 * This method will go through my owned entries, and see whether I should share them with a new leader, and/or I should stop care about specific entries
 	 * @param channel
 	 */
-	async replicationReorganization(
-		changedProgarms: Set<string> | string[]
-	) {
+	async replicationReorganization(changedProgarms: Set<string> | string[]) {
 		let changed = false;
 		for (const address of changedProgarms) {
 			const programInfo = this.programs.get(address);
 			if (programInfo) {
 				for (const [_, store] of programInfo.program.allStoresMap) {
-
 					const heads = store.oplog.heads;
 					const groupedByGid = await groupByGid(heads);
 					const toSend: Map<string, Entry<any>> = new Map();
@@ -1211,7 +1213,6 @@ export class Peerbit {
 										/*  arr.push(entry); */
 										toSend.set(entry.hash, entry);
 									});
-
 								} catch (error) {
 									if (error instanceof TimeoutError) {
 										logger.error(
@@ -1225,10 +1226,10 @@ export class Peerbit {
 							}
 						}
 
-						if (
-							!newPeers.find((x) => x === this.id.toString())
-						) {
-							const notCreatedLocally = entries.filter(e => !e.createdLocally)
+						if (!newPeers.find((x) => x === this.id.toString())) {
+							const notCreatedLocally = entries.filter(
+								(e) => !e.createdLocally
+							);
 							// delete entries since we are not suppose to replicate this anymore
 							// TODO add delay? freeze time? (to ensure resiliance for bad io)
 							if (notCreatedLocally.length > 0) {
@@ -1244,35 +1245,29 @@ export class Peerbit {
 					changed = true;
 					await exchangeHeads(
 						async (message) => {
-							return ignoreInsufficientPeers(
-								async () =>
-									this._libp2p.pubsub.publish(
-										this.topic,
-										message
-									)
+							return ignoreInsufficientPeers(async () =>
+								this._libp2p.directsub.publish(message, {
+									topics: [this.topic],
+								})
 							);
 						},
 						store,
 						programInfo.program,
 						[...toSend.values()], // TODO send to peers directly
 						true,
-						this.limitSigning
-							? undefined
-							: this.idIdentity,
+						this.limitSigning ? undefined : this.idIdentity,
 						!!programInfo.program.replicate
 					);
 				}
-
 			}
 		}
-		return changed
+		return changed;
 	}
 
 	getCanTrust(address: string): CanTrust | undefined {
 		const p = this.programs.get(address)?.program;
 		if (p) {
-			const ct = this.programs.get(address)
-				?.program as any as CanTrust;
+			const ct = this.programs.get(address)?.program as any as CanTrust;
 			if (ct.isTrusted !== undefined) {
 				return ct;
 			}
@@ -1395,7 +1390,6 @@ export class Peerbit {
 				await cache.cache.close();
 			}
 		}
-
 	}
 	async _onProgamClose(program: Program) {
 		const programAddress = program.address?.toString();
@@ -1417,14 +1411,16 @@ export class Peerbit {
  */
 		/// TODO encryption
 		await ignoreInsufficientPeers(async () =>
-			this.libp2p.pubsub.publish(
-				this.topic,
+			this.libp2p.directsub.publish(
 				serialize(
 					await this.decryptedSignedThing(
 						serialize(new CloseEvent([programAddress])),
 						{ signWithPeerId: true }
 					)
-				)
+				),
+				{
+					topics: [this.topic],
+				}
 			)
 		);
 	}
@@ -1437,7 +1433,6 @@ export class Peerbit {
 		program: Program,
 		minReplicas: MinReplicas
 	): ProgramWithMetadata {
-
 		const programAddress = program.address?.toString();
 		if (!programAddress) {
 			throw new Error("Missing program address");
@@ -1453,7 +1448,7 @@ export class Peerbit {
 		const p = {
 			program,
 			minReplicas,
-			replicators: new Set<string>()
+			replicators: new Set<string>(),
 		};
 
 		this.programs.set(programAddress, p);
@@ -1515,8 +1510,7 @@ export class Peerbit {
 		const peerHashed: string[] = [];
 
 		// Add self
-		const iAmReplicating = this.programs.get(address)
-			?.program?.replicate; // TODO add conditional whether this represents a network (I am not replicating if I am not trusted (pointless))
+		const iAmReplicating = this.programs.get(address)?.program?.replicate; // TODO add conditional whether this represents a network (I am not replicating if I am not trusted (pointless))
 
 		if (peers.length === 0) {
 			return iAmReplicating ? [this.id.toString()] : peers;
@@ -1565,7 +1559,7 @@ export class Peerbit {
 
 		if (!this._topicSubscriptions.has(topic)) {
 			const topicMonitor = new IpfsPubsubPeerMonitor(
-				this.libp2p.pubsub,
+				this.libp2p.directsub,
 				topic,
 				{
 					onJoin: (peer) => {
@@ -1584,9 +1578,8 @@ export class Peerbit {
 							// TODO add delegation info
 							/// TODO encryption
 							await ignoreInsufficientPeers(async () =>
-								this.libp2p.pubsub
+								this.libp2p.directsub
 									.publish(
-										topic,
 										serialize(
 											await this.decryptedSignedThing(
 												serialize(
@@ -1595,7 +1588,8 @@ export class Peerbit {
 													])
 												)
 											)
-										)
+										),
+										{ topics: [topic] }
 									)
 									.catch((error) => {
 										logger.error(
@@ -1727,8 +1721,7 @@ export class Peerbit {
 			const programAddress = program.address!.toString()!;
 
 			if (programAddress) {
-				const existingProgram = this.programs
-					?.get(programAddress);
+				const existingProgram = this.programs?.get(programAddress);
 				if (existingProgram) {
 					return existingProgram;
 				}
@@ -1756,8 +1749,9 @@ export class Peerbit {
 					const ownerAddress = Address.parse(program.owner);
 					const ownerProgramRootAddress = ownerAddress.root();
 					let ownerProgram: AbstractProgram | undefined =
-						this.programs
-							.get(ownerProgramRootAddress.toString())?.program;
+						this.programs.get(
+							ownerProgramRootAddress.toString()
+						)?.program;
 					if (ownerAddress.path) {
 						ownerProgram = ownerProgram?.subprogramsMap.get(
 							ownerAddress.path.index
@@ -1816,7 +1810,6 @@ export class Peerbit {
 				options.replicate !== undefined ? options.replicate : true;
 			await program.init(
 				this.libp2p,
-				this._store,
 				options.identity || this.identity,
 				{
 					onClose: () => this._onProgamClose(program),
@@ -1858,11 +1851,7 @@ export class Peerbit {
 							return;
 						},
 						onWrite: async (store, entry) => {
-							await this.onWrite(
-								program,
-								store,
-								entry
-							);
+							await this.onWrite(program, store, entry);
 							if (options.onWrite) {
 								return options.onWrite(store, entry);
 							}
@@ -1922,7 +1911,7 @@ export class Peerbit {
 			/// TODO encryption
 
 			await ignoreInsufficientPeers(async () =>
-				this.libp2p.pubsub.publish(
+				this.libp2p.directsub.publish(
 					this.topic,
 					serialize(
 						await this.decryptedSignedThing(
@@ -1935,7 +1924,7 @@ export class Peerbit {
 				)
 			);
 			await ignoreInsufficientPeers(async () =>
-				this.libp2p.pubsub.publish(
+				this.libp2p.directsub.publish(
 					this.topic,
 					serialize(
 						await this.decryptedSignedThing(
@@ -2022,7 +2011,7 @@ export class Peerbit {
 		const promise = new Promise<KeyWithMeta<T>[] | undefined>(
 			(resolve, reject) => {
 				const send = (message: Uint8Array) => {
-					return this._libp2p.pubsub.publish(this.topic, message);
+					return this._libp2p.directsub.publish(this.topic, message);
 				};
 				requestAndWaitForKeys(
 					condition,

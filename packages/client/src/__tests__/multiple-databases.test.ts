@@ -4,7 +4,7 @@ import { jest } from "@jest/globals";
 import { v4 as uuid } from "uuid";
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 import { delay } from "@dao-xyz/peerbit-time";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/libp2p-direct-block";
 
 describe(`Multiple Databases`, function () {
     jest.setTimeout(60000);
@@ -84,13 +84,13 @@ describe(`Multiple Databases`, function () {
 
     afterEach(async () => {
         /*  for (let db of remoteDatabasesA)
-     await db.drop()
+	 await db.drop()
 
    for (let db of remoteDatabasesB)
-     await db.drop()
+	 await db.drop()
 
    for (let db of localDatabases)
-     await db.drop() */
+	 await db.drop() */
     });
 
     it("replicates multiple open databases", async () => {
@@ -157,13 +157,13 @@ describe(`Multiple Databases`, function () {
 
         // check gracefully shut down (with no leak)
         let directConnections = 2;
-        const subscriptions = client3.libp2p.pubsub.getTopics();
+        const subscriptions = client3.libp2p.directsub.getTopics();
         expect(subscriptions.length).toEqual(directConnections + 2 + 1); //+ 1 for 2 replication topic (observer and replicator) + block topic
         for (let i = 0; i < dbCount; i++) {
             await remoteDatabasesB[i].drop();
             if (i === dbCount - 1) {
                 await delay(3000);
-                const connections = client3.libp2p.pubsub.getTopics();
+                const connections = client3.libp2p.directsub.getTopics();
 
                 // Direct connection should close because no databases "in common" are open
                 expect(connections).toHaveLength(0 + 1); // + "block" topic

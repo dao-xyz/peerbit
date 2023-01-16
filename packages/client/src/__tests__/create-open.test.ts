@@ -17,10 +17,9 @@ import { createStore, LSession } from "@dao-xyz/peerbit-test-utils";
 import { Program } from "@dao-xyz/peerbit-program";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import {
-
     LevelBlockStore,
     LibP2PBlockStore,
-} from "@dao-xyz/peerbit-block";
+} from "@dao-xyz/libp2p-direct-block";
 import { Level } from "level";
 import { exec } from "child_process";
 
@@ -105,12 +104,12 @@ describe(`Create & Open`, function () {
             });
 
             /*       it('saves database manifest reference locally', async () => {
-              const address = db.address!.toString();
-              const manifestHash = address.split('/')[2]
-              await client.cache.open()
-              const value = await client.cache.get(path.join(db.address?.toString(), '/_manifest'))
-              expect(value).toEqual(manifestHash)
-            }) */
+			  const address = db.address!.toString();
+			  const manifestHash = address.split('/')[2]
+			  await client.cache.open()
+			  const value = await client.cache.get(path.join(db.address?.toString(), '/_manifest'))
+			  expect(value).toEqual(manifestHash)
+			}) */
 
             it("saves database manifest file locally", async () => {
                 const loaded = (await Program.load(
@@ -205,17 +204,17 @@ describe(`Create & Open`, function () {
         });
 
         /*  TODO, this test throws error, but not the expected one
-    it('throws an error if trying to open a database locally and we don\'t have it', async () => {
-       const db = await client.open(new EventStore({ id: 'abc' }), { replicationTopic })
-       const address = new Address(db.address.cid.slice(0, -1) + 'A')
-       await db.drop()
-       try {
-         await client.open(address, { replicationTopic, localOnly: true, timeout: 3000 })
-         throw new Error('Shouldn\'t open the database')
-       } catch (error: any) {
-         expect(error.toString()).toEqual(`Error: Database '${address}' doesn't exist!`)
-       }
-     }) */
+	it('throws an error if trying to open a database locally and we don\'t have it', async () => {
+	   const db = await client.open(new EventStore({ id: 'abc' }), { replicationTopic })
+	   const address = new Address(db.address.cid.slice(0, -1) + 'A')
+	   await db.drop()
+	   try {
+		 await client.open(address, { replicationTopic, localOnly: true, timeout: 3000 })
+		 throw new Error('Shouldn\'t open the database')
+	   } catch (error: any) {
+		 expect(error.toString()).toEqual(`Error: Database '${address}' doesn't exist!`)
+	   }
+	 }) */
 
         it("open the database and it has the added entries", async () => {
             const db = await client.open(new EventStore({ id: uuid() }), {
@@ -267,14 +266,14 @@ describe(`Create & Open`, function () {
 
         /* TODO fix
     
-    it("close load close sets status to 'closed'", async () => {
-      const directory = path.join(dbPath, "custom-store")
-      const db = await client.open(new EventStore({}), { replicationTopic, directory })
-      await db.close()
-      await db.load()
-      await db.close()
-      expect(db.store._cache._store.status).toEqual('closed')
-    })
+	it("close load close sets status to 'closed'", async () => {
+	  const directory = path.join(dbPath, "custom-store")
+	  const db = await client.open(new EventStore({}), { replicationTopic, directory })
+	  await db.close()
+	  await db.load()
+	  await db.close()
+	  expect(db.store._cache._store.status).toEqual('closed')
+	})
  */
         it("successfully manages multiple caches", async () => {
             // Cleaning up cruft from other tests

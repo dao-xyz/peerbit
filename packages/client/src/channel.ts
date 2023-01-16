@@ -69,8 +69,8 @@ export class SharedIPFSChannel implements Closable {
             {
                 const signedMessage = message as SignedMessage;
                 /*    if (signedMessage.from.equals(this._id)) {
-                       return;
-                   } */
+					   return;
+				   } */
                 if (signedMessage.topic !== this._topic) {
                     return;
                 }
@@ -83,13 +83,13 @@ export class SharedIPFSChannel implements Closable {
     }
 
     async start(): Promise<SharedIPFSChannel> {
-        await this._libp2p.pubsub.subscribe(this._topic);
-        this._libp2p.pubsub.addEventListener("message", this._handler);
+        await this._libp2p.directsub.subscribe(this._topic);
+        this._libp2p.directsub.addEventListener("message", this._handler);
         return this;
     }
     async close() {
         await this._monitor?.stop();
-        this._libp2p.pubsub.removeEventListener("message", this._handler);
-        await this._libp2p.pubsub.unsubscribe(this._topic);
+        this._libp2p.directsub.removeEventListener("message", this._handler);
+        await this._libp2p.directsub.unsubscribe(this._topic);
     }
 }

@@ -6,7 +6,7 @@ import { v4 as uuid } from "uuid";
 
 // Include test utilities
 import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
+import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/libp2p-direct-block";
 
 describe(`Replication topic`, function () {
     let session: LSession;
