@@ -1,44 +1,44 @@
 {
-    "name": "@dao-xyz/peerbit-rpc",
-    "version": "0.0.82",
-    "description": "RPC calls for peers",
-    "type": "module",
-    "sideEffects": false,
-    "module": "lib/esm/index.js",
-    "types": "lib/esm/index.d.ts",
-    "exports": {
-        "import": "./lib/esm/index.js",
-        "require": "./lib/cjs/index.js"
-    },
-    "files": [
-        "lib",
-        "src",
-        "!src/**/__tests__",
-        "!lib/**/__tests__",
-        "!documentation",
-        "LICENSE"
-    ],
-    "publishConfig": {
-        "access": "public"
-    },
-    "scripts": {
-        "clean": "shx rm -rf lib/*",
-        "build": "yarn clean && tsc -p tsconfig.json",
-        "postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
-        "test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
-        "test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
-        "test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
-    },
-    "author": "dao.xyz",
-    "license": "MIT",
-    "dependencies": {
-        "@dao-xyz/borsh": "^5.1.2",
-        "@dao-xyz/peerbit-crypto": "^0.0.34",
-        "@dao-xyz/peerbit-logger": "^0.0.4",
-        "@dao-xyz/peerbit-program": "^0.0.78",
-        "@dao-xyz/peerbit-store": "^0.0.93",
-        "@dao-xyz/peerbit-time": "^0.0.19",
-        "uuid": "^8.3.2"
-    },
-    "gitHead": "bfbec720aee276ab1bc7cf4ee7a6c0e90ecb4f51"
+	"name": "@dao-xyz/peerbit-rpc",
+	"version": "0.0.82",
+	"description": "RPC calls for peers",
+	"type": "module",
+	"sideEffects": false,
+	"module": "lib/esm/index.js",
+	"types": "lib/esm/index.d.ts",
+	"exports": {
+		"import": "./lib/esm/index.js",
+		"require": "./lib/cjs/index.js"
+	},
+	"files": [
+		"lib",
+		"src",
+		"!src/**/__tests__",
+		"!lib/**/__tests__",
+		"!documentation",
+		"LICENSE"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"clean": "shx rm -rf lib/*",
+		"build": "yarn clean && tsc -p tsconfig.json",
+		"postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
+		"test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
+		"test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
+		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
+	},
+	"author": "dao.xyz",
+	"license": "MIT",
+	"dependencies": {
+		"@dao-xyz/borsh": "^5.1.3",
+		"@dao-xyz/peerbit-crypto": "^0.0.34",
+		"@dao-xyz/peerbit-logger": "^0.0.4",
+		"@dao-xyz/peerbit-program": "^0.0.78",
+		"@dao-xyz/peerbit-store": "^0.0.93",
+		"@dao-xyz/peerbit-time": "^0.0.19",
+		"uuid": "^8.3.2"
+	},
+	"gitHead": "bfbec720aee276ab1bc7cf4ee7a6c0e90ecb4f51"
 }

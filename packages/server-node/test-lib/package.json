@@ -1,47 +1,47 @@
 {
-    "name": "@dao-xyz/peerbit-node-test-lib",
-    "version": "0.0.1",
-    "author": "dao.xyz",
-    "repository": "https://github.com/@dao-xyz/peerbit-node",
-    "license": "Apache-2.0",
-    "type": "module",
-    "private": true,
-    "sideEffects": false,
-    "bin": {
-        "peerbit": "./lib/esm/bin.js"
-    },
-    "module": "lib/esm/index.js",
-    "types": "lib/esm/index.d.ts",
-    "exports": {
-        "import": "./lib/esm/index.js"
-    },
-    "files": [
-        "lib",
-        "src",
-        "src/nginx-template.conf",
-        "!src/**/__tests__",
-        "!lib/**/__tests__",
-        "LICENSE"
-    ],
-    "engines": {
-        "node": ">=16.15.1"
-    },
-    "scripts": {
-        "clean": "shx rm -rf lib/*",
-        "build": "yarn clean && tsc -p tsconfig.json; tsc-esm -p tsconfig.json",
-        "postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
-        "test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
-        "test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
-        "test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
-    },
-    "devDependencies": {
-        "@dao-xyz/peerbit-test-utils": "*",
-        "libp2p": "^0.41.0"
-    },
-    "dependencies": {
-        "@dao-xyz/peerbit-string": "*",
-        "@dao-xyz/peerbit-trusted-network": "*",
-        "@dao-xyz/peerbit": "*",
-        "is-node": "^1.0.2"
-    }
+	"name": "@dao-xyz/peerbit-node-test-lib",
+	"version": "0.0.1",
+	"author": "dao.xyz",
+	"repository": "https://github.com/@dao-xyz/peerbit-node",
+	"license": "Apache-2.0",
+	"type": "module",
+	"private": true,
+	"sideEffects": false,
+	"bin": {
+		"peerbit": "./lib/esm/bin.js"
+	},
+	"module": "lib/esm/index.js",
+	"types": "lib/esm/index.d.ts",
+	"exports": {
+		"import": "./lib/esm/index.js"
+	},
+	"files": [
+		"lib",
+		"src",
+		"src/nginx-template.conf",
+		"!src/**/__tests__",
+		"!lib/**/__tests__",
+		"LICENSE"
+	],
+	"engines": {
+		"node": ">=16.15.1"
+	},
+	"scripts": {
+		"clean": "shx rm -rf lib/*",
+		"build": "yarn clean && tsc -p tsconfig.json; tsc-esm -p tsconfig.json",
+		"postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
+		"test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
+		"test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
+		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
+	},
+	"devDependencies": {
+		"@dao-xyz/peerbit-test-utils": "*",
+		"libp2p": "^0.41.0"
+	},
+	"dependencies": {
+		"@dao-xyz/peerbit-string": "*",
+		"@dao-xyz/peerbit-trusted-network": "*",
+		"@dao-xyz/peerbit": "*",
+		"is-node": "^1.0.2"
+	}
 }

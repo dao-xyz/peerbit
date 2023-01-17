@@ -4,10 +4,13 @@ import { AbstractLevel } from "abstract-level";
 
 const prefixPath = "./tmp/keystore-test/";
 export const createStore = (
-    name = "./tmp/test-utils/keystore"
+	name?: string
 ): AbstractLevel<any, string, Uint8Array> => {
-    if (fs && fs.mkdirSync) {
-        fs.mkdirSync(prefixPath + name, { recursive: true });
-    }
-    return new MemoryLevel({ valueEncoding: "view" });
+	if (name) {
+		// TODO why are we doing this?
+		if (fs && fs.mkdirSync) {
+			fs.mkdirSync(prefixPath + name, { recursive: true });
+		}
+	}
+	return new MemoryLevel({ valueEncoding: "view" });
 };
