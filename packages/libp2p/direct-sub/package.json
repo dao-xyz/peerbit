@@ -56,7 +56,7 @@
 		"@dao-xyz/libp2p-direct-stream": "^0.0.1",
 		"@dao-xyz/peerbit-logger": "^0.0.4",
 		"abstract-level": "^1.0.3",
-		"libp2p": "^0.41.0",
+		"libp2p": "^0.42.0",
 		"@isaacs/ttlcache": "^1.2.1",
 		"lru-cache": "^7.14.1",
 		"memory-level": "^1.0.0",

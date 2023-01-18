@@ -4,6 +4,8 @@ import crypto from "crypto";
 import { waitForPeers, DirectStream } from "..";
 import { Libp2p } from "libp2p";
 import { DataMessage, Message } from "../messages";
+import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import { compare } from "uint8arrays/dist/src";
 
 class TestStreamImpl extends DirectStream {
 	constructor(libp2p: Libp2p) {
@@ -15,7 +17,7 @@ class TestStreamImpl extends DirectStream {
 }
 
 describe("streams", function () {
-	describe("to", () => {
+	describe("publish", () => {
 		let session: LSession,
 			stream1: TestStreamImpl,
 			stream2: TestStreamImpl,
@@ -43,10 +45,7 @@ describe("streams", function () {
 			└─┘
 			*/
 
-			await session.connect([
-				[session.peers[0], session.peers[1]],
-				[session.peers[1], session.peers[2]],
-			]);
+
 			stream1 = new TestStreamImpl(session.peers[0]);
 			stream2 = new TestStreamImpl(session.peers[1]);
 			stream3 = new TestStreamImpl(session.peers[2]);
@@ -65,11 +64,14 @@ describe("streams", function () {
 			});
 
 			await stream1.start();
-
 			await stream2.start();
-			//	await delay(5000);
-
 			await stream3.start();
+
+			await session.connect([ // behaviour seems to be more predictable if we connect after start (TODO improve startup to use existing connections in a better way)
+				[session.peers[0], session.peers[1]],
+				[session.peers[1], session.peers[2]],
+			]);
+
 			await waitForPeers(stream1, stream2);
 			await waitForPeers(stream2, stream3);
 		});
@@ -153,137 +155,8 @@ describe("streams", function () {
 		});
 	});
 
-	describe("routing", () => {
-		let session: LSession;
-		let peers: {
-			stream: TestStreamImpl;
-			messages: Message[];
-			recieved: DataMessage[];
-		}[];
 
-		const data = new Uint8Array([1, 2, 3]);
 
-		beforeAll(async () => { });
-		beforeEach(async () => {
-			session = await LSession.disconnected(4);
-
-			/* 
-			┌────┐
-			│0   │
-			└┬──┬┘
-			┌▽┐┌▽┐
-			│1││3│
-			└┬┘└─┘
-			┌▽┐   
-			│2│   
-			└─┘   
-			*/
-
-			peers = [];
-			for (const peer of session.peers) {
-				const stream = new TestStreamImpl(peer);
-				const client: {
-					stream: TestStreamImpl;
-					messages: Message[];
-					recieved: DataMessage[];
-				} = {
-					messages: [],
-					recieved: [],
-					stream,
-				};
-				peers.push(client);
-				stream.addEventListener("message", (msg) => {
-					client.messages.push(msg.detail);
-				});
-				stream.addEventListener("data", (msg) => {
-					client.recieved.push(msg.detail);
-				});
-				await stream.start();
-			}
-
-			// slowly connect to that the route maps are deterministic
-			await session.connect([[session.peers[0], session.peers[1]]]);
-			await waitFor(() => peers[0].stream.routes.linksCount === 1);
-			await waitFor(() => peers[1].stream.routes.linksCount === 1);
-			await session.connect([[session.peers[1], session.peers[2]]]);
-			await waitFor(() => peers[0].stream.routes.linksCount === 2);
-			await waitFor(() => peers[1].stream.routes.linksCount === 2);
-			await waitFor(() => peers[2].stream.routes.linksCount === 2);
-			await session.connect([[session.peers[0], session.peers[3]]]);
-			await waitFor(() => peers[0].stream.routes.linksCount === 3);
-			await waitFor(() => peers[1].stream.routes.linksCount === 3);
-			await waitFor(() => peers[2].stream.routes.linksCount === 3);
-			await waitFor(() => peers[3].stream.routes.linksCount === 3);
-			await waitForPeers(peers[0].stream, peers[1].stream);
-			await waitForPeers(peers[1].stream, peers[2].stream);
-			await waitForPeers(peers[0].stream, peers[3].stream);
-		});
-
-		afterEach(async () => {
-			await Promise.all(peers.map((peer) => peer.stream.stop()));
-			await session.stop();
-		});
-		afterAll(async () => { });
-
-		it("will publish on routes", async () => {
-			peers[2].recieved = [];
-			peers[3].recieved = [];
-
-			await peers[0].stream.publish(data, {
-				to: [peers[2].stream.libp2p.peerId],
-			});
-			await waitFor(() => peers[2].recieved.length === 1);
-			expect(
-				peers[2].messages.find((x) => x instanceof DataMessage)
-			).toBeDefined();
-
-			await delay(1000); // some delay to allow all messages to progagate
-			expect(peers[3].recieved).toHaveLength(0);
-			expect(
-				peers[3].messages.find((x) => x instanceof DataMessage)
-			).toBeUndefined();
-		});
-
-		it("re-route new connection", async () => {
-			expect(
-				peers[3].stream.routes.getPath(
-					peers[3].stream.publicKeyHash,
-					peers[2].stream.publicKeyHash
-				)
-			).toHaveLength(4);
-			await session.connect([[session.peers[2], session.peers[3]]]);
-			await waitFor(
-				() =>
-					peers[3].stream.routes.getPath(
-						peers[3].stream.publicKeyHash,
-						peers[2].stream.publicKeyHash
-					).length === 2
-			);
-		});
-
-		it("handle on drop no routes", async () => {
-			expect(
-				peers[3].stream.routes.getPath(
-					peers[3].stream.publicKeyHash,
-					peers[2].stream.publicKeyHash
-				)
-			).toHaveLength(4);
-			expect(peers[1].stream.earlyGoodbyes.size).toEqual(2);
-			expect(peers[3].stream.earlyGoodbyes.size).toEqual(1);
-
-			await peers[0].stream.stop();
-			await waitFor(() => peers[3].stream.routes.linksCount === 0); // because 1, 2 are now disconnected
-			await delay(1000); // make sure nothing get readded
-			expect(peers[3].stream.routes.linksCount).toEqual(0);
-			expect(
-				peers[3].stream.routes.getPath(
-					peers[3].stream.publicKeyHash,
-					peers[2].stream.publicKeyHash
-				)
-			).toHaveLength(0);
-			expect(peers[3].stream.earlyGoodbyes.size).toEqual(0);
-		});
-	});
 
 	describe("join/leave", () => {
 		let session: LSession;
@@ -291,13 +164,15 @@ describe("streams", function () {
 			stream: TestStreamImpl;
 			messages: Message[];
 			recieved: DataMessage[];
+			reachable: PublicSignKey[],
+			unrechable: PublicSignKey[]
 		}[];
-
 		const data = new Uint8Array([1, 2, 3]);
 
 		describe("4", () => {
 			beforeEach(async () => {
 				session = await LSession.disconnected(4);
+
 				/* 
 				┌─┐
 				│3│
@@ -320,10 +195,14 @@ describe("streams", function () {
 					const client: {
 						stream: TestStreamImpl;
 						messages: Message[];
-						recieved: DataMessage[];
+						recieved: DataMessage[]
+						reachable: PublicSignKey[];
+						unrechable: PublicSignKey[];
 					} = {
 						messages: [],
 						recieved: [],
+						reachable: [],
+						unrechable: [],
 						stream,
 					};
 					peers.push(client);
@@ -332,6 +211,12 @@ describe("streams", function () {
 					});
 					stream.addEventListener("data", (msg) => {
 						client.recieved.push(msg.detail);
+					});
+					stream.addEventListener("peer:reachable", (msg) => {
+						client.reachable.push(msg.detail);
+					});
+					stream.addEventListener("peer:unreachable", (msg) => {
+						client.unrechable.push(msg.detail);
 					});
 					await stream.start();
 				}
@@ -352,12 +237,42 @@ describe("streams", function () {
 				await waitForPeers(peers[0].stream, peers[1].stream);
 				await waitForPeers(peers[1].stream, peers[2].stream);
 				await waitForPeers(peers[0].stream, peers[3].stream);
+				for (const peer of peers) {
+					expect(peer.reachable.map(x => x.hashcode())).toContainAllValues(peers.map(x => x.stream.publicKeyHash).filter(x => x !== peer.stream.publicKeyHash)) // peer has recevied reachable event from everone
+				}
 			});
 
 			afterEach(async () => {
 				await Promise.all(peers.map((peer) => peer.stream.stop()));
 				await session.stop();
 			});
+
+			it('will emit unreachable events on shutdown', async () => {
+				/** Shut down slowly and check that all unreachable events are fired */
+				await peers[0].stream.stop();
+				const hasAll = (arr: PublicSignKey[], cmp: PublicSignKey[]) => {
+					let a = new Set(arr.map(x => x.hashcode()));
+					let b = new Set(cmp.map(x => x.hashcode()));
+					if (a.size === b.size && a.size === arr.length && arr.length === cmp.length) {
+						for (const key of cmp) {
+							if (!arr.find(x => x.equals(key))) {
+								return false;
+							}
+						}
+						return true;
+					}
+					return false
+				}
+				expect(peers[0].unrechable).toHaveLength(0);
+				await waitFor(() => hasAll(peers[1].unrechable, [peers[0].stream.publicKey, peers[3].stream.publicKey]));
+				await peers[1].stream.stop();
+				await waitFor(() => hasAll(peers[2].unrechable, [peers[0].stream.publicKey, peers[1].stream.publicKey, peers[3].stream.publicKey]));
+				await peers[2].stream.stop();
+				await waitFor(() => hasAll(peers[3].unrechable, [peers[0].stream.publicKey, peers[1].stream.publicKey, peers[2].stream.publicKey]));
+				await peers[3].stream.stop();
+			})
+
+
 
 			it("will publish on routes", async () => {
 				peers[2].recieved = [];
@@ -474,10 +389,14 @@ describe("streams", function () {
 					const client: {
 						stream: TestStreamImpl;
 						messages: Message[];
-						recieved: DataMessage[];
+						recieved: DataMessage[]
+						reachable: PublicSignKey[];
+						unrechable: PublicSignKey[];
 					} = {
 						messages: [],
 						recieved: [],
+						reachable: [],
+						unrechable: [],
 						stream,
 					};
 					peers.push(client);
@@ -521,28 +440,32 @@ describe("streams", function () {
 	});
 
 	describe("lifecycle", () => {
-		let session: LSession, stream1: TestStreamImpl, stream2: TestStreamImpl;
+		let session: LSession, stream1: TestStreamImpl, stream2: TestStreamImpl
 
-		beforeAll(async () => {
-			session = await LSession.connected(2);
-		});
+
 		beforeEach(async () => {
+			session = await LSession.connected(2);
+
+			await delay(3000)
+		});
+
+		afterEach(async () => {
+			await session.stop();
+			await stream1?.stop();
+			await stream2?.stop();
+
+		});
+
+		it("can restart", async () => {
+
+			await session.connect()
 			stream1 = new TestStreamImpl(session.peers[0]);
 			stream2 = new TestStreamImpl(session.peers[1]);
 			await stream1.start();
 			await stream2.start();
 			await waitForPeers(stream1, stream2);
-		});
 
-		afterEach(async () => {
-			await stream1?.stop();
-			await stream2?.stop();
-		});
 
-		afterAll(async () => {
-			await session.stop();
-		});
-		it("can restart", async () => {
 			await stream1.stop();
 			await stream2.stop();
 			await delay(1000); // Some delay seems to be necessary TODO fix
@@ -550,5 +473,39 @@ describe("streams", function () {
 			await stream2.start();
 			await waitForPeers(stream1, stream2);
 		});
+
+		it('can connect after start', async () => {
+			stream1 = new TestStreamImpl(session.peers[0]);
+			stream2 = new TestStreamImpl(session.peers[1]);
+
+			await stream1.start();
+			await stream2.start();
+
+			await session.connect()
+			await waitForPeers(stream1, stream2);
+
+		})
+
+
+		it('can connect before start', async () => {
+			stream1 = new TestStreamImpl(session.peers[0]);
+			stream2 = new TestStreamImpl(session.peers[1]);
+			await session.connect()
+			await delay(3000)
+
+			await stream1.start();
+			await stream2.start();
+			await waitForPeers(stream1, stream2);
+		})
+
+		it('can connect with delay', async () => {
+			stream1 = new TestStreamImpl(session.peers[0]);
+			stream2 = new TestStreamImpl(session.peers[1]);
+			stream2.start();
+			await delay(3000)
+			stream1.start();
+
+			await waitForPeers(stream1, stream2);
+		})
 	});
 });

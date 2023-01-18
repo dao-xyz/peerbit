@@ -55,9 +55,9 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.3",
 		"@dao-xyz/libp2p-direct-stream": "^0.0.1",
-		"@ipld/dag-cbor": "^7.0.3",
+		"@ipld/dag-cbor": "^9.0.0",
 		"abstract-level": "^1.0.3",
-		"libp2p": "^0.41.0",
+		"libp2p": "^0.42.0",
 		"lru-cache": "^7.14.1",
 		"memory-level": "^1.0.0",
 		"uuid": "^8.3.2"

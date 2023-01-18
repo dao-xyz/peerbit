@@ -57,31 +57,20 @@ import {
 	LibP2PExtended,
 } from "@dao-xyz/peerbit-program";
 import PQueue from "p-queue";
-import { Libp2p } from "libp2p";
 import { IpfsPubsubPeerMonitor } from "@dao-xyz/libp2p-pubsub-peer-monitor";
 import type { Ed25519PeerId } from "@libp2p/interface-peer-id";
 import {
-	exchangeSwarmAddresses,
 	ExchangeSwarmMessage,
 } from "./exchange-network.js";
 import isNode from "is-node";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import {
-	LevelBlockStore,
 	BlockStore,
 } from "@dao-xyz/libp2p-direct-block";
 import sodium from "libsodium-wrappers";
 import path from "path-browserify";
 import { TimeoutError } from "@dao-xyz/peerbit-time";
-import { PubSub } from "@libp2p/interface-pubsub";
-import { GossipsubEvents } from "@chainsafe/libp2p-gossipsub";
-import {
-	CloseEvent,
-	Delegation,
-	OpenEvent,
-	RequestReplicationInfo,
-} from "./events.js";
-import { peerIdFromString } from "@libp2p/peer-id";
+import "@libp2p/peer-id";
 
 export const logger = loggerFn({ module: "peer" });
 await sodium.ready;
@@ -162,8 +151,6 @@ const groupByGid = async <T extends Entry<any> | EntryWithRefs<any>>(
 export const DEFAULT_TOPIC = "_";
 export class Peerbit {
 	_libp2p: LibP2PExtended;
-	_store: BlockStore;
-	_topicSubscriptions: Map<string, SharedChannel<SharedIPFSChannel>>;
 
 	// User id
 	identity: Identity;
@@ -220,21 +207,21 @@ export class Peerbit {
 		}
 
 		this._libp2p = libp2p;
-		this._store = new Blocks(
-			new LibP2PBlockStore(
-				this._libp2p,
-				options.store ||
-				new LevelBlockStore(
-					options.storage.createStore(
-						options.directory &&
-						path
-							.join(options.directory, "/blocks")
-							.toString()
+		/* 		this._store = new Blocks(
+					new LibP2PBlockStore(
+						this._libp2p,
+						options.store ||
+						new LevelBlockStore(
+							options.storage.createStore(
+								options.directory &&
+								path
+									.join(options.directory, "/blocks")
+									.toString()
+							)
+						)
 					)
-				)
-			)
-		);
-		this._store.open();
+				);
+				this._store.open(); */
 
 		this.identity = identity;
 
@@ -306,7 +293,6 @@ export class Peerbit {
 		}
 		this._openProgramQueue = new PQueue({ concurrency: 1 });
 		this._reorgQueue = new PQueue({ concurrency: 1 });
-		this._topicSubscriptions = new Map();
 
 		const refreshInterval = options.refreshIntreval || 10000;
 
@@ -488,10 +474,6 @@ export class Peerbit {
 		this._disconnecting = true;
 		// Close a direct connection and remove it from internal state
 
-		for (const [_topic, channel] of this._topicSubscriptions) {
-			await channel.close();
-		}
-
 		this._refreshInterval && clearInterval(this._refreshInterval);
 
 		// close keystore
@@ -510,7 +492,7 @@ export class Peerbit {
 			delete this.caches[directory];
 		}
 
-		await this._store.close();
+		/* await this._store.close(); */
 
 		// Remove all databases from the state
 		this.programs = new Map();
@@ -1699,7 +1681,7 @@ export class Peerbit {
 			) {
 				try {
 					program = (await Program.load(
-						this._store,
+						this._libp2p.directblock,
 						storeOrAddress,
 						options
 					)) as any as S; // TODO fix typings
@@ -1717,7 +1699,7 @@ export class Peerbit {
 				}
 			}
 
-			await program.save(this._store);
+			await program.save(this._libp2p.directblock);
 			const programAddress = program.address!.toString()!;
 
 			if (programAddress) {
@@ -1912,7 +1894,6 @@ export class Peerbit {
 
 			await ignoreInsufficientPeers(async () =>
 				this.libp2p.directsub.publish(
-					this.topic,
 					serialize(
 						await this.decryptedSignedThing(
 							serialize(
@@ -1920,12 +1901,12 @@ export class Peerbit {
 							),
 							{ signWithPeerId: true }
 						)
-					)
+					),
+					{ topics: [this.topic] }
 				)
 			);
 			await ignoreInsufficientPeers(async () =>
 				this.libp2p.directsub.publish(
-					this.topic,
 					serialize(
 						await this.decryptedSignedThing(
 							serialize(
@@ -1935,7 +1916,10 @@ export class Peerbit {
 							),
 							{ signWithPeerId: true }
 						)
-					)
+					),
+					{
+						topics: [this.topic,]
+					}
 				)
 			);
 			return pm;
@@ -2011,7 +1995,7 @@ export class Peerbit {
 		const promise = new Promise<KeyWithMeta<T>[] | undefined>(
 			(resolve, reject) => {
 				const send = (message: Uint8Array) => {
-					return this._libp2p.directsub.publish(this.topic, message);
+					return this._libp2p.directsub.publish(message, { topics: [this.topic] });
 				};
 				requestAndWaitForKeys(
 					condition,

@@ -16,6 +16,7 @@ import {
 	SignaturePolicy,
 } from "@dao-xyz/libp2p-direct-stream";
 import * as Block from "multiformats/block";
+import { delay } from "@dao-xyz/peerbit-time";
 
 const logger = loggerFn({ module: "blocks-libp2p" });
 
@@ -176,6 +177,7 @@ export class DirectBlock extends DirectStream implements BlockStore {
 		await super.start();
 		this.addEventListener("data", this._responseHandler!);
 		await this._localStore?.open();
+		await delay(3000)
 		this._open = true;
 	}
 

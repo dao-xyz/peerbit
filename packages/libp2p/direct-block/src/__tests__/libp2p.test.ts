@@ -10,6 +10,8 @@ describe("transport", function () {
 
 	beforeEach(async () => {
 		session = await LSession.connected(2);
+
+
 	});
 
 	afterEach(async () => {
@@ -51,9 +53,10 @@ describe("transport", function () {
 		expect((store as DirectBlock)._gossip).toBeFalse();
 
 		await store.open();
-		await store2.open();
-		await session.connect();
+		await store2.open()
+
 		await waitForPeers(store, store2);
+
 
 		const data = new Uint8Array([5, 4, 3]);
 		const cid = await store.put(await createBlock(data, "raw"));
@@ -117,6 +120,8 @@ describe("transport", function () {
 		const readData = await store2.get<Uint8Array>(stringifyCid(cid));
 		expect(await getBlockValue(readData!)).toEqual(data);
 	});
+
+
 
 	/* it('can handle conurrent read/write', async () => {
 		store = new Blocks(

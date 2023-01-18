@@ -50,6 +50,12 @@ export class LSession {
 			peer.directblock = new DirectBlock(peer, {
 				localStore: new MemoryLevelBlockStore(),
 			});
+			let stop = peer.stop.bind(peer);
+			peer.stop = async () => {
+				await stop();
+				await peer.directblock.stop()
+				await peer.directsub.stop()
+			}
 		});
 		await Promise.all(session.peers.map((x) => Promise.all([x.directsub.start(), x.directblock.start()])));
 		return new LSession(session);

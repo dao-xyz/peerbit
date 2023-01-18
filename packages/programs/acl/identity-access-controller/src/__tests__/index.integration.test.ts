@@ -82,21 +82,7 @@ class TestStore extends Program {
 		});
 	}
 }
-@variant("identity_graph")
-class TestStore2 extends Program {
-	@field({ type: Documents })
-	store: Documents<IdentityRelation>;
 
-	constructor(properties?: { store: Documents<IdentityRelation> }) {
-		super();
-		if (properties) {
-			this.store = properties.store;
-		}
-	}
-	async setup(): Promise<void> {
-		await this.store.setup({ type: IdentityRelation });
-	}
-}
 
 describe("index", () => {
 	let session: LSession,
@@ -158,12 +144,7 @@ describe("index", () => {
 	});
 
 	it("can write from trust web", async () => {
-		const s = new TestStore2({
-			store: createIdentityGraphStore({
-				id: session.peers[0].peerId.toString(),
-			}),
-		});
-		//new TestStore({ identity: identity(0) });
+		const s = new TestStore({ identity: identity(0) });;
 		const options = {
 			topic: uuid(),
 			replicate: true,
@@ -171,52 +152,52 @@ describe("index", () => {
 		};
 		const l0a = await init(s, 0, options);
 
-		/*await l0a.store.put(
+		await l0a.store.put(
 			new Document({
 				id: "1",
 			})
 		);
-	
-				const l0b = (await init(
-					await TestStore.load(session.peers[1].directblock, l0a.address!),
-					1,
-					options
-				)) as TestStore;
-		
-				await expect(
-					l0b.store.put(
-						new Document({
-							id: "id",
-						})
-					)
-				).rejects.toBeInstanceOf(AccessError); // Not trusted
-				await l0a.accessController.trustedNetwork.add(identity(1).publicKey);
-		
-				await l0b.accessController.trustedNetwork.trustGraph.store.sync(
-					l0a.accessController.trustedNetwork.trustGraph.store.oplog.heads
-				);
-		
-				await waitFor(
-					() =>
-						l0b.accessController.trustedNetwork.trustGraph.store.oplog
-							.length === 1
-				);
-				await waitFor(
-					() =>
-						l0b.accessController.trustedNetwork.trustGraph._index.size === 1
-				);
-		
-				await l0b.store.put(
-					new Document({
-						id: "2",
-					})
-				); // Now trusted
-		
-				await l0a.store.store.sync(l0b.store.store.oplog.heads);
-				await l0b.store.store.sync(l0a.store.store.oplog.heads);
-		
-				await waitFor(() => l0a.store.index.size === 2);
-				await waitFor(() => l0b.store.index.size === 2); */
+
+		const l0b = (await init(
+			await TestStore.load(session.peers[1].directblock, l0a.address!),
+			1,
+			options
+		)) as TestStore;
+
+		await expect(
+			l0b.store.put(
+				new Document({
+					id: "id",
+				})
+			)
+		).rejects.toBeInstanceOf(AccessError); // Not trusted
+		await l0a.accessController.trustedNetwork.add(identity(1).publicKey);
+
+		await l0b.accessController.trustedNetwork.trustGraph.store.sync(
+			l0a.accessController.trustedNetwork.trustGraph.store.oplog.heads
+		);
+
+		await waitFor(
+			() =>
+				l0b.accessController.trustedNetwork.trustGraph.store.oplog
+					.length === 1
+		);
+		await waitFor(
+			() =>
+				l0b.accessController.trustedNetwork.trustGraph._index.size === 1
+		);
+
+		await l0b.store.put(
+			new Document({
+				id: "2",
+			})
+		); // Now trusted
+
+		await l0a.store.store.sync(l0b.store.store.oplog.heads);
+		await l0b.store.store.sync(l0a.store.store.oplog.heads);
+
+		await waitFor(() => l0a.store.index.size === 2);
+		await waitFor(() => l0b.store.index.size === 2);
 	});
 
 	describe("conditions", () => {
