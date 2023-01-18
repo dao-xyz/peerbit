@@ -1,3 +1,18 @@
+import { field, option, serialize, variant } from "@dao-xyz/borsh";
+import {
+	Program
+} from "@dao-xyz/peerbit-program";
+import {
+	Peerbit
+} from "@dao-xyz/peerbit";
+import {
+	Documents,
+	DocumentIndex,
+	DocumentQueryRequest,
+	FieldStringMatchQuery,
+	Results,
+} from "@dao-xyz/peerbit-document";
+
 # Documents
 
 Distributed document store.
