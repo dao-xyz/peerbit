@@ -11,12 +11,8 @@ As of know, go through the [tests](./src//__tests__/index.integration.test.ts) f
 Example 
 ```typescript 
 import { field, option, serialize, variant } from "@dao-xyz/borsh";
-import {
-	Program
-} from "@dao-xyz/peerbit-program";
-import {
-	Peerbit
-} from "@dao-xyz/peerbit";
+import { Program } from "@dao-xyz/peerbit-program";
+import { Peerbit } from "@dao-xyz/peerbit";
 import {
 	Documents,
 	DocumentIndex,
