@@ -58,7 +58,7 @@ class TestStore extends Program {
 
 // later 
 
-const peer = await Peerbit.create (ipfs, options ...)
+const peer = await Peerbit.create (your_libp2p_instance, options ...)
 const store = peer.open(new TestStore());
 console.log(store.address) /// this address can be opened by another peer 
 
