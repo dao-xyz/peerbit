@@ -58,17 +58,23 @@ The goal of this project is to create a **cheaper** and **more private** way of 
 [Encryption scheme](./documentation/encryption.md)
 
 
-## 🚧 Alpha release  🚧
 
+
+
+### 🚧 Alpha release  🚧
 Backwards compatibility for new releases might be lacking. Use with caution and please report bugs and issues you are experiencing when developing with Peerbit. 
 
 ### Documentation is lacking at the moment. Be patient! Read module tests for know to know how you can use different modules. Feel free to write an issue to ask any question!  
 
 
-## Example code
+## Getting started
+## [See this guide](https://github.com/dao-xyz/peerbit-getting-started)
 
+
+## Examples
 ### [Example library project (contains live demos)](https://github.com/dao-xyz/peerbit-examples)
 
+## Other examples
 ### Collaborative text 
 Below is a short example how you can create a collaborative text document: 
 
@@ -190,59 +196,6 @@ program.store.addOperation( ... )
 
 See the [DString](./packages/programs/data/string) for a complete working example that also includes a string search index
 
-
-## Network
-Distributing content among untrusted peers will be unreliable and not resilient to malicious parties that starts to participate in the replication process with large amount (>> min replicas) of nodes and shutting them down simultaneously (no way for the original peers recover all lost data). To mitigate this you can launch your program in a "Network", which is basically a list of nodes that trust each other. Symbolically you could thing of this as a VPC.
-
-To do this, you only have to implement the "Network" interface: 
-```typescript
-import { Peerbit, Network } from '@dao-xyz/peerbit'
-import { Store } from '@dao-xyz/peerbit-store'
-import { Program } from '@dao-xyz/peerbit-program' 
-import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network' 
-import { field, variant } from '@dao-xyz/borst-ts' 
-
-@variant("string_store") 
-@network({property: 'network'})
-class StringStore extends Program
-{
-    @field({type: Store})
-    store: Store<string>
-
-    @field({type: TrustedNetwork}) 
-    network: TrustedNetwork // this is a database storing all peers. Peers that are trusted can add new peers
-
-    constructor(properties?:{ store: Store<any>, network: TrustedNetwork }) {
-        if(properties)
-        {
-            this.store = properties.store
-        }
-    }
-
-    async setup() 
-    {
-        await store.setup({ encoding: ... , canAppend: ..., canRead: ...})
-        await trustedNetwork.setup()
-    }
-}
-
-
-// Later 
-const peer1 = await Peerbit.create(LIBP2P_CLIENT, {... options ...})
-const peer2 = await Peerbit.create(LIBP2P_CLIENT_2, {... options ...})
-
-const programPeer1 = await peer1.open(new StringStore({store: new Store(), network: new TrustedNetwork()}), {... options ...})
-
-// add trust to another peer
-await program.network.add(peer2.identity.publicKey) 
-
-
-// peer2 also has to "join" the network, in practice this means that peer2 adds a record telling that its Peer ID trusts its libp2p Id
-const programPeer2 = await peer2.open(programPeer1.address, {... options ...})
-await peer2.join(programPeer2) // This might fail with "AccessError" if you do this too quickly after "open", because it has not yet recieved the full trust graph from peer1 yet
-```
-
-See [this test(s)](./packages/client/src/__tests__/network.test.ts) for working examples
 
 ## [Utils](./packages/utils/)
 Utility libraries that do not have their own category yet
