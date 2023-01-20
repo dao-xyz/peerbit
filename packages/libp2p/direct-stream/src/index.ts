@@ -256,7 +256,6 @@ export abstract class DirectStream<
 	public seenCache: LRU<string, true>;
 	public earlyGoodbyes: Map<string, Goodbye>;
 	public hellosToReplay: Map<string, Map<string, Hello>>; // key is hash of publicKey, value is map whey key is hash of signature bytes, and value is latest Hello
-	public ppp: Map<string, any> = new Map()
 	private _registrarTopologyIds: string[] | undefined;
 	private readonly maxInboundStreams: number;
 	private readonly maxOutboundStreams: number;
@@ -410,9 +409,6 @@ export abstract class DirectStream<
 		}
 
 		const publicKey = getPublicKeyFromPeerId(peerId);
-		let p = this.ppp.get(publicKey.hashcode());
-		p && await p;
-
 		const peer = this.addPeer(peerId, publicKey, stream.stat.protocol);
 		const inboundStream = peer.attachInboundStream(stream);
 		this.processMessages(peerId, inboundStream, peer).catch((err) => {
@@ -433,102 +429,92 @@ export abstract class DirectStream<
 			const peerKey = getPublicKeyFromPeerId(peerId);
 			const peerKeyHash = peerKey.hashcode();
 
-			let p = this.ppp.get(peerKeyHash);
-			p && await p;
+			// let ok = false;
+			for (const existingStreams of conn.streams) {
+				if (
+					(existingStreams.stat.protocol && this.multicodecs.includes(existingStreams.stat.protocol)) &&
+					existingStreams.stat.direction === "outbound"
+				) {
+					return;
+				}
+
+			}
 
 
-			const fn = async () => {
+			// This condition seem to work better than the one above, for some reason. The rea
+			// The reason we need this at all is because we will connect to existing connection and recieve connection that 
+			// some times, yields a race connections where connection drop each other by reset
 
-				// let ok = false;
-				for (const existingStreams of conn.streams) {
-					if (
-						(existingStreams.stat.protocol && this.multicodecs.includes(existingStreams.stat.protocol)) &&
-						existingStreams.stat.direction === "outbound"
-					) {
+			let stream: any = undefined;
+			let i = 0;
+			let err: any = undefined;
+			while (i++ < 1 && conn.stat.status === 'OPEN') {
+				try {
+					stream = await conn.newStream(this.multicodecs);
+					if (stream.stat.protocol == null) {
+						stream.abort(new Error("Stream was not multiplexed"));
+
+						console.log('here')
 						return;
 					}
-
+					await delay(350)
+				} catch (error) {
+					err = error;
+					// Protocol selection failed?	
 				}
-
-
-				// This condition seem to work better than the one above, for some reason. The rea
-				// The reason we need this at all is because we will connect to existing connection and recieve connection that 
-				// some times, yields a race connections where connection drop each other by reset
-
-				let stream: any = undefined;
-				let i = 0;
-				let err: any = undefined;
-				while (i++ < 1 && conn.stat.status === 'OPEN') {
-					try {
-						stream = await conn.newStream(this.multicodecs);
-						if (stream.stat.protocol == null) {
-							stream.abort(new Error("Stream was not multiplexed"));
-
-							console.log('here')
-							return;
-						}
-						await delay(350)
-					} catch (error) {
-						err = error;
-						// Protocol selection failed?	
-					}
-				}
-				if (!stream) {
-					if (err && conn.stat.status === 'OPEN') {
-						//console.log("EROR STREAM REST ERROR")
-						throw err;
-
-					}
-					return
-				}
-
-				let peer = this.addPeer(peerId, peerKey, stream.stat.protocol);
-				await peer.attachOutboundStream(stream);
-				this.addRouteConnection(this.publicKey, peerKey);
-
-				const promises: Promise<any>[] = [];
-
-				// Say hello
-				promises.push(
-					this.publishMessage(
-						this.libp2p.peerId,
-						new Hello().sign(this.sign),
-						[peer]
-					)
-				);
-
-				// Send my goodbye early if I disconnect for some reason, (so my peer can say goodbye for me)
-				// TODO add custom condition fn for doing below
-				promises.push(
-					this.publishMessage(
-						this.libp2p.peerId,
-						new Goodbye({ early: true }).sign(this.sign),
-						[peer]
-					)
-				);
-
-				// replay all hellos
-				for (const [sender, hellos] of this.hellosToReplay) {
-					if (sender === peerKeyHash) {
-						// Don't say hellos from sender to same sender (uneccessary)
-						continue;
-					}
-					for (const [key, hello] of hellos) {
-						if (!hello.header.verify()) {
-							hellos.delete(key);
-						}
-						promises.push(
-							this.publishMessage(this.libp2p.peerId, hello, [peer])
-						);
-					}
-				}
-
-				const resolved = await Promise.all(promises);
-				return resolved;
 			}
-			let promise = fn()
-			this.ppp.set(this.publicKeyHash, promise);
-			await promise;
+			if (!stream) {
+				if (err && conn.stat.status === 'OPEN') {
+					//console.log("EROR STREAM REST ERROR")
+					throw err;
+
+				}
+				return
+			}
+
+			let peer = this.addPeer(peerId, peerKey, stream.stat.protocol);
+			await peer.attachOutboundStream(stream);
+			this.addRouteConnection(this.publicKey, peerKey);
+
+			const promises: Promise<any>[] = [];
+
+			// Say hello
+			promises.push(
+				this.publishMessage(
+					this.libp2p.peerId,
+					new Hello().sign(this.sign),
+					[peer]
+				)
+			);
+
+			// Send my goodbye early if I disconnect for some reason, (so my peer can say goodbye for me)
+			// TODO add custom condition fn for doing below
+			promises.push(
+				this.publishMessage(
+					this.libp2p.peerId,
+					new Goodbye({ early: true }).sign(this.sign),
+					[peer]
+				)
+			);
+
+			// replay all hellos
+			for (const [sender, hellos] of this.hellosToReplay) {
+				if (sender === peerKeyHash) {
+					// Don't say hellos from sender to same sender (uneccessary)
+					continue;
+				}
+				for (const [key, hello] of hellos) {
+					if (!hello.header.verify()) {
+						hellos.delete(key);
+					}
+					promises.push(
+						this.publishMessage(this.libp2p.peerId, hello, [peer])
+					);
+				}
+			}
+
+			const resolved = await Promise.all(promises);
+			return resolved;
 		} catch (err: any) {
 			logger.error(err);
 

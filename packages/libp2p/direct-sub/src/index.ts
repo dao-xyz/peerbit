@@ -74,8 +74,8 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		return super.stop();
 	}
 
-	public async onPeerConnected(peerId: PeerId, conn: Connection, existing?: boolean) {
-		const ret = await super.onPeerConnected(peerId, conn, existing);
+	public async onPeerConnected(peerId: PeerId, conn: Connection) {
+		const ret = await super.onPeerConnected(peerId, conn);
 		//	this.streamToTopics.set(peerId.toString(), new Set());
 
 		// Aggregate subscribers for my topics through this new connection because if we don't do this we might end up with a situtation where
