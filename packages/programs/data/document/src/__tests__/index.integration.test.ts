@@ -125,7 +125,6 @@ describe("index", () => {
 					});
 			const keypair = await X25519Keypair.create();
 			await store.init(session.peers[i], await createIdentity(), {
-				topic: topic,
 				replicate: i === 0,
 				store: {
 					...DefaultOptions,
@@ -215,7 +214,6 @@ describe("index", () => {
 				}),
 			});
 			await store.init(session.peers[0], await createIdentity(), {
-				topic: "topic",
 				replicate: true,
 				store: {
 					...DefaultOptions,
@@ -256,7 +254,6 @@ describe("index", () => {
 				}),
 			});
 			await store.init(session.peers[0], await createIdentity(), {
-				topic: "topic",
 				replicate: true,
 				store: {
 					...DefaultOptions,
@@ -302,7 +299,6 @@ describe("index", () => {
 			});
 
 			await store.init(session.peers[0], await createIdentity(), {
-				topic: "topic",
 				replicate: true,
 				store: {
 					...DefaultOptions,

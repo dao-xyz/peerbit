@@ -1,5 +1,5 @@
 import { v4 as uuid } from "uuid";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
 import {
 	AccessError,
@@ -40,8 +40,15 @@ class RPCTest extends Program {
 	@field({ type: RPC })
 	query: RPC<Body, Body>;
 
-	async setup(): Promise<void> {
+
+
+	constructor() {
+		super()
+	}
+
+	async setup(topic?: string): Promise<void> {
 		await this.query.setup({
+			topic,
 			responseType: Body,
 			queryType: Body,
 			context: this,
@@ -58,25 +65,32 @@ describe("rpc", () => {
 	beforeAll(async () => {
 		session = await LSession.connected(3);
 
+		const topic = uuid();
+
 		responder = new RPCTest();
 		responder.query = new RPC();
-		const topic = uuid();
+
+		responder.setup(topic)  // set topic manually because we are not going to have a parent program with address 
 		await responder.init(session.peers[0], await createIdentity(), {
-			topic,
 			replicate: true,
 			store: {} as any,
 		});
-		reader = deserialize(serialize(responder), RPCTest);
-		await reader.init(session.peers[1], await createIdentity(), {
-			topic,
-			store: {} as any,
-		} as any);
 
-		await waitForPeers(
+		reader = deserialize(serialize(responder), RPCTest);
+
+		reader.setup(topic)  // set topic manually because we are not going to have a parent program with address
+		await reader.init(session.peers[1], await createIdentity(), {
+			store: {} as any,
+		});
+
+
+		/* await waitForPeers(
 			session.peers[1],
 			[session.peers[0].peerId],
 			responder.query.rpcTopic
-		);
+		); */
+		await delay(4000)
+		const t = 123;
 	});
 	afterAll(async () => {
 		await session.stop();

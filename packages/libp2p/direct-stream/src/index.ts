@@ -65,9 +65,10 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 	 */
 	private _rawInboundStream?: Stream;
 	/**
-	 * An AbortController for controlled shutdown of the inbound stream
+	 * An AbortController for controlled shutdown of the  treams
 	 */
-	readonly inboundAbortController: AbortController;
+	private readonly inboundAbortController: AbortController;
+
 	private closed: boolean;
 
 	constructor(init: PeerStreamsInit) {
@@ -140,12 +141,17 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 	/**
 	 * Attach a raw outbound stream and setup a write stream
 	 */
-	async attachOutboundStream(stream: Stream, fromExisting = false) {
+	async attachOutboundStream(stream: Stream) {
 		// If an outbound stream already exists, gently close it
 		const _prevStream = this.outboundStream;
 		if (this.outboundStream != null) {
+			/* 		if (fromExisting) {
+						return;
+					} */
 			// End the stream without emitting a close event
 			await this.outboundStream!.end();
+			//await this._rawOutboundStream?.close();
+
 		}
 
 		this._rawOutboundStream = stream;
@@ -155,12 +161,9 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 				if (this._rawOutboundStream) {
 					this._rawOutboundStream.close();
 					this.dispatchEvent(new CustomEvent('close'))
-
 				}
 				this._rawOutboundStream = undefined;
 				this.outboundStream = undefined;
-
-				//	
 			},
 		});
 
@@ -197,7 +200,8 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 			this.inboundAbortController.abort();
 			this._rawInboundStream?.close();
 		}
-		this.dispatchEvent(new CustomEvent('close'))
+
+		//this.dispatchEvent(new CustomEvent('close'))
 		this._rawOutboundStream = undefined;
 		this.outboundStream = undefined;
 		this._rawInboundStream = undefined;
@@ -310,7 +314,6 @@ export abstract class DirectStream<
 
 		logger.info("starting");
 
-
 		// Incoming streams
 		// Called after a peer dials us
 		await Promise.all(
@@ -338,14 +341,20 @@ export abstract class DirectStream<
 			)
 		);
 
-		/* 
-				logger.info("started", this.libp2p.peerStore.protoBook["all"]); */
+
 		this.started = true;
 
 		// All existing connections are like new ones for us
+		let multicodecsSet = new Set(this.multicodecs)
 		this.libp2p
 			.getConnections()
-			.forEach((conn) => this.onPeerConnected(conn.remotePeer, conn, true));
+			.forEach(async (conn) => {
+				const has = (await this.libp2p.peerStore.get(conn.remotePeer)).protocols.find(x => multicodecsSet.has(x));
+				if (has) {
+					this.onPeerConnected(conn.remotePeer, conn)
+				}
+
+			});
 	}
 
 	/**
@@ -355,8 +364,6 @@ export abstract class DirectStream<
 		if (!this.started) {
 			return;
 		}
-
-		/* this.heartbeat && clearInterval(this.heartbeat) */
 
 
 		await this.libp2p.unhandle(this.multicodecs);
@@ -398,6 +405,7 @@ export abstract class DirectStream<
 		const peerId = connection.remotePeer;
 		if (stream.stat.protocol == null) {
 			stream.abort(new Error("Stream was not multiplexed"));
+			console.error("Recieved non multiplexed stream")
 			return;
 		}
 
@@ -413,21 +421,17 @@ export abstract class DirectStream<
 
 	}
 
+
+
 	/**
 	 * Registrar notifies an established connection with protocol
 	 */
-	public async onPeerConnected(peerId: PeerId, conn: Connection, existing?: boolean) {
+	public async onPeerConnected(peerId: PeerId, conn: Connection) {
 		logger.info("connected " + peerId);
 		try {
 
 			const peerKey = getPublicKeyFromPeerId(peerId);
 			const peerKeyHash = peerKey.hashcode();
-
-			/* 	if (this.ppp.has(conn.id)) {
-					return;
-				}
-				this.ppp.set(conn.id, true) */
-			//console.log("ON PEER CONNECTED", peerKeyHash, existing, conn.id, conn.stat.status, this.publicKeyHash === peerKeyHash, conn.streams.map(x => x.stat.protocol + " / " + x.stat.direction).filter(x => !!x), conn.tags)
 
 			let p = this.ppp.get(peerKeyHash);
 			p && await p;
@@ -438,15 +442,14 @@ export abstract class DirectStream<
 				// let ok = false;
 				for (const existingStreams of conn.streams) {
 					if (
-						/* existingStreams.stat.protocol && this.multicodecs.includes(existingStreams.stat.protocol) && */
+						(existingStreams.stat.protocol && this.multicodecs.includes(existingStreams.stat.protocol)) &&
 						existingStreams.stat.direction === "outbound"
 					) {
-						//	ok = true; /// if already have inbound proto continue?  instead
-						//	console.log('exit 1')
 						return;
 					}
 
 				}
+
 
 				// This condition seem to work better than the one above, for some reason. The rea
 				// The reason we need this at all is because we will connect to existing connection and recieve connection that 
@@ -455,7 +458,7 @@ export abstract class DirectStream<
 				let stream: any = undefined;
 				let i = 0;
 				let err: any = undefined;
-				while (i++ < 2 && conn.stat.status === 'OPEN') {
+				while (i++ < 1 && conn.stat.status === 'OPEN') {
 					try {
 						stream = await conn.newStream(this.multicodecs);
 						if (stream.stat.protocol == null) {
@@ -471,13 +474,16 @@ export abstract class DirectStream<
 					}
 				}
 				if (!stream) {
-					if (err && conn.stat.status === 'OPEN')
+					if (err && conn.stat.status === 'OPEN') {
+						//console.log("EROR STREAM REST ERROR")
 						throw err;
+
+					}
 					return
 				}
 
 				let peer = this.addPeer(peerId, peerKey, stream.stat.protocol);
-				await peer.attachOutboundStream(stream, existing);
+				await peer.attachOutboundStream(stream);
 				this.addRouteConnection(this.publicKey, peerKey);
 
 				const promises: Promise<any>[] = [];
@@ -690,7 +696,7 @@ export abstract class DirectStream<
 							└─┘
 							
 							from 2s perspective, 
-
+	
 							if everyone conents to each other at the same time, then 0 will say hello to 1 and 1 will save that hello to resend to 2 if 2 ever connects
 							but two is already connected by onPeerConnected has not been invoked yet, so the hello message gets forwarded,
 							and later onPeerConnected gets invoked on 1, and the same message gets resent to 2
@@ -1080,7 +1086,6 @@ export abstract class DirectStream<
 
 
 			if (id.peerId.equals(from)) {
-				logger.trace("not sending message to sender: " + id.peerId);
 				continue;
 			}
 

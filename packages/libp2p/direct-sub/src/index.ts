@@ -8,7 +8,7 @@ import {
 	Message,
 	PeerStreams,
 } from "@dao-xyz/libp2p-direct-stream";
-import errcode from "err-code";
+import { CodeError } from '@libp2p/interfaces/errors'
 import {
 	PubSubMessage,
 	Subscribe,
@@ -31,7 +31,7 @@ export {
 	Unsubscribe,
 	GetSubscribers,
 };
-const logger = logFn({ module: "direct-sub", level: "warn" });
+export const logger = logFn({ module: "direct-sub", level: "warn" });
 
 export interface PeerStreamsInit {
 	id: PeerId;
@@ -165,23 +165,20 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		}
 	}
 
-	getSubscribers(topic: string): Set<string> {
+	getSubscribers(topic: string): Set<string> | undefined {
 		if (!this.started) {
-			throw errcode(new Error("not started yet"), "ERR_NOT_STARTED_YET");
+			throw new CodeError("not started yet", "ERR_NOT_STARTED_YET");
 		}
 
 		if (topic == null) {
-			throw errcode(
-				new Error("topic is required"),
+			throw new CodeError(
+				"topic is required",
 				"ERR_NOT_VALID_TOPIC"
 			);
 		}
 
-		const peersInTopic = this.topics.get(topic.toString());
-		if (peersInTopic == null) {
-			return new Set();
-		}
-		return peersInTopic;
+		return this.topics.get(topic.toString());
+
 	}
 
 	requestSubscribers(
@@ -189,12 +186,12 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		streams?: PeerStreams[]
 	): Promise<void> {
 		if (!this.started) {
-			throw errcode(new Error("not started yet"), "ERR_NOT_STARTED_YET");
+			throw new CodeError("not started yet", "ERR_NOT_STARTED_YET");
 		}
 
 		if (topic == null) {
-			throw errcode(
-				new Error("topic is required"),
+			throw new CodeError(
+				"topic is required",
 				"ERR_NOT_VALID_TOPIC"
 			);
 		}
@@ -212,9 +209,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		);
 	}
 
-	getPeersOnTopic(topic: string): Set<string> | undefined {
-		return this.topics.get(topic.toString());
-	}
+
 
 	getNeighboursWithTopics(
 		topics: string[],

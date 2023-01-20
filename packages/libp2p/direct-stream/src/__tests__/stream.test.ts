@@ -8,8 +8,8 @@ import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { compare } from "uint8arrays/dist/src";
 
 class TestStreamImpl extends DirectStream {
-	constructor(libp2p: Libp2p) {
-		super(libp2p, ["test/0.0.0"], {
+	constructor(libp2p: Libp2p, id = "test/0.0.0") {
+		super(libp2p, [id], {
 			canRelayMessage: true,
 			emitSelf: true,
 		});
@@ -17,6 +17,7 @@ class TestStreamImpl extends DirectStream {
 }
 
 describe("streams", function () {
+
 	describe("publish", () => {
 		let session: LSession,
 			stream1: TestStreamImpl,
@@ -446,7 +447,6 @@ describe("streams", function () {
 		beforeEach(async () => {
 			session = await LSession.connected(2);
 
-			await delay(3000)
 		});
 
 		afterEach(async () => {
@@ -508,4 +508,38 @@ describe("streams", function () {
 			await waitForPeers(stream1, stream2);
 		})
 	});
+
+	describe("multistream", () => {
+
+		let session: LSession, stream1: TestStreamImpl, stream2: TestStreamImpl
+		let stream1b: TestStreamImpl, stream2b: TestStreamImpl;
+
+		beforeEach(async () => {
+			session = await LSession.connected(2);
+		});
+
+		afterEach(async () => {
+			await session.stop();
+			await stream1?.stop();
+			await stream2?.stop();
+
+		})
+
+		it('can setup multiple streams at once', async () => {
+			stream1 = new TestStreamImpl(session.peers[0]);
+			stream2 = new TestStreamImpl(session.peers[1]);
+			stream1b = new TestStreamImpl(session.peers[0], "alt");
+			stream2b = new TestStreamImpl(session.peers[1], "alt");
+			stream1.start();
+			stream2.start();
+			stream1b.start();
+			stream2b.start();
+			await waitFor(() => !!stream1.peers.size)
+			await waitFor(() => !!stream2.peers.size)
+			await waitFor(() => !!stream1b.peers.size)
+			await waitFor(() => !!stream2b.peers.size)
+
+		})
+
+	})
 });

@@ -22,11 +22,11 @@ import { PubSubData } from "@dao-xyz/libp2p-direct-sub";
 
 export type SearchContext = (() => Address) | AbstractProgram | string;
 export type CanRead = (key?: PublicSignKey) => Promise<boolean> | boolean;
-export type RPCTopicOption =
+/* export type RPCTopicOption =
 	| { queryAddressSuffix: string }
-	| { rpcRegion: string };
-export type RPCInitializationOptions<Q, R> = {
-	rpcTopic?: RPCTopicOption;
+	| { rpcRegion: string }; */
+export type RPCSetupOptions<Q, R> = {
+	topic?: string;
 	queryType: AbstractType<Q>;
 	responseType: AbstractType<R>;
 	canRead?: CanRead;
@@ -89,10 +89,10 @@ export class RPC<Q, R> extends ComposableProgram {
 	_responseHandler: ResponseHandler<Q, (R | undefined) | R>;
 	_requestType: AbstractType<Q>;
 	_responseType: AbstractType<R>;
-	_topic: string | undefined;
+	_rpcTopic: string | undefined;
 	_context: SearchContext;
 
-	public setup(options: RPCInitializationOptions<Q, R>) {
+	public setup(options: RPCSetupOptions<Q, R>) {
 		/* if (options.rpcTopic) {
 			if (
 				!!(options.rpcTopic as { rpcRegion }).rpcRegion &&
@@ -115,6 +115,7 @@ export class RPC<Q, R> extends ComposableProgram {
 				});
 			}
 		} */
+		this._rpcTopic = options.topic ?? this._rpcTopic;
 		this._context = options.context;
 		this._responseHandler = options.responseHandler;
 		this._requestType = options.queryType;
@@ -128,7 +129,7 @@ export class RPC<Q, R> extends ComposableProgram {
 		options: ProgramInitializationOptions
 	): Promise<this> {
 		await super.init(libp2p, identity, options);
-		this._topic = options.topic;
+		this._rpcTopic = this._rpcTopic || this.topic;
 		if (options.replicate) {
 			this._subscribe();
 		}
@@ -299,7 +300,7 @@ export class RPC<Q, R> extends ComposableProgram {
 	}
 
 	public get rpcTopic(): string {
-		if (!this._topic) {
+		if (!this._rpcTopic) {
 			throw new Error("Not initialized");
 		}
 		/* 	if (this.rpcRegion) {
@@ -308,7 +309,7 @@ export class RPC<Q, R> extends ComposableProgram {
 				}
 				return this.rpcRegion.from(this.parentProgram.address);
 			} */
-		return this._topic;
+		return this._rpcTopic;
 	}
 
 	public getRpcResponseTopic(_request: RequestV0): string {

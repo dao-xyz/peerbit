@@ -12,21 +12,21 @@ import { v4 as uuid } from "uuid";
 const logger = loggerFn({ module: "exchange-heads" });
 
 export class MinReplicas {
-    get value(): number {
-        throw new Error("Not implemented");
-    }
+	get value(): number {
+		throw new Error("Not implemented");
+	}
 }
 
 @variant(0)
 export class AbsolutMinReplicas extends MinReplicas {
-    _value: number;
-    constructor(value: number) {
-        super();
-        this._value = value;
-    }
-    get value() {
-        return this._value;
-    }
+	_value: number;
+	constructor(value: number) {
+		super();
+		this._value = value;
+	}
+	get value() {
+		return this._value;
+	}
 }
 
 /**
@@ -36,123 +36,121 @@ export class AbsolutMinReplicas extends MinReplicas {
  */
 @variant(0)
 export class EntryWithRefs<T> {
-    @field({ type: Entry })
-    entry: Entry<T>;
+	@field({ type: Entry })
+	entry: Entry<T>;
 
-    @field({ type: vec(Entry) })
-    references: Entry<T>[]; // are some parents to the entry
+	@field({ type: vec(Entry) })
+	references: Entry<T>[]; // are some parents to the entry
 
-    constructor(properties: { entry: Entry<T>; references: Entry<T>[] }) {
-        this.entry = properties.entry;
-        this.references = properties.references;
-    }
+	constructor(properties: { entry: Entry<T>; references: Entry<T>[] }) {
+		this.entry = properties.entry;
+		this.references = properties.references;
+	}
 }
 
 @variant([0, 0])
 export class ExchangeHeadsMessage<T> extends TransportMessage {
-    @field({ type: "string" })
-    programAddress: string;
+	@field({ type: "string" })
+	programAddress: string;
 
-    @field({ type: "u32" })
-    storeIndex: number;
+	@field({ type: "u32" })
+	storeIndex: number;
 
-    @field({ type: vec(EntryWithRefs) })
-    heads: EntryWithRefs<T>[];
+	@field({ type: vec(EntryWithRefs) })
+	heads: EntryWithRefs<T>[];
 
-    @field({ type: option("u32") })
-    programIndex?: number;
+	@field({ type: option("u32") })
+	programIndex?: number;
 
-    @field({ type: option(MinReplicas) })
-    minReplicas?: MinReplicas;
+	@field({ type: option(MinReplicas) })
+	minReplicas?: MinReplicas;
 
-    @field({ type: "bool" })
-    replicating: boolean;
+	/*     @field({ type: "bool" })
+		replicating: boolean;
+	 */
+	@field({ type: fixedUint8Array(4) })
+	reserved: Uint8Array = new Uint8Array(4);
 
-    @field({ type: fixedUint8Array(4) })
-    reserved: Uint8Array = new Uint8Array(4);
-
-    constructor(props: {
-        programIndex?: number;
-        programAddress: string;
-        storeIndex: number;
-        heads: EntryWithRefs<T>[];
-        minReplicas?: MinReplicas;
-        replicating: boolean;
-    }) {
-        super();
-        this.id = uuid();
-        this.storeIndex = props.storeIndex;
-        this.programIndex = props.programIndex;
-        this.programAddress = props.programAddress;
-        this.heads = props.heads;
-        this.minReplicas = props.minReplicas;
-        this.replicating = props.replicating;
-    }
+	constructor(props: {
+		programIndex?: number;
+		programAddress: string;
+		storeIndex: number;
+		heads: EntryWithRefs<T>[];
+		minReplicas?: MinReplicas;
+		/*         replicating: boolean; */
+	}) {
+		super();
+		this.id = uuid();
+		this.storeIndex = props.storeIndex;
+		this.programIndex = props.programIndex;
+		this.programAddress = props.programAddress;
+		this.heads = props.heads;
+		this.minReplicas = props.minReplicas;
+		/*      this.replicating = props.replicating; */
+	}
 }
 
 @variant([0, 1])
 export class RequestHeadsMessage extends TransportMessage {
-    @field({ type: "string" })
-    address: string;
+	@field({ type: "string" })
+	address: string;
 
-    constructor(props: { topic: string; address: string }) {
-        super();
-        if (props) {
-            this.address = props.address;
-        }
-    }
+	constructor(props: { topic: string; address: string }) {
+		super();
+		if (props) {
+			this.address = props.address;
+		}
+	}
 }
 
 export const exchangeHeads = async (
-    send: (message: Uint8Array) => Promise<any>,
-    store: Store<any>,
-    program: Program,
-    heads: Entry<any>[],
-    includeReferences: boolean,
-    identity: Identity | undefined,
-    replicating: boolean
+	send: (message: Uint8Array) => Promise<any>,
+	store: Store<any>,
+	program: Program,
+	heads: Entry<any>[],
+	includeReferences: boolean,
+	identity: Identity | undefined
 ) => {
-    const headsSet = new Set(heads);
-    const headsWithRefs = heads.map((head) => {
-        const refs = !includeReferences
-            ? []
-            : store.oplog
-                  .getReferenceSamples(head, {
-                      pointerCount: 8,
-                      memoryLimit: 1e6 / heads.length,
-                  }) // 1mb total limit split on all heads
-                  .filter((r) => !headsSet.has(r)); // pick a proportional amount of refs so we can efficiently load the log. TODO should be equidistant for good performance?
-        return new EntryWithRefs({
-            entry: head,
-            references: refs,
-        });
-    });
-    logger.debug(`Send latest heads of '${store._storeIndex}'`);
-    if (heads && heads.length > 0) {
-        const message = new ExchangeHeadsMessage({
-            storeIndex: store._storeIndex,
-            programIndex: program._programIndex,
-            programAddress: (program.address ||
-                program.parentProgram.address)!.toString(),
-            heads: headsWithRefs,
-            replicating,
-        });
-        const maybeSigned = new MaybeSigned({ data: serialize(message) });
-        let signedMessage: MaybeSigned<any> = maybeSigned;
-        if (identity) {
-            const signer = async (data: Uint8Array) => {
-                return {
-                    signature: await identity.sign(data),
-                    publicKey: identity.publicKey,
-                };
-            };
-            signedMessage = await signedMessage.sign(signer);
-        }
+	const headsSet = new Set(heads);
+	const headsWithRefs = heads.map((head) => {
+		const refs = !includeReferences
+			? []
+			: store.oplog
+				.getReferenceSamples(head, {
+					pointerCount: 8,
+					memoryLimit: 1e6 / heads.length,
+				}) // 1mb total limit split on all heads
+				.filter((r) => !headsSet.has(r)); // pick a proportional amount of refs so we can efficiently load the log. TODO should be equidistant for good performance?
+		return new EntryWithRefs({
+			entry: head,
+			references: refs,
+		});
+	});
+	logger.debug(`Send latest heads of '${store._storeIndex}'`);
+	if (heads && heads.length > 0) {
+		const message = new ExchangeHeadsMessage({
+			storeIndex: store._storeIndex,
+			programIndex: program._programIndex,
+			programAddress: (program.address ||
+				program.parentProgram.address)!.toString(),
+			heads: headsWithRefs
+		});
+		const maybeSigned = new MaybeSigned({ data: serialize(message) });
+		let signedMessage: MaybeSigned<any> = maybeSigned;
+		if (identity) {
+			const signer = async (data: Uint8Array) => {
+				return {
+					signature: await identity.sign(data),
+					publicKey: identity.publicKey,
+				};
+			};
+			signedMessage = await signedMessage.sign(signer);
+		}
 
-        const decryptedMessage = new DecryptedThing({
-            data: serialize(signedMessage),
-        }); // TODO encryption?
-        const serializedMessage = serialize(decryptedMessage);
-        await send(serializedMessage);
-    }
+		const decryptedMessage = new DecryptedThing({
+			data: serialize(signedMessage),
+		}); // TODO encryption?
+		const serializedMessage = serialize(decryptedMessage);
+		await send(serializedMessage);
+	}
 };

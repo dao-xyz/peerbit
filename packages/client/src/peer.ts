@@ -57,7 +57,6 @@ import {
 	LibP2PExtended,
 } from "@dao-xyz/peerbit-program";
 import PQueue from "p-queue";
-import { IpfsPubsubPeerMonitor } from "@dao-xyz/libp2p-pubsub-peer-monitor";
 import type { Ed25519PeerId } from "@libp2p/interface-peer-id";
 import {
 	ExchangeSwarmMessage,
@@ -79,8 +78,7 @@ const MIN_REPLICAS = 2;
 
 interface ProgramWithMetadata {
 	program: Program;
-	minReplicas: MinReplicas;
-	replicators: Set<string>;
+	minReplicas: MinReplicas
 }
 
 export type StoreOperations = "write" | "all";
@@ -227,6 +225,7 @@ export class Peerbit {
 
 		this.id = options.peerId;
 
+
 		if (this.id.type !== "Ed25519") {
 			throw new Error(
 				"Unsupported id type, expecting Ed25519 but got " + this.id.type
@@ -337,7 +336,7 @@ export class Peerbit {
 			const keyStorePath = directory
 				? path.join(directory, "/keystore")
 				: undefined;
-			logger.info(
+			logger.debug(
 				keyStorePath
 					? "Creating keystore at path: " + keyStorePath
 					: "Creating an in memory keystore"
@@ -522,7 +521,7 @@ export class Peerbit {
 			throw new Error("Missing store info");
 		}
 		const sendAll =
-			this._libp2p.directsub.getSubscribers(this.topic)?.size > 0
+			this._libp2p.directsub.getSubscribers(this.topic)?.size
 				? (data: Uint8Array): Promise<any> => {
 					{
 						return ignoreInsufficientPeers(async () =>
@@ -549,7 +548,7 @@ export class Peerbit {
 					);
 				}
 
-				const replicators = await this.findReplicators(
+				const replicators = await this.findLeaders(
 					topic,
 					programAddress,
 					entry.gid,
@@ -585,8 +584,7 @@ export class Peerbit {
 				program,
 				[entry],
 				true,
-				this.limitSigning ? undefined : this.idIdentity,
-				!!program.replicate
+				this.limitSigning ? undefined : this.idIdentity
 			).catch((error) => {
 				logger.error("Got error when exchanging heads: " + error);
 				throw error;
@@ -704,7 +702,7 @@ export class Peerbit {
 				 * I can use them to load associated logs and join/sync them with the data stores I own
 				 */
 
-				const { storeIndex, programAddress, replicating } = msg;
+				const { storeIndex, programAddress } = msg;
 				let { heads } = msg;
 				// replication topic === trustedNetwork address
 
@@ -763,13 +761,13 @@ export class Peerbit {
 						return;
 					}
 
-					if (replicating) {
-						const peerId = await (
-							sender as Ed25519PublicKey
-						).toPeerId(); // TODO make more performant
-						programInfo.replicators.add(peerId.toString());
-					}
-
+					/* 	if (replicating) {
+							const peerId = await (
+								sender as Ed25519PublicKey
+							).toPeerId(); // TODO make more performant
+							programInfo.replicators.add(peerId.toString());
+						}
+	 */
 					const storeInfo =
 						programInfo.program.allStoresMap.get(storeIndex);
 					if (!storeInfo) {
@@ -795,7 +793,6 @@ export class Peerbit {
 							return head;
 						}); // we need to init because we perhaps need to decrypt gid
 
-					const abc = [...(programInfo.replicators || [])];
 					for (const [gid, value] of await groupByGid(heads)) {
 						const leaders =
 							leaderCache.get(gid) ||
@@ -862,7 +859,7 @@ export class Peerbit {
 						2
 					)
 				);
-			} else if (msg instanceof OpenEvent) {
+			} /* else if (msg instanceof OpenEvent) {
 				if (!sender) {
 					return;
 				}
@@ -954,7 +951,7 @@ export class Peerbit {
 						}
 					)
 				);
-			} else if (msg instanceof KeyResponseMessage) {
+			} */ else if (msg instanceof KeyResponseMessage) {
 				await recieveKeys(msg, (keys) => {
 					return Promise.all(
 						keys.map((key) => this.keystore.saveKey(key))
@@ -1163,7 +1160,7 @@ export class Peerbit {
 						}
 
 						const oldPeersSet = this._gidPeersHistory.get(gid);
-						const newPeers = await this.findReplicators(
+						const newPeers = await this.findLeaders(
 							programInfo.program.address.toString(),
 							gid,
 							programInfo.minReplicas.value
@@ -1238,7 +1235,6 @@ export class Peerbit {
 						[...toSend.values()], // TODO send to peers directly
 						true,
 						this.limitSigning ? undefined : this.idIdentity,
-						!!programInfo.program.replicate
 					);
 				}
 			}
@@ -1392,7 +1388,7 @@ export class Peerbit {
 		}
  */
 		/// TODO encryption
-		await ignoreInsufficientPeers(async () =>
+		/* await ignoreInsufficientPeers(async () =>
 			this.libp2p.directsub.publish(
 				serialize(
 					await this.decryptedSignedThing(
@@ -1404,7 +1400,7 @@ export class Peerbit {
 					topics: [this.topic],
 				}
 			)
-		);
+		); */
 	}
 
 	_onDrop(db: Store<any>) {
@@ -1446,13 +1442,10 @@ export class Peerbit {
 		return !!leaders.find((id) => id === this.id.toString());
 	}
 
-	findReplicators(
-		address: string,
-		gid: string,
-		minReplicas: number
-	): Promise<string[]> {
-		return this.findLeaders(address, gid, minReplicas);
+	getReplicators(address: string): (Set<string> | undefined) {
+		return this.libp2p.directsub.getSubscribers(address)
 	}
+
 
 	async findLeaders(
 		address: string,
@@ -1465,7 +1458,7 @@ export class Peerbit {
 
 		// Assumption: All peers wanting to replicate on topic has direct connections with me (Fully connected network)
 		const allPeers: string[] = [
-			...(this.programs.get(address)?.replicators || []),
+			...(this.getReplicators(address) || []),
 		];
 
 		// Assumption: Network specification is accurate
@@ -1539,7 +1532,7 @@ export class Peerbit {
 		}
 		const topic = this.topic;
 
-		if (!this._topicSubscriptions.has(topic)) {
+		/* if (!this._topicSubscriptions.has(topic)) {
 			const topicMonitor = new IpfsPubsubPeerMonitor(
 				this.libp2p.directsub,
 				topic,
@@ -1601,25 +1594,25 @@ export class Peerbit {
 					).start()
 				)
 			);
-		}
+		} */
 	}
 
 	hasSubscribedToTopic(topic: string): boolean {
 		return this.programs.has(topic);
 	}
-	async unsubscribeToTopic(id: string): Promise<boolean> {
-		/* if (typeof topic !== "string") {
-			if (!topic.address) {
-				throw new Error(
-					"Can not get network address from topic as TrustedNetwork"
-				);
-			}
-			topic = topic.address.toString();
-		} */
+	//async unsubscribeToTopic(id: string): Promise<boolean> {
+	/* if (typeof topic !== "string") {
+		if (!topic.address) {
+			throw new Error(
+				"Can not get network address from topic as TrustedNetwork"
+			);
+		}
+		topic = topic.address.toString();
+	} */
 
-		const a = await this._topicSubscriptions.get(this.topic)?.close(id);
-		return !!a;
-	}
+	//	const a = await this._topicSubscriptions.get(this.topic)?.close(id);
+	//return !!a;
+	//}
 
 	async _requestCache(
 		address: string,
@@ -1892,7 +1885,7 @@ export class Peerbit {
 			await this.subscribeToTopic();
 			/// TODO encryption
 
-			await ignoreInsufficientPeers(async () =>
+			/* await ignoreInsufficientPeers(async () =>
 				this.libp2p.directsub.publish(
 					serialize(
 						await this.decryptedSignedThing(
@@ -1921,7 +1914,9 @@ export class Peerbit {
 						topics: [this.topic,]
 					}
 				)
-			);
+			); */
+
+
 			return pm;
 		};
 		const openStore = await this._openProgramQueue.add(fn);

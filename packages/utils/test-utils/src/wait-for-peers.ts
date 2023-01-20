@@ -30,7 +30,7 @@ const waitForPeers = async (
 				const peers = libp2p.directsub.getSubscribers(topic);
 				const hasAllPeers =
 					peerIdsToWait
-						.map((e) => peers.has(e))
+						.map((e) => peers && peers.has(e))
 						.filter((e) => e === false).length === 0;
 
 				// FIXME: Does not fail on timeout, not easily fixable

@@ -45,7 +45,7 @@ describe("query", () => {
 			);
 		}
 
-		const topic = uuid();
+		const topic: string = uuid();
 		for (let i = 0; i < peersCount; i++) {
 			const store = new Store({ storeIndex: 0 });
 			const signKey = await Ed25519Keypair.create();
@@ -56,7 +56,7 @@ describe("query", () => {
 			} as any; // because query topic needs a parent with address
 			await logIndex.setup({
 				store,
-				rpcTopic: { rpcRegion: topic },
+				rpcTopic: topic,
 				context: "context",
 			});
 			logIndices.push(logIndex);
@@ -98,7 +98,6 @@ describe("query", () => {
 					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				{
-					topic,
 					replicate: i === 0,
 					store: {
 						...DefaultOptions,

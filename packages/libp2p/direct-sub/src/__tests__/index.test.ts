@@ -59,12 +59,12 @@ describe("pubsub", function () {
 			await session.connect([[session.peers[0], session.peers[1]]]);
 			await waitFor(() =>
 				peers[0].stream
-					.getPeersOnTopic(TOPIC)
+					.getSubscribers(TOPIC)
 					?.has(peers[1].stream.publicKeyHash)
 			);
 			await waitFor(() =>
 				peers[1].stream
-					.getPeersOnTopic(TOPIC)
+					.getSubscribers(TOPIC)
 					?.has(peers[0].stream.publicKeyHash)
 			);
 		});
@@ -110,12 +110,12 @@ describe("pubsub", function () {
 			]);
 			await waitFor(() =>
 				peers[0].stream
-					.getPeersOnTopic(TOPIC)
+					.getSubscribers(TOPIC)
 					?.has(peers[2].stream.publicKeyHash)
 			);
 			await waitFor(() =>
 				peers[2].stream
-					.getPeersOnTopic(TOPIC)
+					.getSubscribers(TOPIC)
 					?.has(peers[0].stream.publicKeyHash)
 			);
 		});
@@ -188,7 +188,7 @@ describe("pubsub", function () {
 					}
 					await waitFor(() =>
 						peers[i].stream
-							.getPeersOnTopic(TOPIC)
+							.getSubscribers(TOPIC)
 							?.has(peers[j].stream.publicKeyHash)
 					);
 				}
@@ -201,7 +201,7 @@ describe("pubsub", function () {
 			}
 			for (let i = 0; i < peers.length; i++) {
 				await waitFor(
-					() => !peers[i].stream.getPeersOnTopic(TOPIC)?.size
+					() => !peers[i].stream.getSubscribers(TOPIC)?.size
 				);
 				expect(peers[i].stream.topics.has(TOPIC)).toBeFalse();
 				expect(peers[i].stream.subscriptions.has(TOPIC)).toBeFalse();
@@ -243,6 +243,16 @@ describe("pubsub", function () {
 			await delay(3000); // wait some more time to make sure we dont get more messages
 			expect(peers[2].recieved).toHaveLength(1);
 			expect(peers[1].recieved).toHaveLength(0);
+		});
+		it("can send as non subscribeer", async () => {
+			peers[0].stream.unsubscribe(TOPIC);
+			peers[1].stream.unsubscribe(TOPIC);
+			await peers[0].stream.publish(data, { topics: [TOPIC] });
+			await waitFor(() => peers[2].recieved.length === 1);
+			expect(new Uint8Array(peers[2].recieved[0].data)).toEqual(data);
+			await delay(3000); // wait some more time to make sure we dont get more messages
+			expect(peers[1].recieved).toHaveLength(0);
+			expect(peers[2].recieved).toHaveLength(1);
 		});
 	});
 
@@ -317,7 +327,7 @@ describe("pubsub", function () {
 					}
 					await waitFor(
 						() =>
-							peer.stream.getPeersOnTopic(TOPIC)?.size ===
+							peer.stream.getSubscribers(TOPIC)?.size ===
 							(i === 4 ? 4 : 3)
 					); // all others (except 4 which is not subscribing)
 				} catch (error) {
@@ -430,11 +440,11 @@ describe("pubsub", function () {
 			}
 
 			peers[0].stream.subscribe(TOPIC_1);
-			await waitFor(() => peers[2].stream.getSubscribers(TOPIC_1).has(peers[0].stream.publicKeyHash));
-			await waitFor(() => peers[1].stream.getSubscribers(TOPIC_1).has(peers[0].stream.publicKeyHash));
+			await waitFor(() => peers[2].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			await waitFor(() => peers[1].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
 			peers[0].stream.stop()
-			await waitFor(() => !peers[2].stream.getSubscribers(TOPIC_1).has(peers[0].stream.publicKeyHash));
-			await waitFor(() => !peers[1].stream.getSubscribers(TOPIC_1).has(peers[0].stream.publicKeyHash));
+			await waitFor(() => !peers[2].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			await waitFor(() => !peers[1].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
 		})
 
 		it('can unsubscribe across peers', async () => {
@@ -444,11 +454,11 @@ describe("pubsub", function () {
 			}
 
 			peers[0].stream.subscribe(TOPIC_1);
-			await waitFor(() => peers[2].stream.getSubscribers(TOPIC_1).has(peers[0].stream.publicKeyHash));
-			await waitFor(() => peers[1].stream.getSubscribers(TOPIC_1).has(peers[0].stream.publicKeyHash));
+			await waitFor(() => peers[2].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			await waitFor(() => peers[1].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
 			peers[0].stream.unsubscribe(TOPIC_1);
-			await waitFor(() => !peers[2].stream.getSubscribers(TOPIC_1).has(peers[0].stream.publicKeyHash));
-			await waitFor(() => !peers[1].stream.getSubscribers(TOPIC_1).has(peers[0].stream.publicKeyHash));
+			await waitFor(() => !peers[2].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			await waitFor(() => !peers[1].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
 		})
 	})
 });
