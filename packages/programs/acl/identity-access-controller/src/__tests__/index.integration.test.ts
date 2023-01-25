@@ -22,8 +22,6 @@ import Cache from "@dao-xyz/peerbit-cache";
 import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 import { Program } from "@dao-xyz/peerbit-program";
 import { IdentityAccessController } from "../acl-db";
-import { v4 as uuid } from "uuid";
-import { createIdentityGraphStore, IdentityRelation } from "@dao-xyz/peerbit-trusted-network";
 
 @variant("document")
 class Document {
@@ -95,7 +93,6 @@ describe("index", () => {
 		store: T,
 		i: number,
 		options: {
-			topic: string;
 			replicate: boolean;
 			store: {};
 			canRead?: CanRead;
@@ -146,7 +143,7 @@ describe("index", () => {
 	it("can write from trust web", async () => {
 		const s = new TestStore({ identity: identity(0) });;
 		const options = {
-			topic: uuid(),
+
 			replicate: true,
 			store: {},
 		};
@@ -203,7 +200,7 @@ describe("index", () => {
 	describe("conditions", () => {
 		it("publickey", async () => {
 			const options = {
-				topic: uuid(),
+
 				replicate: true,
 				store: {},
 			};
@@ -258,7 +255,7 @@ describe("index", () => {
 
 		it("through trust chain", async () => {
 			const options = {
-				topic: uuid(),
+
 				replicate: true,
 				store: {},
 			};
@@ -285,17 +282,17 @@ describe("index", () => {
 				2,
 				options
 			)) as TestStore;
-			await waitForPeers(
+
+			/* await waitForPeers(
 				session.peers[1],
 				session.peers[0],
-				options.topic
+				l0a.address.toString()
 			);
 			await waitForPeers(
 				session.peers[2],
 				session.peers[0],
-				options.topic
-			);
-
+				l0a.address.toString()
+			); */
 			await expect(
 				l0c.store.put(
 					new Document({
@@ -351,7 +348,6 @@ describe("index", () => {
 
 		it("any access", async () => {
 			const options = {
-				topic: uuid(),
 				replicate: true,
 				store: {},
 			};
@@ -372,11 +368,11 @@ describe("index", () => {
 				1,
 				options
 			)) as TestStore;
-			await waitForPeers(
-				session.peers[1],
-				session.peers[0],
-				options.topic
-			);
+			/* 		await waitForPeers(
+						session.peers[1],
+						session.peers[0],
+						l0a.address.toString()
+					); */
 
 			await expect(
 				l0b.store.put(
@@ -406,7 +402,7 @@ describe("index", () => {
 
 		it("read access", async () => {
 			const options = {
-				topic: uuid(),
+
 				replicate: true,
 				store: {},
 			};
@@ -427,12 +423,12 @@ describe("index", () => {
 				1,
 				options
 			);
-			await waitForPeers(
-				session.peers[1],
-				session.peers[0],
-				options.topic
-			);
-
+			/* 	await waitForPeers(
+					session.peers[1],
+					session.peers[0],
+					l0a.address.toString()
+				);
+	 */
 			const q = async (): Promise<Results<Document>> => {
 				let results: Results<Document> = undefined as any;
 
@@ -477,7 +473,7 @@ describe("index", () => {
 
 	it("manifests are unique", async () => {
 		const options = {
-			topic: uuid(),
+
 			replicate: true,
 			store: {},
 		};
@@ -497,7 +493,7 @@ describe("index", () => {
 
 	it("can query", async () => {
 		const options = {
-			topic: uuid(),
+
 			replicate: true,
 			store: {},
 		};

@@ -1,6 +1,4 @@
 import { serialize, BorshError } from "@dao-xyz/borsh";
-import type { Message } from "@libp2p/interface-pubsub";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import {
 	MaybeSigned,
 	decryptVerifyInto,
@@ -13,12 +11,11 @@ import {
 	GetEncryptionKeypair,
 	PublicSignKey,
 } from "@dao-xyz/peerbit-crypto";
-import { Libp2p } from "libp2p";
 import { Identity } from "@dao-xyz/peerbit-log";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
-import { LibP2PExtended } from "@dao-xyz/peerbit-program";
 import { PubSubData } from "@dao-xyz/libp2p-direct-sub";
+import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 export const logger = loggerFn({ module: "rpc" });
 export type RPCOptions = {
 	signer?: Identity;
@@ -36,7 +33,7 @@ export type RPCOptions = {
 };
 
 export const send = async (
-	libp2p: LibP2PExtended,
+	libp2p: Libp2pExtended,
 	topic: string,
 	responseTopic: string,
 	query: RequestV0,
@@ -82,6 +79,7 @@ export const send = async (
 	const responsePromise = new Promise<void>((rs, rj) => {
 		const resolve = () => {
 			timeoutFn && clearTimeout(timeoutFn)
+			libp2p.directsub.unsubscribe(responseTopic)
 			libp2p.directsub.removeEventListener("data", _responseHandler);
 			rs()
 		}
@@ -89,6 +87,7 @@ export const send = async (
 
 		const reject = (error) => {
 			timeoutFn && clearTimeout(timeoutFn)
+			libp2p.directsub.unsubscribe(responseTopic)
 			libp2p.directsub.removeEventListener("data", _responseHandler);
 			rj(error)
 		}
@@ -158,7 +157,7 @@ export const send = async (
 };
 
 export const respond = async (
-	libp2p: LibP2PExtended,
+	libp2p: Libp2pExtended,
 	responseTopic: string,
 	request: RequestV0,
 	response: ResponseV0,

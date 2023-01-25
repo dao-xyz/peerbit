@@ -17,7 +17,7 @@ import { Routes } from "./routes.js";
 import LRU from "lru-cache";
 import { PeerMap } from "./peer-map.js";
 import { Hello, DataMessage, Message, Goodbye } from "./messages.js";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import {
 	getKeypairFromPeerId,
 	getPublicKeyFromPeerId,
@@ -29,6 +29,7 @@ export {
 	Goodbye,
 	Hello,
 	DataMessage,
+	MessageHeader
 } from "./messages.js";
 export type SignaturePolicy = "StictSign" | "StrictNoSign";
 
@@ -209,11 +210,17 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 	}
 }
 
-export interface StreamEvents {
-	message: CustomEvent<Message>;
-	data: CustomEvent<DataMessage>;
+export interface PeerEvents {
 	"peer:reachable": CustomEvent<PublicSignKey>
 	"peer:unreachable": CustomEvent<PublicSignKey>
+}
+export interface MessageEvents {
+	message: CustomEvent<Message>;
+}
+
+
+export interface StreamEvents extends PeerEvents, MessageEvents {
+	data: CustomEvent<DataMessage>;
 }
 
 export type DirectStreamOptions = {
@@ -444,32 +451,21 @@ export abstract class DirectStream<
 			// This condition seem to work better than the one above, for some reason. The rea
 			// The reason we need this at all is because we will connect to existing connection and recieve connection that 
 			// some times, yields a race connections where connection drop each other by reset
+			let stream: Stream;
 
-			let stream: any = undefined;
-			let i = 0;
-			let err: any = undefined;
-			while (i++ < 1 && conn.stat.status === 'OPEN') {
-				try {
-					stream = await conn.newStream(this.multicodecs);
-					if (stream.stat.protocol == null) {
-						stream.abort(new Error("Stream was not multiplexed"));
+			try {
+				stream = await conn.newStream(this.multicodecs);
+				if (stream.stat.protocol == null) {
+					stream.abort(new Error("Stream was not multiplexed"));
 
-						console.log('here')
-						return;
-					}
-					await delay(350)
-				} catch (error) {
-					err = error;
-					// Protocol selection failed?	
+					console.log('here')
+					return;
 				}
-			}
-			if (!stream) {
-				if (err && conn.stat.status === 'OPEN') {
-					//console.log("EROR STREAM REST ERROR")
-					throw err;
-
+			} catch (error) {
+				if (conn.stat.status !== 'OPEN') {
+					return; // fail silenty, stream was never intended to be created
 				}
-				return
+				throw error;
 			}
 
 			let peer = this.addPeer(peerId, peerKey, stream.stat.protocol);

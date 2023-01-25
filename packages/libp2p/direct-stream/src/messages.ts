@@ -42,12 +42,13 @@ export const ID_LENGTH = 32;
 const WEEK_MS = 7 * 24 * 60 * 60 + 1000;
 
 @variant(0)
-class MessageHeader {
+export class MessageHeader {
 	@field({ type: fixedArray("u8", ID_LENGTH) })
 	private _id: Uint8Array;
 
 	@field({ type: "u64" })
 	private _timestamp: bigint;
+
 	@field({ type: "u64" })
 	private _expires: bigint;
 
@@ -216,13 +217,14 @@ export class DataMessage extends Message {
 	private _data: Uint8Array;
 
 	constructor(properties: {
+		header?: MessageHeader,
 		to?: string[];
 		data: Uint8Array;
 		signatures?: Signatures;
 	}) {
 		super();
 		this._data = properties.data;
-		this._header = new MessageHeader();
+		this._header = properties.header || new MessageHeader();
 		this._to = properties.to || [];
 		this._signatures = properties.signatures || new Signatures();
 	}

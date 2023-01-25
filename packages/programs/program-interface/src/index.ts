@@ -2,10 +2,7 @@ import { field, option, variant } from "@dao-xyz/borsh";
 import { Entry, Identity } from "@dao-xyz/peerbit-log";
 import { IInitializationOptions, Store } from "@dao-xyz/peerbit-store";
 import { v4 as uuid } from "uuid";
-import {
-	PublicKeyEncryptionResolver,
-	PublicSignKey,
-} from "@dao-xyz/peerbit-crypto";
+import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { getValuesWithType } from "./utils.js";
 import {
 	serialize,
@@ -17,15 +14,14 @@ import path from "path";
 import { CID } from "multiformats/cid";
 import { BlockStore, DirectBlock } from "@dao-xyz/libp2p-direct-block";
 import { Libp2p } from "libp2p";
-import type { DirectSub } from "@dao-xyz/libp2p-direct-sub";
+import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
-import { Libp2pExtended } from "@dao-xyz/peerbit-test-utils/lib/esm/session.js";
 export * from "./protocol-message.js";
 
 const notEmpty = (e: string) => e !== "" && e !== " ";
 
 export interface Manifest {
-	data: Uint8Array;
+	data: Uint8Array
 }
 
 export interface Addressable {
@@ -221,10 +217,6 @@ export type ProgramInitializationOptions = {
 	onDrop?: () => void;
 };
 
-export type LibP2PExtended = Libp2p & {
-	directsub: DirectSub;
-	directblock: DirectBlock;
-};
 
 @variant(0)
 export abstract class AbstractProgram {
@@ -234,7 +226,7 @@ export abstract class AbstractProgram {
 	@field({ type: option("string") })
 	owner?: string; // Will control whether this program can be opened or not
 
-	_libp2p: LibP2PExtended;
+	_libp2p: Libp2pExtended;
 	_identity: Identity;
 	_encryption?: PublicKeyEncryptionResolver;
 	_onClose?: () => void;
@@ -260,7 +252,7 @@ export abstract class AbstractProgram {
 	}
 
 	async init(
-		libp2p: LibP2PExtended,
+		libp2p: Libp2pExtended,
 		identity: Identity,
 		options: ProgramInitializationOptions
 	): Promise<this> {
@@ -437,7 +429,7 @@ export interface CanOpenSubPrograms {
 }
 
 export interface CanTrust {
-	isTrusted(key: PublicSignKey): Promise<boolean> | boolean;
+	isTrusted(keyHash: string): Promise<boolean> | boolean;
 }
 
 @variant(0)
@@ -530,7 +522,6 @@ export abstract class Program
 			timeout?: number;
 		}
 	): Promise<Address> {
-		await store.open();
 		this.setupIndices();
 		const existingAddress = this._address;
 		const address = await save(store, this, options);

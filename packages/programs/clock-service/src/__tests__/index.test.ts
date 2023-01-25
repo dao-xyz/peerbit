@@ -42,7 +42,6 @@ describe("clock", () => {
 	beforeAll(async () => {
 		session = await LSession.connected(3);
 		const responderIdentity = await createIdentity();
-		const topic = uuid();
 		responder = new P({
 			clock: new ClockService({
 				trustedNetwork: new TrustedNetwork({
@@ -54,7 +53,6 @@ describe("clock", () => {
 			session.peers[0],
 			responderIdentity,
 			{
-				topic,
 				replicate: true,
 				store: {
 					cacheId: "id",
@@ -71,7 +69,6 @@ describe("clock", () => {
 			session.peers[1],
 			await createIdentity(),
 			{
-				topic,
 				store: {
 					cacheId: "id",
 					resolveCache: () =>
@@ -80,7 +77,7 @@ describe("clock", () => {
 			} as any
 		);
 
-		await waitForPeers(session.peers[1], [session.peers[0]], topic);
+		await waitForPeers(session.peers[1], [session.peers[0]], responder.clock._remoteSigner.topic);
 	});
 	afterAll(async () => {
 		await session.stop();

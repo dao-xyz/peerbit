@@ -1,3 +1,3 @@
-# block
+# Direct block
 
-IO helper module used within Peerbit
+Block swap/share protocol built on top of [Direct Stream](./../direct-stream/README.md)

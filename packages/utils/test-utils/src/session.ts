@@ -1,21 +1,15 @@
-import { Libp2p } from "libp2p";
 import { LSession as SSession } from "@dao-xyz/libp2p-test-utils";
 import { RecursivePartial } from "@libp2p/interfaces";
 import { Datastore } from "interface-datastore";
+import { createLibp2pExtended, Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import { DirectSub } from "@dao-xyz/libp2p-direct-sub";
-import {
-	DirectBlock,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
+import { DirectBlock, MemoryLevelBlockStore } from "@dao-xyz/libp2p-direct-block"
 
 export type LibP2POptions = {
-	datastore?: RecursivePartial<Datastore> | undefined;
-};
-export type Libp2pExtended = Libp2p & {
-	directsub: DirectSub;
-	directblock: DirectBlock;
+	datastore?: RecursivePartial<Datastore> | undefined
 };
 export class LSession {
+
 	private session: SSession<Libp2pExtended>;
 	constructor(session: SSession<Libp2pExtended>) {
 		this.session = session;
@@ -42,22 +36,13 @@ export class LSession {
 	static async disconnected(n: number, options?: LibP2POptions) {
 		const session: SSession<Libp2pExtended> =
 			await SSession.disconnected<Libp2pExtended>(n, options);
-		session.peers.forEach((peer) => {
-			peer.directsub = new DirectSub(peer, {
-				canRelayMessage: true,
-				signaturePolicy: "StrictNoSign",
-			});
-			peer.directblock = new DirectBlock(peer, {
-				localStore: new MemoryLevelBlockStore(),
-			});
-			let stop = peer.stop.bind(peer);
-			peer.stop = async () => {
-				await stop();
-				await peer.directblock.stop()
-				await peer.directsub.stop()
-			}
-		});
-		await Promise.all(session.peers.map((x) => Promise.all([x.directsub.start(), x.directblock.start()])));
+		const peers = await Promise.all(session.peers.map(async (peer) => {
+			const extended = await createLibp2pExtended(peer)
+			await extended.start()
+			return extended;
+		}));
+		session.peers = peers;
+
 		return new LSession(session);
 	}
 }

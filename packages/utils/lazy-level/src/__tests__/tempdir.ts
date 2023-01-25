@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { nanoid } from "nanoid";
+import { v4 as uuid } from "uuid";
 
 /**
  * Temporary folder
@@ -10,6 +10,6 @@ import { nanoid } from "nanoid";
  * @returns {string} - Full real path to a temporary folder
  */
 export const tempdir = (transform = (d) => d) => {
-    const osTmpDir = fs.realpathSync(os.tmpdir());
-    return path.join(osTmpDir, transform(nanoid()));
+	const osTmpDir = fs.realpathSync(os.tmpdir());
+	return path.join(osTmpDir, transform(uuid()));
 };

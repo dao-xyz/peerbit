@@ -54,7 +54,7 @@ describe(`browser`, function () {
 
 		db2 = await client2.open<EventStore<string>>(
 			await EventStore.load<EventStore<string>>(
-				client2._store,
+				client2.libp2p.directblock,
 				db1.address!
 			),
 			{ replicate: true }
@@ -110,7 +110,7 @@ describe(`browser`, function () {
 
 		db2 = await client2.open<EventStore<string>>(
 			await EventStore.load<EventStore<string>>(
-				client2._store,
+				client2.libp2p.directblock,
 				db1.address!
 			),
 			{ replicate: true }
@@ -155,7 +155,7 @@ describe(`browser`, function () {
 
 		db2 = await client2.open<EventStore<string>>(
 			await EventStore.load<EventStore<string>>(
-				client2._store,
+				client2.libp2p.directblock,
 				db1.address!
 			),
 			{ replicate: true }
@@ -198,7 +198,7 @@ describe(`browser`, function () {
 
 		db2 = await client2.open<EventStore<string>>(
 			await EventStore.load<EventStore<string>>(
-				client2._store,
+				client2.libp2p.directblock,
 				db1.address!
 			),
 			{ replicate: true }
@@ -207,7 +207,7 @@ describe(`browser`, function () {
 		await waitForPeers(session.peers[1], [client1.id], topic);
 		await waitForPeers(session.peers[0], [client2.id], topic);
 		await waitForPeers(session.peers[0], [client2.id], topic);
-		expect(client1._topicSubscriptions.has(topic)).toEqual(false);
+		expect(client1.libp2p.directsub.topics.has(topic)).toEqual(false);
 		/*  expect(client1._directConnections.size).toEqual(0); // since browser
 		 expect(client2._directConnections.size).toEqual(0); // since browser
   */

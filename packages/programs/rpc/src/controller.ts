@@ -13,12 +13,12 @@ import {
 	AbstractProgram,
 	Address,
 	ComposableProgram,
-	LibP2PExtended,
 	ProgramInitializationOptions,
 } from "@dao-xyz/peerbit-program";
 import { Identity } from "@dao-xyz/peerbit-log";
 import { X25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { PubSubData } from "@dao-xyz/libp2p-direct-sub";
+import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 
 export type SearchContext = (() => Address) | AbstractProgram | string;
 export type CanRead = (key?: PublicSignKey) => Promise<boolean> | boolean;
@@ -124,7 +124,7 @@ export class RPC<Q, R> extends ComposableProgram {
 	}
 
 	async init(
-		libp2p: LibP2PExtended,
+		libp2p: Libp2pExtended,
 		identity: Identity,
 		options: ProgramInitializationOptions
 	): Promise<this> {
@@ -138,16 +138,16 @@ export class RPC<Q, R> extends ComposableProgram {
 
 	public async close(): Promise<void> {
 		await this._initializationPromise;
-
-		/*     await this._libp2p.directsub.unsubscribe(
+		if (this._subscribed) {
+			await this._libp2p.directsub.unsubscribe(
 				this.rpcTopic
-			);  should we? */
-
-		await this._libp2p.directsub.addEventListener(
-			"data",
-			this._onMessageBinded
-		);
-		this._subscribed = false;
+			);
+			await this._libp2p.directsub.removeEventListener(
+				"data",
+				this._onMessageBinded
+			);
+			this._subscribed = false;
+		}
 	}
 
 	_subscribe(): void {

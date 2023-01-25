@@ -1,7 +1,8 @@
 import type { PeerId } from "@libp2p/interface-peer-id";
 import { Libp2p } from "libp2p";
-import { Libp2pExtended } from "./session";
 import { getPublicKeyFromPeerId } from "@dao-xyz/peerbit-crypto";
+import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
+
 const waitForPeers = async (
 	libp2p: Libp2pExtended,
 	peersToWait: (PeerId | Libp2p)[] | PeerId | Libp2p,
@@ -24,7 +25,7 @@ const waitForPeers = async (
 			counter += 1;
 			if (counter > 100) {
 				clearInterval(interval);
-				reject()
+				reject(new Error("Failed to find expected subscribers for topic: " + topic))
 			}
 			try {
 				const peers = libp2p.directsub.getSubscribers(topic);

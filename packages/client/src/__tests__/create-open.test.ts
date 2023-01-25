@@ -20,7 +20,6 @@ import {
 	LevelBlockStore,
 } from "@dao-xyz/libp2p-direct-block";
 import { Level } from "level";
-import { exec } from "child_process";
 
 const dbPath = path.join("./peerbit", "tests", "create-open");
 
@@ -80,16 +79,10 @@ describe(`Create & Open`, function () {
 			});
 
 			it("block storage exist at path", async () => {
-				expect(
-					client._store._store instanceof LibP2PBlockStore
-				).toBeTrue();
-				expect(
-					(client._store._store as LibP2PBlockStore)
-						._localStore instanceof LevelBlockStore
-				).toBeTrue();
+
 				const location = (
 					(
-						(client._store._store as LibP2PBlockStore)
+						client.libp2p.directblock
 							._localStore as LevelBlockStore
 					)._level as any as Level
 				).location;
@@ -112,7 +105,7 @@ describe(`Create & Open`, function () {
 
 			it("saves database manifest file locally", async () => {
 				const loaded = (await Program.load(
-					client._store,
+					client.libp2p.directblock,
 					db.address!
 				)) as KeyBlocks<string>;
 				expect(loaded).toBeDefined();
@@ -138,7 +131,7 @@ describe(`Create & Open`, function () {
 			client = await Peerbit.create(session.peers[0], {
 				directory: dbPath + uuid(),
 				storage: {
-					createStore: (string?: string) => createStore(string),
+					createStore,
 				},
 			});
 		});
@@ -183,7 +176,7 @@ describe(`Create & Open`, function () {
 				},
 			});
 			const db2 = await client.open(
-				await Program.load(client._store, db.address!)
+				await Program.load(client.libp2p.directblock, db.address!)
 			);
 			assert.equal(db2.address!.toString().indexOf("/peerbit"), 0);
 			assert.equal(db2.address!.toString().indexOf("zd"), 9);
@@ -198,7 +191,7 @@ describe(`Create & Open`, function () {
 				cid: db.address!.cid.slice(0, -1) + "A",
 			});
 			await db.drop();
-			const dbToLoad = await Program.load(client._store, address);
+			const dbToLoad = await Program.load(client.libp2p.directblock, address);
 			expect(dbToLoad).toBeUndefined();
 		});
 

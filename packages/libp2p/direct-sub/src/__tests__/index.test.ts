@@ -2,13 +2,13 @@ import {
 	DataMessage,
 	Message,
 	waitForPeers,
-	logger,
 } from "@dao-xyz/libp2p-direct-stream";
 import { LSession } from "@dao-xyz/libp2p-test-utils";
 import { waitFor, delay } from "@dao-xyz/peerbit-time";
 import { PubSubMessage, PubSubData } from "../messages.js";
-import { DirectSub } from "./../index.js";
+import { DirectSub, SubscriptionEvent, UnsubcriptionEvent } from "./../index.js";
 import { deserialize } from "@dao-xyz/borsh";
+import { equals } from 'uint8arrays';
 
 describe("pubsub", function () {
 	describe("topic", () => {
@@ -197,7 +197,7 @@ describe("pubsub", function () {
 
 		afterEach(async () => {
 			for (let i = 0; i < peers.length; i++) {
-				peers[i].stream.unsubscribe(TOPIC);
+				peers[i].stream.unsubscribe(TOPIC)
 			}
 			for (let i = 0; i < peers.length; i++) {
 				await waitFor(
@@ -371,6 +371,8 @@ describe("pubsub", function () {
 			stream: DirectSub;
 			messages: Message[];
 			recieved: PubSubData[];
+			subscriptionEvents: SubscriptionEvent[],
+			unsubscriptionEvents: UnsubcriptionEvent[]
 		}[];
 		const data = new Uint8Array([1, 2, 3]);
 		const TOPIC_1 = "hello";
@@ -403,10 +405,14 @@ describe("pubsub", function () {
 					stream: DirectSub;
 					messages: Message[];
 					recieved: PubSubData[];
+					subscriptionEvents: SubscriptionEvent[],
+					unsubscriptionEvents: UnsubcriptionEvent[]
 				} = {
 					messages: [],
 					recieved: [],
 					stream,
+					subscriptionEvents: [],
+					unsubscriptionEvents: []
 				};
 				peers.push(client);
 				stream.addEventListener("message", (msg) => {
@@ -414,6 +420,12 @@ describe("pubsub", function () {
 				});
 				stream.addEventListener("data", (msg) => {
 					client.recieved.push(msg.detail);
+				});
+				stream.addEventListener("subscribe", (msg) => {
+					client.subscriptionEvents.push(msg.detail);
+				});
+				stream.addEventListener("unsubscribe", (msg) => {
+					client.unsubscriptionEvents.push(msg.detail);
 				});
 				await stream.start();
 			}
@@ -439,12 +451,25 @@ describe("pubsub", function () {
 				await peer.stream.requestSubscribers(TOPIC_2);
 			}
 
-			peers[0].stream.subscribe(TOPIC_1);
+			await peers[0].stream.subscribe(TOPIC_1);
 			await waitFor(() => peers[2].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
 			await waitFor(() => peers[1].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
-			peers[0].stream.stop()
+			expect(peers[2].subscriptionEvents).toHaveLength(1);
+			expect(peers[1].subscriptionEvents).toHaveLength(1);
+			expect(peers[2].subscriptionEvents[0].from.equals(peers[0].stream.publicKey)).toBeTrue()
+			expect(peers[2].subscriptionEvents[0].subscriptions).toHaveLength(1);
+			expect(peers[2].subscriptionEvents[0].subscriptions[0].topic).toEqual(TOPIC_1)
+			expect(peers[2].subscriptionEvents[0].subscriptions[0].data).toBeUndefined()
+			await peers[0].stream.stop()
 			await waitFor(() => !peers[2].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
 			await waitFor(() => !peers[1].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			expect(peers[2].subscriptionEvents).toHaveLength(1);
+			expect(peers[1].subscriptionEvents).toHaveLength(1);
+			expect(peers[2].unsubscriptionEvents).toHaveLength(1);
+			expect(peers[1].unsubscriptionEvents).toHaveLength(1);
+			expect(peers[2].unsubscriptionEvents[0].from.equals(peers[0].stream.publicKey)).toBeTrue()
+			expect(peers[2].unsubscriptionEvents[0].unsubscriptions).toHaveLength(1);
+			expect(peers[2].unsubscriptionEvents[0].unsubscriptions[0].topic).toEqual(TOPIC_1)
 		})
 
 		it('can unsubscribe across peers', async () => {
@@ -454,11 +479,186 @@ describe("pubsub", function () {
 			}
 
 			peers[0].stream.subscribe(TOPIC_1);
+			peers[0].stream.subscribe(TOPIC_2);
 			await waitFor(() => peers[2].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
 			await waitFor(() => peers[1].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			await waitFor(() => peers[2].stream.getSubscribers(TOPIC_2)?.has(peers[0].stream.publicKeyHash));
+			await waitFor(() => peers[1].stream.getSubscribers(TOPIC_2)?.has(peers[0].stream.publicKeyHash));
+
+			expect(peers[2].subscriptionEvents).toHaveLength(2);
+			expect(peers[1].subscriptionEvents).toHaveLength(2);
+			expect(peers[2].subscriptionEvents[0].from.equals(peers[0].stream.publicKey)).toBeTrue()
+			expect(peers[2].subscriptionEvents[0].subscriptions).toHaveLength(1);
+			expect(peers[2].subscriptionEvents[0].subscriptions[0].topic).toEqual(TOPIC_1)
+			expect(peers[2].subscriptionEvents[0].subscriptions[0].data).toBeUndefined()
+			expect(peers[2].subscriptionEvents[1].subscriptions).toHaveLength(1);
+			expect(peers[2].subscriptionEvents[1].subscriptions[0].topic).toEqual(TOPIC_2)
+			expect(peers[2].subscriptionEvents[1].subscriptions[0].data).toBeUndefined()
+
 			peers[0].stream.unsubscribe(TOPIC_1);
 			await waitFor(() => !peers[2].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
 			await waitFor(() => !peers[1].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			await waitFor(() => peers[2].stream.getSubscribers(TOPIC_2)?.has(peers[0].stream.publicKeyHash));
+			await waitFor(() => peers[1].stream.getSubscribers(TOPIC_2)?.has(peers[0].stream.publicKeyHash));
+			expect(peers[2].unsubscriptionEvents).toHaveLength(1);
+			expect(peers[1].unsubscriptionEvents).toHaveLength(1);
+			expect(peers[2].unsubscriptionEvents[0].from.equals(peers[0].stream.publicKey)).toBeTrue()
+			expect(peers[2].unsubscriptionEvents[0].unsubscriptions).toHaveLength(1);
+			expect(peers[2].unsubscriptionEvents[0].unsubscriptions[0].topic).toEqual(TOPIC_1)
+			peers[0].stream.unsubscribe(TOPIC_2);
+			await waitFor(() => !peers[2].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			await waitFor(() => !peers[1].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			await waitFor(() => !peers[2].stream.getSubscribers(TOPIC_2)?.has(peers[0].stream.publicKeyHash));
+			await waitFor(() => !peers[1].stream.getSubscribers(TOPIC_2)?.has(peers[0].stream.publicKeyHash));
+			expect(peers[2].unsubscriptionEvents).toHaveLength(2);
+			expect(peers[1].unsubscriptionEvents).toHaveLength(2);
+			expect(peers[2].unsubscriptionEvents[1].from.equals(peers[0].stream.publicKey)).toBeTrue()
+			expect(peers[2].unsubscriptionEvents[1].unsubscriptions).toHaveLength(1);
+			expect(peers[2].unsubscriptionEvents[1].unsubscriptions[0].topic).toEqual(TOPIC_2)
+		})
+
+		it('can handle multiple subscriptions', async () => {
+			for (const peer of peers) {
+				await peer.stream.requestSubscribers(TOPIC_1);
+				await peer.stream.requestSubscribers(TOPIC_2);
+			}
+			peers[0].stream.subscribe(TOPIC_1); // 1
+			peers[0].stream.subscribe(TOPIC_1); // 2
+			peers[0].stream.subscribe(TOPIC_1); // 3
+			await waitFor(() => peers[2].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			await waitFor(() => peers[1].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			peers[0].stream.unsubscribe(TOPIC_1); // 3
+			peers[0].stream.unsubscribe(TOPIC_1); // 2 
+			await delay(3000) // allow some communications
+			await waitFor(() => peers[2].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			await waitFor(() => peers[1].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			await peers[0].stream.unsubscribe(TOPIC_1); // 1
+			await waitFor(() => !peers[2].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			await waitFor(() => !peers[1].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+		})
+
+		it('can override subscription metadata', async () => {
+			for (const peer of peers) {
+				await peer.stream.requestSubscribers(TOPIC_1);
+				await peer.stream.requestSubscribers(TOPIC_2);
+			}
+
+			peers[0].stream.subscribe(TOPIC_1); // 1
+			await waitFor(() => peers[2].stream.getSubscribers(TOPIC_1)?.get(peers[0].stream.publicKeyHash)?.data === undefined);
+			await waitFor(() => !!peers[2].stream.getSubscribers(TOPIC_1)?.get(peers[0].stream.publicKeyHash)?.timestamp);
+			await waitFor(() => peers[1].stream.getSubscribers(TOPIC_1)?.get(peers[0].stream.publicKeyHash)?.data === undefined);
+			await waitFor(() => !!peers[1].stream.getSubscribers(TOPIC_1)?.get(peers[0].stream.publicKeyHash)?.timestamp);
+			expect(peers[1].stream.getSubscribersWithData(TOPIC_1, new Uint8Array())).toBeUndefined()
+			expect(peers[2].stream.getSubscribersWithData(TOPIC_1, new Uint8Array())).toBeUndefined()
+
+			// Subscribe with some metadata
+			const data1 = new Uint8Array([1, 2, 3]);
+			await peers[0].stream.subscribe(TOPIC_1, { data: data1 }); // 2
+			let equalsDefined = (a: Uint8Array | undefined, b: Uint8Array) => {
+				if (!a) {
+					return false;
+				}
+				return equals(a, b)
+			}
+			await waitFor(() => equalsDefined(peers[2].stream.getSubscribers(TOPIC_1)?.get(peers[0].stream.publicKeyHash)?.data, data1));
+			await waitFor(() => equalsDefined(peers[1].stream.getSubscribers(TOPIC_1)?.get(peers[0].stream.publicKeyHash)?.data!, data1));
+			expect(peers[1].stream.getSubscribersWithData(TOPIC_1, new Uint8Array())).toBeUndefined()
+			expect(peers[2].stream.getSubscribersWithData(TOPIC_1, new Uint8Array())).toBeUndefined()
+			expect([...peers[1].stream.getSubscribersWithData(TOPIC_1, data1)!]).toEqual([peers[0].stream.publicKeyHash])
+			expect([...peers[2].stream.getSubscribersWithData(TOPIC_1, data1)!]).toEqual([peers[0].stream.publicKeyHash])
+			expect(peers[2].subscriptionEvents).toHaveLength(2);
+			expect(peers[1].subscriptionEvents).toHaveLength(2);
+			expect(peers[2].subscriptionEvents[1].from.equals(peers[0].stream.publicKey)).toBeTrue()
+			expect(peers[2].subscriptionEvents[1].subscriptions).toHaveLength(1);
+			expect(peers[2].subscriptionEvents[1].subscriptions[0].topic).toEqual(TOPIC_1)
+			expect(new Uint8Array(peers[2].subscriptionEvents[1].subscriptions[0].data!)).toEqual(data1)
+
+
+
+			let data2 = new Uint8Array([3, 2, 1])
+			peers[0].stream.subscribe(TOPIC_1, { data: data2 }); // 3
+			await waitFor(() => equalsDefined(peers[2].stream.getSubscribers(TOPIC_1)?.get(peers[0].stream.publicKeyHash)?.data!, data2));
+			await waitFor(() => equalsDefined(peers[1].stream.getSubscribers(TOPIC_1)?.get(peers[0].stream.publicKeyHash)?.data!, data2));
+			expect(peers[1].stream.getSubscribersWithData(TOPIC_1, data1)).toBeUndefined()
+			expect(peers[2].stream.getSubscribersWithData(TOPIC_1, data1)).toBeUndefined()
+			expect([...peers[1].stream.getSubscribersWithData(TOPIC_1, data2)!]).toEqual([peers[0].stream.publicKeyHash])
+			expect([...peers[2].stream.getSubscribersWithData(TOPIC_1, data2)!]).toEqual([peers[0].stream.publicKeyHash])
+			expect(peers[2].subscriptionEvents).toHaveLength(3);
+			expect(peers[1].subscriptionEvents).toHaveLength(3);
+			expect(peers[2].subscriptionEvents[2].from.equals(peers[0].stream.publicKey)).toBeTrue()
+			expect(peers[2].subscriptionEvents[2].subscriptions).toHaveLength(1);
+			expect(peers[2].subscriptionEvents[2].subscriptions[0].topic).toEqual(TOPIC_1)
+			expect(new Uint8Array(peers[2].subscriptionEvents[2].subscriptions[0].data!)).toEqual(data2)
+
+			peers[0].stream.unsubscribe(TOPIC_1); // 2
+			peers[0].stream.unsubscribe(TOPIC_1); // 1
+			await delay(3000) // allow some communications
+			await waitFor(() => peers[2].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			await waitFor(() => peers[1].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			await peers[0].stream.unsubscribe(TOPIC_1); // 1
+			await waitFor(() => !peers[2].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			await waitFor(() => !peers[1].stream.getSubscribers(TOPIC_1)?.has(peers[0].stream.publicKeyHash));
+			expect(peers[1].stream.getSubscribersWithData(TOPIC_1, data2)).toBeUndefined()
+			expect(peers[2].stream.getSubscribersWithData(TOPIC_1, data2)).toBeUndefined()
+			expect(peers[2].unsubscriptionEvents).toHaveLength(1);
+			expect(peers[1].unsubscriptionEvents).toHaveLength(1);
+			expect(peers[2].unsubscriptionEvents[0].from.equals(peers[0].stream.publicKey)).toBeTrue()
+			expect(peers[2].unsubscriptionEvents[0].unsubscriptions).toHaveLength(1);
+			expect(peers[2].unsubscriptionEvents[0].unsubscriptions[0].topic).toEqual(TOPIC_1)
+			expect(new Uint8Array(peers[2].unsubscriptionEvents[0].unsubscriptions[0].data!)).toEqual(data2)
+
+		})
+
+		it('resubscription will not emit uncessary message', async () => {
+
+			// Subscribe with some metadata
+			const data1 = new Uint8Array([1, 2, 3]);
+
+			let sentMessages = 0;
+			const publishMessage = peers[0].stream.publishMessage.bind(peers[0].stream);
+			peers[0].stream.publishMessage = async (a: any, b: any, c: any) => {
+				sentMessages += 1;
+				return publishMessage(a, b, c)
+			}
+			await peers[0].stream.subscribe(TOPIC_1, { data: data1 });
+			expect(sentMessages).toEqual(1)
+			await peers[0].stream.subscribe(TOPIC_1, { data: data1 });
+			expect(sentMessages).toEqual(1) // no new messages sent
+
+		})
+
+		it('requesting subscribers will not overwrite subscriptions', async () => {
+
+			for (const peer of peers) {
+				await peer.stream.requestSubscribers(TOPIC_1);
+				await peer.stream.requestSubscribers(TOPIC_2);
+			}
+
+			// Subscribe with some metadata
+			const data1 = new Uint8Array([1, 2, 3]);
+			await peers[0].stream.subscribe(TOPIC_1, { data: data1 });
+			let equalsDefined = (a: Uint8Array | undefined, b: Uint8Array) => {
+				if (!a) {
+					return false;
+				}
+				return equals(a, b)
+			}
+			await waitFor(() => equalsDefined(peers[2].stream.getSubscribers(TOPIC_1)?.get(peers[0].stream.publicKeyHash)?.data, data1));
+			await waitFor(() => equalsDefined(peers[1].stream.getSubscribers(TOPIC_1)?.get(peers[0].stream.publicKeyHash)?.data!, data1));
+			//	await delay(3000)
+			expect(peers[1].stream.getSubscribersWithData(TOPIC_1, new Uint8Array())).toBeUndefined()
+			expect(peers[2].stream.getSubscribersWithData(TOPIC_1, new Uint8Array())).toBeUndefined()
+			expect([...peers[1].stream.getSubscribersWithData(TOPIC_1, data1)!]).toEqual([peers[0].stream.publicKeyHash])
+			expect([...peers[2].stream.getSubscribersWithData(TOPIC_1, data1)!]).toEqual([peers[0].stream.publicKeyHash])
+
+			// Request subscribers and makes sure we don't get any wierd overwrites
+			await peers[1].stream.requestSubscribers(TOPIC_1)
+			await peers[2].stream.requestSubscribers(TOPIC_1)
+
+			await delay(3000); // wait for some messages
+			expect([...peers[1].stream.getSubscribersWithData(TOPIC_1, data1)!]).toEqual([peers[0].stream.publicKeyHash])
+			expect([...peers[2].stream.getSubscribersWithData(TOPIC_1, data1)!]).toEqual([peers[0].stream.publicKeyHash])
+
 		})
 	})
-});
+})

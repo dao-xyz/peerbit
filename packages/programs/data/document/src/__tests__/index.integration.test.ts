@@ -26,20 +26,14 @@ import {
 } from "@dao-xyz/peerbit-crypto";
 import Cache from "@dao-xyz/peerbit-cache";
 import { AbstractLevel } from "abstract-level";
-import { fileURLToPath } from "url";
-import path from "path";
 import { v4 as uuid } from "uuid";
 import { Program } from "@dao-xyz/peerbit-program";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { DocumentIndex } from "../document-index.js";
 import {
-	HeadsMessage,
-	LogEntryEncryptionQuery,
-	LogQueryRequest,
+	HeadsMessage, LogEntryEncryptionQuery, LogQueryRequest,
 } from "@dao-xyz/peerbit-logindex";
 import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
-
-const __filename = fileURLToPath(import.meta.url);
 
 @variant("document")
 class Document {
@@ -97,7 +91,7 @@ describe("index", () => {
 		session = await LSession.connected(peersCount);
 		for (let i = 0; i < peersCount; i++) {
 			cacheStores.push(
-				await createStore(path.join(__filename, "cache- " + i))
+				await createStore()
 			);
 		}
 		const topic = uuid();

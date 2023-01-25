@@ -14,12 +14,8 @@ import { v4 as uuid } from "uuid";
 import { DefaultOptions, Store } from "@dao-xyz/peerbit-store";
 import Cache from "@dao-xyz/peerbit-cache";
 import { AbstractLevel } from "abstract-level";
-import path from "path";
 import {
-	HeadsMessage,
-	LogEntryEncryptionQuery,
-	LogIndex,
-	LogQueryRequest,
+	HeadsMessage, LogEntryEncryptionQuery, LogIndex, LogQueryRequest,
 } from "../controller";
 import { fileURLToPath } from "url";
 import { waitFor } from "@dao-xyz/peerbit-time";
@@ -40,9 +36,7 @@ describe("query", () => {
 		cacheStores = [];
 		logIndices = [];
 		for (let i = 0; i < peersCount; i++) {
-			cacheStores.push(
-				await createStore(path.join(__filename, "cache-" + i))
-			);
+			cacheStores.push(await createStore());
 		}
 
 		const topic: string = uuid();

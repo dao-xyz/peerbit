@@ -13,6 +13,7 @@ import { getConfigDir, getKeysPath, NotFoundError } from "./config.js";
 import { checkExistPath } from "./api.js";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { serialize, deserialize } from "@dao-xyz/borsh";
+import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 
 export const saveKeys = async (keypair: Ed25519Keypair): Promise<void> => {
 	const fs = await import("fs");
@@ -85,12 +86,8 @@ export const createNode = async () => {
 		transports: [tcp(), webSockets()],
 		connectionEncryption: [noise()],
 		streamMuxers: [mplex()],
-		pubsub: floodsub(),
-		/*  pubsub: gossipsub({
-			 canRelayMessage: true, */
-		//  globalSignaturePolicy: "StrictNoSign", // will not be backwards compatible with networks globalSignaturePolicy is the default StrictSign
-		//  }),
 	});
 	await node.start();
-	return node;
+
+	return node as Libp2pExtended;
 };

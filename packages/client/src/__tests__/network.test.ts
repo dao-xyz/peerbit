@@ -1,53 +1,49 @@
-//
-import rmrf from "rimraf";
 import { Peerbit } from "../peer";
-
 import { EventStore } from "./utils/stores/event-store";
-import { jest } from "@jest/globals";
 
 // Include test utilities
 import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/libp2p-direct-block";
+
 
 describe(`network`, function () {
-    let session: LSession;
-    let client1: Peerbit,
-        client2: Peerbit,
-        client3: Peerbit,
-        db1: EventStore<string>,
-        db2: EventStore<string>,
-        db3: EventStore<string>;
+	let session: LSession;
+	let client1: Peerbit,
+		client2: Peerbit,
+		client3: Peerbit,
+		db1: EventStore<string>,
+		db2: EventStore<string>,
+		db3: EventStore<string>;
 
-    beforeAll(async () => {
-        session = await LSession.connected(3);
-    });
+	beforeAll(async () => {
+		session = await LSession.connected(3);
+	});
 
-    afterAll(async () => {
-        await session.stop();
-    });
+	afterAll(async () => {
+		await session.stop();
+	});
 
-    beforeEach(async () => {
-        client1 = await Peerbit.create(session.peers[0], {});
-        client2 = await Peerbit.create(session.peers[1], {});
-        client3 = await Peerbit.create(session.peers[2], {});
-    });
+	beforeEach(async () => {
+		client1 = await Peerbit.create(session.peers[0], {});
+		client2 = await Peerbit.create(session.peers[1], {});
+		client3 = await Peerbit.create(session.peers[2], {});
+	});
 
-    afterEach(async () => {
-        if (db1) await db1.drop();
+	afterEach(async () => {
+		if (db1) await db1.drop();
 
-        if (db2) await db2.drop();
+		if (db2) await db2.drop();
 
-        if (db3) await db3.drop();
+		if (db3) await db3.drop();
 
-        if (client1) await client1.stop();
+		if (client1) await client1.stop();
 
-        if (client2) await client2.stop();
+		if (client2) await client2.stop();
 
-        if (client3) await client3.stop();
-    });
-    it("_", () => {});
+		if (client3) await client3.stop();
+	});
+	it("_", () => { });
 
-    /*  TODO
+	/*  TODO
     
 	it("will not recieved heads if not trusted", async () => {
 		 const network = new TrustedNetwork({

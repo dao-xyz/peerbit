@@ -103,8 +103,7 @@ export class RequestHeadsMessage extends TransportMessage {
 	}
 }
 
-export const exchangeHeads = async (
-	send: (message: Uint8Array) => Promise<any>,
+export const createExchangeHeadsMessage = async (
 	store: Store<any>,
 	program: Program,
 	heads: Entry<any>[],
@@ -127,30 +126,27 @@ export const exchangeHeads = async (
 		});
 	});
 	logger.debug(`Send latest heads of '${store._storeIndex}'`);
-	if (heads && heads.length > 0) {
-		const message = new ExchangeHeadsMessage({
-			storeIndex: store._storeIndex,
-			programIndex: program._programIndex,
-			programAddress: (program.address ||
-				program.parentProgram.address)!.toString(),
-			heads: headsWithRefs
-		});
-		const maybeSigned = new MaybeSigned({ data: serialize(message) });
-		let signedMessage: MaybeSigned<any> = maybeSigned;
-		if (identity) {
-			const signer = async (data: Uint8Array) => {
-				return {
-					signature: await identity.sign(data),
-					publicKey: identity.publicKey,
-				};
+	const message = new ExchangeHeadsMessage({
+		storeIndex: store._storeIndex,
+		programIndex: program._programIndex,
+		programAddress: (program.address ||
+			program.parentProgram.address)!.toString(),
+		heads: headsWithRefs
+	});
+	const maybeSigned = new MaybeSigned({ data: serialize(message) });
+	let signedMessage: MaybeSigned<any> = maybeSigned;
+	if (identity) {
+		const signer = async (data: Uint8Array) => {
+			return {
+				signature: await identity.sign(data),
+				publicKey: identity.publicKey,
 			};
-			signedMessage = await signedMessage.sign(signer);
-		}
-
-		const decryptedMessage = new DecryptedThing({
-			data: serialize(signedMessage),
-		}); // TODO encryption?
-		const serializedMessage = serialize(decryptedMessage);
-		await send(serializedMessage);
+		};
+		signedMessage = await signedMessage.sign(signer);
 	}
+
+	const decryptedMessage = new DecryptedThing({
+		data: serialize(signedMessage),
+	}); // TODO encryption?
+	return serialize(decryptedMessage);
 };

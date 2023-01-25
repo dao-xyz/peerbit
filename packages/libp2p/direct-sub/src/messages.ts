@@ -5,6 +5,7 @@ import {
 	variant,
 	serialize,
 	deserialize,
+	option
 } from "@dao-xyz/borsh";
 export abstract class PubSubMessage {
 	abstract serialize(): Uint8Array | Uint8ArrayList;
@@ -71,18 +72,32 @@ export class PubSubData extends PubSubMessage {
 	}
 }
 
+
+@variant(0)
+export class Subscription {
+	@field({ type: 'string' })
+	topic: string
+
+	@field({ type: option(Uint8Array) })
+	data?: Uint8Array // if omitted, the subcription event is a no-op (will not replace anything)
+
+	constructor(topic: string, data?: Uint8Array) {
+		this.topic = topic;
+		this.data = data;
+	}
+}
+
 @variant(1)
 export class Subscribe extends PubSubMessage {
-	@field({ type: vec('string') })
-	topics: string[];
 
-	constructor(options: { topics: string[] }) {
+	@field({ type: vec(Subscription) })
+	subscriptions: Subscription[];
+
+	constructor(options: { subscriptions: Subscription[] }) {
 		super();
-		if (options.topics.length > 255) {
-			throw new Error("Can at most subscribe to 255 topics at once");
-		}
-		this.topics = options.topics;
+		this.subscriptions = options.subscriptions
 	}
+
 
 	_serialized: Uint8ArrayList;
 
@@ -104,14 +119,26 @@ export class Subscribe extends PubSubMessage {
 	}
 }
 
+
+@variant(0)
+export class Unsubscription {
+
+	@field({ type: 'string' })
+	topic: string
+	constructor(topic: string) {
+		this.topic = topic;
+	}
+}
+
 @variant(2)
 export class Unsubscribe extends PubSubMessage {
-	@field({ type: vec('string') })
-	topics: string[];
+
+	@field({ type: vec(Unsubscription) })
+	unsubscriptions: Unsubscription[];
 
 	constructor(options: { topics: string[] }) {
 		super();
-		this.topics = options.topics;
+		this.unsubscriptions = options.topics.map(x => new Unsubscription(x));
 	}
 
 	_serialized: Uint8ArrayList;
@@ -135,10 +162,12 @@ export class Unsubscribe extends PubSubMessage {
 	}
 }
 
+
 @variant(3)
 export class GetSubscribers extends PubSubMessage {
 	@field({ type: vec('string') })
 	topics: string[];
+
 
 	// add stop filter list to prvent this message from propgating to unecessary peers
 

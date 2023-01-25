@@ -84,13 +84,11 @@ describe("rpc", () => {
 		});
 
 
-		/* await waitForPeers(
+		await waitForPeers(
 			session.peers[1],
 			[session.peers[0].peerId],
 			responder.query.rpcTopic
-		); */
-		await delay(4000)
-		const t = 123;
+		);
 	});
 	afterAll(async () => {
 		await session.stop();

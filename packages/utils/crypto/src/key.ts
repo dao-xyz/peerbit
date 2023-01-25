@@ -33,6 +33,8 @@ export abstract class PublicSignKey implements Key {
 				.digest("base64"))
 		);
 	}
+
+
 }
 
 export interface PrivateSignKey extends Key { }

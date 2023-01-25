@@ -1,15 +1,11 @@
 {
-	"name": "@dao-xyz/libp2p-direct-block",
-	"version": "0.0.15",
-	"description": "Block store for Peerbit",
+	"name": "@dao-xyz/peerbit-libp2p",
+	"version": "0.0.1",
+	"description": "libp2p node for Peerbit",
 	"type": "module",
 	"sideEffects": false,
-	"private": false,
-	"publishConfig": {
-		"access": "public"
-	},
-	"module": "lib/esm/index.js",
-	"types": "lib/esm/index.d.ts",
+	"module": "./lib/esm/index.js",
+	"types": "./lib/esm/index.d.ts",
 	"exports": {
 		"import": "./lib/esm/index.js"
 	},
@@ -26,40 +22,31 @@
 		"src",
 		"!src/**/__tests__",
 		"!lib/**/__tests__",
-		"!src/**/_benchmark__",
-		"!lib/**/_benchmark__",
 		"LICENSE"
 	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/dao-xyz/peerbit"
+	},
 	"engines": {
 		"node": ">=16.15.1"
 	},
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/dao-xyz/peerbit.git"
-	},
-	"keywords": [
-		"peerbit"
-	],
 	"author": "dao.xyz",
 	"license": "MIT",
-	"bugs": {
-		"url": "https://github.com/dao-xyz/peerbit/issues"
+	"dependencies": {
+		"@dao-xyz/libp2p-noise": "^11.1.0",
+		"@dao-xyz/libp2p-direct-block": "^0.0.15",
+		"@dao-xyz/libp2p-direct-sub": "^0.0.1",
+		"@libp2p/mplex": "^7.1.1",
+		"@libp2p/tcp": "^6.0.9",
+		"libp2p": "^0.42.0",
+		"level": "^8.0.0"
 	},
-	"homepage": "https://github.com/dao-xyz/peerbit#readme",
+	"devDependencies": {
+		"@dao-xyz/peerbit-time": "^0.0.19"
+	},
 	"localMaintainers": [
 		"dao.xyz"
 	],
-	"devDependencies": {
-		"@dao-xyz/libp2p-test-utils": "^0.0.1"
-	},
-	"dependencies": {
-		"@dao-xyz/borsh": "^5.1.4",
-		"@dao-xyz/libp2p-direct-stream": "^0.0.1",
-		"@ipld/dag-cbor": "^9.0.0",
-		"abstract-level": "^1.0.3",
-		"libp2p": "^0.42.0",
-		"lru-cache": "^7.14.1",
-		"memory-level": "^1.0.0",
-		"nanoid": "^4.0.0"
-	}
+	"gitHead": "bfbec720aee276ab1bc7cf4ee7a6c0e90ecb4f51"
 }

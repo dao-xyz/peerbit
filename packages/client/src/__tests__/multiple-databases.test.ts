@@ -45,7 +45,6 @@ describe(`Multiple Databases`, function () {
 		const options = {};
 
 		// Open the databases on the first node
-		const topic = uuid();
 		for (let i = 0; i < dbCount; i++) {
 			const db = await client1.open(
 				new EventStore<string>({ id: "local-" + i }),
@@ -56,7 +55,7 @@ describe(`Multiple Databases`, function () {
 		for (let i = 0; i < dbCount; i++) {
 			const db = await client2.open<EventStore<string>>(
 				await EventStore.load<EventStore<string>>(
-					client2._store,
+					client2.libp2p.directblock,
 					localDatabases[i].address!
 				),
 				{ ...options }
@@ -67,7 +66,7 @@ describe(`Multiple Databases`, function () {
 		for (let i = 0; i < dbCount; i++) {
 			const db = await client3.open<EventStore<string>>(
 				await EventStore.load<EventStore<string>>(
-					client3._store,
+					client3.libp2p.directblock,
 					localDatabases[i].address!
 				),
 				{ ...options }
@@ -76,9 +75,12 @@ describe(`Multiple Databases`, function () {
 		}
 
 		// Wait for the peers to connect
-		await waitForPeers(session.peers[0], [client2.id], topic);
-		await waitForPeers(session.peers[1], [client1.id], topic);
-		await waitForPeers(session.peers[2], [client1.id], topic);
+		for (const db of localDatabases) {
+			await waitForPeers(session.peers[0], [client2.id], db.address.toString());
+			await waitForPeers(session.peers[1], [client1.id], db.address.toString());
+			await waitForPeers(session.peers[2], [client1.id], db.address.toString());
+		}
+
 	});
 
 	afterEach(async () => {
@@ -123,7 +125,7 @@ describe(`Multiple Databases`, function () {
 				if (allReplicated()) {
 					clearInterval(interval);
 
-					await delay(10000); // add some delay, so that we absorb any extra (unwanted) replication
+					await delay(3000); // add some delay, so that we absorb any extra (unwanted) replication
 
 					// Verify that the databases contain all the right entries
 					remoteDatabasesA.forEach((db) => {
@@ -155,18 +157,12 @@ describe(`Multiple Databases`, function () {
 		});
 
 		// check gracefully shut down (with no leak)
-		let directConnections = 2;
-		const subscriptions = client3.libp2p.directsub.getTopics();
-		expect(subscriptions.length).toEqual(directConnections + 2 + 1); //+ 1 for 2 replication topic (observer and replicator) + block topic
+		const subscriptions = client3.libp2p.directsub.topics;
+		expect(subscriptions.size).toEqual(dbCount);
 		for (let i = 0; i < dbCount; i++) {
 			await remoteDatabasesB[i].drop();
-			if (i === dbCount - 1) {
-				await delay(3000);
-				const connections = client3.libp2p.directsub.getTopics();
-
-				// Direct connection should close because no databases "in common" are open
-				expect(connections).toHaveLength(0 + 1); // + "block" topic
-			}
+			await delay(3000);
+			expect(client3.libp2p.directsub.topics.size).toEqual(dbCount - i - 1)
 		}
 	});
 });
