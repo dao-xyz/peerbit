@@ -4,6 +4,7 @@
 		"packages/libp2p/direct-stream",
 		"packages/libp2p/direct-sub",
 		"packages/libp2p/libp2p-test-utils",
+		"packages/libp2p/peerbit-libp2p",
 		"packages/log",
 		"packages/client",
 		"packages/server-node/frontend",
