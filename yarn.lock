@@ -1842,10 +1842,10 @@
   dependencies:
     "@jridgewell/trace-mapping" "0.3.9"
 
-"@dao-xyz/borsh@^5.1.3":
-  version "5.1.3"
-  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-5.1.3.tgz#815104b015169afb1f42c12b584c7688c479b514"
-  integrity sha512-P9j0nERW9tGozVK7OieC87iacrRvnkbpDJqu+l+2fdh+GjNiWqWrctragQqjvopapfkCWYbq8CakcjRs/d0rkQ==
+"@dao-xyz/borsh@^5.1.4":
+  version "5.1.4"
+  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-5.1.4.tgz#d87530d4b64325c8313170fda847ddc350159bc1"
+  integrity sha512-ID1Qm3h+l077puCiGtgcCW7rmf/4Uam7iR+tT49oWW7AFCFSF4PF4o9Li6tGLF7p7IcE6xh+CZkvjhd7+73sjA==
   dependencies:
     "@protobufjs/float" "^1.0.2"
     "@protobufjs/utf8" "^1.1.0"
@@ -1873,11 +1873,6 @@
     protons-runtime "^4.0.2"
     uint8arraylist "^2.3.2"
     uint8arrays "^4.0.3"
-
-"@dao-xyz/libp2p-pubsub-peer-monitor@^0.0.19":
-  version "0.0.19"
-  resolved "https://registry.yarnpkg.com/@dao-xyz/libp2p-pubsub-peer-monitor/-/libp2p-pubsub-peer-monitor-0.0.19.tgz#333bf79f9c47608518594f3b837ff1e5e6a2d81f"
-  integrity sha512-gZrhL00VlK3nKwsBJsC9kXH3WNM32MWAmhmbdDTLCPw6MU6ii40/JvZLE+VDApbvZPkhPftUf+JlEQP6fTG/Tg==
 
 "@emotion/babel-plugin@^11.10.5":
   version "11.10.5"
