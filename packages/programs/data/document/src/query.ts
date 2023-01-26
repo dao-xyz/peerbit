@@ -153,6 +153,14 @@ export class FieldBigIntCompareQuery extends StateFieldQuery {
     }
 }
 
+@variant(4)
+export class FieldIsNullQuery extends StateFieldQuery {
+
+    constructor(props?: { key: string[] | string }) {
+        super(props);
+    }
+}
+
 @variant(0)
 export class MemoryCompare {
     @field({ type: Uint8Array })

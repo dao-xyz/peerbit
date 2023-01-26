@@ -15,6 +15,7 @@ import {
     FieldBigIntCompareQuery,
     FieldByteMatchQuery,
     FieldStringMatchQuery,
+    FieldIsNullQuery,
     MemoryCompareQuery,
     DocumentQueryRequest,
     Query,
@@ -306,6 +307,11 @@ export class DocumentIndex<T> extends ComposableProgram {
                                   }
 
                                   return compare(value, f.compare, f.value);
+                              }
+                              if (f instanceof FieldIsNullQuery) {
+                                  const value: bigint | number = fv;
+
+                                  return value === null;
                               }
                           } else if (f instanceof MemoryCompareQuery) {
                               const operation =
