@@ -311,7 +311,7 @@ export class DocumentIndex<T> extends ComposableProgram {
                               if (f instanceof FieldIsEmptyQuery) {
                                   const value: bigint | number | undefined = fv;
 
-                                  return value === null || value === undefined;
+                                  return !(f.isempty && (value === null || value === undefined))
                               }
                           } else if (f instanceof MemoryCompareQuery) {
                               const operation =

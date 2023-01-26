@@ -155,9 +155,14 @@ export class FieldBigIntCompareQuery extends StateFieldQuery {
 
 @variant(4)
 export class FieldIsEmptyQuery extends StateFieldQuery {
+    @field({ type: "bool" })
+    isempty: boolean
 
-    constructor(props?: { key: string[] | string }) {
+    constructor(props?: { key: string[] | string; isempty: boolean }) {
         super(props);
+        if (props) {
+            this.isempty = props.isempty;
+        }
     }
 }
 
