@@ -2,8 +2,6 @@ import { LSession as SSession } from "@dao-xyz/libp2p-test-utils";
 import { RecursivePartial } from "@libp2p/interfaces";
 import { Datastore } from "interface-datastore";
 import { createLibp2pExtended, Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
-import { DirectSub } from "@dao-xyz/libp2p-direct-sub";
-import { DirectBlock, MemoryLevelBlockStore } from "@dao-xyz/libp2p-direct-block"
 
 export type LibP2POptions = {
 	datastore?: RecursivePartial<Datastore> | undefined

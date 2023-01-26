@@ -171,6 +171,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 				this.listenForSubscribers(t);
 			}
 		}
+
 		if (newTopicsForTopicData.length > 0) {
 			const message = new DataMessage({
 				data: toUint8Array(

@@ -172,7 +172,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 		return this._index.size;
 	}
 
-	async updateIndex(change: Change<Operation<T>>) {
+	/* async updateIndex(change: Change<Operation<T>>) {
 		if (!this.type) {
 			throw new Error("Not initialized");
 		}
@@ -186,27 +186,6 @@ export class DocumentIndex<T> extends ComposableProgram {
 		for (const item of entries) {
 			try {
 				const payload = await item.getPayloadValue();
-				/* if (payload instanceof PutAllOperation) {
-					for (const doc of payload.docs) {
-						if (doc && handled[doc.key] !== true) {
-							handled[doc.key] = true;
-							this._index.set(doc.key, {
-								key: asString(doc.key),
-								value: this.deserializeOrPass(doc),
-								entry: item,
-								context: new Context({
-									created:
-										this._index.get(doc.key)?.context
-											.created ||
-										item.metadata.clock.timestamp.wallTime,
-									modified:
-										item.metadata.clock.timestamp.wallTime,
-									head: item.hash,
-								}),
-							});
-						}
-					}
-				} else  */
 				if (payload instanceof PutOperation) {
 					const key = payload.key;
 					if (removedSet.has(item.hash)) {
@@ -243,16 +222,8 @@ export class DocumentIndex<T> extends ComposableProgram {
 				throw error;
 			}
 		}
-	}
+	} */
 
-	deserializeOrPass(value: PutOperation<T>): T {
-		if (value._value) {
-			return value._value;
-		} else {
-			value._value = deserialize(value.data, this.type);
-			return value._value!;
-		}
-	}
 
 	_queryDocuments(
 		filter: (doc: IndexedValue<T>) => boolean

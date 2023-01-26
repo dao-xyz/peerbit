@@ -94,7 +94,6 @@ describe("index", () => {
 				await createStore()
 			);
 		}
-		const topic = uuid();
 		// Create store
 		for (let i = 0; i < peersCount; i++) {
 			if (i > 0) {

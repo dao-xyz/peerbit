@@ -18,10 +18,7 @@ import { Entry } from "@dao-xyz/peerbit-log";
 describe(`Subprogram`, () => {
 	let session: LSession;
 	let client1: Peerbit,
-		client2: Peerbit,
-		db1: EventStore<string>,
-		db2: EventStore<string>;
-	let topic: string;
+		client2: Peerbit
 	let timer: any;
 
 	beforeAll(async () => {
@@ -43,22 +40,12 @@ describe(`Subprogram`, () => {
 		client2 = await Peerbit.create(session.peers[1], {
 			limitSigning: true,
 		}); // limitSigning = dont sign exchange heads request
-		db1 = await client1.open(
-			new EventStore<string>({
-				id: "abc",
-			})
-		);
+
 	});
 
 	afterEach(async () => {
 		clearInterval(timer);
-
-		if (db1) await db1.store.drop();
-
-		if (db2) await db2.store.drop();
-
 		if (client1) await client1.stop();
-
 		if (client2) await client2.stop();
 	});
 
@@ -107,10 +94,12 @@ describe(`Subprogram`, () => {
 				}),
 			})
 		);
+		/// this.parentProgram 
 
-		await client2.subscribeToProgram((await client1.open(store, {
+		const program = (await client1.open(store, {
 			replicate: false,
-		})).address.toString());
+		}))
+		await client2.open(program.address);
 
 		const { entry: eventStore } = await store.eventStore.put(
 			new EventStore({ id: "store 1" })

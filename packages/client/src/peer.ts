@@ -295,14 +295,16 @@ export class Peerbit {
 		const refreshInterval = options.refreshIntreval || 10000;
 
 		let promise: Promise<boolean> | undefined = undefined;
-		this._refreshInterval = setInterval(async () => {
-			if (promise) {
-				return;
-			}
-			promise = this.replicationReorganization([...this.programs.keys()]);
-			await promise;
-			promise = undefined;
-		}, refreshInterval);
+		// 	TODO do we need this?
+
+		/* 	this._refreshInterval = setInterval(async () => {
+				if (promise) {
+					return;
+				}
+				promise = this.replicationReorganization([...this.programs.keys()]);
+				await promise;
+				promise = undefined;
+			}, refreshInterval); */
 
 		this.libp2p.directsub.addEventListener('data', this._onMessage.bind(this))
 		this.libp2p.directsub.addEventListener('subscribe', this._onSubscription.bind(this))
@@ -319,7 +321,15 @@ export class Peerbit {
 			throw new Error("Expecting libp2p argument to either be of type Libp2p or Libp2pExtended")
 		}
 		if (!(libp2p as Libp2pExtended).directblock && !(libp2p as Libp2pExtended).directsub) {
-			libp2pExtended = await createLibp2pExtended(libp2p) // will modify the libp2p instance to support directblock and directsub
+			libp2pExtended = await createLibp2pExtended(libp2p, {
+				blocks: {
+					directory: options.directory &&
+						path
+							.join(options.directory, "/blocks")
+							.toString()
+				}
+			}) // will modify the libp2p instance to support directblock and directsub
+			await libp2pExtended.start();
 		}
 
 
@@ -522,10 +532,10 @@ export class Peerbit {
 	}
 
 	// Callback for local writes to the database. We the update to pubsub.
-	onWrite<T>(program: Program, store: Store<any>, entry: Entry<T>): void {
-		const programAddress =
-			program.address?.toString() ||
-			program.parentProgram.address!.toString();
+	onWrite<T>(program: Program, store: Store<any>, entry: Entry<T>, address?: Address | string): void {
+
+		const programAddress = (program.address || program.parentProgram.address).toString();
+		const writeAddress = (address?.toString() || programAddress)
 		const storeInfo = this.programs
 			.get(programAddress)
 			?.program.allStoresMap.get(store._storeIndex);
@@ -589,13 +599,15 @@ export class Peerbit {
 				return;
 			}; 
 		} */
+
+		// TODO Should we also do gidHashhistory update here?
 		createExchangeHeadsMessage(
 			store,
 			program,
 			[entry],
 			true,
 			this.limitSigning ? undefined : this.idIdentity
-		).then((bytes) => { this.libp2p.directsub.publish(bytes, { topics: [programAddress] }) })
+		).then((bytes) => { this.libp2p.directsub.publish(bytes, { topics: [writeAddress] }) })
 	}
 
 	/*  async isTrustedByNetwork(
@@ -1183,9 +1195,11 @@ throw error;
 				for (const [_, store] of programInfo.program.allStoresMap) {
 					const heads = store.oplog.heads;
 					const groupedByGid = await groupByGid(heads);
-					const toSend: Map<string, Entry<any>> = new Map();
-					let newPeers: string[] = [];
 					for (const [gid, entries] of groupedByGid) {
+
+						const toSend: Map<string, Entry<any>> = new Map();
+						let newPeers: string[] = [];
+
 						if (entries.length === 0) {
 							continue; // TODO maybe close store?
 						}
@@ -1245,20 +1259,24 @@ throw error;
 							// TODO if length === 0 maybe close store?
 						}
 						this._gidPeersHistory.set(gid, new Set(currentPeers));
+
+						if (toSend.size === 0) {
+							continue
+						}
+						const bytes = await createExchangeHeadsMessage(
+							store,
+							programInfo.program,
+							[...toSend.values()], // TODO send to peers directly
+							true,
+							this.limitSigning ? undefined : this.idIdentity,
+						);
+
+						// TODO perhaps send less messages to more recievers for performance reasons?
+						await this._libp2p.directsub.publish(bytes, { to: newPeers })
 					}
 					changed = true;
 
-					if (toSend.size === 0) {
-						continue
-					}
-					const bytes = await createExchangeHeadsMessage(
-						store,
-						programInfo.program,
-						[...toSend.values()], // TODO send to peers directly
-						true,
-						this.limitSigning ? undefined : this.idIdentity,
-					);
-					await this._libp2p.directsub.publish(bytes, { to: newPeers })
+
 				}
 			}
 		}
@@ -1564,6 +1582,7 @@ throw error;
 		}
 		const topic = typeof address === 'string' ? address : address.toString();
 		this.libp2p.directsub.subscribe(topic, { data: replicate ? REPLICATOR_TAG_DATA : OBSERVER_TAG_DATA });
+		await this.libp2p.directsub.requestSubscribers(topic); // get up to date with who are subscribing to this topic
 
 		/* if (!this._topicSubscriptions.has(topic)) {
 			const topicMonitor = new IpfsPubsubPeerMonitor(
@@ -1859,7 +1878,7 @@ throw error;
 							return;
 						},
 						onWrite: async (store, entry) => {
-							await this.onWrite(program, store, entry);
+							await this.onWrite(program, store, entry, program.owner || program.address);
 							if (options.onWrite) {
 								return options.onWrite(store, entry);
 							}
@@ -2088,16 +2107,4 @@ throw error;
 }
 const areWeTestingWithJest = (): boolean => {
 	return process.env.JEST_WORKER_ID !== undefined;
-};
-
-const ignoreInsufficientPeers = async (fn: () => Promise<any>) => {
-	try {
-		await fn();
-	} catch (error: any) {
-		if (error?.message === "PublishError.InsufficientPeers") {
-			/// ignore
-		} else {
-			throw error;
-		}
-	}
 };

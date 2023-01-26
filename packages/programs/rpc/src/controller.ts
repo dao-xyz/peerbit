@@ -129,7 +129,7 @@ export class RPC<Q, R> extends ComposableProgram {
 		options: ProgramInitializationOptions
 	): Promise<this> {
 		await super.init(libp2p, identity, options);
-		this._rpcTopic = this._rpcTopic || this.topic;
+		this._rpcTopic = this._rpcTopic || this.parentProgram.address.withPath({ index: this._programIndex! }).toString();
 		if (options.replicate) {
 			this._subscribe();
 		}

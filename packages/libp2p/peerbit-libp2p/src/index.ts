@@ -14,10 +14,10 @@ import type { Transport } from '@libp2p/interface-transport'
 import { Level } from 'level'
 import { Program } from '@dao-xyz/peerbit-program'
 import { tcp } from '@libp2p/tcp';
+
 export interface DB {
 	someProprty: Program
 }
-
 
 export type Libp2pExtended = Libp2p & {
 	directsub: DirectSub;
@@ -29,7 +29,12 @@ type CreateOptions = {
 	listen?: string[],
 	directory?: string
 }
-export const createLibp2pExtended: (args: CreateOptions | Libp2p) => Promise<Libp2pExtended> = async (args) => {
+type ExtendedOptions = {
+	blocks?: {
+		directory?: string
+	}
+}
+export const createLibp2pExtended: (args: CreateOptions | Libp2p, options?: ExtendedOptions) => Promise<Libp2pExtended> = async (args, options) => {
 	const peer = ((args as Libp2p).start) ? args as Libp2pExtended : await createLibp2p({
 		connectionManager: {
 			autoDial: false,
@@ -46,7 +51,7 @@ export const createLibp2pExtended: (args: CreateOptions | Libp2p) => Promise<Lib
 		signaturePolicy: "StrictNoSign",
 	});
 	peer.directblock = new DirectBlock(peer, {
-		localStore: (args as CreateOptions).directory ? new LevelBlockStore(new Level((args as CreateOptions).directory!)) : new MemoryLevelBlockStore()
+		localStore: options?.blocks?.directory ? new LevelBlockStore(new Level(options.blocks.directory!)) : new MemoryLevelBlockStore()
 	});
 
 	let start = peer.start.bind(peer);

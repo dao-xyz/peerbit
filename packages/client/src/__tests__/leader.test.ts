@@ -51,6 +51,8 @@ describe(`leaders`, function () {
 			})
 		);
 
+		// Subscription evnet is sent before I open, so I don't save the subscription?
+		// but this should requrest subscribers?
 		const _program2 = await client2.open<PermissionedEventStore>(
 			program.address!
 		);
@@ -78,8 +80,8 @@ describe(`leaders`, function () {
 		expect(leadersFrom1).toEqual(leadersFrom2);
 		expect(leadersFrom1).toHaveLength(2);
 		expect(leadersFrom1).toContainAllValues([
-			client1.id.toString(),
-			client2.id.toString(),
+			client1.idKeyHash,
+			client2.idKeyHash,
 		]);
 	});
 

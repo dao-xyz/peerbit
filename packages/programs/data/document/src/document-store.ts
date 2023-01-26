@@ -29,7 +29,7 @@ import {
 import { CanRead } from "@dao-xyz/peerbit-rpc";
 import { LogIndex } from "@dao-xyz/peerbit-logindex";
 import { AccessError } from "@dao-xyz/peerbit-crypto";
-import { Results } from "./query.js";
+import { Context, Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { getBlockValue } from "@dao-xyz/libp2p-direct-block"
 const logger = loggerFn({ module: "document" });
@@ -79,6 +79,8 @@ export class Documents<T> extends ComposableProgram {
 	get index(): DocumentIndex<T> {
 		return this._index;
 	}
+
+
 	async setup(options: {
 		type: Constructor<T>;
 		canRead?: CanRead;
@@ -92,10 +94,7 @@ export class Documents<T> extends ComposableProgram {
 		await this.store.setup({
 			encoding: BORSH_ENCODING(Operation),
 			canAppend: this.canAppend.bind(this),
-			onUpdate: async (change: Change<Operation<T>>) => {
-				await this.handleDeletions(change);
-				await this._index.updateIndex(change);
-			},
+			onUpdate: this.handleChanges.bind(this),
 		});
 		await this._logIndex.setup({
 			store: this.store,
@@ -228,7 +227,6 @@ export class Documents<T> extends ComposableProgram {
 				if (entry.next.length !== 1) {
 					return false;
 				}
-				2;
 				const existingDocument = this._index.get(operation.key);
 				if (!existingDocument) {
 					// already deleted
@@ -247,6 +245,9 @@ export class Documents<T> extends ComposableProgram {
 
 	public put(doc: T, options?: AddOperationOptions<Operation<T>>) {
 		if (doc instanceof Program) {
+			if (this.parentProgram == null) {
+				throw new Error(`Program ${this.constructor.name} have not been opened, as 'parentProgram' property is missing`)
+			}
 			if (!(this.parentProgram as any as CanOpenSubPrograms).canOpen) {
 				throw new Error(
 					"Class " +
@@ -298,9 +299,90 @@ export class Documents<T> extends ComposableProgram {
 		);
 	}
 
-	async handleDeletions(change: Change<Operation<T>>): Promise<void> {
-		const entries = change.added.sort(this.store.oplog._sortFn).reverse();
-		for (const entry of entries) {
+	async handleChanges(change: Change<Operation<T>>): Promise<void> {
+
+		const removed = [...(change.removed || [])];
+		const removedSet = new Set<string>(removed.map((x) => x.hash));
+		const entries = [...change.added, ...(change.removed || [])]
+			.sort(this.store.oplog._sortFn)
+			.reverse();
+
+		for (const item of entries) {
+			try {
+				const payload = await item.getPayloadValue();
+				if (payload instanceof PutOperation) {
+					const key = payload.key;
+					if (removedSet.has(item.hash)) {
+						this._index._index.delete(key);
+					} else {
+						const value = this.deserializeOrPass(payload);
+						this._index._index.set(key, {
+							entry: item,
+							key: payload.key,
+							value: value,
+							context: new Context({
+								created:
+									this._index.get(key)?.context.created ||
+									item.metadata.clock.timestamp.wallTime,
+								modified:
+									item.metadata.clock.timestamp.wallTime,
+								head: item.hash,
+							}),
+						});
+
+
+						// Program specific
+						if (value instanceof Program) {
+
+							// if replicator, then open
+
+
+
+						}
+
+					}
+				} else if (payload instanceof DeleteOperation) {
+					if (!removedSet.has(item.hash)) {
+
+						if (payload.permanently) {
+							// delete all nexts recursively (but dont delete the DELETE record (because we might want to share this with others))
+							const nexts = item.next
+								.map((n) => this.store.oplog.get(n))
+								.filter((x) => !!x) as Entry<any>[];
+
+							await this.store.removeOperation(nexts, {
+								recursively: true,
+							});
+						}
+
+						// update index
+						const key = payload.key;
+						const value = this._index._index.get(key);
+						this._index._index.delete(key);
+
+						// Program specific
+						if (value instanceof Program) {
+
+							// if not replicator, then close if open
+
+
+						}
+
+					} else {
+						// TODO, a delete operation entry has been removed, this means that an entry should not be deleted, however, the inverse of deletion is to do nothing.. (?)
+					}
+				} else {
+					// Unknown operation
+				}
+			} catch (error) {
+				if (error instanceof AccessError) {
+					continue;
+				}
+				throw error;
+			}
+		}
+
+		/* for (const entry of entries) {
 			try {
 				const payload = await entry.getPayloadValue();
 				if (payload instanceof DeleteOperation) {
@@ -314,6 +396,8 @@ export class Documents<T> extends ComposableProgram {
 							recursively: true,
 						});
 					}
+				} else if (payload instanceof PutOperation) {
+					// Do nothing (for now)	
 				} else {
 					// Unknown operation
 				}
@@ -323,6 +407,34 @@ export class Documents<T> extends ComposableProgram {
 				}
 				throw error;
 			}
+		} */
+	}
+
+
+	deserializeOrPass(value: PutOperation<T>): T {
+		if (value._value) {
+			return value._value;
+		} else {
+			value._value = deserialize(value.data, this.index.type);
+			return value._value!;
 		}
 	}
+
+	/* 
+
+	async updateIndex(change: Change<Operation<T>>) {
+		if (!this.type) {
+			throw new Error("Not initialized");
+		}
+
+		const removed = [...(change.removed || [])];
+		const removedSet = new Set<string>(removed.map((x) => x.hash));
+		const entries = [...change.added, ...(change.removed || [])]
+			.sort(this._store.oplog._sortFn)
+			.reverse();
+
+		
+	}
+
+	*/
 }

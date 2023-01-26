@@ -142,6 +142,8 @@ describe(`sharding`, () => {
 		await waitFor(() => db2.store.store.oplog.values.length === entryCount);
 
 		db3 = await client3.open<PermissionedEventStore>(db1.address!);
+		// client 3 will subscribe and start to recive heads before recieving subscription info about other peers 
+
 		await waitFor(
 			() =>
 				client1.getReplicators(db1.address!.toString())
@@ -157,15 +159,6 @@ describe(`sharding`, () => {
 				client3.getReplicators(db1.address!.toString())
 					?.size === 2
 		);
-
-		let isLeader: boolean[] = [];
-		for (const v of db3.store.store.oplog.heads) {
-			isLeader.push(
-				!!(
-					await client3.findLeaders(db3.address.toString(), v.gid, 2)
-				).find((x) => x === client3.id.toString())
-			);
-		}
 
 		await waitFor(
 			() =>

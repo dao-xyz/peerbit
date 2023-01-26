@@ -12,7 +12,7 @@ import {
 } from "@dao-xyz/borsh";
 import path from "path";
 import { CID } from "multiformats/cid";
-import { BlockStore, DirectBlock } from "@dao-xyz/libp2p-direct-block";
+import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { Libp2p } from "libp2p";
 import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
@@ -416,12 +416,6 @@ export abstract class AbstractProgram {
 	}
 
 
-	get topic(): string {
-		if (!this.address) {
-			throw new Error("Missing address")
-		}
-		return this.address.toString()
-	}
 }
 
 export interface CanOpenSubPrograms {
@@ -552,6 +546,14 @@ export abstract class Program
 			Program,
 			options
 		) as Promise<S>;
+	}
+
+
+	get topic(): string {
+		if (!this.address) {
+			throw new Error("Missing address")
+		}
+		return this.address.toString()
 	}
 }
 

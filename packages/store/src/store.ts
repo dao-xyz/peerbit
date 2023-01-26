@@ -476,12 +476,11 @@ export class Store<T> implements Initiable<T> {
 		if (!this.initialized) {
 			return;
 		}
-
-		await this.idle();
-
 		if (this._options.onClose) {
 			await this._options.onClose(this);
 		}
+
+		await this.idle();
 
 		this._oplog = null as any;
 		this._lastHeadsPath = undefined;

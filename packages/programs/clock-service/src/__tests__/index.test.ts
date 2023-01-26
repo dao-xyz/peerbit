@@ -76,8 +76,11 @@ describe("clock", () => {
 				} as any,
 			} as any
 		);
-
-		await waitForPeers(session.peers[1], [session.peers[0]], responder.clock._remoteSigner.topic);
+		const topic = responder.clock._remoteSigner._rpcTopic;
+		if (!topic) {
+			throw new Error("Expecting topic")
+		}
+		await waitForPeers(session.peers[1], [session.peers[0]], topic);
 	});
 	afterAll(async () => {
 		await session.stop();

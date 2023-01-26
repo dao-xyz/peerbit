@@ -13,13 +13,10 @@ import { v4 as uuid } from "uuid";
 import { jest } from "@jest/globals";
 
 // Include test utilities
-import { createStore, LSession } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/libp2p-test-utils";
 import { Program } from "@dao-xyz/peerbit-program";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import {
-	LevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
-import { Level } from "level";
+import { LevelBlockStore } from "@dao-xyz/libp2p-direct-block";
 
 const dbPath = path.join("./peerbit", "tests", "create-open");
 
@@ -80,12 +77,7 @@ describe(`Create & Open`, function () {
 
 			it("block storage exist at path", async () => {
 
-				const location = (
-					(
-						client.libp2p.directblock
-							._localStore as LevelBlockStore
-					)._level as any as Level
-				).location;
+				const location = (client.libp2p.directblock._localStore as LevelBlockStore)._level["location"]
 				expect(location).toEndWith(
 					path.join(client.directory!, "blocks").toString()
 				);
@@ -129,10 +121,7 @@ describe(`Create & Open`, function () {
 
 		beforeAll(async () => {
 			client = await Peerbit.create(session.peers[0], {
-				directory: dbPath + uuid(),
-				storage: {
-					createStore,
-				},
+				directory: dbPath + uuid()
 			});
 		});
 		afterAll(async () => {
