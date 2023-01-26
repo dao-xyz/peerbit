@@ -154,7 +154,7 @@ export class FieldBigIntCompareQuery extends StateFieldQuery {
 }
 
 @variant(4)
-export class FieldIsNullQuery extends StateFieldQuery {
+export class FieldIsEmptyQuery extends StateFieldQuery {
 
     constructor(props?: { key: string[] | string }) {
         super(props);
