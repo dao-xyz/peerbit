@@ -34,11 +34,11 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@dao-xyz/libp2p-noise": "^11.1.0",
+		"@dao-xyz/libp2p-noise": "^11.1.1",
 		"@dao-xyz/libp2p-direct-block": "^0.0.15",
 		"@dao-xyz/libp2p-direct-sub": "^0.0.1",
 		"@libp2p/mplex": "^7.1.1",
-		"@libp2p/tcp": "^6.0.9",
+		"@libp2p/websockets": "^5.0.3",
 		"libp2p": "^0.42.0",
 		"level": "^8.0.0"
 	},

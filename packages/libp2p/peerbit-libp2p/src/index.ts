@@ -13,11 +13,12 @@ import type { RecursivePartial } from '@libp2p/interfaces'
 import type { Transport } from '@libp2p/interface-transport'
 import { Level } from 'level'
 import { Program } from '@dao-xyz/peerbit-program'
-import { tcp } from '@libp2p/tcp';
+import { webSockets } from "@libp2p/websockets"
+import { AddressManagerInit } from "libp2p/address-manager";
+import { PeerId } from '@libp2p/interface-peer-id'
+import { ConnectionManagerConfig } from "libp2p/connection-manager";
 
-export interface DB {
-	someProprty: Program
-}
+export interface DB { someProprty: Program }
 
 export type Libp2pExtended = Libp2p & {
 	directsub: DirectSub;
@@ -26,7 +27,9 @@ export type Libp2pExtended = Libp2p & {
 
 type CreateOptions = {
 	transports?: RecursivePartial<(components: Components) => Transport>[],
-	listen?: string[],
+	addresses?: RecursivePartial<AddressManagerInit>,
+	peerId?: RecursivePartial<PeerId>,
+	connectionManager?: RecursivePartial<ConnectionManagerConfig>
 	directory?: string
 }
 type ExtendedOptions = {
@@ -34,27 +37,34 @@ type ExtendedOptions = {
 		directory?: string
 	}
 }
-export const createLibp2pExtended: (args: CreateOptions | Libp2p, options?: ExtendedOptions) => Promise<Libp2pExtended> = async (args, options) => {
-	const peer = ((args as Libp2p).start) ? args as Libp2pExtended : await createLibp2p({
-		connectionManager: {
-			autoDial: false,
-		},
-		addresses: {
-			listen: (args as CreateOptions).listen || ["/ip4/127.0.0.1/tcp/0"],
-		},
-		transports: (args as CreateOptions).transports || [tcp()],
-		connectionEncryption: [noise()],
-		streamMuxers: [mplex()],
-	}) as Libp2pExtended;
+export const createLibp2pExtended: (args?: (ExtendedOptions & { libp2p?: Libp2p | CreateOptions })) => Promise<Libp2pExtended> = async (args) => {
+	let peer: Libp2pExtended;
+	if (((args?.libp2p as Libp2p)?.start)) {
+		peer = args?.libp2p as Libp2pExtended
+	}
+	else {
+		const opts = args?.libp2p as (CreateOptions | undefined);
+		peer = await createLibp2p({
+			peerId: opts?.peerId,
+			connectionManager: opts?.connectionManager || { autoDial: false },
+			addresses: opts?.addresses || { listen: ["/ip4/127.0.0.1/tcp/0"] },
+			transports: opts?.transports || [webSockets()],
+			connectionEncryption: [noise()],
+			streamMuxers: [mplex()],
+		}) as Libp2pExtended
+	}
+
 	peer.directsub = new DirectSub(peer, {
 		canRelayMessage: true,
 		signaturePolicy: "StrictNoSign",
 	});
+
 	peer.directblock = new DirectBlock(peer, {
-		localStore: options?.blocks?.directory ? new LevelBlockStore(new Level(options.blocks.directory!)) : new MemoryLevelBlockStore()
+		localStore: args?.blocks?.directory ? new LevelBlockStore(new Level(args.blocks.directory!)) : new MemoryLevelBlockStore()
 	});
 
-	let start = peer.start.bind(peer);
+	const start = peer.start.bind(peer);
+
 	peer.start = async () => {
 		if (!peer.isStarted()) {
 			await start();
@@ -62,7 +72,8 @@ export const createLibp2pExtended: (args: CreateOptions | Libp2p, options?: Exte
 		await Promise.all([peer.directblock.start(), peer.directsub.start()])
 	}
 
-	let stop = peer.stop.bind(peer);
+	const stop = peer.stop.bind(peer);
+
 	peer.stop = async () => {
 		await stop();
 		await Promise.all([peer.directblock.stop(), peer.directsub.stop()])

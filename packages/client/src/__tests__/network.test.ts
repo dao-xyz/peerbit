@@ -23,9 +23,9 @@ describe(`network`, function () {
 	});
 
 	beforeEach(async () => {
-		client1 = await Peerbit.create(session.peers[0], {});
-		client2 = await Peerbit.create(session.peers[1], {});
-		client3 = await Peerbit.create(session.peers[2], {});
+		client1 = await Peerbit.create({ libp2p: session.peers[0] });
+		client2 = await Peerbit.create({ libp2p: session.peers[1] });
+		client3 = await Peerbit.create({ libp2p: session.peers[2] });
 	});
 
 	afterEach(async () => {

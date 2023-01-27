@@ -19,12 +19,14 @@ import {
 	Change,
 	Encoding,
 	Entry,
+	Identity,
 	Log,
 } from "@dao-xyz/peerbit-log";
 import {
-	CanOpenSubPrograms,
+	Address,
 	ComposableProgram,
 	Program,
+	ProgramInitializationOptions,
 } from "@dao-xyz/peerbit-program";
 import { CanRead } from "@dao-xyz/peerbit-rpc";
 import { LogIndex } from "@dao-xyz/peerbit-logindex";
@@ -32,6 +34,8 @@ import { AccessError } from "@dao-xyz/peerbit-crypto";
 import { Context, Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { getBlockValue } from "@dao-xyz/libp2p-direct-block"
+import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
+import { OpenProgram } from "@dao-xyz/peerbit-program";
 const logger = loggerFn({ module: "document" });
 
 export class OperationError extends Error {
@@ -58,6 +62,7 @@ export class Documents<T> extends ComposableProgram {
 	_valueEncoding: Encoding<T>;
 
 	_optionCanAppend?: CanAppend<Operation<T>>;
+	_canOpen?: (program: Program) => Promise<boolean>
 
 	constructor(properties: {
 		canEdit?: boolean;
@@ -85,8 +90,15 @@ export class Documents<T> extends ComposableProgram {
 		type: Constructor<T>;
 		canRead?: CanRead;
 		canAppend?: CanAppend<Operation<T>>;
+		canOpen?: (program: Program) => Promise<boolean>
 	}) {
 		this._clazz = options.type;
+		this._canOpen = options.canOpen;
+		if (Program.isPrototypeOf(this._clazz)) {
+			if (!this._canOpen) {
+				throw new Error("setup needs to be called with the canOpen option when the document type is a Program")
+			}
+		}
 		this._valueEncoding = BORSH_ENCODING(this._clazz);
 		if (options.canAppend) {
 			this._optionCanAppend = options.canAppend;
@@ -248,14 +260,14 @@ export class Documents<T> extends ComposableProgram {
 			if (this.parentProgram == null) {
 				throw new Error(`Program ${this.constructor.name} have not been opened, as 'parentProgram' property is missing`)
 			}
-			if (!(this.parentProgram as any as CanOpenSubPrograms).canOpen) {
+			/* if (!(this.parentProgram as any as CanOpenSubPrograms).canOpen) {
 				throw new Error(
 					"Class " +
 					this.parentProgram.constructor.name +
 					" needs to implement CanOpenSubPrograms for this Documents store to progams"
 				);
-			}
-			doc.owner = this.parentProgram.address.toString();
+			} */
+			//doc.owner = this.parentProgram.address.toString();
 			doc.setupIndices();
 		}
 
@@ -334,10 +346,19 @@ export class Documents<T> extends ComposableProgram {
 						// Program specific
 						if (value instanceof Program) {
 
+							// TODO rm these checks
+							if (!this.replicator) {
+								throw new Error("Documents have not been initialized with the 'replicator' function, which is required for types that extends Program")
+							}
+
+							if (!this.open) {
+								throw new Error("Documents have not been initialized with the open function, which is required for types that extends Program")
+							}
+
 							// if replicator, then open
-
-
-
+							if ((await this._canOpen!(value)) && (this.replicate && await this.replicator!(this.parentProgram.address, item.gid))) {
+								await this.open!(value);
+							}
 						}
 
 					}
@@ -359,13 +380,8 @@ export class Documents<T> extends ComposableProgram {
 						const key = payload.key;
 						const value = this._index._index.get(key);
 						this._index._index.delete(key);
-
-						// Program specific
-						if (value instanceof Program) {
-
-							// if not replicator, then close if open
-
-
+						if (value?.value instanceof Program) {
+							await value?.value.close();
 						}
 
 					} else {

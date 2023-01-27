@@ -43,17 +43,17 @@ export class Routes {
 			to = temp;
 		}
 
-		let linkExisted = !!this.getLink(from, to)
-		let newReachableNodesFromOrigin: string[] = [];
+		const linkExisted = !!this.getLink(from, to)
+		const newReachableNodesFromOrigin: string[] = [];
 		if (!linkExisted) {
-			let currentTime = +new Date;
-			let fromWasReachable = origin == from || this.getPath(origin, from).length;
-			let toWasReachable = origin === to || this.getPath(origin, to).length;
-			let fromIsNowReachable = toWasReachable
-			let toIsNowReachable = fromWasReachable;
+			const currentTime = +new Date;
+			const fromWasReachable = origin == from || this.getPath(origin, from).length;
+			const toWasReachable = origin === to || this.getPath(origin, to).length;
+			const fromIsNowReachable = toWasReachable
+			const toIsNowReachable = fromWasReachable;
 
 			const visited = new Set<string | number>();
-			let newReachableNodes: string[] = [];
+			const newReachableNodes: string[] = [];
 			if (fromIsNowReachable) {
 				newReachableNodes.push(from)
 			}
@@ -134,8 +134,8 @@ export class Routes {
 		const link = this.getLink(from, to);
 		if (link) {
 			const date = +new Date
-			let fromWasReachable = origin == from || this.getPath(origin, from).length;
-			let toWasReachable = origin === to || this.getPath(origin, to).length;
+			const fromWasReachable = origin == from || this.getPath(origin, from).length;
+			const toWasReachable = origin === to || this.getPath(origin, to).length;
 			this.graph.removeLink(link);
 
 			const unreachableNodesFromOrigin: string[] = [];

@@ -208,13 +208,15 @@ export const load = async <S extends Addressable>(
 	der.address = Address.parse(Address.join(address.cid));
 	return der;
 };
-
+export type OpenProgram = (program: Program) => Promise<Program>;
 export type ProgramInitializationOptions = {
 	store: IInitializationOptions<any>;
 	parent?: AbstractProgram;
 	replicate?: boolean;
 	onClose?: () => void;
 	onDrop?: () => void;
+	open?: OpenProgram,
+	replicator?: (address: Address, gid: string) => Promise<boolean>
 };
 
 
@@ -223,25 +225,24 @@ export abstract class AbstractProgram {
 	@field({ type: option("u32") })
 	_programIndex?: number; // Prevent duplicates for subprograms
 
-	@field({ type: option("string") })
-	owner?: string; // Will control whether this program can be opened or not
+	private _libp2p: Libp2pExtended;
+	private _identity: Identity;
+	private _encryption?: PublicKeyEncryptionResolver;
+	private _onClose?: () => void;
+	private _onDrop?: () => void;
+	private _initialized?: boolean;
+	private _replicate?: boolean;
 
-	_libp2p: Libp2pExtended;
-	_identity: Identity;
-	_encryption?: PublicKeyEncryptionResolver;
-	_onClose?: () => void;
-	_onDrop?: () => void;
-	_initialized?: boolean;
-	_initializationPromise: Promise<void>;
-	_replicate?: boolean;
+	replicator?: (address: Address, gid: string) => Promise<boolean>
+	open?: (program: Program) => Promise<Program>
+
+
 	parentProgram: Program;
 
 	get initialized() {
 		return this._initialized;
 	}
-	get initializationPromise(): Promise<void> | undefined {
-		return this._initializationPromise;
-	}
+
 
 	get programIndex(): number | undefined {
 		return this._programIndex;
@@ -260,32 +261,30 @@ export abstract class AbstractProgram {
 			throw new Error("Already initialized");
 		}
 
-		const fn = async () => {
-			this._libp2p = libp2p;
-			this._identity = identity;
-			this._encryption = options.store.encryption;
-			this._onClose = options.onClose;
-			this._onDrop = options.onDrop;
-			this._replicate = options.replicate;
+		this._libp2p = libp2p;
+		this._identity = identity;
+		this._encryption = options.store.encryption;
+		this._onClose = options.onClose;
+		this._onDrop = options.onDrop;
+		this._replicate = options.replicate;
+		this.open = options.open;
+		this.replicator = options.replicator;
 
-			const nexts = this.programs;
-			for (const next of nexts) {
-				await next.init(libp2p, identity, {
-					...options,
-					parent: this,
-				});
-			}
+		const nexts = this.programs;
+		for (const next of nexts) {
+			await next.init(libp2p, identity, {
+				...options,
+				parent: this,
+			});
+		}
 
-			await Promise.all(
-				this.stores.map((s) =>
-					s.init(libp2p.directblock, identity, options.store)
-				)
-			);
+		await Promise.all(
+			this.stores.map((s) =>
+				s.init(libp2p.directblock, identity, options.store)
+			)
+		);
 
-			this._initialized = true;
-		};
-		this._initializationPromise = fn();
-		await this._initializationPromise;
+		this._initialized = true;
 		return this;
 	}
 
@@ -320,7 +319,7 @@ export abstract class AbstractProgram {
 		this._initialized = false;
 	}
 
-	get libp2p(): Libp2p {
+	get libp2p(): Libp2pExtended {
 		return this._libp2p;
 	}
 
@@ -416,11 +415,10 @@ export abstract class AbstractProgram {
 	}
 
 
+
+
 }
 
-export interface CanOpenSubPrograms {
-	canOpen(programToOpen: Program, fromEntry: Entry<any>): Promise<boolean>;
-}
 
 export interface CanTrust {
 	isTrusted(keyHash: string): Promise<boolean> | boolean;
@@ -430,10 +428,12 @@ export interface CanTrust {
 export abstract class Program
 	extends AbstractProgram
 	implements Addressable, Saveable {
+
 	@field({ type: "string" })
 	id: string;
 
-	_address?: Address;
+	private _address?: Address;
+
 
 	constructor(properties?: { id?: string }) {
 		super();

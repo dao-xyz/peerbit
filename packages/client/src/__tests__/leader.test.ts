@@ -24,9 +24,9 @@ describe(`leaders`, function () {
 	});
 
 	beforeEach(async () => {
-		client1 = await Peerbit.create(session.peers[0], {});
-		client2 = await Peerbit.create(session.peers[1], {});
-		client3 = await Peerbit.create(session.peers[2], {});
+		client1 = await Peerbit.create({ libp2p: session.peers[0] });
+		client2 = await Peerbit.create({ libp2p: session.peers[1] });
+		client3 = await Peerbit.create({ libp2p: session.peers[2] });
 	});
 
 	afterEach(async () => {
@@ -93,13 +93,9 @@ describe(`leaders`, function () {
 			new EventStore<string>({ id: "replication-tests" })
 		);
 
-		const isLeaderAOneLeader = client1.isLeader(
-			await client1.findLeaders(db1.address!.toString(), 123, 1)
-		);
+		const isLeaderAOneLeader = await client1.isLeader(db1.address!.toString(), 123, 1)
 		expect(isLeaderAOneLeader);
-		const isLeaderATwoLeader = client1.isLeader(
-			await client1.findLeaders(db1.address!.toString(), 123, 2)
-		);
+		const isLeaderATwoLeader = await client1.isLeader(db1.address!.toString(), 123, 2)
 		expect(isLeaderATwoLeader);
 
 		db2 = await client2.open<EventStore<string>>(db1.address!);
@@ -116,23 +112,16 @@ describe(`leaders`, function () {
 		// leader rotation is kind of random, so we do a sequence of tests
 		for (let slot = 0; slot < 3; slot++) {
 			// One leader
-			const isLeaderAOneLeader = client1.isLeader(
-				await client1.findLeaders(db1.address!.toString(), slot, 1)
-			);
-			const isLeaderBOneLeader = client2.isLeader(
-				await client2.findLeaders(db1.address!.toString(), slot, 1)
-			);
+			const isLeaderAOneLeader = await client1.isLeader(db1.address!.toString(), slot, 1)
+			const isLeaderBOneLeader = await client2.isLeader(db1.address!.toString(), slot, 1)
 			expect([isLeaderAOneLeader, isLeaderBOneLeader]).toContainAllValues(
 				[false, true]
 			);
 
 			// Two leaders
-			const isLeaderATwoLeaders = client1.isLeader(
-				await client1.findLeaders(db1.address!.toString(), slot, 2)
-			);
-			const isLeaderBTwoLeaders = client2.isLeader(
-				await client2.findLeaders(db1.address!.toString(), slot, 2)
-			);
+			const isLeaderATwoLeaders = await client1.isLeader(db1.address!.toString(), slot, 2)
+			const isLeaderBTwoLeaders = await client2.isLeader(db1.address!.toString(), slot, 2)
+
 			expect([
 				isLeaderATwoLeaders,
 				isLeaderBTwoLeaders,
@@ -159,12 +148,9 @@ describe(`leaders`, function () {
 		const slot = 0;
 
 		// Two leaders, but only one will be leader since only one is replicating
-		const isLeaderA = client1.isLeader(
-			await client1.findLeaders(db1.address!.toString(), slot, 2)
-		);
-		const isLeaderB = client2.isLeader(
-			await client2.findLeaders(db1.address!.toString(), slot, 2)
-		);
+		const isLeaderA = await client1.isLeader(db1.address!.toString(), slot, 2)
+		const isLeaderB = await client2.isLeader(db1.address!.toString(), slot, 2)
+
 		expect(!isLeaderA); // because replicate is false
 		expect(isLeaderB);
 	});
@@ -195,15 +181,9 @@ describe(`leaders`, function () {
 		const slot = 0;
 
 		// Two leaders, but only one will be leader since only one is replicating
-		const isLeaderA = client1.isLeader(
-			await client1.findLeaders(db1.address!.toString(), slot, 3)
-		);
-		const isLeaderB = client2.isLeader(
-			await client2.findLeaders(db1.address!.toString(), slot, 3)
-		);
-		const isLeaderC = client3.isLeader(
-			await client3.findLeaders(db1.address!.toString(), slot, 3)
-		);
+		const isLeaderA = await client1.isLeader(db1.address!.toString(), slot, 3)
+		const isLeaderB = await client2.isLeader(db1.address!.toString(), slot, 3)
+		const isLeaderC = await client3.isLeader(db1.address!.toString(), slot, 3)
 
 		expect(!isLeaderA); // because replicate is false
 		expect(isLeaderB);
@@ -236,15 +216,9 @@ describe(`leaders`, function () {
 		// One leader
 		const slot = 0;
 
-		const isLeaderAOneLeader = client1.isLeader(
-			await client1.findLeaders(db1.address!.toString(), slot, 1)
-		);
-		const isLeaderBOneLeader = client2.isLeader(
-			await client2.findLeaders(db1.address!.toString(), slot, 1)
-		);
-		const isLeaderCOneLeader = client3.isLeader(
-			await client3.findLeaders(db1.address!.toString(), slot, 1)
-		);
+		const isLeaderAOneLeader = await client1.isLeader(db1.address!.toString(), slot, 1);
+		const isLeaderBOneLeader = await client2.isLeader(db1.address!.toString(), slot, 1);
+		const isLeaderCOneLeader = await client3.isLeader(db1.address!.toString(), slot, 1);
 		expect([
 			isLeaderAOneLeader,
 			isLeaderBOneLeader,
@@ -252,15 +226,9 @@ describe(`leaders`, function () {
 		]).toContainValues([false, false, true]);
 
 		// Two leaders
-		const isLeaderATwoLeaders = client1.isLeader(
-			await client1.findLeaders(db1.address!.toString(), slot, 2)
-		);
-		const isLeaderBTwoLeaders = client2.isLeader(
-			await client2.findLeaders(db1.address!.toString(), slot, 2)
-		);
-		const isLeaderCTwoLeaders = client3.isLeader(
-			await client3.findLeaders(db1.address!.toString(), slot, 2)
-		);
+		const isLeaderATwoLeaders = await client1.isLeader(db1.address!.toString(), slot, 2)
+		const isLeaderBTwoLeaders = await client2.isLeader(db1.address!.toString(), slot, 2)
+		const isLeaderCTwoLeaders = await client3.isLeader(db1.address!.toString(), slot, 2)
 		expect([
 			isLeaderATwoLeaders,
 			isLeaderBTwoLeaders,
@@ -268,15 +236,9 @@ describe(`leaders`, function () {
 		]).toContainValues([false, true, true]);
 
 		// Three leders
-		const isLeaderAThreeLeaders = client1.isLeader(
-			await client1.findLeaders(db1.address!.toString(), slot, 3)
-		);
-		const isLeaderBThreeLeaders = client2.isLeader(
-			await client2.findLeaders(db1.address!.toString(), slot, 3)
-		);
-		const isLeaderCThreeLeaders = client3.isLeader(
-			await client3.findLeaders(db1.address!.toString(), slot, 3)
-		);
+		const isLeaderAThreeLeaders = await client1.isLeader(db1.address!.toString(), slot, 3)
+		const isLeaderBThreeLeaders = await client2.isLeader(db1.address!.toString(), slot, 3)
+		const isLeaderCThreeLeaders = await client3.isLeader(db1.address!.toString(), slot, 3)
 		expect([
 			isLeaderAThreeLeaders,
 			isLeaderBThreeLeaders,

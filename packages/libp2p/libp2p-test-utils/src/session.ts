@@ -2,9 +2,12 @@ import { createLibp2p, Libp2p } from "libp2p";
 import { noise } from "@dao-xyz/libp2p-noise";
 import { mplex } from "@libp2p/mplex";
 import { tcp } from "@libp2p/tcp";
+import { webSockets } from "@libp2p/websockets"
+
 import { setMaxListeners } from "events";
 import { RecursivePartial } from "@libp2p/interfaces";
 import { Datastore } from "interface-datastore";
+
 export type LibP2POptions = {
 	datastore?: RecursivePartial<Datastore> | undefined
 };

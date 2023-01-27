@@ -75,10 +75,9 @@ describe("rpc", () => {
 			replicate: true,
 			store: {} as any,
 		});
-
 		reader = deserialize(serialize(responder), RPCTest);
-
 		reader.setup(topic)  // set topic manually because we are not going to have a parent program with address
+
 		await reader.init(session.peers[1], await createIdentity(), {
 			store: {} as any,
 		});

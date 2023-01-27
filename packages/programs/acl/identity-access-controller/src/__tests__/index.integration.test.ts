@@ -125,8 +125,8 @@ describe("index", () => {
 	});
 
 	afterAll(async () => {
-		await session.stop();
 		await Promise.all(programs?.map((c) => c.close()));
+		await session.stop();
 		await Promise.all(cacheStore?.map((c) => c.close()));
 	});
 

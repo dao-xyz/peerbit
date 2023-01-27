@@ -11,14 +11,17 @@ describe("ssl", () => {
 
 	beforeAll(async () => {
 		session = await LSession.connected(1);
-		peer = await Peerbit.create(session.peers[0], {
-			directory: "./peerbit/" + +new Date(),
+		peer = await Peerbit.create({
+			libp2p: session.peers[0],
+			directory: "./peerbit/tmp/" + +new Date(),
 		});
 		server = await startServer(peer, 12345);
 	});
 
 	afterAll(async () => {
+		await peer.stop()
 		await session.stop();
+		await server.close()
 	});
 	it("_", () => { });
 	/* These test are flaky, or have side effects, and should not be running in ci yet

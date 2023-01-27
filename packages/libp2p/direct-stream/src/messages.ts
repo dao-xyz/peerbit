@@ -350,15 +350,19 @@ export class Hello extends Message {
 		this.signatures = new Signatures();
 	}
 
-	get sender(): PublicSignKey | undefined {
-		return this.signatures.signatures[0]?.publicKey;
+	get sender(): PublicSignKey {
+		return this.signatures.signatures[0].publicKey;
 	}
 
 	serialize() {
 		return serialize(this);
 	}
 	static deserialize(bytes: Uint8ArrayList): Hello {
-		return deserialize(bytes.subarray(), Hello);
+		const result = deserialize(bytes.subarray(), Hello);
+		if (result.signatures.signatures.length === 0) {
+			throw new Error("Missing sender on Hello")
+		}
+		return result;
 	}
 
 	_prefix: Uint8Array | undefined;
@@ -437,15 +441,19 @@ export class Goodbye extends Message {
 		this.signatures = new Signatures();
 	}
 
-	get sender(): PublicSignKey | undefined {
-		return this.signatures.signatures[0]?.publicKey;
+	get sender(): PublicSignKey {
+		return this.signatures.signatures[0]!.publicKey;
 	}
 
 	serialize() {
 		return serialize(this);
 	}
 	static deserialize(bytes: Uint8ArrayList): Goodbye {
-		return deserialize(bytes.subarray(), Goodbye);
+		const result = deserialize(bytes.subarray(), Goodbye);
+		if (result.signatures.signatures.length === 0) {
+			throw new Error("Missing sender on Goodbye")
+		}
+		return result;
 	}
 
 	_prefix: Uint8Array | undefined;

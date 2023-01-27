@@ -379,7 +379,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 			promises.push(
 				this.queryHandler(queryRequest, {
 					address: this.address.toString(),
-					from: this._identity.publicKey,
+					from: this.identity.publicKey,
 				}).then((results) => {
 					if (results.length > 0) {
 						responseHandler(

@@ -1,21 +1,15 @@
-import { createLibp2p } from "libp2p";
-import { noise } from "@dao-xyz/libp2p-noise";
-import { mplex } from "@libp2p/mplex";
-
-import { tcp } from "@libp2p/tcp";
-import { webSockets } from "@libp2p/websockets";
-import { floodsub } from "@libp2p/floodsub";
-
 import { peerIdFromKeys } from "@libp2p/peer-id";
 import { Ed25519Keypair, fromBase64, toBase64 } from "@dao-xyz/peerbit-crypto";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import { supportedKeys } from "@libp2p/crypto/keys";
 import { getConfigDir, getKeysPath, NotFoundError } from "./config.js";
 import { checkExistPath } from "./api.js";
-import { waitFor } from "@dao-xyz/peerbit-time";
 import { serialize, deserialize } from "@dao-xyz/borsh";
-import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
+import { createLibp2pExtended } from '@dao-xyz/peerbit-libp2p';
+import { Ed25519PublicKey } from "@dao-xyz/peerbit-crypto";
 
 export const saveKeys = async (keypair: Ed25519Keypair): Promise<void> => {
+
 	const fs = await import("fs");
 	const configDir = await getConfigDir();
 	const keysPath = await getKeysPath(configDir);
@@ -24,6 +18,7 @@ export const saveKeys = async (keypair: Ed25519Keypair): Promise<void> => {
 			"Config path for keys: " + keysPath + ", already exist"
 		);
 	}
+
 	console.log(`Creating config folder ${configDir}`);
 
 	fs.mkdirSync(configDir, { recursive: true });
@@ -72,7 +67,7 @@ export const createNode = async () => {
 			keypair.publicKey.publicKey
 		).bytes
 	); // marshalPublicKey({ bytes: keypair.publicKey.bytes }, 'ed25519'), marshalPrivateKey({ bytes: keypair.privateKey.bytes }, 'ed25519')
-	const node = await createLibp2p({
+	/*const node =  await createLibp2p({
 		peerId,
 		connectionManager: {
 			maxConnections: Infinity,
@@ -82,12 +77,27 @@ export const createNode = async () => {
 		addresses: {
 			listen: ["/ip4/127.0.0.1/tcp/8001", "/ip4/127.0.0.1/tcp/8002/ws"],
 		},
-
-		transports: [tcp(), webSockets()],
+		transports: [webSockets()],
 		connectionEncryption: [noise()],
 		streamMuxers: [mplex()],
 	});
 	await node.start();
 
-	return node as Libp2pExtended;
+	return node as Libp2pExtended; */
+
+	const node = await createLibp2pExtended({
+		libp2p: {
+			peerId,
+			addresses: {
+				listen: ["/ip4/127.0.0.1/tcp/8001", "/ip4/127.0.0.1/tcp/8002/ws"],
+			},
+			connectionManager: {
+				maxConnections: Infinity,
+				minConnections: 0,
+				pollInterval: 2000,
+			},
+		}
+	})
+	await node.start()
+	return node;
 };

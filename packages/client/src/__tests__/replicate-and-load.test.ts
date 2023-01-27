@@ -13,8 +13,8 @@ describe(`Replicate and Load`, function () {
 
 	beforeAll(async () => {
 		session = await LSession.connected(2);
-		client1 = await Peerbit.create(session.peers[0], {});
-		client2 = await Peerbit.create(session.peers[1], {});
+		client1 = await Peerbit.create({ libp2p: session.peers[0] });
+		client2 = await Peerbit.create({ libp2p: session.peers[1] });
 
 		// Connect the peers manually to speed up test times
 	});

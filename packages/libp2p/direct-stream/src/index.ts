@@ -351,7 +351,7 @@ export abstract class DirectStream<
 		this.started = true;
 
 		// All existing connections are like new ones for us
-		let multicodecsSet = new Set(this.multicodecs)
+		const multicodecsSet = new Set(this.multicodecs)
 		this.libp2p
 			.getConnections()
 			.forEach(async (conn) => {
@@ -468,7 +468,7 @@ export abstract class DirectStream<
 				throw error;
 			}
 
-			let peer = this.addPeer(peerId, peerKey, stream.stat.protocol);
+			const peer = this.addPeer(peerId, peerKey, stream.stat.protocol);
 			await peer.attachOutboundStream(stream);
 			this.addRouteConnection(this.publicKey, peerKey);
 
@@ -524,19 +524,19 @@ export abstract class DirectStream<
 		this.peerKeyHashToPublicKey.set(from.hashcode(), from);
 		this.peerKeyHashToPublicKey.set(to.hashcode(), to);
 		this.routes.addLink(from.hashcode(), to.hashcode()).forEach((added) => {
-			let key = this.peerKeyHashToPublicKey.get(added);
+			const key = this.peerKeyHashToPublicKey.get(added);
 			if (key?.equals(this.publicKey) === false) {
 				this.onPeerReachable(key!)
 			}
 			else {
-				let x = 123;
+				const x = 123;
 			}
 		})
 	}
 
 	removeRouteConnection(from: PublicSignKey, to: PublicSignKey) {
 		this.routes.deleteLink(from.hashcode(), to.hashcode()).forEach((deleted) => {
-			let key = this.peerKeyHashToPublicKey.get(deleted)!;
+			const key = this.peerKeyHashToPublicKey.get(deleted)!;
 			this.peerKeyHashToPublicKey.delete(deleted);
 			if (key?.equals(this.publicKey) === false) {
 				this.onPeerUnreachable(key!)
@@ -1057,7 +1057,7 @@ export abstract class DirectStream<
 
 		const bytes = message.serialize();
 		this.seenCache.set(this.getMsgId(bytes), true);
-		let promises: Promise<any>[] = []
+		const promises: Promise<any>[] = []
 		for (const stream of peers.values()) {
 			const id = stream as PeerStreams;
 

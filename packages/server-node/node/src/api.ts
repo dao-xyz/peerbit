@@ -1,9 +1,8 @@
 import http from "http";
-import { PublicSignKey, fromBase64, toBase64 } from "@dao-xyz/peerbit-crypto";
+import { fromBase64, toBase64 } from "@dao-xyz/peerbit-crypto";
 import { Peerbit } from "@dao-xyz/peerbit";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { Program, Address } from "@dao-xyz/peerbit-program";
-import { IdentityRelation } from "@dao-xyz/peerbit-trusted-network";
 import { multiaddr } from "@multiformats/multiaddr";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { v4 as uuid } from "uuid";
@@ -29,12 +28,10 @@ export const getPort = (protocol: string) => {
 
 const IPFS_ID_PATH = "/peer/id";
 const ADDRESSES_PATH = "/peer/addresses";
-const TOPIC_PATH = "/topic";
 const TOPICS_PATH = "/topics";
 const PROGRAM_PATH = "/program";
 const LIBRARY_PATH = "/library";
-const NETWORK_PEER_PATH = "/network/peer";
-const NETWORK_PEERS_PATH = "/network/peers";
+
 
 export const checkExistPath = async (path: string) => {
 	const fs = await import("fs");
@@ -113,7 +110,7 @@ export const startServerWithNode = async (relay: boolean) => {
 	};
 	const peer = relay
 		? controller.api
-		: await Peerbit.create(controller.api, { directory: ".peerbit/data" });
+		: await Peerbit.create({ libp2p: controller.api, directory: ".peerbit/data" });
 	const server = await startServer(peer);
 	const printNodeInfo = async () => {
 		console.log("Starting node with address(es): ");
@@ -257,9 +254,9 @@ export const startServer = async (
 									if (replicate) {
 										if (client instanceof Peerbit) {
 											res.write(
-												JSON.stringify([
-													...client.programs.keys(),
-												])
+												JSON.stringify(
+													[...client.programs.entries()].filter((x) => x[1].program.replicate).map(x => x[0]),
+												)
 											);
 											res.end();
 										} else {
@@ -270,7 +267,7 @@ export const startServer = async (
 									} else {
 										res.write(
 											JSON.stringify(
-												[...libp2p.directsub.topics.keys()]
+												[...libp2p.directsub.subscriptions.keys()]
 											)
 										);
 										res.end();
@@ -317,41 +314,31 @@ export const startServer = async (
 
 								case "PUT":
 									getBody(req, (body) => {
-										const topic =
-											url.searchParams.get("topic");
-										if (topic && topic.length === 0) {
+										try {
+											const parsed = deserialize(
+												fromBase64(body),
+												Program
+											);
+											(client as Peerbit)
+												.open(parsed)
+												.then((program) => {
+													res.writeHead(200);
+													res.end(
+														program.address.toString()
+													);
+												})
+												.catch((error) => {
+													res.writeHead(400);
+													res.end(
+														"Failed to open program: " +
+														error.toString()
+													);
+												});
+										} catch (error) {
 											res.writeHead(400);
-											res.end("Invalid topic: " + topic);
-										} else {
-											try {
-												const parsed = deserialize(
-													fromBase64(body),
-													Program
-												);
-												(client as Peerbit)
-													.open(parsed, {
-														/*    topic:
-															   topic || undefined, */
-													})
-													.then((program) => {
-														res.writeHead(200);
-														res.end(
-															program.address.toString()
-														);
-													})
-													.catch((error) => {
-														res.writeHead(400);
-														res.end(
-															"Failed to open program: " +
-															error.toString()
-														);
-													});
-											} catch (error) {
-												res.writeHead(400);
-												res.end(
-													"Invalid base64 program binary"
-												);
-											}
+											res.end(
+												"Invalid base64 program binary"
+											);
 										}
 									});
 									break;
@@ -383,120 +370,6 @@ export const startServer = async (
 												res.writeHead(400);
 												res.end(e.message.toString?.());
 											});
-									}
-								});
-								break;
-
-							default:
-								r404();
-								break;
-						}
-					} else if (req.url.startsWith(NETWORK_PEERS_PATH)) {
-						switch (req.method) {
-							case "GET":
-								try {
-									const program = getProgramFromPath(req, 2);
-									if (program) {
-										/*  const network = getNetwork(program);
-										 if (network) {
-											 res.setHeader(
-												 "Content-Type",
-												 "application/json"
-											 );
-											 res.writeHead(200);
-											 res.write(
-												 JSON.stringify(
-													 [
-														 ...network.trustGraph._index._index.values(),
-													 ].map((x) =>
-														 toBase64(
-															 serialize(x.value)
-														 )
-													 )
-												 )
-											 );
-											 res.end();
-										 } else {
-											 res.writeHead(400);
-											 res.end("Program is not in a VPC");
-										 } */
-									} else {
-										res.writeHead(404);
-										res.end();
-									}
-								} catch (error: any) {
-									res.writeHead(404);
-									res.end(error.message);
-								}
-								break;
-
-							default:
-								r404();
-								break;
-						}
-					} else if (req.url.startsWith(NETWORK_PEER_PATH)) {
-						const url = new URL(
-							req.url,
-							"http://localhost:" + port
-						);
-						//const path = url.pathname.substring(NETWORK_PEER_PATH.length, url.pathname.length).split("/");
-						switch (req.method) {
-							case "PUT":
-								getBody(req, (body) => {
-									try {
-										const program = getProgramFromPath(
-											req,
-											2
-										);
-										if (program) {
-											/*  const network = getNetwork(program);
-											 if (network) {
-												 try {
-													 const reciever =
-														 deserialize(
-															 fromBase64(body),
-															 PublicSignKey
-														 );
-													 network
-														 .add(reciever)
-														 .then((r) => {
-															 res.writeHead(200);
-															 res.end(
-																 toBase64(
-																	 serialize(r)
-																 )
-															 );
-														 })
-														 .catch(
-															 (error?: any) => {
-																 res.writeHead(
-																	 400
-																 );
-																 res.end(
-																	 "Failed to add relation: " +
-																		 typeof error.message ===
-																		 "string"
-																		 ? error.message
-																		 : JSON.stringify(
-																			 error.message
-																		 )
-																 );
-															 }
-														 );
-												 } catch (error) {
-													 res.writeHead(400);
-													 res.end(
-														 "Invalid base64 program binary"
-													 );
-												 }
-											 } */
-										} else {
-											res.writeHead(404);
-											res.end();
-										}
-									} catch (error: any) {
-										res.writeHead(404);
-										res.end(error.message);
 									}
 								});
 								break;
@@ -609,20 +482,6 @@ export const client = async (
 				},
 			},
 		},
-		topic: {
-			put: async (topic: string, replicate: boolean): Promise<void> => {
-				throwIfNot200(
-					await axios.put(
-						endpoint + TOPIC_PATH + "?replicate=" + replicate,
-						topic,
-						{
-							validateStatus,
-							headers: await getHeaders(),
-						}
-					)
-				);
-			},
-		},
 		topics: {
 			get: async (replicate: boolean): Promise<string[]> => {
 				const result = throwIfNot200(
@@ -661,8 +520,7 @@ export const client = async (
 			 * @returns
 			 */
 			put: async (
-				program: Program | string,
-				topic?: string
+				program: Program | string
 			): Promise<Address> => {
 				const base64 =
 					program instanceof Program
@@ -671,8 +529,7 @@ export const client = async (
 				const resp = throwIfNot200(
 					await axios.put(
 						endpoint +
-						PROGRAM_PATH +
-						(topic ? "?topic=" + topic : ""),
+						PROGRAM_PATH,
 						base64,
 						{ validateStatus, headers: await getHeaders() }
 					)
@@ -689,48 +546,6 @@ export const client = async (
 					})
 				);
 				return;
-			},
-		},
-
-		network: {
-			peers: {
-				get: async (
-					address: Address | string
-				): Promise<IdentityRelation[] | undefined> => {
-					const result = getBodyByStatus(
-						await axios.get(
-							endpoint +
-							NETWORK_PEERS_PATH +
-							"/" +
-							encodeURIComponent(address.toString()),
-							{ validateStatus, headers: await getHeaders() }
-						)
-					);
-					return !result
-						? undefined
-						: (result as string[]).map((r) =>
-							deserialize(fromBase64(r), IdentityRelation)
-						);
-				},
-			},
-			peer: {
-				put: async (
-					address: Address | string,
-					publicKey: PublicSignKey
-				): Promise<IdentityRelation> => {
-					const base64 = toBase64(serialize(publicKey));
-					const resp = throwIfNot200(
-						await axios.put(
-							endpoint +
-							NETWORK_PEER_PATH +
-							"/" +
-							encodeURIComponent(address.toString()),
-							base64,
-							{ validateStatus, headers: await getHeaders() }
-						)
-					);
-					return deserialize(fromBase64(resp.data), IdentityRelation);
-				},
 			},
 		},
 	};

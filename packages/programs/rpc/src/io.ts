@@ -79,16 +79,20 @@ export const send = async (
 	const responsePromise = new Promise<void>((rs, rj) => {
 		const resolve = () => {
 			timeoutFn && clearTimeout(timeoutFn)
-			libp2p.directsub.unsubscribe(responseTopic)
-			libp2p.directsub.removeEventListener("data", _responseHandler);
+			if (libp2p.directsub.started) {
+				libp2p.directsub.unsubscribe(responseTopic)
+				libp2p.directsub.removeEventListener("data", _responseHandler);
+			}
 			rs()
 		}
 		options.stopper && options.stopper(resolve);
 
 		const reject = (error) => {
 			timeoutFn && clearTimeout(timeoutFn)
-			libp2p.directsub.unsubscribe(responseTopic)
-			libp2p.directsub.removeEventListener("data", _responseHandler);
+			if (libp2p.directsub.started) {
+				libp2p.directsub.unsubscribe(responseTopic)
+				libp2p.directsub.removeEventListener("data", _responseHandler);
+			}
 			rj(error)
 		}
 		const _responseHandler = async (evt: CustomEvent<PubSubData>) => {

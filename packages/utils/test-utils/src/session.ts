@@ -35,7 +35,7 @@ export class LSession {
 		const session: SSession<Libp2pExtended> =
 			await SSession.disconnected<Libp2pExtended>(n, options);
 		const peers = await Promise.all(session.peers.map(async (peer) => {
-			const extended = await createLibp2pExtended(peer)
+			const extended = await createLibp2pExtended({ libp2p: peer })
 			await extended.start()
 			return extended;
 		}));

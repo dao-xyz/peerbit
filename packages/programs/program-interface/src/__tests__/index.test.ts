@@ -4,7 +4,6 @@ import { ComposableProgram, Program } from "..";
 import { getValuesWithType } from "../utils.js";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import {
-	BlockStore,
 	MemoryLevelBlockStore,
 } from "@dao-xyz/libp2p-direct-block";
 

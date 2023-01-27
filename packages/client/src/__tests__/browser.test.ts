@@ -33,11 +33,13 @@ describe(`browser`, function () {
 	it("can replicate entries", async () => {
 		session = await LSession.connected(2);
 
-		client1 = await Peerbit.create(session.peers[0], {
+		client1 = await Peerbit.create({
 			browser: true,
+			libp2p: session.peers[0],
 		});
-		client2 = await Peerbit.create(session.peers[1], {
+		client2 = await Peerbit.create({
 			browser: true,
+			libp2p: session.peers[1],
 		});
 
 		db1 = await client1.open(
@@ -76,12 +78,14 @@ describe(`browser`, function () {
 		session.peers[0].dial(session.peers[2].getMultiaddrs()[0]);
 		session.peers[1].dial(session.peers[2].getMultiaddrs()[0]);
 
-		client1 = await Peerbit.create(session.peers[0], {
+		client1 = await Peerbit.create({
 			browser: true,
+			libp2p: session.peers[0],
 		});
 
-		client2 = await Peerbit.create(session.peers[1], {
+		client2 = await Peerbit.create({
 			browser: true,
+			libp2p: session.peers[1],
 		});
 
 
@@ -131,11 +135,13 @@ describe(`browser`, function () {
 	it("will share entries as replicator on peer connect", async () => {
 		session = await LSession.connected(2);
 
-		client1 = await Peerbit.create(session.peers[0], {
+		client1 = await Peerbit.create({
 			browser: true,
+			libp2p: session.peers[0],
 		});
-		client2 = await Peerbit.create(session.peers[1], {
+		client2 = await Peerbit.create({
 			browser: true,
+			libp2p: session.peers[1]
 		});
 
 		db1 = await client1.open(
@@ -171,11 +177,13 @@ describe(`browser`, function () {
 	it("will share entries as observer on peer connect", async () => {
 		session = await LSession.connected(2);
 
-		client1 = await Peerbit.create(session.peers[0], {
+		client1 = await Peerbit.create({
 			browser: true,
+			libp2p: session.peers[0]
 		});
-		client2 = await Peerbit.create(session.peers[1], {
+		client2 = await Peerbit.create({
 			browser: true,
+			libp2p: session.peers[1]
 		});
 
 		db1 = await client1.open(

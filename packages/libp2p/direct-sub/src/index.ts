@@ -148,11 +148,11 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		}
 		topic = typeof topic === 'string' ? [topic] : topic;
 
-		let newTopicsForTopicData: string[] = [];
+		const newTopicsForTopicData: string[] = [];
 		for (const t of topic) {
-			let prev = this.subscriptions.get(t)
+			const prev = this.subscriptions.get(t)
 			if (prev) {
-				let difference = !!prev.data != !!options?.data || (prev.data && options?.data && !equals(prev.data, options?.data))
+				const difference = !!prev.data != !!options?.data || (prev.data && options?.data && !equals(prev.data, options?.data))
 				prev.counter += 1;
 
 				if (difference) {
@@ -344,7 +344,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		if (message.early) {
 			return true;
 		}
-		const senderKey = message.sender?.hashcode()!;
+		const senderKey = message.sender.hashcode();
 		const topicsFromSender = this.peerToTopic.get(senderKey);
 		if (topicsFromSender) {
 			for (const topic of topicsFromSender) {
@@ -359,11 +359,11 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		const peers = this.topics.get(topic)
 		let change: SubscriptionData | undefined = undefined;
 		if (peers) {
-			let data = peers.get(publicKeyHash)
+			const data = peers.get(publicKeyHash)
 			if (data) {
 				change = data;
 				if (data.data) {
-					let map = this.topicsToSubscriptionDataToPeer.get(topic)!;
+					const map = this.topicsToSubscriptionDataToPeer.get(topic)!;
 					const hash = data.hash = createSubscriptionDataHash(data?.data);
 					const set = map.get(hash);
 					if (set) {
@@ -393,9 +393,9 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 	public onPeerUnreachable(publicKey: PublicSignKey) {
 		super.onPeerUnreachable(publicKey)
 		const publicKeyHash = publicKey.hashcode();
-		let peerTopics = this.peerToTopic.get(publicKeyHash)
+		const peerTopics = this.peerToTopic.get(publicKeyHash)
 
-		let changed: Subscription[] = [];
+		const changed: Subscription[] = [];
 		if (peerTopics) {
 			for (const topic of peerTopics) {
 				const change = this.deletePeerFromTopic(topic, publicKeyHash)
@@ -486,7 +486,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 			const fromPublic = getPublicKeyFromPeerId(from)
 			this.initializePeer(subscriber)
 
-			let changed: Subscription[] = [];
+			const changed: Subscription[] = [];
 			pubsubMessage.subscriptions.forEach((subscription) => {
 				const peers = this.topics.get(subscription.topic);
 				if (peers == null) {
@@ -498,8 +498,8 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 				const existingSubscription = peers.get(subscriberKey);
 				if (!existingSubscription || existingSubscription.timestamp < message.header.timetamp && subscription.data) {
 
-					let hash = subscription.data && createSubscriptionDataHash(subscription.data)
-					let prev = peers.get(subscriberKey);
+					const hash = subscription.data && createSubscriptionDataHash(subscription.data)
+					const prev = peers.get(subscriberKey);
 					peers.set(subscriberKey, {
 						timestamp: message.header.timetamp, // TODO update timestamps on all messages?
 						data: subscription.data,
@@ -507,7 +507,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 					});
 					changed.push(subscription);
 					if (subscription.data) {
-						let peersWithHash = this.topicsToSubscriptionDataToPeer.get(subscription.topic)!;
+						const peersWithHash = this.topicsToSubscriptionDataToPeer.get(subscription.topic)!;
 						let set = peersWithHash.get(hash!)
 						if (!set) {
 							set = new Set()
@@ -518,7 +518,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 						if (prev?.data) {
 							const prevHash = prev.hash || createSubscriptionDataHash(prev.data)
 							if (hash !== prevHash) {
-								let set = peersWithHash.get(prevHash)!;
+								const set = peersWithHash.get(prevHash)!;
 								set.delete(subscriberKey)
 								if (set.size === 0) {
 									peersWithHash.delete(prevHash);
@@ -554,7 +554,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 				logger.warn("Recieved subscription message with no signers");
 				return false;
 			}
-			let changed: Subscription[] = [];
+			const changed: Subscription[] = [];
 			const subscriber = message.signatures.signatures[0].publicKey!;
 			const subscriberKey = subscriber.hashcode(); // Assume first signature is the one who is signing
 
@@ -578,7 +578,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 				return false;
 			}
 
-			let subscriptionsToSend: Subscription[] = []
+			const subscriptionsToSend: Subscription[] = []
 			for (const topic of pubsubMessage.topics) {
 				const subscription = this.subscriptions.get(topic);
 				if (subscription) {

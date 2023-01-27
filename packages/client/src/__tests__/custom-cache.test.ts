@@ -22,9 +22,10 @@ describe(`Use a Custom Cache`, function () {
 
 		rmrf.sync(dbPath);
 
-		client1 = await Peerbit.create(session.peers[0], {
+		client1 = await Peerbit.create({
 			directory: path.join(dbPath, "1"),
 			cache: cache,
+			libp2p: session.peers[0],
 		});
 	});
 

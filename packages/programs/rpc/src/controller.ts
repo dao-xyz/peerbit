@@ -137,12 +137,11 @@ export class RPC<Q, R> extends ComposableProgram {
 	}
 
 	public async close(): Promise<void> {
-		await this._initializationPromise;
 		if (this._subscribed) {
-			await this._libp2p.directsub.unsubscribe(
+			await this.libp2p.directsub.unsubscribe(
 				this.rpcTopic
 			);
-			await this._libp2p.directsub.removeEventListener(
+			await this.libp2p.directsub.removeEventListener(
 				"data",
 				this._onMessageBinded
 			);
@@ -156,8 +155,8 @@ export class RPC<Q, R> extends ComposableProgram {
 		}
 
 		this._onMessageBinded = this._onMessage.bind(this);
-		this._libp2p.directsub.subscribe(this.rpcTopic);
-		this._libp2p.directsub.addEventListener("data", this._onMessageBinded);
+		this.libp2p.directsub.subscribe(this.rpcTopic);
+		this.libp2p.directsub.addEventListener("data", this._onMessageBinded);
 		logger.debug("subscribing to query topic: " + this.rpcTopic);
 		this._subscribed = true;
 	}
@@ -167,7 +166,7 @@ export class RPC<Q, R> extends ComposableProgram {
 		{
 			const message = evt.detail;
 			if (message) {
-				/*  if (message.from.equals(this._libp2p.peerId)) {
+				/*  if (message.from.equals(this.libp2p.peerId)) {
 					 return;
 				 } */
 				try {
@@ -176,7 +175,7 @@ export class RPC<Q, R> extends ComposableProgram {
 							await decryptVerifyInto(
 								message.data,
 								RPCMessage,
-								this._encryption?.getAnyKeypair ||
+								this.encryption?.getAnyKeypair ||
 								(() => Promise.resolve(undefined)),
 								{
 									isTrusted: (key) =>
@@ -212,7 +211,7 @@ export class RPC<Q, R> extends ComposableProgram {
 
 							if (response) {
 								await respond(
-									this._libp2p,
+									this.libp2p,
 									this.getRpcResponseTopic(request),
 									request,
 									new ResponseV0({
@@ -220,8 +219,8 @@ export class RPC<Q, R> extends ComposableProgram {
 										context: this.contextAddress,
 									}),
 									{
-										encryption: this._encryption,
-										signer: this._identity,
+										encryption: this.encryption,
+										signer: this.identity,
 									}
 								);
 							}
@@ -275,7 +274,7 @@ export class RPC<Q, R> extends ComposableProgram {
 			respondTo: keypair.publicKey,
 		});
 		return send(
-			this._libp2p,
+			this.libp2p,
 			this.rpcTopic,
 			this.getRpcResponseTopic(r),
 			r,

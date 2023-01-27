@@ -41,8 +41,9 @@ describe(`Create & Open`, function () {
 			let localDataPath: string, client: Peerbit;
 
 			beforeAll(async () => {
-				client = await Peerbit.create(session.peers[0], {
+				client = await Peerbit.create({
 					directory: dbPath + uuid(),
+					libp2p: session.peers[0]
 				});
 			});
 			afterAll(async () => {
@@ -120,8 +121,9 @@ describe(`Create & Open`, function () {
 		jest.retryTimes(1); // TODO Side effects may cause failures
 
 		beforeAll(async () => {
-			client = await Peerbit.create(session.peers[0], {
-				directory: dbPath + uuid()
+			client = await Peerbit.create({
+				directory: dbPath + uuid(),
+				libp2p: session.peers[0]
 			});
 		});
 		afterAll(async () => {
@@ -220,8 +222,9 @@ describe(`Create & Open`, function () {
 		let client: Peerbit;
 
 		beforeAll(async () => {
-			client = await Peerbit.create(session.peers[0], {
+			client = await Peerbit.create({
 				directory: dbPath + uuid(),
+				libp2p: session.peers[0],
 			});
 		});
 		afterAll(async () => {

@@ -67,7 +67,10 @@ export class LevelBlockStore implements BlockStore {
 		try {
 			const bytes =
 				(this._tempStore && this._tempStore.get(cid)) ||
-				(await this._level.get(cid));
+				(await this._level.get(cid, { valueEncoding: 'view' }));
+			if (!bytes) {
+				return undefined;
+			}
 			const codec = codecCodes[cidObject.code];
 			const block = await Block.decode({
 				bytes,

@@ -21,9 +21,9 @@ describe(`Multiple Databases`, function () {
 	beforeAll(async () => {
 		session = await LSession.connected(3);
 
-		client1 = await Peerbit.create(session.peers[0], {});
-		client2 = await Peerbit.create(session.peers[1], {});
-		client3 = await Peerbit.create(session.peers[2], {});
+		client1 = await Peerbit.create({ libp2p: session.peers[0] });
+		client2 = await Peerbit.create({ libp2p: session.peers[1] });
+		client3 = await Peerbit.create({ libp2p: session.peers[2] });
 		client2._minReplicas = 3;
 		client3._minReplicas = 3;
 		client1._minReplicas = 3;

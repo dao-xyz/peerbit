@@ -1,6 +1,6 @@
 import { variant, field, serialize, vec } from "@dao-xyz/borsh";
 import { TransportMessage } from "./message.js";
-import { Ed25519PublicKey, getPublicKeyFromPeerId, PeerIdAddress, PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import { getPublicKeyFromPeerId } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { Identity } from "@dao-xyz/peerbit-log";

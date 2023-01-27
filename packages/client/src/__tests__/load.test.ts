@@ -29,7 +29,8 @@ describe(`load`, () => {
 		});
 
 		beforeEach(async () => {
-			client1 = await Peerbit.create(session.peers[0], {
+			client1 = await Peerbit.create({
+				libp2p: session.peers[0],
 				directory: dbPath + "/" + uuid(),
 				storage: {
 					createStore: () => createStore(),
@@ -259,7 +260,8 @@ describe(`load`, () => {
 		});
 
 		beforeEach(async () => {
-			client1 = await Peerbit.create(session.peers[0], {
+			client1 = await Peerbit.create({
+				libp2p: session.peers[0],
 				directory: dbPath + "/" + uuid(),
 				storage: {
 					createStore: () => createStore(),
@@ -492,7 +494,8 @@ describe(`load`, () => {
 		});
 
 		beforeEach(async () => {
-			client1 = await Peerbit.create(session.peers[0], {
+			client1 = await Peerbit.create({
+				libp2p: session.peers[0],
 				directory: dbPath + "/" + uuid(),
 			});
 		});
@@ -534,7 +537,8 @@ describe(`load`, () => {
 		});
 
 		beforeEach(async () => {
-			client1 = await Peerbit.create(session.peers[0], {
+			client1 = await Peerbit.create({
+				libp2p: session.peers[0],
 				directory: dbPath + "/" + uuid(),
 				storage: {
 					createStore: () => createStore(),

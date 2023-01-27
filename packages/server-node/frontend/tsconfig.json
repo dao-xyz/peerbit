@@ -1,30 +1,31 @@
 {
-    "compilerOptions": {
-        "target": "ES2020",
-        "module": "ES2022",
-        "lib": [
-            "dom",
-            "dom.iterable",
-            "ES2020",
-            "ES2021",
-            "ES2022",
-            "ES2022.String",
-            "DOM"
-        ],
-        "moduleResolution": "node",
-        "allowJs": true,
-        "skipLibCheck": true,
-        "esModuleInterop": true,
-        "allowSyntheticDefaultImports": true,
-        "strict": false,
-        "forceConsistentCasingInFileNames": true,
-        "noFallthroughCasesInSwitch": true,
-        "resolveJsonModule": true,
-        "isolatedModules": true,
-        "noEmit": true,
-        "jsx": "react-jsx",
-        "experimentalDecorators": true,
-        "typeRoots": ["node_modules/@types"]
-    },
-    "include": ["src", "config-overrides.js"]
+	"compilerOptions": {
+		"target": "es2022",
+		"useDefineForClassFields": true,
+		"lib": [
+			"DOM",
+			"DOM.Iterable",
+			"Es2022"
+		],
+		"allowJs": false,
+		"skipLibCheck": true,
+		"esModuleInterop": false,
+		"allowSyntheticDefaultImports": true,
+		"strict": true,
+		"forceConsistentCasingInFileNames": true,
+		"module": "es2022",
+		"moduleResolution": "node",
+		"resolveJsonModule": true,
+		"isolatedModules": true,
+		"noEmit": true,
+		"jsx": "react-jsx"
+	},
+	"include": [
+		"src"
+	],
+	"references": [
+		{
+			"path": "./tsconfig.node.json"
+		}
+	]
 }
