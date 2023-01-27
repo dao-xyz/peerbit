@@ -58,6 +58,7 @@ export const createNode = async () => {
 		keypair = Ed25519Keypair.create();
 		await saveKeys(keypair);
 	}
+
 	const peerId = await peerIdFromKeys(
 		new supportedKeys["ed25519"].Ed25519PublicKey(
 			keypair.publicKey.publicKey
