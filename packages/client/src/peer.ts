@@ -327,24 +327,6 @@ export class Peerbit {
 			identity = options.identity;
 		} else {
 
-			/* 
-						let signKey: KeyWithMeta<Ed25519Keypair>;
-
-			const existingKey = await keystore.getKey(id.toString());
-			if (existingKey) {
-				if (existingKey.keypair instanceof Ed25519Keypair === false) {
-					// TODO add better behaviour for this
-					throw new Error(
-						"Failed to create keypair from ipfs id because it already exist with a different type: " +
-						existingKey.keypair.constructor.name
-					);
-				}
-				signKey = existingKey as KeyWithMeta<Ed25519Keypair>;
-			} else {
-				signKey = await keystore.createEd25519Key({
-					id: id.toString(),
-				});
-			} */
 			const keypair = getKeypairFromPeerId(id);
 			if (keypair instanceof Sec256k1Keccak256Keypair) {
 				identity = {
