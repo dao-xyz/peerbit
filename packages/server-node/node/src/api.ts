@@ -361,7 +361,7 @@ export const startServer = async (
 										res.writeHead(400);
 										res.end("Invalid library: " + name);
 									} else {
-										import(/* webpackIgnore: true */ name)
+										import(/* webpackIgnore: true */ /* @vite-ignore */ name)
 											.then(() => {
 												res.writeHead(200);
 												res.end();

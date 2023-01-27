@@ -259,7 +259,7 @@ export const cli = async (args?: string[]) => {
 					handler: async (args) => {
 						for (const lib of args.library) {
 							const importedLib = await import(
-                                /* webpackIgnore: true */ lib
+                                /* webpackIgnore: true */ /* @vite-ignore */ lib
 							);
 							console.log("imported lib:", importedLib);
 						}
