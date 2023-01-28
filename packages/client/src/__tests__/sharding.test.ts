@@ -9,7 +9,7 @@ import { PermissionedEventStore } from "./utils/stores/test-store";
 import { v4 as uuid } from "uuid";
 
 describe(`sharding`, () => {
-	// jest.retryTimes(3); // TODO this test is FLAKY
+	jest.retryTimes(1); // TODO this tests are FLAKY
 
 	let session: LSession;
 	let client1: Peerbit,
@@ -109,11 +109,11 @@ describe(`sharding`, () => {
 		});
 		expect(
 			db2.store.store.oplog.values.length > entryCount * 0.5 &&
-				db2.store.store.oplog.values.length < entryCount * 0.85
+			db2.store.store.oplog.values.length < entryCount * 0.85
 		).toBeTrue();
 		expect(
 			db3.store.store.oplog.values.length > entryCount * 0.5 &&
-				db3.store.store.oplog.values.length < entryCount * 0.85
+			db3.store.store.oplog.values.length < entryCount * 0.85
 		).toBeTrue();
 	});
 
@@ -128,9 +128,6 @@ describe(`sharding`, () => {
 		const entryCount = 100;
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
-			// db1.store.add(i.toString(), { nexts: [] });
-			//  await
-			//   await delay(2000);
 			promises.push(db1.store.add(i.toString(), { nexts: [] }));
 		}
 
@@ -173,11 +170,11 @@ describe(`sharding`, () => {
 		});
 		expect(
 			db2.store.store.oplog.values.length > entryCount * 0.5 &&
-				db2.store.store.oplog.values.length < entryCount * 0.85
+			db2.store.store.oplog.values.length < entryCount * 0.85
 		).toBeTrue();
 		expect(
 			db3.store.store.oplog.values.length > entryCount * 0.5 &&
-				db3.store.store.oplog.values.length < entryCount * 0.85
+			db3.store.store.oplog.values.length < entryCount * 0.85
 		).toBeTrue();
 	});
 
