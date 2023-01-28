@@ -107,6 +107,7 @@ export interface IndexedValue<T> {
 	value: T; // decrypted, decoded
 	entry: Entry<Operation<T>>;
 	context: Context;
+	source: Uint8Array;
 }
 
 @variant("documents_index")
@@ -172,58 +173,6 @@ export class DocumentIndex<T> extends ComposableProgram {
 	get size(): number {
 		return this._index.size;
 	}
-
-	/* async updateIndex(change: Change<Operation<T>>) {
-		if (!this.type) {
-			throw new Error("Not initialized");
-		}
-
-		const removed = [...(change.removed || [])];
-		const removedSet = new Set<string>(removed.map((x) => x.hash));
-		const entries = [...change.added, ...(change.removed || [])]
-			.sort(this._store.oplog._sortFn)
-			.reverse();
-
-		for (const item of entries) {
-			try {
-				const payload = await item.getPayloadValue();
-				if (payload instanceof PutOperation) {
-					const key = payload.key;
-					if (removedSet.has(item.hash)) {
-						this._index.delete(key);
-					} else {
-						this._index.set(key, {
-							entry: item,
-							key: payload.key,
-							value: this.deserializeOrPass(payload),
-							context: new Context({
-								created:
-									this._index.get(key)?.context.created ||
-									item.metadata.clock.timestamp.wallTime,
-								modified:
-									item.metadata.clock.timestamp.wallTime,
-								head: item.hash,
-							}),
-						});
-					}
-				} else if (payload instanceof DeleteOperation) {
-					if (!removedSet.has(item.hash)) {
-						const key = payload.key;
-						this._index.delete(key);
-					} else {
-						// TODO, a delete operation entry has been removed, this means that an entry should not be deleted, however, the inverse of deletion is to do nothing.. (?)
-					}
-				} else {
-					// Unknown operation
-				}
-			} catch (error) {
-				if (error instanceof AccessError) {
-					continue;
-				}
-				throw error;
-			}
-		}
-	} */
 
 	_queryDocuments(
 		filter: (doc: IndexedValue<T>) => boolean
@@ -371,6 +320,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 										new ResultWithSource({
 											context: r.context,
 											value: r.value,
+											source: r.source,
 										})
 								),
 							})

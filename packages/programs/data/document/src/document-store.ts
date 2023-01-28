@@ -317,6 +317,7 @@ export class Documents<T> extends ComposableProgram {
 								modified: item.metadata.clock.timestamp.wallTime,
 								head: item.hash,
 							}),
+							source: payload.data,
 						});
 
 						// Program specific

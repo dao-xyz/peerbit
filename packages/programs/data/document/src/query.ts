@@ -220,13 +220,13 @@ export class Context {
 @variant(0)
 export class ResultWithSource<T> extends Result {
 	@field({ type: Uint8Array })
-	_source?: Uint8Array;
+	_source: Uint8Array;
 
 	@field({ type: Context })
 	context: Context;
 
 	_type: AbstractType<T>;
-	constructor(opts: { source?: Uint8Array; context: Context; value?: T }) {
+	constructor(opts: { source: Uint8Array; context: Context; value?: T }) {
 		super();
 		this._source = opts.source;
 		this.context = opts.context;
