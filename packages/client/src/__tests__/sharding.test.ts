@@ -109,11 +109,11 @@ describe(`sharding`, () => {
 		});
 		expect(
 			db2.store.store.oplog.values.length > entryCount * 0.5 &&
-			db2.store.store.oplog.values.length < entryCount * 0.85
+				db2.store.store.oplog.values.length < entryCount * 0.85
 		).toBeTrue();
 		expect(
 			db3.store.store.oplog.values.length > entryCount * 0.5 &&
-			db3.store.store.oplog.values.length < entryCount * 0.85
+				db3.store.store.oplog.values.length < entryCount * 0.85
 		).toBeTrue();
 	});
 
@@ -170,11 +170,11 @@ describe(`sharding`, () => {
 		});
 		expect(
 			db2.store.store.oplog.values.length > entryCount * 0.5 &&
-			db2.store.store.oplog.values.length < entryCount * 0.85
+				db2.store.store.oplog.values.length < entryCount * 0.85
 		).toBeTrue();
 		expect(
 			db3.store.store.oplog.values.length > entryCount * 0.5 &&
-			db3.store.store.oplog.values.length < entryCount * 0.85
+				db3.store.store.oplog.values.length < entryCount * 0.85
 		).toBeTrue();
 	});
 
