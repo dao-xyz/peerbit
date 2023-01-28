@@ -10,6 +10,6 @@ import { v4 as uuid } from "uuid";
  * @returns {string} - Full real path to a temporary folder
  */
 export const tempdir = (transform = (d) => d) => {
-	const osTmpDir = fs.realpathSync(os.tmpdir());
-	return path.join(osTmpDir, transform(uuid()));
+    const osTmpDir = fs.realpathSync(os.tmpdir());
+    return path.join(osTmpDir, transform(uuid()));
 };

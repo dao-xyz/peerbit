@@ -1,51 +1,43 @@
 {
-	"include": [
-		"packages/*/src",
-		"packages/*/*/src"
-	],
-	"exclude": [
-		"node_modules",
-		"packages/*/node_modules",
-		"packages/*/*/node_modules"
-	],
-	"compilerOptions": {
-		"target": "es2022",
-		"module": "ES2022",
-		"lib": [
-			"ES2022",
-			"DOM"
-		],
-		"moduleResolution": "node",
-		"strict": true,
-		"strictPropertyInitialization": false,
-		"noUnusedLocals": false,
-		"strictFunctionTypes": true,
-		"esModuleInterop": true,
-		"noEmit": true,
-		"noEmitOnError": false,
-		"noImplicitAny": false,
-		"declaration": true,
-		"sourceMap": true,
-		"stripInternal": true,
-		"jsx": "react",
-		"allowSyntheticDefaultImports": true,
-		"resolveJsonModule": true,
-		"isolatedModules": true,
-		"emitDecoratorMetadata": true,
-		"experimentalDecorators": true,
-		"typeRoots": [
-			"node_modules/@types",
-			"node_modeles/@multiformats/multiaddrs/dist"
-		],
-		"skipLibCheck": true
-	},
-	"typedocOptions": {
-		"entryPoints": ".",
-		"entryPointStrategy": "packages",
-		"out": "docs",
-		"readme": "README.md"
-	},
-	"files": [
-		"global.d.ts"
-	]
+    "include": ["packages/*/src", "packages/*/*/src"],
+    "exclude": [
+        "node_modules",
+        "packages/*/node_modules",
+        "packages/*/*/node_modules"
+    ],
+    "compilerOptions": {
+        "target": "es2022",
+        "module": "ES2022",
+        "lib": ["ES2022", "DOM"],
+        "moduleResolution": "node",
+        "strict": true,
+        "strictPropertyInitialization": false,
+        "noUnusedLocals": false,
+        "strictFunctionTypes": true,
+        "esModuleInterop": true,
+        "noEmit": true,
+        "noEmitOnError": false,
+        "noImplicitAny": false,
+        "declaration": true,
+        "sourceMap": true,
+        "stripInternal": true,
+        "jsx": "react",
+        "allowSyntheticDefaultImports": true,
+        "resolveJsonModule": true,
+        "isolatedModules": true,
+        "emitDecoratorMetadata": true,
+        "experimentalDecorators": true,
+        "typeRoots": [
+            "node_modules/@types",
+            "node_modeles/@multiformats/multiaddrs/dist"
+        ],
+        "skipLibCheck": true
+    },
+    "typedocOptions": {
+        "entryPoints": ".",
+        "entryPointStrategy": "packages",
+        "out": "docs",
+        "readme": "README.md"
+    },
+    "files": ["global.d.ts"]
 }

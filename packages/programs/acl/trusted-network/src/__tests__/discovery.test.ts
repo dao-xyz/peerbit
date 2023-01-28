@@ -1,5 +1,5 @@
 import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
-it('_', () => { })
+it("_", () => {});
 /* import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./test-store.js";

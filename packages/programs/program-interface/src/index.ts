@@ -5,10 +5,10 @@ import { v4 as uuid } from "uuid";
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { getValuesWithType } from "./utils.js";
 import {
-	serialize,
-	deserialize,
-	Constructor,
-	AbstractType,
+    serialize,
+    deserialize,
+    Constructor,
+    AbstractType,
 } from "@dao-xyz/borsh";
 import path from "path";
 import { CID } from "multiformats/cid";
@@ -21,544 +21,533 @@ export * from "./protocol-message.js";
 const notEmpty = (e: string) => e !== "" && e !== " ";
 
 export interface Manifest {
-	data: Uint8Array
+    data: Uint8Array;
 }
 
 export interface Addressable {
-	address?: Address | undefined;
+    address?: Address | undefined;
 }
 
 export class ProgramPath {
-	@field({ type: "u32" })
-	index: number;
+    @field({ type: "u32" })
+    index: number;
 
-	constructor(properties: { index: number }) {
-		if (properties) {
-			this.index = properties.index;
-		}
-	}
+    constructor(properties: { index: number }) {
+        if (properties) {
+            this.index = properties.index;
+        }
+    }
 
-	static from(obj: { index: number } | AbstractProgram) {
-		if (obj instanceof AbstractProgram) {
-			if (obj.programIndex == undefined) {
-				throw new Error(
-					"Path can be created from a program without an index"
-				);
-			}
-			return new ProgramPath({
-				index: obj.programIndex,
-			});
-		} else {
-			return new ProgramPath(obj);
-		}
-	}
+    static from(obj: { index: number } | AbstractProgram) {
+        if (obj instanceof AbstractProgram) {
+            if (obj.programIndex == undefined) {
+                throw new Error(
+                    "Path can be created from a program without an index"
+                );
+            }
+            return new ProgramPath({
+                index: obj.programIndex,
+            });
+        } else {
+            return new ProgramPath(obj);
+        }
+    }
 }
 
 @variant(0)
 export class Address {
-	@field({ type: "string" })
-	cid: string;
+    @field({ type: "string" })
+    cid: string;
 
-	@field({ type: option(ProgramPath) })
-	path?: ProgramPath;
+    @field({ type: option(ProgramPath) })
+    path?: ProgramPath;
 
-	constructor(properties: { cid: string; path?: ProgramPath }) {
-		if (properties) {
-			this.cid = properties.cid;
-			this.path = properties.path;
-		}
-	}
+    constructor(properties: { cid: string; path?: ProgramPath }) {
+        if (properties) {
+            this.cid = properties.cid;
+            this.path = properties.path;
+        }
+    }
 
-	toString() {
-		return Address.join(this.cid, this.path);
-	}
+    toString() {
+        return Address.join(this.cid, this.path);
+    }
 
-	equals(other: Address) {
-		return this.cid === other.cid;
-	}
+    equals(other: Address) {
+        return this.cid === other.cid;
+    }
 
-	withPath(path: ProgramPath | { index: number }): Address {
-		return new Address({
-			cid: this.cid,
-			path: path instanceof ProgramPath ? path : ProgramPath.from(path),
-		});
-	}
+    withPath(path: ProgramPath | { index: number }): Address {
+        return new Address({
+            cid: this.cid,
+            path: path instanceof ProgramPath ? path : ProgramPath.from(path),
+        });
+    }
 
-	root(): Address {
-		return new Address({ cid: this.cid });
-	}
+    root(): Address {
+        return new Address({ cid: this.cid });
+    }
 
-	static isValid(address: { toString(): string }) {
-		const parsedAddress = address.toString().replace(/\\/g, "/");
+    static isValid(address: { toString(): string }) {
+        const parsedAddress = address.toString().replace(/\\/g, "/");
 
-		const containsProtocolPrefix = (e: string, i: number) =>
-			!(
-				(i === 0 || i === 1) &&
-				parsedAddress.toString().indexOf("/peerbit") === 0 &&
-				e === "peerbit"
-			);
+        const containsProtocolPrefix = (e: string, i: number) =>
+            !(
+                (i === 0 || i === 1) &&
+                parsedAddress.toString().indexOf("/peerbit") === 0 &&
+                e === "peerbit"
+            );
 
-		const parts = parsedAddress
-			.toString()
-			.split("/")
-			.filter(containsProtocolPrefix)
-			.filter(notEmpty);
+        const parts = parsedAddress
+            .toString()
+            .split("/")
+            .filter(containsProtocolPrefix)
+            .filter(notEmpty);
 
-		let accessControllerHash;
+        let accessControllerHash;
 
-		const validateHash = (hash: string) => {
-			const prefixes = ["zd", "Qm", "ba", "k5"];
-			for (const p of prefixes) {
-				if (hash.indexOf(p) > -1) {
-					return true;
-				}
-			}
-			return false;
-		};
+        const validateHash = (hash: string) => {
+            const prefixes = ["zd", "Qm", "ba", "k5"];
+            for (const p of prefixes) {
+                if (hash.indexOf(p) > -1) {
+                    return true;
+                }
+            }
+            return false;
+        };
 
-		try {
-			accessControllerHash = validateHash(parts[0])
-				? CID.parse(parts[0]).toString()
-				: null;
-		} catch (e) {
-			return false;
-		}
+        try {
+            accessControllerHash = validateHash(parts[0])
+                ? CID.parse(parts[0]).toString()
+                : null;
+        } catch (e) {
+            return false;
+        }
 
-		return accessControllerHash !== null;
-	}
+        return accessControllerHash !== null;
+    }
 
-	static parse(address: { toString(): string }) {
-		if (!address) {
-			throw new Error(`Not a valid Peerbit address: ${address}`);
-		}
+    static parse(address: { toString(): string }) {
+        if (!address) {
+            throw new Error(`Not a valid Peerbit address: ${address}`);
+        }
 
-		if (!Address.isValid(address)) {
-			throw new Error(`Not a valid Peerbit address: ${address}`);
-		}
+        if (!Address.isValid(address)) {
+            throw new Error(`Not a valid Peerbit address: ${address}`);
+        }
 
-		const parsedAddress = address.toString().replace(/\\/g, "/");
-		const parts = parsedAddress
-			.toString()
-			.split("/")
-			.filter(
-				(e, i) =>
-					!(
-						(i === 0 || i === 1) &&
-						parsedAddress.toString().indexOf("/peerbit") === 0 &&
-						e === "peerbit"
-					)
-			)
-			.filter((e) => e !== "" && e !== " ");
+        const parsedAddress = address.toString().replace(/\\/g, "/");
+        const parts = parsedAddress
+            .toString()
+            .split("/")
+            .filter(
+                (e, i) =>
+                    !(
+                        (i === 0 || i === 1) &&
+                        parsedAddress.toString().indexOf("/peerbit") === 0 &&
+                        e === "peerbit"
+                    )
+            )
+            .filter((e) => e !== "" && e !== " ");
 
-		return new Address({
-			cid: parts[0],
-			path:
-				parts.length == 2
-					? new ProgramPath({ index: Number(parts[1]) })
-					: undefined,
-		});
-	}
+        return new Address({
+            cid: parts[0],
+            path:
+                parts.length == 2
+                    ? new ProgramPath({ index: Number(parts[1]) })
+                    : undefined,
+        });
+    }
 
-	static join(cid: string, addressPath?: ProgramPath) {
-		const p = path.posix || path;
-		if (!addressPath) return p.join("/peerbit", cid);
-		else return p.join("/peerbit", cid, addressPath.index.toString());
-	}
+    static join(cid: string, addressPath?: ProgramPath) {
+        const p = path.posix || path;
+        if (!addressPath) return p.join("/peerbit", cid);
+        else return p.join("/peerbit", cid, addressPath.index.toString());
+    }
 }
 
 export interface Saveable {
-	save(
-		ipfs: any,
-		options?: {
-			format?: string;
-			pin?: boolean;
-			timeout?: number;
-		}
-	): Promise<Address>;
+    save(
+        ipfs: any,
+        options?: {
+            format?: string;
+            pin?: boolean;
+            timeout?: number;
+        }
+    ): Promise<Address>;
 }
 
 export const save = async (
-	store: BlockStore,
-	thing: Addressable,
-	options: { format?: string; timeout?: number } = {}
+    store: BlockStore,
+    thing: Addressable,
+    options: { format?: string; timeout?: number } = {}
 ): Promise<Address> => {
-	const manifest: Manifest = {
-		data: serialize(thing),
-	};
-	const hash = await store.put(
-		await createBlock(manifest, options.format || "dag-cbor"),
-		options
-	);
-	return Address.parse(Address.join(hash));
+    const manifest: Manifest = {
+        data: serialize(thing),
+    };
+    const hash = await store.put(
+        await createBlock(manifest, options.format || "dag-cbor"),
+        options
+    );
+    return Address.parse(Address.join(hash));
 };
 
 export const load = async <S extends Addressable>(
-	store: BlockStore,
-	address: Address,
-	into: Constructor<S> | AbstractType<S>,
-	options: { timeout?: number } = {}
+    store: BlockStore,
+    address: Address,
+    into: Constructor<S> | AbstractType<S>,
+    options: { timeout?: number } = {}
 ): Promise<S | undefined> => {
-	const manifestBlock = await store.get<Manifest>(address.cid, options);
-	if (!manifestBlock) {
-		return undefined;
-	}
+    const manifestBlock = await store.get<Manifest>(address.cid, options);
+    if (!manifestBlock) {
+        return undefined;
+    }
 
-	const manifest = await getBlockValue(manifestBlock);
-	const der = deserialize(manifest.data, into);
-	der.address = Address.parse(Address.join(address.cid));
-	return der;
+    const manifest = await getBlockValue(manifestBlock);
+    const der = deserialize(manifest.data, into);
+    der.address = Address.parse(Address.join(address.cid));
+    return der;
 };
 export type OpenProgram = (program: Program) => Promise<Program>;
 export type ProgramInitializationOptions = {
-	store: IInitializationOptions<any>;
-	parent?: AbstractProgram;
-	replicate?: boolean;
-	onClose?: () => void;
-	onDrop?: () => void;
-	open?: OpenProgram,
-	replicator?: (address: Address, gid: string) => Promise<boolean>
+    store: IInitializationOptions<any>;
+    parent?: AbstractProgram;
+    replicate?: boolean;
+    onClose?: () => void;
+    onDrop?: () => void;
+    open?: OpenProgram;
+    replicator?: (address: Address, gid: string) => Promise<boolean>;
 };
-
 
 @variant(0)
 export abstract class AbstractProgram {
-	@field({ type: option("u32") })
-	_programIndex?: number; // Prevent duplicates for subprograms
+    @field({ type: option("u32") })
+    _programIndex?: number; // Prevent duplicates for subprograms
 
-	private _libp2p: Libp2pExtended;
-	private _identity: Identity;
-	private _encryption?: PublicKeyEncryptionResolver;
-	private _onClose?: () => void;
-	private _onDrop?: () => void;
-	private _initialized?: boolean;
-	private _replicate?: boolean;
+    private _libp2p: Libp2pExtended;
+    private _identity: Identity;
+    private _encryption?: PublicKeyEncryptionResolver;
+    private _onClose?: () => void;
+    private _onDrop?: () => void;
+    private _initialized?: boolean;
+    private _replicate?: boolean;
 
-	replicator?: (address: Address, gid: string) => Promise<boolean>
-	open?: (program: Program) => Promise<Program>
+    replicator?: (address: Address, gid: string) => Promise<boolean>;
+    open?: (program: Program) => Promise<Program>;
 
+    parentProgram: Program;
 
-	parentProgram: Program;
+    get initialized() {
+        return this._initialized;
+    }
 
-	get initialized() {
-		return this._initialized;
-	}
+    get programIndex(): number | undefined {
+        return this._programIndex;
+    }
 
+    get replicate() {
+        return this._replicate;
+    }
 
-	get programIndex(): number | undefined {
-		return this._programIndex;
-	}
+    async init(
+        libp2p: Libp2pExtended,
+        identity: Identity,
+        options: ProgramInitializationOptions
+    ): Promise<this> {
+        if (this.initialized) {
+            throw new Error("Already initialized");
+        }
 
-	get replicate() {
-		return this._replicate;
-	}
+        this._libp2p = libp2p;
+        this._identity = identity;
+        this._encryption = options.store.encryption;
+        this._onClose = options.onClose;
+        this._onDrop = options.onDrop;
+        this._replicate = options.replicate;
+        this.open = options.open;
+        this.replicator = options.replicator;
 
-	async init(
-		libp2p: Libp2pExtended,
-		identity: Identity,
-		options: ProgramInitializationOptions
-	): Promise<this> {
-		if (this.initialized) {
-			throw new Error("Already initialized");
-		}
+        const nexts = this.programs;
+        for (const next of nexts) {
+            await next.init(libp2p, identity, {
+                ...options,
+                parent: this,
+            });
+        }
 
-		this._libp2p = libp2p;
-		this._identity = identity;
-		this._encryption = options.store.encryption;
-		this._onClose = options.onClose;
-		this._onDrop = options.onDrop;
-		this._replicate = options.replicate;
-		this.open = options.open;
-		this.replicator = options.replicator;
+        await Promise.all(
+            this.stores.map((s) =>
+                s.init(libp2p.directblock, identity, options.store)
+            )
+        );
 
-		const nexts = this.programs;
-		for (const next of nexts) {
-			await next.init(libp2p, identity, {
-				...options,
-				parent: this,
-			});
-		}
+        this._initialized = true;
+        return this;
+    }
 
-		await Promise.all(
-			this.stores.map((s) =>
-				s.init(libp2p.directblock, identity, options.store)
-			)
-		);
+    async close(): Promise<void> {
+        if (!this.initialized) {
+            return;
+        }
+        const promises: Promise<void>[] = [];
+        for (const store of this.stores.values()) {
+            promises.push(store.close());
+        }
+        for (const program of this.programs.values()) {
+            promises.push(program.close());
+        }
+        await Promise.all(promises);
+        this._onClose && this._onClose();
+    }
 
-		this._initialized = true;
-		return this;
-	}
+    async drop(): Promise<void> {
+        if (!this.initialized) {
+            return;
+        }
+        this._onDrop && this._onDrop();
+        const promises: Promise<void>[] = [];
+        for (const store of this.stores.values()) {
+            promises.push(store.drop());
+        }
+        for (const program of this.programs.values()) {
+            promises.push(program.drop());
+        }
+        await Promise.all(promises);
+        this._initialized = false;
+    }
 
-	async close(): Promise<void> {
-		if (!this.initialized) {
-			return;
-		}
-		const promises: Promise<void>[] = [];
-		for (const store of this.stores.values()) {
-			promises.push(store.close());
-		}
-		for (const program of this.programs.values()) {
-			promises.push(program.close());
-		}
-		await Promise.all(promises);
-		this._onClose && this._onClose();
-	}
+    get libp2p(): Libp2pExtended {
+        return this._libp2p;
+    }
 
-	async drop(): Promise<void> {
-		if (!this.initialized) {
-			return;
-		}
-		this._onDrop && this._onDrop();
-		const promises: Promise<void>[] = [];
-		for (const store of this.stores.values()) {
-			promises.push(store.drop());
-		}
-		for (const program of this.programs.values()) {
-			promises.push(program.drop());
-		}
-		await Promise.all(promises);
-		this._initialized = false;
-	}
+    get identity(): Identity {
+        return this._identity;
+    }
 
-	get libp2p(): Libp2pExtended {
-		return this._libp2p;
-	}
+    get encryption(): PublicKeyEncryptionResolver | undefined {
+        return this._encryption;
+    }
 
-	get identity(): Identity {
-		return this._identity;
-	}
+    _stores: Store<any>[];
+    get stores(): Store<any>[] {
+        if (this._stores) {
+            return this._stores;
+        }
+        this._stores = getValuesWithType(this, Store, AbstractProgram);
+        return this._stores;
+    }
 
-	get encryption(): PublicKeyEncryptionResolver | undefined {
-		return this._encryption;
-	}
+    _allStores: Store<any>[];
+    get allStores(): Store<any>[] {
+        if (this._allStores) {
+            return this._allStores;
+        }
+        this._allStores = getValuesWithType(this, Store);
+        return this._allStores;
+    }
 
-	_stores: Store<any>[];
-	get stores(): Store<any>[] {
-		if (this._stores) {
-			return this._stores;
-		}
-		this._stores = getValuesWithType(this, Store, AbstractProgram);
-		return this._stores;
-	}
+    _allStoresMap: Map<number, Store<any>>;
+    get allStoresMap(): Map<number, Store<any>> {
+        if (this._allStoresMap) {
+            return this._allStoresMap;
+        }
+        const map = new Map<number, Store<any>>();
+        getValuesWithType(this, Store).map((s) => map.set(s._storeIndex, s));
+        this._allStoresMap = map;
+        return this._allStoresMap;
+    }
 
-	_allStores: Store<any>[];
-	get allStores(): Store<any>[] {
-		if (this._allStores) {
-			return this._allStores;
-		}
-		this._allStores = getValuesWithType(this, Store);
-		return this._allStores;
-	}
+    _allPrograms: AbstractProgram[];
+    get allPrograms(): AbstractProgram[] {
+        if (this._allPrograms) {
+            return this._allPrograms;
+        }
+        const arr: AbstractProgram[] = this.programs;
+        const nexts = this.programs;
+        for (const next of nexts) {
+            arr.push(...next.allPrograms);
+        }
+        this._allPrograms = arr;
+        return this._allPrograms;
+    }
 
-	_allStoresMap: Map<number, Store<any>>;
-	get allStoresMap(): Map<number, Store<any>> {
-		if (this._allStoresMap) {
-			return this._allStoresMap;
-		}
-		const map = new Map<number, Store<any>>();
-		getValuesWithType(this, Store).map((s) => map.set(s._storeIndex, s));
-		this._allStoresMap = map;
-		return this._allStoresMap;
-	}
+    _subprogramMap: Map<number, AbstractProgram>;
+    get subprogramsMap(): Map<number, AbstractProgram> {
+        if (this._subprogramMap) {
+            // is static, so we cache naively
+            return this._subprogramMap;
+        }
+        const map = new Map<number, AbstractProgram>();
+        this.programs.map((s) => map.set(s._programIndex!, s));
+        const nexts = this.programs;
+        for (const next of nexts) {
+            const submap = next.subprogramsMap;
+            submap.forEach((program, address) => {
+                if (map.has(address)) {
+                    throw new Error("Store duplicates detected");
+                }
+                map.set(address, program);
+            });
+        }
+        this._subprogramMap = map;
+        return this._subprogramMap;
+    }
 
-	_allPrograms: AbstractProgram[];
-	get allPrograms(): AbstractProgram[] {
-		if (this._allPrograms) {
-			return this._allPrograms;
-		}
-		const arr: AbstractProgram[] = this.programs;
-		const nexts = this.programs;
-		for (const next of nexts) {
-			arr.push(...next.allPrograms);
-		}
-		this._allPrograms = arr;
-		return this._allPrograms;
-	}
+    get programs(): AbstractProgram[] {
+        return getValuesWithType(this, AbstractProgram, Store);
+    }
 
-	_subprogramMap: Map<number, AbstractProgram>;
-	get subprogramsMap(): Map<number, AbstractProgram> {
-		if (this._subprogramMap) {
-			// is static, so we cache naively
-			return this._subprogramMap;
-		}
-		const map = new Map<number, AbstractProgram>();
-		this.programs.map((s) => map.set(s._programIndex!, s));
-		const nexts = this.programs;
-		for (const next of nexts) {
-			const submap = next.subprogramsMap;
-			submap.forEach((program, address) => {
-				if (map.has(address)) {
-					throw new Error("Store duplicates detected");
-				}
-				map.set(address, program);
-			});
-		}
-		this._subprogramMap = map;
-		return this._subprogramMap;
-	}
-
-	get programs(): AbstractProgram[] {
-		return getValuesWithType(this, AbstractProgram, Store);
-	}
-
-	get address() {
-		if (this.parentProgram) {
-			if (this.programIndex == undefined) {
-				throw new Error("Program index not defined");
-			}
-			return this.parentProgram.address.withPath({
-				index: this.programIndex!,
-			});
-		}
-		throw new Error(
-			"ComposableProgram does not have an address and `parentProgram` is undefined"
-		);
-	}
-
-
-
-
+    get address() {
+        if (this.parentProgram) {
+            if (this.programIndex == undefined) {
+                throw new Error("Program index not defined");
+            }
+            return this.parentProgram.address.withPath({
+                index: this.programIndex!,
+            });
+        }
+        throw new Error(
+            "ComposableProgram does not have an address and `parentProgram` is undefined"
+        );
+    }
 }
 
-
 export interface CanTrust {
-	isTrusted(keyHash: string): Promise<boolean> | boolean;
+    isTrusted(keyHash: string): Promise<boolean> | boolean;
 }
 
 @variant(0)
 export abstract class Program
-	extends AbstractProgram
-	implements Addressable, Saveable {
+    extends AbstractProgram
+    implements Addressable, Saveable
+{
+    @field({ type: "string" })
+    id: string;
 
-	@field({ type: "string" })
-	id: string;
+    private _address?: Address;
 
-	private _address?: Address;
+    constructor(properties?: { id?: string }) {
+        super();
+        if (properties) {
+            this.id = properties.id || uuid();
+        } else {
+            this.id = uuid();
+        }
+    }
+    get address() {
+        if (this._address) {
+            return this._address;
+        }
+        return super.address;
+    }
 
+    set address(address: Address) {
+        this._address = address;
+    }
 
-	constructor(properties?: { id?: string }) {
-		super();
-		if (properties) {
-			this.id = properties.id || uuid();
-		} else {
-			this.id = uuid();
-		}
-	}
-	get address() {
-		if (this._address) {
-			return this._address;
-		}
-		return super.address;
-	}
+    /**
+     * Will be called before program init(...)
+     * This function can be used to connect different modules
+     */
+    abstract setup(): Promise<void>;
 
+    setupIndices(): void {
+        for (const [ix, store] of this.allStores.entries()) {
+            store._storeIndex = ix;
+        }
+        // post setup
+        // set parents of subprograms to this
+        for (const [ix, program] of this.allPrograms.entries()) {
+            program._programIndex = ix;
+            program.parentProgram = this.parentProgram || this;
+        }
+    }
 
-	set address(address: Address) {
-		this._address = address;
-	}
+    async init(
+        libp2p: Libp2pExtended,
+        identity: Identity,
+        options: ProgramInitializationOptions
+    ): Promise<this> {
+        // TODO, determine whether setup should be called before or after save
+        if (this.parentProgram === undefined) {
+            await this.save(libp2p.directblock);
+        }
 
-	/**
-	 * Will be called before program init(...)
-	 * This function can be used to connect different modules
-	 */
-	abstract setup(): Promise<void>;
+        await this.setup();
+        await super.init(libp2p, identity, options);
+        if (this.parentProgram != undefined && this._address) {
+            throw new Error(
+                "Expecting address to be undefined as this program is part of another program"
+            );
+        }
 
-	setupIndices(): void {
-		for (const [ix, store] of this.allStores.entries()) {
-			store._storeIndex = ix;
-		}
-		// post setup
-		// set parents of subprograms to this
-		for (const [ix, program] of this.allPrograms.entries()) {
-			program._programIndex = ix;
-			program.parentProgram = this.parentProgram || this;
-		}
-	}
+        return this;
+    }
 
-	async init(
-		libp2p: Libp2pExtended,
-		identity: Identity,
-		options: ProgramInitializationOptions
-	): Promise<this> {
-		// TODO, determine whether setup should be called before or after save
-		if (this.parentProgram === undefined) {
-			await this.save(libp2p.directblock);
-		}
+    async saveSnapshot() {
+        await Promise.all(this.allStores.map((store) => store.saveSnapshot()));
+    }
 
-		await this.setup();
-		await super.init(libp2p, identity, options);
-		if (this.parentProgram != undefined && this._address) {
-			throw new Error(
-				"Expecting address to be undefined as this program is part of another program"
-			);
-		}
+    async loadFromSnapshot() {
+        await Promise.all(
+            this.allStores.map((store) => store.loadFromSnapshot())
+        );
+    }
 
-		return this;
-	}
+    async load() {
+        await Promise.all(this.allStores.map((store) => store.load()));
+    }
 
-	async saveSnapshot() {
-		await Promise.all(this.allStores.map((store) => store.saveSnapshot()));
-	}
+    async save(
+        store: BlockStore,
+        options?: {
+            format?: string;
+            pin?: boolean;
+            timeout?: number;
+        }
+    ): Promise<Address> {
+        this.setupIndices();
+        const existingAddress = this._address;
+        const address = await save(store, this, options);
+        this._address = address;
+        if (!this.address) {
+            throw new Error("Unexpected");
+        }
 
-	async loadFromSnapshot() {
-		await Promise.all(
-			this.allStores.map((store) => store.loadFromSnapshot())
-		);
-	}
+        if (existingAddress && !existingAddress.equals(this.address)) {
+            throw new Error(
+                "Program properties has been changed after constructor so that the hash has changed. Make sure that the 'setup(...)' function does not modify any properties that are to be serialized"
+            );
+        }
 
-	async load() {
-		await Promise.all(this.allStores.map((store) => store.load()));
-	}
+        return address;
+    }
 
-	async save(
-		store: BlockStore,
-		options?: {
-			format?: string;
-			pin?: boolean;
-			timeout?: number;
-		}
-	): Promise<Address> {
-		this.setupIndices();
-		const existingAddress = this._address;
-		const address = await save(store, this, options);
-		this._address = address;
-		if (!this.address) {
-			throw new Error("Unexpected");
-		}
+    static load<S extends Program>(
+        store: BlockStore,
+        address: Address | string,
+        options?: {
+            timeout?: number;
+        }
+    ): Promise<S> {
+        return load(
+            store,
+            address instanceof Address ? address : Address.parse(address),
+            Program,
+            options
+        ) as Promise<S>;
+    }
 
-		if (existingAddress && !existingAddress.equals(this.address)) {
-			throw new Error(
-				"Program properties has been changed after constructor so that the hash has changed. Make sure that the 'setup(...)' function does not modify any properties that are to be serialized"
-			);
-		}
-
-		return address;
-	}
-
-	static load<S extends Program>(
-		store: BlockStore,
-		address: Address | string,
-		options?: {
-			timeout?: number;
-		}
-	): Promise<S> {
-		return load(
-			store,
-			address instanceof Address ? address : Address.parse(address),
-			Program,
-			options
-		) as Promise<S>;
-	}
-
-
-	get topic(): string {
-		if (!this.address) {
-			throw new Error("Missing address")
-		}
-		return this.address.toString()
-	}
+    get topic(): string {
+        if (!this.address) {
+            throw new Error("Missing address");
+        }
+        return this.address.toString();
+    }
 }
 
 /**
  * Building block, but not something you use as a standalone
  */
 @variant(1)
-export abstract class ComposableProgram extends AbstractProgram { }
+export abstract class ComposableProgram extends AbstractProgram {}

@@ -1,46 +1,46 @@
 {
-	"name": "frontend",
-	"private": true,
-	"version": "0.2.0",
-	"type": "module",
-	"scripts": {
-		"dev": "vite",
-		"start": "vite",
-		"build": "tsc && vite build",
-		"preview": "vite preview"
-	},
-	"dependencies": {
-		"react": "^18.2.0",
-		"react-dom": "^18.2.0",
-		"@emotion/react": "^11.10.5",
-		"@emotion/styled": "^11.10.5",
-		"@mui/material": "^5.10.13",
-		"crypto-browserify": "^3.12.0",
-		"path-browserify": "^1.0.1",
-		"stream-browserify": "^3.0.0",
-		"timers-browserify": "^2.0.12",
-		"@dao-xyz/peerbit-node": "*"
-	},
-	"devDependencies": {
-		"@types/react": "^18.0.26",
-		"@types/react-dom": "^18.0.9",
-		"@vitejs/plugin-react": "^3.0.0",
-		"typescript": "^4.9.3",
-		"vite": "^4.0.0",
-		"@rollup/plugin-node-resolve": "^15.0.1"
-	},
-	"browserslist": {
-		"production": [
-			"chrome >= 67",
-			"edge >= 79",
-			"firefox >= 68",
-			"opera >= 54",
-			"safari >= 14"
-		],
-		"development": [
-			"last 1 chrome version",
-			"last 1 firefox version",
-			"last 1 safari version"
-		]
-	}
+    "name": "frontend",
+    "private": true,
+    "version": "0.2.0",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "start": "vite",
+        "build": "tsc && vite build",
+        "preview": "vite preview"
+    },
+    "dependencies": {
+        "react": "^18.2.0",
+        "react-dom": "^18.2.0",
+        "@emotion/react": "^11.10.5",
+        "@emotion/styled": "^11.10.5",
+        "@mui/material": "^5.10.13",
+        "crypto-browserify": "^3.12.0",
+        "path-browserify": "^1.0.1",
+        "stream-browserify": "^3.0.0",
+        "timers-browserify": "^2.0.12",
+        "@dao-xyz/peerbit-node": "*"
+    },
+    "devDependencies": {
+        "@types/react": "^18.0.26",
+        "@types/react-dom": "^18.0.9",
+        "@vitejs/plugin-react": "^3.0.0",
+        "typescript": "^4.9.3",
+        "vite": "^4.0.0",
+        "@rollup/plugin-node-resolve": "^15.0.1"
+    },
+    "browserslist": {
+        "production": [
+            "chrome >= 67",
+            "edge >= 79",
+            "firefox >= 68",
+            "opera >= 54",
+            "safari >= 14"
+        ],
+        "development": [
+            "last 1 chrome version",
+            "last 1 firefox version",
+            "last 1 safari version"
+        ]
+    }
 }

@@ -3,15 +3,15 @@ import { LazyLevelDatastore } from "../../index.js";
 import { tempdir } from "../tempdir.js";
 
 async function testLevelIteratorDestroy() {
-	const store = new LazyLevelDatastore(tempdir());
-	await store.open();
-	await store.put(
-		new Key(`/test/key${Date.now()}`),
-		new TextEncoder().encode(`TESTDATA${Date.now()}`)
-	);
-	for await (const d of store.query({})) {
-		console.log(d); // eslint-disable-line no-console
-	}
+    const store = new LazyLevelDatastore(tempdir());
+    await store.open();
+    await store.put(
+        new Key(`/test/key${Date.now()}`),
+        new TextEncoder().encode(`TESTDATA${Date.now()}`)
+    );
+    for await (const d of store.query({})) {
+        console.log(d); // eslint-disable-line no-console
+    }
 }
 
 // Will exit with:

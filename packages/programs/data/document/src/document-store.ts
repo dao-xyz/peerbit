@@ -19,21 +19,14 @@ import {
 	Change,
 	Encoding,
 	Entry,
-	Identity,
-	Log,
 } from "@dao-xyz/peerbit-log";
-import {
-	Address,
-	ComposableProgram,
-	Program,
-	ProgramInitializationOptions,
-} from "@dao-xyz/peerbit-program";
+import { ComposableProgram, Program } from "@dao-xyz/peerbit-program";
 import { CanRead } from "@dao-xyz/peerbit-rpc";
 import { LogIndex } from "@dao-xyz/peerbit-logindex";
 import { AccessError } from "@dao-xyz/peerbit-crypto";
 import { Context, Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
-import { getBlockValue } from "@dao-xyz/libp2p-direct-block"
+import { getBlockValue } from "@dao-xyz/libp2p-direct-block";
 import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import { OpenProgram } from "@dao-xyz/peerbit-program";
 const logger = loggerFn({ module: "document" });
@@ -62,7 +55,7 @@ export class Documents<T> extends ComposableProgram {
 	_valueEncoding: Encoding<T>;
 
 	_optionCanAppend?: CanAppend<Operation<T>>;
-	_canOpen?: (program: Program) => Promise<boolean>
+	_canOpen?: (program: Program) => Promise<boolean>;
 
 	constructor(properties: {
 		canEdit?: boolean;
@@ -85,18 +78,21 @@ export class Documents<T> extends ComposableProgram {
 		return this._index;
 	}
 
-
 	async setup(options: {
 		type: Constructor<T>;
 		canRead?: CanRead;
 		canAppend?: CanAppend<Operation<T>>;
-		canOpen?: (program: Program) => Promise<boolean>
+		canOpen?: (program: Program) => Promise<boolean>;
 	}) {
 		this._clazz = options.type;
 		this._canOpen = options.canOpen;
+
+		/* eslint-disable */
 		if (Program.isPrototypeOf(this._clazz)) {
 			if (!this._canOpen) {
-				throw new Error("setup needs to be called with the canOpen option when the document type is a Program")
+				throw new Error(
+					"setup needs to be called with the canOpen option when the document type is a Program"
+				);
 			}
 		}
 		this._valueEncoding = BORSH_ENCODING(this._clazz);
@@ -258,7 +254,9 @@ export class Documents<T> extends ComposableProgram {
 	public put(doc: T, options?: AddOperationOptions<Operation<T>>) {
 		if (doc instanceof Program) {
 			if (this.parentProgram == null) {
-				throw new Error(`Program ${this.constructor.name} have not been opened, as 'parentProgram' property is missing`)
+				throw new Error(
+					`Program ${this.constructor.name} have not been opened, as 'parentProgram' property is missing`
+				);
 			}
 			/* if (!(this.parentProgram as any as CanOpenSubPrograms).canOpen) {
 				throw new Error(
@@ -312,7 +310,6 @@ export class Documents<T> extends ComposableProgram {
 	}
 
 	async handleChanges(change: Change<Operation<T>>): Promise<void> {
-
 		const removed = [...(change.removed || [])];
 		const removedSet = new Set<string>(removed.map((x) => x.hash));
 		const entries = [...change.added, ...(change.removed || [])]
@@ -342,29 +339,36 @@ export class Documents<T> extends ComposableProgram {
 							}),
 						});
 
-
 						// Program specific
 						if (value instanceof Program) {
-
 							// TODO rm these checks
 							if (!this.replicator) {
-								throw new Error("Documents have not been initialized with the 'replicator' function, which is required for types that extends Program")
+								throw new Error(
+									"Documents have not been initialized with the 'replicator' function, which is required for types that extends Program"
+								);
 							}
 
 							if (!this.open) {
-								throw new Error("Documents have not been initialized with the open function, which is required for types that extends Program")
+								throw new Error(
+									"Documents have not been initialized with the open function, which is required for types that extends Program"
+								);
 							}
 
 							// if replicator, then open
-							if ((await this._canOpen!(value)) && (this.replicate && await this.replicator!(this.parentProgram.address, item.gid))) {
+							if (
+								(await this._canOpen!(value)) &&
+								this.replicate &&
+								(await this.replicator!(
+									this.parentProgram.address,
+									item.gid
+								))
+							) {
 								await this.open!(value);
 							}
 						}
-
 					}
 				} else if (payload instanceof DeleteOperation) {
 					if (!removedSet.has(item.hash)) {
-
 						if (payload.permanently) {
 							// delete all nexts recursively (but dont delete the DELETE record (because we might want to share this with others))
 							const nexts = item.next
@@ -383,7 +387,6 @@ export class Documents<T> extends ComposableProgram {
 						if (value?.value instanceof Program) {
 							await value?.value.close();
 						}
-
 					} else {
 						// TODO, a delete operation entry has been removed, this means that an entry should not be deleted, however, the inverse of deletion is to do nothing.. (?)
 					}
@@ -425,7 +428,6 @@ export class Documents<T> extends ComposableProgram {
 			}
 		} */
 	}
-
 
 	deserializeOrPass(value: PutOperation<T>): T {
 		if (value._value) {

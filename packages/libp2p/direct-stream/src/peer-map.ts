@@ -1,1 +1,1 @@
-export type PeerMap<T> = Map<string, T>
+export type PeerMap<T> = Map<string, T>;
