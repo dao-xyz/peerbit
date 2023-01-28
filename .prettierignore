@@ -5,4 +5,4 @@ coverage
 **/.svn
 **/.hg
 **/node_modules
-**/frontend/build
+**/frontend/dist
