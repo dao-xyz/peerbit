@@ -1,58 +1,58 @@
 {
-    "name": "@dao-xyz/peerbit-store",
-    "version": "0.1.1",
-    "description": "Modified base class for orbit db stores for Typescript with CJS and ESM builds",
-    "type": "module",
-    "sideEffects": false,
-    "module": "lib/esm/index.js",
-    "types": "lib/esm/index.d.ts",
-    "exports": {
-        "import": "./lib/esm/index.js",
-        "require": "./lib/cjs/index.js"
-    },
-    "files": [
-        "lib",
-        "src",
-        "!src/**/__tests__",
-        "!lib/**/__tests__",
-        "LICENSE"
-    ],
-    "publishConfig": {
-        "access": "public"
-    },
-    "scripts": {
-        "clean": "shx rm -rf lib/*",
-        "build": "yarn clean && tsc -p tsconfig.json",
-        "postbuild": "echo '{\"type\":\"module\"} ' | node ../../node_modules/.bin/json > lib/esm/package.json",
-        "test": "node ../../node_modules/.bin/jest test  -c  ../../jest.config.ts --runInBand --forceExit",
-        "test:unit": "node ../../node_modules/.bin/jest test  -c  ../../jest.config.unit.ts --runInBand --forceExit",
-        "test:integration": "node ../node_modules/.bin/jest test -c  ../../jest.config.integration.ts --runInBand --forceExit"
-    },
-    "repository": {
-        "type": "git",
-        "url": "https://github.com/dao-xyz/peerbit"
-    },
-    "engines": {
-        "node": ">=16.15.1"
-    },
-    "license": "MIT",
-    "dependencies": {
-        "@dao-xyz/libp2p-direct-block": "^0.1.1",
-        "@dao-xyz/peerbit-cache": "^0.4.40",
-        "@dao-xyz/peerbit-log": "^0.1.1",
-        "p-each-series": "^3.0.0",
-        "p-map": "^5.5.0",
-        "p-queue": "^7.3.0",
-        "path-browserify": "^1.0.1"
-    },
-    "devDependencies": {
-        "@dao-xyz/peerbit-keystore": "^0.1.1",
-        "@dao-xyz/peerbit-test-utils": "^0.1.1",
-        "level": "^8.0.0",
-        "libsodium-wrappers": "^0.7.10"
-    },
-    "localMaintainers": [
-        "dao.xyz"
-    ],
-    "gitHead": "9e1681454f31fd7bd9de8856a63744c66652fe15"
+	"name": "@dao-xyz/peerbit-store",
+	"version": "0.1.1",
+	"description": "Modified base class for orbit db stores for Typescript with CJS and ESM builds",
+	"type": "module",
+	"sideEffects": false,
+	"module": "lib/esm/index.js",
+	"types": "lib/esm/index.d.ts",
+	"exports": {
+		"import": "./lib/esm/index.js",
+		"require": "./lib/cjs/index.js"
+	},
+	"files": [
+		"lib",
+		"src",
+		"!src/**/__tests__",
+		"!lib/**/__tests__",
+		"LICENSE"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"clean": "shx rm -rf lib/*",
+		"build": "yarn clean && tsc -p tsconfig.json",
+		"postbuild": "echo '{\"type\":\"module\"} ' | node ../../node_modules/.bin/json > lib/esm/package.json",
+		"test": "node ../../node_modules/.bin/jest test  -c  ../../jest.config.ts --runInBand --forceExit",
+		"test:unit": "node ../../node_modules/.bin/jest test  -c  ../../jest.config.unit.ts --runInBand --forceExit",
+		"test:integration": "node ../node_modules/.bin/jest test -c  ../../jest.config.integration.ts --runInBand --forceExit"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/dao-xyz/peerbit"
+	},
+	"engines": {
+		"node": ">=16.15.1"
+	},
+	"license": "MIT",
+	"dependencies": {
+		"@dao-xyz/libp2p-direct-block": "^0.1.1",
+		"@dao-xyz/peerbit-cache": "^0.4.40",
+		"@dao-xyz/peerbit-log": "^0.1.1",
+		"p-each-series": "^3.0.0",
+		"p-map": "^5.5.0",
+		"p-queue": "^7.3.0",
+		"path-browserify": "^1.0.1"
+	},
+	"devDependencies": {
+		"@dao-xyz/peerbit-keystore": "^0.1.1",
+		"@dao-xyz/peerbit-test-utils": "^0.1.1",
+		"level": "^8.0.0",
+		"libsodium-wrappers": "^0.7.10"
+	},
+	"localMaintainers": [
+		"dao.xyz"
+	],
+	"gitHead": "9e1681454f31fd7bd9de8856a63744c66652fe15"
 }

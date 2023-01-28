@@ -5,23 +5,23 @@ import type { MultihashHasher } from "multiformats/hashes/hasher";
 
 export type GetOptions = { timeout?: number; hasher?: MultihashHasher<number> };
 export type PutOptions = {
-    timeout?: number;
+	timeout?: number;
 };
 
 export type StoreStatus = "open" | "opening" | "closed" | "closing";
 export interface BlockStore {
-    get<T>(
-        cid: string,
-        options?: GetOptions
-    ): Promise<Block.Block<T, any, any, any> | undefined>;
-    put<T>(
-        value: Block.Block<T, any, any, any>,
-        optsions?: PutOptions
-    ): Promise<string>;
-    rm(cid: string): Promise<void>;
-    open(): Promise<void>;
-    close(): Promise<void>;
-    get status(): StoreStatus;
+	get<T>(
+		cid: string,
+		options?: GetOptions
+	): Promise<Block.Block<T, any, any, any> | undefined>;
+	put<T>(
+		value: Block.Block<T, any, any, any>,
+		optsions?: PutOptions
+	): Promise<string>;
+	rm(cid: string): Promise<void>;
+	open(): Promise<void>;
+	close(): Promise<void>;
+	get status(): StoreStatus;
 }
 
 /* async function write(

@@ -1,9 +1,9 @@
 export const BlockStoreNotDefinedError = () =>
-    new Error("Block store not defined");
+	new Error("Block store not defined");
 export const LogNotDefinedError = () => new Error("Log instance not defined");
 export const NotALogError = () =>
-    new Error("Given argument is not an instance of Log");
+	new Error("Given argument is not an instance of Log");
 export const CannotJoinWithDifferentId = () =>
-    new Error("Can't join logs with different IDs");
+	new Error("Can't join logs with different IDs");
 export const LtOrLteMustBeStringOrArray = () =>
-    new Error("lt or lte must be a string or array of Entries");
+	new Error("lt or lte must be a string or array of Entries");

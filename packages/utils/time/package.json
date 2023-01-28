@@ -1,34 +1,34 @@
 {
-    "name": "@dao-xyz/peerbit-time",
-    "version": "0.0.19",
-    "description": "Time utils",
-    "type": "module",
-    "sideEffects": false,
-    "module": "lib/esm/index.js",
-    "types": "lib/esm/index.d.ts",
-    "exports": {
-        "import": "./lib/esm/index.js",
-        "require": "./lib/cjs/index.js"
-    },
-    "files": [
-        "lib",
-        "src",
-        "!src/**/__tests__",
-        "!lib/**/__tests__",
-        "LICENSE"
-    ],
-    "publishConfig": {
-        "access": "public"
-    },
-    "scripts": {
-        "clean": "shx rm -rf lib/*",
-        "build": "yarn clean && tsc -p tsconfig.json",
-        "postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
-        "test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
-        "test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
-        "test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
-    },
-    "author": "dao.xyz",
-    "license": "MIT",
-    "gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
+	"name": "@dao-xyz/peerbit-time",
+	"version": "0.0.19",
+	"description": "Time utils",
+	"type": "module",
+	"sideEffects": false,
+	"module": "lib/esm/index.js",
+	"types": "lib/esm/index.d.ts",
+	"exports": {
+		"import": "./lib/esm/index.js",
+		"require": "./lib/cjs/index.js"
+	},
+	"files": [
+		"lib",
+		"src",
+		"!src/**/__tests__",
+		"!lib/**/__tests__",
+		"LICENSE"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"clean": "shx rm -rf lib/*",
+		"build": "yarn clean && tsc -p tsconfig.json",
+		"postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
+		"test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
+		"test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
+		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
+	},
+	"author": "dao.xyz",
+	"license": "MIT",
+	"gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
 }

@@ -6,35 +6,35 @@ export const WAIT_FOR_PEERS_TIME = 5000;
 
 @variant([2, 0])
 export class ReplicatorInfo extends TransportMessage {
-    @field({ type: option("string") })
-    fromId?: string;
+	@field({ type: option("string") })
+	fromId?: string;
 
-    @field({ type: "string" })
-    topic: string;
+	@field({ type: "string" })
+	topic: string;
 
-    @field({ type: "u32" })
-    store: number; // address
+	@field({ type: "u32" })
+	store: number; // address
 
-    @field({ type: option(StringSetSerializer) })
-    heads?: Set<string>; // address
+	@field({ type: option(StringSetSerializer) })
+	heads?: Set<string>; // address
 
-    constructor(props?: {
-        fromId?: string;
-        topic: string;
-        store: number;
-        heads?: Set<string> | string[];
-    }) {
-        super();
-        if (props) {
-            this.fromId = props.fromId;
-            this.topic = props.topic;
-            this.store = props.store;
-            this.heads = Array.isArray(props.heads)
-                ? new Set(props.heads)
-                : this.heads;
-            /*  this.allowForks = props.allowForks; */
-        }
-    }
+	constructor(props?: {
+		fromId?: string;
+		topic: string;
+		store: number;
+		heads?: Set<string> | string[];
+	}) {
+		super();
+		if (props) {
+			this.fromId = props.fromId;
+			this.topic = props.topic;
+			this.store = props.store;
+			this.heads = Array.isArray(props.heads)
+				? new Set(props.heads)
+				: this.heads;
+			/*  this.allowForks = props.allowForks; */
+		}
+	}
 }
 
 /* @variant([2, 1])

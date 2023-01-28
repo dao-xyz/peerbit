@@ -7,24 +7,24 @@ import dotenv from "dotenv";
 dotenv.config();
 
 describe("ssl", () => {
-    let session: LSession, peer: Peerbit, server: http.Server;
+	let session: LSession, peer: Peerbit, server: http.Server;
 
-    beforeAll(async () => {
-        session = await LSession.connected(1);
-        peer = await Peerbit.create({
-            libp2p: session.peers[0],
-            directory: "./peerbit/tmp/" + +new Date(),
-        });
-        server = await startServer(peer, 12345);
-    });
+	beforeAll(async () => {
+		session = await LSession.connected(1);
+		peer = await Peerbit.create({
+			libp2p: session.peers[0],
+			directory: "./peerbit/tmp/" + +new Date(),
+		});
+		server = await startServer(peer, 12345);
+	});
 
-    afterAll(async () => {
-        await peer.stop();
-        await session.stop();
-        await server.close();
-    });
-    it("_", () => {});
-    /* These test are flaky, or have side effects, and should not be running in ci yet
+	afterAll(async () => {
+		await peer.stop();
+		await session.stop();
+		await server.close();
+	});
+	it("_", () => {});
+	/* These test are flaky, or have side effects, and should not be running in ci yet
 	it("certbot", async () => {
 		const { exec } = await import("child_process");
 		const containerName = "nginx-certbot-" + +new Date();

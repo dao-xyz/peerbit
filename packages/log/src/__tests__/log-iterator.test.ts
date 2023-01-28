@@ -9,8 +9,8 @@ import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
 import {
-    BlockStore,
-    MemoryLevelBlockStore,
+	BlockStore,
+	MemoryLevelBlockStore,
 } from "@dao-xyz/libp2p-direct-block";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
@@ -20,108 +20,107 @@ const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 
 let signKey: KeyWithMeta<Ed25519Keypair>,
-    signKey2: KeyWithMeta<Ed25519Keypair>,
-    signKey3: KeyWithMeta<Ed25519Keypair>;
+	signKey2: KeyWithMeta<Ed25519Keypair>,
+	signKey3: KeyWithMeta<Ed25519Keypair>;
 
 describe("Log - Iterator", function () {
-    let keystore: Keystore, store: BlockStore;
+	let keystore: Keystore, store: BlockStore;
 
-    beforeAll(async () => {
-        rmrf.sync(testKeyStorePath(__filenameBase));
+	beforeAll(async () => {
+		rmrf.sync(testKeyStorePath(__filenameBase));
 
-        await fs.copy(
-            signingKeysFixturesPath(__dirname),
-            testKeyStorePath(__filenameBase)
-        );
+		await fs.copy(
+			signingKeysFixturesPath(__dirname),
+			testKeyStorePath(__filenameBase)
+		);
 
-        keystore = new Keystore(
-            await createStore(testKeyStorePath(__filenameBase))
-        );
+		keystore = new Keystore(
+			await createStore(testKeyStorePath(__filenameBase))
+		);
 
-        //@ts-ignore
-        signKey = await keystore.getKey(new Uint8Array([3]));
-        //@ts-ignore
-        signKey2 = await keystore.getKey(new Uint8Array([2]));
-        //@ts-ignore
-        signKey3 = await keystore.getKey(new Uint8Array([1]));
-        store = new MemoryLevelBlockStore();
-        await store.open();
-    });
+		//@ts-ignore
+		signKey = await keystore.getKey(new Uint8Array([3]));
+		//@ts-ignore
+		signKey2 = await keystore.getKey(new Uint8Array([2]));
+		//@ts-ignore
+		signKey3 = await keystore.getKey(new Uint8Array([1]));
+		store = new MemoryLevelBlockStore();
+		await store.open();
+	});
 
-    afterAll(async () => {
-        await store.close();
+	afterAll(async () => {
+		await store.close();
 
-        rmrf.sync(testKeyStorePath(__filenameBase));
+		rmrf.sync(testKeyStorePath(__filenameBase));
 
-        await keystore?.close();
-    });
+		await keystore?.close();
+	});
 
-    describe("Basic iterator functionality", () => {
-        let log1: Log<string>;
+	describe("Basic iterator functionality", () => {
+		let log1: Log<string>;
 
-        beforeEach(async () => {
-            log1 = new Log(
-                store,
-                {
-                    ...signKey.keypair,
-                    sign: async (data: Uint8Array) =>
-                        await signKey.keypair.sign(data),
-                },
-                { logId: "X" }
-            );
+		beforeEach(async () => {
+			log1 = new Log(
+				store,
+				{
+					...signKey.keypair,
+					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				},
+				{ logId: "X" }
+			);
 
-            for (let i = 0; i <= 100; i++) {
-                await log1.append("entry" + i);
-            }
-        });
+			for (let i = 0; i <= 100; i++) {
+				await log1.append("entry" + i);
+			}
+		});
 
-        it("returns a Symbol.iterator object", async () => {
-            const it = log1.iterator({
-                amount: 0,
-            });
+		it("returns a Symbol.iterator object", async () => {
+			const it = log1.iterator({
+				amount: 0,
+			});
 
-            expect(typeof it[Symbol.iterator]).toEqual("function");
-            assert.deepStrictEqual(it.next(), {
-                value: undefined,
-                done: true,
-            });
-        });
+			expect(typeof it[Symbol.iterator]).toEqual("function");
+			assert.deepStrictEqual(it.next(), {
+				value: undefined,
+				done: true,
+			});
+		});
 
-        it("returns length from tail and amount", async () => {
-            const amount = 10;
-            const it = log1.iterator({
-                amount: amount,
-            });
-            const length = [...it].length;
-            expect(length).toEqual(10);
-            let i = 0;
-            for (const entry of it) {
-                expect(entry.payload.getValue()).toEqual("entry" + i++);
-            }
-        });
+		it("returns length from tail and amount", async () => {
+			const amount = 10;
+			const it = log1.iterator({
+				amount: amount,
+			});
+			const length = [...it].length;
+			expect(length).toEqual(10);
+			let i = 0;
+			for (const entry of it) {
+				expect(entry.payload.getValue()).toEqual("entry" + i++);
+			}
+		});
 
-        it("returns length from head and amount", async () => {
-            const amount = 10;
-            const it = log1.iterator({
-                amount: amount,
-                from: "head",
-            });
-            const length = [...it].length;
-            expect(length).toEqual(10);
-            let i = 0;
-            for (const entry of it) {
-                expect(entry.payload.getValue()).toEqual("entry" + (100 - i++));
-            }
-        });
+		it("returns length from head and amount", async () => {
+			const amount = 10;
+			const it = log1.iterator({
+				amount: amount,
+				from: "head",
+			});
+			const length = [...it].length;
+			expect(length).toEqual(10);
+			let i = 0;
+			for (const entry of it) {
+				expect(entry.payload.getValue()).toEqual("entry" + (100 - i++));
+			}
+		});
 
-        it("returns all", async () => {
-            const it = log1.iterator();
-            const length = [...it].length;
-            expect(length).toEqual(101);
-            let i = 0;
-            for (const entry of it) {
-                expect(entry.payload.getValue()).toEqual("entry" + i++);
-            }
-        });
-    });
+		it("returns all", async () => {
+			const it = log1.iterator();
+			const length = [...it].length;
+			expect(length).toEqual(101);
+			let i = 0;
+			for (const entry of it) {
+				expect(entry.payload.getValue()).toEqual("entry" + i++);
+			}
+		});
+	});
 });

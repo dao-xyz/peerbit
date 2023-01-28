@@ -27,18 +27,18 @@ const session: LSession = await LSession.disconnected(4);
  */
 
 await session.connect([
-    [session.peers[0], session.peers[1]],
-    [session.peers[1], session.peers[2]],
-    [session.peers[2], session.peers[3]],
+	[session.peers[0], session.peers[1]],
+	[session.peers[1], session.peers[2]],
+	[session.peers[2], session.peers[3]],
 ]);
 const stores: DirectBlock[] = await Promise.all(
-    session.peers.map(async (peer) => {
-        const stream = new DirectBlock(peer, {
-            localStore: new MemoryLevelBlockStore(),
-        });
-        await stream.open();
-        return stream;
-    })
+	session.peers.map(async (peer) => {
+		const stream = new DirectBlock(peer, {
+			localStore: new MemoryLevelBlockStore(),
+		});
+		await stream.open();
+		return stream;
+	})
 );
 
 await session.connect();
@@ -49,41 +49,39 @@ await delay(3000);
 
 const largeRandom: Uint8Array[] = [];
 for (let i = 0; i < 100; i++) {
-    largeRandom.push(crypto.randomBytes(1e6));
+	largeRandom.push(crypto.randomBytes(1e6));
 }
 
 const smallRandom: Uint8Array[] = [];
 const t1 = +new Date();
 for (let i = 0; i < 1000; i++) {
-    smallRandom.push(crypto.randomBytes(1e3));
+	smallRandom.push(crypto.randomBytes(1e3));
 }
 
 const sizes = [1e3, 1e6];
 let suite = new B.Suite("_", { minSamples: 1, initCount: 1, maxTime: 5 });
 for (const size of sizes) {
-    suite = suite.add("size: " + size / 1e3 + "kb", {
-        defer: true,
-        async: true,
-        fn: async (deferred) => {
-            {
-                const rng = crypto.randomBytes(size);
-                const cid = await stores[0].put(await createBlock(rng, "raw"));
-                await getBlockValue(
-                    (await stores[stores.length - 1].get<Uint8Array>(
-                        stringifyCid(cid)
-                    ))!
-                );
-                deferred.resolve();
-            }
-        },
-    });
+	suite = suite.add("size: " + size / 1e3 + "kb", {
+		defer: true,
+		async: true,
+		fn: async (deferred) => {
+			{
+				const rng = crypto.randomBytes(size);
+				const cid = await stores[0].put(await createBlock(rng, "raw"));
+				await getBlockValue(
+					(await stores[stores.length - 1].get<Uint8Array>(stringifyCid(cid)))!
+				);
+				deferred.resolve();
+			}
+		},
+	});
 }
 suite
-    .on("cycle", (event: any) => {
-        console.log(String(event.target));
-    })
-    .on("complete", function (this: any, ...args: any[]) {
-        stores.forEach((stream) => stream.close());
-        session.stop();
-    })
-    .run({ async: true });
+	.on("cycle", (event: any) => {
+		console.log(String(event.target));
+	})
+	.on("complete", function (this: any, ...args: any[]) {
+		stores.forEach((stream) => stream.close());
+		session.stop();
+	})
+	.run({ async: true });

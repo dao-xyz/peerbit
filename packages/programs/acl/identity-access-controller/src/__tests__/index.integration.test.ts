@@ -120,8 +120,7 @@ describe("index", () => {
 			identites.push(await createIdentity());
 			cacheStore.push(await createStore());
 		}
-		await waitForPeersBlock(...session.peers.map(peer => peer.directblock))
-
+		await waitForPeersBlock(...session.peers.map((peer) => peer.directblock));
 	});
 
 	afterAll(async () => {
@@ -153,7 +152,6 @@ describe("index", () => {
 			})
 		);
 
-
 		const l0b = (await init(
 			await TestStore.load(session.peers[1].directblock, l0a.address!),
 			1,
@@ -175,12 +173,10 @@ describe("index", () => {
 
 		await waitFor(
 			() =>
-				l0b.accessController.trustedNetwork.trustGraph.store.oplog
-					.length === 1
+				l0b.accessController.trustedNetwork.trustGraph.store.oplog.length === 1
 		);
 		await waitFor(
-			() =>
-				l0b.accessController.trustedNetwork.trustGraph._index.size === 1
+			() => l0b.accessController.trustedNetwork.trustGraph._index.size === 1
 		);
 
 		await l0b.store.put(
@@ -216,10 +212,7 @@ describe("index", () => {
 			);
 
 			const l0b = (await init(
-				await TestStore.load(
-					session.peers[1].directblock,
-					l0a.address!
-				),
+				await TestStore.load(session.peers[1].directblock, l0a.address!),
 				1,
 				options
 			)) as TestStore;
@@ -273,18 +266,12 @@ describe("index", () => {
 			);
 
 			const l0b = (await init(
-				await TestStore.load(
-					session.peers[1].directblock,
-					l0a.address!
-				),
+				await TestStore.load(session.peers[1].directblock, l0a.address!),
 				1,
 				options
 			)) as TestStore;
 			const l0c = (await init(
-				await TestStore.load(
-					session.peers[2].directblock,
-					l0a.address!
-				),
+				await TestStore.load(session.peers[2].directblock, l0a.address!),
 				2,
 				options
 			)) as TestStore;
@@ -336,14 +323,14 @@ describe("index", () => {
 				identity(2).publicKey
 			);
 			await l0c.accessController.identityGraphController.relationGraph.store.sync(
-				l0b.accessController.identityGraphController.relationGraph.store
-					.oplog.heads
+				l0b.accessController.identityGraphController.relationGraph.store.oplog
+					.heads
 			);
 
 			await waitFor(
 				() =>
-					l0c.accessController.identityGraphController.relationGraph
-						.index.size === 1
+					l0c.accessController.identityGraphController.relationGraph.index
+						.size === 1
 			);
 			await l0c.store.put(
 				new Document({
@@ -370,10 +357,7 @@ describe("index", () => {
 			);
 
 			const l0b = (await init(
-				await TestStore.load(
-					session.peers[1].directblock,
-					l0a.address!
-				),
+				await TestStore.load(session.peers[1].directblock, l0a.address!),
 				1,
 				options
 			)) as TestStore;
@@ -462,7 +446,7 @@ describe("index", () => {
 				);
 				try {
 					await waitFor(() => !!results);
-				} catch (error) { }
+				} catch (error) {}
 				return results;
 			};
 

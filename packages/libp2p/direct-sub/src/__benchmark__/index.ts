@@ -8,9 +8,9 @@ import { waitForPeers } from "@dao-xyz/libp2p-direct-stream";
 
 const session: LSession = await LSession.disconnected(4);
 await session.connect([
-    [session.peers[0], session.peers[1]],
-    [session.peers[1], session.peers[2]],
-    [session.peers[2], session.peers[3]],
+	[session.peers[0], session.peers[1]],
+	[session.peers[1], session.peers[2]],
+	[session.peers[2], session.peers[3]],
 ]);
 
 /* 
@@ -30,14 +30,14 @@ await session.connect([
  */
 
 const streams: DirectSub[] = await Promise.all(
-    session.peers.map(async (peer) => {
-        const stream = new DirectSub(peer, {
-            canRelayMessage: true,
-            emitSelf: true,
-        });
-        await stream.start();
-        return stream;
-    })
+	session.peers.map(async (peer) => {
+		const stream = new DirectSub(peer, {
+			canRelayMessage: true,
+			emitSelf: true,
+		});
+		await stream.start();
+		return stream;
+	})
 );
 const TOPIC = "world";
 streams[streams.length - 1].subscribe(TOPIC);
@@ -48,40 +48,40 @@ let suite = new B.Suite();
 let listener: ((msg: any) => any) | undefined = undefined;
 const msgMap: Map<string, { resolve: () => any }> = new Map();
 const msgIdFn = (msg: Uint8Array) =>
-    crypto.createHash("sha1").update(msg.subarray(0, 20)).digest("base64");
+	crypto.createHash("sha1").update(msg.subarray(0, 20)).digest("base64");
 
 const sizes = [1e3, 1e6];
 for (const size of sizes) {
-    suite = suite.add("size: " + size / 1e3 + "kb", {
-        defer: true,
-        fn: (deferred) => {
-            const small = crypto.randomBytes(size); // 1kb
-            msgMap.set(msgIdFn(small), deferred);
-            streams[0].publish(small, { topics: [TOPIC] });
-        },
-        setup: () => {
-            listener = (msg) => {
-                msgMap.get(msgIdFn(msg.detail.data))!.resolve();
-            };
+	suite = suite.add("size: " + size / 1e3 + "kb", {
+		defer: true,
+		fn: (deferred) => {
+			const small = crypto.randomBytes(size); // 1kb
+			msgMap.set(msgIdFn(small), deferred);
+			streams[0].publish(small, { topics: [TOPIC] });
+		},
+		setup: () => {
+			listener = (msg) => {
+				msgMap.get(msgIdFn(msg.detail.data))!.resolve();
+			};
 
-            streams[streams.length - 1].addEventListener("data", listener);
-            msgMap.clear();
-        },
-        teardown: () => {
-            streams[streams.length - 1].removeEventListener("data", listener);
-        },
-    });
+			streams[streams.length - 1].addEventListener("data", listener);
+			msgMap.clear();
+		},
+		teardown: () => {
+			streams[streams.length - 1].removeEventListener("data", listener);
+		},
+	});
 }
 suite
-    .on("cycle", (event: any) => {
-        console.log(String(event.target));
-    })
-    .on("error", (e) => {
-        console.error(e);
-        throw e;
-    })
-    .on("complete", function (this: any, ...args: any[]) {
-        streams.forEach((stream) => stream.stop());
-        session.stop();
-    })
-    .run({ async: true });
+	.on("cycle", (event: any) => {
+		console.log(String(event.target));
+	})
+	.on("error", (e) => {
+		console.error(e);
+		throw e;
+	})
+	.on("complete", function (this: any, ...args: any[]) {
+		streams.forEach((stream) => stream.stop());
+		session.stop();
+	})
+	.run({ async: true });

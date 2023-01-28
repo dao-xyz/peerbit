@@ -11,28 +11,28 @@ import { jest } from "@jest/globals";
 import { PermissionedString } from "..";
 
 describe("server", () => {
-    let session: LSession, peer: Peerbit;
-    jest.setTimeout(60 * 1000);
+	let session: LSession, peer: Peerbit;
+	jest.setTimeout(60 * 1000);
 
-    beforeAll(async () => {
-        session = await LSession.connected(1);
-        peer = await Peerbit.create({
-            libp2p: session.peers[0],
-            directory: "./tmp/peerbit/" + +new Date(),
-        });
-    });
+	beforeAll(async () => {
+		session = await LSession.connected(1);
+		peer = await Peerbit.create({
+			libp2p: session.peers[0],
+			directory: "./tmp/peerbit/" + +new Date(),
+		});
+	});
 
-    afterAll(async () => {
-        await session.stop();
-    });
+	afterAll(async () => {
+		await session.stop();
+	});
 
-    it("_", async () => {
-        const program = new PermissionedString({
-            store: new DString({}),
-            trusted: [peer.identity.publicKey],
-        });
-        program.setupIndices();
-        const base54 = Buffer.from(serialize(program)).toString("base64");
-        const pr = deserialize(Buffer.from(base54, "base64"), Program);
-    });
+	it("_", async () => {
+		const program = new PermissionedString({
+			store: new DString({}),
+			trusted: [peer.identity.publicKey],
+		});
+		program.setupIndices();
+		const base54 = Buffer.from(serialize(program)).toString("base64");
+		const pr = deserialize(Buffer.from(base54, "base64"), Program);
+	});
 });

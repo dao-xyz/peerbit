@@ -19,6 +19,7 @@ module.exports = {
 	],
 	"ignorePatterns": ["**/*.test.ts", "/**/lib/", "/**/frontend/dist", "/**/test-utils/"],
 	"rules": {
+		"no-mixed-spaces-and-tabs": "off",
 		"@typescript-eslint/no-explicit-any": "off",
 		"@typescript-eslint/prefer-as-const": "off",
 		"@typescript-eslint/no-empty-interface": "off",

@@ -1,8 +1,8 @@
 export {
-    cidifyString,
-    stringifyCid,
-    createBlock,
-    getBlockValue,
+	cidifyString,
+	stringifyCid,
+	createBlock,
+	getBlockValue,
 } from "./block.js";
 export { DirectBlock } from "./libp2p.js";
 export * from "./store.js";

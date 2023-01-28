@@ -6,119 +6,119 @@ import { waitFor, delay } from "@dao-xyz/peerbit-time";
 import { waitForPeers } from "./utils";
 
 describe("transport", function () {
-    let session: LSession, store: DirectBlock, store2: DirectBlock;
+	let session: LSession, store: DirectBlock, store2: DirectBlock;
 
-    beforeEach(async () => {
-        session = await LSession.connected(2);
-    });
+	beforeEach(async () => {
+		session = await LSession.connected(2);
+	});
 
-    afterEach(async () => {
-        await store?.close();
-        await store2?.close();
-        await session.stop();
-    });
+	afterEach(async () => {
+		await store?.close();
+		await store2?.close();
+		await session.stop();
+	});
 
-    it("can restart", async () => {
-        store = new DirectBlock(session.peers[0], {
-            localStore: new MemoryLevelBlockStore(),
-        });
-        await store.open();
-        store2 = new DirectBlock(session.peers[1], {
-            localStore: new MemoryLevelBlockStore(),
-        });
+	it("can restart", async () => {
+		store = new DirectBlock(session.peers[0], {
+			localStore: new MemoryLevelBlockStore(),
+		});
+		await store.open();
+		store2 = new DirectBlock(session.peers[1], {
+			localStore: new MemoryLevelBlockStore(),
+		});
 
-        await store2.open();
+		await store2.open();
 
-        await waitForPeers(store, store2);
-        await store.close();
-        await store2.close();
+		await waitForPeers(store, store2);
+		await store.close();
+		await store2.close();
 
-        await delay(1000); // Some delay seems to be necessary TODO fix
-        await store.open();
-        await store2.open();
-        await waitForPeers(store, store2);
-    });
+		await delay(1000); // Some delay seems to be necessary TODO fix
+		await store.open();
+		await store2.open();
+		await waitForPeers(store, store2);
+	});
 
-    it("rw", async () => {
-        store = new DirectBlock(session.peers[0], {
-            localStore: new MemoryLevelBlockStore(),
-        });
-        store2 = new DirectBlock(session.peers[1], {
-            localStore: new MemoryLevelBlockStore(),
-        });
+	it("rw", async () => {
+		store = new DirectBlock(session.peers[0], {
+			localStore: new MemoryLevelBlockStore(),
+		});
+		store2 = new DirectBlock(session.peers[1], {
+			localStore: new MemoryLevelBlockStore(),
+		});
 
-        expect((store as DirectBlock)._gossipCache).toBeUndefined();
-        expect((store as DirectBlock)._gossip).toBeFalse();
+		expect((store as DirectBlock)._gossipCache).toBeUndefined();
+		expect((store as DirectBlock)._gossip).toBeFalse();
 
-        await store.open();
-        await store2.open();
+		await store.open();
+		await store2.open();
 
-        await waitForPeers(store, store2);
+		await waitForPeers(store, store2);
 
-        const data = new Uint8Array([5, 4, 3]);
-        const cid = await store.put(await createBlock(data, "raw"));
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store.put(await createBlock(data, "raw"));
 
-        expect(stringifyCid(cid)).toEqual(
-            "zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J"
-        );
-        const readData = await store2.get<Uint8Array>(stringifyCid(cid));
-        expect(await getBlockValue(readData!)).toEqual(data);
-    });
+		expect(stringifyCid(cid)).toEqual(
+			"zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J"
+		);
+		const readData = await store2.get<Uint8Array>(stringifyCid(cid));
+		expect(await getBlockValue(readData!)).toEqual(data);
+	});
 
-    it("timeout", async () => {
-        store = new DirectBlock(session.peers[0], {
-            localStore: new MemoryLevelBlockStore(),
-        });
-        await store.open();
-        store2 = new DirectBlock(session.peers[1], {
-            localStore: new MemoryLevelBlockStore(),
-        });
-        await store2.open();
+	it("timeout", async () => {
+		store = new DirectBlock(session.peers[0], {
+			localStore: new MemoryLevelBlockStore(),
+		});
+		await store.open();
+		store2 = new DirectBlock(session.peers[1], {
+			localStore: new MemoryLevelBlockStore(),
+		});
+		await store2.open();
 
-        await waitForPeers(store, store2);
+		await waitForPeers(store, store2);
 
-        const t1 = +new Date();
-        const readData = await store.get<Uint8Array>(
-            "zb3we1BmfxpFg6bCXmrsuEo8JuQrGEf7RyFBdRxEHLuqc4CSr",
-            { timeout: 3000 }
-        );
-        const t2 = +new Date();
-        expect(readData).toBeUndefined();
-        expect(t2 - t1 < 3100);
-    });
+		const t1 = +new Date();
+		const readData = await store.get<Uint8Array>(
+			"zb3we1BmfxpFg6bCXmrsuEo8JuQrGEf7RyFBdRxEHLuqc4CSr",
+			{ timeout: 3000 }
+		);
+		const t2 = +new Date();
+		expect(readData).toBeUndefined();
+		expect(t2 - t1 < 3100);
+	});
 
-    it("gossip", async () => {
-        store = new DirectBlock(session.peers[0], {
-            localStore: new MemoryLevelBlockStore(),
-            gossip: { cache: {} },
-        });
-        await store.open();
+	it("gossip", async () => {
+		store = new DirectBlock(session.peers[0], {
+			localStore: new MemoryLevelBlockStore(),
+			gossip: { cache: {} },
+		});
+		await store.open();
 
-        store2 = new DirectBlock(session.peers[1], {
-            gossip: { cache: {} },
-        });
-        await store2.open();
-        // await session.connect();
-        await waitForPeers(store, store2);
+		store2 = new DirectBlock(session.peers[1], {
+			gossip: { cache: {} },
+		});
+		await store2.open();
+		// await session.connect();
+		await waitForPeers(store, store2);
 
-        const data = new Uint8Array([1, 2, 3]);
+		const data = new Uint8Array([1, 2, 3]);
 
-        const cid = await store.put(await createBlock(data, "raw"));
-        expect(stringifyCid(cid)).toEqual(
-            "zb2rhWtC5SY6zV1y2SVN119ofpxsbEtpwiqSoK77bWVzHqeWU"
-        );
+		const cid = await store.put(await createBlock(data, "raw"));
+		expect(stringifyCid(cid)).toEqual(
+			"zb2rhWtC5SY6zV1y2SVN119ofpxsbEtpwiqSoK77bWVzHqeWU"
+		);
 
-        await delay(5000);
+		await delay(5000);
 
-        await waitFor(() => store2._gossipCache!.size === 1);
+		await waitFor(() => store2._gossipCache!.size === 1);
 
-        store2._readFromPeers = () => Promise.resolve(undefined); // make sure we only read from gossipCache
+		store2._readFromPeers = () => Promise.resolve(undefined); // make sure we only read from gossipCache
 
-        const readData = await store2.get<Uint8Array>(stringifyCid(cid));
-        expect(await getBlockValue(readData!)).toEqual(data);
-    });
+		const readData = await store2.get<Uint8Array>(stringifyCid(cid));
+		expect(await getBlockValue(readData!)).toEqual(data);
+	});
 
-    /* it('can handle conurrent read/write', async () => {
+	/* it('can handle conurrent read/write', async () => {
 		store = new Blocks(
 			new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
 		);
@@ -197,7 +197,7 @@ describe("transport", function () {
 		console.log("Large", t3 - t1, t2 - t1, t3 - t2);
 
 	}); */
-    /* 
+	/* 
 	
 		it("small", async () => {
 			store = new Blocks(

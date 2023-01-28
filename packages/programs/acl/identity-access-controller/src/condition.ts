@@ -3,44 +3,44 @@ import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 
 @variant(0)
 export class Network {
-    @field({ type: "string" })
-    type: string;
+	@field({ type: "string" })
+	type: string;
 
-    @field({ type: "string" })
-    rpc: string;
+	@field({ type: "string" })
+	rpc: string;
 }
 
 export class AccessCondition<T> {
-    async allowed(_key: PublicSignKey): Promise<boolean> {
-        throw new Error("Not implemented");
-    }
+	async allowed(_key: PublicSignKey): Promise<boolean> {
+		throw new Error("Not implemented");
+	}
 }
 
 @variant([0, 0])
 export class AnyAccessCondition<T> extends AccessCondition<T> {
-    constructor() {
-        super();
-    }
-    async allowed(_key: PublicSignKey): Promise<boolean> {
-        return true;
-    }
+	constructor() {
+		super();
+	}
+	async allowed(_key: PublicSignKey): Promise<boolean> {
+		return true;
+	}
 }
 
 @variant([0, 1])
 export class PublicKeyAccessCondition<T> extends AccessCondition<T> {
-    @field({ type: PublicSignKey })
-    key: PublicSignKey;
+	@field({ type: PublicSignKey })
+	key: PublicSignKey;
 
-    constructor(options?: { key: PublicSignKey }) {
-        super();
-        if (options) {
-            this.key = options.key;
-        }
-    }
+	constructor(options?: { key: PublicSignKey }) {
+		super();
+		if (options) {
+			this.key = options.key;
+		}
+	}
 
-    async allowed(identity: PublicSignKey): Promise<boolean> {
-        return this.key.equals(identity);
-    }
+	async allowed(identity: PublicSignKey): Promise<boolean> {
+		return this.key.equals(identity);
+	}
 }
 
 /*  Not yet :)
