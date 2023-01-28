@@ -11,6 +11,7 @@ import {
     U64Compare,
     Compare,
     ModifiedAtQuery,
+    FieldMissingQuery,
 } from "../query.js";
 import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";
@@ -62,9 +63,11 @@ describe("index", () => {
             @field({ type: option("u64") })
             number?: bigint;
 
-            constructor(opts?: Document) {
+            constructor(opts: Document) {
                 if (opts) {
-                    Object.assign(this, opts);
+                    this.id = opts.id;
+                    this.name = opts.name;
+                    this.number = opts.number;
                 }
             }
         }
@@ -179,6 +182,12 @@ describe("index", () => {
                 number: 3n,
             });
 
+            let doc4 = new Document({
+                id: "4",
+                name: undefined,
+                number: undefined,
+            });
+
             await writeStore.docs.put(doc);
             await waitFor(() => writeStore.docs.index.size === 1);
             await writeStore.docs.put(docEdit);
@@ -186,7 +195,8 @@ describe("index", () => {
             await waitFor(() => writeStore.docs.index.size === 2);
             await writeStore.docs.put(doc2Edit);
             await writeStore.docs.put(doc3);
-            await waitFor(() => writeStore.docs.index.size === 3);
+            await writeStore.docs.put(doc4);
+            await waitFor(() => writeStore.docs.index.size === 4);
         });
 
         afterEach(async () => {});
@@ -331,7 +341,7 @@ describe("index", () => {
                     },
                     { remote: false }
                 );
-                expect(response.results).toHaveLength(3);
+                expect(response.results).toHaveLength(4);
             });
 
             it("match all", async () => {
@@ -346,7 +356,7 @@ describe("index", () => {
                     },
                     { remote: { amount: 1 } }
                 );
-                expect(response.results).toHaveLength(3);
+                expect(response.results).toHaveLength(4);
             });
 
             it("can match sync", async () => {
@@ -357,11 +367,10 @@ describe("index", () => {
                     }),
                     (r: Results<Document>) => {
                         // dont do anything
-                        const x = 123;
                     },
                     { remote: { amount: 1, sync: true } }
                 );
-                await waitFor(() => stores[1].docs.index.size === 3);
+                await waitFor(() => stores[1].docs.index.size === 4);
             });
 
             it("string", async () => {
@@ -386,6 +395,25 @@ describe("index", () => {
                     "1",
                     "2",
                 ]);
+            });
+
+            it("missing", async () => {
+                let response: Results<Document> = undefined as any;
+                await stores[1].docs.index.query(
+                    new DocumentQueryRequest({
+                        queries: [
+                            new FieldMissingQuery({
+                                key: "name",
+                            }),
+                        ],
+                    }),
+                    (r: Results<Document>) => {
+                        response = r;
+                    },
+                    { remote: { amount: 1 } }
+                );
+                expect(response.results).toHaveLength(1);
+                expect(response.results.map((x) => x.value.id)).toEqual(["4"]);
             });
 
             describe("time", () => {

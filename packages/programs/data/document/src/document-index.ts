@@ -23,6 +23,7 @@ import {
     ModifiedAtQuery,
     compare,
     Context,
+    FieldMissingQuery,
 } from "./query.js";
 import { AccessError, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { CanRead, RPC, QueryContext, RPCOptions } from "@dao-xyz/peerbit-rpc";
@@ -259,12 +260,10 @@ export class DocumentIndex<T> extends ComposableProgram {
                                           .toLowerCase()
                                           .indexOf(f.value.toLowerCase()) !== -1
                                   );
-                              }
-                              if (f instanceof FieldByteMatchQuery) {
+                              } else if (f instanceof FieldByteMatchQuery) {
                                   if (!Array.isArray(fv)) return false;
                                   return arraysEqual(fv, f.value);
-                              }
-                              if (f instanceof FieldBigIntCompareQuery) {
+                              } else if (f instanceof FieldBigIntCompareQuery) {
                                   const value: bigint | number = fv;
 
                                   if (
@@ -275,6 +274,8 @@ export class DocumentIndex<T> extends ComposableProgram {
                                   }
 
                                   return compare(value, f.compare, f.value);
+                              } else if (f instanceof FieldMissingQuery) {
+                                  return fv == null; // null or undefined
                               }
                           } else if (f instanceof MemoryCompareQuery) {
                               const operation =

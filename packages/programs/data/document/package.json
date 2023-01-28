@@ -38,6 +38,7 @@
         "nanoid": "^4.0.0"
     },
     "devDependencies": {
+        "@dao-xyz/peerbit-test-utils": "0.1.1",
         "@dao-xyz/peerbit-time": "^0.0.19"
     },
     "gitHead": "9e1681454f31fd7bd9de8856a63744c66652fe15"
