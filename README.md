@@ -114,7 +114,7 @@ class CollaborativeText extends Program {
 
 // ... 
 
-const peer = await Peerbit.create (libp2p, options ...)
+const peer = await Peerbit.create(...options...)
 const document = peer.open(new CollaborativeText());
 console.log(document.address) /// this address can be opened by another peer 
 
@@ -142,7 +142,7 @@ npm install @dao-xyz/peerbit
 import { Peerbit } from '@dao-xyz/peerbit'
 
 // Create a peer from an libp2p instance
-const peer = await Peerbit.create(LIBP2P_CLIENT, {... options ...})
+const peer = await Peerbit.create({libp2p: SOME_LIBP2P_INSTANCE })
 
 // Open a program 
 const program = await peer.open(PRORGAM ADDRESS or PRORGAM)
@@ -184,7 +184,7 @@ class StringStore extends Program  // Needs to extend Program if you are going t
 
 // Later 
 
-const peer = await Peerbit.create(LIBP2P_CLIENT, {... options ...})
+const peer = await Peerbit.create({libp2p: ANOTHER_LIBP2P_INSTANCE })
 
 const program = await peer.open(new StringStore({store: new Store()}), ... options ...)
  
