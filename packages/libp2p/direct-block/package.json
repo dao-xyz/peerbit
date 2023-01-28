@@ -57,7 +57,7 @@
 		"@dao-xyz/libp2p-direct-stream": "^0.1.2",
 		"@ipld/dag-cbor": "^9.0.0",
 		"abstract-level": "^1.0.3",
-		"libp2p": "^0.42.0",
+		"libp2p": "^0.42.2",
 		"lru-cache": "^7.14.1",
 		"memory-level": "^1.0.0",
 		"nanoid": "^4.0.0"

@@ -1104,10 +1104,10 @@
     "@protobufjs/float" "^1.0.2"
     "@protobufjs/utf8" "^1.1.0"
 
-"@dao-xyz/libp2p-noise@^11.1.1":
-  version "11.1.1"
-  resolved "https://registry.yarnpkg.com/@dao-xyz/libp2p-noise/-/libp2p-noise-11.1.1.tgz#32fdc0ea400067cdd65009d8511afe30285ca8d7"
-  integrity sha512-j68BJHVVKJjxRbaMbOf6FYzxvOuvgeSDlf1OUzKoEB6eOhu2iJCTrrhnX1FyQu27rQaetFD6ug1Xji4ZXF7vRQ==
+"@dao-xyz/libp2p-noise@^11.1.2":
+  version "11.1.2"
+  resolved "https://registry.yarnpkg.com/@dao-xyz/libp2p-noise/-/libp2p-noise-11.1.2.tgz#3941065a19b3eab32dada3d6e99599d346054ee9"
+  integrity sha512-8dNHakCUbnRKYJZFW0hAoX+7bNk0KtzpqsD6egeMAf7nlkLE77fT/nRC1K7Vt/Gwbf4g8NvrCpfQsGhgl6jE0w==
   dependencies:
     "@libp2p/crypto" "^1.0.11"
     "@libp2p/interface-connection-encrypter" "^3.0.5"
@@ -1125,7 +1125,7 @@
     it-stream-types "^1.0.5"
     libsodium-wrappers "^0.7.10"
     protons-runtime "^4.0.2"
-    uint8arraylist "^2.3.2"
+    uint8arraylist "^2.4.3"
     uint8arrays "^4.0.3"
 
 "@emotion/babel-plugin@^11.10.5":
@@ -1666,11 +1666,6 @@
   version "1.1.0"
   resolved "https://registry.yarnpkg.com/@isaacs/string-locale-compare/-/string-locale-compare-1.1.0.tgz#291c227e93fd407a96ecd59879a35809120e432b"
   integrity sha512-SQ7Kzhh9+D+ZW9MA0zkYv3VXhIDNx+LzM6EJ+/65I3QY+enU6Itte7E5XX7EWrqLW2FN4n06GWzBnPoC3th2aQ==
-
-"@isaacs/ttlcache@^1.2.1":
-  version "1.2.1"
-  resolved "https://registry.yarnpkg.com/@isaacs/ttlcache/-/ttlcache-1.2.1.tgz#07f54e31ee2dde9f0d2608fe3707f358596825e2"
-  integrity sha512-6hUKl0TcmeenJXitePBS/vPn1l/C8+sO4vvSmRh/hW4CeBm+QselPM6AyiM7WON6jApouCJGUfHYbaNObcMFrQ==
 
 "@istanbuljs/load-nyc-config@^1.0.0":
   version "1.1.0"
@@ -2846,7 +2841,7 @@
     interface-datastore "^7.0.0"
     multiformats "^11.0.0"
 
-"@libp2p/mplex@^7.1.0", "@libp2p/mplex@^7.1.1":
+"@libp2p/mplex@^7.1.1":
   version "7.1.1"
   resolved "https://registry.yarnpkg.com/@libp2p/mplex/-/mplex-7.1.1.tgz#557567fb6575c471eaa283175c2305d3ef6045fb"
   integrity sha512-0owK1aWgXXtjiohXtjwLV7Ehjdj96eBtsapVt7AzlHA+W8uYnI+x058thq3MisyMDlHiiE3BTh6fEf+t2/0dUw==
@@ -2998,7 +2993,7 @@
     uint8arraylist "^2.0.0"
     uint8arrays "^4.0.2"
 
-"@libp2p/tcp@^6.0.9":
+"@libp2p/tcp@^6.1.1":
   version "6.1.1"
   resolved "https://registry.yarnpkg.com/@libp2p/tcp/-/tcp-6.1.1.tgz#5a08c6a80efbfde5796eda66f33834ba3bf24afa"
   integrity sha512-WOIklm74jV5BuRgQu0/En7ikXpozH77DuoSodQWAnIsbKYgaLxsi9U828XTRuvCJJfl8w56VefWZMHv2bLNjuw==
@@ -7830,7 +7825,7 @@ libnpmpublish@^6.0.4:
     semver "^7.3.7"
     ssri "^9.0.0"
 
-libp2p@^0.42.0:
+libp2p@^0.42.2:
   version "0.42.2"
   resolved "https://registry.yarnpkg.com/libp2p/-/libp2p-0.42.2.tgz#093b694b550508fadd8d3bcbd5d42cc984409d0f"
   integrity sha512-arTOCJEEmAFw5HjlXdULVAFs7Y/dWZmgX/qN4SzuxtSkB0pa+fqn/DIbIfpBi2BuY+QozvnARPF1xJtSdqfqJQ==

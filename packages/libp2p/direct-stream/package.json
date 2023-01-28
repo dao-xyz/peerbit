@@ -56,9 +56,8 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.4",
 		"@dao-xyz/peerbit-crypto": "^0.1.2",
-		"@isaacs/ttlcache": "^1.2.1",
 		"abstract-level": "^1.0.3",
-		"libp2p": "^0.42.0",
+		"libp2p": "^0.42.2",
 		"lru-cache": "^7.14.1",
 		"memory-level": "^1.0.0",
 		"nanoid": "^4.0.0",

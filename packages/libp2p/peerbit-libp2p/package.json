@@ -40,11 +40,11 @@
 	"dependencies": {
 		"@dao-xyz/libp2p-direct-block": "^0.1.2",
 		"@dao-xyz/libp2p-direct-sub": "^0.1.2",
-		"@dao-xyz/libp2p-noise": "^11.1.1",
+		"@dao-xyz/libp2p-noise": "^11.1.2",
 		"@libp2p/mplex": "^7.1.1",
 		"@libp2p/websockets": "^5.0.3",
 		"level": "^8.0.0",
-		"libp2p": "^0.42.0"
+		"libp2p": "^0.42.2"
 	},
 	"devDependencies": {
 		"@dao-xyz/peerbit-time": "^0.0.20"

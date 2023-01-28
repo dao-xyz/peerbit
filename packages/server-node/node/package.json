@@ -52,15 +52,15 @@
 	},
 	"dependencies": {
 		"@aws-sdk/client-route-53": "^3.216.0",
-		"@dao-xyz/libp2p-noise": "^11.1.1",
+		"@dao-xyz/libp2p-noise": "^11.1.2",
 		"@dao-xyz/peerbit": "^0.1.5",
 		"@dao-xyz/peerbit-libp2p": "^0.1.2",
 		"@libp2p/floodsub": "^6.0.0",
 		"@libp2p/mplex": "^7.1.1",
-		"@libp2p/tcp": "^6.0.9",
+		"@libp2p/tcp": "^6.1.1",
 		"@libp2p/websockets": "^5.0.3",
 		"is-node": "^1.0.2",
-		"libp2p": "^0.42.0"
+		"libp2p": "^0.42.2"
 	},
 	"peerDependencies": {
 		"axios": "^1.1.3",
