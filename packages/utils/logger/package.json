@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/peerbit-logger",
-	"version": "0.0.4",
+	"version": "0.0.5",
 	"description": "Logging utils",
 	"type": "module",
 	"sideEffects": false,
