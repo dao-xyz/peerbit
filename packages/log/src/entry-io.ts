@@ -4,7 +4,7 @@ import { Entry } from "./entry.js";
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { Encoding, JSON_ENCODING } from "./encoding.js";
 import { Timestamp } from "./clock.js";
-import { Blocks } from "@dao-xyz/peerbit-block";
+import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 
 export interface EntryFetchOptions<T> {
     length?: number;
@@ -76,7 +76,7 @@ export const strictFetchOptions = <T>(
 export class EntryIO {
     // Fetch log graphs in parallel
     static async fetchParallel<T>(
-        store: Blocks,
+        store: BlockStore,
         hashes: string | string[],
         options: EntryFetchAllOptions<T>
     ): Promise<Entry<T>[]> {
@@ -131,7 +131,7 @@ export class EntryIO {
     }
 
     static async fetchAll<T>(
-        store: Blocks,
+        store: BlockStore,
         hashes: string | string[],
         fetchOptions: EntryFetchAllOptions<T>
     ): Promise<Entry<T>[]> {
@@ -241,7 +241,7 @@ export class EntryIO {
                                     e,
                                     ts.wallTime
                                     /* ,
-                                    maxClock.wallTime - ts.wallTime */
+									maxClock.wallTime - ts.wallTime */
                                 ) // approximation, we ignore logical
                         );
                     }
@@ -283,7 +283,11 @@ export class EntryIO {
 
                 try {
                     // Load the entry
-                    const entry = await Entry.fromMultihash<T>(store, hash);
+                    const entry = await Entry.fromMultihash<T>(
+                        store,
+                        hash,
+                        options
+                    );
                     // Simulate network latency (for debugging purposes)
                     if (options.delay > 0) {
                         const sleep = (ms = 0) =>

@@ -1,30 +1,42 @@
 import type { PeerId } from "@libp2p/interface-peer-id";
 import { Libp2p } from "libp2p";
+import { getPublicKeyFromPeerId } from "@dao-xyz/peerbit-crypto";
+import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 
-const waitForPeers = (
-    libp2p: Libp2p | any,
-    peersToWait: (PeerId | string | Libp2p)[] | PeerId | string | Libp2p,
+const waitForPeers = async (
+    libp2p: Libp2pExtended,
+    peersToWait: (PeerId | Libp2p)[] | PeerId | Libp2p,
     topic: string
 ) => {
     const peersToWaitArr = Array.isArray(peersToWait)
         ? peersToWait
         : [peersToWait];
-    return new Promise<void>((resolve, reject) => {
-        const interval = setInterval(async () => {
-            try {
-                const peers = !!(libp2p as Libp2p).pubsub.getSubscribers
-                    ? (libp2p as Libp2p).pubsub.getSubscribers(topic)
-                    : await (libp2p as any).pubsub.peers(topic);
-                const peerIds = peers.map((peer) => peer.toString());
-                const peerIdsToWait = peersToWaitArr.map((peer) =>
-                    (peer as Libp2p).peerId
-                        ? (peer as Libp2p).peerId.toString()
-                        : peer.toString()
-                );
 
+    const peerIdsToWait = peersToWaitArr.map((peer) =>
+        (peer as Libp2p).peerId
+            ? getPublicKeyFromPeerId((peer as Libp2p).peerId).hashcode()
+            : getPublicKeyFromPeerId(peer as PeerId).hashcode()
+    );
+
+    await libp2p.directsub.requestSubscribers(topic);
+    return new Promise<void>((resolve, reject) => {
+        let counter = 0;
+        const interval = setInterval(async () => {
+            counter += 1;
+            if (counter > 100) {
+                clearInterval(interval);
+                reject(
+                    new Error(
+                        "Failed to find expected subscribers for topic: " +
+                            topic
+                    )
+                );
+            }
+            try {
+                const peers = libp2p.directsub.getSubscribers(topic);
                 const hasAllPeers =
                     peerIdsToWait
-                        .map((e) => peerIds.includes(e))
+                        .map((e) => peers && peers.has(e))
                         .filter((e) => e === false).length === 0;
 
                 // FIXME: Does not fail on timeout, not easily fixable

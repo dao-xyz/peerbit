@@ -6,7 +6,10 @@ import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
-import { Blocks, MemoryLevelBlockStore } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
 
@@ -16,7 +19,7 @@ const __dirname = dirname(__filename);
 
 let signKey: KeyWithMeta<Ed25519Keypair>;
 describe("Log - Append", function () {
-    let keystore: Keystore, store: Blocks;
+    let keystore: Keystore, store: BlockStore;
 
     beforeAll(async () => {
         rmrf.sync(testKeyStorePath(__filenameBase));
@@ -34,7 +37,7 @@ describe("Log - Append", function () {
             new Uint8Array([0])
         )) as KeyWithMeta<Ed25519Keypair>;
 
-        store = new Blocks(new MemoryLevelBlockStore());
+        store = new MemoryLevelBlockStore();
         await store.open();
     });
 
@@ -85,7 +88,7 @@ describe("Log - Append", function () {
         it("updated the clocks correctly", async () => {
             log.values.forEach((entry) => {
                 expect(entry.metadata.clock.id).toEqual(
-                    signKey.keypair.publicKey.bytes
+                    new Uint8Array(signKey.keypair.publicKey.bytes)
                 );
                 expect(entry.metadata.clock.timestamp.logical).toEqual(0);
             });
@@ -112,7 +115,6 @@ describe("Log - Append", function () {
             for (let i = 0; i < amount; i++) {
                 prev = (
                     await log.append("hello" + i, {
-                        pin: false,
                         nexts: prev ? [prev] : undefined,
                     })
                 ).entry;
@@ -145,15 +147,15 @@ describe("Log - Append", function () {
                     ).toBeGreaterThan(0);
                 }
                 expect(entry.metadata.clock.id).toEqual(
-                    signKey.keypair.publicKey.bytes
+                    new Uint8Array(signKey.keypair.publicKey.bytes)
                 );
             });
         });
 
         /*    it('added the correct amount of refs pointers', async () => {
-       log.values.forEach((entry, index) => {
-         expect(entry.refs.length).toEqual(index > 0 ? Math.ceil(Math.log2(Math.min(nextPointerAmount, index))) : 0)
-       })
-     }) */
+	   log.values.forEach((entry, index) => {
+		 expect(entry.refs.length).toEqual(index > 0 ? Math.ceil(Math.log2(Math.min(nextPointerAmount, index))) : 0)
+	   })
+	 }) */
     });
 });

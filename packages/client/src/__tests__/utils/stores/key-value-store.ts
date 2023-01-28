@@ -1,4 +1,4 @@
-import { JSON_ENCODING, Log } from "@dao-xyz/peerbit-log";
+import { JSON_ENCODING } from "@dao-xyz/peerbit-log";
 import { Store } from "@dao-xyz/peerbit-store";
 import { EncryptionTemplateMaybeEncrypted } from "@dao-xyz/peerbit-log";
 import { variant, field } from "@dao-xyz/borsh";

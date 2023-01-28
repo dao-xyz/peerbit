@@ -1,19 +1,16 @@
 import { serialize } from "@dao-xyz/borsh";
-import { toBase64 } from "./utils.js";
+import crypto from "crypto";
 
 interface Key {
     equals(other: Key): boolean;
     get bytes(): Uint8Array;
     hashcode(): string;
     toString(): string;
+    _hashcode: string;
 }
 
 export abstract class Keypair {
     abstract get publicKey(): PublicSignKey | PublicKeyEncryptionKey;
-
-    static create(): Keypair {
-        throw new Error("Not implemented");
-    }
 
     equals(other: Keypair): boolean {
         throw new Error("Not implemented");
@@ -28,7 +25,13 @@ export abstract class PublicSignKey implements Key {
     }
 
     hashcode(): string {
-        return toBase64(this.bytes);
+        return (
+            this._hashcode ||
+            (this._hashcode = crypto
+                .createHash("sha256")
+                .update(this.bytes)
+                .digest("base64"))
+        );
     }
 }
 
@@ -39,7 +42,13 @@ export abstract class PrivateSignKey implements Key {
     }
 
     hashcode(): string {
-        return toBase64(this.bytes);
+        return (
+            this._hashcode ||
+            (this._hashcode = crypto
+                .createHash("sha256")
+                .update(this.bytes)
+                .digest("base64"))
+        );
     }
 }
 
@@ -51,7 +60,13 @@ export abstract class PublicKeyEncryptionKey implements Key {
     }
 
     hashcode(): string {
-        return toBase64(this.bytes);
+        return (
+            this._hashcode ||
+            (this._hashcode = crypto
+                .createHash("sha256")
+                .update(this.bytes)
+                .digest("base64"))
+        );
     }
 }
 export interface PrivateEncryptionKey extends Key {}
@@ -61,7 +76,13 @@ export abstract class PrivateEncryptionKey implements Key {
     }
 
     hashcode(): string {
-        return toBase64(this.bytes);
+        return (
+            this._hashcode ||
+            (this._hashcode = crypto
+                .createHash("sha256")
+                .update(this.bytes)
+                .digest("base64"))
+        );
     }
 }
 
@@ -73,6 +94,12 @@ export abstract class PlainKey implements Key {
     }
 
     hashcode(): string {
-        return toBase64(this.bytes);
+        return (
+            this._hashcode ||
+            (this._hashcode = crypto
+                .createHash("sha256")
+                .update(this.bytes)
+                .digest("base64"))
+        );
     }
 }

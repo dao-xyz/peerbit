@@ -12,7 +12,8 @@ describe("server", () => {
 
     beforeAll(async () => {
         session = await LSession.connected(1);
-        peer = await Peerbit.create(session.peers[0], {
+        peer = await Peerbit.create({
+            libp2p: session.peers[0],
             directory: "./peerbit/" + +new Date(),
         });
     });
@@ -24,12 +25,12 @@ describe("server", () => {
         expect(1).toEqual(1);
     });
     /*     it("x", async () => {
-            const program = new PermissionedString({
-                store: new DString({}),
-                network: new TrustedNetwork({ rootTrust: peer.identity.publicKey }),
-            });
-            program.setupIndices();
-            const base542 = Buffer.from(serialize(program)).toString("base64");
-            const t = 123;
-        }); */
+			const program = new PermissionedString({
+				store: new DString({}),
+				network: new TrustedNetwork({ rootTrust: peer.identity.publicKey }),
+			});
+			program.setupIndices();
+			const base542 = Buffer.from(serialize(program)).toString("base64");
+			const t = 123;
+		}); */
 });

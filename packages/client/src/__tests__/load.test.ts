@@ -29,10 +29,11 @@ describe(`load`, () => {
         });
 
         beforeEach(async () => {
-            client1 = await Peerbit.create(session.peers[0], {
+            client1 = await Peerbit.create({
+                libp2p: session.peers[0],
                 directory: dbPath + "/" + uuid(),
                 storage: {
-                    createStore: (string?: string) => createStore(string),
+                    createStore: () => createStore(),
                 },
             }); // We do custom store to prevent sideeffects when writing to disc
 
@@ -40,9 +41,7 @@ describe(`load`, () => {
 
             for (let i = 0; i < entryCount; i++) entryArr.push(i);
 
-            db = await client1.open(new EventStore<string>({}), {
-                topic: uuid(),
-            });
+            db = await client1.open(new EventStore<string>({}));
             address = db.address!.toString();
             await mapSeries(entryArr, (i) => db.add("hello" + i));
             await db.close();
@@ -57,10 +56,9 @@ describe(`load`, () => {
         it("loads database from local cache", async () => {
             db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    client1._store,
+                    client1.libp2p.directblock,
                     Address.parse(address)
-                ),
-                { topic: uuid() }
+                )
             );
             await db.load();
             await waitFor(
@@ -78,10 +76,9 @@ describe(`load`, () => {
             const amount = 3;
             db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    client1._store,
+                    client1.libp2p.directblock,
                     Address.parse(address)
-                ),
-                { topic: uuid() }
+                )
             );
             await db.store.load(amount);
             await waitFor(
@@ -105,10 +102,9 @@ describe(`load`, () => {
             for (let i = 0; i < amount; i++) {
                 db = await client1.open(
                     await EventStore.load<EventStore<string>>(
-                        client1._store,
+                        client1.libp2p.directblock,
                         Address.parse(address)
-                    ),
-                    { topic: uuid() }
+                    )
                 );
                 await db.load();
                 await waitFor(
@@ -128,32 +124,31 @@ describe(`load`, () => {
         });
 
         /* it('closes database while loading', async () => { TODO fix
-      db = await client1.open(address, { type: EVENT_STORE_TYPE, replicationConcurrency: 1 })
-      return new Promise(async (resolve, reject) => {
-        // don't wait for load to finish
-        db.load()
-          .then(() => reject("Should not finish loading?"))
-          .catch(e => {
-            if (e.toString() !== 'ReadError: Database is not open') {
-              reject(e)
-            } else {
-              expect(db._cache._store).toEqual( null)
-              resolve(true)
-            }
-          })
-        await db.close()
-      })
-    }) */
+	  db = await client1.open(address, { type: EVENT_STORE_TYPE, replicationConcurrency: 1 })
+	  return new Promise(async (resolve, reject) => {
+		// don't wait for load to finish
+		db.load()
+		  .then(() => reject("Should not finish loading?"))
+		  .catch(e => {
+			if (e.toString() !== 'ReadError: Database is not open') {
+			  reject(e)
+			} else {
+			  expect(db._cache._store).toEqual( null)
+			  resolve(true)
+			}
+		  })
+		await db.close()
+	  })
+	}) */
 
         it("load, add one, close - several times", async () => {
             const amount = 8;
             for (let i = 0; i < amount; i++) {
                 db = await client1.open(
                     await EventStore.load<EventStore<string>>(
-                        client1._store,
+                        client1.libp2p.directblock,
                         Address.parse(address)
-                    ),
-                    { topic: uuid() }
+                    )
                 );
                 await db.load();
                 await waitFor(
@@ -180,11 +175,10 @@ describe(`load`, () => {
             let done = false;
             db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    client1._store,
+                    client1.libp2p.directblock,
                     Address.parse(address)
                 ),
                 {
-                    topic: uuid(),
                     onReady: async (store) => {
                         await waitFor(
                             () =>
@@ -212,11 +206,10 @@ describe(`load`, () => {
             let done = false;
             db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    client1._store,
+                    client1.libp2p.directblock,
                     Address.parse(address)
                 ),
                 {
-                    topic: uuid(),
                     onLoadProgress: (store, entry) => {
                         count++;
                         expect(address).toEqual(db.address!.toString());
@@ -267,10 +260,11 @@ describe(`load`, () => {
         });
 
         beforeEach(async () => {
-            client1 = await Peerbit.create(session.peers[0], {
+            client1 = await Peerbit.create({
+                libp2p: session.peers[0],
                 directory: dbPath + "/" + uuid(),
                 storage: {
-                    createStore: (string?: string) => createStore(string),
+                    createStore: () => createStore(),
                 },
             }); // We do custom store to prevent sideeffects when writing to disc
 
@@ -278,9 +272,7 @@ describe(`load`, () => {
 
             for (let i = 0; i < entryCount; i++) entryArr.push(i);
 
-            db = await client1.open(new MultipleStores(), {
-                topic: uuid(),
-            });
+            db = await client1.open(new MultipleStores());
             address = db.address!.toString();
             await mapSeries(entryArr, (i) => db.db.add("a" + i));
             await mapSeries(entryArr, (i) => db.db2.add("b" + i));
@@ -296,10 +288,9 @@ describe(`load`, () => {
         it("loads database from local cache", async () => {
             db = await client1.open(
                 await MultipleStores.load<MultipleStores>(
-                    client1._store,
+                    client1.libp2p.directblock,
                     Address.parse(address)
-                ),
-                { topic: uuid() }
+                )
             );
             await db.load();
             await waitFor(
@@ -329,163 +320,163 @@ describe(`load`, () => {
         });
 
         /* it("loads database partially", async () => {
-            const amount = 3;
-            db = await client1.open(
-                await EventStore.load<EventStore<string>>(
-                    client1._store,
-                    Address.parse(address)
-                ),
-                { topic: uuid() }
-            );
-            await db.store.load(amount);
-            await waitFor(
-                () => db.iterator({ limit: -1 }).collect().length === amount
-            );
-            const items = db.iterator({ limit: -1 }).collect();
-            expect(items.length).toEqual(amount);
-            expect(items[0].payload.getValue().value).toEqual(
-                "hello" + (entryCount - amount)
-            );
-            expect(items[1].payload.getValue().value).toEqual(
-                "hello" + (entryCount - amount + 1)
-            );
-            expect(items[items.length - 1].payload.getValue().value).toEqual(
-                "hello" + (entryCount - 1)
-            );
-        });
+			const amount = 3;
+			db = await client1.open(
+				await EventStore.load<EventStore<string>>(
+					client1._store,
+					Address.parse(address)
+				),
+				{ topic: uuid() }
+			);
+			await db.store.load(amount);
+			await waitFor(
+				() => db.iterator({ limit: -1 }).collect().length === amount
+			);
+			const items = db.iterator({ limit: -1 }).collect();
+			expect(items.length).toEqual(amount);
+			expect(items[0].payload.getValue().value).toEqual(
+				"hello" + (entryCount - amount)
+			);
+			expect(items[1].payload.getValue().value).toEqual(
+				"hello" + (entryCount - amount + 1)
+			);
+			expect(items[items.length - 1].payload.getValue().value).toEqual(
+				"hello" + (entryCount - 1)
+			);
+		});
 
-        it("load and close several times", async () => {
-            const amount = 8;
-            for (let i = 0; i < amount; i++) {
-                db = await client1.open(
-                    await EventStore.load<EventStore<string>>(
-                        client1._store,
-                        Address.parse(address)
-                    ),
-                    { topic: uuid() }
-                );
-                await db.load();
-                await waitFor(
-                    () =>
-                        db.iterator({ limit: -1 }).collect().length ===
-                        entryCount
-                );
-                const items = db.iterator({ limit: -1 }).collect();
-                expect(items.length).toEqual(entryCount);
-                expect(items[0].payload.getValue().value).toEqual("hello0");
-                expect(items[1].payload.getValue().value).toEqual("hello1");
-                expect(
-                    items[items.length - 1].payload.getValue().value
-                ).toEqual("hello" + (entryCount - 1));
-                await db.close();
-            }
-        }); */
+		it("load and close several times", async () => {
+			const amount = 8;
+			for (let i = 0; i < amount; i++) {
+				db = await client1.open(
+					await EventStore.load<EventStore<string>>(
+						client1._store,
+						Address.parse(address)
+					),
+					{ topic: uuid() }
+				);
+				await db.load();
+				await waitFor(
+					() =>
+						db.iterator({ limit: -1 }).collect().length ===
+						entryCount
+				);
+				const items = db.iterator({ limit: -1 }).collect();
+				expect(items.length).toEqual(entryCount);
+				expect(items[0].payload.getValue().value).toEqual("hello0");
+				expect(items[1].payload.getValue().value).toEqual("hello1");
+				expect(
+					items[items.length - 1].payload.getValue().value
+				).toEqual("hello" + (entryCount - 1));
+				await db.close();
+			}
+		}); */
 
         /* it('closes database while loading', async () => { TODO fix
-      db = await client1.open(address, { type: EVENT_STORE_TYPE, replicationConcurrency: 1 })
-      return new Promise(async (resolve, reject) => {
-        // don't wait for load to finish
-        db.load()
-          .then(() => reject("Should not finish loading?"))
-          .catch(e => {
-            if (e.toString() !== 'ReadError: Database is not open') {
-              reject(e)
-            } else {
-              expect(db._cache._store).toEqual( null)
-              resolve(true)
-            }
-          })
-        await db.close()
-      })
-    }) */
+	  db = await client1.open(address, { type: EVENT_STORE_TYPE, replicationConcurrency: 1 })
+	  return new Promise(async (resolve, reject) => {
+		// don't wait for load to finish
+		db.load()
+		  .then(() => reject("Should not finish loading?"))
+		  .catch(e => {
+			if (e.toString() !== 'ReadError: Database is not open') {
+			  reject(e)
+			} else {
+			  expect(db._cache._store).toEqual( null)
+			  resolve(true)
+			}
+		  })
+		await db.close()
+	  })
+	}) */
 
         /*  it("load, add one, close - several times", async () => {
-             const amount = 8;
-             for (let i = 0; i < amount; i++) {
-                 db = await client1.open(
-                     await EventStore.load<EventStore<string>>(
-                         client1._store,
-                         Address.parse(address)
-                     ),
-                     { topic: uuid() }
-                 );
-                 await db.load();
-                 await waitFor(
-                     () =>
-                         db.iterator({ limit: -1 }).collect().length ===
-                         entryCount + i
-                 );
-                 await db.add("hello" + (entryCount + i));
-                 await waitFor(
-                     () =>
-                         db.iterator({ limit: -1 }).collect().length ===
-                         entryCount + i + 1
-                 );
-                 const items = db.iterator({ limit: -1 }).collect();
-                 expect(items.length).toEqual(entryCount + i + 1);
-                 expect(
-                     items[items.length - 1].payload.getValue().value
-                 ).toEqual("hello" + (entryCount + i));
-                 await db.close();
-             }
-         });
+			 const amount = 8;
+			 for (let i = 0; i < amount; i++) {
+				 db = await client1.open(
+					 await EventStore.load<EventStore<string>>(
+						 client1._store,
+						 Address.parse(address)
+					 ),
+					 { topic: uuid() }
+				 );
+				 await db.load();
+				 await waitFor(
+					 () =>
+						 db.iterator({ limit: -1 }).collect().length ===
+						 entryCount + i
+				 );
+				 await db.add("hello" + (entryCount + i));
+				 await waitFor(
+					 () =>
+						 db.iterator({ limit: -1 }).collect().length ===
+						 entryCount + i + 1
+				 );
+				 const items = db.iterator({ limit: -1 }).collect();
+				 expect(items.length).toEqual(entryCount + i + 1);
+				 expect(
+					 items[items.length - 1].payload.getValue().value
+				 ).toEqual("hello" + (entryCount + i));
+				 await db.close();
+			 }
+		 });
  
-         it("loading a database emits 'ready' event", async () => {
-             let done = false;
-             db = await client1.open(
-                 await EventStore.load<EventStore<string>>(
-                     client1._store,
-                     Address.parse(address)
-                 ),
-                 {
-                     topic: uuid(),
-                     onReady: async (store) => {
-                         await waitFor(
-                             () =>
-                                 db.iterator({ limit: -1 }).collect().length ===
-                                 entryCount
-                         );
-                         const items = db.iterator({ limit: -1 }).collect();
-                         expect(items.length).toEqual(entryCount);
-                         expect(items[0].payload.getValue().value).toEqual(
-                             "hello0"
-                         );
-                         expect(
-                             items[items.length - 1].payload.getValue().value
-                         ).toEqual("hello" + (entryCount - 1));
-                         done = true;
-                     },
-                 }
-             );
-             await db.load();
-             await waitFor(() => done);
-         });
+		 it("loading a database emits 'ready' event", async () => {
+			 let done = false;
+			 db = await client1.open(
+				 await EventStore.load<EventStore<string>>(
+					 client1._store,
+					 Address.parse(address)
+				 ),
+				 {
+					 topic: uuid(),
+					 onReady: async (store) => {
+						 await waitFor(
+							 () =>
+								 db.iterator({ limit: -1 }).collect().length ===
+								 entryCount
+						 );
+						 const items = db.iterator({ limit: -1 }).collect();
+						 expect(items.length).toEqual(entryCount);
+						 expect(items[0].payload.getValue().value).toEqual(
+							 "hello0"
+						 );
+						 expect(
+							 items[items.length - 1].payload.getValue().value
+						 ).toEqual("hello" + (entryCount - 1));
+						 done = true;
+					 },
+				 }
+			 );
+			 await db.load();
+			 await waitFor(() => done);
+		 });
  
-         it("loading a database emits 'load.progress' event", async () => {
-             let count = 0;
-             let done = false;
-             db = await client1.open(
-                 await EventStore.load<EventStore<string>>(
-                     client1._store,
-                     Address.parse(address)
-                 ),
-                 {
-                     topic: uuid(),
-                     onLoadProgress: (store, entry) => {
-                         count++;
-                         expect(address).toEqual(db.address!.toString());
+		 it("loading a database emits 'load.progress' event", async () => {
+			 let count = 0;
+			 let done = false;
+			 db = await client1.open(
+				 await EventStore.load<EventStore<string>>(
+					 client1._store,
+					 Address.parse(address)
+				 ),
+				 {
+					 topic: uuid(),
+					 onLoadProgress: (store, entry) => {
+						 count++;
+						 expect(address).toEqual(db.address!.toString());
  
-                         assert.notEqual(entry.hash, null);
-                         assert.notEqual(entry, null);
-                         if (count === entryCount) {
-                             done = true;
-                         }
-                     },
-                 }
-             );
-             await db.load();
-             await waitFor(() => done);
-         }); */
+						 assert.notEqual(entry.hash, null);
+						 assert.notEqual(entry, null);
+						 if (count === entryCount) {
+							 done = true;
+						 }
+					 },
+				 }
+			 );
+			 await db.load();
+			 await waitFor(() => done);
+		 }); */
     });
 
     describe("load from empty snapshot", function () {
@@ -503,7 +494,8 @@ describe(`load`, () => {
         });
 
         beforeEach(async () => {
-            client1 = await Peerbit.create(session.peers[0], {
+            client1 = await Peerbit.create({
+                libp2p: session.peers[0],
                 directory: dbPath + "/" + uuid(),
             });
         });
@@ -513,18 +505,16 @@ describe(`load`, () => {
         });
 
         it("loads database from an empty snapshot", async () => {
-            const options = { topic: uuid() };
-            db = await client1.open(new EventStore<string>({}), options);
+            db = await client1.open(new EventStore<string>({}));
             address = db.address!.toString();
             await db.saveSnapshot();
             await db.close();
 
             db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    client1._store,
+                    client1.libp2p.directblock,
                     Address.parse(address)
-                ),
-                options
+                )
             );
             await db.loadFromSnapshot();
             const items = db.iterator({ limit: -1 }).collect();
@@ -547,10 +537,11 @@ describe(`load`, () => {
         });
 
         beforeEach(async () => {
-            client1 = await Peerbit.create(session.peers[0], {
+            client1 = await Peerbit.create({
+                libp2p: session.peers[0],
                 directory: dbPath + "/" + uuid(),
                 storage: {
-                    createStore: (string?: string) => createStore(string),
+                    createStore: () => createStore(),
                 },
             });
 
@@ -558,9 +549,7 @@ describe(`load`, () => {
 
             for (let i = 0; i < entryCount; i++) entryArr.push(i);
 
-            db = await client1.open(new EventStore<string>({}), {
-                topic: uuid(),
-            });
+            db = await client1.open(new EventStore<string>({}));
             address = db.address!.toString();
             await mapSeries(entryArr, (i) => db.add("hello" + i));
             await db.saveSnapshot();
@@ -576,10 +565,9 @@ describe(`load`, () => {
         it("loads database from snapshot", async () => {
             db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    client1._store,
+                    client1.libp2p.directblock,
                     Address.parse(address)
-                ),
-                { topic: uuid() }
+                )
             );
             await db.loadFromSnapshot();
             const items = db.iterator({ limit: -1 }).collect();
@@ -595,10 +583,9 @@ describe(`load`, () => {
             for (let i = 0; i < amount; i++) {
                 db = await client1.open(
                     await EventStore.load<EventStore<string>>(
-                        client1._store,
+                        client1.libp2p.directblock,
                         Address.parse(address)
-                    ),
-                    { topic: uuid() }
+                    )
                 );
                 await db.loadFromSnapshot();
                 const expectedCount = entryCount + i;
@@ -620,22 +607,19 @@ describe(`load`, () => {
         });
 
         it("throws an error when trying to load a missing snapshot", async () => {
-            const options = { topic: uuid() };
             db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    client1._store,
+                    client1.libp2p.directblock,
                     Address.parse(address)
-                ),
-                options
+                )
             );
             await db.drop();
             db = null as any;
             db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    client1._store,
+                    client1.libp2p.directblock,
                     Address.parse(address)
-                ),
-                options
+                )
             );
 
             let err;
@@ -653,11 +637,10 @@ describe(`load`, () => {
             let done = false;
             db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    client1._store,
+                    client1.libp2p.directblock,
                     Address.parse(address)
                 ),
                 {
-                    topic: uuid(),
                     onReady: (store) => {
                         const items = db.iterator({ limit: -1 }).collect();
                         expect(items.length).toEqual(entryCount);
@@ -680,11 +663,10 @@ describe(`load`, () => {
             let count = 0;
             db = await client1.open(
                 await EventStore.load<EventStore<string>>(
-                    client1._store,
+                    client1.libp2p.directblock,
                     Address.parse(address)
                 ),
                 {
-                    topic: uuid(),
                     onLoadProgress: (store, entry) => {
                         count++;
                         expect(address).toEqual(db.address!.toString());

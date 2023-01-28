@@ -1,11 +1,9 @@
-import rmrf from "rimraf";
 import { Peerbit } from "../peer";
 import { EventStore } from "./utils/stores/event-store";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { SimpleStoreContract } from "./utils/access";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
-describe(`shared`, function () {
+describe(`shared`, () => {
     let session: LSession;
     let client1: Peerbit,
         client2: Peerbit,
@@ -13,7 +11,7 @@ describe(`shared`, function () {
         db2: SimpleStoreContract;
 
     beforeAll(async () => {
-        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(2);
     });
 
     afterAll(async () => {
@@ -21,8 +19,8 @@ describe(`shared`, function () {
     });
 
     beforeEach(async () => {
-        client1 = await Peerbit.create(session.peers[0], {});
-        client2 = await Peerbit.create(session.peers[1], {});
+        client1 = await Peerbit.create({ libp2p: session.peers[0] });
+        client2 = await Peerbit.create({ libp2p: session.peers[1] });
     });
 
     afterEach(async () => {
@@ -36,18 +34,15 @@ describe(`shared`, function () {
     });
 
     it("open same store twice will share instance", async () => {
-        const topic = "topic";
         db1 = await client1.open(
             new SimpleStoreContract({
                 store: new EventStore({ id: "some db" }),
-            }),
-            { topic: topic }
+            })
         );
         const sameDb = await client1.open(
             new SimpleStoreContract({
                 store: new EventStore({ id: "some db" }),
-            }),
-            { topic: topic }
+            })
         );
         expect(db1 === sameDb);
     });
@@ -59,16 +54,14 @@ describe(`shared`, function () {
                 store: new EventStore<string>({
                     id: "event store",
                 }),
-            }),
-            { topic: topic }
+            })
         );
         db2 = await client1.open(
             new SimpleStoreContract({
                 store: new EventStore<string>({
                     id: "event store",
                 }),
-            }),
-            { topic: topic }
+            })
         );
         expect(db1 !== db2);
         expect(db1.store === db2.store);

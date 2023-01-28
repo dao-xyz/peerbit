@@ -8,7 +8,10 @@ import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
 
@@ -17,7 +20,9 @@ const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 
 describe("Log - Join Concurrent Entries", function () {
-    let store: Blocks, keystore: Keystore, signKey: KeyWithMeta<Ed25519Keypair>;
+    let store: BlockStore,
+        keystore: Keystore,
+        signKey: KeyWithMeta<Ed25519Keypair>;
 
     beforeAll(async () => {
         rmrf.sync(testKeyStorePath(__filenameBase));
@@ -33,7 +38,7 @@ describe("Log - Join Concurrent Entries", function () {
         // @ts-ignore
         signKey = await keystore.getKey(new Uint8Array([0]));
 
-        store = new Blocks(new MemoryLevelBlockStore());
+        store = new MemoryLevelBlockStore();
         await store.open();
     });
 
@@ -104,32 +109,32 @@ describe("Log - Join Concurrent Entries", function () {
         });
 
         /*  Below test is not true any more since we are using HLC
-        it("Concurrently appending same payload after join results in same state", async () => {
-            for (let i = 10; i < 20; i++) {
-                await log1.append("hello1-" + i);
-                await log2.append("hello2-" + i);
-            }
+		it("Concurrently appending same payload after join results in same state", async () => {
+			for (let i = 10; i < 20; i++) {
+				await log1.append("hello1-" + i);
+				await log2.append("hello2-" + i);
+			}
 
-            await log1.join(log2);
-            await log2.join(log1);
+			await log1.join(log2);
+			await log2.join(log1);
 
-            await log1.append("same");
-            await log2.append("same");
+			await log1.append("same");
+			await log2.append("same");
 
-            const hash1 = await log1.toMultihash();
-            const hash2 = await log2.toMultihash();
+			const hash1 = await log1.toMultihash();
+			const hash2 = await log2.toMultihash();
 
-            expect(hash1).toEqual(hash2);
-            expect(log1.length).toEqual(41);
-            expect(log2.length).toEqual(41);
-            assert.deepStrictEqual(
-                log1.values.map((e) => e.payload.getValue()),
-                log2.values.map((e) => e.payload.getValue())
-            );
-        }); */
+			expect(hash1).toEqual(hash2);
+			expect(log1.length).toEqual(41);
+			expect(log2.length).toEqual(41);
+			assert.deepStrictEqual(
+				log1.values.map((e) => e.payload.getValue()),
+				log2.values.map((e) => e.payload.getValue())
+			);
+		}); */
 
         /*  it("Joining after concurrently appending same payload joins entry once", async () => {
 
-         }); */
+		 }); */
     });
 });

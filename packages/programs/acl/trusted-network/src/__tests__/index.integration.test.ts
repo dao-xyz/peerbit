@@ -15,13 +15,11 @@ import {
     Ed25519Keypair,
     PeerIdAddress,
 } from "@dao-xyz/peerbit-crypto";
-import { Secp256k1PublicKey } from "@dao-xyz/peerbit-crypto";
+import { Secp256k1Keccak256PublicKey } from "@dao-xyz/peerbit-crypto";
 import { Identity } from "@dao-xyz/peerbit-log";
 import { Wallet } from "@ethersproject/wallet";
 import { createStore } from "@dao-xyz/peerbit-test-utils";
 import { AbstractLevel } from "abstract-level";
-import { fileURLToPath } from "url";
-import path from "path";
 import {
     CachedValue,
     DefaultOptions,
@@ -36,14 +34,6 @@ import {
     Results,
 } from "@dao-xyz/peerbit-document";
 import { v4 as uuid } from "uuid";
-import {
-    DEFAULT_BLOCK_TRANSPORT_TOPIC,
-    LibP2PBlockStore,
-    MemoryLevelBlockStore,
-    Blocks,
-} from "@dao-xyz/peerbit-block";
-
-const __filename = fileURLToPath(import.meta.url);
 
 const createIdentity = async () => {
     const ed = await Ed25519Keypair.create();
@@ -70,12 +60,12 @@ class IdentityGraph extends Program {
 }
 describe("index", () => {
     let session: LSession,
-        stores: Blocks[],
         identites: Identity[],
-        cacheStore: AbstractLevel<any, string, Uint8Array>[];
+        cacheStore: AbstractLevel<any, string, Uint8Array>[],
+        programs: Program[];
 
     const identity = (i: number) => identites[i];
-    const init = (
+    const init = async (
         store: Program,
         i: number,
         options: {
@@ -83,45 +73,37 @@ describe("index", () => {
             replicate?: boolean;
             store?: IStoreOptions<any>;
         }
-    ) =>
+    ) => {
         store.init &&
-        store.init(session.peers[i], stores[i], identites[i], {
-            ...options,
-            replicate:
-                options.replicate !== undefined ? options.replicate : true,
-            store: {
-                ...DefaultOptions,
-                resolveCache: async () => new Cache<CachedValue>(cacheStore[i]),
-                ...options.store,
-            },
-        });
+            (await store.init(session.peers[i], identites[i], {
+                ...options,
+                replicate: options.replicate ?? true,
+                store: {
+                    ...DefaultOptions,
+                    resolveCache: async () =>
+                        new Cache<CachedValue>(cacheStore[i]),
+                    ...options.store,
+                },
+            }));
+        programs.push(store);
+        return store;
+    };
     beforeAll(async () => {
-        session = await LSession.connected(4, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(5);
         identites = [];
         cacheStore = [];
-        stores = [];
+        programs = [];
+
         for (let i = 0; i < session.peers.length; i++) {
             identites.push(await createIdentity());
-            cacheStore.push(
-                await createStore(
-                    path.join(__filename, "/cache/" + i.toString())
-                )
-            );
-            const store = new Blocks(
-                new LibP2PBlockStore(
-                    session.peers[i],
-                    new MemoryLevelBlockStore()
-                )
-            );
-            await store.open();
-            stores.push(store);
+            cacheStore.push(await createStore());
         }
     });
 
     afterAll(async () => {
+        await Promise.all(programs.map((p) => p.close()));
         await session.stop();
         await Promise.all(cacheStore?.map((c) => c.close()));
-        await Promise.all(stores?.map((c) => c.close()));
     });
     describe("identity-graph", () => {
         it("serializes relation with right padding ed25519", async () => {
@@ -141,7 +123,7 @@ describe("index", () => {
         });
 
         it("serializes relation with right padding sepc256k1", async () => {
-            const from = new Secp256k1PublicKey({
+            const from = new Secp256k1Keccak256PublicKey({
                 address: await Wallet.createRandom().getAddress(),
             });
             const to = (await Ed25519Keypair.create()).publicKey;
@@ -159,7 +141,7 @@ describe("index", () => {
         });
 
         it("serializes relation with right padding ipfs address", async () => {
-            const from = new Secp256k1PublicKey({
+            const from = new Secp256k1Keccak256PublicKey({
                 address: await Wallet.createRandom().getAddress(),
             });
             const to = new PeerIdAddress({ address: "abc123" });
@@ -178,7 +160,7 @@ describe("index", () => {
 
         it("path", async () => {
             const a = (await Ed25519Keypair.create()).publicKey;
-            const b = new Secp256k1PublicKey({
+            const b = new Secp256k1Keccak256PublicKey({
                 address: await Wallet.createRandom().getAddress(),
             });
             const c = (await Ed25519Keypair.create()).publicKey;
@@ -246,7 +228,7 @@ describe("index", () => {
 
         it("can revoke", async () => {
             const a = (await Ed25519Keypair.create()).publicKey;
-            const b = new Secp256k1PublicKey({
+            const b = new Secp256k1Keccak256PublicKey({
                 address: await Wallet.createRandom().getAddress(),
             });
 
@@ -300,7 +282,7 @@ describe("index", () => {
 
             await delay(1000);
             let l0b: TrustedNetwork = (await TrustedNetwork.load(
-                stores[1],
+                session.peers[1].directblock,
                 l0a.address!
             )) as any;
             await init(l0b, 1, { topic });
@@ -325,7 +307,7 @@ describe("index", () => {
             // Try query with trusted
             let responses: Results<IdentityRelation>[] = [];
             let l0c: TrustedNetwork = (await TrustedNetwork.load(
-                stores[2],
+                session.peers[2].directblock,
                 l0a.address!
             )) as any;
             await init(l0c, 2, { topic });
@@ -351,7 +333,7 @@ describe("index", () => {
 
             // Try query with untrusted
             let l0d: TrustedNetwork = (await TrustedNetwork.load(
-                stores[3],
+                session.peers[3].directblock,
                 l0a.address!
             )) as any;
             await init(l0d, 3, { topic });
@@ -376,15 +358,10 @@ describe("index", () => {
 
             // check if peer3 is trusted from a peer that is not replicating
             let l0observer: TrustedNetwork = (await TrustedNetwork.load(
-                new Blocks(
-                    new LibP2PBlockStore(
-                        session.peers[1],
-                        new MemoryLevelBlockStore()
-                    )
-                ),
+                session.peers[4].directblock,
                 l0a.address!
             )) as any;
-            await init(l0observer, 1, {
+            await init(l0observer, 4, {
                 topic,
                 replicate: false,
                 store: {},
@@ -429,10 +406,10 @@ describe("index", () => {
             expect(
                 l0a.trustGraph.put(
                     new IdentityRelation({
-                        to: new Secp256k1PublicKey({
+                        to: new Secp256k1Keccak256PublicKey({
                             address: await Wallet.createRandom().getAddress(),
                         }),
-                        from: new Secp256k1PublicKey({
+                        from: new Secp256k1Keccak256PublicKey({
                             address: await Wallet.createRandom().getAddress(),
                         }),
                     })
@@ -449,12 +426,7 @@ describe("index", () => {
             await init(l0a, 0, { topic });
 
             let l0b: TrustedNetwork = (await TrustedNetwork.load(
-                new Blocks(
-                    new LibP2PBlockStore(
-                        session.peers[1],
-                        new MemoryLevelBlockStore()
-                    )
-                ),
+                session.peers[1].directblock,
                 l0a.address!
             )) as any;
             await init(l0b, 1, { topic });

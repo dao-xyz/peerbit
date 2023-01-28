@@ -31,12 +31,12 @@
         "crdt"
     ],
     "dependencies": {
-        "@dao-xyz/borsh": "^4.0.7",
-        "@dao-xyz/peerbit-block": "^0.0.15",
+        "libp2p": "^0.42.0",
+        "@dao-xyz/borsh": "^5.1.4",
+        "@dao-xyz/libp2p-direct-block": "^0.0.15",
         "@dao-xyz/peerbit-crypto": "^0.0.34",
         "@dao-xyz/peerbit-logger": "^0.0.4",
         "json-stringify-deterministic": "^1.0.7",
-        "multihashing-async": "^2.0.1",
         "p-do-whilst": "^1.1.0",
         "p-each-series": "^3.0.0",
         "p-map": "^5.5.0",

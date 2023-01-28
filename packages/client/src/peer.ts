@@ -1,13 +1,12 @@
 import { IStoreOptions, Store } from "@dao-xyz/peerbit-store";
 import Cache from "@dao-xyz/peerbit-cache";
 import { Keystore, KeyWithMeta, StoreError } from "@dao-xyz/peerbit-keystore";
-import { isDefined } from "./is-defined.js";
 import { AbstractLevel } from "abstract-level";
 import { Level } from "level";
 import { MemoryLevel } from "memory-level";
 import { multiaddr } from "@multiformats/multiaddr";
 import {
-    exchangeHeads,
+    createExchangeHeadsMessage,
     ExchangeHeadsMessage,
     AbsolutMinReplicas,
     EntryWithRefs,
@@ -16,68 +15,51 @@ import {
 import { Entry, Identity } from "@dao-xyz/peerbit-log";
 import { serialize, deserialize, BorshError } from "@dao-xyz/borsh";
 import { TransportMessage } from "./message.js";
-import type {
-    Message as PubSubMessage,
-    SignedMessage as SignedPubSubMessage,
-} from "@libp2p/interface-pubsub";
-import { SharedChannel, SharedIPFSChannel } from "./channel.js";
-import {
-    exchangeKeys,
-    KeyResponseMessage,
-    KeyAccessCondition,
-    recieveKeys,
-    requestAndWaitForKeys,
-    RequestKeyMessage,
-    RequestKeyCondition,
-    RequestKeysByKey,
-    RequestKeysByAddress,
-} from "./exchange-keys.js";
 import {
     X25519PublicKey,
-    PeerIdAddress,
     AccessError,
     DecryptedThing,
     Ed25519Keypair,
     EncryptedThing,
     MaybeEncrypted,
     PublicKeyEncryptionResolver,
-    PublicSignKey,
     X25519Keypair,
+    Ed25519PublicKey,
+    Ed25519PrivateKey,
+    getKeypairFromPeerId,
+    Sec256k1Keccak256Keypair,
 } from "@dao-xyz/peerbit-crypto";
-import LRU from "lru-cache";
-import { DirectChannel } from "@dao-xyz/libp2p-pubsub-direct-channel";
 import { encryptionWithRequestKey } from "./encryption.js";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
-import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
-import {
-    AbstractProgram,
-    CanOpenSubPrograms,
-    Program,
-    Address,
-} from "@dao-xyz/peerbit-program";
+import { Program, Address, CanTrust } from "@dao-xyz/peerbit-program";
 import PQueue from "p-queue";
-import { Libp2p } from "libp2p";
-import { IpfsPubsubPeerMonitor } from "@dao-xyz/libp2p-pubsub-peer-monitor";
-import type { PeerId } from "@libp2p/interface-peer-id";
-import {
-    exchangeSwarmAddresses,
-    ExchangeSwarmMessage,
-} from "./exchange-network.js";
-import { getNetwork, network } from "./network.js";
+import type { Ed25519PeerId } from "@libp2p/interface-peer-id";
+import { ExchangeSwarmMessage } from "./exchange-network.js";
 import isNode from "is-node";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import {
-    LibP2PBlockStore,
-    LevelBlockStore,
-    Blocks,
-    BlockStore,
-} from "@dao-xyz/peerbit-block";
+    PubSubData,
+    Subscription,
+    SubscriptionEvent,
+    UnsubcriptionEvent,
+} from "@dao-xyz/libp2p-direct-sub";
 import sodium from "libsodium-wrappers";
-import { delay } from "@dao-xyz/peerbit-time";
 import path from "path-browserify";
-import { waitFor, TimeoutError } from "@dao-xyz/peerbit-time";
+import { TimeoutError } from "@dao-xyz/peerbit-time";
+import "@libp2p/peer-id";
+import { peerIdFromString } from "@libp2p/peer-id";
+import { Libp2p } from "libp2p";
+import { createLibp2pExtended, Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
+import { equals } from "uint8arrays";
+import {
+    ObserverType,
+    OBSERVER_TYPE_VARIANT,
+    ReplicatorType,
+    REPLICATOR_TYPE_VARIANT,
+    SubscriptionType,
+} from "./replicator.js";
 export const logger = loggerFn({ module: "peer" });
-await sodium.ready;
 
 const MIN_REPLICAS = 2;
 
@@ -93,29 +75,25 @@ export type Storage = {
 export type OptionalCreateOptions = {
     limitSigning?: boolean;
     minReplicas?: number;
-    waitForKeysTimout?: number;
     store?: BlockStore;
-    canOpenProgram?(
-        address: string,
-        topic?: string,
-        entryToReplicate?: Entry<any>
-    ): Promise<boolean>;
+    refreshIntreval?: number;
 };
 export type CreateOptions = {
     keystore: Keystore;
     identity: Identity;
     directory?: string;
-    peerId: PeerId;
+    peerId: Ed25519PeerId;
     storage: Storage;
     cache: Cache<any>;
     localNetwork: boolean;
     browser?: boolean;
 } & OptionalCreateOptions;
 export type CreateInstanceOptions = {
+    libp2p?: Libp2p | Libp2pExtended;
     storage?: Storage;
     directory?: string;
     keystore?: Keystore;
-    peerId?: PeerId;
+    peerId?: Ed25519PeerId;
     identity?: Identity;
     cache?: Cache<any>;
     localNetwork?: boolean;
@@ -127,9 +105,7 @@ export type OpenOptions = {
     replicate?: boolean;
     directory?: string;
     timeout?: number;
-    minReplicas?: MinReplicas;
-    verifyCanOpen?: boolean;
-    topic?: string;
+    minReplicas?: MinReplicas | number;
 } & IStoreOptions<any>;
 
 const groupByGid = async <T extends Entry<any> | EntryWithRefs<any>>(
@@ -150,133 +126,241 @@ const groupByGid = async <T extends Entry<any> | EntryWithRefs<any>>(
     return groupByGid;
 };
 
-export const getObserverTopic = (topic: string) => {
-    return topic;
-};
-
-export const getReplicationTopic = (topic: string) => {
-    return topic + "!";
-};
-export const isReplicationTopic = (topic: string) => {
-    return topic.endsWith("!");
-};
-
 export class Peerbit {
-    _libp2p: Libp2p;
-    _store: Blocks;
-    _directConnections: Map<string, SharedChannel<DirectChannel>>;
-    _topicSubscriptions: Map<string, SharedChannel<SharedIPFSChannel>>;
+    _libp2p: Libp2pExtended;
 
+    // User id
     identity: Identity;
-    id: PeerId;
+
+    // Node id
+    id: Ed25519PeerId;
+    idKey: Ed25519Keypair;
+    idKeyHash: string;
+    idIdentity: Identity;
+
     directory?: string;
     storage: Storage;
     caches: { [key: string]: { cache: Cache<any>; handlers: Set<string> } };
     keystore: Keystore;
     _minReplicas: number;
-    /// topic => program address => Program metadata
-    programs: Map<string, Map<string, ProgramWithMetadata>>;
+    /// program address => Program metadata
+    programs: Map<string, ProgramWithMetadata>;
     limitSigning: boolean;
     localNetwork: boolean;
     browser: boolean; // is running inside of browser?
 
-    _gidPeersHistory: Map<string, Set<string>> = new Map();
-    _waitForKeysTimeout: number | undefined;
-    _keysInflightMap: Map<string, Promise<any>> = new Map(); // TODO fix types
-    _keyRequestsLRU: LRU<
-        string,
-        KeyWithMeta<Ed25519Keypair | X25519Keypair>[] | null
-    > = new LRU({ max: 100, ttl: 10000 });
+    private _gidPeersHistory: Map<string, Set<string>> = new Map();
+    private _openProgramQueue: PQueue;
+    private _disconnected = false;
+    private _disconnecting = false;
+    private _encryption: PublicKeyEncryptionResolver;
+    private _refreshInterval: any;
 
-    _canOpenProgram: (
-        address: string,
-        topic?: string,
-        entryTopReplicate?: Entry<any>
-    ) => Promise<boolean>;
-    _openProgramQueue: PQueue;
-    _reorgQueue: PQueue;
-
-    _disconnected = false;
-    _disconnecting = false;
-    _encryption: PublicKeyEncryptionResolver;
-
-    constructor(libp2p: Libp2p, identity: Identity, options: CreateOptions) {
-        if (!isDefined(libp2p)) {
+    constructor(
+        libp2p: Libp2pExtended,
+        identity: Identity,
+        options: CreateOptions
+    ) {
+        if (libp2p == null) {
             throw new Error("Libp2p required");
         }
-        if (!isDefined(identity)) {
+        if (identity == null) {
             throw new Error("identity key required");
         }
 
         this._libp2p = libp2p;
-        this._store = new Blocks(
-            new LibP2PBlockStore(
-                this._libp2p,
-                options.store ||
-                    new LevelBlockStore(
-                        options.storage.createStore(
-                            options.directory &&
-                                path
-                                    .join(options.directory, "/blocks")
-                                    .toString()
-                        )
-                    )
-            )
-        );
-        this._store.open();
+        /* 		this._store = new Blocks(
+					new LibP2PBlockStore(
+						this._libp2p,
+						options.store ||
+						new LevelBlockStore(
+							options.storage.createStore(
+								options.directory &&
+								path
+									.join(options.directory, "/blocks")
+									.toString()
+							)
+						)
+					)
+				);
+				this._store.open(); */
 
         this.identity = identity;
         this.id = options.peerId;
 
+        if (this.id.type !== "Ed25519") {
+            throw new Error(
+                "Unsupported id type, expecting Ed25519 but got " + this.id.type
+            );
+        }
+
+        if (!this.id.privateKey) {
+            throw new Error("Expecting private key to be defined");
+        }
+        this.idKey = new Ed25519Keypair({
+            privateKey: new Ed25519PrivateKey({
+                privateKey: this.id.privateKey.slice(4),
+            }),
+            publicKey: new Ed25519PublicKey({
+                publicKey: this.id.publicKey.slice(4),
+            }),
+        });
+        this.idKeyHash = this.idKey.publicKey.hashcode();
+        this.idIdentity = {
+            ...this.idKey,
+            sign: (data) => this.idKey.sign(data),
+        };
+
         this.directory = options.directory || "./peerbit/data";
         this.storage = options.storage;
-        this._directConnections = new Map();
         this.programs = new Map();
         this.caches = {};
         this._minReplicas = options.minReplicas || MIN_REPLICAS;
         this.limitSigning = options.limitSigning || false;
         this.browser = options.browser || !isNode;
-        this._canOpenProgram =
-            options.canOpenProgram ||
-            (async (address, topic, entryToReplicate) => {
-                const network = this._getNetwork(address, topic);
-                if (!network) {
-                    return Promise.resolve(true);
-                }
-
-                if (!entryToReplicate) {
-                    return this.isTrustedByNetwork(undefined, address, topic);
-                }
-
-                for (const signature of await entryToReplicate.getSignatures()) {
-                    const trusted = await this.isTrustedByNetwork(
-                        signature.publicKey,
-                        address,
-                        topic
-                    );
-                    if (trusted) {
-                        return true;
-                    }
-                }
-                return false;
-            });
-
         this.localNetwork = options.localNetwork;
         this.caches[this.directory] = {
             cache: options.cache,
             handlers: new Set(),
         };
         this.keystore = options.keystore;
-        if (typeof options.waitForKeysTimout === "number") {
-            this._waitForKeysTimeout = options.waitForKeysTimout;
-        }
-        this._openProgramQueue = new PQueue({ concurrency: 1 });
-        this._reorgQueue = new PQueue({ concurrency: 1 });
 
-        this._topicSubscriptions = new Map();
+        this._openProgramQueue = new PQueue({ concurrency: 1 });
+
+        const refreshInterval = options.refreshIntreval || 10000;
+
+        const promise: Promise<boolean> | undefined = undefined;
+        // 	TODO do we need this?
+
+        /* 	this._refreshInterval = setInterval(async () => {
+				if (promise) {
+					return;
+				}
+				promise = this.replicationReorganization([...this.programs.keys()]);
+				await promise;
+				promise = undefined;
+			}, refreshInterval); */
+
+        this.libp2p.directsub.addEventListener(
+            "data",
+            this._onMessage.bind(this)
+        );
+        this.libp2p.directsub.addEventListener(
+            "subscribe",
+            this._onSubscription.bind(this)
+        );
+        this.libp2p.directsub.addEventListener(
+            "unsubscribe",
+            this._onUnsubscription.bind(this)
+        );
     }
 
-    get libp2p(): Libp2p {
+    static async create(options: CreateInstanceOptions = {}) {
+        await sodium.ready;
+        let libp2pExtended: Libp2pExtended = options.libp2p as Libp2pExtended;
+        if (!libp2pExtended) {
+            libp2pExtended = await createLibp2pExtended();
+        } else {
+            if (
+                !!(libp2pExtended as Libp2pExtended).directblock !=
+                !!(libp2pExtended as Libp2pExtended).directsub
+            ) {
+                throw new Error(
+                    "Expecting libp2p argument to either be of type Libp2p or Libp2pExtended"
+                );
+            }
+            if (
+                !(options.libp2p as Libp2pExtended).directblock &&
+                !(options.libp2p as Libp2pExtended).directsub
+            ) {
+                libp2pExtended = await createLibp2pExtended({
+                    libp2p: options.libp2p,
+                    blocks: {
+                        directory:
+                            options.directory &&
+                            path.join(options.directory, "/blocks").toString(),
+                    },
+                });
+            }
+        }
+
+        await libp2pExtended.start();
+
+        const id: Ed25519PeerId = libp2pExtended.peerId as Ed25519PeerId;
+        if (id.type !== "Ed25519") {
+            throw new Error(
+                "Unsupported id type, expecting Ed25519 but got " + id.type
+            );
+        }
+
+        const directory = options.directory;
+        const storage = options.storage || {
+            createStore: (
+                path?: string
+            ): AbstractLevel<any, string, Uint8Array> => {
+                return path
+                    ? new Level(path, { valueEncoding: "view" })
+                    : new MemoryLevel({ valueEncoding: "view" });
+            },
+        };
+
+        let keystore: Keystore;
+        if (options.keystore) {
+            keystore = options.keystore;
+        } else {
+            const keyStorePath = directory
+                ? path.join(directory, "/keystore")
+                : undefined;
+            logger.debug(
+                keyStorePath
+                    ? "Creating keystore at path: " + keyStorePath
+                    : "Creating an in memory keystore"
+            );
+            keystore = new Keystore(await storage.createStore(keyStorePath));
+        }
+
+        let identity: Identity;
+        if (options.identity) {
+            identity = options.identity;
+        } else {
+            const keypair = getKeypairFromPeerId(id);
+            if (keypair instanceof Sec256k1Keccak256Keypair) {
+                identity = {
+                    publicKey: keypair.publicKey,
+                    sign: (data) => keypair.sign(data),
+                };
+            } else {
+                identity = {
+                    privateKey: keypair.privateKey,
+                    publicKey: keypair.publicKey,
+                    sign: (data) => keypair.sign(data),
+                };
+            }
+        }
+
+        const cache =
+            options.cache ||
+            new Cache(
+                await storage.createStore(
+                    directory ? path.join(directory, "/cache") : undefined
+                )
+            );
+        const localNetwork = options.localNetwork || false;
+        const finalOptions = Object.assign({}, options, {
+            peerId: id,
+            keystore,
+            identity,
+            directory,
+            storage,
+            cache,
+            localNetwork,
+        });
+
+        const peer = new Peerbit(libp2pExtended, identity, finalOptions);
+        await peer.getEncryption();
+        return peer;
+    }
+    get libp2p(): Libp2pExtended {
         return this._libp2p;
     }
 
@@ -303,14 +387,22 @@ export class Peerbit {
     }
 
     async decryptedSignedThing(
-        data: Uint8Array
+        data: Uint8Array,
+        options?: {
+            signWithPeerId: boolean;
+        }
     ): Promise<DecryptedThing<MaybeSigned<Uint8Array>>> {
         const signedMessage = await new MaybeSigned({ data }).sign(
             async (data) => {
-                return {
-                    publicKey: this.identity.publicKey,
-                    signature: await this.identity.sign(data),
-                };
+                return options?.signWithPeerId
+                    ? {
+                          publicKey: this.idKey.publicKey,
+                          signature: this.idKey.sign(data),
+                      }
+                    : {
+                          publicKey: this.identity.publicKey,
+                          signature: await this.identity.sign(data),
+                      };
             }
         );
         return new DecryptedThing({
@@ -320,14 +412,22 @@ export class Peerbit {
 
     async enryptedSignedThing(
         data: Uint8Array,
-        reciever: X25519PublicKey
+        reciever: X25519PublicKey,
+        options?: {
+            signWithPeerId: boolean;
+        }
     ): Promise<EncryptedThing<MaybeSigned<Uint8Array>>> {
         const signedMessage = await new MaybeSigned({ data }).sign(
             async (data) => {
-                return {
-                    publicKey: this.identity.publicKey,
-                    signature: await this.identity.sign(data),
-                };
+                return options?.signWithPeerId
+                    ? {
+                          publicKey: this.idKey.publicKey,
+                          signature: this.idKey.sign(data),
+                      }
+                    : {
+                          publicKey: this.identity.publicKey,
+                          signature: await this.identity.sign(data),
+                      };
             }
         );
         return new DecryptedThing<MaybeSigned<Uint8Array>>({
@@ -335,113 +435,21 @@ export class Peerbit {
         }).encrypt(this.encryption.getEncryptionKeypair, reciever);
     }
 
-    static async create(libp2p: Libp2p, options: CreateInstanceOptions = {}) {
-        const id: PeerId = libp2p.peerId;
-        const directory = options.directory;
-
-        const storage = options.storage || {
-            createStore: (
-                path?: string
-            ): AbstractLevel<any, string, Uint8Array> => {
-                return path
-                    ? new Level(path, { valueEncoding: "view" })
-                    : new MemoryLevel({ valueEncoding: "view" });
-            },
-        };
-
-        let keystore: Keystore;
-        if (options.keystore) {
-            keystore = options.keystore;
-        } else {
-            const keyStorePath = directory
-                ? path.join(directory, "/keystore")
-                : undefined;
-            logger.info(
-                keyStorePath
-                    ? "Creating keystore at path: " + keyStorePath
-                    : "Creating an in memory keystore"
-            );
-            keystore = new Keystore(await storage.createStore(keyStorePath));
-        }
-
-        let identity: Identity;
-        if (options.identity) {
-            identity = options.identity;
-        } else {
-            let signKey: KeyWithMeta<Ed25519Keypair>;
-
-            const existingKey = await keystore.getKey(id.toString());
-            if (existingKey) {
-                if (existingKey.keypair instanceof Ed25519Keypair === false) {
-                    // TODO add better behaviour for this
-                    throw new Error(
-                        "Failed to create keypair from ipfs id because it already exist with a different type: " +
-                            existingKey.keypair.constructor.name
-                    );
-                }
-                signKey = existingKey as KeyWithMeta<Ed25519Keypair>;
-            } else {
-                signKey = await keystore.createEd25519Key({
-                    id: id.toString(),
-                });
-            }
-
-            identity = {
-                ...signKey.keypair,
-                sign: (data) => signKey.keypair.sign(data),
-            };
-        }
-
-        const cache =
-            options.cache ||
-            new Cache(
-                await storage.createStore(
-                    directory ? path.join(directory, "/cache") : undefined
-                )
-            );
-        const localNetwork = options.localNetwork || false;
-        const finalOptions = Object.assign({}, options, {
-            peerId: id,
-            keystore,
-            identity,
-            directory,
-            storage,
-            cache,
-            localNetwork,
-        });
-
-        const peer = new Peerbit(libp2p, identity, finalOptions);
-        await peer.getEncryption();
-        return peer;
-    }
-
     async disconnect() {
         this._disconnecting = true;
         // Close a direct connection and remove it from internal state
 
-        for (const [_topic, channel] of this._topicSubscriptions) {
-            await channel.close();
-        }
-
-        const removeDirectConnect = (value: any, e: string) => {
-            this._directConnections.get(e)?.close();
-            this._directConnections.delete(e);
-        };
-
-        // Close all direct connections to peers
-        this._directConnections.forEach(removeDirectConnect);
+        this._refreshInterval && clearInterval(this._refreshInterval);
 
         // close keystore
         await this.keystore.close();
 
         // Close all open databases
-        for (const [key, dbs] of this.programs.entries()) {
-            await Promise.all(
-                [...dbs.values()].map((program) => program.program.close())
-            );
-            this.programs.delete(key);
-            // delete this.allPrograms[key];
-        }
+        await Promise.all(
+            [...this.programs.values()].map((program) =>
+                program.program.close()
+            )
+        );
 
         const caches = Object.keys(this.caches);
         for (const directory of caches) {
@@ -449,7 +457,7 @@ export class Peerbit {
             delete this.caches[directory];
         }
 
-        await this._store.close();
+        /* await this._store.close(); */
 
         // Remove all databases from the state
         this.programs = new Map();
@@ -472,109 +480,41 @@ export class Peerbit {
         program: Program,
         store: Store<any>,
         entry: Entry<T>,
-        topic: string
+        address?: Address | string
     ): void {
-        const programAddress =
-            program.address?.toString() ||
-            program.parentProgram.address!.toString();
+        const programAddress = (
+            program.address || program.parentProgram.address
+        ).toString();
+        const writeAddress = address?.toString() || programAddress;
         const storeInfo = this.programs
-            .get(topic)
-            ?.get(programAddress)
+            .get(programAddress)
             ?.program.allStoresMap.get(store._storeIndex);
         if (!storeInfo) {
             throw new Error("Missing store info");
         }
-        const observerTopic = getObserverTopic(topic);
-        const sendAll =
-            this._libp2p.pubsub.getSubscribers(observerTopic)?.length > 0
-                ? (data: Uint8Array): Promise<any> => {
-                      return this.libp2p.pubsub.publish(
-                          getObserverTopic(topic),
-                          data
-                      );
-                  }
-                : undefined;
-        let send = sendAll;
-        if (!this.browser && program.replicate) {
-            // send to peers directly
-            send = async (data: Uint8Array) => {
-                const minReplicas = this.programs
-                    .get(topic)
-                    ?.get(programAddress)?.minReplicas.value;
-                if (typeof minReplicas !== "number") {
-                    throw new Error(
-                        "Min replicas info not found for: " +
-                            topic +
-                            "/" +
-                            programAddress
-                    );
-                }
 
-                const replicators = await this.findReplicators(
-                    topic,
-                    programAddress,
-                    entry.gid,
-                    minReplicas
-                );
-                const channels: SharedChannel<DirectChannel>[] = [];
-                for (const replicator of replicators) {
-                    if (replicator === this.id.toString()) {
-                        continue;
-                    }
-                    const channel = this._directConnections.get(replicator);
-                    if (
-                        !channel ||
-                        this.libp2p.pubsub.getSubscribers(channel.channel._id)
-                            .length === 0
-                    ) {
-                        // we are missing a channel, send to all instead as fallback
-                        return sendAll && sendAll(data);
-                    } else {
-                        channels.push(channel);
-                    }
-                }
-                await Promise.all(
-                    channels.map((channel) => channel.channel.send(data))
-                );
-                return;
-            };
-        }
-        if (send) {
-            exchangeHeads(
-                send,
-                store,
-                program,
-                [entry],
-                topic,
-                true,
-                this.limitSigning ? undefined : this.identity
-            ).catch((error) => {
-                logger.error("Got error when exchanging heads: " + error);
-                throw error;
-            });
-        }
-    }
-
-    async isTrustedByNetwork(
-        identity: PublicSignKey | undefined,
-        address: string,
-        topic?: string
-    ): Promise<boolean> {
-        if (!identity) {
-            return false;
-        }
-        const network = this._getNetwork(address, topic);
-        if (!network) {
-            return false;
-        }
-        return !!(await network.isTrusted(identity));
+        // TODO Should we also do gidHashhistory update here?
+        createExchangeHeadsMessage(
+            store,
+            program,
+            [entry],
+            true,
+            this.limitSigning ? undefined : this.idIdentity
+        ).then((bytes) => {
+            this.libp2p.directsub.publish(bytes, { topics: [writeAddress] });
+        });
     }
 
     _maybeOpenStorePromise: Promise<boolean>;
     // Callback for receiving a message from the network
-    async _onMessage(message: PubSubMessage) {
+    async _onMessage(evt: CustomEvent<PubSubData>) {
+        const message = evt.detail;
         logger.debug(
-            `${this.id}: Recieved message on topic: ${message.topic} ${message.data.length}`
+            `${this.id}: Recieved message on topics: ${
+                message.topics.length > 1
+                    ? "#" + message.topics.length
+                    : message.topics[0]
+            } ${message.data.length}`
         );
         if (this._disconnecting) {
             logger.warn("Got message while disconnecting");
@@ -588,10 +528,10 @@ export class Peerbit {
         }
 
         try {
-            const peer =
-                message.type === "signed"
-                    ? (message as SignedPubSubMessage).from
-                    : undefined;
+            /*   const peer =
+				  message.type === "signed"
+					  ? (message as SignedPubSubMessage).from
+					  : undefined; */
             const maybeEncryptedMessage = deserialize(
                 message.data,
                 MaybeEncrypted
@@ -602,26 +542,30 @@ export class Peerbit {
             const signedMessage = decrypted.getValue(MaybeSigned);
             await signedMessage.verify();
             const msg = signedMessage.getValue(TransportMessage);
-            const sender: PublicSignKey | undefined =
-                signedMessage.signature?.publicKey;
+            const sender: string | undefined =
+                signedMessage.signature?.publicKey.hashcode();
+
             const checkTrustedSender = async (
-                address: string,
-                onlyNetworked: boolean
+                address: string
             ): Promise<boolean> => {
-                let isTrusted = false;
+                const isTrusted = false;
                 if (sender) {
                     // find the progrma
-                    const network = this._getNetwork(address);
-                    if (!network) {
-                        if (onlyNetworked) {
-                            return false;
-                        }
-                        return true;
-                    } else if (network instanceof TrustedNetwork) {
-                        isTrusted = !!(await network.isTrusted(sender));
-                    } else {
-                        throw new Error("Unexpected network type");
+                    const ct = this.getCanTrust(address);
+                    /* if (!network) {
+						if (onlyNetworked) {
+							return false;
+						}
+						return true;
+					} else if (network instanceof TrustedNetwork) {
+						isTrusted = !!(await network.isTrusted(sender));
+					} else {
+						throw new Error("Unexpected network type");
+					} */
+                    if (!ct) {
+                        return false;
                     }
+                    return !!(await ct.isTrusted(sender));
                 }
                 if (!isTrusted) {
                     logger.info("Recieved message from untrusted peer");
@@ -636,100 +580,57 @@ export class Peerbit {
                  * I can use them to load associated logs and join/sync them with the data stores I own
                  */
 
-                const { topic, storeIndex, programAddress, heads } = msg;
+                const { storeIndex, programAddress } = msg;
+                let { heads } = msg;
                 // replication topic === trustedNetwork address
 
-                const pstores = this.programs.get(topic);
+                const pstores = this.programs;
                 const paddress = programAddress;
 
                 logger.debug(
                     `${this.id}: Recieved heads: ${
                         heads.length === 1
                             ? heads[0].entry.hash
-                            : "#" + heads[0].entry.hash
-                    }, topic: ${topic}, storeIndex: ${storeIndex}`
+                            : "#" + heads.length
+                    }, storeIndex: ${storeIndex}`
                 );
                 if (heads) {
-                    const leaderCache: Map<string, string[]> = new Map();
-                    if (!pstores?.has(programAddress)) {
-                        await this._maybeOpenStorePromise;
-                        for (const [gid, entries] of await groupByGid(heads)) {
-                            // Check if root, if so, we check if we should open the store
-                            const leaders = await this.findLeaders(
-                                topic,
-                                programAddress,
-                                gid,
-                                msg.minReplicas?.value || this._minReplicas
-                            ); // Todo reuse calculations
-                            leaderCache.set(gid, leaders);
-                            if (leaders.find((x) => x === this.id.toString())) {
-                                const oneEntry = entries[0].entry;
-                                try {
-                                    // Assumption: All entries should suffice as references
-                                    // when passing to this.open as reasons/proof of validity of opening the store
+                    const programInfo = this.programs.get(paddress)!;
 
-                                    await this.open(Address.parse(paddress), {
-                                        topic: topic,
-                                        directory: this.directory,
-                                        entryToReplicate: oneEntry,
-                                        verifyCanOpen: true,
-                                        identity: this.identity,
-                                        minReplicas: msg.minReplicas,
-                                    });
-                                } catch (error) {
-                                    if (error instanceof AccessError) {
-                                        logger.debug(
-                                            `${this.id}: Failed to open store from head: ${oneEntry.hash}`
-                                        );
-
-                                        return;
-                                    }
-                                    throw error; // unexpected
-                                }
-                                break;
-                            }
-                        }
+                    if (!programInfo) {
+                        return;
                     }
 
-                    const programInfo = this.programs
-                        .get(topic)!
-                        .get(paddress)!;
                     const storeInfo =
                         programInfo.program.allStoresMap.get(storeIndex);
                     if (!storeInfo) {
-                        throw new Error(
+                        logger.error(
                             "Missing store info, which was expected to exist for " +
-                                topic +
-                                ", " +
                                 paddress +
                                 ", " +
                                 storeIndex
                         );
+                        return;
                     }
                     const toMerge: EntryWithRefs<any>[] = [];
-
-                    await programInfo.program.initializationPromise; // Make sure it is ready
-
-                    heads.forEach((head) =>
-                        head.entry.init({
-                            encryption: storeInfo.oplog._encryption,
-                            encoding: storeInfo.oplog._encoding,
-                        })
-                    ); // we need to init because we perhaps need to decrypt gid
+                    heads = heads
+                        .filter((head) => !storeInfo.oplog.has(head.entry.hash))
+                        .map((head) => {
+                            head.entry.init({
+                                encryption: storeInfo.oplog._encryption,
+                                encoding: storeInfo.oplog._encoding,
+                            });
+                            return head;
+                        }); // we need to init because we perhaps need to decrypt gid
 
                     for (const [gid, value] of await groupByGid(heads)) {
-                        const leaders =
-                            leaderCache.get(gid) ||
-                            (await this.findLeaders(
-                                topic,
+                        if (
+                            !(await this.isLeader(
                                 programAddress,
                                 gid,
                                 programInfo.minReplicas.value
-                            ));
-                        const isLeader = leaders.find(
-                            (l) => l === this.id.toString()
-                        );
-                        if (!isLeader) {
+                            ))
+                        ) {
                             logger.debug(
                                 `${this.id}: Dropping heads with gid: ${gid}. Because not leader`
                             );
@@ -737,11 +638,9 @@ export class Peerbit {
                         }
                         value.forEach((head) => {
                             toMerge.push(head);
-                            logger.debug(
-                                `${this.id}: Leader for head: ' ${head.entry.hash}`
-                            );
                         });
                     }
+
                     if (toMerge.length > 0) {
                         const store =
                             programInfo.program.allStoresMap.get(storeIndex);
@@ -750,7 +649,32 @@ export class Peerbit {
                                 "Unexpected, missing store on sync"
                             );
                         }
+                        /*          for (const v of store.oplog.heads) {
+									 if (!v.createdLocally && !(await this.findLeaders(programAddress, v.gid, programInfo.minReplicas.value)).find(x => x === this.id.toString())) {
+										 const t = 123;
+									 }
+								 }
+								 const ccc1 = [...programInfo.replicators]; */
+
                         await store.sync(toMerge);
+
+                        /*  this._reorgQueue.add(async () => {
+							 const ccx = ccc1;
+							 const ccc2 = programInfo.replicators.size;
+							 const l1 = store.oplog.values.length;
+							 const l2 = store.oplog.values.length;
+							 for (const v of store.oplog.heads) {
+								 for (let i = 0; i < 100; i++) {
+									 const tmg = (await this.findLeaders(programAddress, toMerge[0].entry.gid, programInfo.minReplicas.value)).find(x => x === this.id.toString());
+									 if (!tmg) {
+										 const t = 123;
+									 }
+								 }
+								 if (!v.createdLocally && !(await this.findLeaders(programAddress, v.gid, programInfo.minReplicas.value)).find(x => x === this.id.toString())) {
+									 const t = 123;
+								 }
+							 }
+						 }) */
                     }
                 }
                 logger.debug(
@@ -761,16 +685,10 @@ export class Peerbit {
                         2
                     )
                 );
-            } else if (msg instanceof KeyResponseMessage) {
-                await recieveKeys(msg, (keys) => {
-                    return Promise.all(
-                        keys.map((key) => this.keystore.saveKey(key))
-                    );
-                });
             } else if (msg instanceof ExchangeSwarmMessage) {
                 let hasAll = true;
                 for (const i of msg.info) {
-                    if (!this._directConnections.has(i.id)) {
+                    if (!this.libp2p.peerStore.has(peerIdFromString(i.id))) {
                         hasAll = false;
                         break;
                     }
@@ -808,66 +726,29 @@ export class Peerbit {
                         return promises;
                     })
                 );
-            } else if (msg instanceof RequestKeyMessage) {
-                /**
-                 * Someone is requesting X25519 Secret keys for me so that they can open encrypted messages (and encrypt)
-                 *
-                 */
-                if (!peer) {
-                    logger.error("Execting a sigmed pubsub message");
-                    return;
-                }
-
-                if (!sender) {
-                    logger.info("Expecing sender when recieving key info");
-                    return;
-                }
-                let canExchangeKey: KeyAccessCondition;
-                if (msg.condition instanceof RequestKeysByAddress) {
-                    if (
-                        !(await checkTrustedSender(msg.condition.address, true))
-                    ) {
-                        return;
-                    }
-                    canExchangeKey = (key) =>
-                        Promise.resolve(
-                            key.group ===
-                                (msg.condition as RequestKeysByAddress).address
-                        );
-                } else if (msg.condition instanceof RequestKeysByKey) {
-                    canExchangeKey = (key) =>
-                        checkTrustedSender(key.group, true);
-                } else {
-                    throw new Error("Unexpected message");
-                }
-
-                const send = (data: Uint8Array) =>
-                    this._libp2p.pubsub.publish(
-                        message.topic, // DirectChannel.getTopic([peer.toString()]),
-                        data
-                    );
-                await exchangeKeys(
-                    send,
-                    msg,
-                    canExchangeKey,
-                    this.keystore,
-                    this.identity,
-                    this.encryption
-                );
-                logger.debug(`Exchanged keys`);
             } else {
                 throw new Error("Unexpected message");
             }
         } catch (e: any) {
             if (e instanceof BorshError) {
                 logger.trace(
-                    `${this.id}: Failed to handle message on topic: ${message.topic} ${message.data.length}: Got message for a different namespace`
+                    `${
+                        this.id
+                    }: Failed to handle message on topic: ${JSON.stringify(
+                        message.topics
+                    )} ${
+                        message.data.length
+                    }: Got message for a different namespace`
                 );
                 return;
             }
             if (e instanceof AccessError) {
                 logger.trace(
-                    `${this.id}: Failed to handle message on topic: ${message.topic} ${message.data.length}: Got message I could not decrypt`
+                    `${
+                        this.id
+                    }: Failed to handle message on topic: ${JSON.stringify(
+                        message.topics
+                    )} ${message.data.length}: Got message I could not decrypt`
                 );
                 return;
             }
@@ -875,87 +756,48 @@ export class Peerbit {
         }
     }
 
-    async _onPeerConnected(topic: string, peer: string) {
-        logger.debug(`New peer '${peer}' connected to '${topic}'`);
-        try {
-            // determine if we should open a channel (we are replicating a store on the topic + a weak check the peer is trusted)
-            const programs = this.programs.get(topic);
-            if (programs) {
-                // Should subscription to a replication be a proof of "REPLICATING?"
-                const initializeAsNonBrowser = async () => {
-                    await exchangeSwarmAddresses(
-                        (data) =>
-                            this.libp2p.pubsub.publish(
-                                getReplicationTopic(topic),
-                                data
-                            ),
-                        this.identity,
-                        peer,
-                        this._libp2p.pubsub.getPeers(),
-                        this._libp2p.peerStore.addressBook,
-                        this._getNetwork(topic),
-                        this.localNetwork
+    async _onUnsubscription(evt: CustomEvent<UnsubcriptionEvent>) {
+        logger.debug(
+            `Peer disconnected '${evt.detail.from.hashcode()}' from '${JSON.stringify(
+                evt.detail.unsubscriptions.map((x) => x.topic)
+            )}'`
+        );
+
+        return this.handleSubscriptionChange(evt.detail.unsubscriptions);
+    }
+
+    async _onSubscription(evt: CustomEvent<SubscriptionEvent>) {
+        logger.debug(
+            `New peer '${evt.detail.from.hashcode()}' connected to '${JSON.stringify(
+                evt.detail.subscriptions.map((x) => x.topic)
+            )}'`
+        );
+        return this.handleSubscriptionChange(evt.detail.subscriptions);
+    }
+
+    async handleSubscriptionChange(changes: Subscription[]) {
+        for (const subscription of changes) {
+            if (subscription.data) {
+                try {
+                    const type = deserialize(
+                        subscription.data,
+                        SubscriptionType
                     );
-                    await this.getChannel(peer, topic); // always open a channel, and drop channels if necessary (not trusted) (TODO)
-                };
-                if (programs.size === 0 && !this.browser) {
-                    // we are subscribed to replicationTopic, but we have not opened any store, this "means"
-                    // that we are intending to replicate data for this topic
-                    await initializeAsNonBrowser();
-                    return;
-                }
-
-                for (const [
-                    _storeAddress,
-                    programAndStores,
-                ] of programs.entries()) {
-                    for (const [_, store] of programAndStores.program
-                        .allStoresMap) {
-                        if (
-                            !this.browser &&
-                            programAndStores.program.replicate
-                        ) {
-                            // create a channel for sending/receiving messages
-
-                            await initializeAsNonBrowser();
-                            return;
-
-                            // Creation of this channel here, will make sure it is created even though a head might not be exchangee
-                        } else {
-                            // If replicate false, we are in write mode. Means we should exchange all heads
-                            // Because we dont know anything about whom are to store data, so we assume all peers might have responsibility
-                            const send = (data: Uint8Array) =>
-                                this._libp2p.pubsub.publish(
-                                    getObserverTopic(topic), // DirectChannel.getTopic([peer.toString()]),
-                                    data
-                                );
-                            const headsToExchange = store.oplog.heads;
-                            logger.debug(
-                                `${this.id}: Exchange heads ${
-                                    headsToExchange.length === 1
-                                        ? headsToExchange[0].hash
-                                        : "#" + headsToExchange.length
-                                } onPeerConnected ${topic} - ${peer}`
-                            );
-                            await exchangeHeads(
-                                send,
-                                store,
-                                programAndStores.program,
-                                headsToExchange,
-                                topic,
-                                false,
-                                this.limitSigning ? undefined : this.identity
-                            );
+                    if (type instanceof ReplicatorType) {
+                        const p = this.programs.get(subscription.topic);
+                        if (p) {
+                            await this.replicationReorganization([
+                                p.program.address.toString(),
+                            ]);
                         }
                     }
+                } catch (error) {
+                    logger.warn(
+                        "Recieved subscription with invalid data on topic",
+                        subscription.topic
+                    );
                 }
             }
-        } catch (error: any) {
-            logger.error(
-                "Unexpected error in _onPeerConnected callback: " +
-                    error.toString()
-            );
-            throw error;
         }
     }
 
@@ -964,226 +806,120 @@ export class Peerbit {
      * This method will go through my owned entries, and see whether I should share them with a new leader, and/or I should stop care about specific entries
      * @param channel
      */
-    async replicationReorganization(modifiedChannel: DirectChannel) {
-        const connections = this._directConnections.get(
-            modifiedChannel.recieverId.toString()
-        );
-        if (!connections) {
-            logger.error(
-                "Missing direct connection to: " +
-                    modifiedChannel.recieverId.toString()
-            );
-            return;
-        }
+    async replicationReorganization(changedProgarms: Set<string> | string[]) {
+        let changed = false;
+        for (const address of changedProgarms) {
+            const programInfo = this.programs.get(address);
+            if (programInfo) {
+                for (const [_, store] of programInfo.program.allStoresMap) {
+                    const heads = store.oplog.heads;
+                    const groupedByGid = await groupByGid(heads);
+                    for (const [gid, entries] of groupedByGid) {
+                        const toSend: Map<string, Entry<any>> = new Map();
+                        const newPeers: string[] = [];
 
-        for (const topic of connections.dependencies) {
-            const programs = this.programs.get(topic);
-            if (programs) {
-                for (const programInfo of programs.values()) {
-                    for (const [_, store] of programInfo.program.allStoresMap) {
-                        const heads = store.oplog.heads;
-                        const groupedByGid = await groupByGid(heads);
-                        for (const [gid, entries] of groupedByGid) {
-                            if (entries.length === 0) {
-                                continue; // TODO maybe close store?
-                            }
+                        if (entries.length === 0) {
+                            continue; // TODO maybe close store?
+                        }
 
-                            const oldPeersSet = this._gidPeersHistory.get(gid);
-                            const newPeers = await this.findReplicators(
-                                topic,
-                                programInfo.program.address.toString(),
-                                gid,
-                                programInfo.minReplicas.value
-                            );
+                        const oldPeersSet = this._gidPeersHistory.get(gid);
+                        const currentPeers = await this.findLeaders(
+                            programInfo.program.address.toString(),
+                            gid,
+                            programInfo.minReplicas.value
+                        );
+                        for (const currentPeer of currentPeers) {
+                            if (
+                                !oldPeersSet?.has(currentPeer) &&
+                                currentPeer !== this.idKeyHash
+                            ) {
+                                // second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
+                                newPeers.push(currentPeer);
 
-                            for (const newPeer of newPeers) {
-                                if (
-                                    !oldPeersSet?.has(newPeer) &&
-                                    newPeer !== this.id.toString()
-                                ) {
-                                    // second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
-
-                                    // send heads to the new peer
-                                    try {
-                                        const channel = await waitFor(
-                                            () =>
-                                                this._directConnections.get(
-                                                    newPeer
-                                                )?.channel
+                                // send heads to the new peer
+                                // console.log('new gid for peer', newPeers.length, this.id.toString(), newPeer, gid, entries.length, newPeers)
+                                try {
+                                    logger.debug(
+                                        `${this.id}: Exchange heads ${
+                                            entries.length === 1
+                                                ? entries[0].hash
+                                                : "#" + entries.length
+                                        }  on rebalance`
+                                    );
+                                    entries.forEach((entry) => {
+                                        /*  arr.push(entry); */
+                                        toSend.set(entry.hash, entry);
+                                    });
+                                } catch (error) {
+                                    if (error instanceof TimeoutError) {
+                                        logger.error(
+                                            "Missing channel when reorg to peer: " +
+                                                currentPeer.toString()
                                         );
-                                        if (!channel) {
-                                            logger.error(
-                                                "Missing channel when reorg to peer: " +
-                                                    newPeer.toString()
-                                            );
-                                            continue;
-                                        }
-
-                                        logger.debug(
-                                            `${this.id}: Exchange heads ${
-                                                entries.length === 1
-                                                    ? entries[0].hash
-                                                    : "#" + entries.length
-                                            }  on rebalance ${topic}`
-                                        );
-
-                                        await exchangeHeads(
-                                            async (message) => {
-                                                await channel.send(message);
-                                            },
-                                            store,
-                                            programInfo.program,
-                                            entries,
-                                            topic,
-                                            true,
-                                            this.limitSigning
-                                                ? undefined
-                                                : this.identity
-                                        );
-                                    } catch (error) {
-                                        if (error instanceof TimeoutError) {
-                                            logger.error(
-                                                "Missing channel when reorg to peer: " +
-                                                    newPeer.toString()
-                                            );
-                                            continue;
-                                        }
-                                        throw error;
+                                        continue;
                                     }
+                                    throw error;
                                 }
                             }
+                        }
 
-                            if (
-                                !newPeers.find((x) => x === this.id.toString())
-                            ) {
-                                // delete entries since we are not suppose to replicate this anymore
-                                // TODO add delay? freeze time? (to ensure resiliance for bad io)
-                                await store.removeOperation(entries, {
+                        if (!currentPeers.find((x) => x === this.idKeyHash)) {
+                            const notCreatedLocally = entries.filter(
+                                (e) => !e.createdLocally
+                            );
+                            // delete entries since we are not suppose to replicate this anymore
+                            // TODO add delay? freeze time? (to ensure resiliance for bad io)
+                            if (notCreatedLocally.length > 0) {
+                                await store.removeOperation(notCreatedLocally, {
                                     recursively: true,
                                 });
-
-                                // TODO if length === 0 maybe close store?
                             }
-                            this._gidPeersHistory.set(gid, new Set(newPeers));
+
+                            // TODO if length === 0 maybe close store?
                         }
+                        this._gidPeersHistory.set(gid, new Set(currentPeers));
+
+                        if (toSend.size === 0) {
+                            continue;
+                        }
+                        const bytes = await createExchangeHeadsMessage(
+                            store,
+                            programInfo.program,
+                            [...toSend.values()], // TODO send to peers directly
+                            true,
+                            this.limitSigning ? undefined : this.idIdentity
+                        );
+
+                        // TODO perhaps send less messages to more recievers for performance reasons?
+                        await this._libp2p.directsub.publish(bytes, {
+                            to: newPeers,
+                        });
                     }
+                    changed = true;
                 }
             }
         }
+        return changed;
     }
 
-    async join(program: Program) {
-        const network = getNetwork(program);
-        if (!network) {
-            throw new Error("Program not part of anetwork");
-        }
-        // Will be rejected by peers if my identity is not trusted
-        // (this will sign our IPFS ID with our client Ed25519 key identity, if peers do not trust our identity, we will be rejected)
-        await network.add(
-            new PeerIdAddress({ address: this._libp2p.peerId.toString() })
-        );
-    }
-
-    async getChannel(
-        peer: string,
-        fromTopic: string
-    ): Promise<DirectChannel | undefined> {
-        // TODO what happens if disconnect and connection to direct connection is happening
-        // simultaneously
-        const getDirectConnection = (peer: string) =>
-            this._directConnections.get(peer)?._channel;
-
-        let channel = getDirectConnection(peer);
-        if (!channel) {
-            try {
-                logger.debug(`Create a channel to ${peer}`);
-                channel = await DirectChannel.open(
-                    this.libp2p,
-                    peer,
-                    (message) => {
-                        logger.debug(
-                            `${this.id}: Recieved message from direct channel: ${message.topic}`
-                        );
-                        this._onMessage(message);
-                    },
-                    {
-                        onPeerLeaveCallback: (channel) => {
-                            // First modify direct connections
-                            this._directConnections
-                                .get(channel.recieverId.toString())!
-                                .close(channel.recieverId.toString());
-
-                            // Then perform replication reorg
-                            this._reorgQueue.add(() =>
-                                this.replicationReorganization(channel)
-                            );
-                        },
-                        onNewPeerCallback: (channel) => {
-                            // First modify direct connections
-                            const sharedChannel = this._directConnections.get(
-                                channel.recieverId.toString()
-                            );
-                            if (!sharedChannel) {
-                                this._directConnections.set(
-                                    channel.recieverId.toString(),
-                                    new SharedChannel(
-                                        channel,
-                                        new Set([fromTopic])
-                                    )
-                                );
-                            } else {
-                                sharedChannel.dependencies.add(fromTopic);
-                            }
-
-                            // Then perform replication reorg
-                            this._reorgQueue.add(() =>
-                                this.replicationReorganization(channel)
-                            );
-                        },
-                    }
-                );
-                logger.debug(`Channel created to ${peer}`);
-            } catch (e: any) {
-                logger.error(e);
-                return undefined;
+    getCanTrust(address: string): CanTrust | undefined {
+        const p = this.programs.get(address)?.program;
+        if (p) {
+            const ct = this.programs.get(address)?.program as any as CanTrust;
+            if (ct.isTrusted !== undefined) {
+                return ct;
             }
         }
-
-        // Wait for the direct channel to be fully connected
-        try {
-            let cancel = false;
-            delay(20 * 1000).then(() => {
-                cancel = true;
-            });
-
-            const connected = await channel.connect({
-                isClosed: () =>
-                    cancel || this._disconnected || this._disconnecting,
-            });
-            if (!connected) {
-                return undefined; // failed to create channel
-            }
-        } catch (error) {
-            if (this._disconnected || this._disconnecting) {
-                return; // its ok
-            }
-            throw error; // unexpected
-        }
-        logger.debug(`Connected to ${peer}`);
-
-        return channel;
+        return;
     }
 
     // Callback when a store was closed
-    async _onClose(program: Program, db: Store<any>, topic: string) {
+    async _onClose(program: Program, db: Store<any>) {
         // TODO Can we really close a this.programs, either we close all stores in the replication topic or none
 
         const programAddress = program.address?.toString();
 
         logger.debug(`Close ${programAddress}/${db.id}`);
-
-        // Unsubscribe from pubsub
-        await this.unsubscribeToTopic(topic, db.id);
 
         const dir =
             db && db._options.directory ? db._options.directory : this.cacheDir;
@@ -1195,21 +931,12 @@ export class Peerbit {
             }
         }
     }
-    async _onProgamClose(program: Program, topic: string) {
+    async _onProgamClose(program: Program) {
         const programAddress = program.address?.toString();
         if (programAddress) {
-            this.programs.get(topic)?.delete(programAddress);
-        }
-        const otherStoresUsingSameReplicationTopic = this.programs.get(topic);
-        // close all connections with this repplication topic if this is the last dependency
-        const isLastStoreForReplicationTopic =
-            otherStoresUsingSameReplicationTopic?.size === 0;
-        if (isLastStoreForReplicationTopic) {
-            for (const [key, connection] of this._directConnections) {
-                await connection.close(topic);
-                // Delete connection from thing
-
-                // TODO what happens if we close a store, but not its direct connection? we should open direct connections and make it dependenct on the replciation topic
+            const deleted = this.programs.delete(programAddress);
+            if (deleted) {
+                this.libp2p.directsub.unsubscribe(programAddress);
             }
         }
     }
@@ -1219,44 +946,29 @@ export class Peerbit {
     }
 
     addProgram(
-        topic: string,
         program: Program,
         minReplicas: MinReplicas
     ): ProgramWithMetadata {
-        if (!this.programs.has(topic)) {
-            this.programs.set(topic, new Map());
-        }
-        if (!this.programs.has(topic)) {
-            throw new Error("Unexpected behaviour");
-        }
-
         const programAddress = program.address?.toString();
         if (!programAddress) {
             throw new Error("Missing program address");
         }
-        const existingProgramAndStores = this.programs
-            .get(topic)
-            ?.get(programAddress);
+        const existingProgramAndStores = this.programs.get(programAddress);
         if (
             !!existingProgramAndStores &&
             existingProgramAndStores.program !== program
         ) {
             // second condition only makes this throw error if we are to add a new instance with the same address
-            throw new Error(`Program at ${topic} is already created`);
+            throw new Error(`Program at ${programAddress} is already created`);
         }
         const p = {
             program,
             minReplicas,
+            replicators: new Set<string>(),
         };
-        this.programs.get(topic)?.set(programAddress, p);
-        return p;
-    }
 
-    getReplicatorsOnTopic(topic: string): string[] {
-        return (
-            this._topicSubscriptions.get(getReplicationTopic(topic))?.channel
-                ._monitor?._peers || []
-        );
+        this.programs.set(programAddress, p);
+        return p;
     }
 
     /**
@@ -1264,58 +976,79 @@ export class Peerbit {
      * @param slot, some time measure
      * @returns
      */
-    isLeader(leaders: string[]): boolean {
-        return !!leaders.find((id) => id === this.id.toString());
+
+    getReplicators(address: string): string[] | undefined {
+        return this.libp2p.directsub.getSubscribersWithData(
+            address,
+            REPLICATOR_TYPE_VARIANT,
+            { prefix: true }
+        );
     }
 
-    findReplicators(
-        topic: string,
+    getObservers(address: string): string[] | undefined {
+        return this.libp2p.directsub.getSubscribersWithData(
+            address,
+            OBSERVER_TYPE_VARIANT,
+            { prefix: true }
+        );
+    }
+
+    async isLeader(
         address: string,
-        gid: string,
-        minReplicas: number
-    ): Promise<string[]> {
-        return this.findLeaders(topic, address, gid, minReplicas);
+        slot: { toString(): string },
+        numberOfLeaders: number
+    ): Promise<boolean> {
+        const isLeader = (
+            await this.findLeaders(address, slot, numberOfLeaders)
+        ).find((l) => l === this.idKeyHash);
+        return !!isLeader;
     }
 
     async findLeaders(
-        topic: string,
         address: string,
         slot: { toString(): string },
         numberOfLeaders: number
     ): Promise<string[]> {
         // Hash the time, and find the closest peer id to this hash
-        const h = (h: string) => sodium.crypto_generichash(32, h, null, "hex");
+
+        const h = (h: string) => sodium.crypto_generichash(16, h, null, "hex");
         const slotHash = h(slot.toString());
 
         // Assumption: All peers wanting to replicate on topic has direct connections with me (Fully connected network)
-        const allPeers: string[] = this.getReplicatorsOnTopic(topic);
+        const allPeers: string[] = this.getReplicators(address) || [];
 
         // Assumption: Network specification is accurate
         // Replication topic is not an address we assume that the network allows all participants
-        const network = this._getNetwork(address, topic);
-        const isTrusted = (peer: string | PeerId) =>
-            network
-                ? network.isTrusted(
-                      new PeerIdAddress({ address: peer.toString() })
-                  )
-                : true;
-        const peers = await Promise.all(allPeers.map(isTrusted)).then(
-            (results) => allPeers.filter((_v, index) => results[index])
-        );
+        const network = this.getCanTrust(address);
+
+        let peers: string[];
+        if (network) {
+            const isTrusted = (peer: string) =>
+                network
+                    ? network.isTrusted(
+                          peer // TODO improve perf
+                      )
+                    : true;
+
+            peers = await Promise.all(allPeers.map(isTrusted)).then((results) =>
+                allPeers.filter((_v, index) => results[index])
+            );
+        } else {
+            peers = allPeers;
+        }
 
         const hashToPeer: Map<string, string> = new Map();
         const peerHashed: string[] = [];
 
+        // Add self
+        const iAmReplicating = this.programs.get(address)?.program?.replicate; // TODO add conditional whether this represents a network (I am not replicating if I am not trusted (pointless))
+
         if (peers.length === 0) {
-            return [this.id.toString()];
+            return iAmReplicating ? [this.idKeyHash] : peers;
         }
 
-        // Add self
-        const iAmReplicating = this._topicSubscriptions.has(
-            getReplicationTopic(topic)
-        ); // TODO add conditional whether this represents a network (I am not replicating if I am not trusted (pointless))
         if (iAmReplicating) {
-            peers.push(this.id.toString());
+            peers.push(this.idKeyHash.toString());
         }
 
         // Hash step
@@ -1324,6 +1057,7 @@ export class Peerbit {
             hashToPeer.set(peerHash, peer);
             peerHashed.push(peerHash);
         });
+
         numberOfLeaders = Math.min(numberOfLeaders, peerHashed.length);
         peerHashed.push(slotHash);
 
@@ -1348,94 +1082,25 @@ export class Peerbit {
         return leaders;
     }
 
-    async subscribeToTopic(
-        topic: string,
-        asReplicator: boolean
+    private async subscribeToProgram(
+        address: string | Address,
+        replicate?: boolean
     ): Promise<void> {
         if (this._disconnected || this._disconnecting) {
             throw new Error("Disconnected");
         }
-
-        if (!this.programs.has(topic)) {
-            this.programs.set(topic, new Map());
-        }
-
-        const handleTopic = async (
-            topic: string,
-            onPeerConnected?: (peer: string) => void
-        ) => {
-            if (!this._topicSubscriptions.has(topic)) {
-                const topicMonitor = new IpfsPubsubPeerMonitor(
-                    this.libp2p.pubsub,
-                    topic,
-                    {
-                        onJoin: (peer) => {
-                            logger.debug(`Peer joined ${topic}:`);
-                            logger.debug(peer);
-                            onPeerConnected && onPeerConnected(peer);
-                        },
-                        onLeave: (peer) => {
-                            logger.debug(`Peer ${peer} left ${topic}`);
-                        },
-                        onError: (e) => {
-                            logger.error(e);
-                        },
-                    }
-                );
-                this._topicSubscriptions.set(
-                    topic,
-                    new SharedChannel(
-                        await new SharedIPFSChannel(
-                            this._libp2p,
-                            this.id,
-                            topic,
-                            (message) => {
-                                return this._onMessage(message);
-                            },
-                            topicMonitor
-                        ).start()
-                    )
-                );
-            }
-        };
-
-        // The last argument below make sure we only do (onPeerConnected once even though we might be subscribing as an observer (and potentialy replicator))
-        await handleTopic(
-            getObserverTopic(topic),
-            asReplicator
-                ? undefined
-                : (peer) => this._onPeerConnected(topic, peer)
-        );
-        if (asReplicator) {
-            await handleTopic(getReplicationTopic(topic), (peer) =>
-                this._onPeerConnected(topic, peer)
-            );
-        }
+        const topic =
+            typeof address === "string" ? address : address.toString();
+        this.libp2p.directsub.subscribe(topic, {
+            data: serialize(
+                replicate ? new ReplicatorType() : new ObserverType()
+            ),
+        });
+        await this.libp2p.directsub.requestSubscribers(topic); // get up to date with who are subscribing to this topic
     }
 
     hasSubscribedToTopic(topic: string): boolean {
         return this.programs.has(topic);
-    }
-    async unsubscribeToTopic(
-        topic: string | TrustedNetwork,
-        id: string
-    ): Promise<boolean> {
-        if (typeof topic !== "string") {
-            if (!topic.address) {
-                throw new Error(
-                    "Can not get network address from topic as TrustedNetwork"
-                );
-            }
-            topic = topic.address.toString();
-        }
-
-        const a = await this._topicSubscriptions
-            .get(getReplicationTopic(topic))
-            ?.close(id);
-        const b = await this._topicSubscriptions
-            .get(getObserverTopic(topic))
-            ?.close(id);
-        return !!(a || b);
     }
 
     async _requestCache(
@@ -1498,7 +1163,7 @@ export class Peerbit {
             ) {
                 try {
                     program = (await Program.load(
-                        this._store,
+                        this._libp2p.directblock,
                         storeOrAddress,
                         options
                     )) as any as S; // TODO fix typings
@@ -1516,78 +1181,17 @@ export class Peerbit {
                 }
             }
 
-            await program.save(this._store);
+            await program.save(this._libp2p.directblock);
             const programAddress = program.address!.toString()!;
 
-            const definedTopic: string = (options.topic || programAddress)!;
-            if (!definedTopic) {
-                throw new Error("Replication topic is undefined");
-            }
             if (programAddress) {
-                const existingProgram = this.programs
-                    .get(definedTopic)
-                    ?.get(programAddress);
+                const existingProgram = this.programs?.get(programAddress);
                 if (existingProgram) {
                     return existingProgram;
                 }
             }
 
             logger.debug("open()");
-
-            const pstores = this.programs.get(definedTopic);
-            if (
-                programAddress &&
-                (!pstores || !pstores.has(programAddress)) &&
-                options.verifyCanOpen
-            ) {
-                // open store if is leader and sender is trusted
-                let senderCanOpen = false;
-
-                if (!program.owner) {
-                    // can open is is trusted by netwoek?
-                    senderCanOpen = await this._canOpenProgram(
-                        programAddress,
-                        definedTopic,
-                        options.entryToReplicate
-                    );
-                } else if (options.entryToReplicate) {
-                    const ownerAddress = Address.parse(program.owner);
-                    const ownerProgramRootAddress = ownerAddress.root();
-                    let ownerProgram: AbstractProgram | undefined =
-                        this.programs
-                            .get(definedTopic)
-                            ?.get(ownerProgramRootAddress.toString())?.program;
-                    if (ownerAddress.path) {
-                        ownerProgram = ownerProgram?.subprogramsMap.get(
-                            ownerAddress.path.index
-                        );
-                    }
-                    if (!ownerProgram) {
-                        logger.info("Failed to find owner program");
-                        throw new AccessError("Failed to find owner program");
-                    }
-                    // TOOD make typesafe
-                    const csp =
-                        ownerProgram as Program as any as CanOpenSubPrograms;
-                    if (!csp.canOpen) {
-                        senderCanOpen = false;
-                    } else {
-                        senderCanOpen = await csp.canOpen(
-                            program,
-                            options.entryToReplicate
-                        );
-                    }
-                }
-
-                if (!senderCanOpen) {
-                    logger.info(
-                        "Failed to open program because request is not trusted"
-                    );
-                    throw new AccessError(
-                        "Failed to open program because request is not trusted"
-                    );
-                }
-            }
 
             options = Object.assign(
                 { localOnly: false, create: false },
@@ -1598,101 +1202,94 @@ export class Peerbit {
             if (!options.encryption) {
                 options.encryption = await encryptionWithRequestKey(
                     this.identity,
-                    this.keystore,
-                    this._waitForKeysTimeout
-                        ? (key) =>
-                              this.requestAndWaitForKeys(
-                                  definedTopic,
-                                  programAddress,
-                                  new RequestKeysByKey({
-                                      key,
-                                  })
-                              )
-                        : undefined
+                    this.keystore
                 );
             }
             const replicate =
                 options.replicate !== undefined ? options.replicate : true;
-            await program.init(
-                this.libp2p,
-                this._store,
-                options.identity || this.identity,
-                {
-                    topic: definedTopic,
-                    onClose: () => this._onProgamClose(program, definedTopic!),
-                    onDrop: () => this._onProgamClose(program, definedTopic!),
-                    replicate,
-                    store: {
-                        ...options,
-                        cacheId: programAddress,
-                        resolveCache: (store) => {
-                            const programAddress = program.address?.toString();
-                            if (!programAddress) {
-                                throw new Error("Unexpected");
-                            }
-                            return new Cache(
-                                this.cache._store.sublevel(
-                                    path.join(programAddress, "store", store.id)
-                                )
-                            );
-                        },
-                        onClose: async (store) => {
-                            await this._onClose(program, store, definedTopic);
-                            if (options.onClose) {
-                                return options.onClose(store);
-                            }
-                            return;
-                        },
-                        onDrop: async (store) => {
-                            await this._onDrop(store);
-                            if (options.onDrop) {
-                                return options.onDrop(store);
-                            }
-                            return;
-                        },
-                        onLoad: async (store) => {
-                            /*  await this._onLoad(store) */
-                            if (options.onLoad) {
-                                return options.onLoad(store);
-                            }
-                            return;
-                        },
-                        onWrite: async (store, entry) => {
-                            await this.onWrite(
-                                program,
-                                store,
-                                entry,
-                                definedTopic
-                            );
-                            if (options.onWrite) {
-                                return options.onWrite(store, entry);
-                            }
-                            return;
-                        },
-                        onReplicationComplete: async (store) => {
-                            if (options.onReplicationComplete) {
-                                options.onReplicationComplete(store);
-                            }
-                        },
-                        onReplicationFetch: async (store, entry) => {
-                            if (options.onReplicationFetch) {
-                                options.onReplicationFetch(store, entry);
-                            }
-                        },
-                        onReplicationQueued: async (store, entry) => {
-                            if (options.onReplicationQueued) {
-                                options.onReplicationQueued(store, entry);
-                            }
-                        },
-                        onOpen: async (store) => {
-                            if (options.onOpen) {
-                                return options.onOpen(store);
-                            }
-                            return;
-                        },
+            const minReplicas =
+                options.minReplicas != null
+                    ? typeof options.minReplicas === "number"
+                        ? new AbsolutMinReplicas(this._minReplicas)
+                        : options.minReplicas
+                    : new AbsolutMinReplicas(this._minReplicas);
+            await program.init(this.libp2p, options.identity || this.identity, {
+                onClose: () => this._onProgamClose(program),
+                onDrop: () => this._onProgamClose(program),
+                replicate,
+                replicator: (address, gid) =>
+                    this.isLeader(address.toString(), gid, minReplicas.value),
+                open: (program) => this.open(program, options), // If the program opens more programs
+                store: {
+                    ...options,
+                    cacheId: programAddress,
+                    resolveCache: (store) => {
+                        const programAddress = program.address?.toString();
+                        if (!programAddress) {
+                            throw new Error("Unexpected");
+                        }
+                        return new Cache(
+                            this.cache._store.sublevel(
+                                path.join(programAddress, "store", store.id)
+                            )
+                        );
                     },
-                }
-            );
+                    onClose: async (store) => {
+                        await this._onClose(program, store);
+                        if (options.onClose) {
+                            return options.onClose(store);
+                        }
+                        return;
+                    },
+                    onDrop: async (store) => {
+                        await this._onDrop(store);
+                        if (options.onDrop) {
+                            return options.onDrop(store);
+                        }
+                        return;
+                    },
+                    onLoad: async (store) => {
+                        /*  await this._onLoad(store) */
+                        if (options.onLoad) {
+                            return options.onLoad(store);
+                        }
+                        return;
+                    },
+                    onWrite: async (store, entry) => {
+                        await this.onWrite(
+                            program,
+                            store,
+                            entry,
+                            program.address
+                        );
+                        if (options.onWrite) {
+                            return options.onWrite(store, entry);
+                        }
+                        return;
+                    },
+                    onReplicationComplete: async (store) => {
+                        if (options.onReplicationComplete) {
+                            options.onReplicationComplete(store);
+                        }
+                    },
+                    onReplicationFetch: async (store, entry) => {
+                        if (options.onReplicationFetch) {
+                            options.onReplicationFetch(store, entry);
+                        }
+                    },
+                    onReplicationQueued: async (store, entry) => {
+                        if (options.onReplicationQueued) {
+                            options.onReplicationQueued(store, entry);
+                        }
+                    },
+                    onOpen: async (store) => {
+                        if (options.onOpen) {
+                            return options.onOpen(store);
+                        }
+                        return;
+                    },
+                },
+            });
 
             const resolveCache = async (address: Address) => {
                 const cache = await this._requestCache(
@@ -1715,12 +1312,14 @@ export class Peerbit {
             };
             await resolveCache(program.address!);
 
-            const pm = await this.addProgram(
-                definedTopic,
-                program,
-                options.minReplicas || new AbsolutMinReplicas(this._minReplicas)
+            const pm = await this.addProgram(program, minReplicas);
+
+            await this.subscribeToProgram(
+                program.address.toString(),
+                replicate
             );
-            await this.subscribeToTopic(definedTopic, replicate);
+            /// TODO encryption
+
             return pm;
         };
         const openStore = await this._openProgramQueue.add(fn);
@@ -1728,32 +1327,6 @@ export class Peerbit {
             throw new Error("Unexpected");
         }
         return openStore.program as S;
-        /*  } */
-    }
-
-    _getNetwork(
-        address: string | Address,
-        topic?: string
-    ): TrustedNetwork | undefined {
-        const a = typeof address === "string" ? address : address.toString();
-        if (!topic)
-            for (const [k, v] of this.programs.entries()) {
-                if (v.has(a)) {
-                    topic = k;
-                }
-            }
-        if (!topic) {
-            return;
-        }
-        const parsedAddress =
-            address instanceof Address ? address : Address.parse(address);
-        const asPermissioned = this.programs
-            .get(topic)
-            ?.get(parsedAddress.root().toString())?.program;
-        if (!asPermissioned) {
-            return;
-        }
-        return getNetwork(asPermissioned);
     }
 
     /**
@@ -1772,90 +1345,14 @@ export class Peerbit {
         return data !== undefined && data !== null;
     }
 
-    async requestAndWaitForKeys<T extends Ed25519Keypair | X25519Keypair>(
-        topic: string,
-        address: string,
-        condition: RequestKeyCondition
-    ): Promise<KeyWithMeta<T>[] | undefined> {
-        if (!this._getNetwork(address)) {
-            return;
-        }
-        const promiseKey = condition.hashcode;
-        const existingPromise = this._keysInflightMap.get(promiseKey);
-        if (existingPromise) {
-            return existingPromise;
-        }
-
-        const lruCache = this._keyRequestsLRU.get(promiseKey);
-        if (lruCache !== undefined) {
-            return lruCache as KeyWithMeta<T>[];
-        }
-
-        const promise = new Promise<KeyWithMeta<T>[] | undefined>(
-            (resolve, reject) => {
-                const send = (message: Uint8Array) =>
-                    this._libp2p.pubsub.publish(
-                        getReplicationTopic(topic),
-                        message
-                    );
-                requestAndWaitForKeys(
-                    condition,
-                    send,
-                    this.keystore,
-                    this.identity,
-                    this._waitForKeysTimeout
-                )
-                    .then((results) => {
-                        if (results && results?.length > 0) {
-                            resolve(results as KeyWithMeta<T>[] | undefined); // TODO fix type safety
-                        } else {
-                            resolve(undefined);
-                        }
-                    })
-                    .catch((error) => {
-                        reject(error);
-                    });
-            }
-        );
-        this._keysInflightMap.set(promiseKey, promise);
-
-        try {
-            const result = await promise;
-            this._keyRequestsLRU.set(promiseKey, result ? result : null);
-            this._keysInflightMap.delete(promiseKey);
-            return result;
-        } catch (error) {
-            if (error instanceof StoreError) {
-                if (this._disconnected) {
-                    return undefined;
-                }
-            }
-            throw error;
-        }
-    }
-
     async getEncryptionKey(
-        topic: string,
         address: string
     ): Promise<KeyWithMeta<Ed25519Keypair | X25519Keypair> | undefined> {
         // v0 take some recent
         const keys = await this.keystore.getKeys<
             Ed25519Keypair | X25519Keypair
         >(address);
-        let key = keys?.[0];
-        if (!key) {
-            const keys = this._waitForKeysTimeout
-                ? await this.requestAndWaitForKeys(
-                      topic,
-                      address,
-                      new RequestKeysByAddress({
-                          address,
-                          type: "encryption",
-                      })
-                  )
-                : undefined;
-            key = keys ? keys[0] : undefined;
-        }
+        const key = keys?.[0];
         return key;
     }
 }

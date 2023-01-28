@@ -1,14 +1,14 @@
 import { variant, field, serialize, vec } from "@dao-xyz/borsh";
 import { TransportMessage } from "./message.js";
-import { PeerIdAddress } from "@dao-xyz/peerbit-crypto";
+import { getPublicKeyFromPeerId } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { Identity } from "@dao-xyz/peerbit-log";
-import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import type { PeerId } from "@libp2p/interface-peer-id";
 import type { AddressBook } from "@libp2p/interface-peer-store";
 import { multiaddr } from "@multiformats/multiaddr";
 import { peerIdFromString } from "@libp2p/peer-id";
+import { CanTrust } from "@dao-xyz/peerbit-program";
 
 @variant(0)
 export class PeerInfo {
@@ -42,19 +42,18 @@ export class ExchangeSwarmMessage extends TransportMessage {
     }
 }
 
-export const exchangeSwarmAddresses = async (
-    send: (data: Uint8Array) => Promise<any>,
+export const createExchangeSwarmAddressesMessage = async (
     identity: Identity,
     peerReciever: string,
     peers: PeerId[],
     addressBook: AddressBook,
-    network?: TrustedNetwork,
+    network?: CanTrust,
     localNetwork?: boolean
 ) => {
     let trustedAddresses: PeerId[];
     if (network) {
         const isTrusted = (peer: PeerId) =>
-            network.isTrusted(new PeerIdAddress({ address: peer.toString() }));
+            network.isTrusted(getPublicKeyFromPeerId(peer).hashcode());
         trustedAddresses = await Promise.all(peers.map(isTrusted)).then(
             (results) => peers.filter((_v, index) => results[index])
         );
@@ -93,25 +92,22 @@ export const exchangeSwarmAddresses = async (
         return;
     }
 
-    const message = serialize(
-        new ExchangeSwarmMessage({
-            info: filteredAddresses,
-        })
-    );
+    const resp = new ExchangeSwarmMessage({
+        info: filteredAddresses,
+    });
+    const message = serialize(resp);
     const signatureResult = await identity.sign(message);
-    await send(
-        serialize(
-            await new DecryptedThing<ExchangeSwarmMessage>({
-                data: serialize(
-                    new MaybeSigned({
-                        signature: new SignatureWithKey({
-                            signature: signatureResult,
-                            publicKey: identity.publicKey,
-                        }),
-                        data: message,
-                    })
-                ),
-            })
-        )
+    return serialize(
+        await new DecryptedThing<ExchangeSwarmMessage>({
+            data: serialize(
+                new MaybeSigned({
+                    signature: new SignatureWithKey({
+                        signature: signatureResult,
+                        publicKey: identity.publicKey,
+                    }),
+                    data: message,
+                })
+            ),
+        })
     );
 };

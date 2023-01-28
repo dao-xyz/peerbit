@@ -85,10 +85,10 @@ export class ClockService extends Program {
                         message: "Recieved an entry with an invalid timestamp",
                     });
                 }
-                const signature = await this._identity.sign(entry.toSignable());
+                const signature = await this.identity.sign(entry.toSignable());
                 return new Ok({
                     signature: new SignatureWithKey({
-                        publicKey: this._identity.publicKey,
+                        publicKey: this.identity.publicKey,
                         signature,
                     }),
                 });

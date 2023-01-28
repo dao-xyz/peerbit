@@ -6,37 +6,28 @@ import { SimpleIndex } from "./utils.js";
 import { createStore } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { AbstractLevel } from "abstract-level";
-import { fileURLToPath } from "url";
-import path from "path";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
-const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 
 describe(`Snapshots`, function () {
-    let blockStore: Blocks,
+    let blockStore: BlockStore,
         signKey: KeyWithMeta<Ed25519Keypair>,
         identityStore: AbstractLevel<any, string, Uint8Array>,
         store: Store<any>,
         cacheStore: AbstractLevel<any, string, Uint8Array>;
     let index: SimpleIndex<string>;
-    const ipfsConfig = Object.assign(
-        {},
-        {
-            repo: "repo-entry" + __filenameBase + new Date().getTime(),
-        }
-    );
 
     beforeAll(async () => {
-        identityStore = await createStore(path.join(__filename, "identity"));
-        cacheStore = await createStore(path.join(__filename, "cache"));
-
+        identityStore = await createStore();
+        cacheStore = await createStore();
         const keystore = new Keystore(identityStore);
-
         signKey = await keystore.createEd25519Key();
     });
 
     beforeEach(async () => {
-        blockStore = new Blocks(new MemoryLevelBlockStore());
+        blockStore = new MemoryLevelBlockStore();
         await blockStore.open();
 
         const cache = new Cache(cacheStore);
@@ -73,9 +64,9 @@ describe(`Snapshots`, function () {
         }
         const snapshot = await store.saveSnapshot();
         /*  expect(snapshot[0].path.length).toEqual(46);
-         expect(snapshot[0].cid.toString().length).toEqual(46);
-         expect(snapshot[0].path).toEqual(snapshot[0].cid.toString());
-         expect(snapshot[0].size > writes * 200).toEqual(true); */
+		 expect(snapshot[0].cid.toString().length).toEqual(46);
+		 expect(snapshot[0].path).toEqual(snapshot[0].cid.toString());
+		 expect(snapshot[0].size > writes * 200).toEqual(true); */
         expect(snapshot).toBeDefined();
     });
 

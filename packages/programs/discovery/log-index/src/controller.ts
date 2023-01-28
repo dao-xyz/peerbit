@@ -1,12 +1,7 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh";
 import { Entry, EntryEncryptionTemplate } from "@dao-xyz/peerbit-log";
 import { ComposableProgram } from "@dao-xyz/peerbit-program";
-import {
-    CanRead,
-    RPC,
-    RPCTopicOption,
-    SearchContext,
-} from "@dao-xyz/peerbit-rpc";
+import { CanRead, RPC, SearchContext } from "@dao-xyz/peerbit-rpc";
 import { Store } from "@dao-xyz/peerbit-store";
 import { EncryptedThing, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
@@ -118,14 +113,14 @@ export class LogIndex extends ComposableProgram {
     async setup(properties: {
         store: Store<any>;
         canRead?: CanRead;
-        rpcTopic?: RPCTopicOption;
+        rpcTopic?: string;
         context: SearchContext;
     }) {
         this._store = properties?.store;
         await this.query.setup({
             context: properties.context,
             queryType: LogQueryRequest,
-            rpcTopic: properties.rpcTopic,
+            topic: properties.rpcTopic,
             responseType: HeadsMessage,
             responseHandler: this.responseHandler.bind(this),
             canRead: properties.canRead || (() => Promise.resolve(true)),

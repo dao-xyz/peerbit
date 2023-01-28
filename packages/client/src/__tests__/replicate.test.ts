@@ -1,14 +1,13 @@
 import assert from "assert";
 import mapSeries from "p-each-series";
 import { Entry } from "@dao-xyz/peerbit-log";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { jest } from "@jest/globals";
-import { getObserverTopic, getReplicationTopic, Peerbit } from "../peer";
+import { Peerbit } from "../peer";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { IStoreOptions } from "@dao-xyz/peerbit-store";
 import { v4 as uuid } from "uuid";
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 describe(`Replication`, function () {
     jest.setTimeout(60000);
@@ -18,20 +17,17 @@ describe(`Replication`, function () {
         client2: Peerbit,
         db1: EventStore<string>,
         db2: EventStore<string>;
-    let topic: string;
     let options: IStoreOptions<any>;
 
     beforeEach(async () => {
-        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(2);
 
-        client1 = await Peerbit.create(session.peers[0], {});
-        client2 = await Peerbit.create(session.peers[1], {});
+        client1 = await Peerbit.create({ libp2p: session.peers[0] });
+        client2 = await Peerbit.create({ libp2p: session.peers[1] });
 
         options = Object.assign({}, options, {});
-        topic = uuid();
         db1 = await client1.open(new EventStore<string>({ id: "a" }), {
             ...options,
-            topic: topic,
         });
     });
 
@@ -53,52 +49,12 @@ describe(`Replication`, function () {
         let done = false;
         db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                client2._store,
+                client2.libp2p.directblock,
                 db1.address!
             ),
             {
-                topic: topic,
                 ...options,
                 onReplicationComplete: async () => {
-                    expect(
-                        db2.iterator({ limit: -1 }).collect().length
-                    ).toEqual(1);
-
-                    const db1Entries: Entry<Operation<string>>[] = db1
-                        .iterator({ limit: -1 })
-                        .collect();
-                    expect(db1Entries.length).toEqual(1);
-                    expect(
-                        await client1.findReplicators(
-                            topic,
-                            db1.address.toString(),
-                            db1Entries[0].gid,
-                            client1._minReplicas
-                        )
-                    ).toContainValues(
-                        [client1.id, client2.id].map((p) => p.toString())
-                    );
-                    expect(db1Entries[0].payload.getValue().value).toEqual(
-                        value
-                    );
-
-                    const db2Entries: Entry<Operation<string>>[] = db2
-                        .iterator({ limit: -1 })
-                        .collect();
-                    expect(db2Entries.length).toEqual(1);
-                    expect(
-                        await client2.findReplicators(
-                            topic,
-                            db1.address.toString(),
-                            db2Entries[0].gid,
-                            client1._minReplicas
-                        )
-                    ).toContainValues(
-                        [client1.id, client2.id].map((p) => p.toString())
-                    );
-                    expect(db2Entries[0].payload.getValue().value).toEqual(
-                        value
-                    );
                     done = true;
                 },
             }
@@ -106,27 +62,57 @@ describe(`Replication`, function () {
         await waitForPeers(
             session.peers[1],
             [client1.id],
-            getObserverTopic(topic)
+            db1.address.toString()
         );
         await waitForPeers(
             session.peers[0],
             [client2.id],
-            getObserverTopic(topic)
+            db1.address.toString()
         );
-        await waitFor(() => client1._directConnections.size === 1);
-        await waitFor(() => client2._directConnections.size === 1);
 
         const value = "hello";
         await db1.add(value);
 
         await waitFor(() => done);
+
+        expect(db2.iterator({ limit: -1 }).collect().length).toEqual(1);
+
+        const db1Entries: Entry<Operation<string>>[] = db1
+            .iterator({ limit: -1 })
+            .collect();
+        expect(db1Entries.length).toEqual(1);
+        expect(
+            await client1.findLeaders(
+                db1.address.toString(),
+                db1Entries[0].gid,
+                client1._minReplicas
+            )
+        ).toContainAllValues(
+            [client1.idKeyHash, client2.idKeyHash].map((p) => p.toString())
+        );
+        expect(db1Entries[0].payload.getValue().value).toEqual(value);
+
+        const db2Entries: Entry<Operation<string>>[] = db2
+            .iterator({ limit: -1 })
+            .collect();
+        expect(db2Entries.length).toEqual(1);
+        expect(
+            await client2.findLeaders(
+                db1.address.toString(),
+                db2Entries[0].gid,
+                client1._minReplicas
+            )
+        ).toContainValues(
+            [client1.idKeyHash, client2.idKeyHash].map((p) => p.toString())
+        );
+        expect(db2Entries[0].payload.getValue().value).toEqual(value);
     });
 
     it("replicates database of 100 entries", async () => {
         await waitForPeers(
             session.peers[1],
             [client1.id],
-            getReplicationTopic(topic)
+            db1.address.toString()
         );
 
         options = Object.assign({}, options);
@@ -134,11 +120,10 @@ describe(`Replication`, function () {
         let done = false;
         db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                client2._store,
+                client2.libp2p.directblock,
                 db1.address!
             ),
             {
-                topic: topic,
                 ...options,
                 onReplicationComplete: () => {
                     // Once db2 has finished replication, make sure it has all elements
@@ -172,7 +157,7 @@ describe(`Replication`, function () {
         await waitForPeers(
             session.peers[1],
             [client1.id],
-            getReplicationTopic(topic)
+            db1.address.toString()
         );
 
         options = Object.assign({}, options);
@@ -183,19 +168,27 @@ describe(`Replication`, function () {
         // Verify that progress count increases monotonically by saving
         // each event's current progress into an array
         let progressEvents: number = 0;
-        const progressEventsEntries: any[] = [];
-
+        const progressEventsEntries: Entry<any>[] = [];
         let done = false;
+
+        let replicationReorganizationDone = false;
+
+        client1.replicationReorganization = async (_changed: any) => {
+            return true; // do a noop becaus in this test we want to make sure that writes are only treated once
+            // and we don't want extra replication events
+        };
 
         db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                client2._store,
+                client2.libp2p.directblock,
                 db1.address!
             ),
             {
-                topic: topic,
                 ...options,
                 onReplicationQueued: (store, entry) => {
+                    if (!replicationReorganizationDone) {
+                        return false;
+                    }
                     if (!replicateSet.has(entry.hash)) {
                         replicateSet.add(entry.hash);
                     } else {
@@ -239,6 +232,7 @@ describe(`Replication`, function () {
         expect(db2.iterator({ limit: -1 }).collect().length).toEqual(
             entryCount
         );
+
         // progress events should increase monotonically
         expect(progressEvents).toEqual(entryCount);
     });
@@ -276,11 +270,10 @@ describe(`Replication`, function () {
 
         db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                client2._store,
+                client2.libp2p.directblock,
                 db1.address!
             ),
             {
-                topic: topic,
                 ...options,
                 onReplicationQueued: (store, entry) => {
                     if (!replicateSet.has(entry.hash)) {
@@ -324,7 +317,7 @@ describe(`Replication`, function () {
         await waitForPeers(
             session.peers[1],
             [client1.id],
-            getReplicationTopic(topic)
+            db1.address.toString()
         );
 
         const entryCount = 15;
@@ -353,13 +346,17 @@ describe(`Replication`, function () {
         const replicateSet = new Set();
         let done = false;
 
+        client1.replicationReorganization = async (_changed: any) => {
+            return true; // do a noop becaus in this test we want to make sure that writes are only treated once
+            // and we don't want extra replication events
+        };
+
         db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                client2._store,
+                client2.libp2p.directblock,
                 db1.address!
             ),
             {
-                topic: topic,
                 ...options,
                 onReplicationComplete: (store) => {
                     // Once db2 has finished replication, make sure it has all elements

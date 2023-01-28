@@ -13,16 +13,10 @@ import { v4 as uuid } from "uuid";
 import { jest } from "@jest/globals";
 
 // Include test utilities
-import { createStore, LSession } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/libp2p-test-utils";
 import { Program } from "@dao-xyz/peerbit-program";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import {
-    DEFAULT_BLOCK_TRANSPORT_TOPIC,
-    LevelBlockStore,
-    LibP2PBlockStore,
-} from "@dao-xyz/peerbit-block";
-import { Level } from "level";
-import { exec } from "child_process";
+import { LevelBlockStore } from "@dao-xyz/libp2p-direct-block";
 
 const dbPath = path.join("./peerbit", "tests", "create-open");
 
@@ -32,7 +26,7 @@ describe(`Create & Open`, function () {
     let session: LSession;
 
     beforeAll(async () => {
-        session = await LSession.connected(1, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(1);
     });
 
     afterAll(async () => {
@@ -47,8 +41,9 @@ describe(`Create & Open`, function () {
             let localDataPath: string, client: Peerbit;
 
             beforeAll(async () => {
-                client = await Peerbit.create(session.peers[0], {
+                client = await Peerbit.create({
                     directory: dbPath + uuid(),
+                    libp2p: session.peers[0],
                 });
             });
             afterAll(async () => {
@@ -67,7 +62,6 @@ describe(`Create & Open`, function () {
                 db = await client.open(
                     new KeyBlocks<string>({ id: "second" }),
                     {
-                        topic: uuid(),
                         directory: localDataPath,
                         replicate: false,
                     }
@@ -83,19 +77,9 @@ describe(`Create & Open`, function () {
             });
 
             it("block storage exist at path", async () => {
-                expect(
-                    client._store._store instanceof LibP2PBlockStore
-                ).toBeTrue();
-                expect(
-                    (client._store._store as LibP2PBlockStore)
-                        ._localStore instanceof LevelBlockStore
-                ).toBeTrue();
                 const location = (
-                    (
-                        (client._store._store as LibP2PBlockStore)
-                            ._localStore as LevelBlockStore
-                    )._level as any as Level
-                ).location;
+                    client.libp2p.directblock._localStore as LevelBlockStore
+                )._level["location"];
                 expect(location).toEndWith(
                     path.join(client.directory!, "blocks").toString()
                 );
@@ -106,16 +90,16 @@ describe(`Create & Open`, function () {
             });
 
             /*       it('saves database manifest reference locally', async () => {
-              const address = db.address!.toString();
-              const manifestHash = address.split('/')[2]
-              await client.cache.open()
-              const value = await client.cache.get(path.join(db.address?.toString(), '/_manifest'))
-              expect(value).toEqual(manifestHash)
-            }) */
+			  const address = db.address!.toString();
+			  const manifestHash = address.split('/')[2]
+			  await client.cache.open()
+			  const value = await client.cache.get(path.join(db.address?.toString(), '/_manifest'))
+			  expect(value).toEqual(manifestHash)
+			}) */
 
             it("saves database manifest file locally", async () => {
                 const loaded = (await Program.load(
-                    client._store,
+                    client.libp2p.directblock,
                     db.address!
                 )) as KeyBlocks<string>;
                 expect(loaded).toBeDefined();
@@ -125,7 +109,6 @@ describe(`Create & Open`, function () {
             it("can pass local database directory as an option", async () => {
                 const dir = "./peerbit/tests/another-feed-" + uuid();
                 const db2 = await client.open(new EventStore({ id: "third" }), {
-                    topic: uuid(),
                     directory: dir,
                 });
                 expect(fs.existsSync(dir)).toEqual(true);
@@ -139,11 +122,9 @@ describe(`Create & Open`, function () {
         jest.retryTimes(1); // TODO Side effects may cause failures
 
         beforeAll(async () => {
-            client = await Peerbit.create(session.peers[0], {
+            client = await Peerbit.create({
                 directory: dbPath + uuid(),
-                storage: {
-                    createStore: (string?: string) => createStore(string),
-                },
+                libp2p: session.peers[0],
             });
         });
         afterAll(async () => {
@@ -154,9 +135,7 @@ describe(`Create & Open`, function () {
 
         it("opens a database - name only", async () => {
             const topic = uuid();
-            const db = await client.open(new EventStore({}), {
-                topic: topic,
-            });
+            const db = await client.open(new EventStore({}));
             assert.equal(db.address!.toString().indexOf("/peerbit"), 0);
             assert.equal(db.address!.toString().indexOf("zd"), 9);
             await db.drop();
@@ -166,7 +145,6 @@ describe(`Create & Open`, function () {
             const signKey = await client.keystore.createEd25519Key();
             const topic = uuid();
             const db = await client.open(new EventStore({}), {
-                topic: topic,
                 identity: {
                     ...signKey.keypair,
                     sign: (data) => signKey.keypair.sign(data),
@@ -184,15 +162,13 @@ describe(`Create & Open`, function () {
             const signKey = await client.keystore.createEd25519Key();
             const topic = uuid();
             const db = await client.open(new EventStore({}), {
-                topic: topic,
                 identity: {
                     ...signKey.keypair,
                     sign: (data) => signKey.keypair.sign(data),
                 },
             });
             const db2 = await client.open(
-                await Program.load(client._store, db.address!),
-                { topic: topic }
+                await Program.load(client.libp2p.directblock, db.address!)
             );
             assert.equal(db2.address!.toString().indexOf("/peerbit"), 0);
             assert.equal(db2.address!.toString().indexOf("zd"), 9);
@@ -202,29 +178,30 @@ describe(`Create & Open`, function () {
 
         it("doesn't open a database if we don't have it locally", async () => {
             const topic = uuid();
-            const db = await client.open(new EventStore({}), {
-                topic: topic,
-            });
+            const db = await client.open(new EventStore({}));
             const address = new Address({
                 cid: db.address!.cid.slice(0, -1) + "A",
             });
             await db.drop();
-            const dbToLoad = await Program.load(client._store, address);
+            const dbToLoad = await Program.load(
+                client.libp2p.directblock,
+                address
+            );
             expect(dbToLoad).toBeUndefined();
         });
 
         /*  TODO, this test throws error, but not the expected one
-    it('throws an error if trying to open a database locally and we don\'t have it', async () => {
-       const db = await client.open(new EventStore({ id: 'abc' }), { replicationTopic })
-       const address = new Address(db.address.cid.slice(0, -1) + 'A')
-       await db.drop()
-       try {
-         await client.open(address, { replicationTopic, localOnly: true, timeout: 3000 })
-         throw new Error('Shouldn\'t open the database')
-       } catch (error: any) {
-         expect(error.toString()).toEqual(`Error: Database '${address}' doesn't exist!`)
-       }
-     }) */
+	it('throws an error if trying to open a database locally and we don\'t have it', async () => {
+	   const db = await client.open(new EventStore({ id: 'abc' }), { replicationTopic })
+	   const address = new Address(db.address.cid.slice(0, -1) + 'A')
+	   await db.drop()
+	   try {
+		 await client.open(address, { replicationTopic, localOnly: true, timeout: 3000 })
+		 throw new Error('Shouldn\'t open the database')
+	   } catch (error: any) {
+		 expect(error.toString()).toEqual(`Error: Database '${address}' doesn't exist!`)
+	   }
+	 }) */
 
         it("open the database and it has the added entries", async () => {
             const db = await client.open(new EventStore({ id: uuid() }), {
@@ -249,8 +226,9 @@ describe(`Create & Open`, function () {
         let client: Peerbit;
 
         beforeAll(async () => {
-            client = await Peerbit.create(session.peers[0], {
+            client = await Peerbit.create({
                 directory: dbPath + uuid(),
+                libp2p: session.peers[0],
             });
         });
         afterAll(async () => {
@@ -263,7 +241,6 @@ describe(`Create & Open`, function () {
             const directory = path.join(dbPath, "custom-store");
             const replicationTopic = uuid();
             const db = await client.open(new EventStore({}), {
-                topic: replicationTopic,
                 directory,
             });
             try {
@@ -277,14 +254,14 @@ describe(`Create & Open`, function () {
 
         /* TODO fix
     
-    it("close load close sets status to 'closed'", async () => {
-      const directory = path.join(dbPath, "custom-store")
-      const db = await client.open(new EventStore({}), { replicationTopic, directory })
-      await db.close()
-      await db.load()
-      await db.close()
-      expect(db.store._cache._store.status).toEqual('closed')
-    })
+	it("close load close sets status to 'closed'", async () => {
+	  const directory = path.join(dbPath, "custom-store")
+	  const db = await client.open(new EventStore({}), { replicationTopic, directory })
+	  await db.close()
+	  await db.load()
+	  await db.close()
+	  expect(db.store._cache._store.status).toEqual('closed')
+	})
  */
         it("successfully manages multiple caches", async () => {
             // Cleaning up cruft from other tests
@@ -292,24 +269,17 @@ describe(`Create & Open`, function () {
             const directory2 = path.join(dbPath, "custom-store2");
 
             const topic = uuid();
-            const db1 = await client.open(new EventStore({ id: "xyz1" }), {
-                topic: topic,
-            });
+            const db1 = await client.open(new EventStore({ id: "xyz1" }));
             const db2 = await client.open(new EventStore({ id: "xyz2" }), {
-                topic: topic,
                 directory,
             });
             const db3 = await client.open(new EventStore({ id: "xyz3" }), {
-                topic: topic,
                 directory,
             });
             const db4 = await client.open(new EventStore({ id: "xyz4" }), {
-                topic: topic,
                 directory: directory2,
             });
-            const db5 = await client.open(new EventStore({ id: "xyz5" }), {
-                topic: topic,
-            });
+            const db5 = await client.open(new EventStore({ id: "xyz5" }));
             try {
                 await db1.close();
                 await db2.close();

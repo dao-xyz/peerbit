@@ -12,13 +12,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 import { createStore } from "./utils.js";
 
 let signKey: KeyWithMeta<Ed25519Keypair>;
 
 describe("Log - Nexts", function () {
-    let keystore: Keystore, store: Blocks;
+    let keystore: Keystore, store: BlockStore;
 
     beforeAll(async () => {
         rmrf.sync(testKeyStorePath(__filenameBase));
@@ -34,7 +37,7 @@ describe("Log - Nexts", function () {
         signKey = (await keystore.getKey(
             new Uint8Array([0])
         )) as KeyWithMeta<Ed25519Keypair>;
-        store = new Blocks(new MemoryLevelBlockStore());
+        store = new MemoryLevelBlockStore();
         await store.open();
     });
 

@@ -32,13 +32,13 @@
     "author": "dao.xyz",
     "license": "MIT",
     "dependencies": {
-        "@dao-xyz/borsh": "^4.0.7",
+        "@dao-xyz/borsh": "^5.1.4",
         "@dao-xyz/peerbit-crypto": "^0.0.34",
         "@dao-xyz/peerbit-logger": "^0.0.4",
         "@dao-xyz/peerbit-program": "^0.0.78",
         "@dao-xyz/peerbit-store": "^0.0.93",
         "@dao-xyz/peerbit-time": "^0.0.19",
-        "uuid": "^8.3.2"
+        "nanoid": "^4.0.0"
     },
     "gitHead": "bfbec720aee276ab1bc7cf4ee7a6c0e90ecb4f51"
 }

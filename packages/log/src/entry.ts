@@ -21,13 +21,14 @@ import {
     Ed25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
 import { verify, toBase64 } from "@dao-xyz/peerbit-crypto";
-import { Blocks } from "@dao-xyz/peerbit-block";
+import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { arraysCompare, arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
 import sodium from "libsodium-wrappers";
 import { Encoding, JSON_ENCODING } from "./encoding.js";
 import { Identity } from "./identity.js";
 import { StringArray } from "./types.js";
 import { logger } from "./logger.js";
+import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
 await sodium.ready;
 
 export type MaybeEncryptionPublicKey =
@@ -205,8 +206,9 @@ export class Entry<T>
 
     _encryption?: PublicKeyEncryptionResolver;
     _encoding?: Encoding<T>;
+    createdLocally?: boolean;
 
-    constructor(obj?: {
+    constructor(obj: {
         payload: MaybeEncrypted<Payload<T>>;
         signatures?: Signatures;
         metadata: MaybeEncrypted<Metadata>;
@@ -214,19 +216,19 @@ export class Entry<T>
         fork?: MaybeEncrypted<StringArray>; //  (not used)
         reserved?: number[]; // intentational type 0  (not used)h
         hash?: string;
+        createdLocally?: boolean;
     }) {
-        if (obj) {
-            this._metadata = obj.metadata;
-            this._payload = obj.payload;
-            this._signatures = obj.signatures;
-            this._next = obj.next;
-            this._fork =
-                obj.fork ||
-                new DecryptedThing({
-                    data: serialize(new StringArray({ arr: [] })),
-                });
-            this._reserved = obj.reserved || [0, 0, 0, 0];
-        }
+        this._metadata = obj.metadata;
+        this._payload = obj.payload;
+        this._signatures = obj.signatures;
+        this._next = obj.next;
+        this._fork =
+            obj.fork ||
+            new DecryptedThing({
+                data: serialize(new StringArray({ arr: [] })),
+            });
+        this._reserved = obj.reserved || [0, 0, 0, 0];
+        this.createdLocally = obj.createdLocally;
     }
 
     init(
@@ -428,7 +430,7 @@ export class Entry<T>
         ); // dont compare hashes because the hash is a function of the other properties
     }
 
-    async delete(store: Blocks): Promise<void> {
+    async delete(store: BlockStore): Promise<void> {
         if (!this.hash) {
             throw new Error("Missing hash");
         }
@@ -442,7 +444,7 @@ export class Entry<T>
     }
 
     static async create<T>(properties: {
-        store: Blocks;
+        store: BlockStore;
         gid?: string;
         gidSeed?: string;
         data: T;
@@ -450,7 +452,6 @@ export class Entry<T>
         canAppend?: CanAppend<T>;
         next?: Entry<T>[];
         clock?: Clock;
-        pin?: boolean;
         encryption?: EntryEncryption;
         identity: Identity;
         signers?: ((data: Uint8Array) => Promise<SignatureWithKey>)[];
@@ -577,8 +578,8 @@ export class Entry<T>
                     // replace gid if next is from alonger chain, or from a later time, or same time but "smaller" gid
                     else if (
                         /*   maxChainLength < n.maxChainLength ||
-                          maxClock < n.clock.logical ||
-                          (maxClock == n.clock.logical && n.gid < gid) */ // Longest chain?
+						  maxClock < n.clock.logical ||
+						  (maxClock == n.clock.logical && n.gid < gid) */ // Longest chain?
                         Timestamp.compare(
                             n.metadata.clock.timestamp,
                             maxClock
@@ -635,6 +636,7 @@ export class Entry<T>
             metadata: metadataEncrypted,
             signatures: undefined,
             fork: forks,
+            createdLocally: true,
             next: nextEncrypted, // Array of hashes
             /* refs: properties.refs, */
         });
@@ -683,11 +685,7 @@ export class Entry<T>
             }
         }
         // Append hash and signature
-        entry.hash = await Entry.toMultihash(
-            properties.store,
-            entry,
-            properties.pin
-        );
+        entry.hash = await Entry.toMultihash(properties.store, entry);
         return entry;
     }
 
@@ -702,17 +700,14 @@ export class Entry<T>
      * // "Qm...Foo"
      */
     static async toMultihash<T>(
-        store: Blocks,
-        entry: Entry<T>,
-        pin = false
+        store: BlockStore,
+        entry: Entry<T>
     ): Promise<string> {
         if (entry.hash) {
             throw new Error("Expected hash to be missing");
         }
 
-        return store.put(serialize(entry), "raw", {
-            pin,
-        });
+        return store.put(await createBlock(serialize(entry), "raw"));
     }
 
     /**
@@ -725,13 +720,17 @@ export class Entry<T>
      * console.log(entry)
      * // { hash: "Zd...Foo", payload: "hello", next: [] }
      */
-    static async fromMultihash<T>(store: Blocks, hash: string) {
+    static async fromMultihash<T>(
+        store: BlockStore,
+        hash: string,
+        options?: { timeout?: number }
+    ) {
         if (!hash) throw new Error(`Invalid hash: ${hash}`);
-        const bytes = await store.get<Uint8Array>(hash);
+        const bytes = await store.get<Uint8Array>(hash, options);
         if (!bytes) {
             throw new Error("Fialed to resolve block: " + hash);
         }
-        const entry = deserialize(bytes, Entry);
+        const entry = deserialize(await getBlockValue(bytes), Entry);
         entry.hash = hash;
         return entry;
     }

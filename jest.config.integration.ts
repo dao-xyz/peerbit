@@ -16,15 +16,21 @@ const jestConfig: JestConfigWithTsJest = {
     extensionsToTreatAsEsm: [".ts"],
     moduleNameMapper: {
         uuid: require.resolve("uuid"),
+        "#noise-crypto": "./crypto/crypto-node.js",
         "^(\\.{1,2}/.*)\\.js$": "$1",
     },
     transformIgnorePatterns: ["dns"],
-
+    //forceExit: true,
     /*  useESM: true, */
-    testRegex: "/__tests__/[A-Za-z0-9-/]+(\\.integration)?\\.(test|spec)\\.ts$",
+    testRegex: [
+        "/__tests__/[A-Za-z0-9-/]+(\\.integration)?\\.(test|spec)\\.ts$",
+        "/test/[A-Za-z0-9-/]+(\\.integration)?\\.(test|spec)\\.ts$",
+    ],
     moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
     testTimeout: 60000,
     setupFilesAfterEnv: ["jest-extended/all"],
+    /* 	detectOpenHandles: true,
+		watch: true */
     /*   coverageReporters: ["lcov"]
      */
 };

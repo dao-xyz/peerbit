@@ -1,10 +1,9 @@
-import { getReplicationTopic, Peerbit } from "../peer";
+import { Peerbit } from "../peer";
 import { EventStore } from "./utils/stores";
 import { jest } from "@jest/globals";
 import { v4 as uuid } from "uuid";
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
+import { delay } from "@dao-xyz/peerbit-time";
 
 describe(`Multiple Databases`, function () {
     jest.setTimeout(60000);
@@ -20,11 +19,11 @@ describe(`Multiple Databases`, function () {
 
     // Create two IPFS instances and two client instances (2 nodes/peers)
     beforeAll(async () => {
-        session = await LSession.connected(3, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(3);
 
-        client1 = await Peerbit.create(session.peers[0], {});
-        client2 = await Peerbit.create(session.peers[1], {});
-        client3 = await Peerbit.create(session.peers[2], {});
+        client1 = await Peerbit.create({ libp2p: session.peers[0] });
+        client2 = await Peerbit.create({ libp2p: session.peers[1] });
+        client3 = await Peerbit.create({ libp2p: session.peers[2] });
         client2._minReplicas = 3;
         client3._minReplicas = 3;
         client1._minReplicas = 3;
@@ -46,21 +45,20 @@ describe(`Multiple Databases`, function () {
         const options = {};
 
         // Open the databases on the first node
-        const topic = uuid();
         for (let i = 0; i < dbCount; i++) {
             const db = await client1.open(
                 new EventStore<string>({ id: "local-" + i }),
-                { ...options, topic: topic }
+                { ...options }
             );
             localDatabases.push(db);
         }
         for (let i = 0; i < dbCount; i++) {
             const db = await client2.open<EventStore<string>>(
                 await EventStore.load<EventStore<string>>(
-                    client2._store,
+                    client2.libp2p.directblock,
                     localDatabases[i].address!
                 ),
-                { topic: topic, ...options }
+                { ...options }
             );
             remoteDatabasesA.push(db);
         }
@@ -68,45 +66,43 @@ describe(`Multiple Databases`, function () {
         for (let i = 0; i < dbCount; i++) {
             const db = await client3.open<EventStore<string>>(
                 await EventStore.load<EventStore<string>>(
-                    client3._store,
+                    client3.libp2p.directblock,
                     localDatabases[i].address!
                 ),
-                { topic: topic, ...options }
+                { ...options }
             );
             remoteDatabasesB.push(db);
         }
 
         // Wait for the peers to connect
-        await waitForPeers(
-            session.peers[0],
-            [client2.id],
-            getReplicationTopic(topic)
-        );
-        await waitForPeers(
-            session.peers[1],
-            [client1.id],
-            getReplicationTopic(topic)
-        );
-        await waitForPeers(
-            session.peers[2],
-            [client1.id],
-            getReplicationTopic(topic)
-        );
-
-        await waitFor(() => client1._directConnections.size === 2);
-        await waitFor(() => client2._directConnections.size === 2);
-        await waitFor(() => client3._directConnections.size === 2);
+        for (const db of localDatabases) {
+            await waitForPeers(
+                session.peers[0],
+                [client2.id],
+                db.address.toString()
+            );
+            await waitForPeers(
+                session.peers[1],
+                [client1.id],
+                db.address.toString()
+            );
+            await waitForPeers(
+                session.peers[2],
+                [client1.id],
+                db.address.toString()
+            );
+        }
     });
 
     afterEach(async () => {
         /*  for (let db of remoteDatabasesA)
-     await db.drop()
+	 await db.drop()
 
    for (let db of remoteDatabasesB)
-     await db.drop()
+	 await db.drop()
 
    for (let db of localDatabases)
-     await db.drop() */
+	 await db.drop() */
     });
 
     it("replicates multiple open databases", async () => {
@@ -140,7 +136,7 @@ describe(`Multiple Databases`, function () {
                 if (allReplicated()) {
                     clearInterval(interval);
 
-                    await delay(10000); // add some delay, so that we absorb any extra (unwanted) replication
+                    await delay(3000); // add some delay, so that we absorb any extra (unwanted) replication
 
                     // Verify that the databases contain all the right entries
                     remoteDatabasesA.forEach((db) => {
@@ -172,18 +168,14 @@ describe(`Multiple Databases`, function () {
         });
 
         // check gracefully shut down (with no leak)
-        let directConnections = 2;
-        const subscriptions = client3.libp2p.pubsub.getTopics();
-        expect(subscriptions.length).toEqual(directConnections + 2 + 1); //+ 1 for 2 replication topic (observer and replicator) + block topic
+        const subscriptions = client3.libp2p.directsub.topics;
+        expect(subscriptions.size).toEqual(dbCount);
         for (let i = 0; i < dbCount; i++) {
             await remoteDatabasesB[i].drop();
-            if (i === dbCount - 1) {
-                await delay(3000);
-                const connections = client3.libp2p.pubsub.getTopics();
-
-                // Direct connection should close because no databases "in common" are open
-                expect(connections).toHaveLength(0 + 1); // + "block" topic
-            }
+            await delay(3000);
+            expect(client3.libp2p.directsub.topics.size).toEqual(
+                dbCount - i - 1
+            );
         }
     });
 });

@@ -5,16 +5,10 @@ import { Ed25519Identity, Entry } from "@dao-xyz/peerbit-log";
 import { Program } from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { ClockService } from "../controller";
-import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { MemoryLevel } from "memory-level";
 import { default as Cache } from "@dao-xyz/peerbit-cache";
 import { v4 as uuid } from "uuid";
-import {
-    DEFAULT_BLOCK_TRANSPORT_TOPIC,
-    LibP2PBlockStore,
-    MemoryLevelBlockStore,
-    Blocks,
-} from "@dao-xyz/peerbit-block";
+import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 
 const createIdentity = async () => {
     const ed = await Ed25519Keypair.create();
@@ -44,11 +38,10 @@ class P extends Program {
 }
 
 describe("clock", () => {
-    let session: LSession, responder: P, reader: P, readerStore: Blocks;
+    let session: LSession, responder: P, reader: P;
     beforeAll(async () => {
-        session = await LSession.connected(3, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(3);
         const responderIdentity = await createIdentity();
-        const topic = uuid();
         responder = new P({
             clock: new ClockService({
                 trustedNetwork: new TrustedNetwork({
@@ -56,46 +49,29 @@ describe("clock", () => {
                 }),
             }),
         });
-        await responder.init(
-            session.peers[0],
-            new Blocks(
-                new LibP2PBlockStore(
-                    session.peers[0],
-                    new MemoryLevelBlockStore()
-                )
-            ),
-            responderIdentity,
-            {
-                topic,
-                replicate: true,
-                store: {
-                    cacheId: "id",
-                    resolveCache: () =>
-                        Promise.resolve(new Cache(new MemoryLevel())),
-                } as any,
-            } as any
-        );
+        await responder.init(session.peers[0], responderIdentity, {
+            replicate: true,
+            store: {
+                cacheId: "id",
+                resolveCache: () =>
+                    Promise.resolve(new Cache(new MemoryLevel())),
+            } as any,
+        } as any);
 
         responder.clock._maxError = BigInt(maxTimeError * 1e6);
 
         reader = deserialize(serialize(responder), P);
-        readerStore = new Blocks(
-            new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
-        );
-        await reader.init(
-            session.peers[1],
-            readerStore,
-            await createIdentity(),
-            {
-                topic,
-                store: {
-                    cacheId: "id",
-                    resolveCache: () =>
-                        Promise.resolve(new Cache(new MemoryLevel())),
-                } as any,
-            } as any
-        );
-
+        await reader.init(session.peers[1], await createIdentity(), {
+            store: {
+                cacheId: "id",
+                resolveCache: () =>
+                    Promise.resolve(new Cache(new MemoryLevel())),
+            } as any,
+        } as any);
+        const topic = responder.clock._remoteSigner._rpcTopic;
+        if (!topic) {
+            throw new Error("Expecting topic");
+        }
         await waitForPeers(session.peers[1], [session.peers[0]], topic);
     });
     afterAll(async () => {
@@ -106,7 +82,7 @@ describe("clock", () => {
         const entry = await Entry.create({
             data: "hello world",
             identity: reader.identity,
-            store: readerStore,
+            store: session.peers[1].directblock,
             signers: [
                 async (data: Uint8Array) =>
                     new SignatureWithKey({
@@ -134,7 +110,7 @@ describe("clock", () => {
             Entry.create({
                 data: "hello world",
                 identity: reader.identity,
-                store: readerStore,
+                store: session.peers[1].directblock,
                 signers: [
                     async (data: Uint8Array) =>
                         new SignatureWithKey({

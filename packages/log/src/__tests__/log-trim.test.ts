@@ -4,7 +4,10 @@ import { Log } from "../log.js";
 
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 
 import { dirname } from "path";
 import { fileURLToPath } from "url";
@@ -18,7 +21,7 @@ const __dirname = dirname(__filename);
 let signKey: KeyWithMeta<Ed25519Keypair>;
 
 describe("Append trim", function () {
-    let keystore: Keystore, store: Blocks;
+    let keystore: Keystore, store: BlockStore;
 
     beforeAll(async () => {
         rmrf.sync(testKeyStorePath(__filenameBase));
@@ -35,7 +38,7 @@ describe("Append trim", function () {
         //@ts-ignore
         signKey = await keystore.getKey(new Uint8Array([0]));
 
-        store = new Blocks(new MemoryLevelBlockStore());
+        store = new MemoryLevelBlockStore();
         await store.open();
     });
 
@@ -88,7 +91,7 @@ describe("Append trim", function () {
         const { entry: a4, removed } = await log.append("hello4");
         expect(removed).toContainAllValues([a1, a2, a3]);
         expect(log.length).toEqual(1);
-        await log._storage.idle();
+        await (log._storage as MemoryLevelBlockStore).idle();
         expect(await log._storage.get(a1.hash)).toBeUndefined();
         expect(await log._storage.get(a2.hash)).toBeUndefined();
         expect(await log._storage.get(a3.hash)).toBeUndefined();
@@ -121,7 +124,7 @@ describe("Append trim", function () {
         const { entry: a4, removed: r4 } = await log.append("hello4");
         expect(r4).toContainAllValues([a3]);
         expect(log.values.map((x) => x.payload.getValue())).toEqual(["hello4"]);
-        await log._storage.idle();
+        await (log._storage as MemoryLevelBlockStore).idle();
         expect(await log._storage.get(a1.hash)).toBeUndefined();
         expect(await log._storage.get(a2.hash)).toBeUndefined();
         expect(await log._storage.get(a3.hash)).toBeUndefined();

@@ -1,47 +1,38 @@
-import assert, { rejects } from "assert";
-import { Store, DefaultOptions, HeadsCache } from "../store.js";
+import assert from "assert";
+import { Store, DefaultOptions } from "../store.js";
 import { default as Cache } from "@dao-xyz/peerbit-cache";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Entry } from "@dao-xyz/peerbit-log";
 import { SimpleIndex } from "./utils.js";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
-import { fileURLToPath } from "url";
-import path from "path";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import { AbstractLevel } from "abstract-level";
-
-const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
 
 // Test utils
 import { createStore } from "@dao-xyz/peerbit-test-utils";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 describe(`addOperation`, function () {
-    let blockStore: Blocks,
+    let blockStore: BlockStore,
         signKey: KeyWithMeta<Ed25519Keypair>,
         identityStore: AbstractLevel<any, string, Uint8Array>,
         store: Store<any>,
         cacheStore: AbstractLevel<any, string, Uint8Array>;
     let index: SimpleIndex<string>;
 
-    const ipfsConfig = Object.assign(
-        {},
-        {
-            repo: "repo-add" + __filenameBase + new Date().getTime(),
-        }
-    );
-
     beforeAll(async () => {
-        identityStore = await createStore(path.join(__filename, "identity"));
+        identityStore = await createStore();
 
         const keystore = new Keystore(identityStore);
 
         signKey = await keystore.createEd25519Key();
 
-        blockStore = new Blocks(new MemoryLevelBlockStore());
+        blockStore = new MemoryLevelBlockStore();
         await blockStore.open();
 
-        cacheStore = await createStore(path.join(__filename, "cache"));
+        cacheStore = await createStore();
     });
 
     afterAll(async () => {
@@ -148,6 +139,45 @@ describe(`addOperation`, function () {
         }
 
         await waitFor(() => done);
+    });
+
+    it("adds multiple operations concurrently", async () => {
+        const writes = 100;
+        let eventsFired = 0;
+
+        const cache = new Cache(cacheStore);
+        let done = false;
+        const onWrite = async (store: Store<any>, entry: Entry<any>) => {
+            eventsFired++;
+            if (eventsFired === writes) {
+                done = true;
+            }
+        };
+
+        store = new Store({ storeIndex: 1 });
+        index = new SimpleIndex(store);
+        await store.init(
+            blockStore,
+            {
+                ...signKey.keypair,
+                sign: async (data: Uint8Array) =>
+                    await signKey.keypair.sign(data),
+            },
+            {
+                ...DefaultOptions,
+                resolveCache: () => Promise.resolve(cache),
+                onUpdate: index.updateIndex.bind(index),
+                onWrite: onWrite,
+            }
+        );
+
+        const promises: Promise<any>[] = [];
+        for (let i = 0; i < writes; i++) {
+            promises.push(store.addOperation({ step: i }, { nexts: [] }));
+        }
+        await Promise.all(promises);
+        await waitFor(() => done);
+        expect(store.oplog.values.length).toEqual(writes);
     });
 
     it("can add as unique heads", async () => {

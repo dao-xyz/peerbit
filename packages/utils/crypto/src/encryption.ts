@@ -1,5 +1,6 @@
 export * from "./errors.js";
 import {
+    AbstractType,
     Constructor,
     deserialize,
     field,
@@ -12,6 +13,8 @@ import { AccessError } from "./errors.js";
 import sodium from "libsodium-wrappers";
 import { X25519Keypair, X25519PublicKey, X25519SecretKey } from "./x25519.js";
 import { Ed25519Keypair, Ed25519PublicKey } from "./ed25519.js";
+import crypto from "crypto";
+
 await sodium.ready;
 
 const NONCE_LENGTH = 24;
@@ -74,7 +77,7 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
     }
 
     _value?: T;
-    getValue(clazz: Constructor<T>): T {
+    getValue(clazz: AbstractType<T>): T {
         if (this._value) {
             return this._value;
         }
@@ -90,7 +93,7 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
     ): EncryptedThing<T> {
         const bytes = serialize(this);
         const epheremalKey = sodium.crypto_secretbox_keygen();
-        const nonce = new Uint8Array(sodium.randombytes_buf(NONCE_LENGTH));
+        const nonce = crypto.randomBytes(NONCE_LENGTH); // crypto random is faster than sodim random
         const cipher = sodium.crypto_secretbox_easy(bytes, nonce, epheremalKey);
 
         let encryptionKeypair =
@@ -107,7 +110,7 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
         });
 
         const ks = recieverX25519PublicKeys.map((recieverPublicKey) => {
-            const kNonce = new Uint8Array(sodium.randombytes_buf(NONCE_LENGTH));
+            const kNonce = crypto.randomBytes(NONCE_LENGTH); // crypto random is faster than sodium random
             return new K({
                 encryptedKey: new CipherWithNonce({
                     cipher: sodium.crypto_box_easy(

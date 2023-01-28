@@ -1,18 +1,16 @@
 import http from "http";
-import { PublicSignKey, fromBase64, toBase64 } from "@dao-xyz/peerbit-crypto";
+import { fromBase64, toBase64 } from "@dao-xyz/peerbit-crypto";
 import { Peerbit } from "@dao-xyz/peerbit";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { Program, Address } from "@dao-xyz/peerbit-program";
-import { IdentityRelation } from "@dao-xyz/peerbit-trusted-network";
 import { multiaddr } from "@multiformats/multiaddr";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import { v4 as uuid } from "uuid";
 import { Libp2p } from "libp2p";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
-import { getNetwork } from "@dao-xyz/peerbit";
 import { getConfigDir, getCredentialsPath, NotFoundError } from "./config.js";
 import { setMaxListeners } from "events";
 import { createNode } from "./libp2p.js";
+import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 export const LOCAL_PORT = 8082;
 export const SSL_PORT = 9002;
 
@@ -30,12 +28,9 @@ export const getPort = (protocol: string) => {
 
 const IPFS_ID_PATH = "/peer/id";
 const ADDRESSES_PATH = "/peer/addresses";
-const TOPIC_PATH = "/topic";
 const TOPICS_PATH = "/topics";
 const PROGRAM_PATH = "/program";
 const LIBRARY_PATH = "/library";
-const NETWORK_PEER_PATH = "/network/peer";
-const NETWORK_PEERS_PATH = "/network/peers";
 
 export const checkExistPath = async (path: string) => {
     const fs = await import("fs");
@@ -114,7 +109,10 @@ export const startServerWithNode = async (relay: boolean) => {
     };
     const peer = relay
         ? controller.api
-        : await Peerbit.create(controller.api, { directory: ".peerbit/data" });
+        : await Peerbit.create({
+              libp2p: controller.api,
+              directory: ".peerbit/data",
+          });
     const server = await startServer(peer);
     const printNodeInfo = async () => {
         console.log("Starting node with address(es): ");
@@ -144,31 +142,12 @@ export const startServerWithNode = async (relay: boolean) => {
     await shutDownHook(controller, server);
 };
 export const startServer = async (
-    client: Peerbit | Libp2p,
+    client: Peerbit | Libp2pExtended,
     port: number = LOCAL_PORT
 ): Promise<http.Server> => {
     const notPeerBitError =
         "Client is just a Libp2p node, not a full Peerbit client. The command is not supported for this node type";
     const libp2p = client instanceof Peerbit ? client.libp2p : client;
-
-    // TODO for convinience we do this, but should we? Who might not like this
-    // This is needed atm for all Peerbit apps, but not for other thinngs potentially
-    let err: any = undefined;
-    for (let i = 0; i < 3; i++) {
-        try {
-            await libp2p.pubsub.subscribe(DEFAULT_BLOCK_TRANSPORT_TOPIC);
-            err = undefined;
-            break;
-        } catch (error) {
-            err = error;
-            await delay(5000);
-        }
-    }
-
-    if (err) {
-        throw err;
-    }
-
     const password = await loadOrCreatePassword();
 
     const adminACL = (req: http.IncomingMessage): boolean => {
@@ -206,14 +185,9 @@ export const startServer = async (
                 throw new Error("Invalid path");
             }
             const address = decodeURIComponent(path[pathIndex]);
-
-            for (const [topic, programs] of client.programs.entries()) {
-                {
-                    const p = programs.get(address);
-                    if (p) {
-                        return p.program;
-                    }
-                }
+            const p = client.programs.get(address);
+            if (p) {
+                return p.program;
             }
         } else {
             throw new Error(notPeerBitError);
@@ -282,9 +256,17 @@ export const startServer = async (
                                     if (replicate) {
                                         if (client instanceof Peerbit) {
                                             res.write(
-                                                JSON.stringify([
-                                                    ...client.programs.keys(),
-                                                ])
+                                                JSON.stringify(
+                                                    [
+                                                        ...client.programs.entries(),
+                                                    ]
+                                                        .filter(
+                                                            (x) =>
+                                                                x[1].program
+                                                                    .replicate
+                                                        )
+                                                        .map((x) => x[0])
+                                                )
                                             );
                                             res.end();
                                         } else {
@@ -294,80 +276,14 @@ export const startServer = async (
                                         }
                                     } else {
                                         res.write(
-                                            JSON.stringify(
-                                                libp2p.pubsub.getTopics()
-                                            )
+                                            JSON.stringify([
+                                                ...libp2p.directsub.subscriptions.keys(),
+                                            ])
                                         );
                                         res.end();
                                     }
                                 });
 
-                                break;
-                            default:
-                                r404();
-                                break;
-                        }
-                    } else if (req.url.startsWith(TOPIC_PATH)) {
-                        switch (req.method) {
-                            case "PUT":
-                                getBody(req, (body) => {
-                                    import("url").then((parse) => {
-                                        const replicateParam = parse.parse(
-                                            req.url!,
-                                            true
-                                        ).query["replicate"];
-                                        if (Array.isArray(replicateParam)) {
-                                            res.writeHead(400);
-                                            res.end(
-                                                "Expecting one replicate param"
-                                            );
-                                            return;
-                                        }
-                                        const replicate = replicateParam
-                                            ? JSON.parse(replicateParam)
-                                            : replicateParam;
-                                        const topic = body;
-                                        if (
-                                            typeof topic !== "string" ||
-                                            topic.trim().length !== topic.length
-                                        ) {
-                                            res.writeHead(400);
-                                            res.end(
-                                                "Invalid topic: " +
-                                                    JSON.stringify(topic)
-                                            );
-                                        } else if (!replicate) {
-                                            libp2p.pubsub.subscribe(topic);
-                                            res.writeHead(200);
-                                            res.end();
-                                        } else {
-                                            if (client instanceof Peerbit) {
-                                                if (
-                                                    client.programs.has(topic)
-                                                ) {
-                                                    res.writeHead(400);
-                                                    res.end(
-                                                        "Already subscribed to this topic"
-                                                    );
-                                                } else {
-                                                    client
-                                                        .subscribeToTopic(
-                                                            topic,
-                                                            true
-                                                        )
-                                                        .then(() => {
-                                                            res.writeHead(200);
-                                                            res.end();
-                                                        });
-                                                }
-                                            } else {
-                                                res.writeHead(400);
-                                                res.write(notPeerBitError);
-                                                res.end();
-                                            }
-                                        }
-                                    });
-                                });
                                 break;
                             default:
                                 r404();
@@ -408,41 +324,31 @@ export const startServer = async (
 
                                 case "PUT":
                                     getBody(req, (body) => {
-                                        const topic =
-                                            url.searchParams.get("topic");
-                                        if (topic && topic.length === 0) {
+                                        try {
+                                            const parsed = deserialize(
+                                                fromBase64(body),
+                                                Program
+                                            );
+                                            (client as Peerbit)
+                                                .open(parsed)
+                                                .then((program) => {
+                                                    res.writeHead(200);
+                                                    res.end(
+                                                        program.address.toString()
+                                                    );
+                                                })
+                                                .catch((error) => {
+                                                    res.writeHead(400);
+                                                    res.end(
+                                                        "Failed to open program: " +
+                                                            error.toString()
+                                                    );
+                                                });
+                                        } catch (error) {
                                             res.writeHead(400);
-                                            res.end("Invalid topic: " + topic);
-                                        } else {
-                                            try {
-                                                const parsed = deserialize(
-                                                    fromBase64(body),
-                                                    Program
-                                                );
-                                                (client as Peerbit)
-                                                    .open(parsed, {
-                                                        topic:
-                                                            topic || undefined,
-                                                    })
-                                                    .then((program) => {
-                                                        res.writeHead(200);
-                                                        res.end(
-                                                            program.address.toString()
-                                                        );
-                                                    })
-                                                    .catch((error) => {
-                                                        res.writeHead(400);
-                                                        res.end(
-                                                            "Failed to open program: " +
-                                                                error.toString()
-                                                        );
-                                                    });
-                                            } catch (error) {
-                                                res.writeHead(400);
-                                                res.end(
-                                                    "Invalid base64 program binary"
-                                                );
-                                            }
+                                            res.end(
+                                                "Invalid base64 program binary"
+                                            );
                                         }
                                     });
                                     break;
@@ -465,7 +371,9 @@ export const startServer = async (
                                         res.writeHead(400);
                                         res.end("Invalid library: " + name);
                                     } else {
-                                        import(/* webpackIgnore: true */ name)
+                                        import(
+                                            /* webpackIgnore: true */ /* @vite-ignore */ name
+                                        )
                                             .then(() => {
                                                 res.writeHead(200);
                                                 res.end();
@@ -474,120 +382,6 @@ export const startServer = async (
                                                 res.writeHead(400);
                                                 res.end(e.message.toString?.());
                                             });
-                                    }
-                                });
-                                break;
-
-                            default:
-                                r404();
-                                break;
-                        }
-                    } else if (req.url.startsWith(NETWORK_PEERS_PATH)) {
-                        switch (req.method) {
-                            case "GET":
-                                try {
-                                    const program = getProgramFromPath(req, 2);
-                                    if (program) {
-                                        const network = getNetwork(program);
-                                        if (network) {
-                                            res.setHeader(
-                                                "Content-Type",
-                                                "application/json"
-                                            );
-                                            res.writeHead(200);
-                                            res.write(
-                                                JSON.stringify(
-                                                    [
-                                                        ...network.trustGraph._index._index.values(),
-                                                    ].map((x) =>
-                                                        toBase64(
-                                                            serialize(x.value)
-                                                        )
-                                                    )
-                                                )
-                                            );
-                                            res.end();
-                                        } else {
-                                            res.writeHead(400);
-                                            res.end("Program is not in a VPC");
-                                        }
-                                    } else {
-                                        res.writeHead(404);
-                                        res.end();
-                                    }
-                                } catch (error: any) {
-                                    res.writeHead(404);
-                                    res.end(error.message);
-                                }
-                                break;
-
-                            default:
-                                r404();
-                                break;
-                        }
-                    } else if (req.url.startsWith(NETWORK_PEER_PATH)) {
-                        const url = new URL(
-                            req.url,
-                            "http://localhost:" + port
-                        );
-                        //const path = url.pathname.substring(NETWORK_PEER_PATH.length, url.pathname.length).split("/");
-                        switch (req.method) {
-                            case "PUT":
-                                getBody(req, (body) => {
-                                    try {
-                                        const program = getProgramFromPath(
-                                            req,
-                                            2
-                                        );
-                                        if (program) {
-                                            const network = getNetwork(program);
-                                            if (network) {
-                                                try {
-                                                    const reciever =
-                                                        deserialize(
-                                                            fromBase64(body),
-                                                            PublicSignKey
-                                                        );
-                                                    network
-                                                        .add(reciever)
-                                                        .then((r) => {
-                                                            res.writeHead(200);
-                                                            res.end(
-                                                                toBase64(
-                                                                    serialize(r)
-                                                                )
-                                                            );
-                                                        })
-                                                        .catch(
-                                                            (error?: any) => {
-                                                                res.writeHead(
-                                                                    400
-                                                                );
-                                                                res.end(
-                                                                    "Failed to add relation: " +
-                                                                        typeof error.message ===
-                                                                        "string"
-                                                                        ? error.message
-                                                                        : JSON.stringify(
-                                                                              error.message
-                                                                          )
-                                                                );
-                                                            }
-                                                        );
-                                                } catch (error) {
-                                                    res.writeHead(400);
-                                                    res.end(
-                                                        "Invalid base64 program binary"
-                                                    );
-                                                }
-                                            }
-                                        } else {
-                                            res.writeHead(404);
-                                            res.end();
-                                        }
-                                    } catch (error: any) {
-                                        res.writeHead(404);
-                                        res.end(error.message);
                                     }
                                 });
                                 break;
@@ -700,20 +494,6 @@ export const client = async (
                 },
             },
         },
-        topic: {
-            put: async (topic: string, replicate: boolean): Promise<void> => {
-                throwIfNot200(
-                    await axios.put(
-                        endpoint + TOPIC_PATH + "?replicate=" + replicate,
-                        topic,
-                        {
-                            validateStatus,
-                            headers: await getHeaders(),
-                        }
-                    )
-                );
-            },
-        },
         topics: {
             get: async (replicate: boolean): Promise<string[]> => {
                 const result = throwIfNot200(
@@ -751,22 +531,16 @@ export const client = async (
              * @param topic, topic
              * @returns
              */
-            put: async (
-                program: Program | string,
-                topic?: string
-            ): Promise<Address> => {
+            put: async (program: Program | string): Promise<Address> => {
                 const base64 =
                     program instanceof Program
                         ? toBase64(serialize(program))
                         : program;
                 const resp = throwIfNot200(
-                    await axios.put(
-                        endpoint +
-                            PROGRAM_PATH +
-                            (topic ? "?topic=" + topic : ""),
-                        base64,
-                        { validateStatus, headers: await getHeaders() }
-                    )
+                    await axios.put(endpoint + PROGRAM_PATH, base64, {
+                        validateStatus,
+                        headers: await getHeaders(),
+                    })
                 );
                 return Address.parse(resp.data);
             },
@@ -780,48 +554,6 @@ export const client = async (
                     })
                 );
                 return;
-            },
-        },
-
-        network: {
-            peers: {
-                get: async (
-                    address: Address | string
-                ): Promise<IdentityRelation[] | undefined> => {
-                    const result = getBodyByStatus(
-                        await axios.get(
-                            endpoint +
-                                NETWORK_PEERS_PATH +
-                                "/" +
-                                encodeURIComponent(address.toString()),
-                            { validateStatus, headers: await getHeaders() }
-                        )
-                    );
-                    return !result
-                        ? undefined
-                        : (result as string[]).map((r) =>
-                              deserialize(fromBase64(r), IdentityRelation)
-                          );
-                },
-            },
-            peer: {
-                put: async (
-                    address: Address | string,
-                    publicKey: PublicSignKey
-                ): Promise<IdentityRelation> => {
-                    const base64 = toBase64(serialize(publicKey));
-                    const resp = throwIfNot200(
-                        await axios.put(
-                            endpoint +
-                                NETWORK_PEER_PATH +
-                                "/" +
-                                encodeURIComponent(address.toString()),
-                            base64,
-                            { validateStatus, headers: await getHeaders() }
-                        )
-                    );
-                    return deserialize(fromBase64(resp.data), IdentityRelation);
-                },
             },
         },
     };

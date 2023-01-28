@@ -37,7 +37,7 @@
     },
     "license": "MIT",
     "dependencies": {
-        "@dao-xyz/peerbit-block": "^0.0.15",
+        "@dao-xyz/libp2p-direct-block": "^0.0.15",
         "@dao-xyz/peerbit-cache": "^0.4.38",
         "@dao-xyz/peerbit-log": "^0.0.13",
         "p-each-series": "^3.0.0",

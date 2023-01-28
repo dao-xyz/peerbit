@@ -1,28 +1,28 @@
-import { field, variant } from "@dao-xyz/borsh";
-import { Program } from "@dao-xyz/peerbit-program";
-import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
-import { network } from "@dao-xyz/peerbit";
+import { field, variant, vec } from "@dao-xyz/borsh";
+import { Ed25519PublicKey, PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import { CanTrust, Program } from "@dao-xyz/peerbit-program";
 import { DString } from "@dao-xyz/peerbit-string";
+import { PeerId } from "@libp2p/interface-peer-id";
 
 @variant("permissioned_string")
-@network({ property: "_network" })
-export class PermissionedString extends Program {
+export class PermissionedString extends Program implements CanTrust {
     @field({ type: DString })
     _store: DString;
 
-    @field({ type: TrustedNetwork })
-    _network: TrustedNetwork;
+    @field({ type: vec(PublicSignKey) })
+    trusted: PublicSignKey[];
 
-    constructor(properties?: { store?: DString; network: TrustedNetwork }) {
+    constructor(properties?: {
+        store?: DString;
+        trusted: (PublicSignKey | PeerId)[];
+    }) {
         super();
         if (properties) {
-            this._network = properties.network;
             this._store = properties.store || new DString({});
+            this.trusted = properties.trusted.map((x) =>
+                x instanceof PublicSignKey ? x : Ed25519PublicKey.from(x)
+            );
         }
-    }
-
-    get network(): TrustedNetwork {
-        return this._network;
     }
 
     get store(): DString {
@@ -31,6 +31,14 @@ export class PermissionedString extends Program {
 
     async setup(): Promise<void> {
         await this._store.setup();
-        await this._network.setup();
+    }
+
+    isTrusted(keyHash: string): boolean | Promise<boolean> {
+        for (const t of this.trusted) {
+            if (t.hashcode() == keyHash) {
+                return true;
+            }
+        }
+        return false;
     }
 }

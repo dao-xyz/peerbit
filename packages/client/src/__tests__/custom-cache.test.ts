@@ -7,7 +7,6 @@ import CustomCache from "@dao-xyz/peerbit-cache";
 import { jest } from "@jest/globals";
 import { databases } from "./utils";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 const dbPath = "./tmp/tests/customCache";
 
@@ -17,15 +16,16 @@ describe(`Use a Custom Cache`, function () {
     let session: LSession, client1: Peerbit, store;
 
     beforeAll(async () => {
-        session = await LSession.connected(1, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(1);
         store = await createStore("local" + +new Date());
         const cache = new CustomCache(store);
 
         rmrf.sync(dbPath);
 
-        client1 = await Peerbit.create(session.peers[0], {
+        client1 = await Peerbit.create({
             directory: path.join(dbPath, "1"),
             cache: cache,
+            libp2p: session.peers[0],
         });
     });
 

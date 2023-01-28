@@ -1,4 +1,7 @@
-import { Blocks, MemoryLevelBlockStore } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 import { Ed25519Keypair, Keypair } from "@dao-xyz/peerbit-crypto";
 import { KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Entry } from "../entry";
@@ -8,7 +11,7 @@ import { identityFromSignKey } from "./utils";
 
 describe("values", () => {
     let e1: Entry<string>, e2: Entry<string>, e3: Entry<string>;
-    let store: Blocks;
+    let store: BlockStore;
     beforeEach(async () => {
         const identity = identityFromSignKey(
             new KeyWithMeta({
@@ -17,7 +20,7 @@ describe("values", () => {
                 timestamp: 0n,
             })
         );
-        store = new Blocks(new MemoryLevelBlockStore());
+        store = new MemoryLevelBlockStore();
         await store.open();
         e1 = await Entry.create({
             store,

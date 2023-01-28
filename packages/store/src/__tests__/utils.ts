@@ -1,5 +1,4 @@
 import { Change, Entry } from "@dao-xyz/peerbit-log";
-import { Log } from "@dao-xyz/peerbit-log";
 import { Store } from "../store";
 
 export class SimpleIndex<T> {

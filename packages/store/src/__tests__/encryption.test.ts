@@ -1,10 +1,5 @@
 import assert from "assert";
-import {
-    Store,
-    DefaultOptions,
-    HeadsCache,
-    IInitializationOptions,
-} from "../store.js";
+import { Store, DefaultOptions, IInitializationOptions } from "../store.js";
 import { default as Cache } from "@dao-xyz/peerbit-cache";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import {
@@ -14,19 +9,17 @@ import {
 } from "@dao-xyz/peerbit-crypto";
 import { AccessError } from "@dao-xyz/peerbit-crypto";
 import { SimpleIndex } from "./utils.js";
-import { v4 as uuid } from "uuid";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { fileURLToPath } from "url";
-import path from "path";
-const __filename = fileURLToPath(import.meta.url);
 import { AbstractLevel } from "abstract-level";
 
 // Test utils
 import { createStore } from "@dao-xyz/peerbit-test-utils";
-
 import { Entry } from "@dao-xyz/peerbit-log";
-import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 
 describe(`addOperation`, function () {
     let signKey: KeyWithMeta<Ed25519Keypair>,
@@ -37,14 +30,12 @@ describe(`addOperation`, function () {
         senderKey: KeyWithMeta<Ed25519Keypair>,
         recieverKey: KeyWithMeta<Ed25519Keypair>,
         encryption: PublicKeyEncryptionResolver,
-        blockStore: Blocks;
+        blockStore: BlockStore;
     let index: SimpleIndex<string>;
 
     beforeEach(async () => {
-        identityStore = await createStore(
-            path.join(__filename, "identity" + uuid())
-        );
-        cacheStore = await createStore(path.join(__filename, "cache" + uuid()));
+        identityStore = await createStore();
+        cacheStore = await createStore();
         keystore = new Keystore(identityStore);
         signKey = await keystore.createEd25519Key();
         senderKey = await keystore.createEd25519Key();
@@ -80,7 +71,7 @@ describe(`addOperation`, function () {
                 }
             },
         };
-        blockStore = new Blocks(new MemoryLevelBlockStore());
+        blockStore = new MemoryLevelBlockStore();
         await blockStore.open();
     });
 
@@ -101,7 +92,7 @@ describe(`addOperation`, function () {
                 expect(heads.length).toEqual(1);
                 assert.deepStrictEqual(entry.payload.getValue(), data);
                 /*   expect(store.replicationStatus.progress).toEqual(1n);
-                  expect(store.replicationStatus.max).toEqual(1n); */
+				  expect(store.replicationStatus.max).toEqual(1n); */
                 assert.deepStrictEqual(index._index, heads);
                 await delay(5000); // seems because write is async?
                 const localHeads = await store.getCachedHeads();
@@ -168,7 +159,7 @@ describe(`addOperation`, function () {
             expect(heads.length).toEqual(1);
             assert.deepStrictEqual(entry.payload.getValue(), data);
             /* expect(store.replicationStatus.progress).toEqual(1n);
-            expect(store.replicationStatus.max).toEqual(1n); */
+			expect(store.replicationStatus.max).toEqual(1n); */
             assert.deepStrictEqual(index._index, heads);
             const localHeads = await store.getCachedHeads();
 

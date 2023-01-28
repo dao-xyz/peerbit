@@ -14,7 +14,6 @@ import { v4 as uuid } from "uuid";
 import { DefaultOptions, Store } from "@dao-xyz/peerbit-store";
 import Cache from "@dao-xyz/peerbit-cache";
 import { AbstractLevel } from "abstract-level";
-import path from "path";
 import {
     HeadsMessage,
     LogEntryEncryptionQuery,
@@ -25,7 +24,6 @@ import { fileURLToPath } from "url";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Address } from "@dao-xyz/peerbit-program";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
 
 describe("query", () => {
     let session: LSession,
@@ -41,24 +39,21 @@ describe("query", () => {
         cacheStores = [];
         logIndices = [];
         for (let i = 0; i < peersCount; i++) {
-            cacheStores.push(
-                await createStore(path.join(__filename, "cache-" + i))
-            );
+            cacheStores.push(await createStore());
         }
 
-        const topic = uuid();
+        const topic: string = uuid();
         for (let i = 0; i < peersCount; i++) {
             const store = new Store({ storeIndex: 0 });
             const signKey = await Ed25519Keypair.create();
             const cache = new Cache(cacheStores[i]);
             const logIndex = new LogIndex({ query: new RPC() });
-            const blockStore = new Blocks(new MemoryLevelBlockStore());
             logIndex.query.parentProgram = {
                 address: new Address({ cid: "1" }),
             } as any; // because query topic needs a parent with address
             await logIndex.setup({
                 store,
-                rpcTopic: { rpcRegion: topic },
+                rpcTopic: topic,
                 context: "context",
             });
             logIndices.push(logIndex);
@@ -82,7 +77,7 @@ describe("query", () => {
                 },
             };
             await store.init(
-                blockStore,
+                session.peers[i].directblock,
                 {
                     ...signKey,
                     sign: async (data: Uint8Array) => await signKey.sign(data),
@@ -95,13 +90,11 @@ describe("query", () => {
             );
             await logIndex.init(
                 session.peers[i],
-                blockStore,
                 {
                     ...signKey,
                     sign: async (data: Uint8Array) => await signKey.sign(data),
                 },
                 {
-                    topic,
                     replicate: i === 0,
                     store: {
                         ...DefaultOptions,

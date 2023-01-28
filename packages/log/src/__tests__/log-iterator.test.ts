@@ -8,7 +8,10 @@ import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
 
@@ -21,7 +24,7 @@ let signKey: KeyWithMeta<Ed25519Keypair>,
     signKey3: KeyWithMeta<Ed25519Keypair>;
 
 describe("Log - Iterator", function () {
-    let keystore: Keystore, store: Blocks;
+    let keystore: Keystore, store: BlockStore;
 
     beforeAll(async () => {
         rmrf.sync(testKeyStorePath(__filenameBase));
@@ -41,7 +44,7 @@ describe("Log - Iterator", function () {
         signKey2 = await keystore.getKey(new Uint8Array([2]));
         //@ts-ignore
         signKey3 = await keystore.getKey(new Uint8Array([1]));
-        store = new Blocks(new MemoryLevelBlockStore());
+        store = new MemoryLevelBlockStore();
         await store.open();
     });
 

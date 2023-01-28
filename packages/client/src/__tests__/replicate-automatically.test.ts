@@ -3,22 +3,20 @@ import { EventStore } from "./utils/stores/event-store";
 import { KeyBlocks } from "./utils/stores/key-value-store";
 import assert from "assert";
 import mapSeries from "p-each-series";
-import { v4 as uuid } from "uuid";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
 describe(`Automatic Replication`, function () {
     /*  let ipfsd1: Controller, ipfsd2: Controller, ipfsd3: Controller, ipfsd4: Controller, ipfs1: IPFS, ipfs2: IPFS, ipfs3: IPFS, ipfs4: IPFS */
     let client1: Peerbit, client2: Peerbit, client3: Peerbit, client4: Peerbit;
     let session: LSession;
-    beforeAll(async () => {
-        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
-        client1 = await Peerbit.create(session.peers[0], {});
-        client2 = await Peerbit.create(session.peers[1], {});
+    beforeEach(async () => {
+        session = await LSession.connected(2);
+        client1 = await Peerbit.create({ libp2p: session.peers[0] });
+        client2 = await Peerbit.create({ libp2p: session.peers[1] });
     });
 
-    afterAll(async () => {
+    afterEach(async () => {
         if (client1) {
             await client1.stop();
         }
@@ -39,11 +37,8 @@ describe(`Automatic Replication`, function () {
         const entryCount = 33;
         const entryArr: number[] = [];
 
-        const topic = uuid();
-
         const db1 = await client1.open(
-            new EventStore<string>({ id: "replicate-automatically-tests" }),
-            { topic: topic }
+            new EventStore<string>({ id: "replicate-automatically-tests" })
         );
 
         const db3 = await client1.open(
@@ -51,7 +46,6 @@ describe(`Automatic Replication`, function () {
                 id: "replicate-automatically-tests-kv",
             }),
             {
-                topic: topic,
                 onReplicationComplete: (_) => {
                     fail();
                 },
@@ -69,11 +63,10 @@ describe(`Automatic Replication`, function () {
         let done = false;
         const db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                client2._store,
+                client2.libp2p.directblock,
                 db1.address!
             ),
             {
-                topic: topic,
                 onReplicationComplete: (_) => {
                     // Listen for the 'replicated' events and check that all the entries
                     // were replicated to the second database
@@ -93,11 +86,10 @@ describe(`Automatic Replication`, function () {
 
         const _db4 = await client2.open<KeyBlocks<string>>(
             await KeyBlocks.load<KeyBlocks<string>>(
-                client2._store,
+                client2.libp2p.directblock,
                 db3.address!
             ),
             {
-                topic: topic,
                 onReplicationComplete: (_) => {
                     fail();
                 },
@@ -110,10 +102,9 @@ describe(`Automatic Replication`, function () {
     it("starts replicating the database when peers connect in write mode", async () => {
         const entryCount = 1;
         const entryArr: number[] = [];
-        const topic = uuid();
         const db1 = await client1.open(
             new EventStore<string>({ id: "replicate-automatically-tests" }),
-            { topic: topic, replicate: false }
+            { replicate: false }
         );
 
         // Create the entries in the first database
@@ -127,11 +118,10 @@ describe(`Automatic Replication`, function () {
         let done = false;
         const db2 = await client2.open<EventStore<string>>(
             await EventStore.load<EventStore<string>>(
-                client2._store,
+                client2.libp2p.directblock,
                 db1.address!
             ),
             {
-                topic: topic,
                 onReplicationComplete: (_) => {
                     // Listen for the 'replicated' events and check that all the entries
                     // were replicated to the second database

@@ -21,6 +21,7 @@ import { waitFor } from "@dao-xyz/peerbit-time";
 import { AddOperationOptions } from "@dao-xyz/peerbit-store";
 import sodium from "libsodium-wrappers";
 await sodium.ready;
+
 const canAppendByRelation = async (
     entry: Entry<Operation<IdentityRelation>>,
     isTrusted?: (key: PublicSignKey) => Promise<boolean>
@@ -230,7 +231,8 @@ export class TrustedNetwork extends Program {
      */
     async isTrusted(
         trustee: PublicSignKey | PeerIdAddress,
-        truster: PublicSignKey = this.rootTrust
+        truster: PublicSignKey = this.rootTrust,
+        options?: { timeout: number }
     ): Promise<boolean> {
         if (trustee.equals(this.rootTrust)) {
             return true;
@@ -239,6 +241,7 @@ export class TrustedNetwork extends Program {
             return this._isTrustedLocal(trustee, truster);
         } else {
             let trusted = false;
+            let stopper: (() => any) | any;
             this.logIndex.query.send(
                 new LogQueryRequest({ queries: [] }),
                 async (heads, from) => {
@@ -264,11 +267,17 @@ export class TrustedNetwork extends Program {
                         truster
                     );
                     if (isTrustedTrustee) {
+                        stopper && stopper();
                         trusted = true;
                     }
+                },
+                {
+                    stopper: (s) => {
+                        stopper = s;
+                    },
+                    timeout: options?.timeout || 10 * 1000,
                 }
             );
-
             try {
                 await waitFor(() => trusted);
                 return trusted;

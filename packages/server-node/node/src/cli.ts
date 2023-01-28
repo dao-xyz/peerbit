@@ -1,11 +1,9 @@
-import { Peerbit } from "@dao-xyz/peerbit";
 import { createTestDomain, startCertbot } from "./domain.js";
 import { serialize } from "@dao-xyz/borsh";
-import { client, startServer, startServerWithNode } from "./api.js";
+import { client, startServerWithNode } from "./api.js";
 import { parsePublicKey } from "./utils.js";
 import { createRecord } from "./aws.js";
 import { toBase64 } from "@dao-xyz/peerbit-crypto";
-import { createNode } from "./libp2p.js";
 
 const KEY_EXAMPLE =
     'E.g. [CHAIN TYPE]/[PUBLICKEY]. e.g. if ethereum: "ethereum/0x4e54fD83..."';
@@ -198,115 +196,6 @@ export const cli = async (args?: string[]) => {
                         }
                     },
                 })
-                .command<{ topic: string; replicate: boolean }>({
-                    command: "add <topic>",
-                    describe: "add topic",
-                    builder: (yargs: any) => {
-                        yargs.positional("topic", {
-                            describe: "Topic to add",
-                            type: "string",
-                            demandOption: true,
-                        });
-                        yargs.option("replicate", {
-                            type: "boolean",
-                            describe: "Replicate data on this topic",
-                            alias: "r",
-                            default: false,
-                        });
-                        return yargs;
-                    },
-                    handler: async (args) => {
-                        const c = await client();
-                        await c.topic.put(args.topic, args.replicate);
-                        console.log(
-                            "Topic: " + args.topic + " is now subscribed to"
-                        );
-                    },
-                })
-                .strict()
-                .demandCommand();
-            return yargs;
-        })
-        .command("network", "Manage networks", (yargs) => {
-            yargs
-                .command(
-                    "relations",
-                    "Manage relations in a network",
-                    (yargs) => {
-                        yargs
-                            .command<{ address: string }>({
-                                command: "list <address>",
-                                describe: "List all relations in a network",
-                                builder: (yargs: any) => {
-                                    yargs.positional("address", {
-                                        type: "string",
-                                        describe: "Program address",
-                                        demandOption: true,
-                                    });
-                                    return yargs;
-                                },
-
-                                handler: async (args) => {
-                                    const c = await client();
-                                    const relations = await c.network.peers.get(
-                                        args.address
-                                    );
-                                    if (!relations) {
-                                        console.log("Network does not exist");
-                                    } else {
-                                        for (const r of relations) {
-                                            console.log(
-                                                r.from.toString() +
-                                                    " -> " +
-                                                    r.to.toString()
-                                            );
-                                        }
-                                    }
-                                },
-                            })
-                            .command<{ address: string; publicKey: string }>({
-                                command: "add <address> <publicKey>",
-                                describe: "Add trust to a peer in a network",
-                                builder: (yargs: any) => {
-                                    yargs.positional("address", {
-                                        type: "string",
-                                        describe: "Program address",
-                                        demandOption: true,
-                                    });
-                                    yargs.positional("publicKey", {
-                                        type: "string",
-                                        describe: KEY_EXAMPLE,
-                                        alias: "pk",
-                                        demandOption: true,
-                                    });
-                                    return yargs;
-                                },
-                                handler: async (args) => {
-                                    const c = await client();
-                                    const pk = parsePublicKey(args.publicKey);
-                                    if (!pk) {
-                                        throw new Error(
-                                            "Invalid public key: " +
-                                                args.publicKey
-                                        );
-                                    }
-                                    const relation = await c.network.peer.put(
-                                        args.address,
-                                        pk
-                                    );
-                                    console.log(
-                                        "Added relation: " +
-                                            relation.from.toString() +
-                                            " -> " +
-                                            relation.to.toString()
-                                    );
-                                },
-                            })
-                            .strict()
-                            .demandCommand();
-                        return yargs;
-                    }
-                )
                 .strict()
                 .demandCommand();
             return yargs;
@@ -344,21 +233,11 @@ export const cli = async (args?: string[]) => {
                             describe: "base64 serialized",
                             demandOption: true,
                         });
-
-                        yargs.option("topic", {
-                            type: "string",
-                            describe: "Replication topic",
-                            alias: "t",
-                        });
-
                         return yargs;
                     },
                     handler: async (args) => {
                         const c = await client();
-                        const address = await c.program.put(
-                            args.program,
-                            args.topic
-                        );
+                        const address = await c.program.put(args.program);
                         console.log(address.toString());
                     },
                 })
@@ -377,7 +256,7 @@ export const cli = async (args?: string[]) => {
                     handler: async (args) => {
                         for (const lib of args.library) {
                             const importedLib = await import(
-                                /* webpackIgnore: true */ lib
+                                /* webpackIgnore: true */ /* @vite-ignore */ lib
                             );
                             console.log("imported lib:", importedLib);
                         }

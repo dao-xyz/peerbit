@@ -8,7 +8,10 @@ import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
 
@@ -16,7 +19,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 
-let store: Blocks,
+let store: BlockStore,
     signKey: KeyWithMeta<Ed25519Keypair>,
     signKey2: KeyWithMeta<Ed25519Keypair>,
     signKey3: KeyWithMeta<Ed25519Keypair>,
@@ -62,7 +65,7 @@ describe("Entry - Persistency", function () {
             new Uint8Array([3])
         )) as KeyWithMeta<Ed25519Keypair>;
 
-        store = new Blocks(new MemoryLevelBlockStore());
+        store = new MemoryLevelBlockStore();
         await store.open();
     });
 

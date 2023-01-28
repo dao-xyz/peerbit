@@ -1,7 +1,10 @@
 {
     "packages": [
-        "packages/libp2p/pubsub-direct-channel",
-        "packages/libp2p/pubsub-peer-monitor",
+        "packages/libp2p/direct-block",
+        "packages/libp2p/direct-stream",
+        "packages/libp2p/direct-sub",
+        "packages/libp2p/libp2p-test-utils",
+        "packages/libp2p/peerbit-libp2p",
         "packages/log",
         "packages/client",
         "packages/server-node/frontend",
@@ -18,12 +21,12 @@
         "packages/programs/data/document",
         "packages/programs/data/string",
         "packages/store",
-        "packages/utils/block",
         "packages/utils/test-utils",
         "packages/utils/cache",
         "packages/utils/borsh-utils",
         "packages/utils/time",
-        "packages/utils/logger"
+        "packages/utils/logger",
+        "packages/utils/lazy-level"
     ],
     "version": "independent",
     "npmClient": "yarn",

@@ -1,6 +1,4 @@
 import { serialize, BorshError } from "@dao-xyz/borsh";
-import type { Message } from "@libp2p/interface-pubsub";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import {
     MaybeSigned,
     decryptVerifyInto,
@@ -13,10 +11,11 @@ import {
     GetEncryptionKeypair,
     PublicSignKey,
 } from "@dao-xyz/peerbit-crypto";
-import { Libp2p } from "libp2p";
 import { Identity } from "@dao-xyz/peerbit-log";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+import { PubSubData } from "@dao-xyz/libp2p-direct-sub";
+import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 export const logger = loggerFn({ module: "rpc" });
 export type RPCOptions = {
     signer?: Identity;
@@ -30,10 +29,11 @@ export type RPCOptions = {
     responseRecievers?: X25519PublicKey[];
     context?: string;
     strict?: boolean;
+    stopper?: (stopper: () => void) => void;
 };
 
 export const send = async (
-    libp2p: Libp2p,
+    libp2p: Libp2pExtended,
     topic: string,
     responseTopic: string,
     query: RequestV0,
@@ -47,60 +47,10 @@ export const send = async (
 
     // send query and wait for replies in a generator like behaviour
     let results = 0;
-    const _responseHandler = async (evt: CustomEvent<Message>) => {
-        if (evt.detail.type === "signed") {
-            const message = evt.detail;
-            if (message) {
-                if (message.from.equals(libp2p.peerId)) {
-                    return;
-                }
-                try {
-                    const { result, from } = await decryptVerifyInto(
-                        message.data,
-                        RPCMessage,
-                        sendKey,
-                        {
-                            isTrusted: options?.isTrusted,
-                        }
-                    );
+    let timeoutFn: any = undefined;
 
-                    if (result instanceof ResponseV0) {
-                        responseHandler(result, from);
-                        results += 1;
-                    }
-                } catch (error) {
-                    if (error instanceof AccessError) {
-                        return; // Ignore things we can not open
-                    }
-
-                    if (error instanceof BorshError && !options.strict) {
-                        logger.debug("Namespace error");
-                        return; // Name space conflict most likely
-                    }
-
-                    console.error(
-                        "failed ot deserialize query response",
-                        error
-                    );
-                    throw error;
-                }
-            }
-        }
-    };
-    try {
-        libp2p.pubsub.subscribe(responseTopic);
-        libp2p.pubsub.addEventListener("message", _responseHandler);
-    } catch (error: any) {
-        // timeout
-        if (error.constructor.name != "TimeoutError") {
-            throw new Error(
-                "Got unexpected error when query: " + error.constructor.name
-            );
-        }
-    }
     const serializedQuery = serialize(query);
     let maybeSignedMessage = new MaybeSigned({ data: serializedQuery });
-
     if (options.signer) {
         maybeSignedMessage = await maybeSignedMessage.sign(async (data) => {
             return {
@@ -125,34 +75,92 @@ export const send = async (
         );
     }
 
-    await libp2p.pubsub.publish(topic, serialize(maybeEncryptedMessage));
+    const responsePromise = new Promise<void>((rs, rj) => {
+        const resolve = () => {
+            timeoutFn && clearTimeout(timeoutFn);
+            if (libp2p.directsub.started) {
+                libp2p.directsub.unsubscribe(responseTopic);
+                libp2p.directsub.removeEventListener("data", _responseHandler);
+            }
+            rs();
+        };
+        options.stopper && options.stopper(resolve);
 
-    if (options.amount != undefined) {
-        await waitFor(() => results >= (options.amount as number), {
-            timeout: options.timeout,
-            delayInterval: 500,
-        });
-    } else {
-        await delay(options.timeout);
-    }
-    try {
-        //  await libp2p.pubsub.unsubscribe(topic); TODO should we?
-        await libp2p.pubsub.removeEventListener("message", _responseHandler);
-    } catch (error: any) {
-        if (
-            error?.constructor?.name === "NotStartedError" ||
-            (typeof error?.message === "string" &&
-                error?.message.indexOf("Pubsub is not started") !== -1)
-        ) {
-            return;
+        const reject = (error) => {
+            timeoutFn && clearTimeout(timeoutFn);
+            if (libp2p.directsub.started) {
+                libp2p.directsub.unsubscribe(responseTopic);
+                libp2p.directsub.removeEventListener("data", _responseHandler);
+            }
+            rj(error);
+        };
+        const _responseHandler = async (evt: CustomEvent<PubSubData>) => {
+            const message = evt.detail;
+            if (message && message.topics.includes(responseTopic)) {
+                try {
+                    const { result, from } = await decryptVerifyInto(
+                        message.data,
+                        RPCMessage,
+                        sendKey,
+                        {
+                            isTrusted: options?.isTrusted,
+                        }
+                    );
+
+                    if (result instanceof ResponseV0) {
+                        responseHandler(result, from);
+                        results += 1;
+
+                        if (
+                            options.amount != null &&
+                            results >= (options.amount as number)
+                        ) {
+                            resolve!();
+                        }
+                    }
+                } catch (error) {
+                    if (error instanceof AccessError) {
+                        return; // Ignore things we can not open
+                    }
+
+                    if (error instanceof BorshError && !options.strict) {
+                        logger.debug("Namespace error");
+                        return; // Name space conflict most likely
+                    }
+
+                    console.error(
+                        "failed ot deserialize query response",
+                        error
+                    );
+                    reject(error);
+                }
+            }
+        };
+        try {
+            libp2p.directsub.subscribe(responseTopic);
+            libp2p.directsub.addEventListener("data", _responseHandler);
+        } catch (error: any) {
+            // timeout
+            if (error.constructor.name != "TimeoutError") {
+                throw new Error(
+                    "Got unexpected error when query: " + error.constructor.name
+                );
+            }
         }
-        console.error("xxx", error);
-        throw error;
-    }
+        timeoutFn = setTimeout(() => {
+            resolve();
+        }, options.timeout);
+    });
+
+    await libp2p.directsub.publish(serialize(maybeEncryptedMessage), {
+        topics: [topic],
+    });
+
+    await responsePromise;
 };
 
 export const respond = async (
-    libp2p: Libp2p,
+    libp2p: Libp2pExtended,
     responseTopic: string,
     request: RequestV0,
     response: ResponseV0,
@@ -193,8 +201,7 @@ export const respond = async (
         request.respondTo
     );
 
-    await libp2p.pubsub.publish(
-        responseTopic,
-        serialize(maybeEncryptedMessage)
-    );
+    await libp2p.directsub.publish(serialize(maybeEncryptedMessage), {
+        topics: [responseTopic],
+    });
 };

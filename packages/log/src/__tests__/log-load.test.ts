@@ -12,6 +12,7 @@ import { fileURLToPath } from "url";
 import { delay } from "@dao-xyz/peerbit-time";
 import path from "path";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
+import * as Block from "multiformats/block";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -28,8 +29,8 @@ import {
     GetOptions,
     MemoryLevelBlockStore,
     PutOptions,
-    Blocks,
-} from "@dao-xyz/peerbit-block";
+    StoreStatus,
+} from "@dao-xyz/libp2p-direct-block";
 import { createStore } from "./utils.js";
 
 let signKey: KeyWithMeta<Ed25519Keypair>,
@@ -41,32 +42,35 @@ const last = <T>(arr: T[]): T => {
     return arr[arr.length - 1];
 };
 
-class SlowBlockStore extends Blocks {
+class SlowBlockStore implements BlockStore {
+    _store: BlockStore;
     constructor(store: BlockStore) {
-        super(store);
+        this._store = store;
     }
     async get<T>(
         cid: string,
         options?: GetOptions | undefined
-    ): Promise<T | undefined> {
+    ): Promise<Block.Block<T, any, any, any> | undefined> {
         await delay(3000);
-        return super.get(cid, options);
+        return this._store.get(cid, options);
     }
     put(
-        value: any,
-        format: string,
+        value: Block.Block<any, any, any, any>,
         options?: PutOptions | undefined
     ): Promise<string> {
-        return super.put(value, format, options);
+        return this._store.put(value, options);
     }
     rm(cid: string): Promise<void> {
-        return super.rm(cid);
+        return this._store.rm(cid);
     }
     open(): Promise<void> {
-        return super.open();
+        return this._store.open();
     }
     close(): Promise<void> {
-        return super.close();
+        return this._store.close();
+    }
+    get status(): StoreStatus {
+        return this._store.status;
     }
 }
 
@@ -92,7 +96,7 @@ describe("Log - Load", function () {
 
     let keystore: Keystore;
     let signKeys: KeyWithMeta<Ed25519Keypair>[];
-    let store: Blocks;
+    let store: BlockStore;
 
     beforeAll(async () => {
         rmrf.sync(testKeyStorePath(__filenameBase));
@@ -126,11 +130,11 @@ describe("Log - Load", function () {
         signKey2 = signKeys[1];
         signKey3 = signKeys[2];
         signKey4 = signKeys[3];
-        store = new Blocks(new MemoryLevelBlockStore());
+        store = new MemoryLevelBlockStore();
         await store.open();
         /*  const memstore = new MemStore();
-         (ipfs.object as any).put = memstore.put.bind(memstore);
-         (ipfs.object as any).get = memstore.get.bind(memstore) as any; */
+		 (ipfs.object as any).put = memstore.put.bind(memstore);
+		 (ipfs.object as any).get = memstore.get.bind(memstore) as any; */
     });
 
     afterAll(async () => {
@@ -191,7 +195,7 @@ describe("Log - Load", function () {
         });
 
         it("respects timeout parameter", async () => {
-            const slowStore = new SlowBlockStore(store._store);
+            const slowStore = new SlowBlockStore(store);
             const fixture = await LogCreator.createLogWithSixteenEntries(
                 slowStore,
                 signKeys
@@ -303,7 +307,7 @@ describe("Log - Load", function () {
             const timeout = 500;
             const st = new Date().getTime();
             const log = await Log.fromEntryHash(
-                new SlowBlockStore(store._store),
+                new SlowBlockStore(store),
                 {
                     ...signKey.keypair,
                     sign: async (data: Uint8Array) =>
@@ -800,8 +804,8 @@ describe("Log - Load", function () {
                 const prev2 = last(items2);
                 const prev3 = last(items3);
                 /*        log1.tickClock()
-             log2.tickClock()
-             log3.tickClock() */
+			 log2.tickClock()
+			 log3.tickClock() */
                 const n1 = await Entry.create({
                     store,
                     identity: log1._identity,
@@ -836,11 +840,11 @@ describe("Log - Load", function () {
                             : undefined,
                 });
                 /*        log1.mergeClock(log2.clock)
-             log1.mergeClock(log3.clock)
-             log2.mergeClock(log1.clock)
-             log2.mergeClock(log3.clock)
-             log3.mergeClock(log1.clock)
-             log3.mergeClock(log2.clock) */
+			 log1.mergeClock(log3.clock)
+			 log2.mergeClock(log1.clock)
+			 log2.mergeClock(log3.clock)
+			 log3.mergeClock(log1.clock)
+			 log3.mergeClock(log2.clock) */
                 items1.push(n1);
                 items2.push(n2);
                 items3.push(n3);
@@ -998,7 +1002,7 @@ describe("Log - Load", function () {
             );
 
             /*  expect(f.toString()).toEqual(bigLogString) // Ignore these for know since we have removed the clock manipulation in the loop
-     expect(g.toString()).toEqual(bigLogString) */
+	 expect(g.toString()).toEqual(bigLogString) */
         });
 
         it("retrieves full log of randomly joined log", async () => {
@@ -1764,14 +1768,14 @@ describe("Log - Load", function () {
                     });
 
                     /*      log1.tickClock()
-             log2.tickClock()
-             log3.tickClock()
-             log1.mergeClock(log2.clock)
-             log1.mergeClock(log3.clock)
-             log2.mergeClock(log1.clock)
-             log2.mergeClock(log3.clock)
-             log3.mergeClock(log1.clock)
-             log3.mergeClock(log2.clock) */
+			 log2.tickClock()
+			 log3.tickClock()
+			 log1.mergeClock(log2.clock)
+			 log1.mergeClock(log3.clock)
+			 log2.mergeClock(log1.clock)
+			 log2.mergeClock(log3.clock)
+			 log3.mergeClock(log1.clock)
+			 log3.mergeClock(log2.clock) */
                     items1.push(n1);
                     items2.push(n2);
                     items3.push(n3);

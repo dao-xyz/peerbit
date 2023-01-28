@@ -5,18 +5,9 @@ import { DefaultOptions, Store } from "../store.js";
 import { SimpleIndex } from "./utils.js";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { jest } from "@jest/globals";
-import { fileURLToPath } from "url";
-import path from "path";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import { AbstractLevel } from "abstract-level";
 import { Entry } from "@dao-xyz/peerbit-log";
-import {
-    LibP2PBlockStore,
-    MemoryLevelBlockStore,
-    Blocks,
-} from "@dao-xyz/peerbit-block";
-
-const __filename = fileURLToPath(import.meta.url);
 
 // Tests timeout
 const timeout = 30000;
@@ -28,18 +19,13 @@ describe(`Sync`, () => {
         signKey: KeyWithMeta<Ed25519Keypair>,
         store: Store<any>,
         keystore: Keystore,
-        cacheStore: AbstractLevel<any, string, Uint8Array>,
-        blockStore: Blocks,
-        blockStore2: Blocks;
+        cacheStore: AbstractLevel<any, string, Uint8Array>;
 
     let index: SimpleIndex<string>;
 
     beforeAll(async () => {
-        cacheStore = await createStore(path.join(__filename, "cache"));
-        keystore = new Keystore(
-            await createStore(path.join(__filename, "identity"))
-        );
-
+        cacheStore = await createStore();
+        keystore = new Keystore(await createStore());
         session = await LSession.connected(2);
         signKey = await keystore.createEd25519Key();
     });
@@ -48,13 +34,8 @@ describe(`Sync`, () => {
         const cache = new Cache(cacheStore);
         store = new Store({ storeIndex: 0 });
         index = new SimpleIndex(store);
-
-        blockStore = new Blocks(
-            new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
-        );
-        await blockStore.open();
         await store.init(
-            blockStore,
+            session.peers[0].directblock,
             {
                 ...signKey.keypair,
                 sign: async (data: Uint8Array) =>
@@ -70,10 +51,6 @@ describe(`Sync`, () => {
         );
     });
 
-    afterEach(async () => {
-        await blockStore?.close();
-        await blockStore2?.close();
-    });
     afterAll(async () => {
         await session.stop();
         await keystore?.close();
@@ -83,13 +60,9 @@ describe(`Sync`, () => {
         const cache = new Cache(cacheStore);
         const index2 = new SimpleIndex(store);
         const store2 = new Store({ storeIndex: 1 });
-        blockStore2 = new Blocks(
-            new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
-        );
-        await blockStore2.open();
 
         await store2.init(
-            blockStore2,
+            session.peers[1].directblock,
             {
                 ...signKey.keypair,
                 sign: async (data: Uint8Array) =>
@@ -122,14 +95,8 @@ describe(`Sync`, () => {
         const store2 = new Store({ storeIndex: 1 });
 
         const fetchCallBackEntries: Entry<any>[] = [];
-
-        blockStore2 = new Blocks(
-            new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
-        );
-        await blockStore2.open();
-
         await store2.init(
-            blockStore2,
+            session.peers[1].directblock,
             {
                 ...signKey.keypair,
                 sign: async (data: Uint8Array) =>

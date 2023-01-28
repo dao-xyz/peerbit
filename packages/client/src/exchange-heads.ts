@@ -7,6 +7,7 @@ import { fixedUint8Array } from "@dao-xyz/peerbit-borsh-utils";
 import { Store } from "@dao-xyz/peerbit-store";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { TransportMessage } from "./message.js";
+import { v4 as uuid } from "uuid";
 
 const logger = loggerFn({ module: "exchange-heads" });
 
@@ -50,16 +51,13 @@ export class EntryWithRefs<T> {
 @variant([0, 0])
 export class ExchangeHeadsMessage<T> extends TransportMessage {
     @field({ type: "string" })
-    topic: string;
-
-    @field({ type: "string" })
     programAddress: string;
-
-    @field({ type: "u32" })
-    storeIndex: number;
 
     @field({ type: option("u32") })
     programIndex?: number;
+
+    @field({ type: "u32" })
+    storeIndex: number;
 
     @field({ type: vec(EntryWithRefs) })
     heads: EntryWithRefs<T>[];
@@ -70,60 +68,52 @@ export class ExchangeHeadsMessage<T> extends TransportMessage {
     @field({ type: fixedUint8Array(4) })
     reserved: Uint8Array = new Uint8Array(4);
 
-    constructor(props?: {
-        topic: string;
+    constructor(props: {
         programIndex?: number;
         programAddress: string;
         storeIndex: number;
-
         heads: EntryWithRefs<T>[];
         minReplicas?: MinReplicas;
     }) {
         super();
-        if (props) {
-            /* this.resourceRequirements = props.resourceRequirements || []; */
-            this.topic = props.topic;
-            this.storeIndex = props.storeIndex;
-            this.programIndex = props.programIndex;
-            this.programAddress = props.programAddress;
-            this.heads = props.heads;
-            this.minReplicas = props.minReplicas;
-        }
+        this.id = uuid();
+        this.storeIndex = props.storeIndex;
+        this.programIndex = props.programIndex;
+        this.programAddress = props.programAddress;
+        this.heads = props.heads;
+        this.minReplicas = props.minReplicas;
     }
 }
 
 @variant([0, 1])
 export class RequestHeadsMessage extends TransportMessage {
     @field({ type: "string" })
-    topic: string;
-
-    @field({ type: "string" })
     address: string;
 
-    constructor(props?: { topic: string; address: string }) {
+    constructor(props: { topic: string; address: string }) {
         super();
         if (props) {
-            this.topic = props.topic;
             this.address = props.address;
         }
     }
 }
 
-export const exchangeHeads = async (
-    send: (message: Uint8Array) => Promise<any>,
+export const createExchangeHeadsMessage = async (
     store: Store<any>,
     program: Program,
     heads: Entry<any>[],
-    topic: string,
     includeReferences: boolean,
-    identity?: Identity
+    identity: Identity | undefined
 ) => {
     const headsSet = new Set(heads);
     const headsWithRefs = heads.map((head) => {
         const refs = !includeReferences
             ? []
             : store.oplog
-                  .getPow2Refs(store.oplog.length)
+                  .getReferenceSamples(head, {
+                      pointerCount: 8,
+                      memoryLimit: 1e6 / heads.length,
+                  }) // 1mb total limit split on all heads
                   .filter((r) => !headsSet.has(r)); // pick a proportional amount of refs so we can efficiently load the log. TODO should be equidistant for good performance?
         return new EntryWithRefs({
             entry: head,
@@ -131,31 +121,27 @@ export const exchangeHeads = async (
         });
     });
     logger.debug(`Send latest heads of '${store._storeIndex}'`);
-    if (heads && heads.length > 0) {
-        const message = new ExchangeHeadsMessage({
-            topic: topic,
-            storeIndex: store._storeIndex,
-            programIndex: program._programIndex,
-            programAddress: (program.address ||
-                program.parentProgram.address)!.toString(),
-            heads: headsWithRefs,
-        });
-        const maybeSigned = new MaybeSigned({ data: serialize(message) });
-        let signedMessage: MaybeSigned<any> = maybeSigned;
-        if (identity) {
-            const signer = async (data: Uint8Array) => {
-                return {
-                    signature: await identity.sign(data),
-                    publicKey: identity.publicKey,
-                };
+    const message = new ExchangeHeadsMessage({
+        storeIndex: store._storeIndex,
+        programIndex: program._programIndex,
+        programAddress: (program.address ||
+            program.parentProgram.address)!.toString(),
+        heads: headsWithRefs,
+    });
+    const maybeSigned = new MaybeSigned({ data: serialize(message) });
+    let signedMessage: MaybeSigned<any> = maybeSigned;
+    if (identity) {
+        const signer = async (data: Uint8Array) => {
+            return {
+                signature: await identity.sign(data),
+                publicKey: identity.publicKey,
             };
-            signedMessage = await signedMessage.sign(signer);
-        }
-
-        const decryptedMessage = new DecryptedThing({
-            data: serialize(signedMessage),
-        }); // TODO encryption?
-        const serializedMessage = serialize(decryptedMessage);
-        await send(serializedMessage);
+        };
+        signedMessage = await signedMessage.sign(signer);
     }
+
+    const decryptedMessage = new DecryptedThing({
+        data: serialize(signedMessage),
+    }); // TODO encryption?
+    return serialize(decryptedMessage);
 };

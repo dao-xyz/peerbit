@@ -6,37 +6,28 @@ import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { createStore } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { AbstractLevel } from "abstract-level";
-import { fileURLToPath } from "url";
-import path from "path";
-import { MemoryLevelBlockStore, Blocks } from "@dao-xyz/peerbit-block";
-
-const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
+import {
+    BlockStore,
+    MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 
 describe(`Constructor`, function () {
-    let blockStore: Blocks,
+    let blockStore: BlockStore,
         signKey: KeyWithMeta<Ed25519Keypair>,
         identityStore: AbstractLevel<any, string, Uint8Array>,
         store: Store<any>,
         cacheStore: AbstractLevel<any, string, Uint8Array>;
 
-    const ipfsConfig = Object.assign(
-        {},
-        {
-            repo: "repo-entry" + __filenameBase + new Date().getTime(),
-        }
-    );
-
     beforeAll(async () => {
-        identityStore = await createStore(__filenameBase + "/identity");
+        identityStore = await createStore();
         const keystore = new Keystore(identityStore);
 
-        cacheStore = await createStore(__filenameBase + "/cache");
+        cacheStore = await createStore();
         const cache = new Cache<CachedValue>(cacheStore);
 
         signKey = await keystore.createEd25519Key();
 
-        blockStore = new Blocks(new MemoryLevelBlockStore());
+        blockStore = new MemoryLevelBlockStore();
         await blockStore.open();
 
         const options = Object.assign({}, DefaultOptions, {

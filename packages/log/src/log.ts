@@ -31,7 +31,7 @@ import { Encoding, JSON_ENCODING } from "./encoding.js";
 import { Identity } from "./identity.js";
 import { logger as parentLogger } from "./logger.js";
 import { HeadsIndex } from "./heads.js";
-import { Blocks } from "@dao-xyz/peerbit-block";
+import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { Values } from "./values.js";
 
 const logger = parentLogger.child({ module: "log" });
@@ -77,7 +77,7 @@ export type LogOptions<T> = {
 
 export class Log<T> {
     _sortFn: Sorting.ISortFunction;
-    _storage: Blocks;
+    _storage: BlockStore;
     _id: string;
     /*   _rootGid: string; */
 
@@ -100,7 +100,7 @@ export class Log<T> {
     joinConcurrency: number;
 
     constructor(
-        store: Blocks,
+        store: BlockStore,
         identity: Identity,
         options: LogOptions<T> = {}
     ) {
@@ -343,60 +343,81 @@ export class Log<T> {
         return result;
     }
 
-    getPow2Refs(pointerCount = 1): Entry<T>[] {
-        // If pointer count is 4, returns 2
-        // If pointer count is 8, returns 3 references
-        // If pointer count is 512, returns 9 references
-        // If pointer count is 2048, returns 11 references
-        const getEveryPow2 = (maxDistance: number) => {
-            const entries = new Set<Entry<T>>();
-
-            if (maxDistance === 0) {
-                return entries;
-            }
-
-            let next = this._values.head;
-            if (next) {
-                entries.add(next.value);
-            }
-
-            let prev = 1;
+    getReferenceSamples(
+        from: Entry<T>,
+        options?: { pointerCount?: number; memoryLimit?: number }
+    ): Entry<T>[] {
+        const hashes = new Set<string>();
+        const pointerCount = options?.pointerCount || 0;
+        const memoryLimit = options?.memoryLimit;
+        const maxDistance = Math.min(pointerCount, this._values.length);
+        if (maxDistance === 0) {
+            return [];
+        }
+        hashes.add(from.hash);
+        let memoryCounter = from._payload.byteLength;
+        if (from.next?.length > 0 && pointerCount >= 2) {
+            let next = new Set(from.next);
+            let prev = 2;
             outer: for (let i = 2; i <= maxDistance - 1; i *= 2) {
                 for (let j = prev; j < i; j++) {
-                    if (!next) {
+                    if (next.size === 0) {
                         break outer;
                     }
-                    next = next?.next;
+                    const nextNext = new Set<string>();
+                    next.forEach((n) => {
+                        this.get(n)?.next?.forEach((n2) => {
+                            nextNext.add(n2);
+                        });
+                    });
+                    next = nextNext;
                 }
+
                 prev = i;
                 if (next) {
-                    entries.add(next?.value);
+                    for (const n of next) {
+                        if (!memoryLimit) {
+                            hashes.add(n);
+                        } else {
+                            const entry = this.get(n);
+                            if (!entry) {
+                                break outer;
+                            }
+                            memoryCounter += entry._payload.byteLength;
+                            if (memoryCounter > memoryLimit) {
+                                break outer;
+                            }
+                            hashes.add(n);
+                        }
+                        if (hashes.size === pointerCount) {
+                            break outer;
+                        }
+                    }
                 }
             }
-            return entries;
-        };
-        const references = getEveryPow2(
-            Math.min(pointerCount, this._values.length)
-        );
+        }
 
-        // Always include the last known reference
-        /* if (all.length < pointerCount && all[all.length - 1]) {
-            references.add(all[all.length - 1]); // TODO can this yield a duplicate?
-        } */
-        return [...references];
+        const ret: Entry<any>[] = [];
+        for (const hash of hashes) {
+            const entry = this.get(hash);
+            if (entry) {
+                ret.push(entry);
+            }
+        }
+        return ret;
     }
 
     /* getHeadsFromHashes(refs: string[]): Entry<T>[] {
-        const headsFromRefs = new Map<string, Entry<T>>();
-        refs.forEach((ref) => {
-            const headsFromRef = this.getHeads(ref); // TODO allow forks
-            headsFromRef.forEach((head) => {
-                headsFromRefs.set(head.hash, head);
-            });
-        });
-        const nexts = [...headsFromRefs.values()].sort(this._sortFn);
-        return nexts;
-    } */
+		const headsFromRefs = new Map<string, Entry<T>>();
+		refs.forEach((ref) => {
+			const headsFromRef = this.getHeads(ref); // TODO allow forks
+			headsFromRef.forEach((head) => {
+				headsFromRefs.set(head.hash, head);
+			});
+		});
+		const nexts = [...headsFromRefs.values()].sort(this._sortFn);
+		return nexts;
+	} */
 
     /**
      * Append an entry to the log.
@@ -409,14 +430,13 @@ export class Log<T> {
             canAppend?: CanAppend<T>;
             gidSeed?: string;
             nexts?: Entry<any>[];
-            pin?: boolean;
             identity?: Identity;
             signers?: ((data: Uint8Array) => Promise<SignatureWithKey>)[];
             reciever?: EncryptionTemplateMaybeEncrypted;
             onGidsShadowed?: (gids: string[]) => void;
             trim?: TrimOptions;
             timestamp?: Timestamp;
-        } = { pin: false }
+        } = {}
     ): Promise<{ entry: Entry<T>; removed: Entry<T>[] }> {
         if (options.reciever && !this._encryption) {
             throw new Error(
@@ -456,7 +476,6 @@ export class Log<T> {
             encoding: this._encoding,
             next: nexts,
             gidSeed: options.gidSeed,
-            pin: options.pin,
             encryption: options.reciever
                 ? {
                       options: this._encryption as PublicKeyEncryptionResolver,
@@ -513,6 +532,7 @@ export class Log<T> {
         entry.init({ encoding: this._encoding, encryption: this._encryption });
 
         const removed = await this.trim(options?.trim);
+
         return { entry, removed };
     }
 
@@ -783,7 +803,7 @@ export class Log<T> {
     }
 
     static async fromMultihash<T>(
-        store: Blocks,
+        store: BlockStore,
         identity: Identity,
         hash: string,
         options: { sortFn?: Sorting.ISortFunction } & EntryFetchAllOptions<T>
@@ -813,7 +833,7 @@ export class Log<T> {
     }
 
     static async fromEntryHash<T>(
-        store: Blocks,
+        store: BlockStore,
         identity: Identity,
         hash: string | string[],
         options: {
@@ -862,7 +882,7 @@ export class Log<T> {
      * @return {Promise<Log>} New Log
      */
     static async fromJSON<T>(
-        store: Blocks,
+        store: BlockStore,
         identity: Identity,
         json: { id: string; heads: string[] },
         options: {
@@ -892,7 +912,7 @@ export class Log<T> {
     }
 
     static async fromEntry<T>(
-        store: Blocks,
+        store: BlockStore,
         identity: Identity,
         sourceEntries: Entry<T>[] | Entry<T>,
         options: EntryFetchOptions<T> & {

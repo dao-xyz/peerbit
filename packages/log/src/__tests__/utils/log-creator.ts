@@ -2,11 +2,11 @@ import { KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { Log } from "../../log.js";
 import { Timestamp } from "../../clock.js";
-import { BlockStore, Blocks } from "@dao-xyz/peerbit-block";
+import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 
 export class LogCreator {
     static async createLogWithSixteenEntries(
-        store: Blocks,
+        store: BlockStore,
         signKeys: KeyWithMeta<Ed25519Keypair>[]
     ) {
         const expectedData = [
@@ -92,7 +92,7 @@ export class LogCreator {
     }
 
     static async createLogWithTwoHundredEntries(
-        store: Blocks,
+        store: BlockStore,
         signKeys: KeyWithMeta<Ed25519Keypair>[]
     ) {
         const amount = 100;

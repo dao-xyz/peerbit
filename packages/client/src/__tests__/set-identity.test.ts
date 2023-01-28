@@ -1,8 +1,6 @@
 import { Peerbit } from "../peer";
-
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { EventStore } from "./utils/stores";
-
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 
 // Include test utilities
@@ -28,7 +26,8 @@ describe(`Set identities`, function () {
             (await keystore.createEd25519Key()) as KeyWithMeta<Ed25519Keypair>;
         signKey2 =
             (await keystore.createEd25519Key()) as KeyWithMeta<Ed25519Keypair>;
-        client = await Peerbit.create(session.peers[0]);
+
+        client = await Peerbit.create({ libp2p: session.peers[0] });
     });
 
     afterAll(async () => {

@@ -7,8 +7,11 @@
     "type": "module",
     "workspaces": {
         "packages": [
-            "packages/libp2p/pubsub-direct-channel",
-            "packages/libp2p/pubsub-peer-monitor",
+            "packages/libp2p/direct-block",
+            "packages/libp2p/direct-stream",
+            "packages/libp2p/direct-sub",
+            "packages/libp2p/libp2p-test-utils",
+            "packages/libp2p/peerbit-libp2p",
             "packages/log",
             "packages/client",
             "packages/server-node/frontend",
@@ -25,12 +28,12 @@
             "packages/programs/data/document",
             "packages/programs/data/string",
             "packages/store",
-            "packages/utils/block",
             "packages/utils/test-utils",
             "packages/utils/cache",
             "packages/utils/borsh-utils",
             "packages/utils/time",
-            "packages/utils/logger"
+            "packages/utils/logger",
+            "packages/utils/lazy-level"
         ],
         "nohoist": [
             "**/@babel/preset-env",
@@ -84,7 +87,6 @@
         "lerna": "^5.5.1",
         "prettier": "^2.8.1",
         "shx": "^0.3.4",
-        "start-server-and-test": "^1.14.0",
         "ts-jest": "^29.0.3",
         "ts-node": "^10.9.1",
         "tslib": "^2.4.1",
@@ -92,6 +94,9 @@
         "typescript": "^4.8.4",
         "typescript-esm": "^2.0.0",
         "rimraf": "^3.0.2",
-        "fs-extra": "^10.1.0"
+        "fs-extra": "^10.1.0",
+        "benchmark": "^2.1.4",
+        "@types/benchmark": "^2.1.2",
+        "why-is-node-running": "^2.2.2"
     }
 }

@@ -1,4 +1,3 @@
-import rmrf from "rimraf";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { variant, field } from "@dao-xyz/borsh";
 import { Peerbit } from "../peer";
@@ -11,22 +10,17 @@ import {
 
 // Include test utilities
 import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { CanOpenSubPrograms, Program } from "@dao-xyz/peerbit-program";
+import { Program } from "@dao-xyz/peerbit-program";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Entry } from "@dao-xyz/peerbit-log";
-import { DEFAULT_BLOCK_TRANSPORT_TOPIC } from "@dao-xyz/peerbit-block";
 
-describe(`Subprogram`, function () {
+describe(`Subprogram`, () => {
     let session: LSession;
-    let client1: Peerbit,
-        client2: Peerbit,
-        db1: EventStore<string>,
-        db2: EventStore<string>;
-    let topic: string;
+    let client1: Peerbit, client2: Peerbit;
     let timer: any;
 
     beforeAll(async () => {
-        session = await LSession.connected(2, [DEFAULT_BLOCK_TRANSPORT_TOPIC]);
+        session = await LSession.connected(2);
     });
 
     afterAll(async () => {
@@ -36,36 +30,23 @@ describe(`Subprogram`, function () {
     beforeEach(async () => {
         clearInterval(timer);
 
-        client1 = await Peerbit.create(session.peers[0], {
-            /*  canAccessKeys: async (requester, _keyToAccess) => {
-                return requester.equals(client2.identity.publicKey); // allow client1 to share keys with client2
-            },  */ waitForKeysTimout: 1000,
+        client1 = await Peerbit.create({
+            libp2p: session.peers[0],
         });
-        client2 = await Peerbit.create(session.peers[1], {
+        client2 = await Peerbit.create({
+            libp2p: session.peers[1],
             limitSigning: true,
         }); // limitSigning = dont sign exchange heads request
-        db1 = await client1.open(
-            new EventStore<string>({
-                id: "abc",
-            }),
-            { topic: topic }
-        );
     });
 
     afterEach(async () => {
         clearInterval(timer);
-
-        if (db1) await db1.store.drop();
-
-        if (db2) await db2.store.drop();
-
         if (client1) await client1.stop();
-
         if (client2) await client2.stop();
     });
 
     @variant("program_with_subprogram")
-    class ProgramWithSubprogram extends Program implements CanOpenSubPrograms {
+    class ProgramWithSubprogram extends Program {
         @field({ type: Documents })
         eventStore: Documents<EventStore<string>>;
 
@@ -86,22 +67,13 @@ describe(`Subprogram`, function () {
             return this.eventStore.setup({
                 type: EventStore,
                 canAppend: this.canAppend.bind(this),
+                canOpen: (program: Program) =>
+                    Promise.resolve(program.constructor === EventStore),
             });
-        }
-
-        async canOpen(
-            program: Program,
-            fromEntry: Entry<any>
-        ): Promise<boolean> {
-            return (
-                program.constructor === EventStore && this.canAppend(fromEntry)
-            );
         }
     }
 
     it("can open store on exchange heads message when trusted", async () => {
-        const topic = "x";
-
         const store = new ProgramWithSubprogram(
             new Documents<EventStore<string>>({
                 index: new DocumentIndex({
@@ -110,44 +82,41 @@ describe(`Subprogram`, function () {
                 }),
             })
         );
-        await client2.subscribeToTopic(topic, true);
 
-        await client1.open(store, {
-            topic: topic,
+        /// this.parentProgram
+        const program = await client1.open(store, {
             replicate: false,
         });
+        program.accessRequests = [];
 
+        await client2.open(program.address);
+
+        const eventStoreToPut = new EventStore<string>({ id: "store 1" });
         const { entry: eventStore } = await store.eventStore.put(
-            new EventStore({ id: "store 1" })
+            eventStoreToPut
         );
+
         const _eventStore2 = await store.eventStore.put(
             new EventStore({ id: "store 2" })
         );
         expect(store.eventStore.store.oplog.heads).toHaveLength(2); // two independent documents
-
-        await waitFor(() => client2.programs.get(topic)?.size || 0 > 0, {
-            timeout: 20 * 1000,
-            delayInterval: 50,
-        });
+        await waitFor(() => client2.programs.size == 3);
+        expect(program.accessRequests).toHaveLength(2);
 
         const eventStoreString = (
             (await eventStore.payload.getValue()) as PutOperation<any>
         ).value as EventStore<string>;
+
+        expect(eventStoreToPut).toEqual(eventStoreString);
+
         await client1.open(eventStoreString, {
-            topic: topic,
             replicate: false,
         });
 
-        const programFromReplicator = [
-            ...client2.programs.get(topic)?.values()!,
-        ][0].program as ProgramWithSubprogram;
-        programFromReplicator.accessRequests = [];
+        const eventStore2 = client2.programs.get(
+            eventStoreToPut.address!.toString()
+        )!.program as EventStore<string>;
         await eventStoreString.add("hello"); // This will exchange an head that will make client 1 open the store
-        await waitFor(() => programFromReplicator.accessRequests.length === 1); // one for checking 'can open store'
-        expect(
-            (
-                await programFromReplicator.accessRequests[0].entry.getPublicKeys()
-            )[0].equals(client1.identity.publicKey)
-        );
+        await waitFor(() => eventStore2.store.oplog.values.length === 1);
     });
 });

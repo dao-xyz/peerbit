@@ -12,9 +12,10 @@ import {
 } from "@dao-xyz/borsh";
 import path from "path";
 import { CID } from "multiformats/cid";
-import { Blocks } from "@dao-xyz/peerbit-block";
+import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { Libp2p } from "libp2p";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
+import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
 export * from "./protocol-message.js";
 
 const notEmpty = (e: string) => e !== "" && e !== " ";
@@ -177,43 +178,45 @@ export interface Saveable {
 }
 
 export const save = async (
-    store: Blocks,
+    store: BlockStore,
     thing: Addressable,
-    options: { format?: string; pin?: boolean; timeout?: number } = {}
+    options: { format?: string; timeout?: number } = {}
 ): Promise<Address> => {
     const manifest: Manifest = {
         data: serialize(thing),
     };
     const hash = await store.put(
-        manifest,
-        options.format || "dag-cbor",
+        await createBlock(manifest, options.format || "dag-cbor"),
         options
     );
     return Address.parse(Address.join(hash));
 };
 
 export const load = async <S extends Addressable>(
-    store: Blocks,
+    store: BlockStore,
     address: Address,
     into: Constructor<S> | AbstractType<S>,
     options: { timeout?: number } = {}
 ): Promise<S | undefined> => {
-    const manifest = await store.get<Manifest>(address.cid, options);
-    if (!manifest) {
+    const manifestBlock = await store.get<Manifest>(address.cid, options);
+    if (!manifestBlock) {
         return undefined;
     }
+
+    const manifest = await getBlockValue(manifestBlock);
     const der = deserialize(manifest.data, into);
     der.address = Address.parse(Address.join(address.cid));
     return der;
 };
-
+export type OpenProgram = (program: Program) => Promise<Program>;
 export type ProgramInitializationOptions = {
     store: IInitializationOptions<any>;
     parent?: AbstractProgram;
-    topic: string;
     replicate?: boolean;
     onClose?: () => void;
     onDrop?: () => void;
+    open?: OpenProgram;
+    replicator?: (address: Address, gid: string) => Promise<boolean>;
 };
 
 @variant(0)
@@ -221,24 +224,21 @@ export abstract class AbstractProgram {
     @field({ type: option("u32") })
     _programIndex?: number; // Prevent duplicates for subprograms
 
-    @field({ type: option("string") })
-    owner?: string; // Will control whether this program can be opened or not
+    private _libp2p: Libp2pExtended;
+    private _identity: Identity;
+    private _encryption?: PublicKeyEncryptionResolver;
+    private _onClose?: () => void;
+    private _onDrop?: () => void;
+    private _initialized?: boolean;
+    private _replicate?: boolean;
 
-    _libp2p: Libp2p;
-    _identity: Identity;
-    _encryption?: PublicKeyEncryptionResolver;
-    _onClose?: () => void;
-    _onDrop?: () => void;
-    _initialized?: boolean;
-    _initializationPromise: Promise<void>;
-    _replicate?: boolean;
+    replicator?: (address: Address, gid: string) => Promise<boolean>;
+    open?: (program: Program) => Promise<Program>;
+
     parentProgram: Program;
 
     get initialized() {
         return this._initialized;
-    }
-    get initializationPromise(): Promise<void> | undefined {
-        return this._initializationPromise;
     }
 
     get programIndex(): number | undefined {
@@ -250,8 +250,7 @@ export abstract class AbstractProgram {
     }
 
     async init(
-        libp2p: Libp2p,
-        store: Blocks,
+        libp2p: Libp2pExtended,
         identity: Identity,
         options: ProgramInitializationOptions
     ): Promise<this> {
@@ -259,30 +258,30 @@ export abstract class AbstractProgram {
             throw new Error("Already initialized");
         }
 
-        const fn = async () => {
-            this._libp2p = libp2p;
-            this._identity = identity;
-            this._encryption = options.store.encryption;
-            this._onClose = options.onClose;
-            this._onDrop = options.onDrop;
-            this._replicate = options.replicate;
+        this._libp2p = libp2p;
+        this._identity = identity;
+        this._encryption = options.store.encryption;
+        this._onClose = options.onClose;
+        this._onDrop = options.onDrop;
+        this._replicate = options.replicate;
+        this.open = options.open;
+        this.replicator = options.replicator;
 
-            const nexts = this.programs;
-            for (const next of nexts) {
-                await next.init(libp2p, store, identity, {
-                    ...options,
-                    parent: this,
-                });
-            }
+        const nexts = this.programs;
+        for (const next of nexts) {
+            await next.init(libp2p, identity, {
+                ...options,
+                parent: this,
+            });
+        }
 
-            await Promise.all(
-                this.stores.map((s) => s.init(store, identity, options.store))
-            );
+        await Promise.all(
+            this.stores.map((s) =>
+                s.init(libp2p.directblock, identity, options.store)
+            )
+        );
 
-            this._initialized = true;
-        };
-        this._initializationPromise = fn();
-        await this._initializationPromise;
+        this._initialized = true;
         return this;
     }
 
@@ -305,6 +304,7 @@ export abstract class AbstractProgram {
         if (!this.initialized) {
             return;
         }
+        this._onDrop && this._onDrop();
         const promises: Promise<void>[] = [];
         for (const store of this.stores.values()) {
             promises.push(store.drop());
@@ -314,10 +314,9 @@ export abstract class AbstractProgram {
         }
         await Promise.all(promises);
         this._initialized = false;
-        this._onDrop && this._onDrop();
     }
 
-    get libp2p(): Libp2p {
+    get libp2p(): Libp2pExtended {
         return this._libp2p;
     }
 
@@ -413,8 +412,8 @@ export abstract class AbstractProgram {
     }
 }
 
-export interface CanOpenSubPrograms {
-    canOpen(programToOpen: Program, fromEntry: Entry<any>): Promise<boolean>;
+export interface CanTrust {
+    isTrusted(keyHash: string): Promise<boolean> | boolean;
 }
 
 @variant(0)
@@ -425,7 +424,7 @@ export abstract class Program
     @field({ type: "string" })
     id: string;
 
-    _address?: Address;
+    private _address?: Address;
 
     constructor(properties?: { id?: string }) {
         super();
@@ -465,18 +464,17 @@ export abstract class Program
     }
 
     async init(
-        libp2p: Libp2p,
-        store: Blocks,
+        libp2p: Libp2pExtended,
         identity: Identity,
         options: ProgramInitializationOptions
     ): Promise<this> {
         // TODO, determine whether setup should be called before or after save
         if (this.parentProgram === undefined) {
-            await this.save(store);
+            await this.save(libp2p.directblock);
         }
 
         await this.setup();
-        await super.init(libp2p, store, identity, options);
+        await super.init(libp2p, identity, options);
         if (this.parentProgram != undefined && this._address) {
             throw new Error(
                 "Expecting address to be undefined as this program is part of another program"
@@ -501,14 +499,13 @@ export abstract class Program
     }
 
     async save(
-        store: Blocks,
+        store: BlockStore,
         options?: {
             format?: string;
             pin?: boolean;
             timeout?: number;
         }
     ): Promise<Address> {
-        await store.open();
         this.setupIndices();
         const existingAddress = this._address;
         const address = await save(store, this, options);
@@ -527,7 +524,7 @@ export abstract class Program
     }
 
     static load<S extends Program>(
-        store: Blocks,
+        store: BlockStore,
         address: Address | string,
         options?: {
             timeout?: number;
@@ -539,6 +536,13 @@ export abstract class Program
             Program,
             options
         ) as Promise<S>;
+    }
+
+    get topic(): string {
+        if (!this.address) {
+            throw new Error("Missing address");
+        }
+        return this.address.toString();
     }
 }
 

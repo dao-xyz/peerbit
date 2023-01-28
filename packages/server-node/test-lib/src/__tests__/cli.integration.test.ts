@@ -4,7 +4,6 @@
 
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { Program } from "@dao-xyz/peerbit-program";
-import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { Peerbit } from "@dao-xyz/peerbit";
 import { DString } from "@dao-xyz/peerbit-string";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
@@ -17,7 +16,8 @@ describe("server", () => {
 
     beforeAll(async () => {
         session = await LSession.connected(1);
-        peer = await Peerbit.create(session.peers[0], {
+        peer = await Peerbit.create({
+            libp2p: session.peers[0],
             directory: "./tmp/peerbit/" + +new Date(),
         });
     });
@@ -29,7 +29,7 @@ describe("server", () => {
     it("_", async () => {
         const program = new PermissionedString({
             store: new DString({}),
-            network: new TrustedNetwork({ rootTrust: peer.identity.publicKey }),
+            trusted: [peer.identity.publicKey],
         });
         program.setupIndices();
         const base54 = Buffer.from(serialize(program)).toString("base64");
