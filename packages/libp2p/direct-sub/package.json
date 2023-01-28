@@ -1,6 +1,6 @@
 {
     "name": "@dao-xyz/libp2p-direct-sub",
-    "version": "0.0.1",
+    "version": "0.1.0",
     "description": "Direct streaming for libp2p",
     "type": "module",
     "sideEffects": false,
@@ -50,19 +50,19 @@
         "dao.xyz"
     ],
     "devDependencies": {
-        "@dao-xyz/libp2p-test-utils": "^0.0.1"
+        "@dao-xyz/libp2p-test-utils": "^0.1.0"
     },
     "dependencies": {
-        "@dao-xyz/libp2p-direct-stream": "^0.0.1",
+        "@dao-xyz/libp2p-direct-stream": "^0.1.0",
         "@dao-xyz/peerbit-logger": "^0.0.4",
+        "@isaacs/ttlcache": "^1.2.1",
         "abstract-level": "^1.0.3",
         "libp2p": "^0.42.0",
-        "@isaacs/ttlcache": "^1.2.1",
         "lru-cache": "^7.14.1",
         "memory-level": "^1.0.0",
         "nanoid": "^4.0.0",
-        "ngraph.path": "^1.4.0",
         "ngraph.graph": "^20.0.1",
+        "ngraph.path": "^1.4.0",
         "uint8arrays": "^4.0.2"
     }
 }
