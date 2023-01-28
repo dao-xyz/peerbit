@@ -55,7 +55,10 @@ export class Documents<T> extends ComposableProgram {
     _valueEncoding: Encoding<T>;
 
     _optionCanAppend?: CanAppend<Operation<T>>;
-    _canOpen?: (program: Program) => Promise<boolean>;
+    _canOpen?: (
+        program: Program,
+        entry: Entry<Operation<T>>
+    ) => Promise<boolean>;
 
     constructor(properties: {
         canEdit?: boolean;
@@ -258,14 +261,6 @@ export class Documents<T> extends ComposableProgram {
                     `Program ${this.constructor.name} have not been opened, as 'parentProgram' property is missing`
                 );
             }
-            /* if (!(this.parentProgram as any as CanOpenSubPrograms).canOpen) {
-				throw new Error(
-					"Class " +
-					this.parentProgram.constructor.name +
-					" needs to implement CanOpenSubPrograms for this Documents store to progams"
-				);
-			} */
-            //doc.owner = this.parentProgram.address.toString();
             doc.setupIndices();
         }
 
@@ -356,7 +351,7 @@ export class Documents<T> extends ComposableProgram {
 
                             // if replicator, then open
                             if (
-                                (await this._canOpen!(value)) &&
+                                (await this._canOpen!(value, item)) &&
                                 this.replicate &&
                                 (await this.replicator!(
                                     this.parentProgram.address,
