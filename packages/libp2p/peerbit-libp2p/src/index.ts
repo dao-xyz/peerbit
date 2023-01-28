@@ -12,15 +12,10 @@ import { mplex } from "@libp2p/mplex";
 import type { RecursivePartial } from "@libp2p/interfaces";
 import type { Transport } from "@libp2p/interface-transport";
 import { Level } from "level";
-import { Program } from "@dao-xyz/peerbit-program";
 import { webSockets } from "@libp2p/websockets";
 import { AddressManagerInit } from "libp2p/address-manager";
 import { PeerId } from "@libp2p/interface-peer-id";
 import { ConnectionManagerConfig } from "libp2p/connection-manager";
-
-export interface DB {
-    someProprty: Program;
-}
 
 export type Libp2pExtended = Libp2p & {
     directsub: DirectSub;
