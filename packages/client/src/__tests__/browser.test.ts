@@ -5,7 +5,6 @@ import { v4 as uuid } from "uuid";
 
 // Include test utilities
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
-import { waitForPeers as waitForPeersBlock } from "@dao-xyz/libp2p-direct-stream";
 
 /**
  * Tests that are relavent for browser environments
