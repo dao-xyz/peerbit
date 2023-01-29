@@ -272,7 +272,7 @@ export class Documents<T> extends ComposableProgram {
 
 	del(
 		key: Keyable,
-		options?: AddOperationOptions<Operation<T>> & { permanent?: boolean }
+		options?: AddOperationOptions<Operation<T>> & { permanently?: boolean }
 	) {
 		const k = asString(key);
 		const existing = this._index.get(k);
@@ -283,7 +283,7 @@ export class Documents<T> extends ComposableProgram {
 		return this.store.addOperation(
 			new DeleteOperation({
 				key: asString(k),
-				permanently: options?.permanent,
+				permanently: options?.permanently,
 			}),
 			{ nexts: [existing.entry], ...options }
 		);
@@ -377,33 +377,6 @@ export class Documents<T> extends ComposableProgram {
 				throw error;
 			}
 		}
-
-		/* for (const entry of entries) {
-			try {
-				const payload = await entry.getPayloadValue();
-				if (payload instanceof DeleteOperation) {
-					if (payload.permanently) {
-						// delete all nexts recursively (but dont delete the DELETE record (because we might want to share this with others))
-						const nexts = entry.next
-							.map((n) => this.store.oplog.get(n))
-							.filter((x) => !!x) as Entry<any>[];
-
-						await this.store.removeOperation(nexts, {
-							recursively: true,
-						});
-					}
-				} else if (payload instanceof PutOperation) {
-					// Do nothing (for now)	
-				} else {
-					// Unknown operation
-				}
-			} catch (error) {
-				if (error instanceof AccessError) {
-					continue;
-				}
-				throw error;
-			}
-		} */
 	}
 
 	deserializeOrPass(value: PutOperation<T>): T {
@@ -414,22 +387,4 @@ export class Documents<T> extends ComposableProgram {
 			return value._value!;
 		}
 	}
-
-	/* 
-
-	async updateIndex(change: Change<Operation<T>>) {
-		if (!this.type) {
-			throw new Error("Not initialized");
-		}
-
-		const removed = [...(change.removed || [])];
-		const removedSet = new Set<string>(removed.map((x) => x.hash));
-		const entries = [...change.added, ...(change.removed || [])]
-			.sort(this._store.oplog._sortFn)
-			.reverse();
-
-		
-	}
-
-	*/
 }
