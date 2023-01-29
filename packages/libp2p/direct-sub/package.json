@@ -63,6 +63,5 @@
 		"ngraph.graph": "^20.0.1",
 		"ngraph.path": "^1.4.0",
 		"uint8arrays": "^4.0.2"
-	},
-	"gitHead": "9e1681454f31fd7bd9de8856a63744c66652fe15"
+	}
 }

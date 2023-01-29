@@ -39,6 +39,5 @@
 	"devDependencies": {
 		"@dao-xyz/peerbit-test-utils": "^0.1.10",
 		"@dao-xyz/peerbit-time": "^0.0.20"
-	},
-	"gitHead": "9e1681454f31fd7bd9de8856a63744c66652fe15"
+	}
 }

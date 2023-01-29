@@ -35,6 +35,5 @@
 		"@dao-xyz/peerbit-crypto": "^0.1.5",
 		"@dao-xyz/peerbit-libp2p": "^0.1.9",
 		"@dao-xyz/peerbit-store": "^0.1.11"
-	},
-	"gitHead": "9e1681454f31fd7bd9de8856a63744c66652fe15"
+	}
 }

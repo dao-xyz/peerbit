@@ -39,6 +39,5 @@
 	"devDependencies": {
 		"@dao-xyz/peerbit-time": "^0.0.20",
 		"@ethersproject/wallet": "^5.7.0"
-	},
-	"gitHead": "9e1681454f31fd7bd9de8856a63744c66652fe15"
+	}
 }

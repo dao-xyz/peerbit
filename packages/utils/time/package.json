@@ -29,6 +29,5 @@
 		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
 	},
 	"author": "dao.xyz",
-	"license": "MIT",
-	"gitHead": "63c806ffbe224816cf72fc5a7859f3437558cada"
+	"license": "MIT"
 }
