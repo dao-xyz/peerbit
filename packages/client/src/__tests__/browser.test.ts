@@ -5,6 +5,7 @@ import { v4 as uuid } from "uuid";
 
 // Include test utilities
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
+import { waitForPeers as waitForPeersBlock } from "@dao-xyz/libp2p-direct-stream";
 
 /**
  * Tests that are relavent for browser environments
@@ -87,16 +88,14 @@ describe(`browser`, function () {
 			libp2p: session.peers[1],
 		});
 
-		/* await waitForPeersBlock(
-				session.peers[0].directblock,
-				session.peers[2].directblock
-			);
-			await waitForPeers(session.peers[0], session.peers[2], topic);
-			await waitForPeersBlock(
-				session.peers[1].directblock,
-				session.peers[2].directblock
-			);
-			await waitForPeers(session.peers[1], session.peers[2], topic); */
+		await waitForPeersBlock(
+			session.peers[0].directblock,
+			session.peers[2].directblock
+		);
+		await waitForPeersBlock(
+			session.peers[1].directblock,
+			session.peers[2].directblock
+		);
 
 		db1 = await client1.open(
 			new EventStore<string>({
@@ -140,6 +139,10 @@ describe(`browser`, function () {
 			browser: true,
 			libp2p: session.peers[1],
 		});
+		await waitForPeersBlock(
+			session.peers[0].directblock,
+			session.peers[1].directblock
+		);
 
 		db1 = await client1.open(
 			new EventStore<string>({
@@ -182,6 +185,11 @@ describe(`browser`, function () {
 			browser: true,
 			libp2p: session.peers[1],
 		});
+
+		await waitForPeersBlock(
+			session.peers[0].directblock,
+			session.peers[1].directblock
+		);
 
 		db1 = await client1.open(
 			new EventStore<string>({
