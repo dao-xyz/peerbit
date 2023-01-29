@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/libp2p-direct-block",
-	"version": "0.1.7",
+	"version": "0.1.8",
 	"description": "Block store for Peerbit",
 	"type": "module",
 	"sideEffects": false,
