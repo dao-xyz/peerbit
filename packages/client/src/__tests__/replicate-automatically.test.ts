@@ -62,10 +62,10 @@ describe(`Automatic Replication`, function () {
 		// Open the second database
 		let done = false;
 		const db2 = await client2.open<EventStore<string>>(
-			await EventStore.load<EventStore<string>>(
+			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			),
+			))!,
 			{
 				onReplicationComplete: (_) => {
 					// Listen for the 'replicated' events and check that all the entries
@@ -85,10 +85,10 @@ describe(`Automatic Replication`, function () {
 		);
 
 		const _db4 = await client2.open<KeyBlocks<string>>(
-			await KeyBlocks.load<KeyBlocks<string>>(
+			(await KeyBlocks.load<KeyBlocks<string>>(
 				client2.libp2p.directblock,
 				db3.address!
-			),
+			))!,
 			{
 				onReplicationComplete: (_) => {
 					fail();
@@ -117,10 +117,10 @@ describe(`Automatic Replication`, function () {
 		// Open the second database
 		let done = false;
 		const db2 = await client2.open<EventStore<string>>(
-			await EventStore.load<EventStore<string>>(
+			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			),
+			))!,
 			{
 				onReplicationComplete: (_) => {
 					// Listen for the 'replicated' events and check that all the entries

@@ -48,10 +48,10 @@ describe(`Replication`, function () {
 		options = Object.assign({}, options);
 		let done = false;
 		db2 = await client2.open<EventStore<string>>(
-			await EventStore.load<EventStore<string>>(
+			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			),
+			))!,
 			{
 				...options,
 				onReplicationComplete: async () => {
@@ -107,10 +107,10 @@ describe(`Replication`, function () {
 
 		let done = false;
 		db2 = await client2.open<EventStore<string>>(
-			await EventStore.load<EventStore<string>>(
+			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			),
+			))!,
 			{
 				...options,
 				onReplicationComplete: () => {
@@ -163,10 +163,10 @@ describe(`Replication`, function () {
 		};
 
 		db2 = await client2.open<EventStore<string>>(
-			await EventStore.load<EventStore<string>>(
+			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			),
+			))!,
 			{
 				...options,
 				onReplicationQueued: (store, entry) => {
@@ -249,10 +249,10 @@ describe(`Replication`, function () {
 		let done = false;
 
 		db2 = await client2.open<EventStore<string>>(
-			await EventStore.load<EventStore<string>>(
+			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			),
+			))!,
 			{
 				...options,
 				onReplicationQueued: (store, entry) => {
@@ -321,10 +321,10 @@ describe(`Replication`, function () {
 		};
 
 		db2 = await client2.open<EventStore<string>>(
-			await EventStore.load<EventStore<string>>(
+			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			),
+			))!,
 			{
 				...options,
 				onReplicationComplete: (store) => {

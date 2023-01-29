@@ -153,7 +153,7 @@ describe("index", () => {
 		);
 
 		const l0b = (await init(
-			await TestStore.load(session.peers[1].directblock, l0a.address!),
+			(await TestStore.load(session.peers[1].directblock, l0a.address!))!,
 			1,
 			options
 		)) as TestStore;
@@ -212,7 +212,7 @@ describe("index", () => {
 			);
 
 			const l0b = (await init(
-				await TestStore.load(session.peers[1].directblock, l0a.address!),
+				(await TestStore.load(session.peers[1].directblock, l0a.address!))!,
 				1,
 				options
 			)) as TestStore;
@@ -266,12 +266,12 @@ describe("index", () => {
 			);
 
 			const l0b = (await init(
-				await TestStore.load(session.peers[1].directblock, l0a.address!),
+				(await TestStore.load(session.peers[1].directblock, l0a.address!))!,
 				1,
 				options
 			)) as TestStore;
 			const l0c = (await init(
-				await TestStore.load(session.peers[2].directblock, l0a.address!),
+				(await TestStore.load(session.peers[2].directblock, l0a.address!))!,
 				2,
 				options
 			)) as TestStore;
@@ -357,7 +357,7 @@ describe("index", () => {
 			);
 
 			const l0b = (await init(
-				await TestStore.load(session.peers[1].directblock, l0a.address!),
+				(await TestStore.load(session.peers[1].directblock, l0a.address!))!,
 				1,
 				options
 			)) as TestStore;

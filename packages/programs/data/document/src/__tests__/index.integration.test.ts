@@ -107,10 +107,10 @@ describe("index", () => {
 				}
 				const store =
 					i > 0
-						? await TestStore.load<TestStore>(
+						? (await TestStore.load<TestStore>(
 								session.peers[i].directblock,
 								stores[0].address!
-						  )
+						  ))!
 						: new TestStore({
 								docs: new Documents<Document>({
 									index: new DocumentIndex({
@@ -275,7 +275,7 @@ describe("index", () => {
 				// delete 1
 				const deleteOperation = (
 					await store.docs.del(doc.id, {
-						permanent: true,
+						permanently: true,
 					})
 				).entry;
 				expect(store.docs._index.size).toEqual(0);
@@ -811,10 +811,10 @@ describe("index", () => {
 				const openEvents: Program[] = [];
 				const store =
 					i > 0
-						? await TestStore.load<TestStore>(
+						? (await TestStore.load<TestStore>(
 								session.peers[i].directblock,
 								stores[0].store.address!
-						  )
+						  ))!
 						: new TestStore({
 								docs: new Documents<SubProgram>({
 									index: new DocumentIndex({

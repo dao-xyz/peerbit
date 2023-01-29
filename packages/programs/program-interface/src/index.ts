@@ -18,7 +18,6 @@ export * from "./protocol-message.js";
 
 const notEmpty = (e: string) => e !== "" && e !== " ";
 
-
 export interface Addressable {
 	address?: Address | undefined;
 }
@@ -180,9 +179,6 @@ export interface Saveable {
 
 	delete(): Promise<void>;
 }
-
-
-
 
 export type OpenProgram = (program: Program) => Promise<Program>;
 export type ProgramInitializationOptions = {
@@ -393,8 +389,10 @@ export interface CanTrust {
 }
 
 @variant(0)
-export abstract class Program extends AbstractProgram implements Addressable, Saveable {
-
+export abstract class Program
+	extends AbstractProgram
+	implements Addressable, Saveable
+{
 	@field({ type: "string" })
 	id: string;
 
@@ -498,10 +496,9 @@ export abstract class Program extends AbstractProgram implements Addressable, Sa
 		return this._address;
 	}
 
-	async delete(
-	): Promise<void> {
+	async delete(): Promise<void> {
 		if (!this.address?.cid) {
-			throw new Error("Can not delete, missing address")
+			throw new Error("Can not delete, missing address");
 		}
 		return this.libp2p.directblock.rm(this.address.cid);
 	}
@@ -513,8 +510,12 @@ export abstract class Program extends AbstractProgram implements Addressable, Sa
 			timeout?: number;
 		}
 	): Promise<S | undefined> {
-		const addressObject = (address instanceof Address ? address : Address.parse(address));
-		const manifestBlock = await store.get<Uint8Array>(addressObject.cid, options);
+		const addressObject =
+			address instanceof Address ? address : Address.parse(address);
+		const manifestBlock = await store.get<Uint8Array>(
+			addressObject.cid,
+			options
+		);
 		if (!manifestBlock) {
 			return undefined;
 		}
@@ -524,8 +525,8 @@ export abstract class Program extends AbstractProgram implements Addressable, Sa
 	}
 
 	async drop(): Promise<void> {
-		await super.drop()
-		return this.delete()
+		await super.drop();
+		return this.delete();
 	}
 
 	get topic(): string {
@@ -540,4 +541,4 @@ export abstract class Program extends AbstractProgram implements Addressable, Sa
  * Building block, but not something you use as a standalone
  */
 @variant(1)
-export abstract class ComposableProgram extends AbstractProgram { }
+export abstract class ComposableProgram extends AbstractProgram {}

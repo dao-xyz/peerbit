@@ -54,10 +54,10 @@ describe(`Multiple Databases`, function () {
 		}
 		for (let i = 0; i < dbCount; i++) {
 			const db = await client2.open<EventStore<string>>(
-				await EventStore.load<EventStore<string>>(
+				(await EventStore.load<EventStore<string>>(
 					client2.libp2p.directblock,
 					localDatabases[i].address!
-				),
+				))!,
 				{ ...options }
 			);
 			remoteDatabasesA.push(db);
@@ -65,10 +65,10 @@ describe(`Multiple Databases`, function () {
 
 		for (let i = 0; i < dbCount; i++) {
 			const db = await client3.open<EventStore<string>>(
-				await EventStore.load<EventStore<string>>(
+				(await EventStore.load<EventStore<string>>(
 					client3.libp2p.directblock,
 					localDatabases[i].address!
-				),
+				))!,
 				{ ...options }
 			);
 			remoteDatabasesB.push(db);

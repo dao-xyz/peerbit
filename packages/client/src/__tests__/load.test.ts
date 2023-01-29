@@ -55,10 +55,10 @@ describe(`load`, () => {
 
 		it("loads database from local cache", async () => {
 			db = await client1.open(
-				await EventStore.load<EventStore<string>>(
+				(await EventStore.load<EventStore<string>>(
 					client1.libp2p.directblock,
 					Address.parse(address)
-				)
+				))!
 			);
 			await db.load();
 			await waitFor(
@@ -75,10 +75,10 @@ describe(`load`, () => {
 		it("loads database partially", async () => {
 			const amount = 3;
 			db = await client1.open(
-				await EventStore.load<EventStore<string>>(
+				(await EventStore.load<EventStore<string>>(
 					client1.libp2p.directblock,
 					Address.parse(address)
-				)
+				))!
 			);
 			await db.store.load(amount);
 			await waitFor(
@@ -101,10 +101,10 @@ describe(`load`, () => {
 			const amount = 8;
 			for (let i = 0; i < amount; i++) {
 				db = await client1.open(
-					await EventStore.load<EventStore<string>>(
+					(await EventStore.load<EventStore<string>>(
 						client1.libp2p.directblock,
 						Address.parse(address)
-					)
+					))!
 				);
 				await db.load();
 				await waitFor(
@@ -143,10 +143,10 @@ describe(`load`, () => {
 			const amount = 8;
 			for (let i = 0; i < amount; i++) {
 				db = await client1.open(
-					await EventStore.load<EventStore<string>>(
+					(await EventStore.load<EventStore<string>>(
 						client1.libp2p.directblock,
 						Address.parse(address)
-					)
+					))!
 				);
 				await db.load();
 				await waitFor(
@@ -169,10 +169,10 @@ describe(`load`, () => {
 		it("loading a database emits 'ready' event", async () => {
 			let done = false;
 			db = await client1.open(
-				await EventStore.load<EventStore<string>>(
+				(await EventStore.load<EventStore<string>>(
 					client1.libp2p.directblock,
 					Address.parse(address)
-				),
+				))!,
 				{
 					onReady: async (store) => {
 						await waitFor(
@@ -196,10 +196,10 @@ describe(`load`, () => {
 			let count = 0;
 			let done = false;
 			db = await client1.open(
-				await EventStore.load<EventStore<string>>(
+				(await EventStore.load<EventStore<string>>(
 					client1.libp2p.directblock,
 					Address.parse(address)
-				),
+				))!,
 				{
 					onLoadProgress: (store, entry) => {
 						count++;
@@ -278,10 +278,10 @@ describe(`load`, () => {
 
 		it("loads database from local cache", async () => {
 			db = await client1.open(
-				await MultipleStores.load<MultipleStores>(
+				(await MultipleStores.load<MultipleStores>(
 					client1.libp2p.directblock,
 					Address.parse(address)
-				)
+				))!
 			);
 			await db.load();
 			await waitFor(
@@ -498,10 +498,10 @@ describe(`load`, () => {
 			await db.close();
 
 			db = await client1.open(
-				await EventStore.load<EventStore<string>>(
+				(await EventStore.load<EventStore<string>>(
 					client1.libp2p.directblock,
 					Address.parse(address)
-				)
+				))!
 			);
 			await db.loadFromSnapshot();
 			const items = db.iterator({ limit: -1 }).collect();
@@ -551,10 +551,10 @@ describe(`load`, () => {
 
 		it("loads database from snapshot", async () => {
 			db = await client1.open(
-				await EventStore.load<EventStore<string>>(
+				(await EventStore.load<EventStore<string>>(
 					client1.libp2p.directblock,
 					Address.parse(address)
-				)
+				))!
 			);
 			await db.loadFromSnapshot();
 			const items = db.iterator({ limit: -1 }).collect();
@@ -569,10 +569,10 @@ describe(`load`, () => {
 			const amount = 4;
 			for (let i = 0; i < amount; i++) {
 				db = await client1.open(
-					await EventStore.load<EventStore<string>>(
+					(await EventStore.load<EventStore<string>>(
 						client1.libp2p.directblock,
 						Address.parse(address)
-					)
+					))!
 				);
 				await db.loadFromSnapshot();
 				const expectedCount = entryCount + i;
@@ -591,38 +591,40 @@ describe(`load`, () => {
 			}
 		});
 
+		/* 	 TODO this test should be on the store
+		
 		it("throws an error when trying to load a missing snapshot", async () => {
-			db = await client1.open(
-				await EventStore.load<EventStore<string>>(
-					client1.libp2p.directblock,
-					Address.parse(address)
-				)
-			);
-			await db.drop();
-			db = null as any;
-			db = await client1.open(
-				await EventStore.load<EventStore<string>>(
-					client1.libp2p.directblock,
-					Address.parse(address)
-				)
-			);
-
-			let err;
-			try {
-				await db.loadFromSnapshot();
-			} catch (e: any) {
-				err = e.toString();
-			}
-			expect(err).toEqual(`Error: Snapshot for ${db.store.id} not found!`);
-		});
-
+				db = await client1.open(
+					await EventStore.load<EventStore<string>>(
+						client1.libp2p.directblock,
+						Address.parse(address)
+					)
+				);
+				await db.drop();
+				db = null as any;
+				db = await client1.open(
+					await EventStore.load<EventStore<string>>(
+						client1.libp2p.directblock,
+						Address.parse(address)
+					)
+				);
+	
+				let err;
+				try {
+					await db.loadFromSnapshot();
+				} catch (e: any) {
+					err = e.toString();
+				}
+				expect(err).toEqual(`Error: Snapshot for ${db.store.id} not found!`);
+			});
+	 */
 		it("loading a database emits 'ready' event", async () => {
 			let done = false;
 			db = await client1.open(
-				await EventStore.load<EventStore<string>>(
+				(await EventStore.load<EventStore<string>>(
 					client1.libp2p.directblock,
 					Address.parse(address)
-				),
+				))!,
 				{
 					onReady: (store) => {
 						const items = db.iterator({ limit: -1 }).collect();
@@ -643,10 +645,10 @@ describe(`load`, () => {
 			let done = false;
 			let count = 0;
 			db = await client1.open(
-				await EventStore.load<EventStore<string>>(
+				(await EventStore.load<EventStore<string>>(
 					client1.libp2p.directblock,
 					Address.parse(address)
-				),
+				))!,
 				{
 					onLoadProgress: (store, entry) => {
 						count++;

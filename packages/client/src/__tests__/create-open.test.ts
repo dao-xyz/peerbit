@@ -15,7 +15,7 @@ import { jest } from "@jest/globals";
 // Include test utilities
 import { LSession } from "@dao-xyz/libp2p-test-utils";
 import { Program } from "@dao-xyz/peerbit-program";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { LevelBlockStore } from "@dao-xyz/libp2p-direct-block";
 
 const dbPath = path.join("./peerbit", "tests", "create-open");
@@ -112,7 +112,7 @@ describe(`Create & Open`, function () {
 
 	describe("Open", function () {
 		let client: Peerbit;
-		jest.retryTimes(1); // TODO Side effects may cause failures
+		//jest.retryTimes(1); // TODO Side effects may cause failures
 
 		beforeAll(async () => {
 			client = await Peerbit.create({
@@ -130,7 +130,7 @@ describe(`Create & Open`, function () {
 			const topic = uuid();
 			const db = await client.open(new EventStore({}));
 			assert.equal(db.address!.toString().indexOf("/peerbit"), 0);
-			assert.equal(db.address!.toString().indexOf("zd"), 9);
+			assert.equal(db.address!.toString().indexOf("zb"), 9);
 			await db.drop();
 		});
 
@@ -144,7 +144,7 @@ describe(`Create & Open`, function () {
 				},
 			});
 			assert.equal(db.address!.toString().indexOf("/peerbit"), 0);
-			assert.equal(db.address!.toString().indexOf("zd"), 9);
+			assert.equal(db.address!.toString().indexOf("zb"), 9);
 			expect(db.store.identity.publicKey.equals(signKey.keypair.publicKey));
 			await db.drop();
 		});
@@ -159,22 +159,26 @@ describe(`Create & Open`, function () {
 				},
 			});
 			const db2 = await client.open(
-				await Program.load(client.libp2p.directblock, db.address!)
+				(await Program.load(client.libp2p.directblock, db.address!))!
 			);
 			assert.equal(db2.address!.toString().indexOf("/peerbit"), 0);
-			assert.equal(db2.address!.toString().indexOf("zd"), 9);
+			assert.equal(db2.address!.toString().indexOf("zb"), 9);
 			await db.drop();
 			await db2.drop();
 		});
 
+		/* 	const address = new Address({
+				cid: "zdpuAnmza2vimH3drqNJji1rckA7x8jUfvi7miWzpePDtvHKJ" // a random cid
+			}); */
 		it("doesn't open a database if we don't have it locally", async () => {
-			const topic = uuid();
 			const db = await client.open(new EventStore({}));
-			const address = new Address({
-				cid: db.address!.cid.slice(0, -1) + "A",
-			});
 			await db.drop();
-			const dbToLoad = await Program.load(client.libp2p.directblock, address);
+			await (client.libp2p.directblock._localStore as LevelBlockStore).idle();
+			const dbToLoad = await Program.load(
+				client.libp2p.directblock,
+				db.address,
+				{ timeout: 3000 }
+			);
 			expect(dbToLoad).toBeUndefined();
 		});
 

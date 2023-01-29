@@ -49,10 +49,10 @@ describe(`browser`, function () {
 		);
 
 		db2 = await client2.open<EventStore<string>>(
-			await EventStore.load<EventStore<string>>(
+			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			),
+			))!,
 			{ replicate: true }
 		);
 
@@ -106,10 +106,10 @@ describe(`browser`, function () {
 		);
 
 		db2 = await client2.open<EventStore<string>>(
-			await EventStore.load<EventStore<string>>(
+			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			),
+			))!,
 			{ replicate: true }
 		);
 
@@ -152,10 +152,10 @@ describe(`browser`, function () {
 		await db1.add("world");
 
 		db2 = await client2.open<EventStore<string>>(
-			await EventStore.load<EventStore<string>>(
+			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			),
+			))!,
 			{ replicate: true }
 		);
 
@@ -194,10 +194,10 @@ describe(`browser`, function () {
 		await db1.add("world");
 
 		db2 = await client2.open<EventStore<string>>(
-			await EventStore.load<EventStore<string>>(
+			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			),
+			))!,
 			{ replicate: true }
 		);
 

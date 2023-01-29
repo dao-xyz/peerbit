@@ -39,10 +39,10 @@ describe(`Write-only`, () => {
 	it("write 1 entry replicate false", async () => {
 		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
 		db2 = await client2.open<EventStore<string>>(
-			await EventStore.load<EventStore<string>>(
+			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			),
+			))!,
 			{ replicate: false }
 		);
 
