@@ -13,7 +13,6 @@ import {
 import path from "path";
 import { CID } from "multiformats/cid";
 import { BlockStore } from "@dao-xyz/libp2p-direct-block";
-import { Libp2p } from "libp2p";
 import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
 export * from "./protocol-message.js";
@@ -158,9 +157,19 @@ export class Address {
 	}
 
 	static join(cid: string, addressPath?: ProgramPath) {
-		const p = path.posix || path;
-		if (!addressPath) return p.join("/peerbit", cid);
-		else return p.join("/peerbit", cid, addressPath.index.toString());
+		if (
+			cid.startsWith("/") ||
+			cid.startsWith(" ") ||
+			cid.endsWith("/") ||
+			cid.endsWith(" ")
+		) {
+			throw new Error("Malformed CID");
+		}
+		if (!addressPath) {
+			return "/peerbit/" + cid;
+		}
+
+		return "/peerbit/" + cid + "/" + addressPath.index.toString();
 	}
 }
 
