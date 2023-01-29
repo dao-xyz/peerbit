@@ -229,7 +229,6 @@ describe(`Create & Open`, function () {
 
 		it("closes a custom store", async () => {
 			const directory = path.join(dbPath, "custom-store");
-			const replicationTopic = uuid();
 			const db = await client.open(new EventStore({}), {
 				directory,
 			});
@@ -258,7 +257,6 @@ describe(`Create & Open`, function () {
 			const directory = path.join(dbPath, "custom-store");
 			const directory2 = path.join(dbPath, "custom-store2");
 
-			const topic = uuid();
 			const db1 = await client.open(new EventStore({ id: "xyz1" }));
 			const db2 = await client.open(new EventStore({ id: "xyz2" }), {
 				directory,
