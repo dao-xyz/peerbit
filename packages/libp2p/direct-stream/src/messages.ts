@@ -13,8 +13,10 @@ import {
 	PublicSignKey,
 	SignatureWithKey,
 	verify,
+	randomBytes,
+	sha256Base64,
+	sha256,
 } from "@dao-xyz/peerbit-crypto";
-import crypto from "crypto";
 
 let concatBytes: (arr: Uint8Array[], totalLength: number) => Uint8Array;
 if ((globalThis as any).Buffer) {
@@ -53,7 +55,7 @@ export class MessageHeader {
 	private _expires: bigint;
 
 	constructor(properties?: { expires?: bigint; id?: Uint8Array }) {
-		this._id = properties?.id || crypto.randomBytes(ID_LENGTH);
+		this._id = properties?.id || randomBytes(ID_LENGTH);
 		this._expires = properties?.expires || BigInt(+new Date() + WEEK_MS);
 		this._timestamp = BigInt(+new Date());
 	}
@@ -106,11 +108,8 @@ export class Signatures {
 		return this.signatures.map((x) => x.publicKey);
 	}
 
-	hashPublicKeys(): string {
-		return crypto
-			.createHash("sha256")
-			.update(serialize(new PublicKeys(this.publicKeys)))
-			.digest("base64");
+	hashPublicKeys(): Promise<string> {
+		return sha256Base64(serialize(new PublicKeys(this.publicKeys)));
 	}
 }
 
@@ -119,7 +118,7 @@ interface Signed {
 	get signatures(): Signatures;
 }
 
-const verifyMultiSig = (
+const verifyMultiSig = async (
 	message: Signed & Prefixed,
 	expectSignatures: boolean
 ) => {
@@ -129,6 +128,7 @@ const verifyMultiSig = (
 		return !expectSignatures;
 	}
 
+	await message.createPrefix();
 	const dataGenerator = getMultiSigDataToSignHistory(message, 0);
 	let done: boolean | undefined = false;
 	for (const signature of signatures) {
@@ -139,7 +139,9 @@ const verifyMultiSig = (
 		}
 		const data = dataGenerator.next();
 		done = data.done;
-		if (!verify(signature.signature, signature.publicKey, data.value!)) {
+		if (
+			!(await verify(signature.signature, signature.publicKey, data.value!))
+		) {
 			return false;
 		}
 	}
@@ -147,6 +149,7 @@ const verifyMultiSig = (
 };
 interface Prefixed {
 	prefix: Uint8Array;
+	createPrefix: () => Promise<Uint8Array>;
 }
 
 const emptySignatures = serialize(new Signatures());
@@ -193,7 +196,7 @@ export abstract class Message {
 
 	abstract serialize(): Uint8ArrayList | Uint8Array;
 	abstract equals(other: Message): boolean;
-	abstract verify(expectSignatures: boolean): boolean;
+	abstract verify(expectSignatures: boolean): Promise<boolean>;
 	abstract get header(): MessageHeader;
 	abstract get signatures(): Signatures;
 }
@@ -258,11 +261,17 @@ export class DataMessage extends Message {
 
 	_prefix: Uint8Array | undefined;
 	get prefix(): Uint8Array {
+		if (!this._prefix) {
+			throw new Error("Prefix not created");
+		}
+		return this._prefix;
+	}
+	async createPrefix(): Promise<Uint8Array> {
 		if (this._prefix) {
 			return this._prefix;
 		}
 		const headerSer = serialize(this._header);
-		const hashBytes = crypto.createHash("sha256").update(this.data).digest();
+		const hashBytes = await sha256(this.data);
 		this._prefix = concatBytes(
 			[new Uint8Array([DATA_VARIANT]), headerSer, hashBytes],
 			1 + headerSer.length + hashBytes.length
@@ -270,10 +279,11 @@ export class DataMessage extends Message {
 		return this._prefix;
 	}
 
-	sign(sign: (bytes: Uint8Array) => SignatureWithKey) {
+	async sign(sign: (bytes: Uint8Array) => Promise<SignatureWithKey>) {
 		this._serialized = undefined; // because we will change this object, so the serialized version will not be applicable anymore
+		await this.createPrefix();
 		this.signatures.signatures.push(
-			sign(
+			await sign(
 				getMultiSigDataToSignHistory(
 					this,
 					this.signatures.signatures.length
@@ -283,7 +293,7 @@ export class DataMessage extends Message {
 		return this;
 	}
 
-	verify(expectSignatures: boolean): boolean {
+	async verify(expectSignatures: boolean): Promise<boolean> {
 		return this._header.verify() && verifyMultiSig(this, expectSignatures);
 	}
 
@@ -362,11 +372,17 @@ export class Hello extends Message {
 
 	_prefix: Uint8Array | undefined;
 	get prefix(): Uint8Array {
-		if (this._prefix) return this._prefix;
+		if (!this._prefix) {
+			throw new Error("Prefix not created");
+		}
+		return this._prefix;
+	}
+	async createPrefix(): Promise<Uint8Array> {
+		if (this._prefix) {
+			return this._prefix;
+		}
 		const headerSer = serialize(this.header);
-		const hashBytes = this.data
-			? crypto.createHash("sha256").update(this.data).digest()
-			: new Uint8Array();
+		const hashBytes = this.data ? await sha256(this.data) : new Uint8Array();
 		this._prefix = concatBytes(
 			[new Uint8Array([HELLO_VARIANT]), headerSer, hashBytes],
 			1 + headerSer.length + hashBytes.length
@@ -374,16 +390,17 @@ export class Hello extends Message {
 		return this._prefix;
 	}
 
-	sign(sign: (bytes: Uint8Array) => SignatureWithKey) {
+	async sign(sign: (bytes: Uint8Array) => Promise<SignatureWithKey>) {
+		await this.createPrefix();
 		const toSign = getMultiSigDataToSignHistory(
 			this,
 			this.signatures.signatures.length
 		).next().value!;
-		this.signatures.signatures.push(sign(toSign));
+		this.signatures.signatures.push(await sign(toSign));
 		return this;
 	}
 
-	verify(expectSignatures: boolean): boolean {
+	async verify(expectSignatures: boolean): Promise<boolean> {
 		return this.header.verify() && verifyMultiSig(this, expectSignatures);
 	}
 
@@ -451,11 +468,18 @@ export class Goodbye extends Message {
 
 	_prefix: Uint8Array | undefined;
 	get prefix(): Uint8Array {
-		if (this._prefix) return this._prefix;
+		if (!this._prefix) {
+			throw new Error("Prefix not created");
+		}
+		return this._prefix;
+	}
+
+	async createPrefix(): Promise<Uint8Array> {
+		if (this._prefix) {
+			return this._prefix;
+		}
 		const headerSer = serialize(this.header);
-		const hashBytes = this.data
-			? crypto.createHash("sha256").update(this.data).digest()
-			: new Uint8Array();
+		const hashBytes = this.data ? await sha256(this.data) : new Uint8Array();
 		this._prefix = concatBytes(
 			[new Uint8Array([GOODBYE_VARIANT]), headerSer, hashBytes],
 			1 + headerSer.length + 1 + hashBytes.length
@@ -463,9 +487,10 @@ export class Goodbye extends Message {
 		return this._prefix;
 	}
 
-	sign(sign: (bytes: Uint8Array) => SignatureWithKey) {
+	async sign(sign: (bytes: Uint8Array) => Promise<SignatureWithKey>) {
+		await this.createPrefix();
 		this.signatures.signatures.push(
-			sign(
+			await sign(
 				getMultiSigDataToSignHistory(
 					this,
 					this.signatures.signatures.length
@@ -475,7 +500,7 @@ export class Goodbye extends Message {
 		return this;
 	}
 
-	verify(expectSignatures: boolean): boolean {
+	async verify(expectSignatures: boolean): Promise<boolean> {
 		return this.header.verify() && verifyMultiSig(this, expectSignatures);
 	}
 
@@ -509,7 +534,7 @@ export class NetworkInfoHeader {
 	timestamp: bigint;
 
 	constructor() {
-		this.id = crypto.randomBytes(ID_LENGTH);
+		this.id = randomBytes(ID_LENGTH);
 		this.timestamp = BigInt(+new Date());
 	}
 }

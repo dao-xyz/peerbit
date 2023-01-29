@@ -91,12 +91,12 @@ describe("Log - CRDT", function () {
 		it("join is associative", async () => {
 			const expectedElementsCount = 6;
 
-			await log1.append("helloA1", { gidSeed: "a" });
-			await log1.append("helloA2", { gidSeed: "a" });
-			await log2.append("helloB1", { gidSeed: "a" });
-			await log2.append("helloB2", { gidSeed: "a" });
-			await log3.append("helloC1", { gidSeed: "a" });
-			await log3.append("helloC2", { gidSeed: "a" });
+			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
+			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB2", { gidSeed: Buffer.from("a") });
+			await log3.append("helloC1", { gidSeed: Buffer.from("a") });
+			await log3.append("helloC2", { gidSeed: Buffer.from("a") });
 
 			// a + (b + c)
 			await log2.join(log3);
@@ -128,12 +128,12 @@ describe("Log - CRDT", function () {
 				},
 				{ logId: "X" }
 			);
-			await log1.append("helloA1", { gidSeed: "a" });
-			await log1.append("helloA2", { gidSeed: "a" });
-			await log2.append("helloB1", { gidSeed: "a" });
-			await log2.append("helloB2", { gidSeed: "a" });
-			await log3.append("helloC1", { gidSeed: "a" });
-			await log3.append("helloC2", { gidSeed: "a" });
+			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
+			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB2", { gidSeed: Buffer.from("a") });
+			await log3.append("helloC1", { gidSeed: Buffer.from("a") });
+			await log3.append("helloC2", { gidSeed: Buffer.from("a") });
 
 			// (a + b) + c
 			await log1.join(log2);
@@ -152,10 +152,10 @@ describe("Log - CRDT", function () {
 		it("join is commutative", async () => {
 			const expectedElementsCount = 4;
 
-			await log1.append("helloA1", { gidSeed: "a" });
-			await log1.append("helloA2", { gidSeed: "a" });
-			await log2.append("helloB1", { gidSeed: "a" });
-			await log2.append("helloB2", { gidSeed: "a" });
+			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
+			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB2", { gidSeed: Buffer.from("a") });
 
 			// b + a
 			await log2.join(log1);
@@ -177,10 +177,10 @@ describe("Log - CRDT", function () {
 				},
 				{ logId: "X" }
 			);
-			await log1.append("helloA1", { gidSeed: "a" });
-			await log1.append("helloA2", { gidSeed: "a" });
-			await log2.append("helloB1", { gidSeed: "a" });
-			await log2.append("helloB2", { gidSeed: "a" });
+			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
+			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB2", { gidSeed: Buffer.from("a") });
 
 			// a + b
 			await log1.join(log2);
@@ -212,10 +212,10 @@ describe("Log - CRDT", function () {
 				},
 				{ logId: "X" }
 			);
-			await log1.append("helloA1", { gidSeed: "a" });
-			await log1.append("helloA2", { gidSeed: "a" });
-			await log2.append("helloB1", { gidSeed: "a" });
-			await log2.append("helloB2", { gidSeed: "a" });
+			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
+			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB2", { gidSeed: Buffer.from("a") });
 			await log2.join(log1);
 			const resA1 = log2.toString();
 
@@ -235,10 +235,10 @@ describe("Log - CRDT", function () {
 				},
 				{ logId: "X" }
 			);
-			await log1.append("helloA1", { gidSeed: "a" });
-			await log1.append("helloA2", { gidSeed: "a" });
-			await log2.append("helloB1", { gidSeed: "a" });
-			await log2.append("helloB2", { gidSeed: "a" });
+			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
+			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB2", { gidSeed: Buffer.from("a") });
 			await log1.join(log2);
 			const resA2 = log1.toString();
 
@@ -261,10 +261,10 @@ describe("Log - CRDT", function () {
 				},
 				{ logId: "X" }
 			);
-			await log1.append("helloA1", { gidSeed: "a" });
-			await log1.append("helloA2", { gidSeed: "a" });
-			await log2.append("helloB1", { gidSeed: "a" });
-			await log2.append("helloB2", { gidSeed: "a" });
+			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
+			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB2", { gidSeed: Buffer.from("a") });
 			await log1.join(log2);
 			const resB1 = log1.toString();
 
@@ -284,10 +284,10 @@ describe("Log - CRDT", function () {
 				},
 				{ logId: "X" }
 			);
-			await log1.append("helloA1", { gidSeed: "a" });
-			await log1.append("helloA2", { gidSeed: "a" });
-			await log2.append("helloB1", { gidSeed: "a" });
-			await log2.append("helloB2", { gidSeed: "a" });
+			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
+			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB2", { gidSeed: Buffer.from("a") });
 			await log2.join(log1);
 			const resB2 = log2.toString();
 
@@ -310,10 +310,10 @@ describe("Log - CRDT", function () {
 				},
 				{ logId: "A" }
 			);
-			await log1.append("helloA1", { gidSeed: "a" });
-			await log1.append("helloA2", { gidSeed: "a" });
-			await log3.append("helloC1", { gidSeed: "a" });
-			await log3.append("helloC2", { gidSeed: "a" });
+			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
+			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
+			await log3.append("helloC1", { gidSeed: Buffer.from("a") });
+			await log3.append("helloC2", { gidSeed: Buffer.from("a") });
 			await log3.join(log1);
 			const resC1 = log3.toString();
 
@@ -333,10 +333,10 @@ describe("Log - CRDT", function () {
 				},
 				{ logId: "X" }
 			);
-			await log1.append("helloA1", { gidSeed: "a" });
-			await log1.append("helloA2", { gidSeed: "a" });
-			await log3.append("helloC1", { gidSeed: "a" });
-			await log3.append("helloC2", { gidSeed: "a" });
+			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
+			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
+			await log3.append("helloC1", { gidSeed: Buffer.from("a") });
+			await log3.append("helloC2", { gidSeed: Buffer.from("a") });
 			await log1.join(log3);
 			const resC2 = log1.toString();
 
@@ -360,10 +360,10 @@ describe("Log - CRDT", function () {
 				{ logId: "X" }
 			);
 
-			await log2.append("helloB1", { gidSeed: "a" });
-			await log2.append("helloB2", { gidSeed: "a" });
-			await log3.append("helloC1", { gidSeed: "a" });
-			await log3.append("helloC2", { gidSeed: "a" });
+			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB2", { gidSeed: Buffer.from("a") });
+			await log3.append("helloC1", { gidSeed: Buffer.from("a") });
+			await log3.append("helloC2", { gidSeed: Buffer.from("a") });
 			await log3.join(log2);
 			const resD1 = log3.toString();
 
@@ -383,10 +383,10 @@ describe("Log - CRDT", function () {
 				},
 				{ logId: "X" }
 			);
-			await log2.append("helloB1", { gidSeed: "a" });
-			await log2.append("helloB2", { gidSeed: "a" });
-			await log3.append("helloC1", { gidSeed: "a" });
-			await log3.append("helloC2", { gidSeed: "a" });
+			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB2", { gidSeed: Buffer.from("a") });
+			await log3.append("helloC1", { gidSeed: Buffer.from("a") });
+			await log3.append("helloC2", { gidSeed: Buffer.from("a") });
 			await log2.join(log3);
 			const resD2 = log2.toString();
 
@@ -417,12 +417,12 @@ describe("Log - CRDT", function () {
 				},
 				{ logId: "X" }
 			);
-			await log1.append("helloA1", { gidSeed: "a" });
-			await log1.append("helloA2", { gidSeed: "a" });
-			await log2.append("helloB1", { gidSeed: "a" });
-			await log2.append("helloB2", { gidSeed: "a" });
-			await log3.append("helloC1", { gidSeed: "a" });
-			await log3.append("helloC2", { gidSeed: "a" });
+			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
+			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB2", { gidSeed: Buffer.from("a") });
+			await log3.append("helloC1", { gidSeed: Buffer.from("a") });
+			await log3.append("helloC2", { gidSeed: Buffer.from("a") });
 			await log1.join(log2);
 			await log1.join(log3);
 			const logLeft = log1.toString();
@@ -451,12 +451,12 @@ describe("Log - CRDT", function () {
 				},
 				{ logId: "X" }
 			);
-			await log1.append("helloA1", { gidSeed: "a" });
-			await log1.append("helloA2", { gidSeed: "a" });
-			await log2.append("helloB1", { gidSeed: "a" });
-			await log2.append("helloB2", { gidSeed: "a" });
-			await log3.append("helloC1", { gidSeed: "a" });
-			await log3.append("helloC2", { gidSeed: "a" });
+			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
+			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
+			await log2.append("helloB2", { gidSeed: Buffer.from("a") });
+			await log3.append("helloC1", { gidSeed: Buffer.from("a") });
+			await log3.append("helloC2", { gidSeed: Buffer.from("a") });
 			await log3.join(log2);
 			await log3.join(log1);
 			const logRight = log3.toString();

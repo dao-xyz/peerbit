@@ -1,5 +1,5 @@
 import { serialize } from "@dao-xyz/borsh";
-import crypto from "crypto";
+import { sha256Base64Sync } from "./hash.js";
 
 interface Key {
 	equals(other: Key): boolean;
@@ -25,13 +25,7 @@ export abstract class PublicSignKey implements Key {
 	}
 
 	hashcode(): string {
-		return (
-			this._hashcode ||
-			(this._hashcode = crypto
-				.createHash("sha256")
-				.update(this.bytes)
-				.digest("base64"))
-		);
+		return this._hashcode || (this._hashcode = sha256Base64Sync(this.bytes));
 	}
 }
 
@@ -42,13 +36,7 @@ export abstract class PrivateSignKey implements Key {
 	}
 
 	hashcode(): string {
-		return (
-			this._hashcode ||
-			(this._hashcode = crypto
-				.createHash("sha256")
-				.update(this.bytes)
-				.digest("base64"))
-		);
+		return this._hashcode || (this._hashcode = sha256Base64Sync(this.bytes));
 	}
 }
 
@@ -60,13 +48,7 @@ export abstract class PublicKeyEncryptionKey implements Key {
 	}
 
 	hashcode(): string {
-		return (
-			this._hashcode ||
-			(this._hashcode = crypto
-				.createHash("sha256")
-				.update(this.bytes)
-				.digest("base64"))
-		);
+		return this._hashcode || (this._hashcode = sha256Base64Sync(this.bytes));
 	}
 }
 export interface PrivateEncryptionKey extends Key {}
@@ -76,13 +58,7 @@ export abstract class PrivateEncryptionKey implements Key {
 	}
 
 	hashcode(): string {
-		return (
-			this._hashcode ||
-			(this._hashcode = crypto
-				.createHash("sha256")
-				.update(this.bytes)
-				.digest("base64"))
-		);
+		return this._hashcode || (this._hashcode = sha256Base64Sync(this.bytes));
 	}
 }
 
@@ -94,12 +70,6 @@ export abstract class PlainKey implements Key {
 	}
 
 	hashcode(): string {
-		return (
-			this._hashcode ||
-			(this._hashcode = crypto
-				.createHash("sha256")
-				.update(this.bytes)
-				.digest("base64"))
-		);
+		return this._hashcode || (this._hashcode = sha256Base64Sync(this.bytes));
 	}
 }

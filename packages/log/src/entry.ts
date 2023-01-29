@@ -19,17 +19,17 @@ import {
 	SignatureWithKey,
 	AccessError,
 	Ed25519PublicKey,
+	sha256Base64,
+	randomBytes,
 } from "@dao-xyz/peerbit-crypto";
 import { verify, toBase64 } from "@dao-xyz/peerbit-crypto";
 import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { arraysCompare, arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
-import sodium from "libsodium-wrappers";
 import { Encoding, JSON_ENCODING } from "./encoding.js";
 import { Identity } from "./identity.js";
 import { StringArray } from "./types.js";
 import { logger } from "./logger.js";
 import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
-await sodium.ready;
 
 export type MaybeEncryptionPublicKey =
 	| X25519PublicKey
@@ -428,16 +428,14 @@ export class Entry<T>
 		await store.rm(this.hash);
 	}
 
-	static createGid(seed?: string): string {
-		return toBase64(
-			sodium.crypto_generichash(32, seed || sodium.randombytes_buf(32))
-		);
+	static createGid(seed?: Uint8Array): Promise<string> {
+		return sha256Base64(seed || randomBytes(32));
 	}
 
 	static async create<T>(properties: {
 		store: BlockStore;
 		gid?: string;
-		gidSeed?: string;
+		gidSeed?: Uint8Array;
 		data: T;
 		encoding?: Encoding<T>;
 		canAppend?: CanAppend<T>;
@@ -574,7 +572,7 @@ export class Entry<T>
 				throw new Error("Unexpected behaviour, could not find gid");
 			}
 		} else {
-			gid = properties.gid || Entry.createGid(properties.gidSeed);
+			gid = properties.gid || (await Entry.createGid(properties.gidSeed));
 		}
 
 		maxChainLength += 1n; // include this

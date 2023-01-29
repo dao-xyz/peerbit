@@ -16,7 +16,6 @@ const jestConfig: JestConfigWithTsJest = {
 	extensionsToTreatAsEsm: [".ts"],
 	moduleNameMapper: {
 		uuid: require.resolve("uuid"),
-		"#noise-crypto": "./crypto/crypto-node.js",
 		"^(\\.{1,2}/.*)\\.js$": "$1",
 	},
 	transformIgnorePatterns: ["dns"],

@@ -437,7 +437,7 @@ describe("Log - Load", function () {
 						...signKey.keypair,
 						sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 					},
-					gidSeed: "A",
+					gidSeed: Buffer.from("a"),
 					data: "entryA" + i,
 					next: prev1 ? [prev1] : undefined,
 				});
@@ -501,21 +501,21 @@ describe("Log - Load", function () {
 				const n1 = await Entry.create({
 					store,
 					identity: log1._identity,
-					gidSeed: "X",
+					gidSeed: Buffer.from("X"),
 					data: "entryA" + i,
 					next: prev1 ? [prev1] : undefined,
 				});
 				const n2 = await Entry.create({
 					store,
 					identity: log2._identity,
-					gidSeed: "X",
+					gidSeed: Buffer.from("X"),
 					data: "entryB" + i,
 					next: prev2 ? [prev2, n1] : [n1],
 				});
 				const n3 = await Entry.create({
 					store,
 					identity: log3._identity,
-					gidSeed: "X",
+					gidSeed: Buffer.from("X"),
 					data: "entryC" + i,
 					next: prev3 ? [prev3, n1, n2] : [n1, n2],
 				});
@@ -585,21 +585,21 @@ describe("Log - Load", function () {
 				const n1 = await Entry.create({
 					store,
 					identity: log1._identity,
-					gidSeed: "X",
+					gidSeed: Buffer.from("X"),
 					data: "entryA" + i,
 					next: prev1 ? [prev1] : undefined,
 				});
 				const n2 = await Entry.create({
 					store,
 					identity: log2._identity,
-					gidSeed: "X",
+					gidSeed: Buffer.from("X"),
 					data: "entryB" + i,
 					next: prev2 ? [prev2, n1] : [n1],
 				});
 				const n3 = await Entry.create({
 					store,
 					identity: log3._identity,
-					gidSeed: "X",
+					gidSeed: Buffer.from("X"),
 					data: "entryC" + i,
 					next: prev3 ? [prev3, n1, n2] : [n1, n2],
 				});
@@ -678,21 +678,21 @@ describe("Log - Load", function () {
 				const n1 = await Entry.create({
 					store,
 					identity: log1._identity,
-					gidSeed: "X",
+					gidSeed: Buffer.from("X"),
 					data: "entryA" + i,
 					next: prev1 ? [prev1] : undefined,
 				});
 				const n2 = await Entry.create({
 					store,
 					identity: log2._identity,
-					gidSeed: "X",
+					gidSeed: Buffer.from("X"),
 					data: "entryB" + i,
 					next: prev2 ? [prev2, n1] : [n1],
 				});
 				const n3 = await Entry.create({
 					store,
 					identity: log3._identity,
-					gidSeed: "X",
+					gidSeed: Buffer.from("X"),
 					data: "entryC" + i,
 					next: prev3 ? [prev3, n1, n2] : [n1, n2],
 				});
@@ -774,7 +774,7 @@ describe("Log - Load", function () {
 				const n1 = await Entry.create({
 					store,
 					identity: log1._identity,
-					gidSeed: "X",
+					gidSeed: Buffer.from("X"),
 					data: "entryA" + i,
 					next: prev1 ? [prev1] : undefined,
 					clock:
@@ -785,7 +785,7 @@ describe("Log - Load", function () {
 				const n2 = await Entry.create({
 					store,
 					identity: log2._identity,
-					gidSeed: "X",
+					gidSeed: Buffer.from("X"),
 					data: "entryB" + i,
 					next: prev2 ? [prev2, n1] : [n1],
 					clock:
@@ -796,7 +796,7 @@ describe("Log - Load", function () {
 				const n3 = await Entry.create({
 					store,
 					identity: log3._identity,
-					gidSeed: "X",
+					gidSeed: Buffer.from("X"),
 					data: "entryC" + i,
 					next: prev3 ? [prev3, n1, n2] : [n1, n2],
 					clock:
@@ -1650,7 +1650,7 @@ describe("Log - Load", function () {
 					const n1 = await Entry.create({
 						store,
 						identity: log1._identity,
-						gidSeed: "X",
+						gidSeed: Buffer.from("X"),
 						data: "entryA" + i,
 						next: prev1 ? [prev1] : undefined,
 						clock:
@@ -1661,7 +1661,7 @@ describe("Log - Load", function () {
 					const n2 = await Entry.create({
 						store,
 						identity: log2._identity,
-						gidSeed: "X",
+						gidSeed: Buffer.from("X"),
 						data: "entryB" + i,
 						next: prev2 ? [prev2, n1] : [n1],
 						clock:
@@ -1672,7 +1672,7 @@ describe("Log - Load", function () {
 					const n3 = await Entry.create({
 						store,
 						identity: log3._identity,
-						gidSeed: "X",
+						gidSeed: Buffer.from("X"),
 						data: "entryC" + i,
 						next: prev3 ? [prev3, n1, n2] : [n1, n2],
 						clock:

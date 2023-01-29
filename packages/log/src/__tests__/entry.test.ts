@@ -26,6 +26,7 @@ import {
 	testKeyStorePath,
 } from "./utils.js";
 import { createStore } from "./utils.js";
+import { sha256Base64Sync } from "@dao-xyz/peerbit-crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -75,7 +76,7 @@ describe("Entry", function () {
 			const entry = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "hello",
 			});
 			deserialize(serialize(entry), Entry);
@@ -92,14 +93,12 @@ describe("Entry", function () {
 			const entry = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "hello",
 				clock,
 			});
 			expect(entry.hash).toMatchSnapshot();
-			expect(entry.gid).toEqual(
-				await toBase64(await sodium.crypto_generichash(32, "A"))
-			);
+			expect(entry.gid).toEqual(sha256Base64Sync(Buffer.from("a")));
 			expect(entry.metadata.clock.equals(clock)).toBeTrue();
 
 			expect(entry.payload.getValue()).toEqual("hello");
@@ -115,16 +114,14 @@ describe("Entry", function () {
 			const entry = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: payload,
 				next: [],
 				clock,
 			});
 			expect(entry.hash).toMatchSnapshot();
 			expect(entry.payload.getValue()).toEqual(payload);
-			expect(entry.gid).toEqual(
-				await toBase64(await sodium.crypto_generichash(32, "A"))
-			);
+			expect(entry.gid).toEqual(sha256Base64Sync(Buffer.from("a")));
 			expect(entry.metadata.clock.equals(clock)).toBeTrue();
 			expect(entry.next.length).toEqual(0);
 		});
@@ -142,7 +139,7 @@ describe("Entry", function () {
 			const entry = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: payload,
 				next: [],
 				encryption: {
@@ -189,9 +186,7 @@ describe("Entry", function () {
 			expect(entry.payload.getValue()).toEqual(payload);
 
 			// We can not have a hash check because nonce of encryption will always change
-			expect(entry.gid).toEqual(
-				await toBase64(await sodium.crypto_generichash(32, "A"))
-			);
+			expect(entry.gid).toEqual(sha256Base64Sync(Buffer.from("a")));
 			assert.deepStrictEqual(
 				entry.metadata.clock.id,
 				new Uint8Array(
@@ -210,7 +205,7 @@ describe("Entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: payload1,
 				next: [],
 				clock: new LamportClock({
@@ -221,7 +216,7 @@ describe("Entry", function () {
 			const entry2 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: payload2,
 				next: [entry1],
 				clock: new LamportClock({
@@ -239,14 +234,14 @@ describe("Entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "hello1",
 				next: [],
 			});
 			const entry2 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "hello2",
 				next: [entry1],
 			});
@@ -257,14 +252,14 @@ describe("Entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "hello1",
 				next: [],
 			});
 			const entry2 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "hello2",
 				next: [entry1],
 			});
@@ -275,7 +270,7 @@ describe("Entry", function () {
 			const entry0A = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "hello1",
 				next: [],
 			});
@@ -283,7 +278,7 @@ describe("Entry", function () {
 			const entry1A = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "hello1",
 				next: [entry0A],
 			});
@@ -291,7 +286,7 @@ describe("Entry", function () {
 			const entry1B = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "B",
+				gidSeed: Buffer.from("b"),
 				clock: entry1A.metadata.clock,
 				data: "hello1",
 				next: [],
@@ -305,7 +300,7 @@ describe("Entry", function () {
 			const entry2 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "Should not be used",
+				gidSeed: Buffer.from("Should not be used"),
 				data: "hello2",
 				next: [entry1A, entry1B],
 			});
@@ -316,7 +311,7 @@ describe("Entry", function () {
 			const entry1A = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "B",
+				gidSeed: Buffer.from("b"),
 				data: "hello1",
 				next: [],
 			});
@@ -324,7 +319,7 @@ describe("Entry", function () {
 			const entry1B = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				clock: entry1A.metadata.clock.advance(),
 				data: "hello1",
 				next: [],
@@ -341,7 +336,7 @@ describe("Entry", function () {
 			const entry2 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "Should not be used",
+				gidSeed: Buffer.from("Should not be used"),
 				data: "hello2",
 				next: [entry1A, entry1B],
 			});
@@ -352,7 +347,7 @@ describe("Entry", function () {
 			const entry1A = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "hello1",
 				next: [],
 			});
@@ -360,7 +355,7 @@ describe("Entry", function () {
 			const entry1B = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "B",
+				gidSeed: Buffer.from("b"),
 				clock: entry1A.metadata.clock,
 				data: "hello1",
 				next: [],
@@ -375,7 +370,7 @@ describe("Entry", function () {
 			const entry2 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "Should not be used",
+				gidSeed: Buffer.from("Should not be used"),
 				data: "hello2",
 				next: [entry1A, entry1B],
 			});
@@ -386,7 +381,7 @@ describe("Entry", function () {
 			const entry1A = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "hello1",
 				next: [],
 			});
@@ -402,7 +397,7 @@ describe("Entry", function () {
 			const entry2 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "Should not be used",
+				gidSeed: Buffer.from("Should not be used"),
 				data: "hello2",
 				next: [entry1A, entry1B],
 			});
@@ -414,7 +409,7 @@ describe("Entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "hello1",
 				next: [],
 			});
@@ -422,7 +417,7 @@ describe("Entry", function () {
 			const entry2 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "Should not be used",
+				gidSeed: Buffer.from("Should not be used"),
 				data: "hello2",
 				next: [entry1],
 			});
@@ -435,7 +430,7 @@ describe("Entry", function () {
 				await Entry.create({
 					store,
 					identity: identityFromSignKey(signKey),
-					gidSeed: "A",
+					gidSeed: Buffer.from("a"),
 					data: null,
 					next: [],
 				});
@@ -451,7 +446,7 @@ describe("Entry", function () {
 				await Entry.create({
 					store,
 					identity: identityFromSignKey(signKey),
-					gidSeed: "A",
+					gidSeed: Buffer.from("a"),
 					data: "hello",
 					next: {} as any,
 				});
@@ -467,7 +462,7 @@ describe("Entry", function () {
 			const entry = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "hello",
 				next: [],
 				clock: new LamportClock({
@@ -504,7 +499,7 @@ describe("Entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: payload1,
 				next: [],
 				clock: new LamportClock({
@@ -515,7 +510,7 @@ describe("Entry", function () {
 			const entry2 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: payload2,
 				next: [entry1],
 				clock: new LamportClock({
@@ -526,9 +521,7 @@ describe("Entry", function () {
 			const final = await Entry.fromMultihash<string>(store, entry2.hash);
 			final.init(entry2);
 			assert(final.equals(entry2));
-			expect(final.gid).toEqual(
-				await toBase64(await sodium.crypto_generichash(32, "A"))
-			);
+			expect(final.gid).toEqual(sha256Base64Sync(Buffer.from("a")));
 			expect(final.payload.getValue()).toEqual(payload2);
 			expect(final.next.length).toEqual(1);
 			expect(final.next[0]).toEqual(entry1.hash);
@@ -543,14 +536,14 @@ describe("Entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: payload1,
 				next: [],
 			});
 			const entry2 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: payload2,
 				next: [entry1],
 			});
@@ -563,21 +556,21 @@ describe("Entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: payload1,
 				next: [],
 			});
 			const entry2 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: payload2,
 				next: [],
 			});
 			const entry3 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: payload2,
 				next: [entry2],
 			});
@@ -593,7 +586,7 @@ describe("Entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: payload1,
 				clock: new LamportClock({
 					id: new Uint8Array([1]),
@@ -604,7 +597,7 @@ describe("Entry", function () {
 			const entry2 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: payload1,
 				clock: new LamportClock({
 					id: new Uint8Array([1]),
@@ -621,14 +614,14 @@ describe("Entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: payload1,
 				next: [],
 			});
 			const entry2 = await Entry.create({
 				store,
 				identity: identityFromSignKey(signKey),
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: payload2,
 				next: [],
 			});

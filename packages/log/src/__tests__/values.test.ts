@@ -25,7 +25,7 @@ describe("values", () => {
 		e1 = await Entry.create({
 			store,
 			identity,
-			gidSeed: "A",
+			gidSeed: Buffer.from("a"),
 			data: "1",
 			next: [],
 		});
@@ -33,7 +33,7 @@ describe("values", () => {
 		e2 = await Entry.create({
 			store,
 			identity,
-			gidSeed: "A",
+			gidSeed: Buffer.from("a"),
 			data: "2",
 			next: [e1],
 		});
@@ -41,7 +41,7 @@ describe("values", () => {
 		e3 = await Entry.create({
 			store,
 			identity,
-			gidSeed: "A",
+			gidSeed: Buffer.from("a"),
 			data: "3",
 			next: [e2],
 		});

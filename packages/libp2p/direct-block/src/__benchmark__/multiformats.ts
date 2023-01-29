@@ -2,23 +2,10 @@ import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import B from "benchmark";
 import crypto from "crypto";
 import { stringifyCid } from "../index.js";
-import { CID } from "multiformats/cid";
-import * as raw from "multiformats/codecs/raw";
-import * as dagCbor from "@ipld/dag-cbor";
-import sodium from "libsodium-wrappers";
-import { from } from "multiformats/hashes/hasher";
 import { sha256 } from "multiformats/hashes/sha2";
-import { base58btc } from "multiformats/bases/base58";
 import * as Block from "multiformats/block";
-import {
-	checkDecodeBlock,
-	cidifyString,
-	codecCodes,
-	codecMap,
-} from "../block.js";
+import { checkDecodeBlock, cidifyString, codecMap } from "../block.js";
 import { equals } from "uint8arrays";
-import { delay } from "@dao-xyz/peerbit-time";
-import { fromBase64, toBase64 } from "@dao-xyz/peerbit-crypto";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/multiformats.ts"
 

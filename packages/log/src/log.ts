@@ -425,7 +425,7 @@ export class Log<T> {
 		data: T,
 		options: {
 			canAppend?: CanAppend<T>;
-			gidSeed?: string;
+			gidSeed?: Uint8Array;
 			nexts?: Entry<any>[];
 			identity?: Identity;
 			signers?: ((data: Uint8Array) => Promise<SignatureWithKey>)[];

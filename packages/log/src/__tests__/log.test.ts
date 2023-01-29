@@ -128,7 +128,7 @@ describe("Log", function () {
 					...signKey.keypair,
 					sign: (data) => signKey.keypair.sign(data),
 				},
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "entryA",
 				next: [],
 				clock: new Clock({ id: new Uint8Array([0]), timestamp: 0 }),
@@ -139,7 +139,7 @@ describe("Log", function () {
 					...signKey.keypair,
 					sign: (data) => signKey.keypair.sign(data),
 				},
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "entryB",
 				next: [],
 				clock: new Clock({ id: new Uint8Array([1]), timestamp: 0 }),
@@ -150,7 +150,7 @@ describe("Log", function () {
 					...signKey.keypair,
 					sign: (data) => signKey.keypair.sign(data),
 				},
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "entryC",
 				next: [],
 				clock: new Clock({ id: new Uint8Array([2]), timestamp: 0 }),
@@ -176,7 +176,7 @@ describe("Log", function () {
 					...signKey.keypair,
 					sign: (data) => signKey.keypair.sign(data),
 				},
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "entryA",
 				next: [],
 			});
@@ -186,7 +186,7 @@ describe("Log", function () {
 					...signKey.keypair,
 					sign: (data) => signKey.keypair.sign(data),
 				},
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "entryB",
 				next: [],
 			});
@@ -196,7 +196,7 @@ describe("Log", function () {
 					...signKey.keypair,
 					sign: (data) => signKey.keypair.sign(data),
 				},
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "entryC",
 				next: [],
 			});
@@ -219,7 +219,7 @@ describe("Log", function () {
 					...signKey.keypair,
 					sign: (data) => signKey.keypair.sign(data),
 				},
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "entryA",
 				next: [],
 			});
@@ -229,7 +229,7 @@ describe("Log", function () {
 					...signKey.keypair,
 					sign: (data) => signKey.keypair.sign(data),
 				},
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "entryB",
 				next: [],
 			});
@@ -239,7 +239,7 @@ describe("Log", function () {
 					...signKey.keypair,
 					sign: (data) => signKey.keypair.sign(data),
 				},
-				gidSeed: "A",
+				gidSeed: Buffer.from("a"),
 				data: "entryC",
 				next: [],
 			});
@@ -310,11 +310,11 @@ describe("Log", function () {
 				},
 				{ logId: "A" }
 			);
-			await log.append("one", { gidSeed: "a" });
-			await log.append("two", { gidSeed: "a" });
-			await log.append("three", { gidSeed: "a" });
-			await log.append("four", { gidSeed: "a" });
-			await log.append("five", { gidSeed: "a" });
+			await log.append("one", { gidSeed: Buffer.from("a") });
+			await log.append("two", { gidSeed: Buffer.from("a") });
+			await log.append("three", { gidSeed: Buffer.from("a") });
+			await log.append("four", { gidSeed: Buffer.from("a") });
+			await log.append("five", { gidSeed: Buffer.from("a") });
 		});
 
 		it("returns a nicely formatted string", () => {
@@ -337,7 +337,7 @@ describe("Log", function () {
 				{ logId: "AAA" }
 			);
 			await log.append("one", {
-				gidSeed: "a",
+				gidSeed: Buffer.from("a"),
 				timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
 			});
 		});
@@ -365,7 +365,7 @@ describe("Log", function () {
 				},
 				{ logId: "AAA" }
 			);
-			await log.append("one", { gidSeed: "a" });
+			await log.append("one", { gidSeed: Buffer.from("a") });
 		});
 
 		it("changes identity", async () => {
@@ -377,7 +377,7 @@ describe("Log", function () {
 				...signKey2.keypair,
 				sign: signKey2.keypair.sign,
 			});
-			await log.append("two", { gidSeed: "a" });
+			await log.append("two", { gidSeed: Buffer.from("a") });
 			assert.deepStrictEqual(
 				log.values[1].metadata.clock.id,
 				new Uint8Array(signKey2.keypair.publicKey.bytes)
@@ -386,7 +386,7 @@ describe("Log", function () {
 				...signKey3.keypair,
 				sign: signKey3.keypair.sign,
 			});
-			await log.append("three", { gidSeed: "a" });
+			await log.append("three", { gidSeed: Buffer.from("a") });
 			assert.deepStrictEqual(
 				log.values[2].metadata.clock.id,
 				new Uint8Array(signKey3.keypair.publicKey.bytes)
@@ -406,7 +406,7 @@ describe("Log", function () {
 				},
 				{ logId: "AAA" }
 			);
-			await log.append("one", { gidSeed: "a" });
+			await log.append("one", { gidSeed: Buffer.from("a") });
 		});
 
 		it("returns true if it has an Entry", () => {
@@ -435,9 +435,9 @@ describe("Log", function () {
 				},
 				{ logId }
 			);
-			await log.append("one", { gidSeed: "a" });
-			await log.append("two", { gidSeed: "a" });
-			await log.append("three", { gidSeed: "a" });
+			await log.append("one", { gidSeed: Buffer.from("a") });
+			await log.append("two", { gidSeed: Buffer.from("a") });
+			await log.append("three", { gidSeed: Buffer.from("a") });
 		});
 
 		describe("toJSON", () => {
@@ -480,7 +480,7 @@ describe("Log", function () {
 					{ logId: "A" }
 				);
 				await log.append("one", {
-					gidSeed: "a",
+					gidSeed: Buffer.from("a"),
 					timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
 				});
 				const hash = await log.toMultihash();
@@ -497,7 +497,7 @@ describe("Log", function () {
 					{ logId: "A" }
 				);
 				await log.append("one", {
-					gidSeed: "a",
+					gidSeed: Buffer.from("a"),
 					timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
 				});
 				const hash = await log.toMultihash();
@@ -536,7 +536,7 @@ describe("Log", function () {
 					{ logId: "X" }
 				);
 				await log.append("one", {
-					gidSeed: "a",
+					gidSeed: Buffer.from("a"),
 					timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
 				});
 				const hash = await log.toMultihash();
@@ -585,7 +585,7 @@ describe("Log", function () {
 					{ logId: "X" }
 				);
 				await log.append("one", {
-					gidSeed: "a",
+					gidSeed: Buffer.from("a"),
 					timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
 				});
 				const multihash = await log.toMultihash();
@@ -865,7 +865,7 @@ describe("Log", function () {
 					{ logId: "X" }
 				);
 				await log.append("one", {
-					gidSeed: "a",
+					gidSeed: Buffer.from("a"),
 					timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
 				});
 				const res = await Log.fromEntryHash(
@@ -892,7 +892,7 @@ describe("Log", function () {
 					{ logId: "X" }
 				);
 				await log.append("one", {
-					gidSeed: "a",
+					gidSeed: Buffer.from("a"),
 					timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
 				});
 				const multihash = await log.toMultihash();
@@ -918,7 +918,7 @@ describe("Log", function () {
 					{ logId: "X" }
 				);
 				await log.append("one", {
-					gidSeed: "a",
+					gidSeed: Buffer.from("a"),
 					timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
 				});
 				const multihash = await log.toMultihash();

@@ -391,7 +391,7 @@ export class Peerbit {
 			return options?.signWithPeerId
 				? {
 						publicKey: this.idKey.publicKey,
-						signature: this.idKey.sign(data),
+						signature: await this.idKey.sign(data),
 				  }
 				: {
 						publicKey: this.identity.publicKey,
@@ -414,7 +414,7 @@ export class Peerbit {
 			return options?.signWithPeerId
 				? {
 						publicKey: this.idKey.publicKey,
-						signature: this.idKey.sign(data),
+						signature: await this.idKey.sign(data),
 				  }
 				: {
 						publicKey: this.identity.publicKey,
@@ -911,7 +911,7 @@ export class Peerbit {
 	}
 
 	_onDrop(db: Store<any>) {
-		logger.info("Dropped store: " + db.id);
+		logger.debug("Dropped store: " + db.id);
 	}
 
 	addProgram(program: Program, minReplicas: MinReplicas): ProgramWithMetadata {

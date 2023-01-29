@@ -21,6 +21,14 @@
 	"publishConfig": {
 		"access": "public"
 	},
+	"browser": {
+		"./lib/esm/hash.js": "./lib/esm/hash-browser.js",
+		"./hash.js": "./lib/esm/hash-browser.js",
+		"./lib/esm/random.js": "./lib/esm/random-browser.js",
+		"./random.js": "./lib/esm/random-browser.js",
+		"./lib/esm/ed25519-sign.js": "./lib/esm/ed25519-sign-browser.js",
+		"./ed25519-sign.js": "./lib/esm/ed25519-sign-browser.js"
+	},
 	"scripts": {
 		"clean": "shx rm -rf lib/*",
 		"build": "yarn clean && tsc -p tsconfig.json",
@@ -32,7 +40,8 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"devDependencies": {
-		"@types/libsodium-wrappers": "^0.7.9"
+		"@types/libsodium-wrappers": "^0.7.9",
+		"uint8arrays": "^4.0.2"
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.4",

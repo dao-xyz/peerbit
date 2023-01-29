@@ -7,7 +7,8 @@ import {
 	AbstractType,
 } from "@dao-xyz/borsh";
 import { arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
-import { Ed25519PublicKey, verifySignatureEd25519 } from "./ed25519.js";
+import { verifySignatureEd25519 } from "./ed25519-sign.js";
+import { Ed25519PublicKey } from "./ed25519.js";
 import { PublicSignKey } from "./key.js";
 import {
 	Secp256k1Keccak256PublicKey,
@@ -105,7 +106,7 @@ export class MaybeSigned<T> {
 	}
 }
 
-export const verify = (
+export const verify = async (
 	signature: Uint8Array,
 	publicKey: PublicSignKey,
 	data: Uint8Array,

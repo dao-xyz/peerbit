@@ -19,9 +19,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
 
-let signKey: KeyWithMeta<Ed25519Keypair>,
-	signKey2: KeyWithMeta<Ed25519Keypair>,
-	signKey3: KeyWithMeta<Ed25519Keypair>;
+let signKey: KeyWithMeta<Ed25519Keypair>;
 
 describe("Log - GetPow2Refs", function () {
 	let keystore: Keystore, store: BlockStore;

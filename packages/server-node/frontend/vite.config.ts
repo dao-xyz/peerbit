@@ -7,10 +7,5 @@ export default defineConfig({
 	plugins: [react()],
 	build: {
 		target: "esnext",
-		rollupOptions: {
-			plugins: [
-				nodeResolve(), // Required until https://github.com/vitejs/vite/issues/7385 is solved
-			],
-		},
 	},
 });

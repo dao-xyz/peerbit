@@ -8,3 +8,5 @@ export * from "./encryption.js";
 export * from "./mix.js";
 export * from "./libp2p.js";
 export * from "./utils.js";
+export * from "./hash.js";
+export * from "./random.js";

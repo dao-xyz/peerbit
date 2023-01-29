@@ -5,7 +5,7 @@ import { EventStore } from "./utils/stores/event-store";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
-
+import { jest } from "@jest/globals";
 import { v4 as uuid } from "uuid";
 
 describe(`sharding`, () => {

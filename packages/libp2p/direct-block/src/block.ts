@@ -1,13 +1,10 @@
 import { CID } from "multiformats/cid";
 import * as raw from "multiformats/codecs/raw";
 import * as dagCbor from "@ipld/dag-cbor";
-import sodium from "libsodium-wrappers";
 import { sha256 } from "multiformats/hashes/sha2";
 import { base58btc } from "multiformats/bases/base58";
 import * as Block from "multiformats/block";
 import type { MultihashHasher } from "multiformats/hashes/hasher";
-
-await sodium.ready;
 
 const unsupportedCodecError = () => new Error("unsupported codec");
 

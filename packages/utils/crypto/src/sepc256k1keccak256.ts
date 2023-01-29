@@ -12,12 +12,11 @@ import {
 import { fromHexString, toHexString } from "./utils.js";
 import { computeAddress } from "@ethersproject/transactions";
 import { PeerId } from "@libp2p/interface-peer-id";
-import crypto from "crypto";
 import { Signer } from "./signer.js";
 import { coerce } from "./bytes.js";
 import { generateKeyPair } from "@libp2p/crypto/keys";
 import utf8 from "@protobufjs/utf8";
-
+import { sha256, sha256Base64 } from "./hash.js";
 @variant(1)
 export class Secp256k1Keccak256PublicKey extends PublicSignKey {
 	@field({ type: fixedUint8Array(20) })
@@ -155,15 +154,13 @@ export class Sec256k1Keccak256Keypair extends Keypair implements Signer {
 
 const decoder = new TextDecoder();
 
-export const verifySignatureSecp256k1 = (
+export const verifySignatureSecp256k1 = async (
 	signature: Uint8Array,
 	publicKey: Secp256k1Keccak256PublicKey,
 	data: Uint8Array,
 	signedHash = false
-): boolean => {
-	const hashedData = signedHash
-		? crypto.createHash("sha256").update(data).digest()
-		: data;
+): Promise<boolean> => {
+	const hashedData = signedHash ? await sha256(data) : data;
 	const signerAddress = verifyMessage(hashedData, decoder.decode(signature));
 	return arraysEqual(fromHexString(signerAddress.slice(2)), publicKey.address);
 };

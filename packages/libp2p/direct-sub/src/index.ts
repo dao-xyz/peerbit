@@ -24,7 +24,6 @@ import { CustomEvent } from "@libp2p/interfaces/events";
 import type { Connection } from "@libp2p/interface-connection";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { Goodbye } from "@dao-xyz/libp2p-direct-stream";
-import crypto from "crypto";
 import { PeerEvents } from "@dao-xyz/libp2p-direct-stream";
 export {
 	PubSubMessage,
@@ -165,7 +164,10 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 				),
 			});
 
-			await this.publishMessage(this.libp2p.peerId, message.sign(this.sign));
+			await this.publishMessage(
+				this.libp2p.peerId,
+				await message.sign(this.sign)
+			);
 		}
 	}
 
@@ -199,7 +201,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 			this.topicsToStreams.delete(topic);
 			await this.publishMessage(
 				this.libp2p.peerId,
-				new DataMessage({
+				await new DataMessage({
 					data: toUint8Array(new Unsubscribe({ topics: [topic] }).serialize()),
 				}).sign(this.sign)
 			);
@@ -253,7 +255,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		this.initializeTopic(topic);
 	}
 
-	requestSubscribers(
+	async requestSubscribers(
 		topic: string | string[],
 		streams?: PeerStreams[]
 	): Promise<void> {
@@ -271,7 +273,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 
 		return this.publishMessage(
 			this.libp2p.peerId,
-			new DataMessage({
+			await new DataMessage({
 				data: toUint8Array(new GetSubscribers({ topics }).serialize()),
 			}).sign(this.sign),
 			streams
@@ -419,7 +421,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 					message.to.find((x) => this.publicKeyHash === x);
 				if (isForMe) {
 					if (verified === undefined) {
-						verified = message.verify(
+						verified = await message.verify(
 							this.signaturePolicy === "StictSign" ? true : false
 						);
 					}
@@ -446,7 +448,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 				streamToSendTO.length > 0 ? streamToSendTO : undefined
 			); // if not find any stream, send to all
 		} else if (pubsubMessage instanceof Subscribe) {
-			if (!message.verify(true)) {
+			if (!(await message.verify(true))) {
 				logger.warn("Recieved message that did not verify Subscribe");
 				return false;
 			}
@@ -509,7 +511,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 			// Forward
 			await this.relayMessage(from, message);
 		} else if (pubsubMessage instanceof Unsubscribe) {
-			if (!message.verify(true)) {
+			if (!(await message.verify(true))) {
 				logger.warn("Recieved message that did not verify Unsubscribe");
 				return false;
 			}
@@ -543,7 +545,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 			// Forward
 			await this.relayMessage(from, message);
 		} else if (pubsubMessage instanceof GetSubscribers) {
-			if (!message.verify(true)) {
+			if (!(await message.verify(true))) {
 				logger.warn("Recieved message that did not verify Unsubscribe");
 				return false;
 			}
@@ -570,7 +572,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 				}
 				this.publishMessage(
 					this.libp2p.peerId,
-					new DataMessage({
+					await new DataMessage({
 						data: toUint8Array(
 							new Subscribe({
 								subscriptions: subscriptionsToSend,

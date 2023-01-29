@@ -33,7 +33,7 @@ export {
 } from "./messages.js";
 export type SignaturePolicy = "StictSign" | "StrictNoSign";
 
-import crypto from "crypto";
+import { sha256Base64 } from "@dao-xyz/peerbit-crypto";
 import { logger } from "./logger.js";
 export { logger };
 export interface PeerStreamsInit {
@@ -232,7 +232,7 @@ export abstract class DirectStream<
 	public peerIdStr: string;
 	public publicKey: PublicSignKey;
 	public publicKeyHash: string;
-	public sign: (bytes: Uint8Array) => SignatureWithKey;
+	public sign: (bytes: Uint8Array) => Promise<SignatureWithKey>;
 
 	public started: boolean;
 	/**
@@ -278,10 +278,10 @@ export abstract class DirectStream<
 
 		this.libp2p = libp2p;
 		const signKey = getKeypairFromPeerId(this.libp2p.peerId);
-		this.sign = ((bytes) =>
+		this.sign = (async (bytes) =>
 			new SignatureWithKey({
 				publicKey: signKey.publicKey,
-				signature: signKey.sign(bytes),
+				signature: await signKey.sign(bytes),
 			})).bind(this);
 
 		this.peerIdStr = libp2p.peerId.toString();
@@ -461,9 +461,11 @@ export abstract class DirectStream<
 
 			// Say hello
 			promises.push(
-				this.publishMessage(this.libp2p.peerId, new Hello().sign(this.sign), [
-					peer,
-				])
+				this.publishMessage(
+					this.libp2p.peerId,
+					await new Hello().sign(this.sign),
+					[peer]
+				)
 			);
 
 			// Send my goodbye early if I disconnect for some reason, (so my peer can say goodbye for me)
@@ -471,7 +473,7 @@ export abstract class DirectStream<
 			promises.push(
 				this.publishMessage(
 					this.libp2p.peerId,
-					new Goodbye({ early: true }).sign(this.sign),
+					await new Goodbye({ early: true }).sign(this.sign),
 					[peer]
 				)
 			);
@@ -483,7 +485,7 @@ export abstract class DirectStream<
 					continue;
 				}
 				for (const [key, hello] of hellos) {
-					if (!hello.header.verify()) {
+					if (!(await hello.header.verify())) {
 						hellos.delete(key);
 					}
 					promises.push(this.publishMessage(this.libp2p.peerId, hello, [peer]));
@@ -544,7 +546,7 @@ export abstract class DirectStream<
 		const earlyGoodBye = this.earlyGoodbyes.get(peerKeyHash);
 		if (earlyGoodBye) {
 			earlyGoodBye.early = false;
-			earlyGoodBye.sign(this.sign);
+			await earlyGoodBye.sign(this.sign);
 			await this.publishMessage(this.libp2p.peerId, earlyGoodBye);
 			this.earlyGoodbyes.delete(peerKeyHash);
 		}
@@ -638,7 +640,7 @@ export abstract class DirectStream<
 		try {
 			await pipe(stream, async (source) => {
 				for await (const data of source) {
-					const msgId = this.getMsgId(data);
+					const msgId = await this.getMsgId(data);
 
 					if (this.seenCache.has(msgId)) {
 						// we got message that WE sent?
@@ -761,7 +763,9 @@ export abstract class DirectStream<
 			if (isForAll || isForMe) {
 				if (
 					this.signaturePolicy === "StictSign" &&
-					!message.verify(this.signaturePolicy === "StictSign" ? true : false)
+					(!(await message.verify(this.signaturePolicy === "StictSign"))
+						? true
+						: false)
 				) {
 					// we don't verify messages we don't dispatch because of the performance penalty // TODO add opts for this
 					logger.warn("Recieved message with invalid signature or timestamp");
@@ -785,7 +789,7 @@ export abstract class DirectStream<
 		return true;
 	}
 	async onHello(from: PeerId, peerStream: PeerStreams, message: Hello) {
-		if (!message.verify(true)) {
+		if (!(await message.verify(true))) {
 			logger.warn("Recieved message with invalid signature or timestamp");
 			return false;
 		}
@@ -805,7 +809,7 @@ export abstract class DirectStream<
 			);
 		}
 
-		message.sign(this.sign); // sign it so othere peers can now I have seen it (and can build a network graph from trace info)
+		await message.sign(this.sign); // sign it so othere peers can now I have seen it (and can build a network graph from trace info)
 
 		let hellos = this.hellosToReplay.get(sender);
 		if (!hellos) {
@@ -813,7 +817,7 @@ export abstract class DirectStream<
 			this.hellosToReplay.set(sender, hellos);
 		}
 
-		const helloSignaturHash = message.signatures.hashPublicKeys();
+		const helloSignaturHash = await message.signatures.hashPublicKeys();
 		const existingHello = hellos.get(helloSignaturHash);
 		if (existingHello) {
 			if (existingHello.header.expires < message.header.expires) {
@@ -829,7 +833,7 @@ export abstract class DirectStream<
 	}
 
 	async onGoodbye(from: PeerId, peerStream: PeerStreams, message: Goodbye) {
-		if (!message.verify(true)) {
+		if (!(await message.verify(true))) {
 			logger.warn("Recieved message with invalid signature or timestamp");
 			return false;
 		}
@@ -866,11 +870,11 @@ export abstract class DirectStream<
 				}
 				relayToPeers.push(stream);
 			}
-			message.sign(this.sign); // sign it so othere peers can now I have seen it (and can build a network graph from trace info)
+			await message.sign(this.sign); // sign it so othere peers can now I have seen it (and can build a network graph from trace info)
 
 			const hellos = this.hellosToReplay.get(sender);
 			if (hellos) {
-				const helloSignaturHash = message.signatures.hashPublicKeys();
+				const helloSignaturHash = await message.signatures.hashPublicKeys();
 				hellos.delete(helloSignaturHash);
 			}
 
@@ -884,15 +888,12 @@ export abstract class DirectStream<
 	 * The default msgID implementation
 	 * Child class can override this.
 	 */
-	public getMsgId(msg: Uint8ArrayList | Uint8Array) {
+	public async getMsgId(msg: Uint8ArrayList | Uint8Array) {
 		// first bytes is discriminator,
 		// next 32 bytes should be an id
 		//return  Buffer.from(msg.slice(0, 33)).toString('base64');
 
-		return crypto
-			.createHash("sha256")
-			.update(msg.subarray(0, 33))
-			.digest("base64"); // base64EncArr(msg, 0, ID_LENGTH + 1);
+		return sha256Base64(msg.subarray(0, 33)); // base64EncArr(msg, 0, ID_LENGTH + 1);
 	}
 
 	/**
@@ -940,7 +941,7 @@ export abstract class DirectStream<
 			to: toHashes,
 		});
 		if (this.signaturePolicy === "StictSign") {
-			message.sign(this.sign);
+			await message.sign(this.sign);
 		}
 
 		if (this.emitSelf) {
@@ -963,7 +964,7 @@ export abstract class DirectStream<
 		// send to all the other peers
 		await this.publishMessage(
 			this.libp2p.peerId,
-			new Hello({ data }).sign(this.sign.bind(this))
+			await new Hello({ data }).sign(this.sign.bind(this))
 		);
 	}
 
@@ -1030,7 +1031,7 @@ export abstract class DirectStream<
 		}
 
 		const bytes = message.serialize();
-		this.seenCache.set(this.getMsgId(bytes), true);
+		this.seenCache.set(await this.getMsgId(bytes), true);
 		const promises: Promise<any>[] = [];
 		for (const stream of peers.values()) {
 			const id = stream as PeerStreams;

@@ -12,7 +12,7 @@ import { AccessError } from "./errors.js";
 import sodium from "libsodium-wrappers";
 import { X25519Keypair, X25519PublicKey, X25519SecretKey } from "./x25519.js";
 import { Ed25519Keypair, Ed25519PublicKey } from "./ed25519.js";
-import crypto from "crypto";
+import { randomBytes } from "./random.js";
 
 await sodium.ready;
 
@@ -92,7 +92,7 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 	): EncryptedThing<T> {
 		const bytes = serialize(this);
 		const epheremalKey = sodium.crypto_secretbox_keygen();
-		const nonce = crypto.randomBytes(NONCE_LENGTH); // crypto random is faster than sodim random
+		const nonce = randomBytes(NONCE_LENGTH); // crypto random is faster than sodim random
 		const cipher = sodium.crypto_secretbox_easy(bytes, nonce, epheremalKey);
 
 		let encryptionKeypair =
@@ -109,7 +109,7 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 		});
 
 		const ks = recieverX25519PublicKeys.map((recieverPublicKey) => {
-			const kNonce = crypto.randomBytes(NONCE_LENGTH); // crypto random is faster than sodium random
+			const kNonce = randomBytes(NONCE_LENGTH); // crypto random is faster than sodium random
 			return new K({
 				encryptedKey: new CipherWithNonce({
 					cipher: sodium.crypto_box_easy(

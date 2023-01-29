@@ -12,7 +12,6 @@ import { fileURLToPath } from "url";
 import path from "path";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
-import { delay } from "@dao-xyz/peerbit-time";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -129,7 +128,7 @@ describe("Log - Join", function () {
 						...signKey.keypair,
 						sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 					},
-					gidSeed: "X" + i,
+					gidSeed: Buffer.from("X" + i),
 					data: "entryA" + i,
 					next: prev1 ? [prev1] : undefined,
 				});

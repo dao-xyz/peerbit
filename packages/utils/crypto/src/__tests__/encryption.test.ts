@@ -2,13 +2,13 @@ import {
 	DecryptedThing,
 	X25519PublicKey,
 	PublicKeyEncryptionResolver,
-	verifySignatureEd25519,
 	Ed25519Keypair,
 	X25519Keypair,
 	verify,
 } from "../index.js";
 import sodium from "libsodium-wrappers";
 import { createEd25519PeerId } from "@libp2p/peer-id-factory";
+import { verifySignatureEd25519 } from "../ed25519-sign.js";
 await sodium.ready;
 
 describe("encryption", function () {
@@ -91,26 +91,5 @@ describe("encryption", function () {
 			reciever2Config.getAnyKeypair
 		);
 		expect(decryptedFromEncrypted2._data).toStrictEqual(data);
-	});
-});
-
-describe("ed25519", function () {
-	it("can sign verify", async () => {
-		const data = new Uint8Array([1, 2, 3]);
-		const senderKey = Ed25519Keypair.create();
-		const signature = senderKey.sign(data);
-		expect(signature).toHaveLength(64); // detached
-		const v = verify(signature, senderKey.publicKey, data);
-		expect(v).toBeTrue();
-	});
-
-	it("from PeerId", async () => {
-		const peerId = await createEd25519PeerId();
-		const convertedKey = await Ed25519Keypair.from(peerId);
-		const data = new Uint8Array([1, 2, 3]);
-		let signature = convertedKey.sign(data);
-		expect(
-			verifySignatureEd25519(signature, convertedKey.publicKey, data)
-		).toBeTrue();
 	});
 });

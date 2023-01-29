@@ -1,67 +1,15 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { PrivateSignKey, PublicSignKey, Keypair } from "./key.js";
 import { arraysCompare, fixedUint8Array } from "@dao-xyz/peerbit-borsh-utils";
-import sodium from "libsodium-wrappers";
 import { Signer, SignWithKey } from "./signer.js";
 import { SignatureWithKey } from "./signature.js";
 import { toHexString } from "./utils.js";
 import { peerIdFromKeys } from "@libp2p/peer-id";
 import { supportedKeys } from "@libp2p/crypto/keys";
 import { coerce } from "./bytes.js";
-import crypto from "crypto";
+import sodium from "libsodium-wrappers";
 import type { Ed25519PeerId, PeerId } from "@libp2p/interface-peer-id";
-
-await sodium.ready;
-
-/* 
- TODO add native crypto sign support
-const signFn = (): (data: Uint8Array, privateKey: Ed25519PrivateKey) => Uint8Array => {
-	if ((globalThis as any).Buffer) {
-		return (globalThis as any).Buffer.allocUnsafe
-	}
-	return (len) => new Uint8Array(len);
-}
-const allocUnsafe = allocUnsafeFn();
-
-const alg = { name: 'Ed25519' };
-crypto.sign(alg, new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 3])) 
-*/
-
-function toDER(key: Uint8Array, p = false) {
-	if (p) {
-		return Buffer.concat([
-			Buffer.from([48, 46, 2, 1, 0, 48, 5, 6, 3, 43, 101, 112, 4, 34, 4, 32]),
-			key,
-		]);
-	}
-
-	// Ed25519's OID
-	const oid = Buffer.from([0x06, 0x03, 0x2b, 0x65, 0x70]);
-
-	// Create a byte sequence containing the OID and key
-	const elements = Buffer.concat([
-		Buffer.concat([
-			Buffer.from([0x30]), // Sequence tag
-			Buffer.from([oid.length]),
-			oid,
-		]),
-		Buffer.concat([
-			Buffer.from([0x03]), // Bit tag
-			Buffer.from([key.length + 1]),
-			Buffer.from([0x00]), // Zero bit
-			key,
-		]),
-	]);
-
-	// Wrap up by creating a sequence of elements
-	const der = Buffer.concat([
-		Buffer.from([0x30]), // Sequence tag
-		Buffer.from([elements.length]),
-		elements,
-	]);
-
-	return der;
-}
+import { sign } from "./ed25519-sign.js";
 
 @variant(0)
 export class Ed25519PublicKey extends PublicSignKey {
@@ -91,7 +39,8 @@ export class Ed25519PublicKey extends PublicSignKey {
 		);
 	}
 
-	private _keyObject: crypto.KeyObject;
+	/* Don't use keyobject for publicKeys becuse it takes longer time to derive it compare to verifying with sodium
+	private keyObject: any;
 	get keyObject() {
 		return (
 			this._keyObject ||
@@ -101,8 +50,7 @@ export class Ed25519PublicKey extends PublicSignKey {
 				key: toDER(this.publicKey),
 			}))
 		);
-	}
-
+	} */
 	static from(id: PeerId) {
 		if (!id.publicKey) {
 			throw new Error("Missing public key");
@@ -139,17 +87,7 @@ export class Ed25519PrivateKey extends PrivateSignKey {
 		return "ed25119s/" + toHexString(this.privateKey);
 	}
 
-	private _keyObject: crypto.KeyObject;
-	get keyObject() {
-		return (
-			this._keyObject ||
-			(this._keyObject = crypto.createPrivateKey({
-				format: "der",
-				type: "pkcs8",
-				key: toDER(this.privateKey, true),
-			}))
-		);
-	}
+	keyObject: any; // crypto.KeyObject;
 
 	static from(id: PeerId) {
 		if (!id.privateKey) {
@@ -195,7 +133,7 @@ export class Ed25519Keypair extends Keypair implements Signer {
 		return kp;
 	}
 
-	sign(data: Uint8Array, hash = false): Uint8Array {
+	sign(data: Uint8Array, hash = false): Promise<Uint8Array> {
 		return sign(data, this.privateKey, hash);
 	}
 
@@ -225,45 +163,3 @@ export class Ed25519Keypair extends Keypair implements Signer {
 		});
 	}
 }
-
-const sign = (
-	data: Uint8Array,
-	privateKey: Ed25519PrivateKey,
-	signedHash = false
-) => {
-	const signedData = signedHash
-		? crypto.createHash("sha256").update(data).digest()
-		: data;
-	/* const signature = sodium.crypto_sign_detached(
-		signedData,
-		privateKey.privateKey
-	);
-	return signature 
- */
-	return crypto.sign(null, signedData, privateKey.keyObject);
-};
-
-export const verifySignatureEd25519 = (
-	signature: Uint8Array,
-	publicKey: Ed25519PublicKey,
-	data: Uint8Array,
-	signedHash = false
-) => {
-	let res = false;
-	try {
-		const hashedData = signedHash
-			? crypto.createHash("sha256").update(data).digest()
-			: data;
-
-		/* 	return crypto.verify(null, hashedData, publicKey.keyObject, signature); */
-		const verified = sodium.crypto_sign_verify_detached(
-			signature,
-			hashedData,
-			publicKey instanceof Ed25519PublicKey ? publicKey.publicKey : publicKey
-		);
-		res = verified;
-	} catch (error) {
-		return false;
-	}
-	return res;
-};
