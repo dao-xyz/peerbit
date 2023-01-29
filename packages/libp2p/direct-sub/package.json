@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/libp2p-direct-sub",
-	"version": "0.1.6",
+	"version": "0.1.7",
 	"description": "Direct streaming for libp2p",
 	"type": "module",
 	"sideEffects": false,
@@ -53,7 +53,7 @@
 		"@dao-xyz/libp2p-test-utils": "^0.1.4"
 	},
 	"dependencies": {
-		"@dao-xyz/libp2p-direct-stream": "^0.1.5",
+		"@dao-xyz/libp2p-direct-stream": "^0.1.6",
 		"@dao-xyz/peerbit-logger": "^0.0.5",
 		"@libp2p/interfaces": "^3.3.1",
 		"abstract-level": "^1.0.3",
