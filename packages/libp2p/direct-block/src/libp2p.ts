@@ -165,7 +165,6 @@ export class DirectBlock extends DirectStream implements BlockStore {
 		await super.start();
 		this.addEventListener("data", this._responseHandler!);
 		await this._localStore?.open();
-		await delay(3000);
 		this._open = true;
 	}
 
