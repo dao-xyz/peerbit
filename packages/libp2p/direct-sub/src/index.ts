@@ -187,7 +187,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 
 		const subscriptions = this.subscriptions.get(topic);
 
-		logger.info(
+		logger.debug(
 			`unsubscribe from ${topic} - am subscribed with subscriptions ${subscriptions}`
 		);
 

@@ -311,7 +311,7 @@ export abstract class DirectStream<
 			return;
 		}
 
-		logger.info("starting");
+		logger.debug("starting");
 
 		// Incoming streams
 		// Called after a peer dials us
@@ -373,7 +373,7 @@ export abstract class DirectStream<
 			this.multicodecs.map((multicodec) => this.libp2p.unhandle(multicodec))
 		);
 
-		logger.info("stopping");
+		logger.debug("stopping");
 		for (const peerStreams of this.peers.values()) {
 			peerStreams.close();
 		}
@@ -386,7 +386,7 @@ export abstract class DirectStream<
 		this.started = false;
 		this.routes.clear();
 		this.peerKeyHashToPublicKey.clear();
-		logger.info("stopped");
+		logger.debug("stopped");
 	}
 
 	isStarted() {
@@ -417,7 +417,7 @@ export abstract class DirectStream<
 	 * Registrar notifies an established connection with protocol
 	 */
 	public async onPeerConnected(peerId: PeerId, conn: Connection) {
-		logger.info("connected " + peerId);
+		logger.debug("connected " + peerId);
 		try {
 			const peerKey = getPublicKeyFromPeerId(peerId);
 			const peerKeyHash = peerKey.hashcode();
@@ -535,7 +535,7 @@ export abstract class DirectStream<
 		// PeerId could be me, if so, it means that I am disconnecting
 		const peerKey = getPublicKeyFromPeerId(peerId);
 		const peerKeyHash = peerKey.hashcode();
-		logger.info("connection ended", peerKey.toString());
+		logger.debug("connection ended", peerKey.toString());
 		this._removePeer(peerKey);
 		if (!this.publicKey.equals(peerKey)) {
 			this.removeRouteConnection(this.publicKey, peerKey);
@@ -592,7 +592,7 @@ export abstract class DirectStream<
 
 		// else create a new peer streams
 		const peerIdStr = peerId.toString();
-		logger.info("new peer" + peerIdStr);
+		logger.debug("new peer" + peerIdStr);
 
 		const peerStreams: PeerStreams = new PeerStreams({
 			peerId,
@@ -622,7 +622,7 @@ export abstract class DirectStream<
 		peerStreams.close();
 
 		// delete peer streams
-		logger.info("delete peer" + publicKey.toString());
+		logger.debug("delete peer" + publicKey.toString());
 		this.peers.delete(hash);
 		return peerStreams;
 	}
@@ -670,7 +670,7 @@ export abstract class DirectStream<
 
 					this.seenCache.set(msgId, true);
 					this.processRpc(peerId, peerStreams, data).catch((err) =>
-						logger.info(err)
+						logger.warn(err)
 					);
 				}
 			});
@@ -694,14 +694,14 @@ export abstract class DirectStream<
 		message: Uint8ArrayList
 	): Promise<boolean> {
 		if (!this.acceptFrom(from)) {
-			logger.info("received message from unacceptable peer %p", from);
+			logger.debug("received message from unacceptable peer %p", from);
 			return false;
 		}
 
-		logger.info("rpc from " + from + ", " + this.peerIdStr);
+		logger.debug("rpc from " + from + ", " + this.peerIdStr);
 
 		if (message.length > 0) {
-			logger.info("messages from " + from);
+			logger.debug("messages from " + from);
 			await this.queue
 				.add(async () => {
 					try {
@@ -710,7 +710,7 @@ export abstract class DirectStream<
 						logger.error(err);
 					}
 				})
-				.catch((err) => logger.info(err));
+				.catch((err) => logger.warn(err));
 		}
 
 		return true;
@@ -976,7 +976,7 @@ export abstract class DirectStream<
 		if (this.canRelayMessage) {
 			return this.publishMessage(from, message, to);
 		} else {
-			logger.info("received message we didn't subscribe to. Dropping.");
+			logger.debug("received message we didn't subscribe to. Dropping.");
 		}
 	}
 	public async publishMessage(
@@ -1045,7 +1045,7 @@ export abstract class DirectStream<
 				continue;
 			}
 
-			logger.info("publish msgs on: " + id.peerId + " from " + this.peerIdStr);
+			logger.debug("publish msgs on: " + id.peerId + " from " + this.peerIdStr);
 			if (!id.isWritable) {
 				// Catch the event where the outbound stream is attach, but also abort if we shut down
 				const outboundPromise = new Promise<void>((rs, rj) => {

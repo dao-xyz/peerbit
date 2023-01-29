@@ -10,7 +10,6 @@ import {
 	Constructor,
 	AbstractType,
 } from "@dao-xyz/borsh";
-import path from "path";
 import { CID } from "multiformats/cid";
 import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";

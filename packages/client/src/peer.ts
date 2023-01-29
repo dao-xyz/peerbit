@@ -531,35 +531,6 @@ export class Peerbit {
 			const signedMessage = decrypted.getValue(MaybeSigned);
 			await signedMessage.verify();
 			const msg = signedMessage.getValue(TransportMessage);
-			const sender: string | undefined =
-				signedMessage.signature?.publicKey.hashcode();
-
-			const checkTrustedSender = async (address: string): Promise<boolean> => {
-				const isTrusted = false;
-				if (sender) {
-					// find the progrma
-					const ct = this.getCanTrust(address);
-					/* if (!network) {
-						if (onlyNetworked) {
-							return false;
-						}
-						return true;
-					} else if (network instanceof TrustedNetwork) {
-						isTrusted = !!(await network.isTrusted(sender));
-					} else {
-						throw new Error("Unexpected network type");
-					} */
-					if (!ct) {
-						return false;
-					}
-					return !!(await ct.isTrusted(sender));
-				}
-				if (!isTrusted) {
-					logger.info("Recieved message from untrusted peer");
-					return false;
-				}
-				return true;
-			};
 
 			if (msg instanceof ExchangeHeadsMessage) {
 				/**
