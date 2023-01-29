@@ -18,9 +18,6 @@ export * from "./protocol-message.js";
 
 const notEmpty = (e: string) => e !== "" && e !== " ";
 
-export interface Manifest {
-	data: Uint8Array;
-}
 
 export interface Addressable {
 	address?: Address | undefined;
@@ -49,6 +46,7 @@ export class ProgramPath {
 		}
 	}
 }
+const ADDRESS_PREFIXES = ["zb", "zd", "Qm", "ba", "k5"];
 
 @variant(0)
 export class Address {
@@ -103,8 +101,7 @@ export class Address {
 		let accessControllerHash;
 
 		const validateHash = (hash: string) => {
-			const prefixes = ["zd", "Qm", "ba", "k5"];
-			for (const p of prefixes) {
+			for (const p of ADDRESS_PREFIXES) {
 				if (hash.indexOf(p) > -1) {
 					return true;
 				}
@@ -174,46 +171,19 @@ export class Address {
 
 export interface Saveable {
 	save(
-		ipfs: any,
+		store: BlockStore,
 		options?: {
 			format?: string;
-			pin?: boolean;
 			timeout?: number;
 		}
 	): Promise<Address>;
+
+	delete(): Promise<void>;
 }
 
-export const save = async (
-	store: BlockStore,
-	thing: Addressable,
-	options: { format?: string; timeout?: number } = {}
-): Promise<Address> => {
-	const manifest: Manifest = {
-		data: serialize(thing),
-	};
-	const hash = await store.put(
-		await createBlock(manifest, options.format || "dag-cbor"),
-		options
-	);
-	return Address.parse(Address.join(hash));
-};
 
-export const load = async <S extends Addressable>(
-	store: BlockStore,
-	address: Address,
-	into: Constructor<S> | AbstractType<S>,
-	options: { timeout?: number } = {}
-): Promise<S | undefined> => {
-	const manifestBlock = await store.get<Manifest>(address.cid, options);
-	if (!manifestBlock) {
-		return undefined;
-	}
 
-	const manifest = await getBlockValue(manifestBlock);
-	const der = deserialize(manifest.data, into);
-	der.address = Address.parse(Address.join(address.cid));
-	return der;
-};
+
 export type OpenProgram = (program: Program) => Promise<Program>;
 export type ProgramInitializationOptions = {
 	store: IInitializationOptions<any>;
@@ -423,10 +393,8 @@ export interface CanTrust {
 }
 
 @variant(0)
-export abstract class Program
-	extends AbstractProgram
-	implements Addressable, Saveable
-{
+export abstract class Program extends AbstractProgram implements Addressable, Saveable {
+
 	@field({ type: "string" })
 	id: string;
 
@@ -506,14 +474,17 @@ export abstract class Program
 		store: BlockStore,
 		options?: {
 			format?: string;
-			pin?: boolean;
 			timeout?: number;
 		}
 	): Promise<Address> {
 		this.setupIndices();
 		const existingAddress = this._address;
-		const address = await save(store, this, options);
-		this._address = address;
+		const hash = await store.put(
+			await createBlock(serialize(this), "raw"),
+			options
+		);
+
+		this._address = Address.parse(Address.join(hash));
 		if (!this.address) {
 			throw new Error("Unexpected");
 		}
@@ -524,22 +495,37 @@ export abstract class Program
 			);
 		}
 
-		return address;
+		return this._address;
 	}
 
-	static load<S extends Program>(
+	async delete(
+	): Promise<void> {
+		if (!this.address?.cid) {
+			throw new Error("Can not delete, missing address")
+		}
+		return this.libp2p.directblock.rm(this.address.cid);
+	}
+
+	static async load<S extends Program>(
 		store: BlockStore,
 		address: Address | string,
 		options?: {
 			timeout?: number;
 		}
-	): Promise<S> {
-		return load(
-			store,
-			address instanceof Address ? address : Address.parse(address),
-			Program,
-			options
-		) as Promise<S>;
+	): Promise<S | undefined> {
+		const addressObject = (address instanceof Address ? address : Address.parse(address));
+		const manifestBlock = await store.get<Uint8Array>(addressObject.cid, options);
+		if (!manifestBlock) {
+			return undefined;
+		}
+		const der = deserialize(manifestBlock.bytes, Program);
+		der.address = Address.parse(Address.join(addressObject.cid));
+		return der as S;
+	}
+
+	async drop(): Promise<void> {
+		await super.drop()
+		return this.delete()
 	}
 
 	get topic(): string {
@@ -554,4 +540,4 @@ export abstract class Program
  * Building block, but not something you use as a standalone
  */
 @variant(1)
-export abstract class ComposableProgram extends AbstractProgram {}
+export abstract class ComposableProgram extends AbstractProgram { }
