@@ -61,7 +61,6 @@
 		"libp2p": "^0.42.2",
 		"lru-cache": "^7.14.1",
 		"memory-level": "^1.0.0",
-		"nanoid": "^4.0.0",
 		"ngraph.graph": "^20.0.1",
 		"ngraph.path": "^1.4.0",
 		"uint8arrays": "^4.0.2"
