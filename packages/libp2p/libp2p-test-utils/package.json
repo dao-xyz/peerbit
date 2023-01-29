@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/libp2p-test-utils",
-	"version": "0.1.3",
+	"version": "0.1.4",
 	"description": "Test utils for Peerbit",
 	"type": "module",
 	"private": false,
