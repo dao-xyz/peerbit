@@ -8,7 +8,6 @@ export const sign = async (
 	privateKey: Ed25519PrivateKey,
 	signedHash = false
 ) => {
-	await sodium.ready;
 	const signedData = signedHash ? await sha256(data) : data;
 
 	if (!privateKey.keyObject) {
@@ -27,7 +26,6 @@ export const verifySignatureEd25519 = async (
 	data: Uint8Array,
 	signedHash = false
 ) => {
-	await sodium.ready;
 	let res = false;
 	try {
 		const hashedData = signedHash ? await sha256(data) : data;

@@ -16,7 +16,7 @@ describe("values", () => {
 		const identity = identityFromSignKey(
 			new KeyWithMeta({
 				group: "",
-				keypair: Ed25519Keypair.create(),
+				keypair: await Ed25519Keypair.create(),
 				timestamp: 0n,
 			})
 		);

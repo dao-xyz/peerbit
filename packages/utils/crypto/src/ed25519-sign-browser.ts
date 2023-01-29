@@ -20,7 +20,6 @@ export const verifySignatureEd25519 = async (
 	let res = false;
 	try {
 		const hashedData = signedHash ? await sha256(data) : data;
-
 		const verified = sodium.crypto_sign_verify_detached(
 			signature,
 			hashedData,

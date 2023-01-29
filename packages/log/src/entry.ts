@@ -472,7 +472,7 @@ export class Entry<T>
 		const maybeEncrypt = <Q>(
 			thing: Q,
 			reciever?: MaybeEncryptionPublicKey
-		): MaybeEncrypted<Q> => {
+		): Promise<MaybeEncrypted<Q>> | MaybeEncrypted<Q> => {
 			const recievers = reciever
 				? Array.isArray(reciever)
 					? reciever
@@ -530,7 +530,7 @@ export class Entry<T>
 			});
 		}
 
-		const payload = maybeEncrypt(
+		const payload = await maybeEncrypt(
 			payloadToSave,
 			properties.encryption?.reciever.payload
 		);
@@ -577,7 +577,7 @@ export class Entry<T>
 
 		maxChainLength += 1n; // include this
 
-		const metadataEncrypted = maybeEncrypt(
+		const metadataEncrypted = await maybeEncrypt(
 			new Metadata({
 				maxChainLength,
 				clock,
@@ -593,7 +593,7 @@ export class Entry<T>
 			}
 		});
 
-		const nextEncrypted = maybeEncrypt(
+		const nextEncrypted = await maybeEncrypt(
 			new StringArray({
 				arr: next,
 			}),
@@ -640,7 +640,7 @@ export class Entry<T>
 				: properties.encryption?.reciever?.signatures?.[
 						signature.publicKey.hashcode()
 				  ];
-			const signatureEncrypted = maybeEncrypt(signature, encryption);
+			const signatureEncrypted = await maybeEncrypt(signature, encryption);
 			encryptedSignatures.push(signatureEncrypted);
 		}
 

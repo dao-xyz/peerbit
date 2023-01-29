@@ -13,7 +13,6 @@ import {
 	Ed25519PrivateKey,
 } from "./ed25519.js";
 import { toHexString } from "./utils.js";
-await sodium.ready;
 
 @variant(0)
 export class X25519PublicKey extends PublicKeyEncryptionKey {
@@ -37,7 +36,10 @@ export class X25519PublicKey extends PublicKeyEncryptionKey {
 		return "x25519p/" + toHexString(this.publicKey);
 	}
 
-	static from(ed25119PublicKey: Ed25519PublicKey): X25519PublicKey {
+	static async from(
+		ed25119PublicKey: Ed25519PublicKey
+	): Promise<X25519PublicKey> {
+		await sodium.ready;
 		return new X25519PublicKey({
 			publicKey: sodium.crypto_sign_ed25519_pk_to_curve25519(
 				ed25119PublicKey.publicKey
@@ -45,7 +47,8 @@ export class X25519PublicKey extends PublicKeyEncryptionKey {
 		});
 	}
 
-	static create(): X25519PublicKey {
+	static async create(): Promise<X25519PublicKey> {
+		await sodium.ready;
 		return new X25519PublicKey({
 			publicKey: sodium.crypto_box_keypair().publicKey,
 		});
@@ -78,12 +81,14 @@ export class X25519SecretKey extends PrivateEncryptionKey {
 	}
 
 	async publicKey(): Promise<X25519PublicKey> {
-		await sodium.ready;
 		return new X25519PublicKey({
 			publicKey: sodium.crypto_scalarmult_base(this.secretKey),
 		});
 	}
-	static from(ed25119SecretKey: Ed25519PrivateKey): X25519SecretKey {
+	static async from(
+		ed25119SecretKey: Ed25519PrivateKey
+	): Promise<X25519SecretKey> {
+		await sodium.ready;
 		return new X25519SecretKey({
 			secretKey: sodium.crypto_sign_ed25519_sk_to_curve25519(
 				ed25119SecretKey.privateKey
@@ -91,7 +96,8 @@ export class X25519SecretKey extends PrivateEncryptionKey {
 		});
 	}
 
-	static create(): X25519SecretKey {
+	static async create(): Promise<X25519SecretKey> {
+		await sodium.ready;
 		return new X25519SecretKey({
 			secretKey: sodium.crypto_box_keypair().privateKey,
 		});
@@ -106,7 +112,8 @@ export class X25519Keypair extends Keypair {
 	@field({ type: X25519SecretKey })
 	secretKey: X25519SecretKey;
 
-	static create(): X25519Keypair {
+	static async create(): Promise<X25519Keypair> {
+		await sodium.ready;
 		const generated = sodium.crypto_box_keypair();
 		const kp = new X25519Keypair();
 		kp.publicKey = new X25519PublicKey({
@@ -118,9 +125,9 @@ export class X25519Keypair extends Keypair {
 		return kp;
 	}
 
-	static from(ed25119Keypair: Ed25519Keypair): X25519Keypair {
-		const pk = X25519PublicKey.from(ed25119Keypair.publicKey);
-		const sk = X25519SecretKey.from(ed25119Keypair.privateKey);
+	static async from(ed25119Keypair: Ed25519Keypair): Promise<X25519Keypair> {
+		const pk = await X25519PublicKey.from(ed25119Keypair.publicKey);
+		const sk = await X25519SecretKey.from(ed25119Keypair.privateKey);
 		const kp = new X25519Keypair();
 		kp.publicKey = pk;
 		kp.secretKey = sk;

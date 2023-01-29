@@ -51,7 +51,6 @@ import "@libp2p/peer-id";
 import { peerIdFromString } from "@libp2p/peer-id";
 import { Libp2p } from "libp2p";
 import { createLibp2pExtended, Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
-import { equals } from "uint8arrays";
 import {
 	ObserverType,
 	OBSERVER_TYPE_VARIANT,
@@ -253,7 +252,8 @@ export class Peerbit {
 	}
 
 	static async create(options: CreateInstanceOptions = {}) {
-		await sodium.ready;
+		await sodium.ready; // Some of the modules depends on sodium to be readyy
+
 		let libp2pExtended: Libp2pExtended = options.libp2p as Libp2pExtended;
 		if (!libp2pExtended) {
 			libp2pExtended = await createLibp2pExtended();

@@ -21,11 +21,9 @@ import {
 	sign as signEd25519Browser,
 } from "../ed25519-sign-browser";
 
-await sodium.ready;
-
 describe("Ed25519", () => {
-	it("ser/der", () => {
-		const keypair = Ed25519Keypair.create();
+	it("ser/der", async () => {
+		const keypair = await Ed25519Keypair.create();
 		const derser = deserialize(serialize(keypair), Ed25519Keypair);
 		expect(derser.publicKey.publicKey).toEqual(keypair.publicKey.publicKey);
 	});
@@ -44,7 +42,7 @@ describe("Ed25519", () => {
 		});
 
 		it("verify", async () => {
-			const keypair = Ed25519Keypair.create();
+			const keypair = await Ed25519Keypair.create();
 			const data = new Uint8Array([1, 2, 3]);
 			const signature = await keypair.sign(data);
 			const isVerified = await verifySignatureEd25519(
@@ -81,7 +79,7 @@ describe("Ed25519", () => {
 
 	describe("browser", () => {
 		it("verify", async () => {
-			const keypair = Ed25519Keypair.create();
+			const keypair = await Ed25519Keypair.create();
 			const data = new Uint8Array([1, 2, 3]);
 			const signature = await signEd25519Browser(data, keypair.privateKey);
 			const isVerified = await verifySignatureEd25519Browser(
@@ -149,8 +147,8 @@ describe("Ed25519", () => {
 });
 
 describe("X25519", () => {
-	it("ser/der", () => {
-		const keypair = X25519Keypair.create();
+	it("ser/der", async () => {
+		const keypair = await X25519Keypair.create();
 		const derser = deserialize(serialize(keypair), X25519Keypair);
 		expect(derser.publicKey.publicKey).toEqual(keypair.publicKey.publicKey);
 	});

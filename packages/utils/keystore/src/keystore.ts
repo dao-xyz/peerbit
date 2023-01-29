@@ -14,7 +14,6 @@ import { waitFor } from "@dao-xyz/peerbit-time";
 import sodium from "libsodium-wrappers";
 import { StoreError } from "./errors.js";
 import { toBase64 } from "@dao-xyz/peerbit-crypto";
-await sodium.ready;
 
 export interface Type<T> extends Function {
 	new (...args: any[]): T;

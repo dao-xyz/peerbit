@@ -6,7 +6,7 @@ import {
 	variant,
 	vec,
 } from "@dao-xyz/borsh";
-import { asString, Hashable } from "./utils.js";
+import { asString, Keyable } from "./utils.js";
 import { BORSH_ENCODING, Change, Encoding, Entry } from "@dao-xyz/peerbit-log";
 import { arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
 import { ComposableProgram } from "@dao-xyz/peerbit-program";
@@ -25,7 +25,7 @@ import {
 	Context,
 	FieldMissingQuery,
 } from "./query.js";
-import { AccessError, PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { CanRead, RPC, QueryContext, RPCOptions } from "@dao-xyz/peerbit-rpc";
 import { Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
@@ -165,7 +165,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 		});
 	}
 
-	public get(key: Hashable): IndexedValue<T> | undefined {
+	public get(key: Keyable): IndexedValue<T> | undefined {
 		const stringKey = asString(key);
 		return this._index.get(stringKey);
 	}

@@ -5,7 +5,7 @@ import { verify } from "../signature.js";
 //node --loader ts-node/esm ./src/__benchmark__/index.ts
 const large = crypto.randomBytes(1e6); //  1mb
 
-const keypair = Ed25519Keypair.create();
+const keypair = await Ed25519Keypair.create();
 const signatures: [Uint8Array, Uint8Array][] = [];
 for (let i = 0; i < 10000; i++) {
 	const data = crypto.randomBytes(1e3);

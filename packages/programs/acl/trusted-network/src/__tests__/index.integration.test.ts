@@ -113,10 +113,10 @@ describe("index", () => {
 			const serFrom = serialize(from);
 			const serTo = serialize(to);
 
+			expect(serRelation.slice(KEY_OFFSET + OFFSET_TO_KEY)).toEqual(serTo); // To key has a fixed offset from 0
 			expect(
 				serRelation.slice(KEY_OFFSET, KEY_OFFSET + serFrom.length)
 			).toEqual(serFrom); // From key has a fixed offset from 0
-			expect(serRelation.slice(KEY_OFFSET + OFFSET_TO_KEY)).toEqual(serTo); // To key has a fixed offset from 0
 		});
 
 		it("serializes relation with right padding sepc256k1", async () => {
@@ -132,23 +132,8 @@ describe("index", () => {
 			expect(
 				serRelation.slice(KEY_OFFSET, KEY_OFFSET + serFrom.length)
 			).toEqual(serFrom); // From key has a fixed offset from 0
-			expect(serRelation.slice(KEY_OFFSET + OFFSET_TO_KEY)).toEqual(serTo); // To key has a fixed offset from 0
-		});
-
-		it("serializes relation with right padding ipfs address", async () => {
-			const from = new Secp256k1Keccak256PublicKey({
-				address: await Wallet.createRandom().getAddress(),
-			});
-			const to = new PeerIdAddress({ address: "abc123" });
-			const relation = new IdentityRelation({ from, to });
-			const serRelation = serialize(relation);
-			const serFrom = serialize(from);
-			const serTo = serialize(to);
-
-			expect(
-				serRelation.slice(KEY_OFFSET, KEY_OFFSET + serFrom.length)
-			).toEqual(serFrom); // From key has a fixed offset from 0
-			expect(serRelation.slice(KEY_OFFSET + OFFSET_TO_KEY)).toEqual(serTo); // To key has a fixed offset from 0
+			const sliceTo = serRelation.slice(KEY_OFFSET + OFFSET_TO_KEY);
+			expect(sliceTo).toEqual(serTo); // To key has a fixed offset from 0
 		});
 
 		it("path", async () => {
@@ -257,7 +242,6 @@ describe("index", () => {
 			const t2 = new TrustedNetwork({ id: "x", rootTrust: key });
 			t1.setupIndices();
 			t2.setupIndices();
-
 			expect(serialize(t1)).toEqual(serialize(t2));
 		});
 

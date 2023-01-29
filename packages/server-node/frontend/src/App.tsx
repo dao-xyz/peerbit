@@ -1,7 +1,6 @@
 import { client as api, getPort } from "@dao-xyz/peerbit-node";
 import { useEffect, useState } from "react";
 import { Box, Grid, Paper, Typography } from "@mui/material";
-
 import {
 	createTheme,
 	responsiveFontSizes,

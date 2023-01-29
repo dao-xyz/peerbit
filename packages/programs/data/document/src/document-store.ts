@@ -11,7 +11,7 @@ import {
 	serialize,
 	variant,
 } from "@dao-xyz/borsh";
-import { asString } from "./utils.js";
+import { asString, Keyable } from "./utils.js";
 import { AddOperationOptions, Store } from "@dao-xyz/peerbit-store";
 import {
 	BORSH_ENCODING,
@@ -27,8 +27,6 @@ import { AccessError } from "@dao-xyz/peerbit-crypto";
 import { Context, Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { getBlockValue } from "@dao-xyz/libp2p-direct-block";
-import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
-import { OpenProgram } from "@dao-xyz/peerbit-program";
 const logger = loggerFn({ module: "document" });
 
 export class OperationError extends Error {
@@ -273,17 +271,18 @@ export class Documents<T> extends ComposableProgram {
 	}
 
 	del(
-		key: string,
+		key: Keyable,
 		options?: AddOperationOptions<Operation<T>> & { permanent?: boolean }
 	) {
-		const existing = this._index.get(key);
+		const k = asString(key);
+		const existing = this._index.get(k);
 		if (!existing) {
-			throw new Error(`No entry with key '${key}' in the database`);
+			throw new Error(`No entry with key '${k}' in the database`);
 		}
 
 		return this.store.addOperation(
 			new DeleteOperation({
-				key: asString(key),
+				key: asString(k),
 				permanently: options?.permanent,
 			}),
 			{ nexts: [existing.entry], ...options }

@@ -41,8 +41,8 @@ const bigIntSort = <T extends number | bigint>(a: T, b: T): number =>
 describe("index", () => {
 	let session: LSession;
 
-	const createIdentity = () => {
-		const ed = Ed25519Keypair.create();
+	const createIdentity = async () => {
+		const ed = await Ed25519Keypair.create();
 		return {
 			publicKey: ed.publicKey,
 			sign: (data) => ed.sign(data),

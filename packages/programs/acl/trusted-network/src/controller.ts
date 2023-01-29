@@ -19,8 +19,7 @@ import { Program } from "@dao-xyz/peerbit-program";
 import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { AddOperationOptions } from "@dao-xyz/peerbit-store";
-import sodium from "libsodium-wrappers";
-await sodium.ready;
+import { sha256Base64Sync } from "@dao-xyz/peerbit-crypto";
 
 const canAppendByRelation = async (
 	entry: Entry<Operation<IdentityRelation>>,
@@ -299,6 +298,6 @@ export class TrustedNetwork extends Program {
 	}
 
 	hashCode(): string {
-		return sodium.crypto_generichash(32, serialize(this), null, "hex");
+		return sha256Base64Sync(serialize(this));
 	}
 }

@@ -14,8 +14,6 @@ import { X25519Keypair, X25519PublicKey, X25519SecretKey } from "./x25519.js";
 import { Ed25519Keypair, Ed25519PublicKey } from "./ed25519.js";
 import { randomBytes } from "./random.js";
 
-await sodium.ready;
-
 const NONCE_LENGTH = 24;
 
 export interface PublicKeyEncryptionResolver {
@@ -31,6 +29,7 @@ export type GetAnyKeypair =
 	| X25519Keypair;
 export type GetEncryptionKeypair =
 	| (() => X25519Keypair | Ed25519Keypair)
+	| (() => Promise<X25519Keypair> | Promise<Ed25519Keypair>)
 	| X25519Keypair
 	| Ed25519Keypair;
 
@@ -86,27 +85,29 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 		return deserialize(this._data, clazz);
 	}
 
-	encrypt(
+	async encrypt(
 		keyResolver: GetEncryptionKeypair,
 		...recieverPublicKeys: (X25519PublicKey | Ed25519PublicKey)[]
-	): EncryptedThing<T> {
+	): Promise<EncryptedThing<T>> {
 		const bytes = serialize(this);
 		const epheremalKey = sodium.crypto_secretbox_keygen();
 		const nonce = randomBytes(NONCE_LENGTH); // crypto random is faster than sodim random
 		const cipher = sodium.crypto_secretbox_easy(bytes, nonce, epheremalKey);
 
 		let encryptionKeypair =
-			typeof keyResolver === "function" ? keyResolver() : keyResolver;
+			typeof keyResolver === "function" ? await keyResolver() : keyResolver;
 		if (encryptionKeypair instanceof Ed25519Keypair) {
-			encryptionKeypair = X25519Keypair.from(encryptionKeypair);
+			encryptionKeypair = await X25519Keypair.from(encryptionKeypair);
 		}
 		const x25519Keypair = encryptionKeypair as X25519Keypair;
-		const recieverX25519PublicKeys = recieverPublicKeys.map((key) => {
-			if (key instanceof Ed25519PublicKey) {
-				return X25519PublicKey.from(key);
-			}
-			return key;
-		});
+		const recieverX25519PublicKeys = await Promise.all(
+			recieverPublicKeys.map((key) => {
+				if (key instanceof Ed25519PublicKey) {
+					return X25519PublicKey.from(key);
+				}
+				return key;
+			})
+		);
 
 		const ks = recieverX25519PublicKeys.map((recieverPublicKey) => {
 			const kNonce = randomBytes(NONCE_LENGTH); // crypto random is faster than sodium random
@@ -322,7 +323,7 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
 			if (key.keypair instanceof X25519Keypair) {
 				secretKey = key.keypair.secretKey;
 			} else {
-				secretKey = X25519SecretKey.from(key.keypair.privateKey);
+				secretKey = await X25519SecretKey.from(key.keypair.privateKey);
 			}
 			let epheremalKey: Uint8Array;
 			try {

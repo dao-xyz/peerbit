@@ -47,7 +47,7 @@ export const createNode = async () => {
 	try {
 		keypair = await loadKeys();
 	} catch (error) {
-		keypair = Ed25519Keypair.create();
+		keypair = await Ed25519Keypair.create();
 		await saveKeys(keypair);
 	}
 

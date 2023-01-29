@@ -9,7 +9,6 @@ import {
 	Ed25519PublicKey,
 	X25519Keypair,
 	X25519PublicKey,
-	toBase64,
 } from "@dao-xyz/peerbit-crypto";
 import sodium from "libsodium-wrappers";
 import { dirname } from "path";

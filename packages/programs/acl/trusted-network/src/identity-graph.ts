@@ -1,4 +1,4 @@
-import { field, serialize, variant } from "@dao-xyz/borsh";
+import { field, fixedArray, serialize, variant } from "@dao-xyz/borsh";
 import {
 	Documents,
 	DocumentIndex,
@@ -7,80 +7,10 @@ import {
 	MemoryCompare,
 	MemoryCompareQuery,
 } from "@dao-xyz/peerbit-document";
-import { PeerIdAddress, PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { joinUint8Arrays } from "@dao-xyz/peerbit-borsh-utils";
 import { RPC } from "@dao-xyz/peerbit-rpc";
-import sodium from "libsodium-wrappers";
-await sodium.ready;
-
-abstract class KeyEnum {
-	equals(other: KeyEnum): boolean {
-		throw new Error("Not implemented");
-	}
-
-	hashCode(): string {
-		throw new Error("Not implemented");
-	}
-
-	get key(): PublicSignKey | PeerIdAddress {
-		throw new Error("Not implemented");
-	}
-}
-
-@variant(0)
-export class PK extends KeyEnum {
-	@field({ type: PublicSignKey })
-	_publicKey: PublicSignKey;
-
-	constructor(properties: { publicKey: PublicSignKey } | PublicSignKey) {
-		super();
-		if (properties) {
-			if (properties instanceof PublicSignKey) {
-				this._publicKey = properties;
-			} else {
-				this._publicKey = properties.publicKey;
-			}
-		}
-	}
-
-	equals(other: KeyEnum): boolean {
-		if (other instanceof PK) {
-			return other.key.equals(this.key);
-		}
-		return false;
-	}
-	get key() {
-		return this._publicKey;
-	}
-}
-
-@variant(1)
-export class IPFSId extends KeyEnum {
-	@field({ type: PeerIdAddress })
-	_id: PeerIdAddress;
-
-	constructor(properties: { id: PeerIdAddress } | PeerIdAddress) {
-		super();
-		if (properties) {
-			if (properties instanceof PeerIdAddress) {
-				this._id = properties;
-			} else {
-				this._id = properties.id;
-			}
-		}
-	}
-
-	equals(other: KeyEnum): boolean {
-		if (other instanceof IPFSId) {
-			return other.key.equals(this.key);
-		}
-		return false;
-	}
-
-	get key() {
-		return this._id;
-	}
-}
+import { sha256Sync } from "@dao-xyz/peerbit-crypto";
 
 export type RelationResolver = {
 	resolve: (
@@ -90,8 +20,8 @@ export type RelationResolver = {
 	next: (relation: IdentityRelation) => PublicSignKey;
 };
 
-export const OFFSET_TO_KEY = 73 + 1;
-export const KEY_OFFSET = 7 + 43; // Relation discriminator + IdentityRelation discriminator + id length + utf8 encoding + id chars
+export const OFFSET_TO_KEY = 74;
+export const KEY_OFFSET = 2 + 32; // Relation discriminator + IdentityRelation discriminator + id
 export const getFromByTo: RelationResolver = {
 	resolve: async (to: PublicSignKey, db: Documents<IdentityRelation>) => {
 		const ser = serialize(to);
@@ -139,7 +69,7 @@ export const getToByFrom: RelationResolver = {
 };
 
 export async function* getPathGenerator(
-	from: PublicSignKey | PeerIdAddress,
+	from: PublicSignKey,
 	db: Documents<IdentityRelation>,
 	resolver: RelationResolver
 ) {
@@ -173,8 +103,8 @@ export async function* getPathGenerator(
  * @returns
  */
 export const hasPathToTarget = async (
-	start: PublicSignKey | PeerIdAddress,
-	target: (key: PublicSignKey | PeerIdAddress) => boolean,
+	start: PublicSignKey,
+	target: (key: PublicSignKey) => boolean,
 	db: Documents<IdentityRelation>,
 	resolver: RelationResolver
 ): Promise<boolean> => {
@@ -198,47 +128,41 @@ export const hasPathToTarget = async (
 
 @variant(0)
 export abstract class AbstractRelation {
-	@field({ type: "string" })
-	id: string;
+	@field({ type: fixedArray("u8", 32) })
+	id: Uint8Array;
 }
 
 @variant(0)
 export class IdentityRelation extends AbstractRelation {
-	@field({ type: KeyEnum })
-	_from: KeyEnum;
+	@field({ type: PublicSignKey })
+	_from: PublicSignKey;
 
 	@field({ type: Uint8Array })
 	padding: Uint8Array;
 
-	@field({ type: KeyEnum })
-	_to: KeyEnum;
+	@field({ type: PublicSignKey })
+	_to: PublicSignKey;
 
 	constructor(properties?: {
-		to: PublicSignKey | PeerIdAddress; // signed by truster
-		from: PublicSignKey | PeerIdAddress;
+		to: PublicSignKey; // signed by truster
+		from: PublicSignKey;
 	}) {
 		super();
 		if (properties) {
-			this._from =
-				properties.from instanceof PublicSignKey
-					? new PK({ publicKey: properties.from })
-					: new IPFSId({ id: properties.from });
-			this._to =
-				properties.to instanceof PublicSignKey
-					? new PK({ publicKey: properties.to })
-					: new IPFSId({ id: properties.to });
+			this._from = properties.from;
+			this._to = properties.to;
 			const serFrom = serialize(this._from);
 			this.padding = new Uint8Array(OFFSET_TO_KEY - serFrom.length - 4); // -4 comes from u32 describing length the padding array
 			this.initializeId();
 		}
 	}
 
-	get from(): PublicSignKey | PeerIdAddress {
-		return this._from.key;
+	get from(): PublicSignKey {
+		return this._from;
 	}
 
-	get to(): PublicSignKey | PeerIdAddress {
-		return this._to.key;
+	get to(): PublicSignKey {
+		return this._to;
 	}
 
 	initializeId() {
@@ -246,19 +170,14 @@ export class IdentityRelation extends AbstractRelation {
 	}
 
 	static id(to: PublicSignKey, from: PublicSignKey) {
-		// we do sha1 to make sure id has fix length, this is important because we want the byte offest of the `trustee` and `truster` to be fixed
-		return sodium.crypto_generichash(
-			32,
-			joinUint8Arrays([serialize(to), serialize(from)]),
-			null,
-			"base64"
-		);
+		// we do make sure id has fixed length, this is important because we want the byte offest of the `trustee` and `truster` to be fixed
+		return sha256Sync(joinUint8Arrays([serialize(to), serialize(from)]));
 	}
 }
 
 export const hasPath = async (
-	start: PublicSignKey | PeerIdAddress,
-	end: PublicSignKey | PeerIdAddress,
+	start: PublicSignKey,
+	end: PublicSignKey,
 	db: Documents<IdentityRelation>,
 	resolver: RelationResolver
 ): Promise<boolean> => {
@@ -266,8 +185,8 @@ export const hasPath = async (
 };
 
 export const getRelation = (
-	from: PublicSignKey | PeerIdAddress,
-	to: PublicSignKey | PeerIdAddress,
+	from: PublicSignKey,
+	to: PublicSignKey,
 	db: Documents<IdentityRelation>
 ): IndexedValue<IdentityRelation> | undefined => {
 	return db.index.get(new IdentityRelation({ from, to }).id);

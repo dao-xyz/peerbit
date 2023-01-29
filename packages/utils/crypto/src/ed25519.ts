@@ -121,7 +121,8 @@ export class Ed25519Keypair extends Keypair implements Signer {
 		}
 	}
 
-	static create(): Ed25519Keypair {
+	static async create(): Promise<Ed25519Keypair> {
+		await sodium.ready;
 		const generated = sodium.crypto_sign_keypair();
 		const kp = new Ed25519Keypair();
 		kp.publicKey = new Ed25519PublicKey({

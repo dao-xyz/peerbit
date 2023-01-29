@@ -7,9 +7,6 @@ import {
 	verify,
 } from "../index.js";
 import sodium from "libsodium-wrappers";
-import { createEd25519PeerId } from "@libp2p/peer-id-factory";
-import { verifySignatureEd25519 } from "../ed25519-sign.js";
-await sodium.ready;
 
 describe("encryption", function () {
 	const config = (keypair: Ed25519Keypair | X25519Keypair) => {
@@ -32,9 +29,9 @@ describe("encryption", function () {
 		} as PublicKeyEncryptionResolver;
 	};
 	it("encrypt", async () => {
-		const senderKey = X25519Keypair.create();
-		const recieverKey1 = X25519Keypair.create();
-		const recieverKey2 = X25519Keypair.create();
+		const senderKey = await X25519Keypair.create();
+		const recieverKey1 = await X25519Keypair.create();
+		const recieverKey2 = await X25519Keypair.create();
 
 		const data = new Uint8Array([1, 2, 3]);
 		const decrypted = new DecryptedThing({
@@ -44,7 +41,7 @@ describe("encryption", function () {
 		const reciever1Config = config(recieverKey1);
 		const reciever2Config = config(recieverKey2);
 
-		const encrypted = decrypted.encrypt(
+		const encrypted = await decrypted.encrypt(
 			senderKey,
 			recieverKey1.publicKey,
 			recieverKey2.publicKey
@@ -63,9 +60,9 @@ describe("encryption", function () {
 	});
 
 	it("it can use ed25519 for encryption", async () => {
-		const senderKey = Ed25519Keypair.create();
-		const recieverKey1 = Ed25519Keypair.create();
-		const recieverKey2 = Ed25519Keypair.create();
+		const senderKey = await Ed25519Keypair.create();
+		const recieverKey1 = await Ed25519Keypair.create();
+		const recieverKey2 = await Ed25519Keypair.create();
 
 		const reciever1Config = config(recieverKey1);
 		const reciever2Config = config(recieverKey2);
@@ -75,7 +72,7 @@ describe("encryption", function () {
 			data,
 		});
 
-		const encrypted = decrypted.encrypt(
+		const encrypted = await decrypted.encrypt(
 			senderKey,
 			recieverKey1.publicKey,
 			recieverKey2.publicKey
