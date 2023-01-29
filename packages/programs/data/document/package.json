@@ -34,8 +34,7 @@
 		"@dao-xyz/borsh": "^5.1.4",
 		"@dao-xyz/peerbit-logindex": "^0.1.5",
 		"@dao-xyz/peerbit-rpc": "^0.1.5",
-		"@dao-xyz/peerbit-store": "^0.1.5",
-		"nanoid": "^4.0.0"
+		"@dao-xyz/peerbit-store": "^0.1.5"
 	},
 	"devDependencies": {
 		"@dao-xyz/peerbit-test-utils": "^0.1.5",

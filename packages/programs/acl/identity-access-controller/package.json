@@ -33,8 +33,7 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.4",
 		"@dao-xyz/peerbit-document": "^0.1.7",
-		"@dao-xyz/peerbit-trusted-network": "^0.1.7",
-		"nanoid": "^4.0.0"
+		"@dao-xyz/peerbit-trusted-network": "^0.1.7"
 	},
 	"gitHead": "9e1681454f31fd7bd9de8856a63744c66652fe15"
 }

@@ -14,8 +14,8 @@
 		"src",
 		"!src/**/__tests__",
 		"!lib/**/__tests__",
-		"!src/**/_benchmark__",
-		"!lib/**/_benchmark__",
+		"!src/**/__benchmark__",
+		"!lib/**/__benchmark__",
 		"LICENSE"
 	],
 	"publishConfig": {

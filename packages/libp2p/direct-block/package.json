@@ -26,8 +26,8 @@
 		"src",
 		"!src/**/__tests__",
 		"!lib/**/__tests__",
-		"!src/**/_benchmark__",
-		"!lib/**/_benchmark__",
+		"!src/**/__benchmark__",
+		"!lib/**/__benchmark__",
 		"LICENSE"
 	],
 	"engines": {
@@ -60,8 +60,7 @@
 		"abstract-level": "^1.0.3",
 		"libp2p": "^0.42.2",
 		"lru-cache": "^7.14.1",
-		"memory-level": "^1.0.0",
-		"nanoid": "^4.0.0"
+		"memory-level": "^1.0.0"
 	},
 	"gitHead": "9e1681454f31fd7bd9de8856a63744c66652fe15"
 }
