@@ -61,6 +61,5 @@
 		"libp2p": "^0.42.2",
 		"lru-cache": "^7.14.1",
 		"memory-level": "^1.0.0"
-	},
-	"gitHead": "9e1681454f31fd7bd9de8856a63744c66652fe15"
+	}
 }
