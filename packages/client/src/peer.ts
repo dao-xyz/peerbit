@@ -1100,10 +1100,10 @@ export class Peerbit {
 						this._libp2p.directblock,
 						storeOrAddress,
 						options
-					)) as any as S; // TODO fix typings
+					)) as S; // TODO fix typings
 					if (program instanceof Program === false) {
 						throw new Error(
-							`Failed to open program because program is of type ${program.constructor.name} and not ${Program.name}`
+							`Failed to open program because program is of type ${program?.constructor.name} and not ${Program.name}`
 						);
 					}
 				} catch (error) {
