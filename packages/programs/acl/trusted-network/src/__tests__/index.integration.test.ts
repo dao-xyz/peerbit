@@ -59,52 +59,52 @@ class IdentityGraph extends Program {
 	}
 }
 describe("index", () => {
-	let session: LSession,
-		identites: Identity[],
-		cacheStore: AbstractLevel<any, string, Uint8Array>[],
-		programs: Program[];
-
-	const identity = (i: number) => identites[i];
-	const init = async (
-		store: Program,
-		i: number,
-		options: {
-			topic: string;
-			replicate?: boolean;
-			store?: IStoreOptions<any>;
-		}
-	) => {
-		store.init &&
-			(await store.init(session.peers[i], identites[i], {
-				...options,
-				replicate: options.replicate ?? true,
-				store: {
-					...DefaultOptions,
-					resolveCache: async () => new Cache<CachedValue>(cacheStore[i]),
-					...options.store,
-				},
-			}));
-		programs.push(store);
-		return store;
-	};
-	beforeAll(async () => {
-		session = await LSession.connected(5);
-		identites = [];
-		cacheStore = [];
-		programs = [];
-
-		for (let i = 0; i < session.peers.length; i++) {
-			identites.push(await createIdentity());
-			cacheStore.push(await createStore());
-		}
-	});
-
-	afterAll(async () => {
-		await Promise.all(programs.map((p) => p.close()));
-		await session.stop();
-		await Promise.all(cacheStore?.map((c) => c.close()));
-	});
 	describe("identity-graph", () => {
+		let session: LSession,
+			identites: Identity[],
+			cacheStore: AbstractLevel<any, string, Uint8Array>[],
+			programs: Program[];
+
+		const init = async (
+			store: Program,
+			i: number,
+			options: {
+				topic: string;
+				replicate?: boolean;
+				store?: IStoreOptions<any>;
+			}
+		) => {
+			store.init &&
+				(await store.init(session.peers[i], identites[i], {
+					...options,
+					replicate: options.replicate ?? true,
+					store: {
+						...DefaultOptions,
+						resolveCache: async () => new Cache<CachedValue>(cacheStore[i]),
+						...options.store,
+					},
+				}));
+			programs.push(store);
+			return store;
+		};
+		beforeAll(async () => {
+			session = await LSession.connected(1);
+			identites = [];
+			cacheStore = [];
+			programs = [];
+
+			for (let i = 0; i < session.peers.length; i++) {
+				identites.push(await createIdentity());
+				cacheStore.push(await createStore());
+			}
+		});
+
+		afterAll(async () => {
+			await Promise.all(programs.map((p) => p.close()));
+			await session.stop();
+			await Promise.all(cacheStore?.map((c) => c.close()));
+		});
+
 		it("serializes relation with right padding ed25519", async () => {
 			const from = (await Ed25519Keypair.create()).publicKey;
 			const to = (await Ed25519Keypair.create()).publicKey;
@@ -236,6 +236,52 @@ describe("index", () => {
 	});
 
 	describe("TrustedNetwork", () => {
+		let session: LSession,
+			identites: Identity[],
+			cacheStore: AbstractLevel<any, string, Uint8Array>[],
+			programs: Program[];
+
+		const identity = (i: number) => identites[i];
+		const init = async (
+			store: Program,
+			i: number,
+			options: {
+				topic: string;
+				replicate?: boolean;
+				store?: IStoreOptions<any>;
+			}
+		) => {
+			store.init &&
+				(await store.init(session.peers[i], identites[i], {
+					...options,
+					replicate: options.replicate ?? true,
+					store: {
+						...DefaultOptions,
+						resolveCache: async () => new Cache<CachedValue>(cacheStore[i]),
+						...options.store,
+					},
+				}));
+			programs.push(store);
+			return store;
+		};
+		beforeAll(async () => {
+			session = await LSession.connected(5);
+			identites = [];
+			cacheStore = [];
+			programs = [];
+
+			for (let i = 0; i < session.peers.length; i++) {
+				identites.push(await createIdentity());
+				cacheStore.push(await createStore());
+			}
+		});
+
+		afterAll(async () => {
+			await Promise.all(programs.map((p) => p.close()));
+			await session.stop();
+			await Promise.all(cacheStore?.map((c) => c.close()));
+		});
+
 		it("can be deterministic", async () => {
 			const key = (await Ed25519Keypair.create()).publicKey;
 			const t1 = new TrustedNetwork({ id: "x", rootTrust: key });
