@@ -108,7 +108,7 @@ export class Routes {
 		} else {
 			this.graph.addLink(from, to, +new Date());
 		}
-		
+
 		return newReachableNodesFromOrigin;
 	}
 
