@@ -33,8 +33,7 @@ import path from "path-browserify";
 import { v4 as uuid } from "uuid";
 import { join } from "./replicator.js";
 import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
-
-const logger = loggerFn({ module: "store" });
+export const logger = loggerFn({ module: "store" });
 
 export class CachedValue {}
 export type AddOperationOptions<T> = {
@@ -46,33 +45,41 @@ export type AddOperationOptions<T> = {
 };
 
 @variant(0)
-export class CID extends CachedValue {
+export class CID {
 	@field({ type: "string" })
 	hash: string;
 
 	constructor(opts?: { hash: string }) {
-		super();
 		if (opts) {
 			this.hash = opts.hash;
 		}
 	}
 }
 
-@variant(1)
-export class UnsfinishedReplication extends CachedValue {
+@variant(0)
+export class CachePath {
+	@field({ type: "string" })
+	path: string;
+
+	constructor(path: string) {
+		this.path = path;
+	}
+}
+
+@variant(0)
+export class UnsfinishedReplication {
 	@field({ type: vec("string") })
 	hashes: string[];
 
 	constructor(opts?: { hashes: string[] }) {
-		super();
 		if (opts) {
 			this.hashes = opts.hashes;
 		}
 	}
 }
 
-@variant(2)
-export class HeadsCache<T> extends CachedValue {
+@variant(0)
+export class HeadsCache {
 	@field({ type: vec("string") })
 	heads: string[];
 
@@ -83,7 +90,6 @@ export class HeadsCache<T> extends CachedValue {
 	counter: bigint;
 
 	constructor(heads: string[], counter: bigint, last?: string) {
-		super();
 		this.heads = heads;
 		this.last = last;
 		this.counter = counter;
@@ -110,23 +116,19 @@ export interface IStoreOptions<T> {
 	onReplicationFetch?: (store: Store<any>, entry: Entry<T>) => void;
 	onReplicationComplete?: (store: Store<any>) => void;
 	onReady?: (store: Store<T>) => void;
-	saveFile?: (file: any) => Promise<string>;
-	loadFile?: (cid: string) => Promise<Uint8Array>;
+	onUpdate?: (change: Change<T>) => void;
 	encryption?: PublicKeyEncryptionResolver;
 	maxHistory?: number;
 	fetchEntryTimeout?: number;
 	replicationConcurrency?: number;
 	sortFn?: ISortFunction;
 	trim?: TrimOptions;
-	onUpdate?: (change: Change<T>) => void;
 }
 
 export interface IInitializationOptions<T>
 	extends IStoreOptions<T>,
 		IInitializationOptionsDefault<T> {
-	resolveCache: (
-		store: Store<any>
-	) => Promise<Cache<CachedValue>> | Cache<CachedValue>;
+	resolveCache: (store: Store<any>) => Promise<Cache> | Cache;
 }
 
 interface IInitializationOptionsDefault<T> {
@@ -181,10 +183,9 @@ export class Store<T> implements Initiable<T> {
 	encoding: Encoding<T> = JSON_ENCODING;
 
 	_store: BlockStore;
-	_cache: Cache<CachedValue>;
+	_cache: Cache;
 	_oplog: Log<T>;
 	_queue: PQueue<any, any>;
-	_txsQueue: PQueue<any, any>;
 
 	_key: string;
 
@@ -216,18 +217,14 @@ export class Store<T> implements Initiable<T> {
 			throw new Error("Already initialized");
 		}
 
-		this._saveFile =
-			options.saveFile ||
-			(async (file) => store.put(await createBlock(file, "dag-cbor")));
-		this._loadFile =
-			options.loadFile ||
-			(async (file) => {
-				const block = await store.get<Uint8Array>(file);
-				if (block) {
-					return getBlockValue<Uint8Array>(block);
-				}
-				return undefined;
-			});
+		this._saveFile = async (file) => store.put(await createBlock(file, "raw"));
+		this._loadFile = async (file) => {
+			const block = await store.get<Uint8Array>(file);
+			if (block) {
+				return getBlockValue<Uint8Array>(block);
+			}
+			return undefined;
+		};
 
 		// Set ipfs since we are to save the store
 		this._store = store;
@@ -238,6 +235,7 @@ export class Store<T> implements Initiable<T> {
 
 		// Cache
 		this._cache = await this._options.resolveCache(this);
+		await this._cache.open();
 
 		// Create IDs, names and paths
 		this.identity = identity;
@@ -259,7 +257,6 @@ export class Store<T> implements Initiable<T> {
 		// addOperation and log-joins queue. Adding ops and joins to the queue
 		// makes sure they get processed sequentially to avoid race conditions
 		this._queue = new PQueue({ concurrency: 1 });
-		this._txsQueue = new PQueue({ concurrency: 2 });
 		if (this._options.onOpen) {
 			await this._options.onOpen(this);
 		}
@@ -276,18 +273,19 @@ export class Store<T> implements Initiable<T> {
 		reset?: boolean
 	) {
 		if (typeof reset !== "boolean") {
-			let isAllHeads = true;
-			const heads: string[] = [];
-			for (const entry of change.added) {
-				const hash = typeof entry === "string" ? entry : entry.hash;
-				if (!this.oplog.headsIndex.get(hash)) {
-					isAllHeads = false;
-				} else {
-					heads.push(hash);
+			if (this.oplog.headsIndex.index.size <= change.added.length) {
+				let addedIsAllHeads = true;
+				for (const entry of change.added) {
+					const hash = typeof entry === "string" ? entry : entry.hash;
+					if (!this.oplog.headsIndex.get(hash)) {
+						addedIsAllHeads = false;
+					}
 				}
+				reset = addedIsAllHeads;
+			} else {
+				// added size < head size, meaning we have not rewritten all heads
+				reset = false;
 			}
-			reset =
-				isAllHeads && this.oplog.headsIndex.index.size === change.added.length;
 		}
 
 		// If 'reset' then dont keep references to old heads caches, assume new cache will fully describe all heads
@@ -303,21 +301,14 @@ export class Store<T> implements Initiable<T> {
 				uuid()
 			);
 			const counter = lastCounter + BigInt(hashes.length);
-			await this._cache._store.batch([
-				{
-					type: "put",
-					key: headsPath,
-					value: newHeadsPath.toString(),
-					valueEncoding: "json",
-				},
-				{
-					type: "put",
-					key: newHeadsPath,
-					value: serialize(new HeadsCache(hashes, counter, lastPath)),
-					valueEncoding: "view",
-				},
-			]);
-
+			await this._cache.set(
+				headsPath,
+				serialize(new CachePath(newHeadsPath.toString()))
+			);
+			await this._cache.set(
+				newHeadsPath,
+				serialize(new HeadsCache(hashes, counter, lastPath))
+			);
 			return { counter, newPath: newHeadsPath };
 		};
 
@@ -328,9 +319,7 @@ export class Store<T> implements Initiable<T> {
 				path.join(this.removedHeadsPath, String(this._headsPathCounter)),
 			];
 			for (const p of paths) {
-				this._txsQueue.add(async () => {
-					await this._cache.deleteByPrefix(p + "/");
-				});
+				await this._cache.deleteByPrefix(p + "/");
 			}
 
 			this._lastHeadsPath = undefined;
@@ -385,7 +374,7 @@ export class Store<T> implements Initiable<T> {
 		// to make sure everything that all operations that have
 		// been queued will be written to disk
 		await this._queue?.onIdle();
-		return this._txsQueue?.onIdle();
+		return this._cache?.idle();
 	}
 
 	async getCachedHeads(
@@ -402,7 +391,9 @@ export class Store<T> implements Initiable<T> {
 			const result: string[] = [];
 			let next = start;
 			while (next) {
-				const cache = await this._cache.getBinary(next, HeadsCache);
+				const cache = await this._cache
+					.get(next)
+					.then((bytes) => bytes && deserialize(bytes, HeadsCache));
 				next = cache?.last;
 				cache?.heads.forEach((head) => {
 					if (filter && filter.has(head)) {
@@ -474,6 +465,7 @@ export class Store<T> implements Initiable<T> {
 		}
 
 		await this.idle();
+		await this._cache.close();
 
 		this._oplog = null as any;
 		this._lastHeadsPath = undefined;
@@ -482,7 +474,6 @@ export class Store<T> implements Initiable<T> {
 		this._lastHeadsCount = 0n;
 
 		// Database is now closed
-
 		return Promise.resolve();
 	}
 
@@ -507,7 +498,6 @@ export class Store<T> implements Initiable<T> {
 		// TODO fix types
 		this._oplog = undefined as any;
 		this._cache = undefined as any;
-
 		this.initialized = false; // call this last because (close() expect initialized to be able to function)
 	}
 
@@ -516,6 +506,9 @@ export class Store<T> implements Initiable<T> {
 			throw new Error("Store needs to be initialized before loaded");
 		}
 
+		if (this._cache.status !== "open") {
+			await this._cache.open();
+		}
 		amount = amount || this._options.maxHistory;
 		const fetchEntryTimeout =
 			opts.fetchEntryTimeout || this._options.fetchEntryTimeout;
@@ -550,10 +543,12 @@ export class Store<T> implements Initiable<T> {
 	}
 
 	async loadLastHeadsPath() {
-		this._lastHeadsPath = await this._cache.get<string>(this.headsPath);
-		this._lastRemovedHeadsPath = await this._cache.get<string>(
-			this.removedHeadsPath
-		);
+		this._lastHeadsPath = await this._cache
+			.get(this.headsPath)
+			.then((bytes) => bytes && deserialize(bytes, CachePath).path);
+		this._lastRemovedHeadsPath = await this._cache
+			.get(this.removedHeadsPath)
+			.then((bytes) => bytes && deserialize(bytes, CachePath).path);
 		this._lastHeadsCount = this._lastHeadsPath
 			? await this.getCachedHeadsCount(this._lastHeadsPath)
 			: 0n;
@@ -566,7 +561,13 @@ export class Store<T> implements Initiable<T> {
 		if (!headPath) {
 			return 0n;
 		}
-		return (await this._cache.getBinary(headPath, HeadsCache))?.counter || 0n;
+		return (
+			(
+				await this._cache
+					.get(headPath)
+					.then((bytes) => bytes && deserialize(bytes, HeadsCache))
+			)?.counter || 0n
+		);
 	}
 
 	async addOperation(
@@ -750,11 +751,16 @@ export class Store<T> implements Initiable<T> {
 		);
 
 		const snapshot = await this._saveFile(buf);
-		await this._cache.setBinary(this.snapshotPath, new CID({ hash: snapshot }));
+		await this._cache.set(
+			this.snapshotPath,
+			serialize(new CID({ hash: snapshot }))
+		);
 
 		await waitForAsync(
 			async () =>
-				(await this._cache.getBinary(this.snapshotPath, CID)) !== undefined,
+				(await this._cache
+					.get(this.snapshotPath)
+					.then((bytes) => bytes && deserialize(bytes, CID))) !== undefined,
 			{ delayInterval: 200, timeout: 10 * 1000 }
 		);
 
@@ -768,7 +774,9 @@ export class Store<T> implements Initiable<T> {
 		}
 		await this.sync([]);
 
-		const snapshotCID = await this._cache.getBinary(this.snapshotPath, CID);
+		const snapshotCID = await this._cache
+			.get(this.snapshotPath)
+			.then((bytes) => bytes && deserialize(bytes, CID));
 		if (snapshotCID) {
 			const file = await this._loadFile(snapshotCID.hash);
 			if (!file) {

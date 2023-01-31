@@ -83,7 +83,7 @@ export type CreateOptions = {
 	directory?: string;
 	peerId: Ed25519PeerId;
 	storage: Storage;
-	cache: Cache<any>;
+	cache: Cache;
 	localNetwork: boolean;
 	browser?: boolean;
 } & OptionalCreateOptions;
@@ -94,7 +94,7 @@ export type CreateInstanceOptions = {
 	keystore?: Keystore;
 	peerId?: Ed25519PeerId;
 	identity?: Identity;
-	cache?: Cache<any>;
+	cache?: Cache;
 	localNetwork?: boolean;
 	browser?: boolean;
 } & OptionalCreateOptions;
@@ -139,7 +139,7 @@ export class Peerbit {
 
 	directory?: string;
 	storage: Storage;
-	caches: { [key: string]: { cache: Cache<any>; handlers: Set<string> } };
+	caches: { [key: string]: { cache: Cache; handlers: Set<string> } };
 	keystore: Keystore;
 	_minReplicas: number;
 	/// program address => Program metadata
@@ -373,6 +373,15 @@ export class Peerbit {
 		}
 		return this._encryption;
 	}
+
+	get disconnected() {
+		return this._disconnected;
+	}
+
+	get disconnecting() {
+		return this._disconnecting;
+	}
+
 	async getEncryption(): Promise<PublicKeyEncryptionResolver> {
 		this._encryption = await encryptionWithRequestKey(
 			this.identity,
@@ -601,32 +610,8 @@ export class Peerbit {
 						if (!store) {
 							throw new Error("Unexpected, missing store on sync");
 						}
-						/*          for (const v of store.oplog.heads) {
-									 if (!v.createdLocally && !(await this.findLeaders(programAddress, v.gid, programInfo.minReplicas.value)).find(x => x === this.id.toString())) {
-										 const t = 123;
-									 }
-								 }
-								 const ccc1 = [...programInfo.replicators]; */
 
 						await store.sync(toMerge);
-
-						/*  this._reorgQueue.add(async () => {
-							 const ccx = ccc1;
-							 const ccc2 = programInfo.replicators.size;
-							 const l1 = store.oplog.values.length;
-							 const l2 = store.oplog.values.length;
-							 for (const v of store.oplog.heads) {
-								 for (let i = 0; i < 100; i++) {
-									 const tmg = (await this.findLeaders(programAddress, toMerge[0].entry.gid, programInfo.minReplicas.value)).find(x => x === this.id.toString());
-									 if (!tmg) {
-										 const t = 123;
-									 }
-								 }
-								 if (!v.createdLocally && !(await this.findLeaders(programAddress, v.gid, programInfo.minReplicas.value)).find(x => x === this.id.toString())) {
-									 const t = 123;
-								 }
-							 }
-						 }) */
 					}
 				}
 				logger.debug(
@@ -1040,7 +1025,7 @@ export class Peerbit {
 	async _requestCache(
 		address: string,
 		directory: string,
-		existingCache?: Cache<any>
+		existingCache?: Cache
 	) {
 		const dir = directory || this.cacheDir;
 		if (!this.caches[dir]) {
@@ -1253,7 +1238,7 @@ export class Peerbit {
 	 * @param  {[Address]} dbAddress [Address of the database to check]
 	 * @return {[Boolean]} [Returns true if we have cached the db locally, false if not]
 	 */
-	async _haveLocalData(cache: Cache<any>, id: string) {
+	async _haveLocalData(cache: Cache, id: string) {
 		if (!cache) {
 			return false;
 		}

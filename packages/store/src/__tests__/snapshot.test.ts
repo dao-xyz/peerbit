@@ -19,16 +19,13 @@ describe(`Snapshots`, function () {
 		cacheStore: AbstractLevel<any, string, Uint8Array>;
 	let index: SimpleIndex<string>;
 
-	beforeAll(async () => {
+	beforeEach(async () => {
+		blockStore = new MemoryLevelBlockStore();
+		await blockStore.open();
 		identityStore = await createStore();
 		cacheStore = await createStore();
 		const keystore = new Keystore(identityStore);
 		signKey = await keystore.createEd25519Key();
-	});
-
-	beforeEach(async () => {
-		blockStore = new MemoryLevelBlockStore();
-		await blockStore.open();
 
 		const cache = new Cache(cacheStore);
 		store = new Store({ storeIndex: 0 });
@@ -48,7 +45,7 @@ describe(`Snapshots`, function () {
 		);
 	});
 
-	afterAll(async () => {
+	afterEach(async () => {
 		await store?.close();
 		await blockStore?.close();
 		await identityStore?.close();

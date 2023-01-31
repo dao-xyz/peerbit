@@ -23,7 +23,7 @@ describe(`Constructor`, function () {
 		const keystore = new Keystore(identityStore);
 
 		cacheStore = await createStore();
-		const cache = new Cache<CachedValue>(cacheStore);
+		const cache = new Cache(cacheStore);
 
 		signKey = await keystore.createEd25519Key();
 

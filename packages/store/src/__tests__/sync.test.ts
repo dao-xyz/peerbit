@@ -18,19 +18,18 @@ describe(`Sync`, () => {
 	let session: LSession,
 		signKey: KeyWithMeta<Ed25519Keypair>,
 		store: Store<any>,
+		store2: Store<any>,
 		keystore: Keystore,
 		cacheStore: AbstractLevel<any, string, Uint8Array>;
 
 	let index: SimpleIndex<string>;
 
-	beforeAll(async () => {
+	beforeEach(async () => {
 		cacheStore = await createStore();
 		keystore = new Keystore(await createStore());
 		session = await LSession.connected(2);
 		signKey = await keystore.createEd25519Key();
-	});
 
-	beforeEach(async () => {
 		const cache = new Cache(cacheStore);
 		store = new Store({ storeIndex: 0 });
 		index = new SimpleIndex(store);
@@ -50,7 +49,9 @@ describe(`Sync`, () => {
 		);
 	});
 
-	afterAll(async () => {
+	afterEach(async () => {
+		await store.close();
+		await store2.close();
 		await session.stop();
 		await keystore?.close();
 	});
@@ -58,7 +59,7 @@ describe(`Sync`, () => {
 	it("syncs normally", async () => {
 		const cache = new Cache(cacheStore);
 		const index2 = new SimpleIndex(store);
-		const store2 = new Store({ storeIndex: 1 });
+		store2 = new Store({ storeIndex: 1 });
 
 		await store2.init(
 			session.peers[1].directblock,
@@ -90,7 +91,7 @@ describe(`Sync`, () => {
 	it("syncs with references", async () => {
 		const cache = new Cache(cacheStore);
 		const index2 = new SimpleIndex(store);
-		const store2 = new Store({ storeIndex: 1 });
+		store2 = new Store({ storeIndex: 1 });
 
 		const fetchCallBackEntries: Entry<any>[] = [];
 		await store2.init(

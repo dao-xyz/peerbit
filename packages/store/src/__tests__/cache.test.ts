@@ -1,4 +1,4 @@
-import { Store, DefaultOptions, HeadsCache } from "../store.js";
+import { Store, DefaultOptions, HeadsCache, CachePath } from "../store.js";
 import { default as Cache } from "@dao-xyz/peerbit-cache";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Entry } from "@dao-xyz/peerbit-log";
@@ -6,6 +6,13 @@ import { SimpleIndex } from "./utils.js";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { AbstractLevel } from "abstract-level";
+import { deserialize } from "@dao-xyz/borsh";
+// Test utils
+import { createStore } from "@dao-xyz/peerbit-test-utils";
+import {
+	BlockStore,
+	MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 
 const checkHashes = async (
 	store: Store<any>,
@@ -13,13 +20,17 @@ const checkHashes = async (
 	hashes: string[][]
 ) => {
 	await store.idle();
-	let cachePath = await store._cache.get<string>(headsPath);
+	let cachePath = await store._cache
+		.get(headsPath)
+		.then((bytes) => bytes && deserialize(bytes, CachePath).path);
 	let nextPath = cachePath!;
 	let ret: string[] = [];
 	if (hashes.length > 0) {
 		for (let i = 0; i < hashes.length; i++) {
 			ret.push(nextPath);
-			let headCache = await store._cache.getBinary(nextPath!, HeadsCache);
+			let headCache = await store._cache
+				.get(nextPath!)
+				.then((bytes) => bytes && deserialize(bytes, HeadsCache));
 			expect(headCache?.heads).toContainAllValues(hashes[i]);
 			if (i === hashes.length - 1) {
 				expect(headCache?.last).toBeUndefined();
@@ -31,7 +42,9 @@ const checkHashes = async (
 	} else {
 		if (cachePath) {
 			expect(
-				await store._cache.getBinary(cachePath, HeadsCache)
+				await store._cache
+					.get(cachePath)
+					.then((bytes) => bytes && deserialize(bytes, HeadsCache))
 			).toBeUndefined();
 		}
 	}
@@ -39,21 +52,14 @@ const checkHashes = async (
 	return ret;
 };
 
-// Test utils
-import { createStore } from "@dao-xyz/peerbit-test-utils";
-import {
-	BlockStore,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
 describe(`load`, function () {
 	let blockStore: BlockStore,
 		signKey: KeyWithMeta<Ed25519Keypair>,
 		identityStore: AbstractLevel<any, string, Uint8Array>,
-		store: Store<any>,
-		cacheStore: AbstractLevel<any, string, Uint8Array>;
+		store: Store<any>;
 	let index: SimpleIndex<string>;
 
-	beforeAll(async () => {
+	beforeEach(async () => {
 		identityStore = await createStore();
 
 		const keystore = new Keystore(identityStore);
@@ -62,27 +68,19 @@ describe(`load`, function () {
 
 		blockStore = new MemoryLevelBlockStore();
 		await blockStore.open();
-
-		cacheStore = await createStore();
 	});
 
-	afterAll(async () => {
+	afterEach(async () => {
 		await store?.close();
 		await blockStore?.close();
 		await identityStore?.close();
-		await cacheStore?.close();
-	});
-
-	beforeEach(async () => {
-		await cacheStore.clear();
 	});
 
 	it("closes and loads", async () => {
-		const cache = new Cache(cacheStore);
 		let done = false;
 		store = new Store({ storeIndex: 0 });
 		index = new SimpleIndex(store);
-
+		const level = await createStore();
 		await store.init(
 			blockStore,
 			{
@@ -91,7 +89,7 @@ describe(`load`, function () {
 			},
 			{
 				...DefaultOptions,
-				resolveCache: () => Promise.resolve(cache),
+				resolveCache: async () => Promise.resolve(new Cache(level)),
 				onUpdate: index.updateIndex.bind(index),
 				onWrite: () => {
 					done = true;
@@ -105,14 +103,14 @@ describe(`load`, function () {
 		});
 
 		await waitFor(() => done);
-
 		await store.close();
 		await store.load();
 		expect(store.oplog.values.length).toEqual(1);
 	});
 
 	it("loads when missing cache", async () => {
-		const cache = new Cache(cacheStore);
+		const level = await createStore();
+		const cache = new Cache(level);
 		let done = false;
 		store = new Store({ storeIndex: 0 });
 		index = new SimpleIndex(store);
@@ -139,15 +137,15 @@ describe(`load`, function () {
 		});
 
 		await waitFor(() => done);
-
 		await store.close();
-		await store._cache.del(store.headsPath);
+		await cache.open();
+		await cache.del(store.headsPath);
 		await store.load();
 		expect(store.oplog.values.length).toEqual(0);
 	});
 
 	it("loads when corrupt cache", async () => {
-		const cache = new Cache(cacheStore);
+		const cache = new Cache(await createStore());
 		let done = false;
 		store = new Store({ storeIndex: 0 });
 		index = new SimpleIndex(store);
@@ -176,14 +174,18 @@ describe(`load`, function () {
 
 		await waitFor(() => done);
 
-		await store.close();
-		const headsPath = (await store._cache.get<string>(store.headsPath))!;
+		await store.idle();
+		const headsPath = (
+			await store._cache
+				.get(store.headsPath)
+				.then((bytes) => bytes && deserialize(bytes, CachePath))
+		)?.path!;
 		await store._cache.set(headsPath, new Uint8Array([255]));
 		await expect(() => store.load()).rejects.toThrowError();
 	});
 
 	it("will respect deleted heads", async () => {
-		const cache = new Cache(cacheStore);
+		const cache = new Cache(await createStore(), { batch: false });
 		let done = false;
 		store = new Store({ storeIndex: 0 });
 		index = new SimpleIndex(store);
@@ -231,7 +233,7 @@ describe(`load`, function () {
 		await store.removeOperation(e2);
 		expect(await store.getCachedHeads()).toContainAllValues([e3.hash]);
 
-		/// Check that memeory is correctly stored
+		/// Check that memory is correctly stored
 		const addedCacheKeys = await checkHashes(store, store.headsPath, [
 			[e3.hash],
 		]);
@@ -250,13 +252,16 @@ describe(`load`, function () {
 		await checkHashes(store, store.removedHeadsPath, []);
 
 		for (const key of [...addedCacheKeys, ...removedCacheKeys]) {
-			expect(await store._cache.getBinary(key, HeadsCache)).toBeUndefined();
+			expect(
+				await store._cache
+					.get(key)
+					.then((bytes) => bytes && deserialize(bytes, HeadsCache))
+			).toBeUndefined();
 		}
 	});
 
 	it("resets heads eventually", async () => {
-		const cache = new Cache(cacheStore);
-		let done = false;
+		const cache = new Cache(await createStore());
 		store = new Store({ storeIndex: 0 });
 		index = new SimpleIndex(store);
 
@@ -270,9 +275,6 @@ describe(`load`, function () {
 				...DefaultOptions,
 				resolveCache: () => Promise.resolve(cache),
 				onUpdate: index.updateIndex.bind(index),
-				onWrite: () => {
-					done = true;
-				},
 				trim: {
 					to: 3,
 				},
@@ -298,7 +300,7 @@ describe(`load`, function () {
 	});
 
 	it("resets heads when referencing all", async () => {
-		const cache = new Cache(cacheStore);
+		const cache = new Cache(await createStore());
 		let done = false;
 		store = new Store({ storeIndex: 0 });
 		index = new SimpleIndex(store);
