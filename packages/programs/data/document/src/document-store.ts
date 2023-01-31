@@ -40,7 +40,7 @@ export class Documents<T> extends ComposableProgram {
 	store: Store<Operation<T>>;
 
 	@field({ type: "bool" })
-	canEdit: boolean; // "Can I overwrite a document?"
+	immutable: boolean; // "Can I overwrite a document?"
 
 	@field({ type: DocumentIndex })
 	_index: DocumentIndex<T>;
@@ -56,14 +56,14 @@ export class Documents<T> extends ComposableProgram {
 	_canOpen?: (program: Program, entry: Entry<Operation<T>>) => Promise<boolean>;
 
 	constructor(properties: {
-		canEdit?: boolean;
+		immutable?: boolean;
 		index: DocumentIndex<T>;
 		logIndex?: LogIndex;
 	}) {
 		super();
 		if (properties) {
 			this.store = new Store();
-			this.canEdit = properties.canEdit || false;
+			this.immutable = properties.immutable ?? false;
 			this._index = properties.index;
 			this._logIndex = properties.logIndex || new LogIndex();
 		}
@@ -203,7 +203,7 @@ export class Documents<T> extends ComposableProgram {
 				}
 				const existingDocument = this._index.get(key);
 				if (existingDocument) {
-					if (!this.canEdit) {
+					if (this.immutable) {
 						//Key already exist and this instance Documents can note overrite/edit'
 						return false;
 					}
@@ -294,78 +294,99 @@ export class Documents<T> extends ComposableProgram {
 		const removedSet = new Set<string>(removed.map((x) => x.hash));
 		const entries = [...change.added, ...(change.removed || [])]
 			.sort(this.store.oplog._sortFn)
-			.reverse();
+			.reverse(); // sort so we get newest to oldest
 
+		// There might be a case where change.added and change.removed contains the same document id. Usaully because you use the "trim" option
+		// in combination with inserting the same document. To mitigate this, we loop through the changes and modify the behaviour for this
+
+		let dedupEntries: Entry<Operation<T>>[] = [];
+		let visited = new Set<string>();
 		for (const item of entries) {
+			const payload = await item.getPayloadValue();
+			let itemKey: string;
+			if (
+				payload instanceof PutOperation ||
+				payload instanceof DeleteOperation
+			) {
+				itemKey = payload.key;
+			} else {
+				throw new Error("Unsupported operation type");
+			}
+
+			if (visited.has(itemKey)) {
+				continue;
+			}
+			visited.add(itemKey);
+			dedupEntries.push(item);
+		}
+
+		for (const item of dedupEntries) {
 			try {
 				const payload = await item.getPayloadValue();
-				if (payload instanceof PutOperation) {
+				if (payload instanceof PutOperation && !removedSet.has(item.hash)) {
 					const key = payload.key;
-					if (removedSet.has(item.hash)) {
-						this._index._index.delete(key);
-					} else {
-						const value = this.deserializeOrPass(payload);
-						this._index._index.set(key, {
-							entry: item,
-							key: payload.key,
-							value: value,
-							context: new Context({
-								created:
-									this._index.get(key)?.context.created ||
-									item.metadata.clock.timestamp.wallTime,
-								modified: item.metadata.clock.timestamp.wallTime,
-								head: item.hash,
-							}),
-							source: payload.data,
-						});
+					const value = this.deserializeOrPass(payload);
+					this._index._index.set(key, {
+						entry: item,
+						key: payload.key,
+						value: value,
+						context: new Context({
+							created:
+								this._index.get(key)?.context.created ||
+								item.metadata.clock.timestamp.wallTime,
+							modified: item.metadata.clock.timestamp.wallTime,
+							head: item.hash,
+						}),
+						source: payload.data,
+					});
 
-						// Program specific
-						if (value instanceof Program) {
-							// TODO rm these checks
-							if (!this.replicator) {
-								throw new Error(
-									"Documents have not been initialized with the 'replicator' function, which is required for types that extends Program"
-								);
-							}
+					// Program specific
+					if (value instanceof Program) {
+						// TODO rm these checks
+						if (!this.replicator) {
+							throw new Error(
+								"Documents have not been initialized with the 'replicator' function, which is required for types that extends Program"
+							);
+						}
 
-							if (!this.open) {
-								throw new Error(
-									"Documents have not been initialized with the open function, which is required for types that extends Program"
-								);
-							}
+						if (!this.open) {
+							throw new Error(
+								"Documents have not been initialized with the open function, which is required for types that extends Program"
+							);
+						}
 
-							// if replicator, then open
-							if (
-								(await this._canOpen!(value, item)) &&
-								this.replicate &&
-								(await this.replicator!(this.parentProgram.address, item.gid))
-							) {
-								await this.open!(value);
-							}
+						// if replicator, then open
+						if (
+							(await this._canOpen!(value, item)) &&
+							this.replicate &&
+							(await this.replicator!(this.parentProgram.address, item.gid))
+						) {
+							await this.open!(value);
 						}
 					}
-				} else if (payload instanceof DeleteOperation) {
-					if (!removedSet.has(item.hash)) {
-						if (payload.permanently) {
-							// delete all nexts recursively (but dont delete the DELETE record (because we might want to share this with others))
-							const nexts = item.next
-								.map((n) => this.store.oplog.get(n))
-								.filter((x) => !!x) as Entry<any>[];
+				} else if (
+					(payload instanceof DeleteOperation && !removedSet.has(item.hash)) ||
+					payload instanceof PutOperation ||
+					removedSet.has(item.hash)
+				) {
+					/* if (payload.permanently) */
+					{
+						// delete all nexts recursively (but dont delete the DELETE record (because we might want to share this with others))
+						const nexts = item.next
+							.map((n) => this.store.oplog.get(n))
+							.filter((x) => !!x) as Entry<any>[];
 
-							await this.store.removeOperation(nexts, {
-								recursively: true,
-							});
-						}
+						await this.store.removeOperation(nexts, {
+							recursively: true,
+						});
+					}
 
-						// update index
-						const key = payload.key;
-						const value = this._index._index.get(key);
-						this._index._index.delete(key);
-						if (value?.value instanceof Program) {
-							await value?.value.close();
-						}
-					} else {
-						// TODO, a delete operation entry has been removed, this means that an entry should not be deleted, however, the inverse of deletion is to do nothing.. (?)
+					// update index
+					const key = (payload as DeleteOperation | PutOperation<T>).key;
+					const value = this._index._index.get(key);
+					this._index._index.delete(key);
+					if (value?.value instanceof Program) {
+						await value?.value.close();
 					}
 				} else {
 					// Unknown operation
