@@ -108,14 +108,7 @@ export class Routes {
 		} else {
 			this.graph.addLink(from, to, +new Date());
 		}
-
-		if (
-			newReachableNodesFromOrigin.length === 1 &&
-			this.linksCount >= 2 &&
-			linkExisted === false
-		) {
-			const t = 123;
-		}
+		
 		return newReachableNodesFromOrigin;
 	}
 
