@@ -52,6 +52,7 @@ describe(`Replication`, function () {
 	it("replicates database of 1 entry", async () => {
 		options = Object.assign({}, options);
 		let done = false;
+		let updated = 0;
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
@@ -62,6 +63,9 @@ describe(`Replication`, function () {
 				onReplicationComplete: async () => {
 					done = true;
 				},
+				onUpdate: async () => {
+					updated += 1;
+				},
 			}
 		);
 		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
@@ -71,7 +75,7 @@ describe(`Replication`, function () {
 		await db1.add(value);
 
 		await waitFor(() => done);
-
+		expect(updated).toEqual(1);
 		expect(db2.iterator({ limit: -1 }).collect().length).toEqual(1);
 
 		const db1Entries: Entry<Operation<string>>[] = db1
