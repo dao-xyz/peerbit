@@ -1083,8 +1083,7 @@ export abstract class DirectStream<
 					})
 					.catch((error) => {
 						logger.error(
-							"Cannot send RPC to %p as there is no open stream to it available",
-							id.peerId
+							"Failed to send to stream: " + id.peerId + ". " + error.message
 						);
 					});
 			} else {
