@@ -25,8 +25,8 @@ import {
 import Cache from "@dao-xyz/peerbit-cache";
 import { AbstractLevel } from "abstract-level";
 import { v4 as uuid } from "uuid";
-import { Address, Program } from "@dao-xyz/peerbit-program";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { Program } from "@dao-xyz/peerbit-program";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { DocumentIndex } from "../document-index.js";
 import {
 	HeadsMessage,
@@ -50,8 +50,6 @@ describe("index", () => {
 	};
 
 	describe("operations", () => {
-		let cacheStores: AbstractLevel<any, string, Uint8Array>[] = [];
-
 		@variant("document")
 		class Document {
 			@field({ type: "string" })
@@ -88,122 +86,23 @@ describe("index", () => {
 			}
 		}
 
-		let peersCount = 3,
-			stores: TestStore[] = [],
-			writeStore: TestStore;
-
-		beforeAll(async () => {
-			session = await LSession.connected(peersCount);
-			for (let i = 0; i < peersCount; i++) {
-				cacheStores.push(await createStore());
-			}
-			// Create store
-			for (let i = 0; i < peersCount; i++) {
-				if (i > 0) {
-					await waitForPeersStreams(
-						session.peers[i].directblock,
-						session.peers[0].directblock
-					);
-				}
-				const store =
-					i > 0
-						? (await TestStore.load<TestStore>(
-								session.peers[i].directblock,
-								stores[0].address!
-						  ))!
-						: new TestStore({
-								docs: new Documents<Document>({
-									index: new DocumentIndex({
-										indexBy: "id",
-									}),
-									canEdit: true,
-								}),
-						  });
-				const keypair = await X25519Keypair.create();
-				await store.init(session.peers[i], await createIdentity(), {
-					replicate: i === 0,
-					store: {
-						...DefaultOptions,
-						encryption: {
-							getEncryptionKeypair: () => keypair,
-							getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
-								for (let i = 0; i < publicKeys.length; i++) {
-									if (
-										publicKeys[i].equals((keypair as X25519Keypair).publicKey)
-									) {
-										return {
-											index: i,
-											keypair: keypair as Ed25519Keypair | X25519Keypair,
-										};
-									}
-								}
-							},
-						},
-						resolveCache: () => new Cache(cacheStores[i]),
-					},
-				});
-				stores.push(store);
-			}
-
-			writeStore = stores[0];
-
-			let doc = new Document({
-				id: "1",
-				name: "hello",
-				number: 1n,
-			});
-			let docEdit = new Document({
-				id: "1",
-				name: "hello world",
-				number: 1n,
-			});
-
-			let doc2 = new Document({
-				id: "2",
-				name: "hello world",
-				number: 4n,
-			});
-
-			let doc2Edit = new Document({
-				id: "2",
-				name: "hello world",
-				number: 2n,
-			});
-
-			let doc3 = new Document({
-				id: "3",
-				name: "foo",
-				number: 3n,
-			});
-
-			let doc4 = new Document({
-				id: "4",
-				name: undefined,
-				number: undefined,
-			});
-
-			await writeStore.docs.put(doc);
-			await waitFor(() => writeStore.docs.index.size === 1);
-			await writeStore.docs.put(docEdit);
-			await writeStore.docs.put(doc2);
-			await waitFor(() => writeStore.docs.index.size === 2);
-			await writeStore.docs.put(doc2Edit);
-			await writeStore.docs.put(doc3);
-			await writeStore.docs.put(doc4);
-			await waitFor(() => writeStore.docs.index.size === 4);
-		});
-
-		afterEach(async () => {});
-
-		afterAll(async () => {
-			await Promise.all(stores.map((x) => x.drop()));
-			await Promise.all(cacheStores.map((x) => x.close()));
-			await session.stop();
-		});
-
 		describe("crud", () => {
+			let cacheStore: AbstractLevel<any, string, Uint8Array>;
+			let store: TestStore;
+
+			beforeAll(async () => {
+				cacheStore = await createStore();
+				session = await LSession.connected(1);
+			});
+
+			afterAll(async () => {
+				//await cacheStore.close();
+				await store?.close();
+				await session.stop();
+			});
+
 			it("can add and delete", async () => {
-				const store = new TestStore({
+				store = new TestStore({
 					docs: new Documents<Document>({
 						index: new DocumentIndex({
 							indexBy: "id",
@@ -214,7 +113,7 @@ describe("index", () => {
 					replicate: true,
 					store: {
 						...DefaultOptions,
-						resolveCache: () => new Cache(cacheStores[0]),
+						resolveCache: () => new Cache(cacheStore),
 					},
 				});
 
@@ -240,20 +139,19 @@ describe("index", () => {
 			});
 
 			it("permanently delete", async () => {
-				const store = new TestStore({
+				store = new TestStore({
 					docs: new Documents<Document>({
 						index: new DocumentIndex({
 							indexBy: "id",
 						}),
-						canEdit: true,
+						immutable: false,
 					}),
 				});
 				await store.init(session.peers[0], await createIdentity(), {
 					replicate: true,
 					store: {
 						...DefaultOptions,
-
-						resolveCache: () => new Cache(cacheStores[0]),
+						resolveCache: () => new Cache(cacheStore),
 					},
 				});
 
@@ -283,13 +181,87 @@ describe("index", () => {
 					deleteOperation.hash,
 				]); // the delete operation
 			});
-			it("trim and update index", async () => {
-				const store = new TestStore({
+
+			it("trim deduplicate changes", async () => {
+				store = new TestStore({
 					docs: new Documents<Document>({
 						index: new DocumentIndex({
 							indexBy: "id",
 						}),
-						canEdit: true,
+					}),
+				});
+				await store.init(session.peers[0], await createIdentity(), {
+					replicate: true,
+					store: {
+						...DefaultOptions,
+						resolveCache: () => new Cache(cacheStore),
+					},
+				});
+
+				let doc = new Document({
+					id: uuid(),
+					name: "Hello world",
+				});
+
+				// put doc
+				await store.docs.put(doc);
+				expect(store.docs._index.size).toEqual(1);
+
+				// put doc again and make sure it still exist in index with trim to 1 option
+				await store.docs.put(doc, { trim: { to: 1 } });
+				expect(store.docs._index.size).toEqual(1);
+				expect(store.docs.store.oplog.values.length).toEqual(1);
+			});
+
+			it("yyyxtrim", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>({
+						index: new DocumentIndex({
+							indexBy: "id",
+						}),
+					}),
+				});
+				await store.init(session.peers[0], await createIdentity(), {
+					replicate: true,
+					store: {
+						...DefaultOptions,
+						resolveCache: () => new Cache(cacheStore),
+					},
+				});
+
+				let doc = new Document({
+					id: uuid(),
+					name: "Hello world",
+				});
+				let doc2 = new Document({
+					id: uuid(),
+					name: "Hello world",
+				});
+				let doc3 = new Document({
+					id: uuid(),
+					name: "Hello world",
+				});
+
+				const putOperation = (await store.docs.put(doc)).entry;
+				expect(store.docs._index.size).toEqual(1);
+				const putOperation2 = (await store.docs.put(doc2, { trim: { to: 2 } }))
+					.entry;
+				expect(store.docs._index.size).toEqual(2);
+				expect(store.docs.store.oplog.values.length).toEqual(2);
+				const putOperation3 = (await store.docs.put(doc3, { trim: { to: 2 } }))
+					.entry;
+				await delay(3000);
+				expect(store.docs._index.size).toEqual(2);
+				expect(store.docs.store.oplog.values.length).toEqual(2);
+			});
+
+			it("trim and update index", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>({
+						index: new DocumentIndex({
+							indexBy: "id",
+						}),
+						immutable: false,
 					}),
 				});
 
@@ -298,7 +270,7 @@ describe("index", () => {
 					store: {
 						...DefaultOptions,
 
-						resolveCache: () => new Cache(cacheStores[0]),
+						resolveCache: () => new Cache(cacheStore),
 					},
 				});
 
@@ -319,6 +291,118 @@ describe("index", () => {
 		});
 
 		describe("query", () => {
+			let peersCount = 3,
+				stores: TestStore[] = [],
+				writeStore: TestStore;
+			let cacheStores: AbstractLevel<any, string, Uint8Array>[] = [];
+
+			beforeAll(async () => {
+				session = await LSession.connected(peersCount);
+				for (let i = 0; i < peersCount; i++) {
+					cacheStores.push(await createStore());
+				}
+				// Create store
+				for (let i = 0; i < peersCount; i++) {
+					if (i > 0) {
+						await waitForPeersStreams(
+							session.peers[i].directblock,
+							session.peers[0].directblock
+						);
+					}
+					const store =
+						i > 0
+							? (await TestStore.load<TestStore>(
+									session.peers[i].directblock,
+									stores[0].address!
+							  ))!
+							: new TestStore({
+									docs: new Documents<Document>({
+										index: new DocumentIndex({
+											indexBy: "id",
+										}),
+										immutable: false,
+									}),
+							  });
+					const keypair = await X25519Keypair.create();
+					await store.init(session.peers[i], await createIdentity(), {
+						replicate: i === 0,
+						store: {
+							...DefaultOptions,
+							encryption: {
+								getEncryptionKeypair: () => keypair,
+								getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
+									for (let i = 0; i < publicKeys.length; i++) {
+										if (
+											publicKeys[i].equals((keypair as X25519Keypair).publicKey)
+										) {
+											return {
+												index: i,
+												keypair: keypair as Ed25519Keypair | X25519Keypair,
+											};
+										}
+									}
+								},
+							},
+							resolveCache: () => new Cache(cacheStores[i]),
+						},
+					});
+					stores.push(store);
+				}
+
+				writeStore = stores[0];
+
+				let doc = new Document({
+					id: "1",
+					name: "hello",
+					number: 1n,
+				});
+				let docEdit = new Document({
+					id: "1",
+					name: "hello world",
+					number: 1n,
+				});
+
+				let doc2 = new Document({
+					id: "2",
+					name: "hello world",
+					number: 4n,
+				});
+
+				let doc2Edit = new Document({
+					id: "2",
+					name: "hello world",
+					number: 2n,
+				});
+
+				let doc3 = new Document({
+					id: "3",
+					name: "foo",
+					number: 3n,
+				});
+
+				let doc4 = new Document({
+					id: "4",
+					name: undefined,
+					number: undefined,
+				});
+
+				await writeStore.docs.put(doc);
+				await waitFor(() => writeStore.docs.index.size === 1);
+				await writeStore.docs.put(docEdit);
+				await writeStore.docs.put(doc2);
+				await waitFor(() => writeStore.docs.index.size === 2);
+				await writeStore.docs.put(doc2Edit);
+				await writeStore.docs.put(doc3);
+				await writeStore.docs.put(doc4);
+				await waitFor(() => writeStore.docs.index.size === 4);
+			});
+
+			afterAll(async () => {
+				await Promise.all(stores.map((x) => x.drop()));
+				await Promise.all(cacheStores.map((x) => x.close()));
+				await session.stop();
+			});
+
 			it("match locally", async () => {
 				let response: Results<Document> = undefined as any;
 
@@ -820,7 +904,7 @@ describe("index", () => {
 									index: new DocumentIndex({
 										indexBy: "id",
 									}),
-									canEdit: true,
+									immutable: false,
 								}),
 						  });
 
