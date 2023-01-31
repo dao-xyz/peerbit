@@ -48,7 +48,10 @@ describe(`browser`, function () {
 			}),
 			{ replicate: true }
 		);
-
+		await waitForPeersBlock(
+			session.peers[0].directblock,
+			session.peers[1].directblock
+		);
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
