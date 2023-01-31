@@ -80,7 +80,7 @@ describe("index", () => {
 					replicate: options.replicate ?? true,
 					store: {
 						...DefaultOptions,
-						resolveCache: async () => new Cache<CachedValue>(cacheStore[i]),
+						resolveCache: async () => new Cache(cacheStore[i]),
 						...options.store,
 					},
 				}));
@@ -257,7 +257,7 @@ describe("index", () => {
 					replicate: options.replicate ?? true,
 					store: {
 						...DefaultOptions,
-						resolveCache: async () => new Cache<CachedValue>(cacheStore[i]),
+						resolveCache: async () => new Cache(cacheStore[i]),
 						...options.store,
 					},
 				}));
