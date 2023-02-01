@@ -2,6 +2,7 @@ import { LSession as SSession } from "@dao-xyz/libp2p-test-utils";
 import { RecursivePartial } from "@libp2p/interfaces";
 import { Datastore } from "interface-datastore";
 import { createLibp2pExtended, Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
+import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
 
 export type LibP2POptions = {
 	datastore?: RecursivePartial<Datastore> | undefined;
@@ -27,6 +28,7 @@ export class LSession {
 	static async connected(n: number) {
 		const session = await LSession.disconnected(n);
 		await session.connect();
+		await waitForPeersStreams(...session.peers.map((x) => x.directblock));
 		return session;
 	}
 

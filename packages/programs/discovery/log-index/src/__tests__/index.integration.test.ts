@@ -12,7 +12,7 @@ import {
 } from "@dao-xyz/peerbit-crypto";
 import { v4 as uuid } from "uuid";
 import { DefaultOptions, Store } from "@dao-xyz/peerbit-store";
-import Cache from "@dao-xyz/peerbit-cache";
+import Cache from "@dao-xyz/lazy-level";
 import { AbstractLevel } from "abstract-level";
 import {
 	HeadsMessage,

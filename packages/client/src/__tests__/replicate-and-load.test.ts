@@ -4,7 +4,6 @@ import mapSeries from "p-each-series";
 
 // Include test utilities
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
-import { waitForPeers as waitForPeersBlock } from "@dao-xyz/libp2p-direct-stream";
 
 describe(`Replicate and Load`, function () {
 	let session: LSession;
@@ -14,11 +13,6 @@ describe(`Replicate and Load`, function () {
 		session = await LSession.connected(2);
 		client1 = await Peerbit.create({ libp2p: session.peers[0] });
 		client2 = await Peerbit.create({ libp2p: session.peers[1] });
-
-		await waitForPeersBlock(
-			session.peers[0].directblock,
-			session.peers[1].directblock
-		);
 		// Connect the peers manually to speed up test times
 	});
 

@@ -18,7 +18,7 @@ import {
 } from "@dao-xyz/peerbit-log";
 import { Entry } from "@dao-xyz/peerbit-log";
 import { BlockStore, stringifyCid } from "@dao-xyz/libp2p-direct-block";
-import Cache from "@dao-xyz/peerbit-cache";
+import Cache from "@dao-xyz/lazy-level";
 import { variant, option, field, vec, Constructor } from "@dao-xyz/borsh";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { Snapshot } from "./snapshot.js";

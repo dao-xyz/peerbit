@@ -1,7 +1,7 @@
 {
-	"name": "@dao-xyz/peerbit-cache",
-	"version": "0.4.50",
-	"description": "Local cache for Peerbit",
+	"name": "@dao-xyz/lazy-level",
+	"version": "0.0.1",
+	"description": "Level with lazy transactions",
 	"type": "module",
 	"publishConfig": {
 		"access": "public"
@@ -34,20 +34,11 @@
 		"test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
 		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
 	},
-	"contributors": [
-		"adam-palazzo",
-		"mistakia",
-		"RichardLitt",
-		"thiagodelgado111"
-	],
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/peerbit-logger": "^0.0.5",
 		"@dao-xyz/peerbit-time": "^0.0.21",
 		"level": "^8.0.0"
-	},
-	"devDependencies": {
-		"@dao-xyz/peerbit-test-utils": "^0.1.11"
 	},
 	"localMaintainers": [
 		"dao.xyz"

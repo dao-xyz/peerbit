@@ -7,11 +7,9 @@ import {
 	checkDecodeBlock,
 } from "./block.js";
 import { variant, field, serialize, deserialize } from "@dao-xyz/borsh";
-import LRU from "lru-cache";
 import { CID } from "multiformats/cid";
 import { DirectStream, DataMessage } from "@dao-xyz/libp2p-direct-stream";
 import * as Block from "multiformats/block";
-import { delay } from "@dao-xyz/peerbit-time";
 
 export class BlockMessage {}
 
@@ -46,7 +44,6 @@ export class DirectBlock extends DirectStream implements BlockStore {
 	_localStore?: BlockStore;
 	_responseHandler?: (evt: CustomEvent<DataMessage>) => any;
 	_resolvers: Map<string, (data: Uint8Array) => void>;
-	_gossipCache?: LRU<string, Uint8Array>;
 	_gossip = false;
 	_open = false;
 
@@ -57,7 +54,6 @@ export class DirectBlock extends DirectStream implements BlockStore {
 			localStore?: BlockStore;
 			transportTopic?: string;
 			localTimeout?: number;
-			gossip?: { cache: { max?: number; ttl?: number } | false };
 		}
 	) {
 		super(libp2p, ["direct-block/1.0.0"], {
@@ -70,18 +66,6 @@ export class DirectBlock extends DirectStream implements BlockStore {
 		this._libp2p = libp2p;
 		const localTimeout = options?.localTimeout || 1000;
 		this._localStore = options?.localStore;
-
-		if (options?.gossip) {
-			this._gossip = true;
-			const gossipCacheOptions =
-				options.gossip?.cache !== false
-					? {
-							max: options.gossip?.cache.max || 1000,
-							ttl: options.gossip?.cache.ttl || 10000,
-					  }
-					: undefined; // TODO choose default variables carefully
-			this._gossipCache = gossipCacheOptions && new LRU(gossipCacheOptions);
-		}
 
 		this._resolvers = new Map();
 		this._responseHandler = async (evt: CustomEvent<DataMessage>) => {
@@ -103,8 +87,6 @@ export class DirectBlock extends DirectStream implements BlockStore {
 					await this.publish(response);
 				} else if (decoded instanceof BlockResponse) {
 					// TODO make sure we are not storing too much bytes in ram (like filter large blocks)
-					this._gossipCache &&
-						this._gossipCache.set(decoded.cid, decoded.bytes);
 
 					this._resolvers.get(decoded.cid)?.(decoded.bytes);
 				}
@@ -140,11 +122,9 @@ export class DirectBlock extends DirectStream implements BlockStore {
 		options?: GetOptions | undefined
 	): Promise<Block.Block<T, any, any, any> | undefined> {
 		const cidObject = cidifyString(cid);
-		let value =
-			(await this._readFromGossip(cid, cidObject, options)) ||
-			(this._localStore
-				? await this._localStore.get<T>(cid, options)
-				: undefined);
+		let value = this._localStore
+			? await this._localStore.get<T>(cid, options)
+			: undefined;
 
 		if (!value) {
 			// try to get it remotelly
@@ -155,37 +135,19 @@ export class DirectBlock extends DirectStream implements BlockStore {
 
 	async rm(cid: string) {
 		this._localStore?.rm(cid);
-		this._gossipCache?.delete(cid);
 	}
 
-	async open(): Promise<void> {
-		return this.start();
+	async open(): Promise<this> {
+		await this.start();
+		return this;
 	}
 	async start(): Promise<void> {
+		await this._localStore?.open();
 		await super.start();
 		this.addEventListener("data", this._responseHandler!);
-		await this._localStore?.open();
 		this._open = true;
 	}
 
-	async _readFromGossip(
-		cidString: string,
-		cidObject: CID,
-		options: { hasher?: any } = {}
-	): Promise<Block.Block<any, any, any, any> | undefined> {
-		const cached = this._gossipCache?.get(cidString);
-		if (cached) {
-			try {
-				const block = await checkDecodeBlock(cidObject, cached, {
-					hasher: options.hasher,
-				});
-				return block;
-			} catch (error) {
-				this._gossipCache?.delete(cidString); // something wrong with that block, TODO make better handling here
-				return undefined;
-			}
-		}
-	}
 	async _readFromPeers(
 		cidString: string,
 		cidObject: CID,
@@ -203,6 +165,7 @@ export class DirectBlock extends DirectStream implements BlockStore {
 						codec,
 						hasher: options?.hasher,
 					});
+
 					clearTimeout(timeoutCallback);
 					this._resolvers.delete(cidString); // TODO concurrency might not work as expected here
 					resolve(value);

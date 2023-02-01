@@ -29,11 +29,10 @@
 			"packages/programs/data/string",
 			"packages/store",
 			"packages/utils/test-utils",
-			"packages/utils/cache",
+			"packages/utils/lazy-level",
 			"packages/utils/borsh-utils",
 			"packages/utils/time",
-			"packages/utils/logger",
-			"packages/utils/lazy-level"
+			"packages/utils/logger"
 		],
 		"nohoist": [
 			"**/@babel/preset-env",

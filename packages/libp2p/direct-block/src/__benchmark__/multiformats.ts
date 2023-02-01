@@ -8,6 +8,8 @@ import { checkDecodeBlock, cidifyString, codecMap } from "../block.js";
 import { equals } from "uint8arrays";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/multiformats.ts"
+// size: 1kb x 785 ops/sec ±2.66% (86 runs sampled)
+// size: 1000kb x 38.14 ops/sec ±1.43% (40 runs sampled)
 
 abstract class DummyCid {
 	static decode(bytes: Uint8Array) {

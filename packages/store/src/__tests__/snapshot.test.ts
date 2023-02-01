@@ -1,4 +1,4 @@
-import { default as Cache } from "@dao-xyz/peerbit-cache";
+import { default as Cache } from "@dao-xyz/lazy-level";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Store, DefaultOptions } from "../store.js";
 import { Entry } from "@dao-xyz/peerbit-log";

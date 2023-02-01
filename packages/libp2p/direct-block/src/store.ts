@@ -19,7 +19,7 @@ export interface BlockStore {
 		optsions?: PutOptions
 	): Promise<string>;
 	rm(cid: string): Promise<void>;
-	open(): Promise<void>;
+	open(): Promise<this>;
 	close(): Promise<void>;
 	get status(): StoreStatus;
 }

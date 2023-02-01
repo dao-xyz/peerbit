@@ -1,5 +1,5 @@
 import { IStoreOptions, Store } from "@dao-xyz/peerbit-store";
-import Cache from "@dao-xyz/peerbit-cache";
+import Cache from "@dao-xyz/lazy-level";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { AbstractLevel } from "abstract-level";
 import { Level } from "level";

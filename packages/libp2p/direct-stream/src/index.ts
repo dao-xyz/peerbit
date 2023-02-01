@@ -14,7 +14,7 @@ import { abortableSource } from "abortable-iterator";
 import * as lp from "it-length-prefixed";
 import { Libp2p } from "libp2p";
 import { Routes } from "./routes.js";
-import LRU from "lru-cache";
+
 import { PeerMap } from "./peer-map.js";
 import { Hello, DataMessage, Message, Goodbye } from "./messages.js";
 import { waitFor } from "@dao-xyz/peerbit-time";
@@ -35,6 +35,7 @@ export type SignaturePolicy = "StictSign" | "StrictNoSign";
 
 import { sha256Base64 } from "@dao-xyz/peerbit-crypto";
 import { logger } from "./logger.js";
+import { Cache } from "./cache.js";
 export { logger };
 export interface PeerStreamsInit {
 	peerId: PeerId;
@@ -253,7 +254,7 @@ export abstract class DirectStream<
 	public emitSelf: boolean;
 	public queue: Queue;
 	public multicodecs: string[];
-	public seenCache: LRU<string, true>;
+	public seenCache: Cache;
 	public earlyGoodbyes: Map<string, Goodbye>;
 	public hellosToReplay: Map<string, Map<string, Hello>>; // key is hash of publicKey, value is map whey key is hash of signature bytes, and value is latest Hello
 	private _registrarTopologyIds: string[] | undefined;
@@ -298,7 +299,7 @@ export abstract class DirectStream<
 		this.earlyGoodbyes = new Map();
 		this.maxInboundStreams = maxInboundStreams;
 		this.maxOutboundStreams = maxOutboundStreams;
-		this.seenCache = new LRU({ ttl: 60 * 1000 });
+		this.seenCache = new Cache({ max: 1e3, ttl: 10 * 60 });
 		this.peerKeyHashToPublicKey = new Map();
 		this._onIncomingStream = this._onIncomingStream.bind(this);
 		this.onPeerConnected = this.onPeerConnected.bind(this);
@@ -668,7 +669,7 @@ export abstract class DirectStream<
 						continue;
 					}
 
-					this.seenCache.set(msgId, true);
+					this.seenCache.add(msgId);
 					this.processRpc(peerId, peerStreams, data).catch((err) =>
 						logger.warn(err)
 					);
@@ -1031,7 +1032,7 @@ export abstract class DirectStream<
 		}
 
 		const bytes = message.serialize();
-		this.seenCache.set(await this.getMsgId(bytes), true);
+		this.seenCache.add(await this.getMsgId(bytes));
 		const promises: Promise<any>[] = [];
 		for (const stream of peers.values()) {
 			const id = stream as PeerStreams;

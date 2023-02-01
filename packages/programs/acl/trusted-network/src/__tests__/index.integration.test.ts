@@ -25,7 +25,7 @@ import {
 	DefaultOptions,
 	IStoreOptions,
 } from "@dao-xyz/peerbit-store";
-import Cache from "@dao-xyz/peerbit-cache";
+import Cache from "@dao-xyz/lazy-level";
 import { field, serialize, variant } from "@dao-xyz/borsh";
 import { Program } from "@dao-xyz/peerbit-program";
 import {

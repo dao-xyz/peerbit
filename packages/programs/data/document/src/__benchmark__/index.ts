@@ -9,11 +9,10 @@ import {
 	X25519Keypair,
 	X25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
-import Cache from "@dao-xyz/peerbit-cache";
+import Cache from "@dao-xyz/lazy-level";
 import { AbstractLevel } from "abstract-level";
 import { Program } from "@dao-xyz/peerbit-program";
 import { DocumentIndex } from "../document-index.js";
-import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
 import { v4 as uuid } from "uuid";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
@@ -73,12 +72,6 @@ const createIdentity = async () => {
 
 // Create store
 for (let i = 0; i < peersCount; i++) {
-	if (i > 0) {
-		await waitForPeersStreams(
-			session.peers[i].directblock,
-			session.peers[0].directblock
-		);
-	}
 	const store =
 		i > 0
 			? (await TestStore.load<TestStore>(

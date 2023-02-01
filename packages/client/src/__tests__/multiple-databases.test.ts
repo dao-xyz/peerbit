@@ -1,7 +1,6 @@
 import { Peerbit } from "../peer";
 import { EventStore } from "./utils/stores";
 import { jest } from "@jest/globals";
-import { v4 as uuid } from "uuid";
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 import { delay } from "@dao-xyz/peerbit-time";
 

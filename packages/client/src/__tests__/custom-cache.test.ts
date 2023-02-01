@@ -3,7 +3,7 @@ import rmrf from "rimraf";
 import path from "path";
 import { Peerbit } from "../peer";
 import { createStore } from "./storage.js";
-import CustomCache from "@dao-xyz/peerbit-cache";
+import CustomCache from "@dao-xyz/lazy-level";
 import { jest } from "@jest/globals";
 import { databases } from "./utils";
 import { LSession } from "@dao-xyz/peerbit-test-utils";

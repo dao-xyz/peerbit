@@ -69,7 +69,7 @@ describe(`Create & Open`, function () {
 			it("block storage exist at path", async () => {
 				const location = (
 					client.libp2p.directblock._localStore as LevelBlockStore
-				)._level["location"];
+				)._level._store["location"];
 				expect(location).toEndWith(
 					path.join(client.directory!, "blocks").toString()
 				);

@@ -78,8 +78,10 @@ describe("program", () => {
 	it("create subprogram address", async () => {
 		const store = new Store();
 		const p = new P2(store);
-		await p.save(new MemoryLevelBlockStore());
+		const mem = await new MemoryLevelBlockStore().open();
+		await p.save(mem);
 		expect(p.program.address.toString()).toEndWith("/0");
+		await mem.close();
 	});
 
 	it("will create indices", async () => {
@@ -113,7 +115,8 @@ describe("program", () => {
 		}
 
 		const pr = new ProgramC();
-		await pr.save(new MemoryLevelBlockStore());
+		const mem = await new MemoryLevelBlockStore().open();
+		await pr.save(mem);
 
 		expect(pr._programIndex).toBeUndefined();
 		expect(pr.programA._programIndex).toEqual(0);
@@ -123,5 +126,7 @@ describe("program", () => {
 		expect(pr.programB.storeB._storeIndex).toEqual(1);
 		expect(pr.programB.programA.storeA._storeIndex).toEqual(2);
 		expect(pr.storeC._storeIndex).toEqual(3);
+
+		await mem.close();
 	});
 });

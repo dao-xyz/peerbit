@@ -13,7 +13,7 @@ import {
 	waitForPeers,
 } from "@dao-xyz/peerbit-test-utils";
 import { AbstractLevel } from "abstract-level";
-import Cache from "@dao-xyz/peerbit-cache";
+import Cache from "@dao-xyz/lazy-level";
 import { Identity } from "@dao-xyz/peerbit-log";
 import { Ed25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";

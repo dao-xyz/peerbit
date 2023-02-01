@@ -22,11 +22,10 @@ import {
 	X25519Keypair,
 	X25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
-import Cache from "@dao-xyz/peerbit-cache";
-import { AbstractLevel } from "abstract-level";
+import Cache from "@dao-xyz/lazy-level";
 import { v4 as uuid } from "uuid";
 import { Program } from "@dao-xyz/peerbit-program";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import { DocumentIndex } from "../document-index.js";
 import {
 	HeadsMessage,
@@ -257,12 +256,6 @@ describe("index", () => {
 
 				// Create store
 				for (let i = 0; i < peersCount; i++) {
-					if (i > 0) {
-						await waitForPeersStreams(
-							session.peers[i].directblock,
-							session.peers[0].directblock
-						);
-					}
 					const store =
 						i > 0
 							? (await TestStore.load<TestStore>(

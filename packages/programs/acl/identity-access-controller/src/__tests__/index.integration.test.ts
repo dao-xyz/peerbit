@@ -17,11 +17,10 @@ import {
 } from "@dao-xyz/peerbit-document";
 import type { CanAppend, Identity } from "@dao-xyz/peerbit-log";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";
-import Cache from "@dao-xyz/peerbit-cache";
+import Cache from "@dao-xyz/lazy-level";
 import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 import { Program } from "@dao-xyz/peerbit-program";
 import { IdentityAccessController } from "../acl-db";
-import { waitForPeers as waitForPeersBlock } from "@dao-xyz/libp2p-direct-stream";
 
 @variant("document")
 class Document {
@@ -114,7 +113,6 @@ describe("index", () => {
 		for (let i = 0; i < session.peers.length; i++) {
 			identites.push(await createIdentity());
 		}
-		await waitForPeersBlock(...session.peers.map((peer) => peer.directblock));
 	});
 
 	afterEach(async () => {

@@ -6,9 +6,7 @@ import { jest } from "@jest/globals";
 import { Peerbit } from "../peer";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { IStoreOptions } from "@dao-xyz/peerbit-store";
-import { v4 as uuid } from "uuid";
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
-import { waitForPeers as waitForPeersBlock } from "@dao-xyz/libp2p-direct-stream";
 
 describe(`Replication`, function () {
 	jest.setTimeout(60000);
@@ -25,11 +23,6 @@ describe(`Replication`, function () {
 
 		client1 = await Peerbit.create({ libp2p: session.peers[0] });
 		client2 = await Peerbit.create({ libp2p: session.peers[1] });
-
-		await waitForPeersBlock(
-			session.peers[0].directblock,
-			session.peers[1].directblock
-		);
 		options = Object.assign({}, options, {});
 		db1 = await client1.open(new EventStore<string>({ id: "a" }), {
 			...options,

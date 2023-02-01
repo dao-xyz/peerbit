@@ -63,8 +63,9 @@ class SlowBlockStore implements BlockStore {
 	rm(cid: string): Promise<void> {
 		return this._store.rm(cid);
 	}
-	open(): Promise<void> {
-		return this._store.open();
+	async open(): Promise<this> {
+		await this._store.open();
+		return this;
 	}
 	close(): Promise<void> {
 		return this._store.close();

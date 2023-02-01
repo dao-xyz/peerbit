@@ -1,17 +1,16 @@
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { AbstractBatchOperation, AbstractLevel } from "abstract-level";
-import { OpenOptions, DatabaseOptions } from "level";
 
 export type LevelBatchOptions = {
 	interval: number;
 	onError?: (error: any) => void;
 };
-export type CacheOptions = { batch?: LevelBatchOptions | boolean };
+export type LazyLevelOptions = { batch?: LevelBatchOptions | boolean };
 
 const logger = loggerFn({ module: "cache" });
 
-export default class Cache {
+export default class LazyLevel {
 	_store: AbstractLevel<any, any, any>;
 	_interval: any;
 	_txQueue?: AbstractBatchOperation<
@@ -26,7 +25,7 @@ export default class Cache {
 
 	constructor(
 		store: AbstractLevel<any, any, any>,
-		opts: CacheOptions = { batch: { interval: 300 } }
+		opts: LazyLevelOptions = { batch: { interval: 300 } }
 	) {
 		this._store = store;
 		if (opts.batch) {
@@ -49,7 +48,7 @@ export default class Cache {
 				throw new Error("Store is closed, so cache will never finish idling");
 			}
 			await waitFor(() => !this._txQueue || this._txQueue.length === 0, {
-				timeout: 3000,
+				timeout: this._batchOptions.interval + 100,
 				delayInterval: 100,
 			});
 		}
@@ -92,7 +91,7 @@ export default class Cache {
 							this._txPromise ? this._txPromise : Promise.resolve()
 						).finally(() =>
 							this._store
-								.batch(arr)
+								.batch(arr, { valueEncoding: "view" })
 								.then(() => {
 									arr.forEach((v) => {
 										if (v.type === "put") {
@@ -200,9 +199,7 @@ export default class Cache {
 				value: value,
 			});
 		} else {
-			return this._store.put(key, value, {
-				valueEncoding: "view",
-			});
+			return this._store.put(key, value, { valueEncoding: "view" });
 		}
 	}
 

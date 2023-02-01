@@ -13,7 +13,6 @@ import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { Program } from "@dao-xyz/peerbit-program";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Entry } from "@dao-xyz/peerbit-log";
-import { waitForPeers as waitForPeersBlock } from "@dao-xyz/libp2p-direct-stream";
 
 describe(`Subprogram`, () => {
 	let session: LSession;
@@ -88,11 +87,6 @@ describe(`Subprogram`, () => {
 			replicate: false,
 		});
 		program.accessRequests = [];
-
-		await waitForPeersBlock(
-			session.peers[0].directblock,
-			session.peers[1].directblock
-		);
 
 		await client2.open(program.address);
 

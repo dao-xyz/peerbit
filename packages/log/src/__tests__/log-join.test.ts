@@ -150,6 +150,7 @@ describe("Log - Join", function () {
 					data: "entryC" + i,
 					next: prev3 ? [prev3, n1, n2] : [n1, n2],
 				});
+
 				items1.push(n1);
 				items2.push(n2);
 				items3.push(n3);

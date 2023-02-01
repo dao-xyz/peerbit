@@ -62,11 +62,6 @@ const publicKeyFromKeyPair = (keypair: Keypair) => {
 	throw new Error("Unsupported");
 };
 
-/* const verifiedCache: { get(string: string): { publicKey: Ed25519PublicKey, data: Uint8Array }, set(string: string, value: { publicKey: Ed25519PublicKey, data: Uint8Array }): void } = new LRU({ max: 1000 })
- */
-
-const NONCE_LENGTH = 24;
-
 /**
  * Enc MSG with Metadata
  */

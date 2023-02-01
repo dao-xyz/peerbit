@@ -1,5 +1,5 @@
 import { Store, DefaultOptions, CachedValue } from "../store.js";
-import { default as Cache } from "@dao-xyz/peerbit-cache";
+import { default as Cache } from "@dao-xyz/lazy-level";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 
 // Test utils

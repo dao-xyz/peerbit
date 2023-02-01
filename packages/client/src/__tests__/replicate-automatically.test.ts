@@ -5,7 +5,6 @@ import assert from "assert";
 import mapSeries from "p-each-series";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import { waitForPeers as waitForPeersBlock } from "@dao-xyz/libp2p-direct-stream";
 
 describe(`Automatic Replication`, function () {
 	/*  let ipfsd1: Controller, ipfsd2: Controller, ipfsd3: Controller, ipfsd4: Controller, ipfs1: IPFS, ipfs2: IPFS, ipfs3: IPFS, ipfs4: IPFS */
@@ -15,11 +14,6 @@ describe(`Automatic Replication`, function () {
 		session = await LSession.connected(2);
 		client1 = await Peerbit.create({ libp2p: session.peers[0] });
 		client2 = await Peerbit.create({ libp2p: session.peers[1] });
-
-		await waitForPeersBlock(
-			session.peers[0].directblock,
-			session.peers[1].directblock
-		);
 	});
 
 	afterEach(async () => {

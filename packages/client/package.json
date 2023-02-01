@@ -29,7 +29,7 @@
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.4",
-		"@dao-xyz/peerbit-cache": "^0.4.50",
+		"@dao-xyz/lazy-level": "^0.0.1",
 		"@dao-xyz/peerbit-crypto": "^0.1.6",
 		"@dao-xyz/peerbit-keystore": "^0.1.12",
 		"@dao-xyz/peerbit-logger": "^0.0.5",
@@ -37,7 +37,6 @@
 		"@dao-xyz/peerbit-store": "^0.1.12",
 		"is-node": "^1.0.2",
 		"level": "^8.0.0",
-		"lru-cache": "^7.14.1",
 		"memory-level": "^1.0.0",
 		"p-queue": "^7.3.0"
 	},

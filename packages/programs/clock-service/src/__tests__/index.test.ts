@@ -6,7 +6,7 @@ import { Program } from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { ClockService } from "../controller";
 import { MemoryLevel } from "memory-level";
-import { default as Cache } from "@dao-xyz/peerbit-cache";
+import { default as Cache } from "@dao-xyz/lazy-level";
 import { v4 as uuid } from "uuid";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 

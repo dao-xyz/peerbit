@@ -47,7 +47,6 @@ describe("transport", function () {
 			localStore: new MemoryLevelBlockStore(),
 		});
 
-		expect((store as DirectBlock)._gossipCache).toBeUndefined();
 		expect((store as DirectBlock)._gossip).toBeFalse();
 
 		await store.open();
@@ -85,37 +84,6 @@ describe("transport", function () {
 		const t2 = +new Date();
 		expect(readData).toBeUndefined();
 		expect(t2 - t1 < 3100);
-	});
-
-	it("gossip", async () => {
-		store = new DirectBlock(session.peers[0], {
-			localStore: new MemoryLevelBlockStore(),
-			gossip: { cache: {} },
-		});
-		await store.open();
-
-		store2 = new DirectBlock(session.peers[1], {
-			gossip: { cache: {} },
-		});
-		await store2.open();
-		// await session.connect();
-		await waitForPeers(store, store2);
-
-		const data = new Uint8Array([1, 2, 3]);
-
-		const cid = await store.put(await createBlock(data, "raw"));
-		expect(stringifyCid(cid)).toEqual(
-			"zb2rhWtC5SY6zV1y2SVN119ofpxsbEtpwiqSoK77bWVzHqeWU"
-		);
-
-		await delay(5000);
-
-		await waitFor(() => store2._gossipCache!.size === 1);
-
-		store2._readFromPeers = () => Promise.resolve(undefined); // make sure we only read from gossipCache
-
-		const readData = await store2.get<Uint8Array>(stringifyCid(cid));
-		expect(await getBlockValue(readData!)).toEqual(data);
 	});
 
 	/* it('can handle conurrent read/write', async () => {
