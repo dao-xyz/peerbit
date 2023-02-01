@@ -6,7 +6,6 @@ import { DefaultOptions } from "@dao-xyz/peerbit-store";
 import { Identity } from "@dao-xyz/peerbit-log";
 import {
 	Ed25519Keypair,
-	EncryptedThing,
 	X25519Keypair,
 	X25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
@@ -15,8 +14,10 @@ import { AbstractLevel } from "abstract-level";
 import { Program } from "@dao-xyz/peerbit-program";
 import { DocumentIndex } from "../document-index.js";
 import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
+import { v4 as uuid } from "uuid";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
+// put x 9,477 ops/sec ±2.86% (80 runs sampled)
 
 @variant("document")
 class Document {
@@ -109,7 +110,8 @@ for (let i = 0; i < peersCount; i++) {
 					}
 				},
 			},
-			resolveCache: () => new Cache(cacheStores[i]),
+			resolveCache: () =>
+				new Cache(cacheStores[i], { batch: { interval: 100 } }),
 		},
 	});
 	stores.push(store);
@@ -121,11 +123,11 @@ suite
 		fn: async (deferred) => {
 			const writeStore = stores[0];
 			const doc = new Document({
-				id: "1",
+				id: uuid(),
 				name: "hello",
 				number: 1n,
 			});
-			await writeStore.docs.put(doc);
+			await writeStore.docs.put(doc, { trim: { type: "length", to: 100 } });
 			deferred.resolve();
 		},
 		defer: true,
