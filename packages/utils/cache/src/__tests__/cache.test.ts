@@ -2,7 +2,6 @@ import Cache from "../index.js";
 import assert from "assert";
 import { MemoryLevel } from "memory-level";
 import crypto from "crypto";
-import { delay } from "@dao-xyz/peerbit-time";
 export const createStore = (): MemoryLevel => {
 	return new MemoryLevel({ valueEncoding: "view" });
 };

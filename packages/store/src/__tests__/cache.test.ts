@@ -61,11 +61,8 @@ describe(`load`, function () {
 
 	beforeEach(async () => {
 		identityStore = await createStore();
-
 		const keystore = new Keystore(identityStore);
-
 		signKey = await keystore.createEd25519Key();
-
 		blockStore = new MemoryLevelBlockStore();
 		await blockStore.open();
 	});
@@ -185,7 +182,7 @@ describe(`load`, function () {
 	});
 
 	it("will respect deleted heads", async () => {
-		const cache = new Cache(await createStore(), { batch: false });
+		const cache = new Cache(await createStore());
 		let done = false;
 		store = new Store({ storeIndex: 0 });
 		index = new SimpleIndex(store);
@@ -276,6 +273,7 @@ describe(`load`, function () {
 				resolveCache: () => Promise.resolve(cache),
 				onUpdate: index.updateIndex.bind(index),
 				trim: {
+					type: "length",
 					to: 3,
 				},
 			}

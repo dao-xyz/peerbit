@@ -1,4 +1,4 @@
-import { logger } from "@dao-xyz/peerbit-logger";
+import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { AbstractBatchOperation, AbstractLevel } from "abstract-level";
 import { OpenOptions, DatabaseOptions } from "level";
@@ -9,7 +9,7 @@ export type LevelBatchOptions = {
 };
 export type CacheOptions = { batch?: LevelBatchOptions | boolean };
 
-const log = logger({ module: "cache" });
+const logger = loggerFn({ module: "cache" });
 
 export default class Cache {
 	_store: AbstractLevel<any, any, any>;
@@ -40,10 +40,24 @@ export default class Cache {
 
 	async idle() {
 		if (this._batchOptions && this._txQueue) {
-			await waitFor(() => this._txQueue!.length === 0);
+			if (
+				this._store.status !== "open" &&
+				this._store.status !== "opening" &&
+				this._txQueue &&
+				this._txQueue.length > 0
+			) {
+				throw new Error("Store is closed, so cache will never finish idling");
+			}
+			await waitFor(() => !this._txQueue || this._txQueue.length === 0, {
+				timeout: 3000,
+				delayInterval: 100,
+			});
 		}
 	}
 	async close() {
+		if (!this._store)
+			return Promise.reject(new Error("No cache store found to close"));
+
 		await this.idle(); // idle after clear interval (because else txQueue might be filled with new things that are never removed)
 		if (this._batchOptions) {
 			clearInterval(this._interval);
@@ -52,8 +66,6 @@ export default class Cache {
 			this._tempDeleted?.clear();
 		}
 
-		if (!this._store)
-			return Promise.reject(new Error("No cache store found to close"));
 		if (this.status !== "closed" && this.status !== "closing") {
 			await this._store.close();
 			return Promise.resolve();
@@ -74,13 +86,14 @@ export default class Cache {
 					this._txQueue &&
 					this._txQueue.length > 0
 				) {
-					try {
-						const arr = this._txQueue.splice(0, this._txQueue.length);
-						if (arr?.length > 0) {
-							this._txPromise = (
-								this._txPromise ? this._txPromise : Promise.resolve()
-							).finally(() => {
-								return this._store.batch(arr).then(() => {
+					const arr = this._txQueue.splice(0, this._txQueue.length);
+					if (arr?.length > 0) {
+						this._txPromise = (
+							this._txPromise ? this._txPromise : Promise.resolve()
+						).finally(() =>
+							this._store
+								.batch(arr)
+								.then(() => {
 									arr.forEach((v) => {
 										if (v.type === "put") {
 											this._tempDeleted?.delete(v.key);
@@ -90,11 +103,15 @@ export default class Cache {
 											this._tempStore!.delete(v.key);
 										}
 									});
-								});
-							});
-						}
-					} catch (error) {
-						this._batchOptions?.onError && this._batchOptions.onError(error);
+								})
+								.catch((error) => {
+									if (this._batchOptions?.onError) {
+										this._batchOptions.onError(error);
+									} else {
+										logger.error(error);
+									}
+								})
+						);
 					}
 				}
 			}, this._batchOptions.interval);
@@ -107,48 +124,10 @@ export default class Cache {
 		return this;
 	}
 
-	/**
-	 * get JSON value encoded value
-	 * @param key
-	 * @returns
-	 */
-	/* async get<T>(key: string): Promise<T | undefined> {
-		return new Promise((resolve, reject) => {
-			this._store.get(key, (err, value) => {
-				if (err) {
-					// Ignore error if key was not found
-					if (err["status"] !== 404) {
-						return reject(err);
-					}
-					resolve(undefined);
-				}
-				try {
-					resolve(value ? JSON.parse(value) : null);
-				} catch (error) {
-					reject(error);
-				}
-			});
-		});
-	} */
-
-	// Set value in the cache and return the new value
-	/* 	set(key: string, value: T) {
-			return new Promise((resolve, reject) => {
-				try {
-					this._store.put(key, JSON.stringify(value), (err) => {
-						if (err) {
-							return reject(err);
-						}
-						log.debug(`cache: Set ${key} to ${JSON.stringify(value)}`);
-						resolve(true);
-					});
-				} catch (error) {
-					reject(error);
-				}
-			});
-		} */
-
 	async get(key: string): Promise<Uint8Array | undefined> {
+		if (this._store.status !== "open") {
+			throw new Error("Cache store not open: " + this._store.status);
+		}
 		let data: Uint8Array;
 		try {
 			if (this._tempDeleted) {
@@ -168,34 +147,15 @@ export default class Cache {
 			}
 			throw err;
 		}
-		return data;
 
-		/* return new Promise((resolve, reject) => {
-			this._store.get(
-				key,
-				{ valueEncoding: "view" },
-				(err: any, value: Uint8Array | undefined) => {
-					if (err) {
-						if (err["status"] !== 404) {
-							return reject(err);
-						}
-					}
-					if (!value) {
-						resolve(undefined);
-						return;
-					}
-					try {
-						const der = value ? deserialize(value, clazz) : undefined;
-						resolve(der);
-					} catch (error) {
-						reject(error);
-					}
-				}
-			);
-		}); */
+		return data;
 	}
 
 	async getByPrefix(prefix: string): Promise<Uint8Array[]> {
+		if (this._store.status !== "open") {
+			throw new Error("Cache store not open: " + this._store.status);
+		}
+
 		const iterator = this._store.iterator<any, Uint8Array>({
 			gte: prefix,
 			lte: prefix + "\xFF",
@@ -248,6 +208,10 @@ export default class Cache {
 
 	// Remove a value and key from the cache
 	async del(key: string) {
+		if (this._store.status !== "open") {
+			throw new Error("Cache store not open: " + this._store.status);
+		}
+
 		if (this._batchOptions) {
 			this._tempDeleted!.add(key);
 			this._txQueue!.push({ type: "del", key: key });
