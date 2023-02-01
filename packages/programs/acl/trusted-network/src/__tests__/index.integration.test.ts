@@ -332,6 +332,8 @@ describe("index", () => {
 			)) as any;
 			await init(l0c, 2, { topic });
 
+			await delay(3000); // with github ci this fails for some reason, hence this delay. TODO identify what proecss to wait for
+
 			await l0c.trustGraph.index.query(
 				new DocumentQueryRequest({
 					queries: [],
