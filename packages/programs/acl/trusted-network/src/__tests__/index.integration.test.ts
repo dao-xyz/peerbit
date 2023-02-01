@@ -60,10 +60,7 @@ class IdentityGraph extends Program {
 }
 describe("index", () => {
 	describe("identity-graph", () => {
-		let session: LSession,
-			identites: Identity[],
-			cacheStore: AbstractLevel<any, string, Uint8Array>[],
-			programs: Program[];
+		let session: LSession, identites: Identity[], programs: Program[];
 
 		const init = async (
 			store: Program,
@@ -80,7 +77,7 @@ describe("index", () => {
 					replicate: options.replicate ?? true,
 					store: {
 						...DefaultOptions,
-						resolveCache: async () => new Cache(cacheStore[i]),
+						resolveCache: async () => new Cache(createStore()),
 						...options.store,
 					},
 				}));
@@ -90,19 +87,19 @@ describe("index", () => {
 		beforeAll(async () => {
 			session = await LSession.connected(1);
 			identites = [];
-			cacheStore = [];
 			programs = [];
 
 			for (let i = 0; i < session.peers.length; i++) {
 				identites.push(await createIdentity());
-				cacheStore.push(await createStore());
 			}
 		});
 
-		afterAll(async () => {
+		afterEach(async () => {
 			await Promise.all(programs.map((p) => p.close()));
+		});
+
+		afterAll(async () => {
 			await session.stop();
-			await Promise.all(cacheStore?.map((c) => c.close()));
 		});
 
 		it("serializes relation with right padding ed25519", async () => {

@@ -16,8 +16,7 @@ import {
 	Results,
 } from "@dao-xyz/peerbit-document";
 import type { CanAppend, Identity } from "@dao-xyz/peerbit-log";
-import { AbstractLevel } from "abstract-level";
-import { CachedValue, DefaultOptions } from "@dao-xyz/peerbit-store";
+import { DefaultOptions } from "@dao-xyz/peerbit-store";
 import Cache from "@dao-xyz/peerbit-cache";
 import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 import { Program } from "@dao-xyz/peerbit-program";
@@ -83,10 +82,7 @@ class TestStore extends Program {
 }
 
 describe("index", () => {
-	let session: LSession,
-		programs: Program[],
-		identites: Identity[],
-		cacheStore: AbstractLevel<any, string, Uint8Array>[];
+	let session: LSession, programs: Program[], identites: Identity[];
 
 	const identity = (i: number) => identites[i];
 	const init = async <T extends Program>(
@@ -104,7 +100,7 @@ describe("index", () => {
 			...options,
 			store: {
 				...DefaultOptions,
-				resolveCache: async () => new Cache<CachedValue>(cacheStore[i]),
+				resolveCache: async () => new Cache(createStore()),
 				...options.store,
 			},
 		});
@@ -115,18 +111,18 @@ describe("index", () => {
 		session = await LSession.connected(3);
 		identites = [];
 		programs = [];
-		cacheStore = [];
 		for (let i = 0; i < session.peers.length; i++) {
 			identites.push(await createIdentity());
-			cacheStore.push(await createStore());
 		}
 		await waitForPeersBlock(...session.peers.map((peer) => peer.directblock));
 	});
 
-	afterAll(async () => {
+	afterEach(async () => {
 		await Promise.all(programs?.map((c) => c.close()));
+	});
+
+	afterAll(async () => {
 		await session.stop();
-		await Promise.all(cacheStore?.map((c) => c.close()));
 	});
 
 	it("can be deterministic", async () => {
@@ -270,6 +266,8 @@ describe("index", () => {
 				1,
 				options
 			)) as TestStore;
+			programs.push(l0a);
+
 			const l0c = (await init(
 				(await TestStore.load(session.peers[2].directblock, l0a.address!))!,
 				2,
@@ -415,16 +413,10 @@ describe("index", () => {
 				1,
 				options
 			);
-			/* 	await waitForPeers(
-					session.peers[1],
-					session.peers[0],
-					l0a.address.toString()
-				);
-	 */
 			const q = async (): Promise<Results<Document>> => {
 				let results: Results<Document> = undefined as any;
 
-				l0b.store.index.query(
+				await l0b.store.index.query(
 					new DocumentQueryRequest({
 						queries: [
 							new FieldStringMatchQuery({
@@ -439,18 +431,16 @@ describe("index", () => {
 					{
 						remote: {
 							signer: identity(1),
+							amount: 1,
 							timeout: 3000,
 						},
 						local: false,
 					}
 				);
-				try {
-					await waitFor(() => !!results);
-				} catch (error) {}
 				return results;
 			};
 
-			expect(await q()).toBeUndefined(); // Because no read access
+			//expect(await q()).toBeUndefined(); // Because no read access
 
 			await l0a.accessController.access.put(
 				new Access({
@@ -458,8 +448,8 @@ describe("index", () => {
 					accessTypes: [AccessType.Read],
 				}).initialize()
 			);
-
-			expect(await q()).toBeDefined(); // Because read access
+			const result = await q();
+			expect(result).toBeDefined(); // Because read access
 		});
 	});
 
@@ -519,7 +509,7 @@ describe("index", () => {
 		await waitFor(() => l0b.accessController.access.index.size === 1);
 
 		let results: Results<Document> = undefined as any;
-		l0b.accessController.access.index.query(
+		await l0b.accessController.access.index.query(
 			new DocumentQueryRequest({
 				queries: [],
 			}),

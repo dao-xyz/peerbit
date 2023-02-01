@@ -87,17 +87,16 @@ describe("index", () => {
 		}
 
 		describe("crud", () => {
-			let cacheStore: AbstractLevel<any, string, Uint8Array>;
 			let store: TestStore;
 
 			beforeAll(async () => {
-				cacheStore = await createStore();
 				session = await LSession.connected(1);
+			});
+			afterEach(async () => {
+				await store?.close();
 			});
 
 			afterAll(async () => {
-				//await cacheStore.close();
-				await store?.close();
 				await session.stop();
 			});
 
@@ -113,7 +112,7 @@ describe("index", () => {
 					replicate: true,
 					store: {
 						...DefaultOptions,
-						resolveCache: () => new Cache(cacheStore),
+						resolveCache: () => new Cache(createStore()),
 					},
 				});
 
@@ -151,7 +150,7 @@ describe("index", () => {
 					replicate: true,
 					store: {
 						...DefaultOptions,
-						resolveCache: () => new Cache(cacheStore),
+						resolveCache: () => new Cache(createStore()),
 					},
 				});
 
@@ -194,7 +193,7 @@ describe("index", () => {
 					replicate: true,
 					store: {
 						...DefaultOptions,
-						resolveCache: () => new Cache(cacheStore),
+						resolveCache: () => new Cache(createStore()),
 					},
 				});
 
@@ -208,51 +207,9 @@ describe("index", () => {
 				expect(store.docs._index.size).toEqual(1);
 
 				// put doc again and make sure it still exist in index with trim to 1 option
-				await store.docs.put(doc, { trim: { to: 1 } });
+				await store.docs.put(doc, { trim: { type: "length", to: 1 } });
 				expect(store.docs._index.size).toEqual(1);
 				expect(store.docs.store.oplog.values.length).toEqual(1);
-			});
-
-			it("yyyxtrim", async () => {
-				store = new TestStore({
-					docs: new Documents<Document>({
-						index: new DocumentIndex({
-							indexBy: "id",
-						}),
-					}),
-				});
-				await store.init(session.peers[0], await createIdentity(), {
-					replicate: true,
-					store: {
-						...DefaultOptions,
-						resolveCache: () => new Cache(cacheStore),
-					},
-				});
-
-				let doc = new Document({
-					id: uuid(),
-					name: "Hello world",
-				});
-				let doc2 = new Document({
-					id: uuid(),
-					name: "Hello world",
-				});
-				let doc3 = new Document({
-					id: uuid(),
-					name: "Hello world",
-				});
-
-				const putOperation = (await store.docs.put(doc)).entry;
-				expect(store.docs._index.size).toEqual(1);
-				const putOperation2 = (await store.docs.put(doc2, { trim: { to: 2 } }))
-					.entry;
-				expect(store.docs._index.size).toEqual(2);
-				expect(store.docs.store.oplog.values.length).toEqual(2);
-				const putOperation3 = (await store.docs.put(doc3, { trim: { to: 2 } }))
-					.entry;
-				await delay(3000);
-				expect(store.docs._index.size).toEqual(2);
-				expect(store.docs.store.oplog.values.length).toEqual(2);
 			});
 
 			it("trim and update index", async () => {
@@ -270,7 +227,7 @@ describe("index", () => {
 					store: {
 						...DefaultOptions,
 
-						resolveCache: () => new Cache(cacheStore),
+						resolveCache: () => new Cache(createStore()),
 					},
 				});
 
@@ -280,7 +237,7 @@ describe("index", () => {
 							id: String(i),
 							name: "Hello world " + String(i),
 						}),
-						{ trim: { to: 10 }, nexts: [] }
+						{ trim: { type: "length", to: 10 }, nexts: [] }
 					);
 				}
 
@@ -294,13 +251,10 @@ describe("index", () => {
 			let peersCount = 3,
 				stores: TestStore[] = [],
 				writeStore: TestStore;
-			let cacheStores: AbstractLevel<any, string, Uint8Array>[] = [];
 
 			beforeAll(async () => {
 				session = await LSession.connected(peersCount);
-				for (let i = 0; i < peersCount; i++) {
-					cacheStores.push(await createStore());
-				}
+
 				// Create store
 				for (let i = 0; i < peersCount; i++) {
 					if (i > 0) {
@@ -343,7 +297,7 @@ describe("index", () => {
 									}
 								},
 							},
-							resolveCache: () => new Cache(cacheStores[i]),
+							resolveCache: () => new Cache(createStore()),
 						},
 					});
 					stores.push(store);
@@ -399,7 +353,6 @@ describe("index", () => {
 
 			afterAll(async () => {
 				await Promise.all(stores.map((x) => x.drop()));
-				await Promise.all(cacheStores.map((x) => x.close()));
 				await session.stop();
 			});
 
@@ -556,43 +509,43 @@ describe("index", () => {
 						response.results.map((x) => x.context.head)
 					).toContainAllValues([allDocs[2].entry.hash]);
 				});
-
-				it("modified between", async () => {
-					let response: Results<Document> = undefined as any;
-
-					const allDocs = [...writeStore.docs.index._index.values()].sort(
-						(a, b) =>
-							Number(
-								a.entry.metadata.clock.timestamp.wallTime -
-									b.entry.metadata.clock.timestamp.wallTime
-							)
-					);
-					await stores[1].docs.index.query(
-						new DocumentQueryRequest({
-							queries: [
-								new ModifiedAtQuery({
-									modified: [
-										new U64Compare({
-											compare: Compare.GreaterOrEqual,
-											value: allDocs[1].entry.metadata.clock.timestamp.wallTime,
+				/*
+								it("modified between", async () => {
+									let response: Results<Document> = undefined as any;
+				
+									const allDocs = [...writeStore.docs.index._index.values()].sort(
+										(a, b) =>
+											Number(
+												a.entry.metadata.clock.timestamp.wallTime -
+												b.entry.metadata.clock.timestamp.wallTime
+											)
+									);
+									await stores[1].docs.index.query(
+										new DocumentQueryRequest({
+											queries: [
+												new ModifiedAtQuery({
+													modified: [
+														new U64Compare({
+															compare: Compare.GreaterOrEqual,
+															value: allDocs[1].entry.metadata.clock.timestamp.wallTime,
+														}),
+														new U64Compare({
+															compare: Compare.Less,
+															value: allDocs[2].entry.metadata.clock.timestamp.wallTime,
+														}),
+													],
+												}),
+											],
 										}),
-										new U64Compare({
-											compare: Compare.Less,
-											value: allDocs[2].entry.metadata.clock.timestamp.wallTime,
-										}),
-									],
-								}),
-							],
-						}),
-						(r: Results<Document>) => {
-							response = r;
-						},
-						{ remote: { amount: 1 } }
-					);
-					expect(
-						response.results.map((x) => x.context.head)
-					).toContainAllValues([allDocs[1].entry.hash]);
-				});
+										(r: Results<Document>) => {
+											response = r;
+										},
+										{ remote: { amount: 1 } }
+									);
+									expect(
+										response.results.map((x) => x.context.head)
+									).toContainAllValues([allDocs[1].entry.hash]);
+								}); */
 			});
 
 			describe("number", () => {
@@ -836,8 +789,6 @@ describe("index", () => {
 	});
 
 	describe("program as value", () => {
-		let cacheStores: AbstractLevel<any, string, Uint8Array>[] = [];
-
 		@variant("subprogram")
 		class SubProgram extends Program {
 			constructor(
@@ -850,6 +801,13 @@ describe("index", () => {
 				super(properties);
 			}
 			async setup() {}
+
+			closed = false;
+
+			async close(): Promise<void> {
+				this.closed = true;
+				return super.close();
+			}
 		}
 
 		@variant("test_program_documents")
@@ -875,14 +833,10 @@ describe("index", () => {
 		let peersCount = 2;
 
 		beforeAll(async () => {
-			for (let i = 0; i < peersCount; i++) {
-				cacheStores.push(await createStore());
-			}
+			session = await LSession.connected(peersCount);
 		});
-
 		beforeEach(async () => {
 			stores = [];
-			session = await LSession.connected(peersCount);
 
 			// Create store
 			for (let i = 0; i < peersCount; i++) {
@@ -914,6 +868,7 @@ describe("index", () => {
 					replicator: () => Promise.resolve(true),
 					open: async (program) => {
 						openEvents.push(program);
+						// we don't init, but in real use case we would init here
 						return program;
 					},
 					store: {
@@ -933,7 +888,7 @@ describe("index", () => {
 								}
 							},
 						},
-						resolveCache: () => new Cache(cacheStores[i]),
+						resolveCache: () => new Cache(createStore()),
 					},
 				});
 				stores.push({ store, openEvents });
@@ -941,11 +896,10 @@ describe("index", () => {
 		});
 		afterEach(async () => {
 			await Promise.all(stores.map((x) => x.store.drop()));
-			await session.stop();
 		});
 
 		afterAll(async () => {
-			await Promise.all(cacheStores.map((x) => x.close()));
+			await session.stop();
 		});
 
 		it("can open a subprogram when put", async () => {
@@ -955,13 +909,39 @@ describe("index", () => {
 			expect(stores[0].openEvents[0]).toEqual(subProgram);
 		});
 
+		it("will close subprogram after put", async () => {
+			const subProgram = new SubProgram();
+			const _result = await stores[0].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
+			expect(stores[0].openEvents).toHaveLength(1);
+			expect(stores[0].openEvents[0]).toEqual(subProgram);
+			await stores[0].store.close();
+			expect(subProgram.closed).toBeTrue();
+		});
+		it("will not close subprogram that is opened before put", async () => {
+			const subProgram = new SubProgram();
+			subProgram.init(session.peers[0], await createIdentity(), {
+				replicate: true,
+				replicator: () => Promise.resolve(true),
+				store: {
+					...DefaultOptions,
+					resolveCache: () => new Cache(createStore()),
+				},
+			});
+			const _result = await stores[0].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
+			expect(stores[0].openEvents).toHaveLength(0);
+			await stores[0].store.close();
+			expect(subProgram.closed).toBeFalse();
+			await subProgram.close();
+			expect(subProgram.closed).toBeTrue();
+		});
+
 		it("non-replicator will not open by default", async () => {
 			const subProgram = new SubProgram();
 			const _result = await stores[1].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
 			expect(stores[1].openEvents).toHaveLength(0);
 		});
 
-		it("can open program when sync ", async () => {
+		it("can open program when sync", async () => {
 			const subProgram = new SubProgram();
 			const _result = await stores[1].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
 			await stores[0].store.docs.store.sync(

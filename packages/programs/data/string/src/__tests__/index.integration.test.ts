@@ -33,9 +33,7 @@ describe("query", () => {
 		observer: Libp2pExtended,
 		writer: Libp2pExtended,
 		writeStore: DString,
-		observerStore: DString,
-		cacheStore1: AbstractLevel<any, string, Uint8Array>,
-		cacheStore2: AbstractLevel<any, string, Uint8Array>;
+		observerStore: DString;
 
 	beforeAll(async () => {
 		session = await LSession.connected(2);
@@ -44,9 +42,6 @@ describe("query", () => {
 	});
 
 	beforeEach(async () => {
-		cacheStore1 = await createStore();
-		cacheStore2 = await createStore();
-
 		// Create store
 		writeStore = new DString({});
 		await writeStore.init(writer, await createIdentity(), {
@@ -57,7 +52,7 @@ describe("query", () => {
 					getAnyKeypair: (_) => Promise.resolve(undefined),
 					getEncryptionKeypair: () => Ed25519Keypair.create(),
 				},
-				resolveCache: () => new Cache(cacheStore1),
+				resolveCache: () => new Cache(createStore()),
 			},
 		});
 
@@ -69,7 +64,7 @@ describe("query", () => {
 		await observerStore.init(observer, await createIdentity(), {
 			store: {
 				...DefaultOptions,
-				resolveCache: () => new Cache(cacheStore2),
+				resolveCache: () => new Cache(createStore()),
 			},
 		});
 
@@ -82,8 +77,6 @@ describe("query", () => {
 	afterEach(async () => {
 		await writeStore.close();
 		await observerStore.close();
-		await cacheStore1.close();
-		await cacheStore2.close();
 	});
 
 	afterAll(async () => {
@@ -210,7 +203,7 @@ describe("query", () => {
 					getAnyKeypair: (_) => Promise.resolve(undefined),
 					getEncryptionKeypair: () => Ed25519Keypair.create(),
 				},
-				resolveCache: () => new Cache(cacheStore1),
+				resolveCache: () => new Cache(createStore()),
 			},
 		});
 
@@ -227,8 +220,9 @@ describe("query", () => {
 			}
 		);
 		await store.close();
-		await delay(3000); // TODO store is async?
+		await delay(1000); // TODO store is async?
 		await store.load();
 		await waitFor(() => store.store.oplog.values.length === 1);
+		await store.close();
 	});
 });
