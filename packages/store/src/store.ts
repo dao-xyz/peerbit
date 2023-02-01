@@ -112,14 +112,12 @@ export interface IStoreOptions<T> {
 	onLoadProgress?: (store: Store<T>, entry: Entry<T>) => void;
 	onWrite?: (store: Store<T>, _entry: Entry<T>) => void;
 	onOpen?: (store: Store<any>) => Promise<void>;
-	onReplicationQueued?: (store: Store<any>, entry: Entry<T>) => void;
-	onReplicationFetch?: (store: Store<any>, entry: Entry<T>) => void;
-	onReplicationComplete?: (store: Store<any>) => void;
-	onReady?: (store: Store<T>) => void;
+	onReplicationQueued?: (store: Store<any>, entry: Entry<T>) => void; // TODO, do we need this?
+	onReplicationFetch?: (store: Store<any>, entry: Entry<T>) => void; // TODO, do we need this?
+	onReplicationComplete?: (store: Store<any>) => void; // TODO, do we need this?
+	onReady?: (store: Store<T>) => void; // TODO, do we need this?
 	onUpdate?: (change: Change<T>) => void;
 	encryption?: PublicKeyEncryptionResolver;
-	maxHistory?: number;
-	fetchEntryTimeout?: number;
 	replicationConcurrency?: number;
 	sortFn?: ISortFunction;
 	trim?: TrimOptions;
@@ -132,14 +130,12 @@ export interface IInitializationOptions<T>
 }
 
 interface IInitializationOptionsDefault<T> {
-	maxHistory?: number;
 	replicationConcurrency?: number;
 	typeMap?: { [key: string]: Constructor<any> };
 	cacheId: string;
 }
 
 export const DefaultOptions: IInitializationOptionsDefault<any> = {
-	maxHistory: -1,
 	replicationConcurrency: 32,
 	cacheId: "id",
 	typeMap: {},
@@ -369,12 +365,12 @@ export class Store<T> implements Initiable<T> {
 		}
 	}
 
-	async idle(): Promise<any> {
+	async idle(): Promise<void> {
 		// Wait for the operations queue to finish processing
 		// to make sure everything that all operations that have
 		// been queued will be written to disk
 		await this._queue?.onIdle();
-		return this._cache?.idle();
+		await this._cache?.idle();
 	}
 
 	async getCachedHeads(
@@ -489,6 +485,10 @@ export class Store<T> implements Initiable<T> {
 			await this._options.onDrop(this);
 		}
 
+		if (this._cache.status !== "open") {
+			await this._cache.open();
+		}
+
 		await this._cache.del(this.headsPath);
 		await this._cache.del(this.snapshotPath);
 
@@ -501,7 +501,7 @@ export class Store<T> implements Initiable<T> {
 		this.initialized = false; // call this last because (close() expect initialized to be able to function)
 	}
 
-	async load(amount?: number, opts: { fetchEntryTimeout?: number } = {}) {
+	private async loadHeads(): Promise<string[]> {
 		if (!this.initialized) {
 			throw new Error("Store needs to be initialized before loaded");
 		}
@@ -509,25 +509,36 @@ export class Store<T> implements Initiable<T> {
 		if (this._cache.status !== "open") {
 			await this._cache.open();
 		}
-		amount = amount || this._options.maxHistory;
-		const fetchEntryTimeout =
-			opts.fetchEntryTimeout || this._options.fetchEntryTimeout;
-
-		if (this._options.onLoad) {
-			await this._options.onLoad(this);
-		}
 
 		await this.loadLastHeadsPath();
 		const heads = await this.getCachedHeads(
 			this._lastHeadsPath,
 			this._lastRemovedHeadsPath
 		);
+		return heads;
+	}
+
+	async load(amount?: number, opts?: { fetchEntryTimeout?: number }) {
+		if (!this.initialized) {
+			throw new Error("Store needs to be initialized before loaded");
+		}
+
+		if (this._cache.status !== "open") {
+			await this._cache.open();
+		}
+		amount = amount ?? -1;
+
+		if (this._options.onLoad) {
+			await this._options.onLoad(this);
+		}
+
+		const heads = await this.loadHeads();
 
 		// Load the log
 		const log = await Log.fromEntryHash(this._store, this.identity, heads, {
 			...this.logOptions,
 			length: amount,
-			timeout: fetchEntryTimeout,
+			timeout: opts?.fetchEntryTimeout,
 			onFetched: this._onLoadProgress.bind(this),
 			concurrency: this._options.replicationConcurrency,
 		});
