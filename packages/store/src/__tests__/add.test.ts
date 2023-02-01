@@ -22,28 +22,20 @@ describe(`addOperation`, function () {
 		cacheStore: AbstractLevel<any, string, Uint8Array>;
 	let index: SimpleIndex<string>;
 
-	beforeAll(async () => {
+	beforeEach(async () => {
 		identityStore = await createStore();
-
 		const keystore = new Keystore(identityStore);
-
 		signKey = await keystore.createEd25519Key();
-
 		blockStore = new MemoryLevelBlockStore();
 		await blockStore.open();
-
 		cacheStore = await createStore();
 	});
 
-	afterAll(async () => {
+	afterEach(async () => {
 		await store?.close();
 		await blockStore?.close();
 		await identityStore?.close();
 		await cacheStore?.close();
-	});
-
-	beforeEach(async () => {
-		await cacheStore.clear();
 	});
 
 	it("adds an operation and triggers the write event", async () => {

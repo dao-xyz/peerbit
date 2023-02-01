@@ -51,16 +51,6 @@ After a while a domain will be written out that you can access and learn more ab
 
 
 4. 
-You might want to subscribe to a few topics. If you are working on an app where you rely on some topic, e.g. "world". Then you want to run following commands
-
-```sh
-peerbit topic add "_"
-peerbit topic add "world"
-```
-
-First topic is the general topic for messages.
-
-5. 
 If you ssh'ed into a some server, remember to do this before exiting the terminal:
 
 Remove all jobs from the shell and make them ignore SIGHUP

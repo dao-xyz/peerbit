@@ -40,7 +40,6 @@ describe(`Replicate and Load`, function () {
 					id: "events",
 				})
 			);
-			// Set 'localOnly' flag on and it'll error if the database doesn't exist locally
 			db2 = await client2.open<EventStore<string>>(
 				(await EventStore.load<EventStore<string>>(
 					client2.libp2p.directblock,

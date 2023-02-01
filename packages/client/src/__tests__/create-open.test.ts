@@ -5,17 +5,15 @@ import path from "path";
 import { Peerbit } from "../peer";
 import { KeyBlocks } from "./utils/stores/key-value-store";
 
-import { Address } from "@dao-xyz/peerbit-program";
 import { EventStore } from "./utils/stores";
 
 // @ts-ignore
 import { v4 as uuid } from "uuid";
-import { jest } from "@jest/globals";
 
 // Include test utilities
 import { LSession } from "@dao-xyz/libp2p-test-utils";
 import { Program } from "@dao-xyz/peerbit-program";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import { LevelBlockStore } from "@dao-xyz/libp2p-direct-block";
 
 const dbPath = path.join("./peerbit", "tests", "create-open");
@@ -59,7 +57,6 @@ describe(`Create & Open`, function () {
 					directory: localDataPath,
 					replicate: false,
 				});
-				await db.close();
 			});
 			afterEach(async () => {
 				await db.drop();

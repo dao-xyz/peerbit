@@ -4,9 +4,9 @@
     <img width="140" src="./logo512.png"  alt="Peerbit icon Icon">
 </p>
 
-<h1 align="center">
+<h1 align="center" style="font-size: 5vmin;">
     <strong>
-        P   e   e   r   b   i   t
+        Peerbit
    </strong>
 </h1>
 <h3 align="center">
@@ -19,7 +19,7 @@
 ![tests](https://github.com/dao-xyz/peerbit/actions/workflows/ci.yml/badge.svg)
 
 ## P2P databases simplified
-Started originally as a fork of OrbitDB: A peer-to-peer database on top of Libp2p and optionally IPFS supporting encryption, sharding and discoverability (searching).
+Started originally as a fork of OrbitDB: A peer-to-peer database on top of Libp2p (and optionally IPFS) supporting encryption, sharding and discoverability (searching).
 
 Peerbit provides an abstraction layer that lets you program with distributed data types. For example, ```String``` can be replaced with [DString](./packages/programs/data/string) (distributed string). Some datatypes, like [Document store](./packages/programs/data/document) are sharded automatically as long as there are not data dependencies between indiviudal documents.
  
@@ -30,7 +30,7 @@ Peers have the possibility to organize themselves into "permissioned" regions. W
 Data can be shared and encrypted on a granular level, you can decide exactly what parts of metadata should be public and not. When you create a commit or a query request, you can specify exactly who is going to be able to decrypt the message. If you want an end to end conversation between two identities, you just include the other peers' public key as a receiver and you would be certain that know one in the middle would be able to read your message.
 
 ### Goals
-The goal of this project is to create a **cheaper** and **more private** way of distributing and accessing data by utilizing consumer hardware and the latest advancements in networking technology. Additionally, we believe that creating a stateful application should and could be made easier if you are approaching it with a P2P database framework like this, since there are no "servers" and "clients", just peers. It should not take longer than a weekend to get started to build your first distributed app!
+The goal of this project is to create a  <span style="color:coral;">cheaper</span> and a more <span style="color:coral;">private</span> way of distributing and accessing data by utilizing consumer hardware and the latest advancements in networking technology. Additionally, we believe that creating a stateful application should and could be made easier if you are approaching it with a P2P database framework like this, since there are no "servers" and "clients", just peers. It should not take longer than a weekend to get started to build your first distributed app!
 
 ### Timeline and progress
 
@@ -131,7 +131,6 @@ console.log(await document.string.toString({remote: {waitFor: 3000 }})) // 'hell
 ## [Peerbit](./packages/client)
 The peer client
 - Open/close programs (databases)
-- Subscribe to replication topics
 
 ### Installation 
 ```sh

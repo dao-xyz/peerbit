@@ -46,8 +46,12 @@ const uniqueEntriesReducer = <T>(res: Map<string, Entry<T>>, acc: Entry<T>) => {
 	return res;
 };
 
-export type TrimToLengthOption = { to: number; from?: number };
-export type TrimToByteLengthOption = { bytelength: number };
+export type TrimToLengthOption = { type: "length"; to: number; from?: number };
+export type TrimToByteLengthOption = {
+	type: "bytelength";
+	to: number;
+	from?: number;
+};
 export type TrimOptions =
 	| (TrimToByteLengthOption | TrimToLengthOption)[]
 	| TrimToByteLengthOption
@@ -646,41 +650,39 @@ export class Log<T> {
 		const deleted: Entry<any>[] = [];
 		// Slice to the requested size
 		const promises: Promise<void>[] = [];
-		if (typeof (option as TrimToLengthOption).to === "number") {
-			const to = (option as TrimToLengthOption).to;
-			const from = (option as TrimToLengthOption).from || to;
-			if (this.length <= from) {
-				return deleted;
-			}
-
-			// prune to length
-			const len = this.length;
-			for (let i = 0; i < len - to; i++) {
-				const entry = this._values.pop();
-				if (!entry) {
-					break;
+		if (option.type === "length") {
+			const to = option.to;
+			const from = option.from ?? to;
+			if (this.length > from) {
+				// prune to length
+				const len = this.length;
+				for (let i = 0; i < len - to; i++) {
+					const entry = this._values.pop();
+					if (!entry) {
+						break;
+					}
+					deleted.push(entry);
+					this._entryIndex.delete(entry.hash);
+					this._headsIndex.del(entry);
+					this._nextsIndex.delete(entry.hash);
+					promises.push(this._storage.rm(entry.hash));
 				}
-				deleted.push(entry);
-				this._entryIndex.delete(entry.hash);
-				this._headsIndex.del(entry);
-				this._nextsIndex.delete(entry.hash);
-				promises.push(this._storage.rm(entry.hash));
 			}
-		} else if (
-			typeof (option as TrimToByteLengthOption).bytelength === "number"
-		) {
+		} else if (option.type == "bytelength") {
 			// prune to max sum payload sizes in bytes
-			const byteLength = (option as TrimToByteLengthOption).bytelength;
-			while (this._values.byteLength > byteLength && this.length > 0) {
-				const entry = this._values.pop();
-				if (!entry) {
-					break;
+			const byteLengthFrom = option.from ?? option.to;
+			if (this._values.byteLength > byteLengthFrom) {
+				while (this._values.byteLength > option.to && this.length > 0) {
+					const entry = this._values.pop();
+					if (!entry) {
+						break;
+					}
+					deleted.push(entry);
+					this._entryIndex.delete(entry.hash);
+					this._headsIndex.del(entry);
+					this._nextsIndex.delete(entry.hash);
+					promises.push(this._storage.rm(entry.hash));
 				}
-				deleted.push(entry);
-				this._entryIndex.delete(entry.hash);
-				this._headsIndex.del(entry);
-				this._nextsIndex.delete(entry.hash);
-				promises.push(this._storage.rm(entry.hash));
 			}
 		}
 		await Promise.all(promises);

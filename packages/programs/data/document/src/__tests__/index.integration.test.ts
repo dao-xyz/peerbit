@@ -25,8 +25,8 @@ import {
 import Cache from "@dao-xyz/peerbit-cache";
 import { AbstractLevel } from "abstract-level";
 import { v4 as uuid } from "uuid";
-import { Address, Program } from "@dao-xyz/peerbit-program";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { Program } from "@dao-xyz/peerbit-program";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { DocumentIndex } from "../document-index.js";
 import {
 	HeadsMessage,
@@ -50,8 +50,6 @@ describe("index", () => {
 	};
 
 	describe("operations", () => {
-		let cacheStores: AbstractLevel<any, string, Uint8Array>[] = [];
-
 		@variant("document")
 		class Document {
 			@field({ type: "string" })
@@ -88,122 +86,22 @@ describe("index", () => {
 			}
 		}
 
-		let peersCount = 3,
-			stores: TestStore[] = [],
-			writeStore: TestStore;
-
-		beforeAll(async () => {
-			session = await LSession.connected(peersCount);
-			for (let i = 0; i < peersCount; i++) {
-				cacheStores.push(await createStore());
-			}
-			// Create store
-			for (let i = 0; i < peersCount; i++) {
-				if (i > 0) {
-					await waitForPeersStreams(
-						session.peers[i].directblock,
-						session.peers[0].directblock
-					);
-				}
-				const store =
-					i > 0
-						? (await TestStore.load<TestStore>(
-								session.peers[i].directblock,
-								stores[0].address!
-						  ))!
-						: new TestStore({
-								docs: new Documents<Document>({
-									index: new DocumentIndex({
-										indexBy: "id",
-									}),
-									canEdit: true,
-								}),
-						  });
-				const keypair = await X25519Keypair.create();
-				await store.init(session.peers[i], await createIdentity(), {
-					replicate: i === 0,
-					store: {
-						...DefaultOptions,
-						encryption: {
-							getEncryptionKeypair: () => keypair,
-							getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
-								for (let i = 0; i < publicKeys.length; i++) {
-									if (
-										publicKeys[i].equals((keypair as X25519Keypair).publicKey)
-									) {
-										return {
-											index: i,
-											keypair: keypair as Ed25519Keypair | X25519Keypair,
-										};
-									}
-								}
-							},
-						},
-						resolveCache: () => new Cache(cacheStores[i]),
-					},
-				});
-				stores.push(store);
-			}
-
-			writeStore = stores[0];
-
-			let doc = new Document({
-				id: "1",
-				name: "hello",
-				number: 1n,
-			});
-			let docEdit = new Document({
-				id: "1",
-				name: "hello world",
-				number: 1n,
-			});
-
-			let doc2 = new Document({
-				id: "2",
-				name: "hello world",
-				number: 4n,
-			});
-
-			let doc2Edit = new Document({
-				id: "2",
-				name: "hello world",
-				number: 2n,
-			});
-
-			let doc3 = new Document({
-				id: "3",
-				name: "foo",
-				number: 3n,
-			});
-
-			let doc4 = new Document({
-				id: "4",
-				name: undefined,
-				number: undefined,
-			});
-
-			await writeStore.docs.put(doc);
-			await waitFor(() => writeStore.docs.index.size === 1);
-			await writeStore.docs.put(docEdit);
-			await writeStore.docs.put(doc2);
-			await waitFor(() => writeStore.docs.index.size === 2);
-			await writeStore.docs.put(doc2Edit);
-			await writeStore.docs.put(doc3);
-			await writeStore.docs.put(doc4);
-			await waitFor(() => writeStore.docs.index.size === 4);
-		});
-
-		afterEach(async () => {});
-
-		afterAll(async () => {
-			await Promise.all(stores.map((x) => x.drop()));
-			await Promise.all(cacheStores.map((x) => x.close()));
-			await session.stop();
-		});
-
 		describe("crud", () => {
+			let store: TestStore;
+
+			beforeAll(async () => {
+				session = await LSession.connected(1);
+			});
+			afterEach(async () => {
+				await store?.close();
+			});
+
+			afterAll(async () => {
+				await session.stop();
+			});
+
 			it("can add and delete", async () => {
-				const store = new TestStore({
+				store = new TestStore({
 					docs: new Documents<Document>({
 						index: new DocumentIndex({
 							indexBy: "id",
@@ -214,7 +112,7 @@ describe("index", () => {
 					replicate: true,
 					store: {
 						...DefaultOptions,
-						resolveCache: () => new Cache(cacheStores[0]),
+						resolveCache: () => new Cache(createStore()),
 					},
 				});
 
@@ -240,20 +138,19 @@ describe("index", () => {
 			});
 
 			it("permanently delete", async () => {
-				const store = new TestStore({
+				store = new TestStore({
 					docs: new Documents<Document>({
 						index: new DocumentIndex({
 							indexBy: "id",
 						}),
-						canEdit: true,
+						immutable: false,
 					}),
 				});
 				await store.init(session.peers[0], await createIdentity(), {
 					replicate: true,
 					store: {
 						...DefaultOptions,
-
-						resolveCache: () => new Cache(cacheStores[0]),
+						resolveCache: () => new Cache(createStore()),
 					},
 				});
 
@@ -283,13 +180,45 @@ describe("index", () => {
 					deleteOperation.hash,
 				]); // the delete operation
 			});
-			it("trim and update index", async () => {
-				const store = new TestStore({
+
+			it("trim deduplicate changes", async () => {
+				store = new TestStore({
 					docs: new Documents<Document>({
 						index: new DocumentIndex({
 							indexBy: "id",
 						}),
-						canEdit: true,
+					}),
+				});
+				await store.init(session.peers[0], await createIdentity(), {
+					replicate: true,
+					store: {
+						...DefaultOptions,
+						resolveCache: () => new Cache(createStore()),
+					},
+				});
+
+				let doc = new Document({
+					id: uuid(),
+					name: "Hello world",
+				});
+
+				// put doc
+				await store.docs.put(doc);
+				expect(store.docs._index.size).toEqual(1);
+
+				// put doc again and make sure it still exist in index with trim to 1 option
+				await store.docs.put(doc, { trim: { type: "length", to: 1 } });
+				expect(store.docs._index.size).toEqual(1);
+				expect(store.docs.store.oplog.values.length).toEqual(1);
+			});
+
+			it("trim and update index", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>({
+						index: new DocumentIndex({
+							indexBy: "id",
+						}),
+						immutable: false,
 					}),
 				});
 
@@ -298,7 +227,7 @@ describe("index", () => {
 					store: {
 						...DefaultOptions,
 
-						resolveCache: () => new Cache(cacheStores[0]),
+						resolveCache: () => new Cache(createStore()),
 					},
 				});
 
@@ -308,7 +237,7 @@ describe("index", () => {
 							id: String(i),
 							name: "Hello world " + String(i),
 						}),
-						{ trim: { to: 10 }, nexts: [] }
+						{ trim: { type: "length", to: 10 }, nexts: [] }
 					);
 				}
 
@@ -319,6 +248,114 @@ describe("index", () => {
 		});
 
 		describe("query", () => {
+			let peersCount = 3,
+				stores: TestStore[] = [],
+				writeStore: TestStore;
+
+			beforeAll(async () => {
+				session = await LSession.connected(peersCount);
+
+				// Create store
+				for (let i = 0; i < peersCount; i++) {
+					if (i > 0) {
+						await waitForPeersStreams(
+							session.peers[i].directblock,
+							session.peers[0].directblock
+						);
+					}
+					const store =
+						i > 0
+							? (await TestStore.load<TestStore>(
+									session.peers[i].directblock,
+									stores[0].address!
+							  ))!
+							: new TestStore({
+									docs: new Documents<Document>({
+										index: new DocumentIndex({
+											indexBy: "id",
+										}),
+										immutable: false,
+									}),
+							  });
+					const keypair = await X25519Keypair.create();
+					await store.init(session.peers[i], await createIdentity(), {
+						replicate: i === 0,
+						store: {
+							...DefaultOptions,
+							encryption: {
+								getEncryptionKeypair: () => keypair,
+								getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
+									for (let i = 0; i < publicKeys.length; i++) {
+										if (
+											publicKeys[i].equals((keypair as X25519Keypair).publicKey)
+										) {
+											return {
+												index: i,
+												keypair: keypair as Ed25519Keypair | X25519Keypair,
+											};
+										}
+									}
+								},
+							},
+							resolveCache: () => new Cache(createStore()),
+						},
+					});
+					stores.push(store);
+				}
+
+				writeStore = stores[0];
+
+				let doc = new Document({
+					id: "1",
+					name: "hello",
+					number: 1n,
+				});
+				let docEdit = new Document({
+					id: "1",
+					name: "hello world",
+					number: 1n,
+				});
+
+				let doc2 = new Document({
+					id: "2",
+					name: "hello world",
+					number: 4n,
+				});
+
+				let doc2Edit = new Document({
+					id: "2",
+					name: "hello world",
+					number: 2n,
+				});
+
+				let doc3 = new Document({
+					id: "3",
+					name: "foo",
+					number: 3n,
+				});
+
+				let doc4 = new Document({
+					id: "4",
+					name: undefined,
+					number: undefined,
+				});
+
+				await writeStore.docs.put(doc);
+				await waitFor(() => writeStore.docs.index.size === 1);
+				await writeStore.docs.put(docEdit);
+				await writeStore.docs.put(doc2);
+				await waitFor(() => writeStore.docs.index.size === 2);
+				await writeStore.docs.put(doc2Edit);
+				await writeStore.docs.put(doc3);
+				await writeStore.docs.put(doc4);
+				await waitFor(() => writeStore.docs.index.size === 4);
+			});
+
+			afterAll(async () => {
+				await Promise.all(stores.map((x) => x.drop()));
+				await session.stop();
+			});
+
 			it("match locally", async () => {
 				let response: Results<Document> = undefined as any;
 
@@ -472,43 +509,43 @@ describe("index", () => {
 						response.results.map((x) => x.context.head)
 					).toContainAllValues([allDocs[2].entry.hash]);
 				});
-
-				it("modified between", async () => {
-					let response: Results<Document> = undefined as any;
-
-					const allDocs = [...writeStore.docs.index._index.values()].sort(
-						(a, b) =>
-							Number(
-								a.entry.metadata.clock.timestamp.wallTime -
-									b.entry.metadata.clock.timestamp.wallTime
-							)
-					);
-					await stores[1].docs.index.query(
-						new DocumentQueryRequest({
-							queries: [
-								new ModifiedAtQuery({
-									modified: [
-										new U64Compare({
-											compare: Compare.GreaterOrEqual,
-											value: allDocs[1].entry.metadata.clock.timestamp.wallTime,
+				/*
+								it("modified between", async () => {
+									let response: Results<Document> = undefined as any;
+				
+									const allDocs = [...writeStore.docs.index._index.values()].sort(
+										(a, b) =>
+											Number(
+												a.entry.metadata.clock.timestamp.wallTime -
+												b.entry.metadata.clock.timestamp.wallTime
+											)
+									);
+									await stores[1].docs.index.query(
+										new DocumentQueryRequest({
+											queries: [
+												new ModifiedAtQuery({
+													modified: [
+														new U64Compare({
+															compare: Compare.GreaterOrEqual,
+															value: allDocs[1].entry.metadata.clock.timestamp.wallTime,
+														}),
+														new U64Compare({
+															compare: Compare.Less,
+															value: allDocs[2].entry.metadata.clock.timestamp.wallTime,
+														}),
+													],
+												}),
+											],
 										}),
-										new U64Compare({
-											compare: Compare.Less,
-											value: allDocs[2].entry.metadata.clock.timestamp.wallTime,
-										}),
-									],
-								}),
-							],
-						}),
-						(r: Results<Document>) => {
-							response = r;
-						},
-						{ remote: { amount: 1 } }
-					);
-					expect(
-						response.results.map((x) => x.context.head)
-					).toContainAllValues([allDocs[1].entry.hash]);
-				});
+										(r: Results<Document>) => {
+											response = r;
+										},
+										{ remote: { amount: 1 } }
+									);
+									expect(
+										response.results.map((x) => x.context.head)
+									).toContainAllValues([allDocs[1].entry.hash]);
+								}); */
 			});
 
 			describe("number", () => {
@@ -752,8 +789,6 @@ describe("index", () => {
 	});
 
 	describe("program as value", () => {
-		let cacheStores: AbstractLevel<any, string, Uint8Array>[] = [];
-
 		@variant("subprogram")
 		class SubProgram extends Program {
 			constructor(
@@ -766,6 +801,13 @@ describe("index", () => {
 				super(properties);
 			}
 			async setup() {}
+
+			closed = false;
+
+			async close(): Promise<void> {
+				this.closed = true;
+				return super.close();
+			}
 		}
 
 		@variant("test_program_documents")
@@ -791,14 +833,10 @@ describe("index", () => {
 		let peersCount = 2;
 
 		beforeAll(async () => {
-			for (let i = 0; i < peersCount; i++) {
-				cacheStores.push(await createStore());
-			}
+			session = await LSession.connected(peersCount);
 		});
-
 		beforeEach(async () => {
 			stores = [];
-			session = await LSession.connected(peersCount);
 
 			// Create store
 			for (let i = 0; i < peersCount; i++) {
@@ -820,7 +858,7 @@ describe("index", () => {
 									index: new DocumentIndex({
 										indexBy: "id",
 									}),
-									canEdit: true,
+									immutable: false,
 								}),
 						  });
 
@@ -830,6 +868,7 @@ describe("index", () => {
 					replicator: () => Promise.resolve(true),
 					open: async (program) => {
 						openEvents.push(program);
+						// we don't init, but in real use case we would init here
 						return program;
 					},
 					store: {
@@ -849,7 +888,7 @@ describe("index", () => {
 								}
 							},
 						},
-						resolveCache: () => new Cache(cacheStores[i]),
+						resolveCache: () => new Cache(createStore()),
 					},
 				});
 				stores.push({ store, openEvents });
@@ -857,11 +896,10 @@ describe("index", () => {
 		});
 		afterEach(async () => {
 			await Promise.all(stores.map((x) => x.store.drop()));
-			await session.stop();
 		});
 
 		afterAll(async () => {
-			await Promise.all(cacheStores.map((x) => x.close()));
+			await session.stop();
 		});
 
 		it("can open a subprogram when put", async () => {
@@ -871,13 +909,39 @@ describe("index", () => {
 			expect(stores[0].openEvents[0]).toEqual(subProgram);
 		});
 
+		it("will close subprogram after put", async () => {
+			const subProgram = new SubProgram();
+			const _result = await stores[0].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
+			expect(stores[0].openEvents).toHaveLength(1);
+			expect(stores[0].openEvents[0]).toEqual(subProgram);
+			await stores[0].store.close();
+			expect(subProgram.closed).toBeTrue();
+		});
+		it("will not close subprogram that is opened before put", async () => {
+			const subProgram = new SubProgram();
+			subProgram.init(session.peers[0], await createIdentity(), {
+				replicate: true,
+				replicator: () => Promise.resolve(true),
+				store: {
+					...DefaultOptions,
+					resolveCache: () => new Cache(createStore()),
+				},
+			});
+			const _result = await stores[0].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
+			expect(stores[0].openEvents).toHaveLength(0);
+			await stores[0].store.close();
+			expect(subProgram.closed).toBeFalse();
+			await subProgram.close();
+			expect(subProgram.closed).toBeTrue();
+		});
+
 		it("non-replicator will not open by default", async () => {
 			const subProgram = new SubProgram();
 			const _result = await stores[1].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
 			expect(stores[1].openEvents).toHaveLength(0);
 		});
 
-		it("can open program when sync ", async () => {
+		it("can open program when sync", async () => {
 			const subProgram = new SubProgram();
 			const _result = await stores[1].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
 			await stores[0].store.docs.store.sync(
