@@ -1,15 +1,10 @@
 import { field, option, variant } from "@dao-xyz/borsh";
-import { Entry, Identity } from "@dao-xyz/peerbit-log";
+import { Identity } from "@dao-xyz/peerbit-log";
 import { IInitializationOptions, Store } from "@dao-xyz/peerbit-store";
 import { v4 as uuid } from "uuid";
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { getValuesWithType } from "./utils.js";
-import {
-	serialize,
-	deserialize,
-	Constructor,
-	AbstractType,
-} from "@dao-xyz/borsh";
+import { serialize, deserialize } from "@dao-xyz/borsh";
 import { CID } from "multiformats/cid";
 import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
@@ -206,7 +201,7 @@ export abstract class AbstractProgram {
 
 	replicator?: (address: Address, gid: string) => Promise<boolean>;
 	open?: (program: Program) => Promise<Program>;
-
+	private programsOpened: Program[];
 	parentProgram: Program;
 
 	get initialized() {
@@ -236,7 +231,18 @@ export abstract class AbstractProgram {
 		this._onClose = options.onClose;
 		this._onDrop = options.onDrop;
 		this._replicate = options.replicate;
-		this.open = options.open;
+		if (options.open) {
+			this.programsOpened = [];
+			this.open = async (program) => {
+				if (program.initialized) {
+					return program;
+				}
+				const opened = await options.open!(program);
+				this.programsOpened.push(opened);
+				return opened;
+			};
+		}
+
 		this.replicator = options.replicator;
 
 		const nexts = this.programs;
@@ -268,6 +274,12 @@ export abstract class AbstractProgram {
 		for (const program of this.programs.values()) {
 			promises.push(program.close());
 		}
+		if (this.programsOpened) {
+			for (const program of this.programsOpened) {
+				promises.push(program.close());
+			}
+			this.programsOpened = [];
+		}
 		await Promise.all(promises);
 		this._onClose && this._onClose();
 	}
@@ -283,6 +295,14 @@ export abstract class AbstractProgram {
 		}
 		for (const program of this.programs.values()) {
 			promises.push(program.drop());
+		}
+		if (this.programsOpened) {
+			for (const program of this.programsOpened) {
+				if (program.initialized) {
+					promises.push(program.drop());
+				}
+			}
+			this.programsOpened = [];
 		}
 		await Promise.all(promises);
 		this._initialized = false;
