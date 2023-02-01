@@ -379,7 +379,7 @@ describe("Log - Heads and Tails", function () {
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				{ logId: "A", trim: { to: 2 } }
+				{ logId: "A", trim: { type: "length", to: 2 } }
 			);
 			const log2 = new Log(
 				store,
@@ -387,7 +387,7 @@ describe("Log - Heads and Tails", function () {
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				{ logId: "A", trim: { to: 2 } }
+				{ logId: "A", trim: { type: "length", to: 2 } }
 			);
 			const { entry: a1 } = await log1.append("helloA1");
 			const { entry: b1 } = await log2.append("helloB1");

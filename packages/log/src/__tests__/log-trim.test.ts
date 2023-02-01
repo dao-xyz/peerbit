@@ -57,7 +57,7 @@ describe("Append trim", function () {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			},
-			{ logId: "A", trim: { from: 1, to: 1 } }
+			{ logId: "A", trim: { type: "length", from: 1, to: 1 } }
 		);
 		await log.append("hello1");
 		await log.trim();
@@ -76,7 +76,7 @@ describe("Append trim", function () {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			},
-			{ logId: "A", trim: { from: 3, to: 1 } } // when length > 3 cut back to 1
+			{ logId: "A", trim: { type: "length", from: 3, to: 1 } } // when length > 3 cut back to 1
 		);
 		const { entry: a1 } = await log.append("hello1");
 		const { entry: a2 } = await log.append("hello2");
@@ -104,7 +104,7 @@ describe("Append trim", function () {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			},
-			{ logId: "A", trim: { bytelength: 15 } } // bytelength is 15 so for every new helloX we hav eto delete the previous helloY
+			{ logId: "A", trim: { type: "bytelength", to: 15 } } // bytelength is 15 so for every new helloX we hav eto delete the previous helloY
 		);
 		const { entry: a1, removed: r1 } = await log.append("hello1");
 		expect(r1).toHaveLength(0);
