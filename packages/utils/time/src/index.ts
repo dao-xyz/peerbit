@@ -23,6 +23,7 @@ export const waitFor = async <T>(
 		timeout: number;
 		stopperCallback?: (stopper: () => void) => void;
 		delayInterval: number;
+		timeoutMessage?: string;
 	} = { timeout: 10 * 1000, delayInterval: 50 }
 ): Promise<T | undefined> => {
 	const startTime = +new Date();
@@ -43,7 +44,11 @@ export const waitFor = async <T>(
 		}
 		await delay(options.delayInterval, options);
 	}
-	throw new TimeoutError("Timed out");
+	throw new TimeoutError(
+		options.timeoutMessage
+			? "Timed out: " + options.timeoutMessage
+			: "Timed out"
+	);
 };
 
 export const waitForAsync = async <T>(
@@ -52,6 +57,7 @@ export const waitForAsync = async <T>(
 		timeout: number;
 		stopperCallback?: (stopper: () => void) => void;
 		delayInterval: number;
+		timeoutMessage?: string;
 	} = { timeout: 10 * 1000, delayInterval: 50 }
 ): Promise<T | undefined> => {
 	const startTime = +new Date();
@@ -72,5 +78,9 @@ export const waitForAsync = async <T>(
 		}
 		await delay(options.delayInterval, options);
 	}
-	throw new TimeoutError("Timed out");
+	throw new TimeoutError(
+		options.timeoutMessage
+			? "Timed out: " + options.timeoutMessage
+			: "Timed out"
+	);
 };
