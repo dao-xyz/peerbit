@@ -20,7 +20,7 @@ export default class LazyLevel {
 	>[];
 	_tempStore?: Map<string, Uint8Array>;
 	_tempDeleted?: Set<string>;
-	_txPromise?: Promise<any>;
+	_txPromise?: Promise<void>;
 	_batchOptions?: { interval: number; onError?: (e: any) => void };
 
 	constructor(
@@ -47,9 +47,11 @@ export default class LazyLevel {
 			) {
 				throw new Error("Store is closed, so cache will never finish idling");
 			}
+			await this._txPromise;
 			await waitFor(() => !this._txQueue || this._txQueue.length === 0, {
 				timeout: this._batchOptions.interval + 100,
 				delayInterval: 100,
+				timeoutMessage: `Failed to wait for idling, got txQueue with ${this._txQueue.length} elements`,
 			});
 		}
 	}
@@ -87,9 +89,7 @@ export default class LazyLevel {
 				) {
 					const arr = this._txQueue.splice(0, this._txQueue.length);
 					if (arr?.length > 0) {
-						this._txPromise = (
-							this._txPromise ? this._txPromise : Promise.resolve()
-						).finally(() =>
+						const next = () =>
 							this._store
 								.batch(arr, { valueEncoding: "view" })
 								.then(() => {
@@ -109,8 +109,12 @@ export default class LazyLevel {
 									} else {
 										logger.error(error);
 									}
-								})
-						);
+								});
+						this._txPromise = (
+							this._txPromise ? this._txPromise : Promise.resolve()
+						)
+							.then(next)
+							.catch(next);
 					}
 				}
 			}, this._batchOptions.interval);
