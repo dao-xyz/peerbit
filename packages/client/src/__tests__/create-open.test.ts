@@ -229,13 +229,8 @@ describe(`Create & Open`, function () {
 			const db = await client.open(new EventStore({}), {
 				directory,
 			});
-			try {
-				await db.close();
-				expect(db.store._cache._store.status).toEqual("closed");
-				const x = 123;
-			} catch (error) {
-				const x = 123;
-			}
+			await db.close();
+			expect(db.store.cache._store.status).toEqual("closed");
 		});
 
 		/* TODO fix
@@ -265,27 +260,29 @@ describe(`Create & Open`, function () {
 				directory: directory2,
 			});
 			const db5 = await client.open(new EventStore({ id: "xyz5" }));
-			try {
-				await db1.close();
-				await db2.close();
-				await db4.close();
 
-				expect(client.cache._store.status).toEqual("open");
-				expect(db2.store._cache._store.status).toEqual("open");
-				expect(db3.store._cache._store.status).toEqual("open");
-				expect(db4.store._cache._store.status).toEqual("closed");
+			expect(db1.store.cache.status).toEqual("open");
+			expect(db2.store.cache.status).toEqual("open");
+			expect(db3.store.cache.status).toEqual("open");
+			expect(db4.store.cache.status).toEqual("open");
 
-				await db3.close();
-				await db5.close();
+			await db1.close();
+			await db2.close();
+			await db4.close();
 
-				expect(client.cache._store.status).toEqual("closed");
-				expect(db2.store._cache._store.status).toEqual("closed");
-				expect(db3.store._cache._store.status).toEqual("closed");
-				expect(db4.store._cache._store.status).toEqual("closed");
-				expect(db5.store._cache._store.status).toEqual("closed");
-			} catch (error) {
-				const x = 123;
-			}
+			expect(client.cache._store.status).toEqual("open");
+			expect(db2.store.cache.status).toEqual("closed");
+			expect(db3.store.cache.status).toEqual("open");
+			expect(db4.store.cache.status).toEqual("closed");
+
+			await db3.close();
+			await db5.close();
+
+			expect(client.cache.status).toEqual("open"); // TODO should this be open or closed now? Assume open, no-op is prefered if not certain
+			expect(db2.store.cache.status).toEqual("closed");
+			expect(db3.store.cache.status).toEqual("closed");
+			expect(db4.store.cache.status).toEqual("closed");
+			expect(db5.store.cache.status).toEqual("closed");
 		});
 	});
 });
