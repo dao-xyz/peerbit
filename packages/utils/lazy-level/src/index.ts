@@ -51,7 +51,11 @@ export default class LazyLevel {
 			await waitFor(() => !this._txQueue || this._txQueue.length === 0, {
 				timeout: this._batchOptions.interval + 100,
 				delayInterval: 100,
-				timeoutMessage: `Failed to wait for idling, got txQueue with ${this._txQueue.length} elements`,
+				timeoutMessage: `Failed to wait for idling, got txQueue with ${
+					this._txQueue?.length
+				} elements. Store status: ${
+					this._store?.status
+				}, interval exist: ${!!this._interval}`,
 			});
 		}
 	}
