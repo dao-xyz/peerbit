@@ -1,6 +1,5 @@
 import path from "path";
 import assert from "assert";
-import LRU from "lru-cache";
 import { Keystore, KeyWithMeta } from "../keystore";
 import rmrf from "rimraf";
 import { AbstractLevel } from "abstract-level";
@@ -74,10 +73,9 @@ describe("keystore", () => {
 
 		it("creates a keystore with both", async () => {
 			let store = await createStore();
-			const cache = new LRU({ max: 10 });
-			const keystore = new Keystore(store, { cache });
+			const keystore = new Keystore(store);
 			assert(["open", "opening"].includes(keystore._store.status));
-			expect(keystore._cache === cache);
+			expect(keystore._cache).toBeDefined();
 			expect(keystore._store === store);
 		});
 	});

@@ -1,5 +1,4 @@
 import { AbstractLevel } from "abstract-level";
-import LRU from "lru-cache";
 import { variant, field, serialize, deserialize } from "@dao-xyz/borsh";
 import {
 	X25519PublicKey,
@@ -14,6 +13,7 @@ import { waitFor } from "@dao-xyz/peerbit-time";
 import sodium from "libsodium-wrappers";
 import { StoreError } from "./errors.js";
 import { toBase64 } from "@dao-xyz/peerbit-crypto";
+import { Cache } from "@dao-xyz/cache";
 
 export interface Type<T> extends Function {
 	new (...args: any[]): T;
@@ -129,7 +129,7 @@ export class KeyWithMeta<T extends Keypair> {
 
 export class Keystore {
 	_store: AbstractLevel<any, string, Uint8Array>;
-	_cache: LRU<string, KeyWithMeta<any>>;
+	_cache: Cache<KeyWithMeta<any>>;
 
 	constructor(store: AbstractLevel<any, string, Uint8Array>, cache?: any) {
 		this._store = store;
@@ -139,7 +139,7 @@ export class Keystore {
 		if (!this._store) {
 			throw new Error("Store needs to be provided");
 		}
-		this._cache = cache || new LRU({ max: 100 });
+		this._cache = cache || new Cache({ max: 100, ttl: 60 * 10 * 1e3 });
 	}
 
 	async openStore() {
@@ -276,8 +276,10 @@ export class Keystore {
 		await this.keyStore.put(publicKeyString, ser, {
 			valueEncoding: "view",
 		}); // TODO fix types, are just wrong
-		this._cache.set(path, key);
-		this._cache.set(publicKeyString, key);
+
+		this._cache.add(path, key);
+
+		this._cache.add(publicKeyString, key);
 
 		if (key.keypair instanceof Ed25519Keypair) {
 			await this.saveKey(
@@ -345,7 +347,7 @@ export class Keystore {
 		}
 
 		if (!cachedKey) {
-			this._cache.set(path!, loadedKey);
+			this._cache.add(path!, loadedKey);
 		}
 
 		return loadedKey; // TODO fix types, we make assumptions here

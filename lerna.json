@@ -24,6 +24,7 @@
 		"packages/utils/test-utils",
 		"packages/utils/lazy-level",
 		"packages/utils/borsh-utils",
+		"packages/utils/cache",
 		"packages/utils/time",
 		"packages/utils/logger"
 	],

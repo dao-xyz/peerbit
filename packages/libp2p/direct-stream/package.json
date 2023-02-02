@@ -56,6 +56,7 @@
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.4",
+		"@dao-xyz/cache": "^0.0.1",
 		"@dao-xyz/peerbit-crypto": "^0.1.6",
 		"@libp2p/topology": "^4.0.1",
 		"abstract-level": "^1.0.3",

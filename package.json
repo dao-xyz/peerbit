@@ -32,6 +32,7 @@
 			"packages/utils/lazy-level",
 			"packages/utils/borsh-utils",
 			"packages/utils/time",
+			"packages/utils/cache",
 			"packages/utils/logger"
 		],
 		"nohoist": [

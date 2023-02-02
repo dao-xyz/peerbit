@@ -35,7 +35,7 @@ export type SignaturePolicy = "StictSign" | "StrictNoSign";
 
 import { sha256Base64 } from "@dao-xyz/peerbit-crypto";
 import { logger } from "./logger.js";
-import { Cache } from "./cache.js";
+import { Cache } from "@dao-xyz/cache";
 export { logger };
 export interface PeerStreamsInit {
 	peerId: PeerId;
@@ -299,7 +299,7 @@ export abstract class DirectStream<
 		this.earlyGoodbyes = new Map();
 		this.maxInboundStreams = maxInboundStreams;
 		this.maxOutboundStreams = maxOutboundStreams;
-		this.seenCache = new Cache({ max: 1e3, ttl: 10 * 60 });
+		this.seenCache = new Cache({ max: 1e3, ttl: 10 * 60 * 1e3 });
 		this.peerKeyHashToPublicKey = new Map();
 		this._onIncomingStream = this._onIncomingStream.bind(this);
 		this.onPeerConnected = this.onPeerConnected.bind(this);
