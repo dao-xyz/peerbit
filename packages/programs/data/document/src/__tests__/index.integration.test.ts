@@ -136,7 +136,7 @@ describe("index", () => {
 				expect(store.docs._index.size).toEqual(1);
 			});
 
-			it("permanently delete", async () => {
+			it("delete permanently", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
 						index: new DocumentIndex({
@@ -169,11 +169,7 @@ describe("index", () => {
 				expect(putOperation2.next).toHaveLength(1);
 
 				// delete 1
-				const deleteOperation = (
-					await store.docs.del(doc.id, {
-						permanently: true,
-					})
-				).entry;
+				const deleteOperation = (await store.docs.del(doc.id)).entry;
 				expect(store.docs._index.size).toEqual(0);
 				expect(store.docs.store.oplog.values.map((x) => x.hash)).toEqual([
 					deleteOperation.hash,
@@ -193,6 +189,7 @@ describe("index", () => {
 					store: {
 						...DefaultOptions,
 						resolveCache: () => new Cache(createStore()),
+						trim: { type: "length", to: 1 },
 					},
 				});
 
@@ -206,7 +203,7 @@ describe("index", () => {
 				expect(store.docs._index.size).toEqual(1);
 
 				// put doc again and make sure it still exist in index with trim to 1 option
-				await store.docs.put(doc, { trim: { type: "length", to: 1 } });
+				await store.docs.put(doc);
 				expect(store.docs._index.size).toEqual(1);
 				expect(store.docs.store.oplog.values.length).toEqual(1);
 			});
@@ -225,8 +222,8 @@ describe("index", () => {
 					replicate: true,
 					store: {
 						...DefaultOptions,
-
 						resolveCache: () => new Cache(createStore()),
+						trim: { type: "length", to: 10 },
 					},
 				});
 
@@ -236,7 +233,7 @@ describe("index", () => {
 							id: String(i),
 							name: "Hello world " + String(i),
 						}),
-						{ trim: { type: "length", to: 10 }, nexts: [] }
+						{ nexts: [] }
 					);
 				}
 

@@ -58,6 +58,8 @@ import {
 	REPLICATOR_TYPE_VARIANT,
 	SubscriptionType,
 } from "./replicator.js";
+import { TrimToByteLengthOption } from "@dao-xyz/peerbit-log";
+import { TrimToLengthOption } from "@dao-xyz/peerbit-log";
 export const logger = loggerFn({ module: "peer" });
 
 const MIN_REPLICAS = 2;
@@ -105,6 +107,7 @@ export type OpenOptions = {
 	directory?: string;
 	timeout?: number;
 	minReplicas?: MinReplicas | number;
+	trim?: TrimToByteLengthOption | TrimToLengthOption;
 } & IStoreOptions<any>;
 
 const groupByGid = async <T extends Entry<any> | EntryWithRefs<any>>(
@@ -839,18 +842,20 @@ export class Peerbit {
 	}
 
 	// Callback when a store was closed
-	async _onClose(program: Program, db: Store<any>) {
+	async _onClose(program: Program, store: Store<any>) {
 		// TODO Can we really close a this.programs, either we close all stores in the replication topic or none
 
 		const programAddress = program.address?.toString();
 
-		logger.debug(`Close ${programAddress}/${db.id}`);
+		logger.debug(`Close ${programAddress}/${store.id}`);
 
 		const dir =
-			db && db._options.directory ? db._options.directory : this.cacheDir;
+			store && store.options.directory
+				? store.options.directory
+				: this.cacheDir;
 		const cache = this.caches[dir];
-		if (cache && cache.handlers.has(db.id)) {
-			cache.handlers.delete(db.id);
+		if (cache && cache.handlers.has(store.id)) {
+			cache.handlers.delete(store.id);
 			if (!cache.handlers.size) {
 				await cache.cache.close();
 			}
@@ -1128,15 +1133,35 @@ export class Peerbit {
 						? new AbsolutMinReplicas(this._minReplicas)
 						: options.minReplicas
 					: new AbsolutMinReplicas(this._minReplicas);
+
+			const resolveMinReplicas = () => {
+				const value = this.programs.get(program.address.toString())?.minReplicas
+					.value;
+				if (value == null) {
+					throw new Error("Missing minReplica value, unexpected");
+				}
+				return value;
+			};
 			await program.init(this.libp2p, options.identity || this.identity, {
 				onClose: () => this._onProgamClose(program),
 				onDrop: () => this._onProgamClose(program),
 				replicate,
 				replicator: (address, gid) =>
-					this.isLeader(address.toString(), gid, minReplicas.value),
+					this.isLeader(address.toString(), gid, resolveMinReplicas()),
 				open: (program) => this.open(program, options), // If the program opens more programs
 				store: {
 					...options,
+					trim: options.trim
+						? {
+								canTrim: async (entry: Entry<any>) =>
+									!(await this.isLeader(
+										program.address.toString()!,
+										entry.gid,
+										resolveMinReplicas()
+									)),
+								...options.trim,
+						  }
+						: undefined,
 					cacheId: programAddress,
 					resolveCache: (store) => {
 						const programAddress = program.address?.toString();

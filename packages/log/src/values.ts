@@ -59,10 +59,15 @@ export class Values<T> {
 				this._byteLength -= walker.value._payload.byteLength;
 				return;
 			}
-			walker = walker.prev;
+			walker = walker.prev; // prev will be undefined if you do removeNode(walker)
 		}
-
 		throw new Error("Failed to delete, entry does not exist");
+	}
+
+	deleteNode(node: yallist.Node<Entry<T>>) {
+		this._values.removeNode(node);
+		this._byteLength -= node.value._payload.byteLength;
+		return;
 	}
 
 	pop() {

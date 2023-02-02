@@ -13,6 +13,10 @@ export class EntryIndex<T> {
 		return this._cache.get(k);
 	}
 
+	has(k: string): boolean {
+		return this._cache.has(k);
+	}
+
 	delete(k: string) {
 		return this._cache.delete(k);
 	}

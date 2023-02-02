@@ -57,7 +57,10 @@ describe("Append trim", function () {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			},
-			{ logId: "A", trim: { type: "length", from: 1, to: 1 } }
+			{
+				logId: "A",
+				trim: { type: "length", from: 1, to: 1, canTrim: () => true },
+			}
 		);
 		await log.append("hello1");
 		await log.trim();
@@ -67,6 +70,29 @@ describe("Append trim", function () {
 		await log.trim();
 		expect(log.length).toEqual(1);
 		expect(log.values[0].payload.getValue()).toEqual("hello3");
+	});
+
+	it("respect canTrim for length type", async () => {
+		const log = new Log<string>(
+			store,
+			{
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			},
+			{ logId: "A" }
+		);
+		const e1 = await log.append("hello1", { nexts: [] }); // set nexts [] so all get unique gids
+		const e2 = await log.append("hello2", { nexts: [] }); // set nexts [] so all get unique gids
+		const e3 = await log.append("hello3", { nexts: [] }); // set nexts [] so all get unique gids
+		await log.trim({
+			type: "length",
+			from: 2,
+			to: 2,
+			canTrim: (entry) => Promise.resolve(entry.gid !== e1.entry.gid),
+		});
+		expect(log.length).toEqual(2);
+		expect(log.values[0].payload.getValue()).toEqual("hello1");
+		expect(log.values[1].payload.getValue()).toEqual("hello3");
 	});
 
 	it("cut back to cut length", async () => {
@@ -80,21 +106,36 @@ describe("Append trim", function () {
 		);
 		const { entry: a1 } = await log.append("hello1");
 		const { entry: a2 } = await log.append("hello2");
-		const { entry: a3 } = await log.append("hello3");
 		expect(await log.trim()).toHaveLength(0);
 		expect(await log._storage.get(a1.hash)).toBeDefined();
 		expect(await log._storage.get(a2.hash)).toBeDefined();
-		expect(await log._storage.get(a3.hash)).toBeDefined();
-		expect(log.length).toEqual(3);
-		const { entry: a4, removed } = await log.append("hello4");
-		expect(removed).toContainAllValues([a1, a2, a3]);
+		expect(log.length).toEqual(2);
+		const { entry: a3, removed } = await log.append("hello3");
+		expect(removed).toContainAllValues([a1, a2]);
 		expect(log.length).toEqual(1);
 		await (log._storage as MemoryLevelBlockStore).idle();
 		expect(await log._storage.get(a1.hash)).toBeUndefined();
 		expect(await log._storage.get(a2.hash)).toBeUndefined();
-		expect(await log._storage.get(a3.hash)).toBeUndefined();
-		expect(await log._storage.get(a4.hash)).toBeDefined();
-		expect(log.values[0].payload.getValue()).toEqual("hello4");
+		expect(await log._storage.get(a3.hash)).toBeDefined();
+		expect(log.values[0].payload.getValue()).toEqual("hello3");
+	});
+
+	it("trimming and concurrency", async () => {
+		const log = new Log<string>(
+			store,
+			{
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			},
+			{ logId: "A", trim: { type: "length", from: 1, to: 1 } } // when length > 3 cut back to 1
+		);
+		let promises: Promise<any>[] = [];
+		for (let i = 0; i < 100; i++) {
+			promises.push(log.append("hello" + i));
+		}
+		await Promise.all(promises);
+		expect(log.length).toEqual(1);
+		expect(log.values[0].payload.getValue()).toEqual("hello99");
 	});
 
 	it("cut back to bytelength", async () => {
@@ -104,7 +145,7 @@ describe("Append trim", function () {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			},
-			{ logId: "A", trim: { type: "bytelength", to: 15 } } // bytelength is 15 so for every new helloX we hav eto delete the previous helloY
+			{ logId: "A", trim: { type: "bytelength", to: 15, canTrim: () => true } } // bytelength is 15 so for every new helloX we hav eto delete the previous helloY
 		);
 		const { entry: a1, removed: r1 } = await log.append("hello1");
 		expect(r1).toHaveLength(0);

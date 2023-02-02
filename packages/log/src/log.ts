@@ -52,10 +52,10 @@ export type TrimToByteLengthOption = {
 	to: number;
 	from?: number;
 };
-export type TrimOptions =
-	| (TrimToByteLengthOption | TrimToLengthOption)[]
-	| TrimToByteLengthOption
-	| TrimToLengthOption;
+export type TrimCondition = TrimToByteLengthOption | TrimToLengthOption;
+export type TrimOptions = {
+	canTrim?: (entry: Entry<any>) => Promise<boolean> | boolean;
+} & TrimCondition;
 export type Change<T> = { added: Entry<T>[]; removed: Entry<T>[] };
 
 export type LogOptions<T> = {
@@ -97,7 +97,8 @@ export class Log<T> {
 	// Index of all next pointers in this log
 	_nextsIndex: Map<string, Set<string>>;
 
-	_trim: TrimOptions = [];
+	_trim?: TrimOptions;
+
 	_encryption?: PublicKeyEncryptionResolver;
 	_encoding: Encoding<T>;
 
@@ -192,7 +193,7 @@ export class Log<T> {
 
 		// Set the clock
 		this.joinConcurrency = concurrency || 16;
-		this._trim = trim ? (Array.isArray(trim) ? trim : [trim]) : [];
+		this._trim = trim;
 	}
 
 	/**
@@ -634,9 +635,11 @@ export class Log<T> {
 	 * @param options
 	 * @returns deleted entries
 	 */
-	async trim(option: TrimOptions = this._trim): Promise<Entry<T>[]> {
+	async trim(
+		option: TrimOptions | undefined = this._trim
+	): Promise<Entry<T>[]> {
 		if (!option) {
-			throw new Error("Prune options missing");
+			return [];
 		}
 
 		if (Array.isArray(option)) {
@@ -650,41 +653,47 @@ export class Log<T> {
 		const deleted: Entry<any>[] = [];
 		// Slice to the requested size
 		const promises: Promise<void>[] = [];
+		let done: () => boolean;
 		if (option.type === "length") {
 			const to = option.to;
 			const from = option.from ?? to;
-			if (this.length > from) {
-				// prune to length
-				const len = this.length;
-				for (let i = 0; i < len - to; i++) {
-					const entry = this._values.pop();
-					if (!entry) {
-						break;
-					}
-					deleted.push(entry);
-					this._entryIndex.delete(entry.hash);
-					this._headsIndex.del(entry);
-					this._nextsIndex.delete(entry.hash);
-					promises.push(this._storage.rm(entry.hash));
-				}
+			if (this.length < from) {
+				return [];
 			}
+			done = () => this.length <= to;
 		} else if (option.type == "bytelength") {
 			// prune to max sum payload sizes in bytes
 			const byteLengthFrom = option.from ?? option.to;
-			if (this._values.byteLength > byteLengthFrom) {
-				while (this._values.byteLength > option.to && this.length > 0) {
-					const entry = this._values.pop();
-					if (!entry) {
-						break;
-					}
-					deleted.push(entry);
-					this._entryIndex.delete(entry.hash);
-					this._headsIndex.del(entry);
-					this._nextsIndex.delete(entry.hash);
-					promises.push(this._storage.rm(entry.hash));
+
+			if (this._values.byteLength < byteLengthFrom) {
+				return [];
+			}
+			done = () => this._values.byteLength <= option.to;
+		} else {
+			return [];
+		}
+
+		let node = this._values.tail;
+		while (node && !done() && this.length > 0) {
+			if (node && option.canTrim && !(await option.canTrim(node.value))) {
+				// ignore it
+				node = node.prev;
+			} else {
+				const prev = node.prev;
+				if (this._entryIndex.has(node.value.hash)) {
+					// TODO, under some concurrency condition the node can already be removed by another trim process
+					this._values.deleteNode(node);
+					deleted.push(node.value);
+					this._entryIndex.delete(node.value.hash);
+					this._headsIndex.del(node.value);
+					this._nextsIndex.delete(node.value.hash);
+					promises.push(this._storage.rm(node.value.hash));
 				}
+
+				node = prev;
 			}
 		}
+
 		await Promise.all(promises);
 		return deleted;
 	}
