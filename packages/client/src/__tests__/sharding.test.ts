@@ -28,12 +28,6 @@ describe(`sharding`, () => {
 		client1 = await Peerbit.create({ libp2p: session.peers[0] });
 		client2 = await Peerbit.create({ libp2p: session.peers[1] });
 		client3 = await Peerbit.create({ libp2p: session.peers[2] });
-
-		db1 = await client1.open<PermissionedEventStore>(
-			new PermissionedEventStore({
-				trusted: [client1.id, client2.id, client3.id],
-			})
-		);
 	});
 
 	afterEach(async () => {
@@ -58,6 +52,12 @@ describe(`sharding`, () => {
 
 	it("can distribute evenly among peers", async () => {
 		// TODO this test is flaky, because it sometimes timeouts because distribution of data among peers is random for small entry counts
+
+		db1 = await client1.open<PermissionedEventStore>(
+			new PermissionedEventStore({
+				trusted: [client1.id, client2.id, client3.id],
+			})
+		);
 		db2 = await client2.open<PermissionedEventStore>(db1.address!);
 		db3 = await client3.open<PermissionedEventStore>(db1.address!);
 		await waitFor(
@@ -80,7 +80,6 @@ describe(`sharding`, () => {
 		await Promise.all(promises);
 		await waitFor(() => db1.store.store.oplog.values.length === entryCount);
 
-		await delay(10000);
 		// this could failed, if we are unlucky probability wise
 		await waitFor(
 			() =>
@@ -109,17 +108,22 @@ describe(`sharding`, () => {
 		});
 		expect(
 			db2.store.store.oplog.values.length > entryCount * 0.5 &&
-				db2.store.store.oplog.values.length < entryCount * 0.85
+			db2.store.store.oplog.values.length < entryCount * 0.85
 		).toBeTrue();
 		expect(
 			db3.store.store.oplog.values.length > entryCount * 0.5 &&
-				db3.store.store.oplog.values.length < entryCount * 0.85
+			db3.store.store.oplog.values.length < entryCount * 0.85
 		).toBeTrue();
 	});
 
 	// TODO add tests for late joining and leaving peers
 
 	it("will distribute to joining peers", async () => {
+		db1 = await client1.open<PermissionedEventStore>(
+			new PermissionedEventStore({
+				trusted: [client1.id, client2.id, client3.id],
+			})
+		);
 		db2 = await client2.open<PermissionedEventStore>(db1.address!);
 		await waitFor(
 			() => client2.getReplicators(db1.address!.toString())?.length === 1
@@ -170,15 +174,20 @@ describe(`sharding`, () => {
 		});
 		expect(
 			db2.store.store.oplog.values.length > entryCount * 0.5 &&
-				db2.store.store.oplog.values.length < entryCount * 0.85
+			db2.store.store.oplog.values.length < entryCount * 0.85
 		).toBeTrue();
 		expect(
 			db3.store.store.oplog.values.length > entryCount * 0.5 &&
-				db3.store.store.oplog.values.length < entryCount * 0.85
+			db3.store.store.oplog.values.length < entryCount * 0.85
 		).toBeTrue();
 	});
 
 	it("will distribute when peers leave", async () => {
+		db1 = await client1.open<PermissionedEventStore>(
+			new PermissionedEventStore({
+				trusted: [client1.id, client2.id, client3.id],
+			})
+		);
 		db2 = await client2.open<PermissionedEventStore>(db1.address!);
 		db3 = await client3.open<PermissionedEventStore>(db1.address!);
 		await waitFor(
@@ -211,5 +220,62 @@ describe(`sharding`, () => {
 		await db3.close();
 
 		await waitFor(() => db2.store.store.oplog.values.length === entryCount);
+	});
+
+	it("will trim responsibly", async () => {
+		// With this trim options, we make sure that we remove all elements expectes the elements we NEED
+		// to replicate (basically nullifies the trim)
+
+		db1 = await client1.open<PermissionedEventStore>(
+			new PermissionedEventStore({
+				trusted: [client1.id, client2.id, client3.id],
+			}),
+			{ trim: { to: 0, from: 1, type: "length" } }
+		);
+
+		db2 = await client2.open<PermissionedEventStore>(db1.address!, {
+			trim: { to: 0, from: 1, type: "length" },
+		});
+		db3 = await client3.open<PermissionedEventStore>(db1.address!, {
+			trim: { to: 0, from: 1, type: "length" },
+		});
+
+		await waitFor(
+			() => client2.getReplicators(db1.address!.toString())?.length === 2
+		);
+
+		await waitFor(
+			() => client3.getReplicators(db1.address!.toString())?.length === 2
+		);
+
+		const entryCount = 100;
+		const promises: Promise<any>[] = [];
+		for (let i = 0; i < entryCount; i++) {
+			promises.push(db1.store.add(i.toString(), { nexts: [] }));
+		}
+
+		await Promise.all(promises);
+
+		await waitFor(
+			() =>
+				db1.store.store.oplog.values.length > entryCount * 0.5 &&
+				db1.store.store.oplog.values.length < entryCount * 0.85
+		);
+
+		await waitFor(
+			() =>
+				db2.store.store.oplog.values.length > entryCount * 0.5 &&
+				db2.store.store.oplog.values.length < entryCount * 0.85
+		);
+		await waitFor(
+			() =>
+				db3.store.store.oplog.values.length > entryCount * 0.5 &&
+				db3.store.store.oplog.values.length < entryCount * 0.85
+		);
+
+		await db3.close();
+
+		await waitFor(() => db2.store.store.oplog.values.length === entryCount);
+		await waitFor(() => db1.store.store.oplog.values.length === entryCount);
 	});
 });
