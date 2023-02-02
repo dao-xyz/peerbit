@@ -3,14 +3,12 @@ import PQueue from "p-queue";
 import {
 	Log,
 	ISortFunction,
-	TrimOptions,
 	LogOptions,
 	Identity,
 	CanAppend,
 	JSON_ENCODING,
 	Change,
-	TrimToLengthOption,
-	TrimToByteLengthOption,
+	TrimOptions,
 } from "@dao-xyz/peerbit-log";
 import {
 	Encoding,
@@ -40,7 +38,6 @@ export type AddOperationOptions<T> = {
 	skipCanAppendCheck?: boolean;
 	identity?: Identity;
 	nexts?: Entry<T>[];
-	trim?: TrimOptions | TrimToByteLengthOption | TrimToLengthOption;
 	reciever?: EncryptionTemplateMaybeEncrypted;
 };
 
@@ -120,13 +117,13 @@ export interface IStoreOptions<T> {
 	encryption?: PublicKeyEncryptionResolver;
 	replicationConcurrency?: number;
 	sortFn?: ISortFunction;
-	trim?: TrimOptions;
 }
 
 export interface IInitializationOptions<T>
 	extends IStoreOptions<T>,
 		IInitializationOptionsDefault<T> {
 	resolveCache: (store: Store<any>) => Promise<Cache> | Cache;
+	trim?: TrimOptions;
 }
 
 interface IInitializationOptionsDefault<T> {
@@ -160,33 +157,31 @@ export class Store<T> implements Initiable<T> {
 
 	// An access controller that is note part of the store manifest, usefull for circular store -> access controller -> store structures
 
-	_options: IInitializationOptions<T>;
+	private _options: IInitializationOptions<T>;
 	identity: Identity;
 
-	_headsPathCounter = 0;
+	private _headsPathCounter = 0;
 	headsPath: string;
-	_lastHeadsPath?: string;
-	_lastHeadsCount = 0n;
+	private _lastHeadsPath?: string;
+	private _lastHeadsCount = 0n;
 
 	removedHeadsPath: string;
-	_lastRemovedHeadsPath?: string;
-	_lastRemovedHeadsCount = 0n;
-
-	_asyncJobs: Promise<void[] | void>;
+	private _lastRemovedHeadsPath?: string;
+	private _lastRemovedHeadsCount = 0n;
 
 	snapshotPath: string;
 	initialized: boolean;
 	encoding: Encoding<T> = JSON_ENCODING;
 
-	_store: BlockStore;
-	_cache: Cache;
-	_oplog: Log<T>;
-	_queue: PQueue<any, any>;
+	private _store: BlockStore;
+	private _cache: Cache;
+	private _oplog: Log<T>;
+	private _queue: PQueue<any, any>;
 
-	_key: string;
+	private _key: string;
 
-	_saveFile: (file: any) => Promise<string>;
-	_loadFile: (cid: string) => Promise<Uint8Array | undefined>;
+	private _saveFile: (file: any) => Promise<string>;
+	private _loadFile: (cid: string) => Promise<Uint8Array | undefined>;
 
 	constructor(properties?: { storeIndex: number }) {
 		if (properties) {
@@ -422,6 +417,13 @@ export class Store<T> implements Initiable<T> {
 		return this._key;
 	}
 
+	get store(): BlockStore {
+		return this._store;
+	}
+	get options(): IInitializationOptions<T> {
+		return this._options;
+	}
+
 	get logOptions(): LogOptions<T> {
 		return {
 			logId: this.id,
@@ -432,6 +434,9 @@ export class Store<T> implements Initiable<T> {
 		};
 	}
 
+	get cache(): Cache {
+		return this._cache;
+	}
 	setIdentity(identity: Identity) {
 		this.identity = identity;
 		this._oplog.setIdentity(identity);
@@ -594,8 +599,8 @@ export class Store<T> implements Initiable<T> {
 			reciever: options?.reciever,
 			canAppend: options?.skipCanAppendCheck ? undefined : this.canAppend,
 			identity: options?.identity,
-			trim: options?.trim,
 		});
+
 		logger.debug("Appended entry with hash: " + change.entry.hash);
 		const changes: Change<T> = {
 			added: [change.entry],
