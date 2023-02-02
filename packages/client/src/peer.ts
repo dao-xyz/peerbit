@@ -1146,23 +1146,35 @@ export class Peerbit {
 				onClose: () => this._onProgamClose(program),
 				onDrop: () => this._onProgamClose(program),
 				replicate,
-				replicator: (address, gid) =>
-					this.isLeader(address.toString(), gid, resolveMinReplicas()),
-				open: (program) => this.open(program, options), // If the program opens more programs
+
+				// If the program opens more programs
+				open: (program) =>
+					this.open(program, {
+						...options,
+
+						// We do this below to prevent the client to get callback from a subprogram,
+						// which is not expected (usually)
+						onUpdate: undefined,
+						onClose: undefined,
+						onDrop: undefined,
+						onLoad: undefined,
+						onLoadProgress: undefined,
+						onReplicationComplete: undefined,
+						onReplicationFetch: undefined,
+						onReplicationQueued: undefined,
+						onOpen: undefined,
+						onReady: undefined,
+						onWrite: undefined,
+					}),
 				store: {
 					...options,
-					trim: options.trim
-						? {
-								canTrim: async (entry: Entry<any>) =>
-									!(await this.isLeader(
-										program.address.toString()!,
-										entry.gid,
-										resolveMinReplicas()
-									)),
-								...options.trim,
-						  }
-						: undefined,
 					cacheId: programAddress,
+					replicator: (entry: Entry<any>) =>
+						this.isLeader(
+							program.address.toString(),
+							entry.gid,
+							resolveMinReplicas()
+						),
 					resolveCache: (store) => {
 						const programAddress = program.address?.toString();
 						if (!programAddress) {
