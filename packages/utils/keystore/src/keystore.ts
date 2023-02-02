@@ -27,6 +27,7 @@ const getGroupKey = (group: string) =>
 const getIdKey = async (
 	id: string | Uint8Array | PublicSignKey
 ): Promise<string> => {
+	await sodium.ready;
 	if (id instanceof PublicSignKey || id instanceof PublicKeyEncryptionKey) {
 		return id.hashcode();
 	}
