@@ -45,20 +45,31 @@ const ADDRESS_PREFIXES = ["zb", "zd", "Qm", "ba", "k5"];
 @variant(0)
 export class Address {
 	@field({ type: "string" })
-	cid: string;
+	private _cid: string;
 
 	@field({ type: option(ProgramPath) })
-	path?: ProgramPath;
+	private _path?: ProgramPath;
 
 	constructor(properties: { cid: string; path?: ProgramPath }) {
 		if (properties) {
-			this.cid = properties.cid;
-			this.path = properties.path;
+			this._cid = properties.cid;
+			this._path = properties.path;
 		}
 	}
+	get cid(): string {
+		return this._cid;
+	}
+
+	get path(): ProgramPath | undefined {
+		return this._path;
+	}
+
+	private _toString: string;
 
 	toString() {
-		return Address.join(this.cid, this.path);
+		return (
+			this._toString || (this._toString = Address.join(this.cid, this.path))
+		);
 	}
 
 	equals(other: Address) {
