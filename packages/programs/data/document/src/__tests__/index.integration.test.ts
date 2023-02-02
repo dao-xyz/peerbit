@@ -855,7 +855,6 @@ describe("index", () => {
 				const keypair = await X25519Keypair.create();
 				await store.init(session.peers[i], await createIdentity(), {
 					replicate: i === 0,
-					replicator: () => Promise.resolve(true),
 					open: async (program) => {
 						openEvents.push(program);
 						// we don't init, but in real use case we would init here
@@ -878,6 +877,7 @@ describe("index", () => {
 								}
 							},
 						},
+						replicator: () => Promise.resolve(true),
 						resolveCache: () => new Cache(createStore()),
 					},
 				});
@@ -911,9 +911,9 @@ describe("index", () => {
 			const subProgram = new SubProgram();
 			subProgram.init(session.peers[0], await createIdentity(), {
 				replicate: true,
-				replicator: () => Promise.resolve(true),
 				store: {
 					...DefaultOptions,
+					replicator: () => Promise.resolve(true),
 					resolveCache: () => new Cache(createStore()),
 				},
 			});

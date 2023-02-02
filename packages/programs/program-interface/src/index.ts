@@ -194,7 +194,6 @@ export type ProgramInitializationOptions = {
 	onClose?: () => void;
 	onDrop?: () => void;
 	open?: OpenProgram;
-	replicator?: (address: Address, gid: string) => Promise<boolean>;
 };
 
 @variant(0)
@@ -210,7 +209,6 @@ export abstract class AbstractProgram {
 	private _initialized?: boolean;
 	private _replicate?: boolean;
 
-	replicator?: (address: Address, gid: string) => Promise<boolean>;
 	open?: (program: Program) => Promise<Program>;
 	private programsOpened: Program[];
 	parentProgram: Program;
@@ -253,8 +251,6 @@ export abstract class AbstractProgram {
 				return opened;
 			};
 		}
-
-		this.replicator = options.replicator;
 
 		const nexts = this.programs;
 		for (const next of nexts) {
