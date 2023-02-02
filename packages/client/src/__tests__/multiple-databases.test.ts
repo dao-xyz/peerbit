@@ -108,8 +108,8 @@ describe(`Multiple Databases`, function () {
 		// Function to check if all databases have been replicated
 		const allReplicated = () => {
 			return (
-				remoteDatabasesA.every((db) => db.store._oplog.length === entryCount) &&
-				remoteDatabasesB.every((db) => db.store._oplog.length === entryCount)
+				remoteDatabasesA.every((db) => db.store.oplog.length === entryCount) &&
+				remoteDatabasesB.every((db) => db.store.oplog.length === entryCount)
 			);
 		};
 
@@ -126,7 +126,7 @@ describe(`Multiple Databases`, function () {
 						try {
 							const result = db.iterator({ limit: -1 }).collect().length;
 							expect(result).toEqual(entryCount);
-							expect(db.store._oplog.length).toEqual(entryCount);
+							expect(db.store.oplog.length).toEqual(entryCount);
 						} catch (error) {
 							reject(error);
 						}
@@ -136,7 +136,7 @@ describe(`Multiple Databases`, function () {
 						try {
 							const result = db.iterator({ limit: -1 }).collect().length;
 							expect(result).toEqual(entryCount);
-							expect(db.store._oplog.length).toEqual(entryCount);
+							expect(db.store.oplog.length).toEqual(entryCount);
 						} catch (error) {
 							reject(error);
 						}

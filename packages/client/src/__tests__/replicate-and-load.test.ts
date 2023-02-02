@@ -80,7 +80,7 @@ describe(`Replicate and Load`, function () {
 
 			return new Promise((resolve, reject) => {
 				timer = setInterval(async () => {
-					if (db2.store._oplog.length === entryCount) {
+					if (db2.store.oplog.length === entryCount) {
 						clearInterval(timer);
 
 						const items = db2.iterator({ limit: -1 }).collect();
