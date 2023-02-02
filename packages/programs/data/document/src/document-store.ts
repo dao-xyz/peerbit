@@ -338,13 +338,6 @@ export class Documents<T> extends ComposableProgram {
 
 					// Program specific
 					if (value instanceof Program) {
-						// TODO rm these checks
-						if (!this.replicator) {
-							throw new Error(
-								"Documents have not been initialized with the 'replicator' function, which is required for types that extends Program"
-							);
-						}
-
 						if (!this.open) {
 							throw new Error(
 								"Documents have not been initialized with the open function, which is required for types that extends Program"
@@ -355,7 +348,7 @@ export class Documents<T> extends ComposableProgram {
 						if (
 							(await this._canOpen!(value, item)) &&
 							this.replicate &&
-							(await this.replicator!(this.parentProgram.address, item.gid))
+							(await this.store.options.replicator!(item))
 						) {
 							await this.open!(value);
 						}
