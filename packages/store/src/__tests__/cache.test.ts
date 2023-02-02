@@ -20,7 +20,7 @@ const checkHashes = async (
 	hashes: string[][]
 ) => {
 	await store.idle();
-	let cachePath = await store._cache
+	let cachePath = await store.cache
 		.get(headsPath)
 		.then((bytes) => bytes && deserialize(bytes, CachePath).path);
 	let nextPath = cachePath!;
@@ -28,7 +28,7 @@ const checkHashes = async (
 	if (hashes.length > 0) {
 		for (let i = 0; i < hashes.length; i++) {
 			ret.push(nextPath);
-			let headCache = await store._cache
+			let headCache = await store.cache
 				.get(nextPath!)
 				.then((bytes) => bytes && deserialize(bytes, HeadsCache));
 			expect(headCache?.heads).toContainAllValues(hashes[i]);
@@ -42,7 +42,7 @@ const checkHashes = async (
 	} else {
 		if (cachePath) {
 			expect(
-				await store._cache
+				await store.cache
 					.get(cachePath)
 					.then((bytes) => bytes && deserialize(bytes, HeadsCache))
 			).toBeUndefined();
@@ -173,11 +173,11 @@ describe(`load`, function () {
 
 		await store.idle();
 		const headsPath = (
-			await store._cache
+			await store.cache
 				.get(store.headsPath)
 				.then((bytes) => bytes && deserialize(bytes, CachePath))
 		)?.path!;
-		await store._cache.set(headsPath, new Uint8Array([255]));
+		await store.cache.set(headsPath, new Uint8Array([255]));
 		await expect(() => store.load()).rejects.toThrowError();
 	});
 
@@ -250,7 +250,7 @@ describe(`load`, function () {
 
 		for (const key of [...addedCacheKeys, ...removedCacheKeys]) {
 			expect(
-				await store._cache
+				await store.cache
 					.get(key)
 					.then((bytes) => bytes && deserialize(bytes, HeadsCache))
 			).toBeUndefined();

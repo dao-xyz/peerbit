@@ -53,15 +53,12 @@ describe(`Constructor`, function () {
 	});
 
 	it("creates a new Store instance", async () => {
-		expect(typeof store._options).toEqual("object");
-		expect(typeof store._store).toEqual("object");
-		expect(typeof store._cache).toEqual("object");
-		expect(typeof store._oplog).toEqual("object");
+		expect(typeof store.options).toEqual("object");
+		expect(typeof store.store).toEqual("object");
+		expect(typeof store.cache).toEqual("object");
+		expect(typeof store.oplog).toEqual("object");
 	});
 
-	it("properly defines a cache", async () => {
-		expect(typeof store._cache).toEqual("object");
-	});
 	it("can clone", async () => {
 		const clone = store.clone();
 		expect(clone).not.toEqual(store);
