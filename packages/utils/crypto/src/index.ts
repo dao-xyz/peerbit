@@ -10,3 +10,4 @@ export * from "./libp2p.js";
 export * from "./utils.js";
 export * from "./hash.js";
 export * from "./random.js";
+export * from "./prehash.js";

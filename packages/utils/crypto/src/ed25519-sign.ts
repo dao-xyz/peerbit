@@ -1,40 +1,43 @@
-import { Ed25519PrivateKey, Ed25519PublicKey } from "./ed25519.js";
-import { sha256 } from "./hash.js";
+import { Ed25519Keypair, Ed25519PublicKey } from "./ed25519.js";
 import sodium from "libsodium-wrappers";
 import crypto from "crypto";
+import { SignatureWithKey } from "./signature.js";
+import { PreHash, prehashFn } from "./prehash.js";
 
 export const sign = async (
 	data: Uint8Array,
-	privateKey: Ed25519PrivateKey,
-	signedHash = false
+	keypair: Ed25519Keypair,
+	prehash: PreHash
 ) => {
-	const signedData = signedHash ? await sha256(data) : data;
+	const hashedData = await prehashFn(data, prehash);
 
-	if (!privateKey.keyObject) {
-		privateKey.keyObject = crypto.createPrivateKey({
+	if (!keypair.privateKey.keyObject) {
+		keypair.privateKey.keyObject = crypto.createPrivateKey({
 			format: "der",
 			type: "pkcs8",
-			key: toDER(privateKey.privateKey, true),
+			key: toDER(keypair.privateKey.privateKey, true),
 		});
 	}
-	return crypto.sign(null, signedData, privateKey.keyObject);
+	return new SignatureWithKey({
+		prehash,
+		publicKey: keypair.publicKey,
+		signature: crypto.sign(null, hashedData, keypair.privateKey.keyObject),
+	});
 };
 
 export const verifySignatureEd25519 = async (
-	signature: Uint8Array,
-	publicKey: Ed25519PublicKey,
-	data: Uint8Array,
-	signedHash = false
+	signature: SignatureWithKey,
+	data: Uint8Array
 ) => {
 	let res = false;
 	try {
-		const hashedData = signedHash ? await sha256(data) : data;
+		const hashedData = await prehashFn(data, signature.prehash);
 
-		/* 	return crypto.verify(null, hashedData, publicKey.keyObject, signature); */
+		/* 	return crypto.verify(null, hashedData, publicKey.keyObject, signature); */ // Sodium seems faster
 		const verified = sodium.crypto_sign_verify_detached(
-			signature,
+			signature.signature,
 			hashedData,
-			publicKey instanceof Ed25519PublicKey ? publicKey.publicKey : publicKey
+			(signature.publicKey as Ed25519PublicKey).publicKey
 		);
 		res = verified;
 	} catch (error) {

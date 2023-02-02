@@ -144,23 +144,9 @@ describe("Log - Encryption", function () {
 					next: recieverKey.keypair.publicKey,
 				},
 				signers: [
-					async (data) =>
-						new SignatureWithKey({
-							publicKey: log2._identity.publicKey,
-							signature: await log2._identity.sign(data),
-						}),
-					async (data) => {
-						return new SignatureWithKey({
-							publicKey: extraSigner.publicKey,
-							signature: await extraSigner.sign(data),
-						});
-					},
-					async (data) => {
-						return new SignatureWithKey({
-							publicKey: extraSigner2.publicKey,
-							signature: await extraSigner2.sign(data),
-						});
-					},
+					log2._identity.sign.bind(log2._identity),
+					extraSigner.sign.bind(extraSigner),
+					extraSigner2.sign.bind(extraSigner2),
 				],
 			});
 

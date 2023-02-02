@@ -279,12 +279,7 @@ export abstract class DirectStream<
 
 		this.libp2p = libp2p;
 		const signKey = getKeypairFromPeerId(this.libp2p.peerId);
-		this.sign = (async (bytes) =>
-			new SignatureWithKey({
-				publicKey: signKey.publicKey,
-				signature: await signKey.sign(bytes),
-			})).bind(this);
-
+		this.sign = signKey.sign.bind(signKey);
 		this.peerIdStr = libp2p.peerId.toString();
 		this.publicKey = signKey.publicKey;
 		this.publicKeyHash = signKey.publicKey.hashcode();
@@ -790,7 +785,7 @@ export abstract class DirectStream<
 		return true;
 	}
 	async onHello(from: PeerId, peerStream: PeerStreams, message: Hello) {
-		if (!(await message.verify(true))) {
+		if (!(await message.verify(false))) {
 			logger.warn("Recieved message with invalid signature or timestamp");
 			return false;
 		}
@@ -834,7 +829,7 @@ export abstract class DirectStream<
 	}
 
 	async onGoodbye(from: PeerId, peerStream: PeerStreams, message: Goodbye) {
-		if (!(await message.verify(true))) {
+		if (!(await message.verify(false))) {
 			logger.warn("Recieved message with invalid signature or timestamp");
 			return false;
 		}

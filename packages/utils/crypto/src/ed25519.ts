@@ -10,6 +10,7 @@ import { coerce } from "./bytes.js";
 import sodium from "libsodium-wrappers";
 import type { Ed25519PeerId, PeerId } from "@libp2p/interface-peer-id";
 import { sign } from "./ed25519-sign.js";
+import { PreHash } from "./prehash.js";
 
 @variant(0)
 export class Ed25519PublicKey extends PublicSignKey {
@@ -134,16 +135,16 @@ export class Ed25519Keypair extends Keypair implements Signer {
 		return kp;
 	}
 
-	sign(data: Uint8Array, hash = false): Promise<Uint8Array> {
-		return sign(data, this.privateKey, hash);
+	sign(
+		data: Uint8Array,
+		prehash: PreHash = PreHash.NONE
+	): Promise<SignatureWithKey> {
+		return sign(data, this, prehash);
 	}
 
-	signer(): SignWithKey {
+	signer(prehash: PreHash): SignWithKey {
 		return async (data: Uint8Array) => {
-			return new SignatureWithKey({
-				publicKey: this.publicKey,
-				signature: await this.sign(data),
-			});
+			return this.sign(data, prehash);
 		};
 	}
 

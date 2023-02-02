@@ -131,16 +131,8 @@ describe("Signed Log", function () {
 			{ logId: "A" }
 		);
 		const signers = [
-			async (data: Uint8Array) =>
-				new SignatureWithKey({
-					publicKey: signKey.keypair.publicKey,
-					signature: await signKey.keypair.sign(data),
-				}),
-			async (data: Uint8Array) =>
-				new SignatureWithKey({
-					publicKey: signKey2.keypair.publicKey,
-					signature: await signKey2.keypair.sign(data),
-				}),
+			signKey.keypair.sign.bind(signKey.keypair),
+			signKey2.keypair.sign.bind(signKey2.keypair),
 		];
 
 		await log.append("one", { signers });

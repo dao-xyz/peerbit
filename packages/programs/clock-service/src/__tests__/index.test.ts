@@ -82,11 +82,7 @@ describe("clock", () => {
 			identity: reader.identity,
 			store: session.peers[1].directblock,
 			signers: [
-				async (data: Uint8Array) =>
-					new SignatureWithKey({
-						publicKey: reader.identity.publicKey,
-						signature: await reader.identity.sign(data),
-					}),
+				reader.identity.sign.bind(reader.identity),
 				reader.clock.sign.bind(reader.clock),
 			],
 		});
@@ -108,11 +104,7 @@ describe("clock", () => {
 				identity: reader.identity,
 				store: session.peers[1].directblock,
 				signers: [
-					async (data: Uint8Array) =>
-						new SignatureWithKey({
-							publicKey: reader.identity.publicKey,
-							signature: await reader.identity.sign(data),
-						}),
+					async (data: Uint8Array) => reader.identity.sign(data),
 					async (data: Uint8Array) => {
 						await delay(maxTimeError + 1000);
 						return reader.clock.sign(data);

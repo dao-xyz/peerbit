@@ -28,6 +28,7 @@ import {
 	Ed25519PrivateKey,
 	getKeypairFromPeerId,
 	Sec256k1Keccak256Keypair,
+	PreHash,
 } from "@dao-xyz/peerbit-crypto";
 import { encryptionWithRequestKey } from "./encryption.js";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
@@ -210,7 +211,7 @@ export class Peerbit {
 		this.idKeyHash = this.idKey.publicKey.hashcode();
 		this.idIdentity = {
 			...this.idKey,
-			sign: (data) => this.idKey.sign(data),
+			sign: (data) => this.idKey.sign(data, PreHash.SHA_256),
 		};
 
 		this.directory = options.directory || "./peerbit/data";
@@ -401,14 +402,8 @@ export class Peerbit {
 	): Promise<DecryptedThing<MaybeSigned<Uint8Array>>> {
 		const signedMessage = await new MaybeSigned({ data }).sign(async (data) => {
 			return options?.signWithPeerId
-				? {
-						publicKey: this.idKey.publicKey,
-						signature: await this.idKey.sign(data),
-				  }
-				: {
-						publicKey: this.identity.publicKey,
-						signature: await this.identity.sign(data),
-				  };
+				? this.idKey.sign(data)
+				: this.identity.sign(data);
 		});
 		return new DecryptedThing({
 			data: serialize(signedMessage),
@@ -424,14 +419,8 @@ export class Peerbit {
 	): Promise<EncryptedThing<MaybeSigned<Uint8Array>>> {
 		const signedMessage = await new MaybeSigned({ data }).sign(async (data) => {
 			return options?.signWithPeerId
-				? {
-						publicKey: this.idKey.publicKey,
-						signature: await this.idKey.sign(data),
-				  }
-				: {
-						publicKey: this.identity.publicKey,
-						signature: await this.identity.sign(data),
-				  };
+				? this.idKey.sign(data)
+				: this.identity.sign(data);
 		});
 		return new DecryptedThing<MaybeSigned<Uint8Array>>({
 			data: serialize(signedMessage),

@@ -131,13 +131,7 @@ export const createExchangeHeadsMessage = async (
 	const maybeSigned = new MaybeSigned({ data: serialize(message) });
 	let signedMessage: MaybeSigned<any> = maybeSigned;
 	if (identity) {
-		const signer = async (data: Uint8Array) => {
-			return {
-				signature: await identity.sign(data),
-				publicKey: identity.publicKey,
-			};
-		};
-		signedMessage = await signedMessage.sign(signer);
+		signedMessage = await signedMessage.sign(identity.sign.bind(identity));
 	}
 
 	const decryptedMessage = new DecryptedThing({

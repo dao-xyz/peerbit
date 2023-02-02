@@ -372,13 +372,7 @@ export class Entry<T>
 		}
 
 		for (const signature of signatures) {
-			if (
-				!(await verify(
-					signature.signature,
-					signature.publicKey,
-					Entry.toSignable(this)
-				))
-			) {
+			if (!(await verify(signature, Entry.toSignable(this)))) {
 				return false;
 			}
 		}
@@ -616,11 +610,7 @@ export class Entry<T>
 		});
 
 		const signers = properties.signers || [
-			async (data: Uint8Array) =>
-				new SignatureWithKey({
-					signature: await properties.identity.sign(data),
-					publicKey: properties.identity.publicKey,
-				}),
+			properties.identity.sign.bind(properties.identity),
 		];
 		const signable = entry.toSignable();
 		let signatures = await Promise.all(

@@ -139,9 +139,7 @@ const verifyMultiSig = async (
 		}
 		const data = dataGenerator.next();
 		done = data.done;
-		if (
-			!(await verify(signature.signature, signature.publicKey, data.value!))
-		) {
+		if (!(await verify(signature, data.value!))) {
 			return false;
 		}
 	}

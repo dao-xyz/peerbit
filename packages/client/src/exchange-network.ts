@@ -97,10 +97,7 @@ export const createExchangeSwarmAddressesMessage = async (
 		await new DecryptedThing<ExchangeSwarmMessage>({
 			data: serialize(
 				new MaybeSigned({
-					signature: new SignatureWithKey({
-						signature: signatureResult,
-						publicKey: identity.publicKey,
-					}),
+					signature: signatureResult,
 					data: message,
 				})
 			),

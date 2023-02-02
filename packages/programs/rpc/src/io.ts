@@ -50,14 +50,11 @@ export const send = async (
 	let timeoutFn: any = undefined;
 
 	const serializedQuery = serialize(query);
-	let maybeSignedMessage = new MaybeSigned({ data: serializedQuery });
+	let maybeSignedMessage = new MaybeSigned<any>({ data: serializedQuery });
 	if (options.signer) {
-		maybeSignedMessage = await maybeSignedMessage.sign(async (data) => {
-			return {
-				publicKey: (options.signer as Identity).publicKey,
-				signature: await (options.signer as Identity).sign(data),
-			};
-		});
+		maybeSignedMessage = await maybeSignedMessage.sign(
+			options.signer.sign.bind(options.signer)
+		);
 	}
 
 	const decryptedMessage = new DecryptedThing<MaybeSigned<Uint8Array>>({
@@ -179,12 +176,9 @@ export const respond = async (
 	let maybeSignedMessage = new MaybeSigned({ data: serializedResponse });
 
 	if (options.signer) {
-		maybeSignedMessage = await maybeSignedMessage.sign(async (data) => {
-			return {
-				publicKey: (options.signer as Identity).publicKey,
-				signature: await (options.signer as Identity).sign(data),
-			};
-		});
+		maybeSignedMessage = await maybeSignedMessage.sign(
+			options.signer.sign.bind(options.signer.sign)
+		);
 	}
 
 	const decryptedMessage = new DecryptedThing<MaybeSigned<Uint8Array>>({

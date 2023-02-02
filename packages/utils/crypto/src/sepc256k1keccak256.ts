@@ -16,7 +16,8 @@ import { Signer } from "./signer.js";
 import { coerce } from "./bytes.js";
 import { generateKeyPair } from "@libp2p/crypto/keys";
 import utf8 from "@protobufjs/utf8";
-import { sha256, sha256Base64 } from "./hash.js";
+import { SignatureWithKey } from "./signature.js";
+import { PreHash, prehashFn } from "./prehash.js";
 @variant(1)
 export class Secp256k1Keccak256PublicKey extends PublicSignKey {
 	@field({ type: fixedUint8Array(20) })
@@ -123,15 +124,25 @@ export class Sec256k1Keccak256Keypair extends Keypair implements Signer {
 		return kp;
 	}
 
-	sign(data: Uint8Array): Uint8Array {
+	async sign(
+		data: Uint8Array,
+		prehash: PreHash = PreHash.NONE
+	): Promise<SignatureWithKey> {
+		const maybeHashed = await prehashFn(data, prehash);
+
 		const signature = joinSignature(
 			(this._wallet || (this._wallet = new Wallet(this.privateKey.privateKey)))
 				._signingKey()
-				.signDigest(hashMessage(data))
+				.signDigest(hashMessage(maybeHashed))
 		);
-		const ret = new Uint8Array(utf8.length(signature));
-		utf8.write(signature, ret, 0);
-		return ret;
+		const signatureBytes = new Uint8Array(utf8.length(signature)); // TODO utilize Buffer allocUnsafe
+		utf8.write(signature, signatureBytes, 0);
+
+		return new SignatureWithKey({
+			prehash: PreHash.NONE,
+			publicKey: this.publicKey,
+			signature: signatureBytes,
+		});
 	}
 
 	equals(other: Keypair) {
@@ -155,12 +166,16 @@ export class Sec256k1Keccak256Keypair extends Keypair implements Signer {
 const decoder = new TextDecoder();
 
 export const verifySignatureSecp256k1 = async (
-	signature: Uint8Array,
-	publicKey: Secp256k1Keccak256PublicKey,
-	data: Uint8Array,
-	signedHash = false
+	signature: SignatureWithKey,
+	data: Uint8Array
 ): Promise<boolean> => {
-	const hashedData = signedHash ? await sha256(data) : data;
-	const signerAddress = verifyMessage(hashedData, decoder.decode(signature));
-	return arraysEqual(fromHexString(signerAddress.slice(2)), publicKey.address);
+	const hashedData = await prehashFn(data, signature.prehash);
+	const signerAddress = verifyMessage(
+		hashedData,
+		decoder.decode(signature.signature)
+	);
+	return arraysEqual(
+		fromHexString(signerAddress.slice(2)),
+		(signature.publicKey as Secp256k1Keccak256PublicKey).address
+	);
 };

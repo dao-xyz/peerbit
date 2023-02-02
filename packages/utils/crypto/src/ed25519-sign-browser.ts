@@ -1,29 +1,37 @@
-import { Ed25519PrivateKey, Ed25519PublicKey } from "./ed25519.js";
+import { Ed25519Keypair, Ed25519PublicKey } from "./ed25519.js";
 import { sha256 } from "./hash.js";
 import sodium from "libsodium-wrappers";
+import { PreHash, prehashFn } from "./prehash.js";
+import { SignatureWithKey } from "./signature.js";
 
 export const sign = async (
 	data: Uint8Array,
-	privateKey: Ed25519PrivateKey,
-	signedHash = false
+	keypair: Ed25519Keypair,
+	prehash: PreHash
 ) => {
-	const signedData = signedHash ? await sha256(data) : data;
-	return sodium.crypto_sign_detached(signedData, privateKey.privateKey);
+	const hashedData = await prehashFn(data, prehash);
+
+	return new SignatureWithKey({
+		prehash,
+		publicKey: keypair.publicKey,
+		signature: sodium.crypto_sign_detached(
+			hashedData,
+			keypair.privateKey.privateKey
+		),
+	});
 };
 
 export const verifySignatureEd25519 = async (
-	signature: Uint8Array,
-	publicKey: Ed25519PublicKey,
 	data: Uint8Array,
-	signedHash = false
+	signature: SignatureWithKey
 ) => {
 	let res = false;
 	try {
-		const hashedData = signedHash ? await sha256(data) : data;
+		const hashedData = await prehashFn(data, signature.prehash);
 		const verified = sodium.crypto_sign_verify_detached(
-			signature,
+			signature.signature,
 			hashedData,
-			publicKey instanceof Ed25519PublicKey ? publicKey.publicKey : publicKey
+			(signature.publicKey as Ed25519PublicKey).publicKey
 		);
 		res = verified;
 	} catch (error) {

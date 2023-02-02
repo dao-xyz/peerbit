@@ -1,9 +1,11 @@
-import { PublicSignKey } from "./key.js";
+import { PreHash } from "./prehash.js";
+import { SignatureWithKey } from "./signature.js";
 
 export interface Signer {
-	sign: (bytes: Uint8Array) => Promise<Uint8Array> | Uint8Array;
+	sign: (
+		bytes: Uint8Array,
+		prehash: PreHash
+	) => Promise<SignatureWithKey> | SignatureWithKey;
 }
 
-export type SignWithKey = (
-	bytes: Uint8Array
-) => Promise<{ signature: Uint8Array; publicKey: PublicSignKey }>;
+export type SignWithKey = (bytes: Uint8Array) => Promise<SignatureWithKey>;

@@ -1,37 +1,38 @@
 import B from "benchmark";
 import crypto from "crypto";
 import { Ed25519Keypair } from "../ed25519.js";
-import { verify } from "../signature.js";
+import { PreHash } from "../prehash.js";
+import { SignatureWithKey, verify } from "../signature.js";
 //node --loader ts-node/esm ./src/__benchmark__/index.ts
-const large = crypto.randomBytes(1e6); //  1mb
 
 const keypair = await Ed25519Keypair.create();
-const signatures: [Uint8Array, Uint8Array][] = [];
+const signatures: [Uint8Array, SignatureWithKey][] = [];
+const size = 1e5;
 for (let i = 0; i < 10000; i++) {
-	const data = crypto.randomBytes(1e3);
-	signatures.push([data, await keypair.sign(data)]);
+	const data = crypto.randomBytes(size);
+	signatures.push([data, await keypair.sign(data, PreHash.NONE)]);
 }
 
-const signaturesHash: [Uint8Array, Uint8Array][] = [];
+const signaturesHash: [Uint8Array, SignatureWithKey][] = [];
 for (let i = 0; i < 10000; i++) {
-	const data = crypto.randomBytes(1e3);
-	signaturesHash.push([data, await keypair.sign(data, true)]);
+	const data = crypto.randomBytes(size);
+	signaturesHash.push([data, await keypair.sign(data, PreHash.SHA_256)]);
 }
 
 const suite = new B.Suite("ed25519");
 suite
 	.add("sign", {
 		fn: async (deferred) => {
-			const data = crypto.randomBytes(1e3); // 1kb
-			await keypair.sign(data);
+			const data = crypto.randomBytes(size); // 1kb
+			await keypair.sign(data, PreHash.NONE);
 			deferred.resolve();
 		},
 		defer: true,
 	})
 	.add("hash+sign", {
 		fn: async (deferred) => {
-			const data = crypto.randomBytes(1e3); // 1kb
-			await keypair.sign(data, true);
+			const data = crypto.randomBytes(size); // 1kb
+			await keypair.sign(data, PreHash.SHA_256);
 			deferred.resolve();
 		},
 		defer: true,
@@ -40,7 +41,7 @@ suite
 		fn: async (deferred) => {
 			const [data, signature] =
 				signatures[Math.floor(Math.random() * signatures.length)];
-			if (!(await verify(signature, keypair.publicKey, data))) {
+			if (!(await verify(signature, data))) {
 				throw new Error("Unverified");
 			}
 			deferred.resolve();
@@ -51,7 +52,7 @@ suite
 		fn: async (deferred) => {
 			const [data, signature] =
 				signaturesHash[Math.floor(Math.random() * signatures.length)];
-			if (!(await verify(signature, keypair.publicKey, data, true))) {
+			if (!(await verify(signature, data))) {
 				throw new Error("Unexpected");
 			}
 			deferred.resolve();

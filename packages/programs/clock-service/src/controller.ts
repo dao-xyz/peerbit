@@ -87,10 +87,7 @@ export class ClockService extends Program {
 				}
 				const signature = await this.identity.sign(entry.toSignable());
 				return new Ok({
-					signature: new SignatureWithKey({
-						publicKey: this.identity.publicKey,
-						signature,
-					}),
+					signature,
 				});
 			},
 		});

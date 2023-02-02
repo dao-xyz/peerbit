@@ -6,6 +6,7 @@ import {
 	Sec256k1Keccak256Keypair,
 	verify,
 	Ed25519PublicKey,
+	SignatureWithKey,
 } from "../index.js";
 import sodium from "libsodium-wrappers";
 import { deserialize, serialize } from "@dao-xyz/borsh";
@@ -20,6 +21,7 @@ import {
 	verifySignatureEd25519 as verifySignatureEd25519Browser,
 	sign as signEd25519Browser,
 } from "../ed25519-sign-browser";
+import { PreHash } from "../prehash.js";
 
 describe("Ed25519", () => {
 	it("ser/der", async () => {
@@ -34,8 +36,11 @@ describe("Ed25519", () => {
 			const data = new Uint8Array([1, 2, 3]);
 			const signature = sodium.crypto_sign_detached(data, keypair.privateKey);
 			const isVerified = await verifySignatureEd25519(
-				signature,
-				new Ed25519PublicKey({ publicKey: keypair.publicKey }),
+				new SignatureWithKey({
+					prehash: PreHash.NONE,
+					publicKey: new Ed25519PublicKey({ publicKey: keypair.publicKey }),
+					signature: signature,
+				}),
 				data
 			);
 			expect(isVerified).toBeTrue();
@@ -45,33 +50,23 @@ describe("Ed25519", () => {
 			const keypair = await Ed25519Keypair.create();
 			const data = new Uint8Array([1, 2, 3]);
 			const signature = await keypair.sign(data);
-			const isVerified = await verifySignatureEd25519(
-				signature,
-				keypair.publicKey,
-				data
-			);
+			const isVerified = await verifySignatureEd25519(signature, data);
 			expect(isVerified).toBeTrue();
 
-			const isNotVerified = await verify(
-				signature,
-				keypair.publicKey,
-				data.reverse()
-			);
+			const isNotVerified = await verify(signature, data.reverse());
 			expect(isNotVerified).toBeFalse();
 		});
 
 		it("verify hashed", async () => {
 			const keypair = await Ed25519Keypair.create();
 			const data = new Uint8Array([1, 2, 3]);
-			const signature = await keypair.sign(data, true);
-			const isVerified = await verify(signature, keypair.publicKey, data, true);
+			const signature = await keypair.sign(data, PreHash.SHA_256);
+			const isVerified = await verify(signature, data);
 			expect(isVerified).toBeTrue();
 
 			const isNotVerified = await verifySignatureEd25519(
 				signature,
-				keypair.publicKey,
-				data.reverse(),
-				true
+				data.reverse()
 			);
 			expect(isNotVerified).toBeFalse();
 		});
@@ -81,18 +76,13 @@ describe("Ed25519", () => {
 		it("verify", async () => {
 			const keypair = await Ed25519Keypair.create();
 			const data = new Uint8Array([1, 2, 3]);
-			const signature = await signEd25519Browser(data, keypair.privateKey);
-			const isVerified = await verifySignatureEd25519Browser(
-				signature,
-				keypair.publicKey,
-				data
-			);
+			const signature = await signEd25519Browser(data, keypair, PreHash.NONE);
+			const isVerified = await verifySignatureEd25519Browser(data, signature);
 			expect(isVerified).toBeTrue();
 
 			const isNotVerified = await verifySignatureEd25519Browser(
-				signature,
-				keypair.publicKey,
-				data.reverse()
+				data.reverse(),
+				signature
 			);
 			expect(isNotVerified).toBeFalse();
 		});
@@ -102,22 +92,15 @@ describe("Ed25519", () => {
 			const data = new Uint8Array([1, 2, 3]);
 			const signature = await signEd25519Browser(
 				data,
-				keypair.privateKey,
-				true
+				keypair,
+				PreHash.SHA_256
 			);
-			const isVerified = await verifySignatureEd25519Browser(
-				signature,
-				keypair.publicKey,
-				data,
-				true
-			);
+			const isVerified = await verifySignatureEd25519Browser(data, signature);
 			expect(isVerified).toBeTrue();
 
 			const isNotVerified = await verifySignatureEd25519Browser(
-				signature,
-				keypair.publicKey,
 				data.reverse(),
-				true
+				signature
 			);
 			expect(isNotVerified).toBeFalse();
 		});
@@ -127,21 +110,37 @@ describe("Ed25519", () => {
 		it("sign", async () => {
 			const keypair = await Ed25519Keypair.create();
 			const data = new Uint8Array([1, 2, 3]);
-			const signature = await signEd25519Browser(data, keypair.privateKey);
-			const signature2 = await signEd25519(data, keypair.privateKey);
-			expect(signature).toEqual(new Uint8Array(signature2));
+			let signFn = [signEd25519Browser, signEd25519];
+			let signatures: SignatureWithKey[] = [];
+			for (const fn of signFn) {
+				const signature = await fn(data, keypair, PreHash.NONE);
+				signatures.push(signature);
+				if (signatures.length > 1) {
+					expect(
+						signatures[signatures.length - 2].equals(
+							signatures[signatures.length - 1]
+						)
+					).toBeTrue();
+				}
+			}
 		});
 
 		it("sign hashed", async () => {
 			const keypair = await Ed25519Keypair.create();
 			const data = new Uint8Array([1, 2, 3]);
-			const signature = await signEd25519Browser(
-				data,
-				keypair.privateKey,
-				true
-			);
-			const signature2 = await signEd25519(data, keypair.privateKey, true);
-			expect(signature).toEqual(new Uint8Array(signature2));
+			let signFn = [signEd25519Browser, signEd25519];
+			let signatures: SignatureWithKey[] = [];
+			for (const fn of signFn) {
+				const signature = await fn(data, keypair, PreHash.SHA_256);
+				signatures.push(signature);
+				if (signatures.length > 1) {
+					expect(
+						signatures[signatures.length - 2].equals(
+							signatures[signatures.length - 1]
+						)
+					).toBeTrue();
+				}
+			}
 		});
 	});
 });
@@ -164,12 +163,17 @@ describe("Sepck2561k1Keccak256", () => {
 		});
 		const signature = await wallet.signMessage(data);
 		let signatureBytes = Buffer.from(signature);
-		const isVerified = await verifySignatureSecp256k1(signatureBytes, pk, data);
+		const signatureWithKey = new SignatureWithKey({
+			prehash: PreHash.NONE,
+			publicKey: pk,
+			signature: signatureBytes,
+		});
+
+		const isVerified = await verifySignatureSecp256k1(signatureWithKey, data);
 		expect(isVerified).toBeTrue();
 
 		const isNotVerified = await verifySignatureSecp256k1(
-			Buffer.from(signature),
-			pk,
+			signatureWithKey,
 			data.reverse()
 		);
 		expect(isNotVerified).toBeFalse();
@@ -184,9 +188,7 @@ describe("Sepck2561k1Keccak256", () => {
 		expect(publicKeyComputed.bytes).toEqual(peerId.publicKey);
 		const wallet = new Wallet(peerId.privateKey!.slice(4));
 		const signature = await keypair.sign(data);
-		expect(
-			await verifySignatureSecp256k1(signature, keypair.publicKey, data)
-		).toBeTrue();
+		expect(await verifySignatureSecp256k1(signature, data)).toBeTrue();
 	});
 
 	it("ser/der", async () => {
