@@ -115,7 +115,7 @@ export class Documents<T> extends ComposableProgram {
 				const entries = (
 					await Promise.all(
 						result.results.map((result) => {
-							return this.store._store
+							return this.store.store
 								.get<Uint8Array>(result.context.head, {
 									timeout: 10 * 10000,
 								})
@@ -187,8 +187,8 @@ export class Documents<T> extends ComposableProgram {
 
 		try {
 			entry.init({
-				encoding: this.store._oplog._encoding,
-				encryption: this.store._oplog._encryption,
+				encoding: this.store.oplog._encoding,
+				encryption: this.store.oplog._encryption,
 			});
 			const operation = await entry.getPayloadValue();
 			if (operation instanceof PutOperation) {
@@ -270,10 +270,7 @@ export class Documents<T> extends ComposableProgram {
 		);
 	}
 
-	del(
-		key: Keyable,
-		options?: AddOperationOptions<Operation<T>> & { permanently?: boolean }
-	) {
+	del(key: Keyable, options?: AddOperationOptions<Operation<T>>) {
 		const k = asString(key);
 		const existing = this._index.get(k);
 		if (!existing) {
@@ -283,7 +280,6 @@ export class Documents<T> extends ComposableProgram {
 		return this.store.addOperation(
 			new DeleteOperation({
 				key: asString(k),
-				permanently: options?.permanently,
 			}),
 			{ nexts: [existing.entry], ...options }
 		);
@@ -369,17 +365,14 @@ export class Documents<T> extends ComposableProgram {
 					payload instanceof PutOperation ||
 					removedSet.has(item.hash)
 				) {
-					/* if (payload.permanently) */
-					{
-						// delete all nexts recursively (but dont delete the DELETE record (because we might want to share this with others))
-						const nexts = item.next
-							.map((n) => this.store.oplog.get(n))
-							.filter((x) => !!x) as Entry<any>[];
+					// delete all nexts recursively (but dont delete the DELETE record (because we might want to share this with others))
+					const nexts = item.next
+						.map((n) => this.store.oplog.get(n))
+						.filter((x) => !!x) as Entry<any>[];
 
-						await this.store.removeOperation(nexts, {
-							recursively: true,
-						});
-					}
+					await this.store.removeOperation(nexts, {
+						recursively: true,
+					});
 
 					// update index
 					const key = (payload as DeleteOperation | PutOperation<T>).key;

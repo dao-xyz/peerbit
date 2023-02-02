@@ -103,6 +103,7 @@ for (let i = 0; i < peersCount; i++) {
 					}
 				},
 			},
+			trim: { type: "length", to: 100 },
 			resolveCache: () =>
 				new Cache(cacheStores[i], { batch: { interval: 100 } }),
 		},
@@ -120,7 +121,7 @@ suite
 				name: "hello",
 				number: 1n,
 			});
-			await writeStore.docs.put(doc, { trim: { type: "length", to: 100 } });
+			await writeStore.docs.put(doc);
 			deferred.resolve();
 		},
 		defer: true,
