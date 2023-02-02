@@ -9,6 +9,8 @@ import {
 	JSON_ENCODING,
 	Change,
 	TrimOptions,
+	TrimToByteLengthOption,
+	TrimToLengthOption,
 } from "@dao-xyz/peerbit-log";
 import {
 	Encoding,
@@ -117,25 +119,24 @@ export interface IStoreOptions<T> {
 	encryption?: PublicKeyEncryptionResolver;
 	replicationConcurrency?: number;
 	sortFn?: ISortFunction;
+	trim?: TrimToByteLengthOption | TrimToLengthOption;
 }
 
 export interface IInitializationOptions<T>
 	extends IStoreOptions<T>,
 		IInitializationOptionsDefault<T> {
 	resolveCache: (store: Store<any>) => Promise<Cache> | Cache;
-	trim?: TrimOptions;
+	replicator?: (entry: Entry<T>) => Promise<boolean>;
 }
 
 interface IInitializationOptionsDefault<T> {
 	replicationConcurrency?: number;
-	typeMap?: { [key: string]: Constructor<any> };
 	cacheId: string;
 }
 
 export const DefaultOptions: IInitializationOptionsDefault<any> = {
 	replicationConcurrency: 32,
 	cacheId: "id",
-	typeMap: {},
 };
 
 export interface Initiable<T> {
@@ -430,7 +431,13 @@ export class Store<T> implements Initiable<T> {
 			encryption: this._options.encryption,
 			encoding: this.encoding,
 			sortFn: this._options.sortFn,
-			trim: this._options.trim,
+			trim: this._options.trim && {
+				// I can trim if I am not a replicator of an entry
+				canTrim:
+					this.options.replicator &&
+					(async (entry) => !(await this.options.replicator!(entry))),
+				...this._options.trim,
+			},
 		};
 	}
 

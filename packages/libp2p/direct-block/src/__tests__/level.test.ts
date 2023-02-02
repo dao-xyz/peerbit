@@ -1,6 +1,5 @@
 import { MemoryLevelBlockStore } from "../level";
 import { createBlock, getBlockValue, stringifyCid } from "../block.js";
-import { delay } from "@dao-xyz/peerbit-time";
 
 describe(`level`, function () {
 	let store: MemoryLevelBlockStore;
