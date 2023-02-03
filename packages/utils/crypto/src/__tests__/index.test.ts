@@ -77,12 +77,12 @@ describe("Ed25519", () => {
 			const keypair = await Ed25519Keypair.create();
 			const data = new Uint8Array([1, 2, 3]);
 			const signature = await signEd25519Browser(data, keypair, PreHash.NONE);
-			const isVerified = await verifySignatureEd25519Browser(data, signature);
+			const isVerified = await verifySignatureEd25519Browser(signature, data);
 			expect(isVerified).toBeTrue();
 
 			const isNotVerified = await verifySignatureEd25519Browser(
-				data.reverse(),
-				signature
+				signature,
+				data.reverse()
 			);
 			expect(isNotVerified).toBeFalse();
 		});
@@ -95,25 +95,31 @@ describe("Ed25519", () => {
 				keypair,
 				PreHash.SHA_256
 			);
-			const isVerified = await verifySignatureEd25519Browser(data, signature);
+			const isVerified = await verifySignatureEd25519Browser(signature, data);
 			expect(isVerified).toBeTrue();
 
 			const isNotVerified = await verifySignatureEd25519Browser(
-				data.reverse(),
-				signature
+				signature,
+				data.reverse()
 			);
 			expect(isNotVerified).toBeFalse();
 		});
 	});
 
-	describe("mixed", () => {
+	describe("mixed api", () => {
+		let signFns = [signEd25519Browser, signEd25519];
+		let verifyFns = [verifySignatureEd25519Browser, verifySignatureEd25519];
+
 		it("sign", async () => {
 			const keypair = await Ed25519Keypair.create();
 			const data = new Uint8Array([1, 2, 3]);
-			let signFn = [signEd25519Browser, signEd25519];
 			let signatures: SignatureWithKey[] = [];
-			for (const fn of signFn) {
-				const signature = await fn(data, keypair, PreHash.NONE);
+			for (const signFn of signFns) {
+				const signature = await signFn(data, keypair, PreHash.NONE);
+				for (const verifyFn of verifyFns) {
+					expect(await verifyFn(signature, data)).toBeTrue();
+				}
+
 				signatures.push(signature);
 				if (signatures.length > 1) {
 					expect(
@@ -128,11 +134,15 @@ describe("Ed25519", () => {
 		it("sign hashed", async () => {
 			const keypair = await Ed25519Keypair.create();
 			const data = new Uint8Array([1, 2, 3]);
-			let signFn = [signEd25519Browser, signEd25519];
 			let signatures: SignatureWithKey[] = [];
-			for (const fn of signFn) {
+			for (const fn of signFns) {
 				const signature = await fn(data, keypair, PreHash.SHA_256);
 				signatures.push(signature);
+
+				for (const verifyFn of verifyFns) {
+					expect(await verifyFn(signature, data)).toBeTrue();
+				}
+
 				if (signatures.length > 1) {
 					expect(
 						signatures[signatures.length - 2].equals(

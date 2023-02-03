@@ -22,8 +22,8 @@ export const sign = async (
 };
 
 export const verifySignatureEd25519 = async (
-	data: Uint8Array,
-	signature: SignatureWithKey
+	signature: SignatureWithKey,
+	data: Uint8Array
 ) => {
 	let res = false;
 	try {
