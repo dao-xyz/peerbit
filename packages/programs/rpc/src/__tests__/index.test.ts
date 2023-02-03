@@ -11,7 +11,11 @@ import {
 } from "@dao-xyz/peerbit-crypto";
 import { RequestV0, ResponseV0, send, respond, RPC, RPCMessage } from "../";
 import { Ed25519Identity } from "@dao-xyz/peerbit-log";
-import { Program } from "@dao-xyz/peerbit-program";
+import {
+	ObserverType,
+	Program,
+	ReplicatorType,
+} from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { PubSubData } from "@dao-xyz/libp2p-direct-sub";
 
@@ -70,13 +74,14 @@ describe("rpc", () => {
 
 		responder.setup(topic); // set topic manually because we are not going to have a parent program with address
 		await responder.init(session.peers[0], await createIdentity(), {
-			replicate: true,
+			role: new ReplicatorType(),
 			store: {} as any,
 		});
 		reader = deserialize(serialize(responder), RPCTest);
 		reader.setup(topic); // set topic manually because we are not going to have a parent program with address
 
 		await reader.init(session.peers[1], await createIdentity(), {
+			role: new ObserverType(),
 			store: {} as any,
 		});
 

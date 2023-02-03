@@ -14,6 +14,7 @@ import {
 	Address,
 	ComposableProgram,
 	ProgramInitializationOptions,
+	ReplicatorType,
 } from "@dao-xyz/peerbit-program";
 import { Identity } from "@dao-xyz/peerbit-log";
 import { X25519Keypair } from "@dao-xyz/peerbit-crypto";
@@ -134,7 +135,7 @@ export class RPC<Q, R> extends ComposableProgram {
 			this.parentProgram.address
 				.withPath({ index: this._programIndex! })
 				.toString();
-		if (options.replicate) {
+		if (options.role instanceof ReplicatorType) {
 			this._subscribe();
 		}
 		return this;

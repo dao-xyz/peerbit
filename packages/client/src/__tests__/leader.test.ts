@@ -4,6 +4,7 @@ import { v4 as uuid } from "uuid";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
+import { ObserverType } from "@dao-xyz/peerbit-program";
 
 describe(`leaders`, function () {
 	let session: LSession;
@@ -157,7 +158,7 @@ describe(`leaders`, function () {
 		db1 = await client1.open(
 			new EventStore<string>({ id: "replication-tests" }),
 			{
-				replicate: false,
+				role: new ObserverType(),
 			}
 		);
 		db2 = await client2.open<EventStore<string>>(db1.address!);
@@ -182,7 +183,7 @@ describe(`leaders`, function () {
 		db1 = await client1.open(
 			new EventStore<string>({ id: "replication-tests" }),
 			{
-				replicate: false,
+				role: new ObserverType(),
 			}
 		);
 		db2 = await client2.open<EventStore<string>>(db1.address!);

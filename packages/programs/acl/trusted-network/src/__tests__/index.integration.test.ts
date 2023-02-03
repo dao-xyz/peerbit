@@ -27,7 +27,12 @@ import {
 } from "@dao-xyz/peerbit-store";
 import Cache from "@dao-xyz/lazy-level";
 import { field, serialize, variant } from "@dao-xyz/borsh";
-import { Program } from "@dao-xyz/peerbit-program";
+import {
+	ObserverType,
+	Program,
+	ReplicatorType,
+	SubscriptionType,
+} from "@dao-xyz/peerbit-program";
 import {
 	Documents,
 	DocumentQueryRequest,
@@ -67,14 +72,14 @@ describe("index", () => {
 			i: number,
 			options: {
 				topic: string;
-				replicate?: boolean;
+				role?: SubscriptionType;
 				store?: IStoreOptions<any>;
 			}
 		) => {
 			store.init &&
 				(await store.init(session.peers[i], identites[i], {
 					...options,
-					replicate: options.replicate ?? true,
+					role: options.role || new ReplicatorType(),
 					store: {
 						...DefaultOptions,
 						resolveCache: async () => new Cache(createStore()),
@@ -244,14 +249,14 @@ describe("index", () => {
 			i: number,
 			options: {
 				topic: string;
-				replicate?: boolean;
+				role?: SubscriptionType;
 				store?: IStoreOptions<any>;
 			}
 		) => {
 			store.init &&
 				(await store.init(session.peers[i], identites[i], {
 					...options,
-					replicate: options.replicate ?? true,
+					role: options.role ?? new ReplicatorType(),
 					store: {
 						...DefaultOptions,
 						resolveCache: async () => new Cache(cacheStore[i]),
@@ -385,7 +390,7 @@ describe("index", () => {
 			)) as any;
 			await init(l0observer, 4, {
 				topic,
-				replicate: false,
+				role: new ObserverType(),
 				store: {},
 			});
 			expect(await l0observer.isTrusted(identity(2).publicKey)).toBeTrue();

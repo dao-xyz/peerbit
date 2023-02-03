@@ -6,6 +6,7 @@ import { v4 as uuid } from "uuid";
 // Include test utilities
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 import { waitForPeers as waitForPeersBlock } from "@dao-xyz/libp2p-direct-stream";
+import { ObserverType, ReplicatorType } from "@dao-xyz/peerbit-program";
 
 /**
  * Tests that are relavent for browser environments
@@ -46,7 +47,7 @@ describe(`browser`, function () {
 			new EventStore<string>({
 				id: uuid(),
 			}),
-			{ replicate: true }
+			{ role: new ReplicatorType() }
 		);
 		await waitForPeersBlock(
 			session.peers[0].directblock,
@@ -57,7 +58,7 @@ describe(`browser`, function () {
 				client2.libp2p.directblock,
 				db1.address!
 			))!,
-			{ replicate: true }
+			{ role: new ReplicatorType() }
 		);
 
 		await waitForPeers(session.peers[1], [client1.id], db1.address!.toString());
@@ -104,7 +105,7 @@ describe(`browser`, function () {
 			new EventStore<string>({
 				id: uuid(),
 			}),
-			{ replicate: true }
+			{ role: new ReplicatorType() }
 		);
 
 		db2 = await client2.open<EventStore<string>>(
@@ -112,7 +113,7 @@ describe(`browser`, function () {
 				client2.libp2p.directblock,
 				db1.address!
 			))!,
-			{ replicate: true }
+			{ role: new ReplicatorType() }
 		);
 
 		/* 	await waitForPeers(session.peers[2], [client1.id], topic);
@@ -151,7 +152,7 @@ describe(`browser`, function () {
 			new EventStore<string>({
 				id: uuid(),
 			}),
-			{ replicate: true }
+			{ role: new ReplicatorType() }
 		);
 
 		await db1.add("hello");
@@ -162,7 +163,7 @@ describe(`browser`, function () {
 				client2.libp2p.directblock,
 				db1.address!
 			))!,
-			{ replicate: true }
+			{ role: new ReplicatorType() }
 		);
 
 		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
@@ -198,7 +199,7 @@ describe(`browser`, function () {
 			new EventStore<string>({
 				id: uuid(),
 			}),
-			{ replicate: false }
+			{ role: new ObserverType() }
 		);
 
 		await db1.add("hello");
@@ -209,7 +210,7 @@ describe(`browser`, function () {
 				client2.libp2p.directblock,
 				db1.address!
 			))!,
-			{ replicate: true }
+			{ role: new ReplicatorType() }
 		);
 
 		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());

@@ -5,6 +5,7 @@ import assert from "assert";
 import mapSeries from "p-each-series";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { waitFor } from "@dao-xyz/peerbit-time";
+import { ObserverType } from "@dao-xyz/peerbit-program";
 
 describe(`Automatic Replication`, function () {
 	/*  let ipfsd1: Controller, ipfsd2: Controller, ipfsd3: Controller, ipfsd4: Controller, ipfs1: IPFS, ipfs2: IPFS, ipfs3: IPFS, ipfs4: IPFS */
@@ -104,7 +105,7 @@ describe(`Automatic Replication`, function () {
 		const entryArr: number[] = [];
 		const db1 = await client1.open(
 			new EventStore<string>({ id: "replicate-automatically-tests" }),
-			{ replicate: false }
+			{ role: new ObserverType() }
 		);
 
 		// Create the entries in the first database

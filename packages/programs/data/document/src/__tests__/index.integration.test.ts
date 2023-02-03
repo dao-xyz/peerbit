@@ -24,7 +24,11 @@ import {
 } from "@dao-xyz/peerbit-crypto";
 import Cache from "@dao-xyz/lazy-level";
 import { v4 as uuid } from "uuid";
-import { Program } from "@dao-xyz/peerbit-program";
+import {
+	ObserverType,
+	Program,
+	ReplicatorType,
+} from "@dao-xyz/peerbit-program";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { DocumentIndex } from "../document-index.js";
 import {
@@ -108,7 +112,7 @@ describe("index", () => {
 					}),
 				});
 				await store.init(session.peers[0], await createIdentity(), {
-					replicate: true,
+					role: new ReplicatorType(),
 					store: {
 						...DefaultOptions,
 						resolveCache: () => new Cache(createStore()),
@@ -146,7 +150,7 @@ describe("index", () => {
 					}),
 				});
 				await store.init(session.peers[0], await createIdentity(), {
-					replicate: true,
+					role: new ReplicatorType(),
 					store: {
 						...DefaultOptions,
 						resolveCache: () => new Cache(createStore()),
@@ -185,7 +189,7 @@ describe("index", () => {
 					}),
 				});
 				await store.init(session.peers[0], await createIdentity(), {
-					replicate: true,
+					role: new ReplicatorType(),
 					store: {
 						...DefaultOptions,
 						resolveCache: () => new Cache(createStore()),
@@ -219,7 +223,7 @@ describe("index", () => {
 				});
 
 				await store.init(session.peers[0], await createIdentity(), {
-					replicate: true,
+					role: new ReplicatorType(),
 					store: {
 						...DefaultOptions,
 						resolveCache: () => new Cache(createStore()),
@@ -269,7 +273,7 @@ describe("index", () => {
 							  });
 					const keypair = await X25519Keypair.create();
 					await store.init(session.peers[i], await createIdentity(), {
-						replicate: i === 0,
+						role: i === 0 ? new ReplicatorType() : new ObserverType(),
 						store: {
 							...DefaultOptions,
 							encryption: {
@@ -854,7 +858,7 @@ describe("index", () => {
 
 				const keypair = await X25519Keypair.create();
 				await store.init(session.peers[i], await createIdentity(), {
-					replicate: i === 0,
+					role: i === 0 ? new ReplicatorType() : new ObserverType(),
 					open: async (program) => {
 						openEvents.push(program);
 						// we don't init, but in real use case we would init here
@@ -910,7 +914,7 @@ describe("index", () => {
 		it("will not close subprogram that is opened before put", async () => {
 			const subProgram = new SubProgram();
 			subProgram.init(session.peers[0], await createIdentity(), {
-				replicate: true,
+				role: new ReplicatorType(),
 				store: {
 					...DefaultOptions,
 					replicator: () => Promise.resolve(true),

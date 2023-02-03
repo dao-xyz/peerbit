@@ -2,12 +2,16 @@ import B from "benchmark";
 import { field, option, variant } from "@dao-xyz/borsh";
 import { Documents, DocumentIndex } from "@dao-xyz/peerbit-document";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { Program } from "@dao-xyz/peerbit-program";
+import {
+	ObserverType,
+	Program,
+	ReplicatorType,
+} from "@dao-xyz/peerbit-program";
 import { v4 as uuid } from "uuid";
 import { Peerbit } from "../peer.js";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
-// put x 787 ops/sec ±1.99% (83 runs sampled)
+// put x 887 ops/sec ±2.43% (79 runs sampled)
 
 @variant("document")
 class Document {
@@ -73,7 +77,10 @@ for (const [i, peer] of session.peers.entries()) {
 						});
 				  }
 				: undefined,
-		replicate: i === session.peers.length - 1,
+		role:
+			i === session.peers.length - 1
+				? new ReplicatorType()
+				: new ObserverType(),
 	});
 	stores.push(store);
 	address = store.address.toString();

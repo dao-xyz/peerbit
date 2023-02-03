@@ -2,7 +2,7 @@ import http from "http";
 import { fromBase64, toBase64 } from "@dao-xyz/peerbit-crypto";
 import { Peerbit } from "@dao-xyz/peerbit";
 import { serialize, deserialize } from "@dao-xyz/borsh";
-import { Program, Address } from "@dao-xyz/peerbit-program";
+import { Program, Address, ReplicatorType } from "@dao-xyz/peerbit-program";
 import { multiaddr } from "@multiformats/multiaddr";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { v4 as uuid } from "uuid";
@@ -244,7 +244,9 @@ export const startServer = async (
 											res.write(
 												JSON.stringify(
 													[...client.programs.entries()]
-														.filter((x) => x[1].program.replicate)
+														.filter(
+															(x) => x[1].program.role instanceof ReplicatorType
+														)
 														.map((x) => x[0])
 												)
 											);

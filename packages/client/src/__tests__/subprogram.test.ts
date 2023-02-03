@@ -10,7 +10,7 @@ import {
 
 // Include test utilities
 import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { Program } from "@dao-xyz/peerbit-program";
+import { ObserverType, Program } from "@dao-xyz/peerbit-program";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Entry } from "@dao-xyz/peerbit-log";
 
@@ -84,7 +84,7 @@ describe(`Subprogram`, () => {
 		);
 
 		const program = await client1.open(store, {
-			replicate: false,
+			role: new ObserverType(),
 		});
 		program.accessRequests = [];
 
@@ -107,7 +107,7 @@ describe(`Subprogram`, () => {
 		expect(eventStoreToPut).toEqual(eventStoreString);
 
 		await client1.open(eventStoreString, {
-			replicate: false,
+			role: new ObserverType(),
 		});
 
 		const eventStore2 = client2.programs.get(

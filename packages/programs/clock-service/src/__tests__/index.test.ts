@@ -2,7 +2,7 @@ import { delay } from "@dao-xyz/peerbit-time";
 import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { Ed25519Identity, Entry } from "@dao-xyz/peerbit-log";
-import { Program } from "@dao-xyz/peerbit-program";
+import { Program, ReplicatorType } from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { ClockService } from "../controller";
 import { MemoryLevel } from "memory-level";
@@ -50,12 +50,12 @@ describe("clock", () => {
 			}),
 		});
 		await responder.init(session.peers[0], responderIdentity, {
-			replicate: true,
+			role: new ReplicatorType(),
 			store: {
 				cacheId: "id",
 				resolveCache: () => Promise.resolve(new Cache(new MemoryLevel())),
-			} as any,
-		} as any);
+			},
+		});
 
 		responder.clock._maxError = BigInt(maxTimeError * 1e6);
 

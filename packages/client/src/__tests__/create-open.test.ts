@@ -12,7 +12,7 @@ import { v4 as uuid } from "uuid";
 
 // Include test utilities
 import { LSession } from "@dao-xyz/libp2p-test-utils";
-import { Program } from "@dao-xyz/peerbit-program";
+import { ObserverType, Program } from "@dao-xyz/peerbit-program";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { LevelBlockStore } from "@dao-xyz/libp2p-direct-block";
 
@@ -55,7 +55,7 @@ describe(`Create & Open`, function () {
 
 				db = await client.open(new KeyBlocks<string>({ id: "second" }), {
 					directory: localDataPath,
-					replicate: false,
+					role: new ObserverType(),
 				});
 			});
 			afterEach(async () => {

@@ -27,6 +27,7 @@ import { AccessError } from "@dao-xyz/peerbit-crypto";
 import { Context, Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { getBlockValue } from "@dao-xyz/libp2p-direct-block";
+import { ReplicatorType } from "@dao-xyz/peerbit-program";
 const logger = loggerFn({ module: "document" });
 
 export class OperationError extends Error {
@@ -148,7 +149,7 @@ export class Documents<T> extends ComposableProgram {
 					)
 				).filter((x) => !!x) as Entry<any>[];
 				await this.store.sync(entries, {
-					save: !!this.replicate,
+					save: this.role instanceof ReplicatorType, // TODO is this expected?
 					canAppend: this._optionCanAppend?.bind(this) || (() => true),
 				});
 				const y = 123;
@@ -347,7 +348,7 @@ export class Documents<T> extends ComposableProgram {
 						// if replicator, then open
 						if (
 							(await this._canOpen!(value, item)) &&
-							this.replicate &&
+							this.role instanceof ReplicatorType &&
 							(await this.store.options.replicator!(item))
 						) {
 							await this.open!(value);

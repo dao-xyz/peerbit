@@ -1,6 +1,6 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh";
 import { Entry, EntryEncryptionTemplate } from "@dao-xyz/peerbit-log";
-import { ComposableProgram } from "@dao-xyz/peerbit-program";
+import { ComposableProgram, ReplicatorType } from "@dao-xyz/peerbit-program";
 import { CanRead, RPC, SearchContext } from "@dao-xyz/peerbit-rpc";
 import { Store } from "@dao-xyz/peerbit-store";
 import { EncryptedThing, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
@@ -129,7 +129,7 @@ export class LogIndex extends ComposableProgram {
 	}
 
 	responseHandler(query: LogQueryRequest): HeadsMessage | undefined {
-		if (!this.replicate) {
+		if (this.role instanceof ReplicatorType === false) {
 			return undefined; // we do this because we might not have all the heads
 		}
 		let results = this._queryEntries((entry) => {

@@ -15,7 +15,7 @@ import {
 	AbstractRelation,
 } from "./identity-graph.js";
 import type { PeerId } from "@libp2p/interface-peer-id";
-import { Program } from "@dao-xyz/peerbit-program";
+import { Program, ReplicatorType } from "@dao-xyz/peerbit-program";
 import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { AddOperationOptions } from "@dao-xyz/peerbit-store";
@@ -230,7 +230,7 @@ export class TrustedNetwork extends Program {
 		if (trustee.equals(this.rootTrust)) {
 			return true;
 		}
-		if (this.trustGraph.replicate) {
+		if (this.trustGraph.role instanceof ReplicatorType) {
 			return this._isTrustedLocal(trustee, truster);
 		} else {
 			let trusted = false;

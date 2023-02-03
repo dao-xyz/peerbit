@@ -23,7 +23,11 @@ import {
 import { fileURLToPath } from "url";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { RPC } from "@dao-xyz/peerbit-rpc";
-import { Address } from "@dao-xyz/peerbit-program";
+import {
+	Address,
+	ObserverType,
+	ReplicatorType,
+} from "@dao-xyz/peerbit-program";
 
 describe("query", () => {
 	let session: LSession,
@@ -95,7 +99,7 @@ describe("query", () => {
 					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				{
-					replicate: i === 0,
+					role: i === 0 ? new ReplicatorType() : new ObserverType(),
 					store: {
 						...DefaultOptions,
 						encryption,

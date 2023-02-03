@@ -53,12 +53,11 @@ import { peerIdFromString } from "@libp2p/peer-id";
 import { Libp2p } from "libp2p";
 import { createLibp2pExtended, Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import {
-	ObserverType,
 	OBSERVER_TYPE_VARIANT,
 	ReplicatorType,
 	REPLICATOR_TYPE_VARIANT,
 	SubscriptionType,
-} from "./replicator.js";
+} from "@dao-xyz/peerbit-program";
 import { TrimToByteLengthOption } from "@dao-xyz/peerbit-log";
 import { TrimToLengthOption } from "@dao-xyz/peerbit-log";
 export const logger = loggerFn({ module: "peer" });
@@ -67,6 +66,7 @@ const MIN_REPLICAS = 2;
 
 interface ProgramWithMetadata {
 	program: Program;
+	sync?: SyncFilter;
 	minReplicas: MinReplicas;
 }
 
@@ -90,6 +90,10 @@ export type CreateOptions = {
 	localNetwork: boolean;
 	browser?: boolean;
 } & OptionalCreateOptions;
+
+export type SyncFilter = (
+	entries: EntryWithRefs<any>[]
+) => Promise<EntryWithRefs<any>[]> | EntryWithRefs<any>[];
 export type CreateInstanceOptions = {
 	libp2p?: Libp2p | Libp2pExtended;
 	storage?: Storage;
@@ -104,7 +108,8 @@ export type CreateInstanceOptions = {
 export type OpenOptions = {
 	identity?: Identity;
 	entryToReplicate?: Entry<any>;
-	replicate?: boolean;
+	role?: SubscriptionType;
+	sync?: SyncFilter;
 	directory?: string;
 	timeout?: number;
 	minReplicas?: MinReplicas | number;
@@ -172,22 +177,6 @@ export class Peerbit {
 		}
 
 		this._libp2p = libp2p;
-		/* 		this._store = new Blocks(
-					new LibP2PBlockStore(
-						this._libp2p,
-						options.store ||
-						new LevelBlockStore(
-							options.storage.createStore(
-								options.directory &&
-								path
-									.join(options.directory, "/blocks")
-									.toString()
-							)
-						)
-					)
-				);
-				this._store.open(); */
-
 		this.identity = identity;
 		this.id = options.peerId;
 
@@ -568,7 +557,7 @@ export class Peerbit {
 						);
 						return;
 					}
-					const toMerge: EntryWithRefs<any>[] = [];
+
 					heads = heads
 						.filter((head) => !storeInfo.oplog.has(head.entry.hash))
 						.map((head) => {
@@ -579,22 +568,29 @@ export class Peerbit {
 							return head;
 						}); // we need to init because we perhaps need to decrypt gid
 
-					for (const [gid, value] of await groupByGid(heads)) {
-						if (
-							!(await this.isLeader(
-								programAddress,
-								gid,
-								programInfo.minReplicas.value
-							))
-						) {
-							logger.debug(
-								`${this.id}: Dropping heads with gid: ${gid}. Because not leader`
-							);
-							continue;
+					let toMerge: EntryWithRefs<any>[];
+					if (!programInfo.sync) {
+						toMerge = [];
+
+						for (const [gid, value] of await groupByGid(heads)) {
+							if (
+								!(await this.isLeader(
+									programAddress,
+									gid,
+									programInfo.minReplicas.value
+								))
+							) {
+								logger.debug(
+									`${this.id}: Dropping heads with gid: ${gid}. Because not leader`
+								);
+								continue;
+							}
+							value.forEach((head) => {
+								toMerge.push(head);
+							});
 						}
-						value.forEach((head) => {
-							toMerge.push(head);
-						});
+					} else {
+						toMerge = await programInfo.sync(heads);
 					}
 
 					if (toMerge.length > 0) {
@@ -864,7 +860,11 @@ export class Peerbit {
 		logger.debug("Dropped store: " + db.id);
 	}
 
-	addProgram(program: Program, minReplicas: MinReplicas): ProgramWithMetadata {
+	addProgram(
+		program: Program,
+		minReplicas: MinReplicas,
+		sync?: SyncFilter
+	): ProgramWithMetadata {
 		const programAddress = program.address?.toString();
 		if (!programAddress) {
 			throw new Error("Missing program address");
@@ -880,6 +880,7 @@ export class Peerbit {
 		const p = {
 			program,
 			minReplicas,
+			sync,
 			replicators: new Set<string>(),
 		};
 
@@ -957,7 +958,8 @@ export class Peerbit {
 		const peerHashed: string[] = [];
 
 		// Add self
-		const iAmReplicating = this.programs.get(address)?.program?.replicate; // TODO add conditional whether this represents a network (I am not replicating if I am not trusted (pointless))
+		const iAmReplicating =
+			this.programs.get(address)?.program?.role instanceof ReplicatorType; // TODO add conditional whether this represents a network (I am not replicating if I am not trusted (pointless))
 
 		if (peers.length === 0) {
 			return iAmReplicating ? [this.idKeyHash] : peers;
@@ -1000,14 +1002,14 @@ export class Peerbit {
 
 	private async subscribeToProgram(
 		address: string | Address,
-		replicate?: boolean
+		role: SubscriptionType
 	): Promise<void> {
 		if (this._disconnected || this._disconnecting) {
 			throw new Error("Disconnected");
 		}
 		const topic = typeof address === "string" ? address : address.toString();
 		this.libp2p.directsub.subscribe(topic, {
-			data: serialize(replicate ? new ReplicatorType() : new ObserverType()),
+			data: serialize(role),
 		});
 		await this.libp2p.directsub.requestSubscribers(topic); // get up to date with who are subscribing to this topic
 	}
@@ -1114,8 +1116,8 @@ export class Peerbit {
 					this.keystore
 				);
 			}
-			const replicate =
-				options.replicate !== undefined ? options.replicate : true;
+			const role = options.role || new ReplicatorType();
+
 			const minReplicas =
 				options.minReplicas != null
 					? typeof options.minReplicas === "number"
@@ -1131,10 +1133,11 @@ export class Peerbit {
 				}
 				return value;
 			};
+
 			await program.init(this.libp2p, options.identity || this.identity, {
 				onClose: () => this._onProgamClose(program),
 				onDrop: () => this._onProgamClose(program),
-				replicate,
+				role,
 
 				// If the program opens more programs
 				open: (program) =>
@@ -1244,9 +1247,9 @@ export class Peerbit {
 			};
 			await resolveCache(program.address!);
 
-			const pm = await this.addProgram(program, minReplicas);
+			const pm = await this.addProgram(program, minReplicas, options.sync);
 
-			await this.subscribeToProgram(program.address.toString(), replicate);
+			await this.subscribeToProgram(program.address.toString(), role);
 			/// TODO encryption
 
 			return pm;

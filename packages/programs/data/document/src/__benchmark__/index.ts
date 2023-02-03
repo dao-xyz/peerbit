@@ -11,7 +11,11 @@ import {
 } from "@dao-xyz/peerbit-crypto";
 import Cache from "@dao-xyz/lazy-level";
 import { AbstractLevel } from "abstract-level";
-import { Program } from "@dao-xyz/peerbit-program";
+import {
+	ObserverType,
+	Program,
+	ReplicatorType,
+} from "@dao-xyz/peerbit-program";
 import { DocumentIndex } from "../document-index.js";
 import { v4 as uuid } from "uuid";
 
@@ -87,7 +91,7 @@ for (let i = 0; i < peersCount; i++) {
 			  });
 	const keypair = await X25519Keypair.create();
 	await store.init(session.peers[i], await createIdentity(), {
-		replicate: i === 0,
+		role: i === 0 ? new ReplicatorType() : new ObserverType(),
 		store: {
 			...DefaultOptions,
 			encryption: {

@@ -19,7 +19,12 @@ import type { CanAppend, Identity } from "@dao-xyz/peerbit-log";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";
 import Cache from "@dao-xyz/lazy-level";
 import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
-import { Program } from "@dao-xyz/peerbit-program";
+import {
+	ObserverType,
+	Program,
+	ReplicatorType,
+	SubscriptionType,
+} from "@dao-xyz/peerbit-program";
 import { IdentityAccessController } from "../acl-db";
 
 @variant("document")
@@ -88,7 +93,7 @@ describe("index", () => {
 		store: T,
 		i: number,
 		options: {
-			replicate: boolean;
+			role: SubscriptionType;
 			store: {};
 			canRead?: CanRead;
 			canAppend?: CanAppend<T>;
@@ -135,7 +140,7 @@ describe("index", () => {
 	it("can write from trust web", async () => {
 		const s = new TestStore({ identity: identity(0) });
 		const options = {
-			replicate: true,
+			role: new ReplicatorType(),
 			store: {},
 		};
 		const l0a = await init(s, 0, options);
@@ -189,7 +194,7 @@ describe("index", () => {
 	describe("conditions", () => {
 		it("publickey", async () => {
 			const options = {
-				replicate: true,
+				role: new ReplicatorType(),
 				store: {},
 			};
 
@@ -243,7 +248,7 @@ describe("index", () => {
 
 		it("through trust chain", async () => {
 			const options = {
-				replicate: true,
+				role: new ReplicatorType(),
 				store: {},
 			};
 
@@ -337,7 +342,7 @@ describe("index", () => {
 
 		it("any access", async () => {
 			const options = {
-				replicate: true,
+				role: new ReplicatorType(),
 				store: {},
 			};
 
@@ -391,7 +396,7 @@ describe("index", () => {
 
 		it("read access", async () => {
 			const options = {
-				replicate: true,
+				role: new ReplicatorType(),
 				store: {},
 			};
 
@@ -453,7 +458,7 @@ describe("index", () => {
 
 	it("manifests are unique", async () => {
 		const options = {
-			replicate: true,
+			role: new ReplicatorType(),
 			store: {},
 		};
 
@@ -472,7 +477,7 @@ describe("index", () => {
 
 	it("can query", async () => {
 		const options = {
-			replicate: true,
+			role: new ReplicatorType(),
 			store: {},
 		};
 
@@ -494,7 +499,7 @@ describe("index", () => {
 
 		const l0b = await init(dbb, 1, {
 			...options,
-			replicate: false,
+			role: new ObserverType(),
 			store: {},
 			canRead: () => Promise.resolve(true),
 		});

@@ -18,6 +18,7 @@ import { Ed25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
+import { ObserverType, ReplicatorType } from "@dao-xyz/peerbit-program";
 
 const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
@@ -44,7 +45,7 @@ describe("query", () => {
 		// Create store
 		writeStore = new DString({});
 		await writeStore.init(writer, await createIdentity(), {
-			replicate: true,
+			role: new ReplicatorType(),
 			store: {
 				...DefaultOptions,
 				encryption: {
@@ -61,6 +62,7 @@ describe("query", () => {
 		)) as DString;
 
 		await observerStore.init(observer, await createIdentity(), {
+			role: new ObserverType(),
 			store: {
 				...DefaultOptions,
 				resolveCache: () => new Cache(createStore()),
@@ -195,7 +197,7 @@ describe("query", () => {
 	it("handles AccessError gracefully", async () => {
 		const store = new DString({});
 		await store.init(writer, await createIdentity(), {
-			replicate: true,
+			role: new ReplicatorType(),
 			store: {
 				...DefaultOptions,
 				encryption: {

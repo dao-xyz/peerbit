@@ -8,8 +8,16 @@ import { serialize, deserialize } from "@dao-xyz/borsh";
 import { CID } from "multiformats/cid";
 import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
-import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
+import { createBlock } from "@dao-xyz/libp2p-direct-block";
+import {
+	NoType,
+	ObserverType,
+	ReplicatorType,
+	SubscriptionType,
+} from "./role.js";
+
 export * from "./protocol-message.js";
+export * from "./role.js";
 
 const notEmpty = (e: string) => e !== "" && e !== " ";
 
@@ -189,8 +197,8 @@ export interface Saveable {
 export type OpenProgram = (program: Program) => Promise<Program>;
 export type ProgramInitializationOptions = {
 	store: IInitializationOptions<any>;
+	role: ReplicatorType | ObserverType | NoType;
 	parent?: AbstractProgram;
-	replicate?: boolean;
 	onClose?: () => void;
 	onDrop?: () => void;
 	open?: OpenProgram;
@@ -207,7 +215,7 @@ export abstract class AbstractProgram {
 	private _onClose?: () => void;
 	private _onDrop?: () => void;
 	private _initialized?: boolean;
-	private _replicate?: boolean;
+	private _role: SubscriptionType;
 
 	open?: (program: Program) => Promise<Program>;
 	private programsOpened: Program[];
@@ -221,8 +229,8 @@ export abstract class AbstractProgram {
 		return this._programIndex;
 	}
 
-	get replicate() {
-		return this._replicate;
+	get role() {
+		return this._role;
 	}
 
 	async init(
@@ -239,7 +247,7 @@ export abstract class AbstractProgram {
 		this._encryption = options.store.encryption;
 		this._onClose = options.onClose;
 		this._onDrop = options.onDrop;
-		this._replicate = options.replicate;
+		this._role = options.role;
 		if (options.open) {
 			this.programsOpened = [];
 			this.open = async (program) => {
