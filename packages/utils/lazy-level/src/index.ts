@@ -49,7 +49,7 @@ export default class LazyLevel {
 			}
 			await this._txPromise;
 			await waitFor(() => !this._txQueue || this._txQueue.length === 0, {
-				timeout: this._batchOptions.interval + 100,
+				timeout: this._batchOptions.interval * 2 + 1000, // TODO, do this better so tests don't fail in slow envs.
 				delayInterval: 100,
 				timeoutMessage: `Failed to wait for idling, got txQueue with ${
 					this._txQueue?.length
