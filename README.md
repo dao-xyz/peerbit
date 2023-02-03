@@ -111,7 +111,7 @@ class Document {
 }
 
 @variant("my_document_store")
-class TestStore extends Program {
+class MyDocumentStore extends Program {
     @field({ type: Documents })
     docs: Documents<Document>;
 
@@ -128,7 +128,7 @@ class TestStore extends Program {
 
 // later 
 const peer = await Peerbit.create ({libp2p: your_libp2p_instance})
-const store = peer.open(new TestStore());
+const store = peer.open(new MyDocumentStore());
 console.log(store.address) /// this address can be opened by another peer 
 
 
