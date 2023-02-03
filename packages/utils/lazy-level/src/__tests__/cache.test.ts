@@ -2,6 +2,7 @@ import Cache from "../index.js";
 import assert from "assert";
 import { MemoryLevel } from "memory-level";
 import crypto from "crypto";
+import { waitFor } from "@dao-xyz/peerbit-time";
 export const createStore = (): MemoryLevel => {
 	return new MemoryLevel({ valueEncoding: "view" });
 };
@@ -137,7 +138,7 @@ describe(`Cache - level`, function () {
 			expect(await cache.get(key)).toBeUndefined();
 			await cache.idle();
 			expect(await cache.get(key)).toBeUndefined();
-			expect(cache._tempDeleted!.size).toEqual(0);
+			await waitFor(() => cache._tempDeleted?.size === 0);
 			expect(cache._tempStore!.size).toEqual(0);
 		});
 
@@ -151,7 +152,7 @@ describe(`Cache - level`, function () {
 			expect(new Uint8Array((await cache.get(key))!)).toEqual(
 				new Uint8Array([1])
 			);
-			expect(cache._tempDeleted!.size).toEqual(0);
+			await waitFor(() => cache._tempDeleted?.size === 0);
 			expect(cache._tempStore!.size).toEqual(0);
 		});
 		it("delete by prefix", async () => {
