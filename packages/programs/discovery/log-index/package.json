@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/peerbit-logindex",
-	"version": "0.1.15",
+	"version": "0.1.16",
 	"description": "Simple log index",
 	"type": "module",
 	"sideEffects": false,
@@ -35,7 +35,7 @@
 		"@dao-xyz/peerbit-crypto": "^0.1.8",
 		"@dao-xyz/peerbit-log": "^0.1.15",
 		"@dao-xyz/peerbit-logger": "^0.0.5",
-		"@dao-xyz/peerbit-rpc": "^0.1.15",
+		"@dao-xyz/peerbit-rpc": "^0.1.16",
 		"@dao-xyz/peerbit-time": "^0.0.22"
 	}
 }
