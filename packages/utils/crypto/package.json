@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/peerbit-crypto",
-	"version": "0.1.6",
+	"version": "0.1.7",
 	"description": "Crypto fn",
 	"type": "module",
 	"sideEffects": false,
