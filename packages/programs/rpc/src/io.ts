@@ -177,7 +177,7 @@ export const respond = async (
 
 	if (options.signer) {
 		maybeSignedMessage = await maybeSignedMessage.sign(
-			options.signer.sign.bind(options.signer.sign)
+			options.signer.sign.bind(options.signer)
 		);
 	}
 
