@@ -699,11 +699,10 @@ export class Log<T> {
 	}
 
 	async deleteRecursively(from: Entry<any> | Entry<any>[]) {
-		const stack = Array.isArray(from) ? from : [from];
+		const stack = Array.isArray(from) ? [...from] : [from];
 		const promises: Promise<void>[] = [];
 		while (stack.length > 0) {
 			const entry = stack.pop()!;
-
 			this._values.delete(entry);
 			this._entryIndex.delete(entry.hash);
 			this._headsIndex.del(entry);
