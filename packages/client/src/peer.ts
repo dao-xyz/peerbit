@@ -66,6 +66,7 @@ const MIN_REPLICAS = 2;
 
 interface ProgramWithMetadata {
 	program: Program;
+	openCounter: number;
 	sync?: SyncFilter;
 	minReplicas: MinReplicas;
 }
@@ -881,6 +882,7 @@ export class Peerbit {
 			program,
 			minReplicas,
 			sync,
+			openCounter: 1,
 			replicators: new Set<string>(),
 		};
 
@@ -1101,6 +1103,7 @@ export class Peerbit {
 			if (programAddress) {
 				const existingProgram = this.programs?.get(programAddress);
 				if (existingProgram) {
+					existingProgram.openCounter += 1;
 					return existingProgram;
 				}
 			}
@@ -1140,24 +1143,8 @@ export class Peerbit {
 				role,
 
 				// If the program opens more programs
-				open: (program) =>
-					this.open(program, {
-						...options,
+				open: (program) => this.open(program, options),
 
-						// We do this below to prevent the client to get callback from a subprogram,
-						// which is not expected (usually)
-						onUpdate: undefined,
-						onClose: undefined,
-						onDrop: undefined,
-						onLoad: undefined,
-						onLoadProgress: undefined,
-						onReplicationComplete: undefined,
-						onReplicationFetch: undefined,
-						onReplicationQueued: undefined,
-						onOpen: undefined,
-						onReady: undefined,
-						onWrite: undefined,
-					}),
 				store: {
 					...options,
 					cacheId: programAddress,
