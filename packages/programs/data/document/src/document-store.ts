@@ -28,6 +28,8 @@ import { Context, Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { getBlockValue } from "@dao-xyz/libp2p-direct-block";
 import { ReplicatorType } from "@dao-xyz/peerbit-program";
+import { EventEmitter, CustomEvent } from "@libp2p/interfaces/events";
+
 const logger = loggerFn({ module: "document" });
 
 export class OperationError extends Error {
@@ -35,6 +37,14 @@ export class OperationError extends Error {
 		super(message);
 	}
 }
+export interface DocumentsChange<T> {
+	added: T[];
+	removed: T[];
+}
+export interface DocumentEvents<T> {
+	change: CustomEvent<DocumentsChange<T>>;
+}
+
 @variant("documents")
 export class Documents<T> extends ComposableProgram {
 	@field({ type: Store })
@@ -55,6 +65,7 @@ export class Documents<T> extends ComposableProgram {
 
 	_optionCanAppend?: CanAppend<Operation<T>>;
 	_canOpen?: (program: Program, entry: Entry<Operation<T>>) => Promise<boolean>;
+	_events: EventEmitter<DocumentEvents<T>>;
 
 	constructor(properties: {
 		immutable?: boolean;
@@ -77,6 +88,13 @@ export class Documents<T> extends ComposableProgram {
 		return this._index;
 	}
 
+	get events(): EventEmitter<DocumentEvents<T>> {
+		if (!this._events) {
+			throw new Error("Program not open");
+		}
+		return this._events;
+	}
+
 	async setup(options: {
 		type: Constructor<T>;
 		canRead?: CanRead;
@@ -85,6 +103,7 @@ export class Documents<T> extends ComposableProgram {
 	}) {
 		this._clazz = options.type;
 		this._canOpen = options.canOpen;
+		this._events = new EventEmitter();
 
 		/* eslint-disable */
 		if (Program.isPrototypeOf(this._clazz)) {
@@ -316,13 +335,19 @@ export class Documents<T> extends ComposableProgram {
 			visited.add(itemKey);
 			dedupEntries.push(item);
 		}
-
+		let documentsChanged: DocumentsChange<T> = {
+			added: [],
+			removed: [],
+		};
 		for (const item of dedupEntries) {
 			try {
 				const payload = await item.getPayloadValue();
 				if (payload instanceof PutOperation && !removedSet.has(item.hash)) {
 					const key = payload.key;
 					const value = this.deserializeOrPass(payload);
+
+					documentsChanged.added.push(value);
+
 					this._index._index.set(key, {
 						entry: item,
 						key: payload.key,
@@ -364,17 +389,22 @@ export class Documents<T> extends ComposableProgram {
 						.map((n) => this.store.oplog.get(n))
 						.filter((x) => !!x) as Entry<any>[];
 
-					await this.store.removeOperation(nexts, {
-						recursively: true,
-					});
+					if (nexts.length > 0) {
+						await this.store.removeEntry(nexts, {
+							recursively: true,
+						});
+					}
 
 					// update index
 					const key = (payload as DeleteOperation | PutOperation<T>).key;
-					const value = this._index._index.get(key);
-					this._index._index.delete(key);
-					if (value?.value instanceof Program) {
-						await value?.value.close();
+					const value = this._index._index.get(key)!;
+
+					documentsChanged.removed.push(value.value);
+					if (value.value instanceof Program) {
+						await value.value.close();
 					}
+
+					this._index._index.delete(key);
 				} else {
 					// Unknown operation
 				}
@@ -385,6 +415,10 @@ export class Documents<T> extends ComposableProgram {
 				throw error;
 			}
 		}
+
+		this.events.dispatchEvent(
+			new CustomEvent("change", { detail: documentsChanged })
+		);
 	}
 
 	deserializeOrPass(value: PutOperation<T>): T {

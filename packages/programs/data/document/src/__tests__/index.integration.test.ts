@@ -1,5 +1,5 @@
 import { field, option, serialize, variant } from "@dao-xyz/borsh";
-import { Documents } from "../document-store";
+import { Documents, DocumentsChange } from "../document-store";
 import {
 	FieldBigIntCompareQuery,
 	FieldStringMatchQuery,
@@ -119,6 +119,11 @@ describe("index", () => {
 					},
 				});
 
+				const changes: DocumentsChange<Document>[] = [];
+				store.docs.events.addEventListener("change", (evt) => {
+					changes.push(evt.detail);
+				});
+
 				let doc = new Document({
 					id: uuid(),
 					name: "Hello world",
@@ -130,14 +135,30 @@ describe("index", () => {
 
 				const putOperation = (await store.docs.put(doc)).entry;
 				expect(store.docs._index.size).toEqual(1);
+
+				expect(changes.length).toEqual(1);
+				expect(changes[0].added).toHaveLength(1);
+				expect(changes[0].added[0].id).toEqual(doc.id);
+				expect(changes[0].removed).toHaveLength(0);
+
 				const putOperation2 = (await store.docs.put(doc2)).entry;
 				expect(store.docs._index.size).toEqual(2);
 				expect(putOperation2.next).toContainAllValues([]); // because doc 2 is independent of doc 1
+
+				expect(changes.length).toEqual(2);
+				expect(changes[1].added).toHaveLength(1);
+				expect(changes[1].added[0].id).toEqual(doc2.id);
+				expect(changes[1].removed).toHaveLength(0);
 
 				// delete 1
 				const deleteOperation = (await store.docs.del(doc.id)).entry;
 				expect(deleteOperation.next).toContainAllValues([putOperation.hash]); // because delete is dependent on put
 				expect(store.docs._index.size).toEqual(1);
+
+				expect(changes.length).toEqual(3);
+				expect(changes[2].added).toHaveLength(0);
+				expect(changes[2].removed).toHaveLength(1);
+				expect(changes[2].removed[0].id).toEqual(doc.id);
 			});
 
 			it("delete permanently", async () => {
@@ -188,6 +209,7 @@ describe("index", () => {
 						}),
 					}),
 				});
+
 				await store.init(session.peers[0], await createIdentity(), {
 					role: new ReplicatorType(),
 					store: {
@@ -195,6 +217,11 @@ describe("index", () => {
 						resolveCache: () => new Cache(createStore()),
 						trim: { type: "length", to: 1 },
 					},
+				});
+
+				const changes: DocumentsChange<Document>[] = [];
+				store.docs.events.addEventListener("change", (evt) => {
+					changes.push(evt.detail);
 				});
 
 				let doc = new Document({
@@ -205,11 +232,19 @@ describe("index", () => {
 				// put doc
 				await store.docs.put(doc);
 				expect(store.docs._index.size).toEqual(1);
+				expect(changes.length).toEqual(1);
+				expect(changes[0].added).toHaveLength(1);
+				expect(changes[0].added[0].id).toEqual(doc.id);
+				expect(changes[0].removed).toHaveLength(0);
 
 				// put doc again and make sure it still exist in index with trim to 1 option
 				await store.docs.put(doc);
 				expect(store.docs._index.size).toEqual(1);
 				expect(store.docs.store.oplog.values.length).toEqual(1);
+				expect(changes.length).toEqual(2);
+				expect(changes[1].added).toHaveLength(1);
+				expect(changes[1].added[0].id).toEqual(doc.id);
+				expect(changes[1].removed).toHaveLength(0);
 			});
 
 			it("trim and update index", async () => {
