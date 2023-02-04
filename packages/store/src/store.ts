@@ -105,17 +105,18 @@ export interface IStoreOptions<T> {
 	 * The directory where data will be stored
 	 */
 	directory?: string;
+
+	onWrite?: (store: Store<T>, change: Entry<T>) => void;
+	onUpdate?: (change: Change<T>) => void;
 	onClose?: (store: Store<T>) => void;
 	onDrop?: (store: Store<T>) => void;
 	onLoad?: (store: Store<T>) => void;
 	onLoadProgress?: (store: Store<T>, entry: Entry<T>) => void;
-	onWrite?: (store: Store<T>, _entry: Entry<T>) => void;
 	onOpen?: (store: Store<any>) => Promise<void>;
 	onReplicationQueued?: (store: Store<any>, entry: Entry<T>) => void; // TODO, do we need this?
 	onReplicationFetch?: (store: Store<any>, entry: Entry<T>) => void; // TODO, do we need this?
 	onReplicationComplete?: (store: Store<any>) => void; // TODO, do we need this?
 	onReady?: (store: Store<T>) => void; // TODO, do we need this?
-	onUpdate?: (change: Change<T>) => void;
 	encryption?: PublicKeyEncryptionResolver;
 	replicationConcurrency?: number;
 	sortFn?: ISortFunction;
@@ -561,7 +562,6 @@ export class Store<T> implements Initiable<T> {
 		if (heads.length > 0) {
 			await this._updateIndex({ added: log.values, removed: [] });
 		}
-
 		this._options.onReady && this._options.onReady(this);
 	}
 
@@ -617,14 +617,15 @@ export class Store<T> implements Initiable<T> {
 			this.updateCachedHeads(changes),
 			this._updateIndex(changes),
 		]);
+
 		this._options.onWrite && this._options.onWrite(this, change.entry);
 		return change;
 	}
 
-	async removeOperation(
+	async removeEntry(
 		entry: Entry<T> | Entry<T>[],
 		options?: { recursively?: boolean }
-	): Promise<Change<T>> {
+	) {
 		const entries = Array.isArray(entry) ? entry : [entry];
 		if (entries.length === 0) {
 			return {
@@ -640,6 +641,13 @@ export class Store<T> implements Initiable<T> {
 				await this.oplog.delete(entry);
 			}
 		}
+	}
+	async removeOperation(
+		entry: Entry<T> | Entry<T>[],
+		options?: { recursively?: boolean }
+	): Promise<Change<T>> {
+		await this.removeEntry(entry, options);
+
 		const change: Change<T> = {
 			added: [],
 			removed: Array.isArray(entry) ? entry : [entry],
