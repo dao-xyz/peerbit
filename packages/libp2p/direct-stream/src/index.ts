@@ -694,10 +694,10 @@ export abstract class DirectStream<
 			return false;
 		}
 
-		logger.debug("rpc from " + from + ", " + this.peerIdStr);
+		// logger.debug("rpc from " + from + ", " + this.peerIdStr);
 
 		if (message.length > 0) {
-			logger.debug("messages from " + from);
+			//	logger.debug("messages from " + from);
 			await this.queue
 				.add(async () => {
 					try {
@@ -798,7 +798,6 @@ export abstract class DirectStream<
 
 		const signatures = message.signatures;
 		for (let i = 0; i < signatures.signatures.length - 1; i++) {
-			//	console.log('add route', this.publicKeyHash, signatures.signatures[i].publicKey.hashcode(), signatures.signatures[i + 1].publicKey.hashcode())
 			this.addRouteConnection(
 				signatures.signatures[i].publicKey,
 				signatures.signatures[i + 1].publicKey
@@ -1022,7 +1021,7 @@ export abstract class DirectStream<
 			(Array.isArray(peers) && peers.length === 0) ||
 			(peers instanceof Map && peers.size === 0)
 		) {
-			logger.info("no peers are subscribed");
+			logger.debug("no peers are subscribed");
 			return;
 		}
 
@@ -1041,7 +1040,7 @@ export abstract class DirectStream<
 				continue;
 			}
 
-			logger.debug("publish msgs on: " + id.peerId + " from " + this.peerIdStr);
+			//logger.debug("publish msgs on: " + id.peerId + " from " + this.peerIdStr);
 			if (!id.isWritable) {
 				// Catch the event where the outbound stream is attach, but also abort if we shut down
 				const outboundPromise = new Promise<void>((rs, rj) => {
@@ -1077,7 +1076,7 @@ export abstract class DirectStream<
 						id.write(bytes);
 					})
 					.catch((error) => {
-						logger.error(
+						logger.info(
 							"Failed to send to stream: " + id.peerId + ". " + error?.message
 						);
 					});
