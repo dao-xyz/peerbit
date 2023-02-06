@@ -173,8 +173,7 @@ export class Peerbit {
 	private _disconnecting = false;
 	private _encryption: PublicKeyEncryptionResolver;
 	private _refreshInterval: any;
-
-	private _lastSubscriptionMessageId: string;
+	private _lastSubscriptionMessageId = "";
 
 	constructor(
 		libp2p: Libp2pExtended,
@@ -231,11 +230,13 @@ export class Peerbit {
 
 		this._openProgramQueue = new PQueue({ concurrency: 1 });
 
+		// 	This is kept naively for know since we yet don't know whether there are edge cases where refreshes are needed
+
+		/* 
 		const refreshInterval = options.refreshIntreval || 100;
 
-		// 	TODO do we need this?
 		const promise: Promise<boolean> | undefined = undefined;
-		/* 	this._refreshInterval = setInterval(async () => {
+			this._refreshInterval = setInterval(async () => {
 				if (promise) {
 					return;
 				}
