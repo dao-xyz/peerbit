@@ -8,7 +8,7 @@ import {
 	MemoryCompareQuery,
 } from "@dao-xyz/peerbit-document";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
-import { joinUint8Arrays } from "@dao-xyz/peerbit-borsh-utils";
+import { concat } from "uint8arrays";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 import { sha256Sync } from "@dao-xyz/peerbit-crypto";
 
@@ -171,7 +171,7 @@ export class IdentityRelation extends AbstractRelation {
 
 	static id(to: PublicSignKey, from: PublicSignKey) {
 		// we do make sure id has fixed length, this is important because we want the byte offest of the `trustee` and `truster` to be fixed
-		return sha256Sync(joinUint8Arrays([serialize(to), serialize(from)]));
+		return sha256Sync(concat([serialize(to), serialize(from)]));
 	}
 }
 

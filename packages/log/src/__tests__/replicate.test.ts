@@ -4,11 +4,6 @@ import { Log } from "../log.js";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import {
-	BlockStore,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
-
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import { Entry } from "../entry.js";
@@ -239,7 +234,7 @@ describe("ipfs-log - Replication", function () {
 			expect(log1.length).toEqual(amount);
 			expect(log2.length).toEqual(amount);
 			expect(
-				[0, 1, 2, 3, 9, 10].map((i) => result.values[i].payload.getValue())
+				[0, 1, 2, 3, 9, 10].map((i) => result.toArray()[i].payload.getValue())
 			).toEqual(["A1", "B1", "A2", "B2", "B5", "A6"]);
 		});
 	});

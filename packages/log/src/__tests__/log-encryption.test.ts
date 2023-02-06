@@ -130,7 +130,7 @@ describe("Log - Encryption", function () {
 				reciever: {
 					metadata: undefined,
 					signatures: {
-						[await log2._identity.publicKey.hashcode()]:
+						[await log2.identity.publicKey.hashcode()]:
 							recieverKey.keypair.publicKey, // reciever 1
 						[await extraSigner.publicKey.hashcode()]: [
 							recieverKey.keypair.publicKey,
@@ -144,14 +144,14 @@ describe("Log - Encryption", function () {
 					next: recieverKey.keypair.publicKey,
 				},
 				signers: [
-					log2._identity.sign.bind(log2._identity),
+					log2.identity.sign.bind(log2.identity),
 					extraSigner.sign.bind(extraSigner),
 					extraSigner2.sign.bind(extraSigner2),
 				],
 			});
 
 			// Remove decrypted caches of the log2 values
-			log2.values.forEach((value) => {
+			log2.toArray().forEach((value) => {
 				value._metadata.clear();
 				value._payload.clear();
 				value._signatures!.signatures.forEach((signature) => signature.clear());
@@ -160,13 +160,13 @@ describe("Log - Encryption", function () {
 
 			await log1.join(log2);
 			expect(log1.length).toEqual(1);
-			const item = last(log1.values);
+			const item = last(log1.toArray());
 			expect(item.next.length).toEqual(0);
 			expect(
 				(await item.getSignatures()).map((x) => x.publicKey.hashcode())
 			).toContainAllValues([
 				extraSigner.publicKey.hashcode(),
-				log2._identity.publicKey.hashcode(),
+				log2.identity.publicKey.hashcode(),
 			]);
 		});
 
@@ -205,7 +205,7 @@ describe("Log - Encryption", function () {
 			});
 
 			// Remove decrypted caches of the log2 values
-			log2.values.forEach((value) => {
+			log2.toArray().forEach((value) => {
 				value._metadata.clear();
 				value._payload.clear();
 				value._signatures!.signatures.forEach((signature) => signature.clear());
@@ -214,7 +214,7 @@ describe("Log - Encryption", function () {
 
 			await log1.join(log2);
 			expect(log1.length).toEqual(4);
-			const item = last(log1.values);
+			const item = last(log1.toArray());
 			expect(item.next.length).toEqual(1);
 		});
 	});

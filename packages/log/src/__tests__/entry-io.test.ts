@@ -85,7 +85,7 @@ describe("Entry - Persistency", function () {
 			{ logId: "X" }
 		);
 		await log.append("one");
-		const hash = log.values[0].hash;
+		const hash = log.toArray()[0].hash;
 		const res = await EntryIO.fetchAll(store, hash, { length: 1 });
 		expect(res.length).toEqual(1);
 	});
@@ -101,7 +101,7 @@ describe("Entry - Persistency", function () {
 		);
 		await log.append("one");
 		await log.append("two");
-		const hash = last(log.values).hash;
+		const hash = last(log.toArray()).hash;
 		const res = await EntryIO.fetchAll(store, hash, { length: 2 });
 		expect(res.length).toEqual(2);
 	});
@@ -117,7 +117,7 @@ describe("Entry - Persistency", function () {
 		);
 		await log.append("one");
 		await log.append("two");
-		const hash = last(log.values).hash;
+		const hash = last(log.toArray()).hash;
 		const res = await EntryIO.fetchAll(store, hash, { length: 1 });
 		expect(res.length).toEqual(1);
 	});
@@ -176,8 +176,8 @@ describe("Entry - Persistency", function () {
 						sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 					},
 					{
-						logId: log2._id,
-						entries: log2.values,
+						logId: log2.id,
+						entries: log2.toArray(),
 						heads: log2.heads.concat(log.heads),
 					}
 				);
@@ -225,7 +225,7 @@ describe("Entry - Persistency", function () {
 						...signKey.keypair,
 						sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 					},
-					{ logId: log2._id, entries: log2.values }
+					{ logId: log2.id, entries: log2.toArray() }
 				);
 				await log2.append("hi" + i);
 				await log2.join(log);
@@ -281,8 +281,8 @@ describe("Entry - Persistency", function () {
 						sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 					},
 					{
-						logId: log2._id,
-						entries: log2.values,
+						logId: log2.id,
+						entries: log2.toArray(),
 						heads: log2.heads,
 					}
 				);
@@ -297,8 +297,8 @@ describe("Entry - Persistency", function () {
 						sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 					},
 					{
-						logId: log3._id,
-						entries: log3.values,
+						logId: log3.id,
+						entries: log3.toArray(),
 						heads: log3.heads.concat(log2.heads),
 					}
 				);
@@ -361,8 +361,8 @@ describe("Entry - Persistency", function () {
 						sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
 					},
 					{
-						logId: log3._id,
-						entries: log3.values,
+						logId: log3.id,
+						entries: log3.toArray(),
 						heads: log3.heads.concat(log2.heads),
 					}
 				);
@@ -383,8 +383,8 @@ describe("Entry - Persistency", function () {
 		await log4.join(log2);
 		await log4.join(log3);
 
-		const values3 = log3.values.map((e) => e.payload.getValue());
-		const values4 = log4.values.map((e) => e.payload.getValue());
+		const values3 = log3.toArray().map((e) => e.payload.getValue());
+		const values4 = log4.toArray().map((e) => e.payload.getValue());
 
 		assert.deepStrictEqual(values3, values4);
 	});

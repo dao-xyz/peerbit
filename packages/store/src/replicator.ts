@@ -23,14 +23,14 @@ export const join = async <T>(
 			(entry.length === 0 || typeof entry[0] === "string"))
 	) {
 		log = await Log.fromEntryHash<T>(
-			into._storage,
-			into._identity,
+			into.storage,
+			into.identity,
 			entry as string | string[],
 			{
 				// TODO, load all store options?
-				encryption: into._encryption,
-				encoding: into._encoding,
-				sortFn: into._sortFn,
+				encryption: into.encryption,
+				encoding: into.encoding,
+				sortFn: into.sortFn,
 				length: -1,
 				exclude: [],
 				shouldFetch,
@@ -56,11 +56,11 @@ export const join = async <T>(
 			entries = [entry];
 		}
 
-		log = await Log.fromEntry(into._storage, into._identity, entries, {
+		log = await Log.fromEntry(into.storage, into.identity, entries, {
 			// TODO, load all store options?
-			encryption: into._encryption,
-			encoding: into._encoding,
-			sortFn: into._sortFn,
+			encryption: into.encryption,
+			encoding: into.encoding,
+			sortFn: into.sortFn,
 			length: -1,
 			shouldFetch,
 			concurrency: options?.concurrency,

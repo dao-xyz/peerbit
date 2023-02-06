@@ -26,36 +26,22 @@ import {
 	SignatureWithKey,
 } from "@dao-xyz/peerbit-crypto";
 import { serialize } from "@dao-xyz/borsh";
-
 import { Encoding, JSON_ENCODING } from "./encoding.js";
 import { Identity } from "./identity.js";
-import { logger as parentLogger } from "./logger.js";
 import { HeadsIndex } from "./heads.js";
 import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { Values } from "./values.js";
-
-const logger = parentLogger.child({ module: "log" });
+import Yallist from "yallist";
+import { Trim, TrimOptions } from "./trim.js";
 
 const { LastWriteWins, NoZeroes } = Sorting;
 const randomId = () => new Date().getTime().toString();
 const getHash = <T>(e: Entry<T>) => e.hash;
-/* const maxSizeReducer = <T>(res: bigint, acc: Entry<T>): bigint => bigIntMax(res, acc.cumulativeSize); */
-
 const uniqueEntriesReducer = <T>(res: Map<string, Entry<T>>, acc: Entry<T>) => {
 	res.set(acc.hash, acc);
 	return res;
 };
 
-export type TrimToLengthOption = { type: "length"; to: number; from?: number };
-export type TrimToByteLengthOption = {
-	type: "bytelength";
-	to: number;
-	from?: number;
-};
-export type TrimCondition = TrimToByteLengthOption | TrimToLengthOption;
-export type TrimOptions = {
-	canTrim?: (entry: Entry<any>) => Promise<boolean> | boolean;
-} & TrimCondition;
 export type Change<T> = { added: Entry<T>[]; removed: Entry<T>[] };
 
 export type LogOptions<T> = {
@@ -80,29 +66,24 @@ export type LogOptions<T> = {
  */
 
 export class Log<T> {
-	_sortFn: Sorting.ISortFunction;
-	_storage: BlockStore;
-	_id: string;
-	/*   _rootGid: string; */
-
-	_hlc: HLC;
+	private _sortFn: Sorting.ISortFunction;
+	private _storage: BlockStore;
+	private _id: string;
+	private _hlc: HLC;
 
 	// Identity
-	_identity: Identity;
+	private _identity: Identity;
 
 	// Keeping track of entries
-	_entryIndex: EntryIndex<T>;
-	_headsIndex: HeadsIndex<T>;
-	_values: Values<T>;
+	private _entryIndex: EntryIndex<T>;
+	private _headsIndex: HeadsIndex<T>;
+	private _values: Values<T>;
+
 	// Index of all next pointers in this log
-	_nextsIndex: Map<string, Set<string>>;
-
-	_trim?: TrimOptions;
-
-	_encryption?: PublicKeyEncryptionResolver;
-	_encoding: Encoding<T>;
-
-	joinConcurrency: number;
+	private _nextsIndex: Map<string, Set<string>>;
+	private _encryption?: PublicKeyEncryptionResolver;
+	private _encoding: Encoding<T>;
+	private _trim: Trim<T>;
 
 	constructor(
 		store: BlockStore,
@@ -174,6 +155,22 @@ export class Log<T> {
 		// Clock
 		this._hlc = new HLC();
 
+		this._trim = new Trim(
+			{
+				deleteNode: async (node: Yallist.Node<Entry<T>>) => {
+					if (this.entryIndex.has(node.value.hash)) {
+						this.values.deleteNode(node);
+						this.entryIndex.delete(node.value.hash);
+						this.headsIndex.del(node.value);
+						this.nextsIndex.delete(node.value.hash);
+						await this.storage.rm(node.value.hash);
+					}
+				},
+				values: this.values,
+			},
+			trim
+		);
+
 		const addToNextsIndex = (e: Entry<T>) => {
 			e.next.forEach((a) => {
 				let nextIndexSet = this._nextsIndex.get(a);
@@ -188,12 +185,10 @@ export class Log<T> {
 		};
 
 		entries.forEach(addToNextsIndex);
+	}
 
-		// Set the length, we calculate the length manually internally
-
-		// Set the clock
-		this.joinConcurrency = concurrency || 16;
-		this._trim = trim;
+	get id() {
+		return this._id;
 	}
 
 	/**
@@ -203,10 +198,14 @@ export class Log<T> {
 		return this._entryIndex.length;
 	}
 
+	get values(): Values<T> {
+		return this._values;
+	}
+
 	/**
-	 * Get all entries sorted
+	 * Get all entries sorted. Don't use this method anywhere where performance matters
 	 */
-	get values(): Entry<T>[] {
+	toArray(): Entry<T>[] {
 		return this._values.toArray();
 	}
 
@@ -230,7 +229,7 @@ export class Log<T> {
 	 * @returns {Array<Entry<T>>}
 	 */
 	get tails() {
-		return Log.findTails(this.values);
+		return Log.findTails(this.toArray());
 	}
 
 	/**
@@ -239,7 +238,7 @@ export class Log<T> {
 	 * @returns {Array<string>} Array of hashes
 	 */
 	get tailHashes() {
-		return Log.findTailHashes(this.values);
+		return Log.findTailHashes(this.toArray());
 	}
 
 	/**
@@ -247,6 +246,34 @@ export class Log<T> {
 	 */
 	get hlc(): HLC {
 		return this._hlc;
+	}
+
+	get identity(): Identity {
+		return this._identity;
+	}
+
+	get storage(): BlockStore {
+		return this._storage;
+	}
+
+	get nextsIndex(): Map<string, Set<string>> {
+		return this._nextsIndex;
+	}
+
+	get entryIndex(): EntryIndex<T> {
+		return this._entryIndex;
+	}
+
+	get encryption() {
+		return this._encryption;
+	}
+
+	get encoding() {
+		return this._encoding;
+	}
+
+	get sortFn() {
+		return this._sortFn;
 	}
 
 	/**
@@ -409,18 +436,6 @@ export class Log<T> {
 		return ret;
 	}
 
-	/* getHeadsFromHashes(refs: string[]): Entry<T>[] {
-		const headsFromRefs = new Map<string, Entry<T>>();
-		refs.forEach((ref) => {
-			const headsFromRef = this.getHeads(ref); // TODO allow forks
-			headsFromRef.forEach((head) => {
-				headsFromRefs.set(head.hash, head);
-			});
-		});
-		const nexts = [...headsFromRefs.values()].sort(this._sortFn);
-		return nexts;
-	} */
-
 	/**
 	 * Append an entry to the log.
 	 * @param {Entry} entry Entry to add
@@ -560,6 +575,10 @@ export class Log<T> {
 		})();
 	}
 
+	async trim(option: TrimOptions | undefined = this._trim.options) {
+		return this._trim.trim(option);
+	}
+
 	/**
 	 * Join two logs.
 	 *
@@ -631,78 +650,14 @@ export class Log<T> {
 		};
 	}
 
-	/**
-	 * @param options
-	 * @returns deleted entries
-	 */
-	async trim(
-		option: TrimOptions | undefined = this._trim
-	): Promise<Entry<T>[]> {
-		if (!option) {
-			return [];
-		}
-
-		if (Array.isArray(option)) {
-			const deleted: Entry<T>[] = [];
-			for (const o of option) {
-				deleted.push(...(await this.trim(o)));
-			}
-			return deleted;
-		}
-
-		const deleted: Entry<any>[] = [];
-		// Slice to the requested size
-		const promises: Promise<void>[] = [];
-		let done: () => boolean;
-		if (option.type === "length") {
-			const to = option.to;
-			const from = option.from ?? to;
-			if (this.length < from) {
-				return [];
-			}
-			done = () => this.length <= to;
-		} else if (option.type == "bytelength") {
-			// prune to max sum payload sizes in bytes
-			const byteLengthFrom = option.from ?? option.to;
-
-			if (this._values.byteLength < byteLengthFrom) {
-				return [];
-			}
-			done = () => this._values.byteLength <= option.to;
-		} else {
-			return [];
-		}
-
-		let node = this._values.tail;
-		while (node && !done() && this.length > 0) {
-			if (node && option.canTrim && !(await option.canTrim(node.value))) {
-				// ignore it
-				node = node.prev;
-			} else {
-				const prev = node.prev;
-				if (this._entryIndex.has(node.value.hash)) {
-					// TODO, under some concurrency condition the node can already be removed by another trim process
-					this._values.deleteNode(node);
-					deleted.push(node.value);
-					this._entryIndex.delete(node.value.hash);
-					this._headsIndex.del(node.value);
-					this._nextsIndex.delete(node.value.hash);
-					promises.push(this._storage.rm(node.value.hash));
-				}
-
-				node = prev;
-			}
-		}
-
-		await Promise.all(promises);
-		return deleted;
-	}
+	/// TODO simplify methods below
 
 	async deleteRecursively(from: Entry<any> | Entry<any>[]) {
 		const stack = Array.isArray(from) ? [...from] : [from];
 		const promises: Promise<void>[] = [];
 		while (stack.length > 0) {
 			const entry = stack.pop()!;
+			this._trim.deleteFromCache(entry);
 			this._values.delete(entry);
 			this._entryIndex.delete(entry.hash);
 			this._headsIndex.del(entry);
@@ -720,6 +675,7 @@ export class Log<T> {
 	}
 
 	async delete(entry: Entry<any>) {
+		this._trim.deleteFromCache(entry);
 		this._values.delete(entry);
 		this._entryIndex.delete(entry.hash);
 		this._headsIndex.del(entry);
@@ -759,7 +715,7 @@ export class Log<T> {
 		return {
 			id: this._id,
 			heads: [...this.headsIndex.index.values()],
-			values: this.values,
+			values: this.toArray(),
 		};
 	}
 
@@ -775,11 +731,14 @@ export class Log<T> {
 		payloadMapper: (payload: Payload<T>) => string = (payload) =>
 			(payload.getValue() as any).toString()
 	) {
-		return this.values
+		return this.toArray()
 			.slice()
 			.reverse()
 			.map((e, idx) => {
-				const parents: Entry<any>[] = Entry.findDirectChildren(e, this.values);
+				const parents: Entry<any>[] = Entry.findDirectChildren(
+					e,
+					this.toArray()
+				);
 				const len = parents.length;
 				let padding = new Array(Math.max(len - 1, 0));
 				padding = len > 1 ? padding.fill("  ") : padding;

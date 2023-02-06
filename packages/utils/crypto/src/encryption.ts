@@ -7,7 +7,7 @@ import {
 	variant,
 	vec,
 } from "@dao-xyz/borsh";
-import { arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
+import { equals } from "@dao-xyz/uint8arrays";
 import { AccessError } from "./errors.js";
 import sodium from "libsodium-wrappers";
 import { X25519Keypair, X25519PublicKey, X25519SecretKey } from "./x25519.js";
@@ -147,7 +147,7 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 
 	equals(other: MaybeEncrypted<T>) {
 		if (other instanceof DecryptedThing) {
-			return arraysEqual(this._data, other._data);
+			return equals(this._data, other._data);
 		} else {
 			return false;
 		}
@@ -180,8 +180,7 @@ export class CipherWithNonce {
 	equals(other: CipherWithNonce): boolean {
 		if (other instanceof CipherWithNonce) {
 			return (
-				arraysEqual(this.nonce, other.nonce) &&
-				arraysEqual(this.cipher, other.cipher)
+				equals(this.nonce, other.nonce) && equals(this.cipher, other.cipher)
 			);
 		} else {
 			return false;
@@ -366,10 +365,10 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
 
 	equals(other: MaybeEncrypted<T>): boolean {
 		if (other instanceof EncryptedThing) {
-			if (!arraysEqual(this._encrypted, other._encrypted)) {
+			if (!equals(this._encrypted, other._encrypted)) {
 				return false;
 			}
-			if (!arraysEqual(this._nonce, other._nonce)) {
+			if (!equals(this._nonce, other._nonce)) {
 				return false;
 			}
 

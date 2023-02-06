@@ -1,14 +1,7 @@
-import {
-	Constructor,
-	deserialize,
-	field,
-	serialize,
-	variant,
-	vec,
-} from "@dao-xyz/borsh";
+import { Constructor, field, serialize, variant } from "@dao-xyz/borsh";
 import { asString, Keyable } from "./utils.js";
-import { BORSH_ENCODING, Change, Encoding, Entry } from "@dao-xyz/peerbit-log";
-import { arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
+import { BORSH_ENCODING, Encoding, Entry } from "@dao-xyz/peerbit-log";
+import { equals } from "@dao-xyz/uint8arrays";
 import { ComposableProgram } from "@dao-xyz/peerbit-program";
 import {
 	FieldBigIntCompareQuery,
@@ -185,7 +178,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 
 	queryHandler(
 		query: DocumentQueryRequest,
-		context?: QueryContext
+		context?: QueryContext // TODO needed?
 	): Promise<IndexedValue<T>[]> {
 		const queries: Query[] = query.queries;
 		const results = this._queryDocuments((doc) =>
@@ -199,11 +192,15 @@ export class DocumentIndex<T> extends ComposableProgram {
 								}
 
 								if (f instanceof FieldStringMatchQuery) {
-									if (typeof fv !== "string") return false;
+									if (typeof fv !== "string") {
+										return false;
+									}
 									return fv.toLowerCase().indexOf(f.value.toLowerCase()) !== -1;
 								} else if (f instanceof FieldByteMatchQuery) {
-									if (!Array.isArray(fv)) return false;
-									return arraysEqual(fv, f.value);
+									if (fv instanceof Uint8Array === false) {
+										return false;
+									}
+									return equals(fv, f.value);
 								} else if (f instanceof FieldBigIntCompareQuery) {
 									const value: bigint | number = fv;
 

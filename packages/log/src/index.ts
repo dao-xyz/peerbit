@@ -7,3 +7,4 @@ export * from "./utils.js";
 export * from "./clock.js";
 export * from "./encoding.js";
 export * from "./identity.js";
+export type { TrimToByteLengthOption, TrimToLengthOption } from "./trim.js";

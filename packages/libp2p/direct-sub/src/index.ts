@@ -32,7 +32,8 @@ export {
 	GetSubscribers,
 	Subscription,
 };
-import { equals } from "uint8arrays";
+import { equals, startsWith } from "@dao-xyz/uint8arrays";
+
 export const logger = logFn({ module: "direct-sub", level: "warn" });
 
 export interface PeerStreamsInit {
@@ -230,18 +231,17 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		const map = this.topics.get(topic);
 		if (map) {
 			const results: string[] = [];
-			outer: for (const [peer, info] of map.entries()) {
-				if (
-					!info.data ||
-					info.data.length < data.length ||
-					(!options?.prefix && info.data.length !== data.length)
-				) {
+			for (const [peer, info] of map.entries()) {
+				if (!info.data) {
 					continue;
 				}
-
-				for (let i = 0; i < data.length; i++) {
-					if (data[i] !== info.data[i]) {
-						continue outer;
+				if (options?.prefix) {
+					if (!startsWith(info.data, data)) {
+						continue;
+					}
+				} else {
+					if (!equals(info.data, data)) {
+						continue;
 					}
 				}
 				results.push(peer);
@@ -488,7 +488,12 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 						timestamp: message.header.timetamp, // TODO update timestamps on all messages?
 						data: subscription.data,
 					});
-					changed.push(subscription);
+					if (
+						!existingSubscription?.data ||
+						!equals(existingSubscription.data, subscription.data)
+					) {
+						changed.push(subscription);
+					}
 				}
 
 				this.topicsToStreams

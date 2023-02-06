@@ -1,14 +1,10 @@
-import { field, variant } from "@dao-xyz/borsh";
+import { field, fixedArray, variant } from "@dao-xyz/borsh";
 import { Keypair, PrivateSignKey, PublicSignKey } from "./key.js";
 import { verifyMessage, Wallet } from "@ethersproject/wallet";
 import { joinSignature, arrayify } from "@ethersproject/bytes";
 import { hashMessage } from "@ethersproject/hash";
 
-import {
-	arraysCompare,
-	arraysEqual,
-	fixedUint8Array,
-} from "@dao-xyz/peerbit-borsh-utils";
+import { equals } from "@dao-xyz/uint8arrays";
 import { fromHexString, toHexString } from "./utils.js";
 import { computeAddress } from "@ethersproject/transactions";
 import { PeerId } from "@libp2p/interface-peer-id";
@@ -20,7 +16,7 @@ import { SignatureWithKey } from "./signature.js";
 import { PreHash, prehashFn } from "./prehash.js";
 @variant(1)
 export class Secp256k1Keccak256PublicKey extends PublicSignKey {
-	@field({ type: fixedUint8Array(20) })
+	@field({ type: fixedArray("u8", 20) })
 	address: Uint8Array; // keccak256, we do this because we want to be able to use web wallets
 
 	constructor(properties: { address: string }) {
@@ -68,7 +64,7 @@ export class Secp256k1Keccak256PrivateKey extends PrivateSignKey {
 
 	equals(other: Secp256k1Keccak256PrivateKey): boolean {
 		if (other instanceof Secp256k1Keccak256PrivateKey) {
-			return arraysCompare(this.privateKey, other.privateKey) === 0;
+			return equals(this.privateKey, other.privateKey);
 		}
 		return false;
 	}
@@ -174,7 +170,7 @@ export const verifySignatureSecp256k1 = async (
 		hashedData,
 		decoder.decode(signature.signature)
 	);
-	return arraysEqual(
+	return equals(
 		fromHexString(signerAddress.slice(2)),
 		(signature.publicKey as Secp256k1Keccak256PublicKey).address
 	);

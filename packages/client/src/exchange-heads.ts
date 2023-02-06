@@ -1,9 +1,15 @@
-import { variant, option, field, vec, serialize } from "@dao-xyz/borsh";
+import {
+	variant,
+	option,
+	field,
+	vec,
+	serialize,
+	fixedArray,
+} from "@dao-xyz/borsh";
 import { Entry, Identity } from "@dao-xyz/peerbit-log";
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
 import { Program } from "@dao-xyz/peerbit-program";
-import { fixedUint8Array } from "@dao-xyz/peerbit-borsh-utils";
 import { Store } from "@dao-xyz/peerbit-store";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { TransportMessage } from "./message.js";
@@ -51,7 +57,7 @@ export class EntryWithRefs<T> {
 @variant([0, 0])
 export class ExchangeHeadsMessage<T> extends TransportMessage {
 	@field({ type: "string" })
-	programAddress: string;
+	programAddress: string; //  TODO do we need this really? (since topics are already addresses, which this message is sent on)
 
 	@field({ type: option("u32") })
 	programIndex?: number;
@@ -65,7 +71,7 @@ export class ExchangeHeadsMessage<T> extends TransportMessage {
 	@field({ type: option(MinReplicas) })
 	minReplicas?: MinReplicas;
 
-	@field({ type: fixedUint8Array(4) })
+	@field({ type: fixedArray("u8", 4) })
 	reserved: Uint8Array = new Uint8Array(4);
 
 	constructor(props: {

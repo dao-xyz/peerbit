@@ -3,7 +3,7 @@ import rmrf from "rimraf";
 import fs from "fs-extra";
 import { Log } from "../log.js";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { arraysCompare } from "@dao-xyz/peerbit-borsh-utils";
+import { compare } from "@dao-xyz/uint8arrays";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
@@ -52,10 +52,7 @@ describe("Log - Heads and Tails", function () {
 			);
 		}
 		keys.sort((a, b) =>
-			arraysCompare(
-				a.keypair.publicKey.publicKey,
-				b.keypair.publicKey.publicKey
-			)
+			compare(a.keypair.publicKey.publicKey, b.keypair.publicKey.publicKey)
 		);
 
 		// @ts-ignore
@@ -145,7 +142,7 @@ describe("Log - Heads and Tails", function () {
 
 			await log2.join(log1);
 			await log2.append("helloB2");
-			const expectedHead = last(log2.values);
+			const expectedHead = last(log2.toArray());
 
 			expect(log2.heads.length).toEqual(1);
 			assert.deepStrictEqual(log2.heads[0].hash, expectedHead.hash);
@@ -171,11 +168,11 @@ describe("Log - Heads and Tails", function () {
 
 			await log1.append("helloA1");
 			await log1.append("helloA2");
-			const expectedHead1 = last(log1.values);
+			const expectedHead1 = last(log1.toArray());
 
 			await log2.append("helloB1");
 			await log2.append("helloB2");
-			const expectedHead2 = last(log2.values);
+			const expectedHead2 = last(log2.toArray());
 
 			await log1.join(log2);
 
@@ -215,8 +212,8 @@ describe("Log - Heads and Tails", function () {
 
 			await log1.append("helloA3");
 			await log1.append("helloA4");
-			const expectedHead2 = last(log2.values);
-			const expectedHead1 = last(log1.values);
+			const expectedHead2 = last(log2.toArray());
+			const expectedHead1 = last(log1.toArray());
 
 			await log1.join(log2);
 
@@ -259,12 +256,12 @@ describe("Log - Heads and Tails", function () {
 			await log1.join(log2);
 			await log1.append("helloA3");
 			await log1.append("helloA4");
-			const expectedHead1 = last(log1.values);
+			const expectedHead1 = last(log1.toArray());
 			await log3.append("helloC1");
 			await log3.append("helloC2");
 			await log2.join(log3);
 			await log2.append("helloB3");
-			const expectedHead2 = last(log2.values);
+			const expectedHead2 = last(log2.toArray());
 			await log1.join(log2);
 
 			const heads = log1.heads;
@@ -306,12 +303,12 @@ describe("Log - Heads and Tails", function () {
 			await log1.join(log2);
 			await log1.append("helloA3");
 			await log1.append("helloA4");
-			const expectedHead1 = last(log1.values);
+			const expectedHead1 = last(log1.toArray());
 			await log3.append("helloC1");
 			await log2.append("helloB3");
 			await log3.append("helloC2");
-			const expectedHead2 = last(log2.values);
-			const expectedHead3 = last(log3.values);
+			const expectedHead2 = last(log2.toArray());
+			const expectedHead3 = last(log3.toArray());
 			await log1.join(log2);
 			await log1.join(log3);
 
@@ -396,7 +393,7 @@ describe("Log - Heads and Tails", function () {
 			await log1.join(log2);
 
 			// the joined log will only contain the last two entries a2, b2
-			expect(log1.values.map((x) => x.hash)).toContainAllValues([
+			expect(log1.toArray().map((x) => x.hash)).toContainAllValues([
 				a2.hash,
 				b2.hash,
 			]);
@@ -459,8 +456,8 @@ describe("Log - Heads and Tails", function () {
 			);
 			expect(log4.length).toEqual(2);
 			expect(log4.tails.length).toEqual(2);
-			expect(log4.tails[0].hash).toEqual(log4.values[0].hash);
-			expect(log4.tails[1].hash).toEqual(log4.values[1].hash);
+			expect(log4.tails[0].hash).toEqual(log4.toArray()[0].hash);
+			expect(log4.tails[1].hash).toEqual(log4.toArray()[1].hash);
 		});
 
 		it("returns tails sorted by public key", async () => {

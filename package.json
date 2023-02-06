@@ -30,7 +30,7 @@
 			"packages/store",
 			"packages/utils/test-utils",
 			"packages/utils/lazy-level",
-			"packages/utils/borsh-utils",
+			"packages/utils/uint8arrays",
 			"packages/utils/time",
 			"packages/utils/cache",
 			"packages/utils/logger"

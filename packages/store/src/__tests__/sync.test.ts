@@ -122,7 +122,10 @@ describe(`Sync`, () => {
 		await store2.sync([
 			{
 				entry: store.oplog.heads[0],
-				references: [store.oplog.values[3], store.oplog.values[6]],
+				references: [
+					store.oplog.values.toArray()[3],
+					store.oplog.values.toArray()[6],
+				],
 			},
 		]);
 		await waitFor(() => store2.oplog.values.length == entryCount);

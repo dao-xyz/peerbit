@@ -1072,7 +1072,6 @@ export abstract class DirectStream<
 						resolve();
 					}
 				});
-
 				outboundPromise
 					.then(() => {
 						id.write(bytes);

@@ -856,6 +856,24 @@ describe("pubsub", function () {
 			expect(sentMessages).toEqual(1); // no new messages sent
 		});
 
+		it("resubscription will not emit uncessary message", async () => {
+			// Subscribe with some metadata
+			const data1 = new Uint8Array([1, 2, 3]);
+
+			let sentMessages = 0;
+			const publishMessage = peers[0].stream.publishMessage.bind(
+				peers[0].stream
+			);
+			peers[0].stream.publishMessage = async (a: any, b: any, c: any) => {
+				sentMessages += 1;
+				return publishMessage(a, b, c);
+			};
+			await peers[0].stream.subscribe(TOPIC_1, { data: data1 });
+			expect(sentMessages).toEqual(1);
+			await peers[0].stream.subscribe(TOPIC_1, { data: data1 });
+			expect(sentMessages).toEqual(1); // no new messages sent
+		});
+
 		it("requesting subscribers will not overwrite subscriptions", async () => {
 			for (const peer of peers) {
 				await peer.stream.requestSubscribers(TOPIC_1);
@@ -912,6 +930,9 @@ describe("pubsub", function () {
 			expect(peers[2].stream.getSubscribersWithData(TOPIC_1, data1)!).toEqual([
 				peers[0].stream.publicKeyHash,
 			]);
+
+			expect(peers[1].subscriptionEvents).toHaveLength(1); // Emits are only the unique ones
+			expect(peers[2].subscriptionEvents).toHaveLength(1); // Emits are only the unique ones
 		});
 
 		it("get subscribers with metadata prefix", async () => {

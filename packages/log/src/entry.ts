@@ -22,9 +22,9 @@ import {
 	sha256Base64,
 	randomBytes,
 } from "@dao-xyz/peerbit-crypto";
-import { verify, toBase64 } from "@dao-xyz/peerbit-crypto";
+import { verify } from "@dao-xyz/peerbit-crypto";
 import { BlockStore } from "@dao-xyz/libp2p-direct-block";
-import { arraysCompare, arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
+import { compare, equals } from "@dao-xyz/uint8arrays";
 import { Encoding, JSON_ENCODING } from "./encoding.js";
 import { Identity } from "./identity.js";
 import { StringArray } from "./types.js";
@@ -105,7 +105,7 @@ export class Payload<T> {
 	}
 
 	equals(other: Payload<T>): boolean {
-		return arraysEqual(this.data, other.data);
+		return equals(this.data, other.data);
 	}
 
 	getValue(encoding: Encoding<T> = JSON_ENCODING): T {
@@ -194,7 +194,7 @@ export class Entry<T>
 	_fork: MaybeEncrypted<StringArray>;
 
 	@field({ type: fixedArray("u8", 4) })
-	_reserved: number[];
+	_reserved: Uint8Array;
 
 	@field({ type: option(Signatures) })
 	_signatures?: Signatures;
@@ -212,7 +212,7 @@ export class Entry<T>
 		metadata: MaybeEncrypted<Metadata>;
 		next: MaybeEncrypted<StringArray>;
 		fork?: MaybeEncrypted<StringArray>; //  (not used)
-		reserved?: number[]; // intentational type 0  (not used)h
+		reserved?: Uint8Array; // intentational type 0  (not used)h
 		hash?: string;
 		createdLocally?: boolean;
 	}) {
@@ -225,7 +225,7 @@ export class Entry<T>
 			new DecryptedThing({
 				data: serialize(new StringArray({ arr: [] })),
 			});
-		this._reserved = obj.reserved || [0, 0, 0, 0];
+		this._reserved = obj.reserved || new Uint8Array([0, 0, 0, 0]);
 		this.createdLocally = obj.createdLocally;
 	}
 
@@ -406,7 +406,7 @@ export class Entry<T>
 
 	equals(other: Entry<T>) {
 		return (
-			arraysEqual(this._reserved, other._reserved) &&
+			equals(this._reserved, other._reserved) &&
 			this._metadata.equals(other._metadata) &&
 			this._signatures!.equals(other._signatures!) &&
 			this._next.equals(other._next) &&
@@ -616,9 +616,7 @@ export class Entry<T>
 		let signatures = await Promise.all(
 			signers.map((signer) => signer(signable))
 		);
-		signatures = signatures.sort((a, b) =>
-			arraysCompare(a.signature, b.signature)
-		);
+		signatures = signatures.sort((a, b) => compare(a.signature, b.signature));
 
 		const encryptedSignatures: MaybeEncrypted<SignatureWithKey>[] = [];
 		const encryptAllSignaturesWithSameKey = isMaybeEryptionPublicKey(

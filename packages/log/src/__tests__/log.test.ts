@@ -16,7 +16,7 @@ import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
-import { arraysCompare } from "@dao-xyz/peerbit-borsh-utils";
+import { compare } from "@dao-xyz/uint8arrays";
 import { createStore } from "./utils.js";
 import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
 
@@ -52,10 +52,7 @@ describe("Log", function () {
 			);
 		}
 		signKeys.sort((a, b) =>
-			arraysCompare(
-				a.keypair.publicKey.publicKey,
-				b.keypair.publicKey.publicKey
-			)
+			compare(a.keypair.publicKey.publicKey, b.keypair.publicKey.publicKey)
 		);
 		// @ts-ignore
 		signKey = signKeys[0];
@@ -84,15 +81,15 @@ describe("Log", function () {
 				},
 				undefined
 			);
-			assert.notStrictEqual(log._entryIndex, null);
-			assert.notStrictEqual(log._headsIndex, null);
-			assert.notStrictEqual(log._id, null);
-			assert.notStrictEqual(log._id, null);
-			assert.notStrictEqual(log.values, null);
+			assert.notStrictEqual(log.entryIndex, null);
+			assert.notStrictEqual(log.headsIndex, null);
+			assert.notStrictEqual(log.id, null);
+			assert.notStrictEqual(log.id, null);
+			assert.notStrictEqual(log.toArray(), null);
 			assert.notStrictEqual(log.heads, null);
 			assert.notStrictEqual(log.tails, null);
 			// assert.notStrictEqual(log.tailCids, null)
-			assert.deepStrictEqual(log.values, []);
+			assert.deepStrictEqual(log.toArray(), []);
 			assert.deepStrictEqual(log.heads, []);
 			assert.deepStrictEqual(log.tails, []);
 		});
@@ -106,7 +103,7 @@ describe("Log", function () {
 				},
 				{ logId: "ABC" }
 			);
-			expect(log._id).toEqual("ABC");
+			expect(log.id).toEqual("ABC");
 		});
 
 		it("generates id string if id is not passed as an argument", () => {
@@ -118,7 +115,7 @@ describe("Log", function () {
 				},
 				undefined
 			);
-			assert.strictEqual(typeof log._id === "string", true);
+			assert.strictEqual(typeof log.id === "string", true);
 		});
 
 		it("sets items if given as params", async () => {
@@ -164,9 +161,9 @@ describe("Log", function () {
 				{ logId: "A", entries: [one, two, three] }
 			);
 			expect(log.length).toEqual(3);
-			expect(log.values[0].payload.getValue()).toEqual("entryA");
-			expect(log.values[1].payload.getValue()).toEqual("entryB");
-			expect(log.values[2].payload.getValue()).toEqual("entryC");
+			expect(log.toArray()[0].payload.getValue()).toEqual("entryA");
+			expect(log.toArray()[1].payload.getValue()).toEqual("entryB");
+			expect(log.toArray()[2].payload.getValue()).toEqual("entryC");
 		});
 
 		it("sets heads if given as params", async () => {
@@ -343,7 +340,7 @@ describe("Log", function () {
 		});
 
 		it("returns an Entry", () => {
-			const entry = log.get(log.values[0].hash)!;
+			const entry = log.get(log.toArray()[0].hash)!;
 			expect(entry.hash).toMatchSnapshot();
 		});
 
@@ -370,7 +367,7 @@ describe("Log", function () {
 
 		it("changes identity", async () => {
 			assert.deepStrictEqual(
-				log.values[0].metadata.clock.id,
+				log.toArray()[0].metadata.clock.id,
 				new Uint8Array(signKey.keypair.publicKey.bytes)
 			);
 			log.setIdentity({
@@ -379,7 +376,7 @@ describe("Log", function () {
 			});
 			await log.append("two", { gidSeed: Buffer.from("a") });
 			assert.deepStrictEqual(
-				log.values[1].metadata.clock.id,
+				log.toArray()[1].metadata.clock.id,
 				new Uint8Array(signKey2.keypair.publicKey.bytes)
 			);
 			log.setIdentity({
@@ -388,7 +385,7 @@ describe("Log", function () {
 			});
 			await log.append("three", { gidSeed: Buffer.from("a") });
 			assert.deepStrictEqual(
-				log.values[2].metadata.clock.id,
+				log.toArray()[2].metadata.clock.id,
 				new Uint8Array(signKey3.keypair.publicKey.bytes)
 			);
 		});
@@ -410,11 +407,11 @@ describe("Log", function () {
 		});
 
 		it("returns true if it has an Entry", () => {
-			assert(log.has(log.values[0].hash));
+			assert(log.has(log.toArray()[0].hash));
 		});
 
 		it("returns true if it has an Entry, hash lookup", () => {
-			assert(log.has(log.values[0].hash));
+			assert(log.has(log.toArray()[0].hash));
 		});
 
 		it("returns false if it doesn't have the Entry", () => {
@@ -445,7 +442,7 @@ describe("Log", function () {
 				expect(JSON.stringify(log.toJSON())).toEqual(
 					JSON.stringify({
 						id: logId,
-						heads: [log.values[2].hash],
+						heads: [log.toArray()[2].hash],
 					})
 				);
 			});
@@ -455,8 +452,8 @@ describe("Log", function () {
 			it("returns the log snapshot", () => {
 				const expectedData = {
 					id: logId,
-					heads: [log.values[2].hash],
-					values: log.values.map((x) => x.hash),
+					heads: [log.toArray()[2].hash],
+					values: log.toArray().map((x) => x.hash),
 				};
 				const snapshot = log.toSnapshot();
 				expect(snapshot.id).toEqual(expectedData.id);
@@ -551,11 +548,11 @@ describe("Log", function () {
 				);
 				expect(JSON.stringify(res.toJSON())).toMatchSnapshot();
 				expect(res.length).toEqual(1);
-				expect(res.values[0].payload.getValue()).toEqual("one");
-				expect(res.values[0].metadata.clock.id).toEqual(
+				expect(res.toArray()[0].payload.getValue()).toEqual("one");
+				expect(res.toArray()[0].metadata.clock.id).toEqual(
 					new Uint8Array(signKey.keypair.publicKey.bytes)
 				);
-				expect(res.values[0].metadata.clock.timestamp.logical).toEqual(0);
+				expect(res.toArray()[0].metadata.clock.timestamp.logical).toEqual(0);
 			});
 
 			it("creates a log from ipfs CID - three entries", async () => {
@@ -570,9 +567,9 @@ describe("Log", function () {
 					{ length: -1 }
 				);
 				expect(res.length).toEqual(3);
-				expect(res.values[0].payload.getValue()).toEqual("one");
-				expect(res.values[1].payload.getValue()).toEqual("two");
-				expect(res.values[2].payload.getValue()).toEqual("three");
+				expect(res.toArray()[0].payload.getValue()).toEqual("one");
+				expect(res.toArray()[1].payload.getValue()).toEqual("two");
+				expect(res.toArray()[2].payload.getValue()).toEqual("three");
 			});
 
 			it("creates a log from ipfs multihash (backwards compat)", async () => {
@@ -600,11 +597,11 @@ describe("Log", function () {
 				);
 				expect(JSON.stringify(res.toJSON())).toMatchSnapshot();
 				expect(res.length).toEqual(1);
-				expect(res.values[0].payload.getValue()).toEqual("one");
-				expect(res.values[0].metadata.clock.id).toEqual(
+				expect(res.toArray()[0].payload.getValue()).toEqual("one");
+				expect(res.toArray()[0].metadata.clock.id).toEqual(
 					new Uint8Array(signKey.keypair.publicKey.bytes)
 				);
-				expect(res.values[0].metadata.clock.timestamp.logical).toEqual(0);
+				expect(res.toArray()[0].metadata.clock.timestamp.logical).toEqual(0);
 			});
 
 			it("has the right sequence number after creation and appending", async () => {
@@ -621,7 +618,7 @@ describe("Log", function () {
 				expect(res.length).toEqual(3);
 				await res.append("four");
 				expect(res.length).toEqual(4);
-				expect(res.values[3].payload.getValue()).toEqual("four");
+				expect(res.toArray()[3].payload.getValue()).toEqual("four");
 			});
 
 			it("creates a log from ipfs CID that has three heads", async () => {
@@ -812,7 +809,7 @@ describe("Log", function () {
 					await log.append(i.toString());
 				}
 
-				const items = log.values;
+				const items = log.toArray();
 				let i = 0;
 				const loadProgressCallback = (entry: Entry<string>) => {
 					assert.notStrictEqual(entry, null);
@@ -840,15 +837,15 @@ describe("Log", function () {
 				// Make sure the onProgress callback was called for each entry
 				expect(i).toEqual(amount);
 				// Make sure the log entries are correct ones
-				expect(result.values[0].metadata.clock.timestamp.logical).toEqual(0);
-				expect(result.values[0].payload.getValue()).toEqual("0");
+				expect(result.toArray()[0].metadata.clock.timestamp.logical).toEqual(0);
+				expect(result.toArray()[0].payload.getValue()).toEqual("0");
 				expect(
 					Timestamp.compare(
-						result.values[result.length - 1].metadata.clock.timestamp,
-						result.values[0].metadata.clock.timestamp
+						result.toArray()[result.length - 1].metadata.clock.timestamp,
+						result.toArray()[0].metadata.clock.timestamp
 					)
 				).toBeGreaterThan(0);
-				expect(result.values[result.length - 1].payload.getValue()).toEqual(
+				expect(result.toArray()[result.length - 1].payload.getValue()).toEqual(
 					"99"
 				);
 			});
@@ -874,8 +871,8 @@ describe("Log", function () {
 						...signKey.keypair,
 						sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 					},
-					log.values[0].hash,
-					{ logId: log._id, length: -1 }
+					log.toArray()[0].hash,
+					{ logId: log.id, length: -1 }
 				);
 				expect(JSON.stringify(res.toJSON())).toMatchSnapshot();
 			});
@@ -942,16 +939,16 @@ describe("Log", function () {
 				...signKey.keypair,
 				sign: (data) => signKey.keypair.sign(data),
 			});
-			expect(log.values instanceof Array).toEqual(true);
+			expect(log.toArray() instanceof Array).toEqual(true);
 			expect(log.length).toEqual(0);
 			await log.append("hello1");
 			await log.append("hello2");
 			await log.append("hello3");
-			expect(log.values instanceof Array).toEqual(true);
+			expect(log.toArray() instanceof Array).toEqual(true);
 			expect(log.length).toEqual(3);
-			expect(log.values[0].payload.getValue()).toEqual("hello1");
-			expect(log.values[1].payload.getValue()).toEqual("hello2");
-			expect(log.values[2].payload.getValue()).toEqual("hello3");
+			expect(log.toArray()[0].payload.getValue()).toEqual("hello1");
+			expect(log.toArray()[1].payload.getValue()).toEqual("hello2");
+			expect(log.toArray()[2].payload.getValue()).toEqual("hello3");
 		});
 	});
 });

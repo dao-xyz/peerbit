@@ -6,7 +6,7 @@ import {
 	serialize,
 	AbstractType,
 } from "@dao-xyz/borsh";
-import { arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
+import { equals } from "@dao-xyz/uint8arrays";
 import { verifySignatureEd25519 } from "./ed25519-sign.js";
 import { Ed25519PublicKey } from "./ed25519.js";
 import { PublicSignKey } from "./key.js";
@@ -41,7 +41,7 @@ export class SignatureWithKey {
 	}
 
 	equals(other: SignatureWithKey): boolean {
-		if (!arraysEqual(this.signature, other.signature)) {
+		if (!equals(this.signature, other.signature)) {
 			return false;
 		}
 		return (
@@ -85,7 +85,7 @@ export class MaybeSigned<T> {
 	}
 
 	equals(other: MaybeSigned<T>): boolean {
-		if (!arraysEqual(this.data, other.data)) {
+		if (!equals(this.data, other.data)) {
 			return false;
 		}
 		if (!this.signature !== !other.signature) {
@@ -135,7 +135,7 @@ export class SignatureWithKey {
 	}
 
 	equals(other: SignatureWithKey): boolean {
-		if (!arraysEqual(this.signature, other.signature)) {
+		if (!equals(this.signature, other.signature)) {
 			return false;
 		}
 		return (
@@ -170,7 +170,7 @@ export abstract class MaybeSigned<T> {
 	abstract verify(): Promise<boolean>
 
 	equals(other: MaybeSigned<T>): boolean {
-		if (!arraysEqual(this.data, other.data)) {
+		if (!equals(this.data, other.data)) {
 			return false;
 		}
 		return true;

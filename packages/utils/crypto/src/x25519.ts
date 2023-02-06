@@ -1,6 +1,6 @@
 export * from "./errors.js";
-import { field, variant } from "@dao-xyz/borsh";
-import { arraysCompare, fixedUint8Array } from "@dao-xyz/peerbit-borsh-utils";
+import { field, fixedArray, variant } from "@dao-xyz/borsh";
+import { compare } from "@dao-xyz/uint8arrays";
 import sodium from "libsodium-wrappers";
 import {
 	Keypair,
@@ -16,7 +16,7 @@ import { toHexString } from "./utils.js";
 
 @variant(0)
 export class X25519PublicKey extends PublicKeyEncryptionKey {
-	@field({ type: fixedUint8Array(32) })
+	@field({ type: fixedArray("u8", 32) })
 	publicKey: Uint8Array;
 
 	constructor(properties?: { publicKey: Uint8Array }) {
@@ -28,7 +28,7 @@ export class X25519PublicKey extends PublicKeyEncryptionKey {
 
 	equals(other: PublicKeyEncryptionKey): boolean {
 		if (other instanceof X25519PublicKey) {
-			return arraysCompare(this.publicKey, other.publicKey) === 0;
+			return compare(this.publicKey, other.publicKey) === 0;
 		}
 		return false;
 	}
@@ -57,7 +57,7 @@ export class X25519PublicKey extends PublicKeyEncryptionKey {
 
 @variant(0)
 export class X25519SecretKey extends PrivateEncryptionKey {
-	@field({ type: fixedUint8Array(32) })
+	@field({ type: fixedArray("u8", 32) })
 	secretKey: Uint8Array;
 
 	constructor(properties?: { secretKey: Uint8Array }) {
@@ -70,8 +70,7 @@ export class X25519SecretKey extends PrivateEncryptionKey {
 	equals(other: PublicKeyEncryptionKey): boolean {
 		if (other instanceof X25519SecretKey) {
 			return (
-				arraysCompare(this.secretKey, (other as X25519SecretKey).secretKey) ===
-				0
+				compare(this.secretKey, (other as X25519SecretKey).secretKey) === 0
 			);
 		}
 		return false;

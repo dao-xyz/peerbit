@@ -20,11 +20,7 @@ import { Identity } from "@dao-xyz/peerbit-log";
 import { Wallet } from "@ethersproject/wallet";
 import { createStore } from "@dao-xyz/peerbit-test-utils";
 import { AbstractLevel } from "abstract-level";
-import {
-	CachedValue,
-	DefaultOptions,
-	IStoreOptions,
-} from "@dao-xyz/peerbit-store";
+import { DefaultOptions, IStoreOptions } from "@dao-xyz/peerbit-store";
 import Cache from "@dao-xyz/lazy-level";
 import { field, serialize, variant } from "@dao-xyz/borsh";
 import {
@@ -266,7 +262,7 @@ describe("index", () => {
 			programs.push(store);
 			return store;
 		};
-		beforeAll(async () => {
+		beforeEach(async () => {
 			session = await LSession.connected(5);
 			identites = [];
 			cacheStore = [];
@@ -278,7 +274,7 @@ describe("index", () => {
 			}
 		});
 
-		afterAll(async () => {
+		afterEach(async () => {
 			await Promise.all(programs.map((p) => p.close()));
 			await session.stop();
 			await Promise.all(cacheStore?.map((c) => c.close()));

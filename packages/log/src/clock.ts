@@ -24,7 +24,7 @@ SOFTWARE.
  */
 
 import { field, variant } from "@dao-xyz/borsh";
-import { arraysCompare, arraysEqual } from "@dao-xyz/peerbit-borsh-utils";
+import { compare, equals } from "@dao-xyz/uint8arrays";
 import hrtime from "./hrtime.js";
 
 const hrTimeNow = hrtime.bigint();
@@ -253,8 +253,7 @@ export class LamportClock {
 
 	equals(other: LamportClock): boolean {
 		return (
-			arraysEqual(this.id, other.id) &&
-			this.timestamp.compare(other.timestamp) === 0
+			equals(this.id, other.id) && this.timestamp.compare(other.timestamp) === 0
 		);
 	}
 
@@ -276,6 +275,6 @@ export class LamportClock {
 
 		// If the sequence number is the same (concurrent events),
 		// and the IDs are different, take the one with a "lower" id
-		return arraysCompare(a.id, b.id);
+		return compare(a.id, b.id);
 	}
 }

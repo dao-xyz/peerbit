@@ -1,5 +1,5 @@
 import { IStoreOptions, Store } from "@dao-xyz/peerbit-store";
-import Cache from "@dao-xyz/lazy-level";
+import LazyLevel from "@dao-xyz/lazy-level";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { AbstractLevel } from "abstract-level";
 import { Level } from "level";
@@ -13,7 +13,13 @@ import {
 	MinReplicas,
 } from "./exchange-heads.js";
 import { Entry, Identity } from "@dao-xyz/peerbit-log";
-import { serialize, deserialize, BorshError } from "@dao-xyz/borsh";
+import {
+	serialize,
+	deserialize,
+	BorshError,
+	BinaryReader,
+	BinaryWriter,
+} from "@dao-xyz/borsh";
 import { TransportMessage } from "./message.js";
 import {
 	X25519PublicKey,
@@ -29,6 +35,8 @@ import {
 	getKeypairFromPeerId,
 	Sec256k1Keccak256Keypair,
 	PreHash,
+	sha256,
+	PublicSignKey,
 } from "@dao-xyz/peerbit-crypto";
 import { encryptionWithRequestKey } from "./encryption.js";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
@@ -60,6 +68,8 @@ import {
 } from "@dao-xyz/peerbit-program";
 import { TrimToByteLengthOption } from "@dao-xyz/peerbit-log";
 import { TrimToLengthOption } from "@dao-xyz/peerbit-log";
+import { startsWith } from "@dao-xyz/uint8arrays";
+import { v4 as uuid } from "uuid";
 export const logger = loggerFn({ module: "peer" });
 
 const MIN_REPLICAS = 2;
@@ -87,14 +97,12 @@ export type CreateOptions = {
 	directory?: string;
 	peerId: Ed25519PeerId;
 	storage: Storage;
-	cache: Cache;
+	cache: LazyLevel;
 	localNetwork: boolean;
 	browser?: boolean;
 } & OptionalCreateOptions;
 
-export type SyncFilter = (
-	entries: EntryWithRefs<any>[]
-) => Promise<EntryWithRefs<any>[]> | EntryWithRefs<any>[];
+export type SyncFilter = (entries: Entry<any>) => Promise<boolean> | boolean;
 export type CreateInstanceOptions = {
 	libp2p?: Libp2p | Libp2pExtended;
 	storage?: Storage;
@@ -102,7 +110,7 @@ export type CreateInstanceOptions = {
 	keystore?: Keystore;
 	peerId?: Ed25519PeerId;
 	identity?: Identity;
-	cache?: Cache;
+	cache?: LazyLevel;
 	localNetwork?: boolean;
 	browser?: boolean;
 } & OptionalCreateOptions;
@@ -149,7 +157,7 @@ export class Peerbit {
 
 	directory?: string;
 	storage: Storage;
-	caches: { [key: string]: { cache: Cache; handlers: Set<string> } };
+	caches: { [key: string]: { cache: LazyLevel; handlers: Set<string> } };
 	keystore: Keystore;
 	_minReplicas: number;
 	/// program address => Program metadata
@@ -158,12 +166,15 @@ export class Peerbit {
 	localNetwork: boolean;
 	browser: boolean; // is running inside of browser?
 
+	private _sortedPeersCache: Map<string, string[]> = new Map();
 	private _gidPeersHistory: Map<string, Set<string>> = new Map();
 	private _openProgramQueue: PQueue;
 	private _disconnected = false;
 	private _disconnecting = false;
 	private _encryption: PublicKeyEncryptionResolver;
 	private _refreshInterval: any;
+
+	private _lastSubscriptionMessageId: string;
 
 	constructor(
 		libp2p: Libp2pExtended,
@@ -220,11 +231,10 @@ export class Peerbit {
 
 		this._openProgramQueue = new PQueue({ concurrency: 1 });
 
-		const refreshInterval = options.refreshIntreval || 10000;
+		const refreshInterval = options.refreshIntreval || 100;
 
-		const promise: Promise<boolean> | undefined = undefined;
 		// 	TODO do we need this?
-
+		const promise: Promise<boolean> | undefined = undefined;
 		/* 	this._refreshInterval = setInterval(async () => {
 				if (promise) {
 					return;
@@ -329,7 +339,7 @@ export class Peerbit {
 
 		const cache =
 			options.cache ||
-			new Cache(
+			new LazyLevel(
 				await storage.createStore(
 					directory ? path.join(directory, "/cache") : undefined
 				)
@@ -452,9 +462,10 @@ export class Peerbit {
 
 	async _createCache(directory: string) {
 		const cacheStorage = await this.storage.createStore(directory);
-		return new Cache(cacheStorage);
+		return new LazyLevel(cacheStorage);
 	}
 
+	COUNTER = 0;
 	// Callback for local writes to the database. We the update to pubsub.
 	onWrite<T>(
 		program: Program,
@@ -530,11 +541,10 @@ export class Peerbit {
 				 */
 
 				const { storeIndex, programAddress } = msg;
-				let { heads } = msg;
+				const { heads } = msg;
 				// replication topic === trustedNetwork address
 
-				const pstores = this.programs;
-				const paddress = programAddress;
+				const programAddressObject = Address.parse(programAddress);
 
 				logger.debug(
 					`${this.id}: Recieved heads: ${
@@ -542,7 +552,7 @@ export class Peerbit {
 					}, storeIndex: ${storeIndex}`
 				);
 				if (heads) {
-					const programInfo = this.programs.get(paddress)!;
+					const programInfo = this.programs.get(programAddress)!;
 
 					if (!programInfo) {
 						return;
@@ -552,19 +562,19 @@ export class Peerbit {
 					if (!storeInfo) {
 						logger.error(
 							"Missing store info, which was expected to exist for " +
-								paddress +
+								programAddressObject +
 								", " +
 								storeIndex
 						);
 						return;
 					}
 
-					heads = heads
+					const filteredHeads = heads
 						.filter((head) => !storeInfo.oplog.has(head.entry.hash))
 						.map((head) => {
 							head.entry.init({
-								encryption: storeInfo.oplog._encryption,
-								encoding: storeInfo.oplog._encoding,
+								encryption: storeInfo.oplog.encryption,
+								encoding: storeInfo.oplog.encoding,
 							});
 							return head;
 						}); // we need to init because we perhaps need to decrypt gid
@@ -572,11 +582,10 @@ export class Peerbit {
 					let toMerge: EntryWithRefs<any>[];
 					if (!programInfo.sync) {
 						toMerge = [];
-
-						for (const [gid, value] of await groupByGid(heads)) {
+						for (const [gid, value] of await groupByGid(filteredHeads)) {
 							if (
 								!(await this.isLeader(
-									programAddress,
+									programAddressObject,
 									gid,
 									programInfo.minReplicas.value
 								))
@@ -591,7 +600,9 @@ export class Peerbit {
 							});
 						}
 					} else {
-						toMerge = await programInfo.sync(heads);
+						toMerge = await Promise.all(
+							filteredHeads.map((x) => programInfo.sync!(x.entry))
+						).then((filter) => filteredHeads.filter((v, ix) => filter[ix]));
 					}
 
 					if (toMerge.length > 0) {
@@ -601,16 +612,19 @@ export class Peerbit {
 						}
 
 						await store.sync(toMerge);
+
+						/*  TODO does this debug affect performance?
+						
+						logger.debug(
+							`${this.id}: Synced ${toMerge.length} heads for '${programAddressObject}/${storeIndex}':\n`,
+							JSON.stringify(
+								toMerge.map((e) => e.entry.hash),
+								null,
+								2
+							)
+						); */
 					}
 				}
-				logger.debug(
-					`${this.id}: Synced ${heads.length} heads for '${paddress}/${storeIndex}':\n`,
-					JSON.stringify(
-						heads.map((e) => e.entry.hash),
-						null,
-						2
-					)
-				);
 			} else if (msg instanceof ExchangeSwarmMessage) {
 				let hasAll = true;
 				for (const i of msg.info) {
@@ -680,7 +694,11 @@ export class Peerbit {
 			)}'`
 		);
 
-		return this.handleSubscriptionChange(evt.detail.unsubscriptions);
+		return this.handleSubscriptionChange(
+			evt.detail.from,
+			evt.detail.unsubscriptions,
+			false
+		);
 	}
 
 	async _onSubscription(evt: CustomEvent<SubscriptionEvent>) {
@@ -689,10 +707,40 @@ export class Peerbit {
 				evt.detail.subscriptions.map((x) => x.topic)
 			)}'`
 		);
-		return this.handleSubscriptionChange(evt.detail.subscriptions);
+		return this.handleSubscriptionChange(
+			evt.detail.from,
+			evt.detail.subscriptions,
+			true
+		);
 	}
 
-	async handleSubscriptionChange(changes: Subscription[]) {
+	async handleSubscriptionChange(
+		from: PublicSignKey,
+		changes: Subscription[],
+		subscribed: boolean
+	) {
+		changes.forEach((c) => {
+			if (!c.data || !startsWith(c.data, REPLICATOR_TYPE_VARIANT)) {
+				return;
+			}
+			this._lastSubscriptionMessageId = uuid();
+
+			const sortedPeer = this._sortedPeersCache.get(c.topic);
+			if (sortedPeer) {
+				const code = from.hashcode();
+				if (subscribed) {
+					// TODO use Set + list for fast lookup
+					if (!sortedPeer.find((x) => x === code)) {
+						sortedPeer.push(code);
+						sortedPeer.sort((a, b) => a.localeCompare(b));
+					}
+				} else {
+					const deleteIndex = sortedPeer.findIndex((x) => x === code);
+					sortedPeer.splice(deleteIndex, 1);
+				}
+			}
+		});
+
 		for (const subscription of changes) {
 			if (subscription.data) {
 				try {
@@ -705,10 +753,12 @@ export class Peerbit {
 							]);
 						}
 					}
-				} catch (error) {
+				} catch (error: any) {
 					logger.warn(
-						"Recieved subscription with invalid data on topic",
-						subscription.topic
+						"Recieved subscription with invalid data on topic: " +
+							subscription.topic +
+							". Error: " +
+							error?.message
 					);
 				}
 			}
@@ -728,6 +778,7 @@ export class Peerbit {
 				for (const [_, store] of programInfo.program.allStoresMap) {
 					const heads = store.oplog.heads;
 					const groupedByGid = await groupByGid(heads);
+					let storeChanged = false;
 					for (const [gid, entries] of groupedByGid) {
 						const toSend: Map<string, Entry<any>> = new Map();
 						const newPeers: string[] = [];
@@ -737,8 +788,9 @@ export class Peerbit {
 						}
 
 						const oldPeersSet = this._gidPeersHistory.get(gid);
+
 						const currentPeers = await this.findLeaders(
-							programInfo.program.address.toString(),
+							programInfo.program.address,
 							gid,
 							programInfo.minReplicas.value
 						);
@@ -747,6 +799,7 @@ export class Peerbit {
 								!oldPeersSet?.has(currentPeer) &&
 								currentPeer !== this.idKeyHash
 							) {
+								storeChanged = true;
 								// second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
 								newPeers.push(currentPeer);
 
@@ -760,10 +813,9 @@ export class Peerbit {
 												: "#" + entries.length
 										}  on rebalance`
 									);
-									entries.forEach((entry) => {
-										/*  arr.push(entry); */
+									for (const entry of entries) {
 										toSend.set(entry.hash, entry);
-									});
+									}
 								} catch (error) {
 									if (error instanceof TimeoutError) {
 										logger.error(
@@ -777,14 +829,23 @@ export class Peerbit {
 							}
 						}
 
+						// We don't need this clause anymore because we got the trim option!
 						if (!currentPeers.find((x) => x === this.idKeyHash)) {
-							const notCreatedLocally = entries.filter(
-								(e) => !e.createdLocally
-							);
+							let entriesToDelete = entries.filter((e) => !e.createdLocally);
+
+							if (programInfo.sync) {
+								// dont delete entries which we wish to keep
+								entriesToDelete = await Promise.all(
+									entriesToDelete.map((x) => programInfo.sync!(x))
+								).then((filter) =>
+									entriesToDelete.filter((v, ix) => !filter[ix])
+								);
+							}
+
 							// delete entries since we are not suppose to replicate this anymore
 							// TODO add delay? freeze time? (to ensure resiliance for bad io)
-							if (notCreatedLocally.length > 0) {
-								await store.removeOperation(notCreatedLocally, {
+							if (entriesToDelete.length > 0) {
+								await store.removeOperation(entriesToDelete, {
 									recursively: true,
 								});
 							}
@@ -809,17 +870,21 @@ export class Peerbit {
 							to: newPeers,
 						});
 					}
-					changed = true;
+					if (storeChanged) {
+						await store.oplog.trim(); // because for entries createdLocally,we can have trim options that still allow us to delete them
+					}
+					changed = storeChanged || changed;
 				}
 			}
 		}
 		return changed;
 	}
 
-	getCanTrust(address: string): CanTrust | undefined {
-		const p = this.programs.get(address)?.program;
+	getCanTrust(address: Address): CanTrust | undefined {
+		const p = this.programs.get(address.toString())?.program;
 		if (p) {
-			const ct = this.programs.get(address)?.program as any as CanTrust;
+			const ct = this.programs.get(address.toString())
+				?.program as any as CanTrust;
 			if (ct.isTrusted !== undefined) {
 				return ct;
 			}
@@ -855,6 +920,7 @@ export class Peerbit {
 				this.libp2p.directsub.unsubscribe(programAddress);
 			}
 		}
+		this._sortedPeersCache.delete(programAddress);
 	}
 
 	_onDrop(db: Store<any>) {
@@ -897,23 +963,51 @@ export class Peerbit {
 	 */
 
 	getReplicators(address: string): string[] | undefined {
-		return this.libp2p.directsub.getSubscribersWithData(
+		let replicators = this.libp2p.directsub.getSubscribersWithData(
 			address,
 			REPLICATOR_TYPE_VARIANT,
 			{ prefix: true }
 		);
+
+		const iAmReplicating =
+			this.programs.get(address.toString())?.program?.role instanceof
+			ReplicatorType; // TODO add conditional whether this represents a network (I am not replicating if I am not trusted (pointless))
+
+		if (iAmReplicating) {
+			replicators = replicators || [];
+			replicators.push(this.idKeyHash.toString());
+		}
+		return replicators;
 	}
 
-	getObservers(address: string): string[] | undefined {
+	getReplicatorsSorted(address: string): string[] | undefined {
+		const replicators = this._sortedPeersCache.get(address);
+		if (replicators) {
+			return replicators;
+		}
+		throw new Error(
+			"Missing sorted peer list of address: " +
+				address +
+				". Unexpected error. " +
+				this.programs.get(address)?.program
+		);
+
+		/* const replicators = this.getReplicators(address) || [];
+		replicators.sort((a, b) => a.localeCompare(b)); // TODO this is anyway semisorted, just insert the idKeyhash on the right place instead
+		this._sortedPeersCache.set(address.toString(), replicators);
+		return replicators; */
+	}
+
+	getObservers(address: Address): string[] | undefined {
 		return this.libp2p.directsub.getSubscribersWithData(
-			address,
+			address.toString(),
 			OBSERVER_TYPE_VARIANT,
 			{ prefix: true }
 		);
 	}
 
 	async isLeader(
-		address: string,
+		address: Address,
 		slot: { toString(): string },
 		numberOfLeaders: number
 	): Promise<boolean> {
@@ -924,80 +1018,54 @@ export class Peerbit {
 	}
 
 	async findLeaders(
-		address: string,
-		slot: { toString(): string },
+		address: Address,
+		subject: { toString(): string },
 		numberOfLeaders: number
 	): Promise<string[]> {
-		// Hash the time, and find the closest peer id to this hash
-
-		const h = (h: string) => sodium.crypto_generichash(16, h, null, "hex");
-		const slotHash = h(slot.toString());
-
-		// Assumption: All peers wanting to replicate on topic has direct connections with me (Fully connected network)
-		const allPeers: string[] = this.getReplicators(address) || [];
+		// For a fixed set or members, the choosen leaders will always be the same (address invariant)
+		// This allows for that same content is always chosen to be distributed to same peers, to remove unecessary copies
+		const peersPreFilter: string[] =
+			this.getReplicatorsSorted(address.toString()) || [];
 
 		// Assumption: Network specification is accurate
 		// Replication topic is not an address we assume that the network allows all participants
 		const network = this.getCanTrust(address);
-
 		let peers: string[];
 		if (network) {
 			const isTrusted = (peer: string) =>
 				network
 					? network.isTrusted(
-							peer // TODO improve perf
+							peer // TODO improve perf, caching etc?
 					  )
 					: true;
 
-			peers = await Promise.all(allPeers.map(isTrusted)).then((results) =>
-				allPeers.filter((_v, index) => results[index])
+			peers = await Promise.all(peersPreFilter.map(isTrusted)).then((results) =>
+				peersPreFilter.filter((_v, index) => results[index])
 			);
 		} else {
-			peers = allPeers;
+			peers = peersPreFilter;
 		}
 
-		const hashToPeer: Map<string, string> = new Map();
-		const peerHashed: string[] = [];
+		numberOfLeaders = Math.min(numberOfLeaders, peers.length);
 
-		// Add self
-		const iAmReplicating =
-			this.programs.get(address)?.program?.role instanceof ReplicatorType; // TODO add conditional whether this represents a network (I am not replicating if I am not trusted (pointless))
+		// Convert this thing we wan't to distribute to 8 bytes so we get can convert it into a u64
+		// modulus into an index
+		const utf8writer = new BinaryWriter();
+		utf8writer.string(subject.toString());
+		const seed = await sha256(utf8writer.finalize());
 
-		if (peers.length === 0) {
-			return iAmReplicating ? [this.idKeyHash] : peers;
-		}
+		// convert hash of slot to a number
+		const seedNumber = new BinaryReader(
+			seed.subarray(seed.length - 8, seed.length)
+		).u64();
+		const startIndex = Number(seedNumber % BigInt(peers.length));
 
-		if (iAmReplicating) {
-			peers.push(this.idKeyHash.toString());
-		}
-
-		// Hash step
-		peers.forEach((peer) => {
-			const peerHash = h(peer + slotHash); // we do peer + slotHash because we want peerHashed.sort() to be different for each slot, (so that uniformly random pick leaders). You can see this as seed
-			hashToPeer.set(peerHash, peer);
-			peerHashed.push(peerHash);
-		});
-
-		numberOfLeaders = Math.min(numberOfLeaders, peerHashed.length);
-		peerHashed.push(slotHash);
-
-		// Choice step
-
-		// TODO make more efficient
-		peerHashed.sort((a, b) => a.localeCompare(b)); // sort is needed, since "getPeers" order is not deterministic
-		const slotIndex = peerHashed.findIndex((x) => x === slotHash);
 		// we only step forward 1 step (ignoring that step backward 1 could be 'closer')
 		// This does not matter, we only have to make sure all nodes running the code comes to somewhat the
 		// same conclusion (are running the same leader selection algorithm)
-		const leaders: string[] = [];
-		let offset = 0;
+		const leaders = new Array(numberOfLeaders);
 		for (let i = 0; i < numberOfLeaders; i++) {
-			let nextIndex = (slotIndex + 1 + i + offset) % peerHashed.length;
-			if (nextIndex === slotIndex) {
-				offset += 1;
-				nextIndex = (nextIndex + 1) % peerHashed.length;
-			}
-			leaders.push(hashToPeer.get(peerHashed[nextIndex]) as string);
+			leaders[i] = peers[(i + startIndex) % peers.length];
 		}
 		return leaders;
 	}
@@ -1023,7 +1091,7 @@ export class Peerbit {
 	async _requestCache(
 		address: string,
 		directory: string,
-		existingCache?: Cache
+		existingCache?: LazyLevel
 	) {
 		const dir = directory || this.cacheDir;
 		if (!this.caches[dir]) {
@@ -1148,18 +1216,18 @@ export class Peerbit {
 				store: {
 					...options,
 					cacheId: programAddress,
-					replicator: (entry: Entry<any>) =>
-						this.isLeader(
-							program.address.toString(),
-							entry.gid,
-							resolveMinReplicas()
-						),
+					replicator: (gid: string) => {
+						this.COUNTER += 1;
+
+						return this.isLeader(program.address, gid, resolveMinReplicas());
+					},
+					replicatorsCacheId: () => this._lastSubscriptionMessageId,
 					resolveCache: (store) => {
 						const programAddress = program.address?.toString();
 						if (!programAddress) {
 							throw new Error("Unexpected");
 						}
-						return new Cache(
+						return new LazyLevel(
 							this.cache._store.sublevel(
 								path.join(programAddress, "store", store.id)
 							)
@@ -1237,7 +1305,12 @@ export class Peerbit {
 			const pm = await this.addProgram(program, minReplicas, options.sync);
 
 			await this.subscribeToProgram(program.address.toString(), role);
+
 			/// TODO encryption
+			this._sortedPeersCache.set(
+				program.address.toString(),
+				role instanceof ReplicatorType ? [this.idKeyHash] : []
+			);
 
 			return pm;
 		};
@@ -1250,11 +1323,11 @@ export class Peerbit {
 
 	/**
 	 * Check if we have the database, or part of it, saved locally
-	 * @param  {[Cache]} cache [The Cache instance containing the local data]
+	 * @param  {[LazyLevel]} cache [The Cache instance containing the local data]
 	 * @param  {[Address]} dbAddress [Address of the database to check]
 	 * @return {[Boolean]} [Returns true if we have cached the db locally, false if not]
 	 */
-	async _haveLocalData(cache: Cache, id: string) {
+	async _haveLocalData(cache: LazyLevel, id: string) {
 		if (!cache) {
 			return false;
 		}

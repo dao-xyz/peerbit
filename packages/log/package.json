@@ -35,15 +35,16 @@
 		"@dao-xyz/libp2p-direct-block": "^0.1.13",
 		"@dao-xyz/peerbit-crypto": "^0.1.8",
 		"@dao-xyz/peerbit-logger": "^0.0.5",
+		"@dao-xyz/cache": "^0.0.2",
 		"json-stringify-deterministic": "^1.0.7",
 		"libp2p": "^0.42.2",
 		"p-do-whilst": "^1.1.0",
-		"p-each-series": "^3.0.0",
 		"p-map": "^5.5.0",
-		"p-whilst": "^3.0.0",
+		"p-queue": "^7.3.3",
 		"yallist": "^4.0.0"
 	},
 	"devDependencies": {
+		"p-each-series": "^3.0.0",
 		"@dao-xyz/peerbit-keystore": "^0.1.16",
 		"@dao-xyz/peerbit-test-utils": "^0.1.15",
 		"@types/yallist": "^4.0.1",

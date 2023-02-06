@@ -1,5 +1,4 @@
-import { variant, field, option } from "@dao-xyz/borsh";
-import { StringSetSerializer } from "@dao-xyz/peerbit-borsh-utils";
+import { variant, field, option, vec } from "@dao-xyz/borsh";
 import { TransportMessage } from "./message.js";
 
 export const WAIT_FOR_PEERS_TIME = 5000;
@@ -15,23 +14,21 @@ export class ReplicatorInfo extends TransportMessage {
 	@field({ type: "u32" })
 	store: number; // address
 
-	@field({ type: option(StringSetSerializer) })
-	heads?: Set<string>; // address
+	@field({ type: vec("string") })
+	heads?: string[]; // address
 
 	constructor(props?: {
 		fromId?: string;
 		topic: string;
 		store: number;
-		heads?: Set<string> | string[];
+		heads?: string[];
 	}) {
 		super();
 		if (props) {
 			this.fromId = props.fromId;
 			this.topic = props.topic;
 			this.store = props.store;
-			this.heads = Array.isArray(props.heads)
-				? new Set(props.heads)
-				: this.heads;
+			this.heads = props.heads;
 			/*  this.allowForks = props.allowForks; */
 		}
 	}

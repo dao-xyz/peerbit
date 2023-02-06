@@ -56,7 +56,7 @@ describe(`Write-only`, () => {
 
 		await waitFor(() => db1.store.oplog.values.length === 2); // db2 can write ...
 		expect(
-			db1.store.oplog.values.map((x) => x.payload.getValue().value)
+			db1.store.oplog.values.toArray().map((x) => x.payload.getValue().value)
 		).toContainAllValues(["hello", "world"]);
 		expect(db2.store.oplog.values.length).toEqual(1); // ... but will not recieve entries
 	});
@@ -76,7 +76,7 @@ describe(`Write-only`, () => {
 
 		await waitFor(() => db1.store.oplog.values.length === 2); // db2 can write ...
 		expect(
-			db1.store.oplog.values.map((x) => x.payload.getValue().value)
+			db1.store.oplog.values.toArray().map((x) => x.payload.getValue().value)
 		).toContainAllValues(["hello", "world"]);
 		expect(db2.store.oplog.values.length).toEqual(1); // ... but will not recieve entries
 	});
@@ -89,17 +89,22 @@ describe(`Write-only`, () => {
 				client2.libp2p.directblock,
 				db1.address!
 			))!,
-			{ role: new ObserverType(), sync: (entries) => entries }
+			{ role: new ObserverType(), sync: () => true }
 		);
 
+		await delay(2000);
 		await db1.add("hello");
 		await db2.add("world");
 
 		await waitFor(() => db1.store.oplog.values.length === 2); // db2 can write ...
 		expect(
-			db1.store.oplog.values.map((x) => x.payload.getValue().value)
+			db1.store.oplog.values.toArray().map((x) => x.payload.getValue().value)
 		).toContainAllValues(["hello", "world"]);
-		expect(db2.store.oplog.values.length).toEqual(2); // ... since syncAll: true
+
+		await waitFor(() => db2.store.oplog.values.length === 2); // ... since syncAll: true
+
+		await client2.replicationReorganization([...client2.programs.keys()]);
+		expect(db2.store.oplog.values.length).toEqual(2);
 	});
 });
 
@@ -132,7 +137,7 @@ describe(`Write-only`, () => {
 
 	await waitFor(() => db1.store.oplog.values.length === 2);
 	expect(
-		db1.store.oplog.values.map((x) => x.payload.getValue().value)
+		db1.store.oplog.values.toArray().map((x) => x.payload.getValue().value)
 	).toContainAllValues(["hello", "world"]);
 	expect(db2.store.oplog.values.length).toEqual(1);
 }); */

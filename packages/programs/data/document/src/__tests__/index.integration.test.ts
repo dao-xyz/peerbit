@@ -10,7 +10,6 @@ import {
 	CreatedAtQuery,
 	U64Compare,
 	Compare,
-	ModifiedAtQuery,
 	FieldMissingQuery,
 } from "../query.js";
 import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
@@ -37,6 +36,7 @@ import {
 	LogQueryRequest,
 } from "@dao-xyz/peerbit-logindex";
 import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
+import crypto from "crypto";
 
 const bigIntSort = <T extends number | bigint>(a: T, b: T): number =>
 	a > b ? 1 : 0 || -(a < b);
@@ -161,6 +161,39 @@ describe("index", () => {
 				expect(changes[2].removed[0].id).toEqual(doc.id);
 			});
 
+			it("many chunks", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>({
+						index: new DocumentIndex({
+							indexBy: "id",
+						}),
+					}),
+				});
+				await store.init(session.peers[0], await createIdentity(), {
+					role: new ReplicatorType(),
+					store: {
+						...DefaultOptions,
+						resolveCache: () => new Cache(createStore()),
+					},
+				});
+				const insertions = 1000;
+				const rngs: string[] = [];
+				for (let i = 0; i < insertions; i++) {
+					rngs.push(Buffer.from(crypto.randomBytes(1e5)).toString("base64"));
+				}
+
+				const t = 123;
+				for (let i = 0; i < 20000; i++) {
+					await store.docs.put(
+						new Document({
+							id: uuid(),
+							name: rngs[i],
+						})
+					);
+				}
+				const q = 123;
+			});
+
 			it("delete permanently", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
@@ -196,9 +229,9 @@ describe("index", () => {
 				// delete 1
 				const deleteOperation = (await store.docs.del(doc.id)).entry;
 				expect(store.docs._index.size).toEqual(0);
-				expect(store.docs.store.oplog.values.map((x) => x.hash)).toEqual([
-					deleteOperation.hash,
-				]); // the delete operation
+				expect(
+					store.docs.store.oplog.values.toArray().map((x) => x.hash)
+				).toEqual([deleteOperation.hash]); // the delete operation
 			});
 
 			it("trim deduplicate changes", async () => {
@@ -278,7 +311,7 @@ describe("index", () => {
 
 				expect(store.docs.index.size).toEqual(10);
 				expect(store.docs.store.oplog.values.length).toEqual(10);
-				expect(store.docs.store.oplog._headsIndex._index.size).toEqual(10);
+				expect(store.docs.store.oplog.headsIndex._index.size).toEqual(10);
 			});
 		});
 
@@ -974,7 +1007,7 @@ describe("index", () => {
 			const subProgram = new SubProgram();
 			const _result = await stores[1].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
 			await stores[0].store.docs.store.sync(
-				stores[1].store.docs.store.oplog.values
+				stores[1].store.docs.store.oplog.values.toArray()
 			);
 			expect(stores[0].openEvents).toHaveLength(1);
 			expect(stores[1].openEvents).toHaveLength(0);

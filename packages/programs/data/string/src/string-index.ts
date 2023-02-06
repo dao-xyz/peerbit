@@ -39,7 +39,10 @@ export class StringIndex extends ComposableProgram {
 	}
 
 	async updateIndex(_change: Change<StringOperation>) {
-		this._string = await applyOperations("", this._store.oplog.values); // TODO improve performance
+		this._string = await applyOperations(
+			"",
+			this._store.oplog.values.toArray()
+		); // TODO improve performance
 	}
 }
 

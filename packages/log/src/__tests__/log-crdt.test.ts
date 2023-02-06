@@ -102,7 +102,7 @@ describe("Log - CRDT", function () {
 			await log2.join(log3);
 			await log1.join(log2);
 
-			const res1 = log1.values.slice();
+			const res1 = log1.toArray().slice();
 
 			log1 = new Log(
 				store,
@@ -139,7 +139,7 @@ describe("Log - CRDT", function () {
 			await log1.join(log2);
 			await log3.join(log1);
 
-			const res2 = log3.values.slice();
+			const res2 = log3.toArray().slice();
 
 			// associativity: a + (b + c) == (a + b) + c
 			expect(res1.length).toEqual(expectedElementsCount);
@@ -159,7 +159,7 @@ describe("Log - CRDT", function () {
 
 			// b + a
 			await log2.join(log1);
-			const res1 = log2.values.slice();
+			const res1 = log2.toArray().slice();
 
 			log1 = new Log(
 				store,
@@ -184,7 +184,7 @@ describe("Log - CRDT", function () {
 
 			// a + b
 			await log1.join(log2);
-			const res2 = log1.values.slice();
+			const res2 = log1.toArray().slice();
 
 			// commutativity: a + b == b + a
 			expect(res1.length).toEqual(expectedElementsCount);

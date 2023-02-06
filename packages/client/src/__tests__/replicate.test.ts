@@ -77,7 +77,7 @@ describe(`Replication`, function () {
 		expect(db1Entries.length).toEqual(1);
 		expect(
 			await client1.findLeaders(
-				db1.address.toString(),
+				db1.address,
 				db1Entries[0].gid,
 				client1._minReplicas
 			)
@@ -92,7 +92,7 @@ describe(`Replication`, function () {
 		expect(db2Entries.length).toEqual(1);
 		expect(
 			await client2.findLeaders(
-				db1.address.toString(),
+				db1.address,
 				db2Entries[0].gid,
 				client1._minReplicas
 			)

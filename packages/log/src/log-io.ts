@@ -37,7 +37,8 @@ export class LogIO {
 		if (!isDefined(format)) {
 			format = "dag-cbor";
 		}
-		if (log.values.length < 1) throw new Error("Can't serialize an empty log");
+		if (log.toArray().length < 1)
+			throw new Error("Can't serialize an empty log");
 
 		return store.put(
 			await createBlock(log.toJSON(), format!, {

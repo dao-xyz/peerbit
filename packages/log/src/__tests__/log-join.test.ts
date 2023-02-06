@@ -4,7 +4,7 @@ import fs from "fs-extra";
 import { Entry } from "../entry.js";
 import { Log } from "../log.js";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { arraysCompare } from "@dao-xyz/peerbit-borsh-utils";
+import { compare } from "@dao-xyz/uint8arrays";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
@@ -52,7 +52,7 @@ describe("Log - Join", function () {
 			);
 		}
 		keys.sort((a, b) => {
-			return arraysCompare(
+			return compare(
 				a.keypair.publicKey.publicKey,
 				b.keypair.publicKey.publicKey
 			);
@@ -205,11 +205,11 @@ describe("Log - Join", function () {
 			const expectedData = ["helloA1", "helloB1", "helloA2", "helloB2"];
 
 			expect(log1.length).toEqual(4);
-			expect(log1.values.map((e) => e.payload.getValue())).toEqual(
+			expect(log1.toArray().map((e) => e.payload.getValue())).toEqual(
 				expectedData
 			);
 
-			const item = last(log1.values);
+			const item = last(log1.toArray());
 			expect(item.next.length).toEqual(1);
 			expect(log1.heads.length).toEqual(2);
 		});
@@ -229,13 +229,13 @@ describe("Log - Join", function () {
 			expect(a2.next).toContainAllValues([a1.hash]);
 			expect(b2.next).toContainAllValues([b1.hash]);
 
-			expect(log1.values.map((e) => e.hash)).toEqual(
-				log2.values.map((e) => e.hash)
+			expect(log1.toArray().map((e) => e.hash)).toEqual(
+				log2.toArray().map((e) => e.hash)
 			);
-			expect(log1.values.map((e) => e.payload.getValue())).toEqual(
+			expect(log1.toArray().map((e) => e.payload.getValue())).toEqual(
 				expectedData
 			);
-			expect(log2.values.map((e) => e.payload.getValue())).toEqual(
+			expect(log2.toArray().map((e) => e.payload.getValue())).toEqual(
 				expectedData
 			);
 		});
@@ -253,7 +253,7 @@ describe("Log - Join", function () {
 
 			expect(log2.length).toEqual(4);
 			assert.deepStrictEqual(
-				log2.values.map((e) => e.payload.getValue()),
+				log2.toArray().map((e) => e.payload.getValue()),
 				expectedData
 			);
 
@@ -274,7 +274,7 @@ describe("Log - Join", function () {
 
 			expect(log2.length).toEqual(4);
 			assert.deepStrictEqual(
-				log2.values.map((e) => e.payload.getValue()),
+				log2.toArray().map((e) => e.payload.getValue()),
 				expectedData
 			);
 
@@ -341,7 +341,7 @@ describe("Log - Join", function () {
 			];
 
 			expect(log1.length).toEqual(8);
-			expect(log1.values.map((e) => e.payload.getValue())).toEqual(
+			expect(log1.toArray().map((e) => e.payload.getValue())).toEqual(
 				expectedData
 			);
 
@@ -366,8 +366,8 @@ describe("Log - Join", function () {
 
 			expect(log1.length).toEqual(8);
 			assert.deepStrictEqual(
-				log1.values.map((e) => e.payload.getValue()),
-				log2.values.map((e) => e.payload.getValue())
+				log1.toArray().map((e) => e.payload.getValue()),
+				log2.toArray().map((e) => e.payload.getValue())
 			);
 		});
 
@@ -474,7 +474,7 @@ describe("Log - Join", function () {
 				},
 			];
 
-			const transformed = log4.values.map((e) => {
+			const transformed = log4.toArray().map((e) => {
 				return {
 					payload: e.payload.getValue(),
 					gid: e.gid,
@@ -537,7 +537,7 @@ describe("Log - Join", function () {
 
 			expect(log4.length).toEqual(10);
 			assert.deepStrictEqual(
-				log4.values.map((e) => e.payload.getValue()),
+				log4.toArray().map((e) => e.payload.getValue()),
 				expectedData
 			);
 		});
@@ -619,11 +619,11 @@ describe("Log - Join", function () {
 				await log1.trim({ type: "length", to: 1 });
 
 				const expectedData = ["helloB2"];
-				const lastEntry = last(log1.values);
+				const lastEntry = last(log1.toArray());
 
 				expect(log1.length).toEqual(1);
 				assert.deepStrictEqual(
-					log1.values.map((e) => e.payload.getValue()),
+					log1.toArray().map((e) => e.payload.getValue()),
 					expectedData
 				);
 				expect(lastEntry.next.length).toEqual(1);
@@ -634,10 +634,10 @@ describe("Log - Join", function () {
 				await log1.trim({ type: "length", to: 2 });
 
 				const expectedData = ["helloA2", "helloB2"];
-				const lastEntry = last(log1.values);
+				const lastEntry = last(log1.toArray());
 
 				expect(log1.length).toEqual(2);
-				expect(log1.values.map((e) => e.payload.getValue())).toEqual(
+				expect(log1.toArray().map((e) => e.payload.getValue())).toEqual(
 					expectedData
 				);
 				expect(lastEntry.next.length).toEqual(1);
@@ -648,10 +648,10 @@ describe("Log - Join", function () {
 				await log1.trim({ type: "length", to: 3 });
 
 				const expectedData = ["helloB1", "helloA2", "helloB2"];
-				const lastEntry = last(log1.values);
+				const lastEntry = last(log1.toArray());
 
 				expect(log1.length).toEqual(3);
-				expect(log1.values.map((e) => e.payload.getValue())).toEqual(
+				expect(log1.toArray().map((e) => e.payload.getValue())).toEqual(
 					expectedData
 				);
 				expect(lastEntry.next.length).toEqual(1);
@@ -662,10 +662,10 @@ describe("Log - Join", function () {
 				await log1.trim({ type: "length", to: 4 });
 
 				const expectedData = ["helloA1", "helloB1", "helloA2", "helloB2"];
-				const lastEntry = last(log1.values);
+				const lastEntry = last(log1.toArray());
 
 				expect(log1.length).toEqual(4);
-				expect(log1.values.map((e) => e.payload.getValue())).toEqual(
+				expect(log1.toArray().map((e) => e.payload.getValue())).toEqual(
 					expectedData
 				);
 				expect(lastEntry.next.length).toEqual(1);

@@ -8680,10 +8680,18 @@ p-queue@^6.6.2:
     eventemitter3 "^4.0.4"
     p-timeout "^3.2.0"
 
-p-queue@^7.2.0, p-queue@^7.3.0:
+p-queue@^7.2.0:
   version "7.3.0"
   resolved "https://registry.yarnpkg.com/p-queue/-/p-queue-7.3.0.tgz#90dfa104894b286dc2f3638961380fb6dc262e55"
   integrity sha512-5fP+yVQ0qp0rEfZoDTlP2c3RYBgxvRsw30qO+VtPPc95lyvSG+x6USSh1TuLB4n96IO6I8/oXQGsTgtna4q2nQ==
+  dependencies:
+    eventemitter3 "^4.0.7"
+    p-timeout "^5.0.2"
+
+p-queue@^7.3.3:
+  version "7.3.3"
+  resolved "https://registry.yarnpkg.com/p-queue/-/p-queue-7.3.3.tgz#4f338fee7b0f6265034c5ec4480659eef572e728"
+  integrity sha512-Mw83fkxHpLvc04DGfUHWP3dAtLIURFkQXPAUylm/pn/eokVVSf/kgp8ukZiwfXeO3J5uiFiPcOkSCvTiJujIBQ==
   dependencies:
     eventemitter3 "^4.0.7"
     p-timeout "^5.0.2"

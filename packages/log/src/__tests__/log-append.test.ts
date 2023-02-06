@@ -67,25 +67,25 @@ describe("Log - Append", function () {
 		});
 
 		it("added the correct values", async () => {
-			log.values.forEach((entry) => {
+			log.toArray().forEach((entry) => {
 				expect(entry.payload.getValue()).toEqual("hello1");
 			});
 		});
 
 		it("added the correct amount of next pointers", async () => {
-			log.values.forEach((entry) => {
+			log.toArray().forEach((entry) => {
 				expect(entry.next.length).toEqual(0);
 			});
 		});
 
 		it("has the correct heads", async () => {
 			log.heads.forEach((head) => {
-				expect(head.hash).toEqual(log.values[0].hash);
+				expect(head.hash).toEqual(log.toArray()[0].hash);
 			});
 		});
 
 		it("updated the clocks correctly", async () => {
-			log.values.forEach((entry) => {
+			log.toArray().forEach((entry) => {
 				expect(entry.metadata.clock.id).toEqual(
 					new Uint8Array(signKey.keypair.publicKey.bytes)
 				);
@@ -118,7 +118,7 @@ describe("Log - Append", function () {
 					})
 				).entry;
 				// Make sure the log has the right heads after each append
-				const values = log.values;
+				const values = log.toArray();
 				expect(log.heads.length).toEqual(1);
 				expect(log.heads[0].hash).toEqual(values[values.length - 1].hash);
 			}
@@ -129,17 +129,17 @@ describe("Log - Append", function () {
 		});
 
 		it("added the correct values", async () => {
-			log.values.forEach((entry, index) => {
+			log.toArray().forEach((entry, index) => {
 				expect(entry.payload.getValue()).toEqual("hello" + index);
 			});
 		});
 
 		it("updated the clocks correctly", async () => {
-			log.values.forEach((entry, index) => {
+			log.toArray().forEach((entry, index) => {
 				if (index > 0) {
 					expect(
 						entry.metadata.clock.timestamp.compare(
-							log.values[index - 1].metadata.clock.timestamp
+							log.toArray()[index - 1].metadata.clock.timestamp
 						)
 					).toBeGreaterThan(0);
 				}

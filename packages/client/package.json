@@ -37,10 +37,11 @@
 		"@dao-xyz/peerbit-logger": "^0.0.5",
 		"@dao-xyz/peerbit-program": "^0.1.17",
 		"@dao-xyz/peerbit-store": "^0.1.17",
+		"@dao-xyz/uint8arrays": "^0.0.1",
 		"is-node": "^1.0.2",
 		"level": "^8.0.0",
 		"memory-level": "^1.0.0",
-		"p-queue": "^7.3.0"
+		"p-queue": "^7.3.3"
 	},
 	"devDependencies": {
 		"@dao-xyz/peerbit-document": "^0.1.20",

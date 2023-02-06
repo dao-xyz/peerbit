@@ -98,8 +98,8 @@ describe(`addOperation`, function () {
 				const firstHead = store.oplog.get(localHeads[0])!;
 				(firstHead._payload as EncryptedThing<any>)._decrypted = undefined;
 				firstHead.init({
-					encryption: store.oplog._encryption,
-					encoding: store.oplog._encoding,
+					encryption: store.oplog.encryption,
+					encoding: store.oplog.encoding,
 				});
 				await firstHead.getPayload();
 				assert.deepStrictEqual(firstHead.payload.getValue(), data);
@@ -164,8 +164,8 @@ describe(`addOperation`, function () {
 			const firstHead = store.oplog.get(localHeads[0])!;
 			(firstHead._payload as EncryptedThing<any>)._decrypted = undefined;
 			firstHead.init({
-				encryption: store.oplog._encryption,
-				encoding: store.oplog._encoding,
+				encryption: store.oplog.encryption,
+				encoding: store.oplog.encoding,
 			});
 			try {
 				await firstHead.getPayload();

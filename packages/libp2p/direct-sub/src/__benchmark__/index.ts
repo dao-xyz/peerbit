@@ -5,6 +5,8 @@ import crypto from "crypto";
 import { waitForPeers } from "@dao-xyz/libp2p-direct-stream";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
+// size: 1kb x 1,852 ops/sec ±1.44% (86 runs sampled)
+// size: 1000kb x 116 ops/sec ±1.98% (80 runs sampled)
 
 const session: LSession = await LSession.disconnected(4);
 await session.connect([

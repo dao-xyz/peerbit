@@ -70,8 +70,8 @@ describe("Log - Delete", function () {
 		const { entry: e3 } = await log.append("hello3");
 
 		await log.deleteRecursively(e2);
-		expect(log._nextsIndex.size).toEqual(0);
-		expect(log.values.length).toEqual(1);
+		expect(log.nextsIndex.size).toEqual(0);
+		expect(log.toArray().length).toEqual(1);
 		expect(log.get(e1.hash)).toBeUndefined();
 		expect(await blockExists(e1.hash)).toBeFalse();
 		expect(log.get(e2.hash)).toBeUndefined();
@@ -80,9 +80,9 @@ describe("Log - Delete", function () {
 		expect(await blockExists(e3.hash)).toBeTrue();
 
 		await log.deleteRecursively(e3);
-		expect(log.values.length).toEqual(0);
+		expect(log.toArray().length).toEqual(0);
 		expect(log.heads).toHaveLength(0);
-		expect(log._nextsIndex.size).toEqual(0);
-		expect(log._entryIndex.length).toEqual(0);
+		expect(log.nextsIndex.size).toEqual(0);
+		expect(log.entryIndex.length).toEqual(0);
 	});
 });

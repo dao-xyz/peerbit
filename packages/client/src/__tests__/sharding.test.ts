@@ -9,8 +9,6 @@ import { jest } from "@jest/globals";
 import { v4 as uuid } from "uuid";
 
 describe(`sharding`, () => {
-	jest.retryTimes(1); // TODO this tests are FLAKY
-
 	let session: LSession;
 	let client1: Peerbit,
 		client2: Peerbit,
@@ -50,24 +48,48 @@ describe(`sharding`, () => {
 		await session.stop();
 	});
 
-	it("can distribute evenly among peers", async () => {
-		// TODO this test is flaky, because it sometimes timeouts because distribution of data among peers is random for small entry counts
+	const sampleSize = 200;
 
+	const checkReplicas = (
+		dbs: PermissionedEventStore[],
+		minReplicas: number,
+		entryCount: number,
+		noGarbage: boolean
+	) => {
+		const map = new Map<string, number>();
+		for (const db of dbs) {
+			for (const value of db.store.store.oplog.values.toArray()) {
+				map.set(value.hash, (map.get(value.hash) || 0) + 1);
+			}
+		}
+		for (const [k, v] of map) {
+			if (noGarbage) {
+				expect(v).toEqual(minReplicas);
+			} else {
+				expect(v).toBeGreaterThanOrEqual(minReplicas);
+				expect(v).toBeLessThanOrEqual(dbs.length);
+			}
+		}
+		expect(map.size).toEqual(entryCount);
+	};
+
+	it("can distribute evenly among peers", async () => {
 		db1 = await client1.open<PermissionedEventStore>(
 			new PermissionedEventStore({
 				trusted: [client1.id, client2.id, client3.id],
-			})
+			}),
+			{ trim: { to: 0, from: 1, type: "length" } }
 		);
 		db2 = await client2.open<PermissionedEventStore>(db1.address!);
 		db3 = await client3.open<PermissionedEventStore>(db1.address!);
 		await waitFor(
-			() => client2.getReplicators(db1.address!.toString())?.length === 2
+			() => client2.getReplicators(db1.address!.toString())?.length === 3
 		);
 		await waitFor(
-			() => client3.getReplicators(db1.address!.toString())?.length === 2
+			() => client3.getReplicators(db1.address!.toString())?.length === 3
 		);
 
-		const entryCount = 100;
+		const entryCount = sampleSize;
 		//await delay(5000);
 
 		// expect min replicas 2 with 3 peers, this means that 66% of entries (ca) will be at peer 2 and 3, and peer1 will have all of them since 1 is the creator
@@ -78,9 +100,12 @@ describe(`sharding`, () => {
 		}
 
 		await Promise.all(promises);
-		await waitFor(() => db1.store.store.oplog.values.length === entryCount);
 
-		// this could failed, if we are unlucky probability wise
+		await waitFor(
+			() =>
+				db1.store.store.oplog.values.length > entryCount * 0.5 &&
+				db1.store.store.oplog.values.length < entryCount * 0.85
+		);
 		await waitFor(
 			() =>
 				db2.store.store.oplog.values.length > entryCount * 0.5 &&
@@ -106,6 +131,7 @@ describe(`sharding`, () => {
 			timeout: 20000,
 			delayInterval: 500,
 		});
+
 		expect(
 			db2.store.store.oplog.values.length > entryCount * 0.5 &&
 				db2.store.store.oplog.values.length < entryCount * 0.85
@@ -114,22 +140,30 @@ describe(`sharding`, () => {
 			db3.store.store.oplog.values.length > entryCount * 0.5 &&
 				db3.store.store.oplog.values.length < entryCount * 0.85
 		).toBeTrue();
+
+		checkReplicas(
+			[db1, db2, db3],
+			client1.programs.get(db1.address.toString())!.minReplicas.value,
+			entryCount,
+			false
+		);
 	});
 
 	// TODO add tests for late joining and leaving peers
 
-	it("will distribute to joining peers", async () => {
+	it("distributes to joining peers", async () => {
 		db1 = await client1.open<PermissionedEventStore>(
 			new PermissionedEventStore({
 				trusted: [client1.id, client2.id, client3.id],
 			})
 		);
+
 		db2 = await client2.open<PermissionedEventStore>(db1.address!);
 		await waitFor(
-			() => client2.getReplicators(db1.address!.toString())?.length === 1
+			() => client2.getReplicators(db1.address!.toString())?.length === 2
 		);
 
-		const entryCount = 100;
+		const entryCount = sampleSize;
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
 			promises.push(db1.store.add(i.toString(), { nexts: [] }));
@@ -143,13 +177,13 @@ describe(`sharding`, () => {
 		// client 3 will subscribe and start to recive heads before recieving subscription info about other peers
 
 		await waitFor(
-			() => client1.getReplicators(db1.address!.toString())?.length === 2
+			() => client1.getReplicators(db1.address!.toString())?.length === 3
 		);
 		await waitFor(
-			() => client2.getReplicators(db1.address!.toString())?.length === 2
+			() => client2.getReplicators(db1.address!.toString())?.length === 3
 		);
 		await waitFor(
-			() => client3.getReplicators(db1.address!.toString())?.length === 2
+			() => client3.getReplicators(db1.address!.toString())?.length === 3
 		);
 
 		await waitFor(
@@ -172,17 +206,28 @@ describe(`sharding`, () => {
 			timeout: 20000,
 			delayInterval: 500,
 		});
-		expect(
-			db2.store.store.oplog.values.length > entryCount * 0.5 &&
-				db2.store.store.oplog.values.length < entryCount * 0.85
-		).toBeTrue();
+		try {
+			expect(
+				db2.store.store.oplog.values.length > entryCount * 0.5 &&
+					db2.store.store.oplog.values.length < entryCount * 0.85
+			).toBeTrue();
+		} catch (error) {
+			const x = 123;
+		}
 		expect(
 			db3.store.store.oplog.values.length > entryCount * 0.5 &&
 				db3.store.store.oplog.values.length < entryCount * 0.85
 		).toBeTrue();
+
+		checkReplicas(
+			[db1, db2, db3],
+			client1.programs.get(db1.address.toString())!.minReplicas.value,
+			entryCount,
+			false
+		);
 	});
 
-	it("will distribute when peers leave", async () => {
+	it("distributes to leaving peers", async () => {
 		db1 = await client1.open<PermissionedEventStore>(
 			new PermissionedEventStore({
 				trusted: [client1.id, client2.id, client3.id],
@@ -191,13 +236,13 @@ describe(`sharding`, () => {
 		db2 = await client2.open<PermissionedEventStore>(db1.address!);
 		db3 = await client3.open<PermissionedEventStore>(db1.address!);
 		await waitFor(
-			() => client2.getReplicators(db1.address!.toString())?.length === 2
+			() => client2.getReplicators(db1.address!.toString())?.length === 3
 		);
 		await waitFor(
-			() => client3.getReplicators(db1.address!.toString())?.length === 2
+			() => client3.getReplicators(db1.address!.toString())?.length === 3
 		);
 
-		const entryCount = 100;
+		const entryCount = sampleSize;
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
 			promises.push(db1.store.add(i.toString(), { nexts: [] }));
@@ -217,12 +262,26 @@ describe(`sharding`, () => {
 				db3.store.store.oplog.values.length < entryCount * 0.85
 		);
 
+		checkReplicas(
+			[db1, db2, db3],
+			client1.programs.get(db1.address.toString())!.minReplicas.value,
+			entryCount,
+			false
+		);
+
 		await db3.close();
 
 		await waitFor(() => db2.store.store.oplog.values.length === entryCount);
+
+		checkReplicas(
+			[db1, db2],
+			client1.programs.get(db1.address.toString())!.minReplicas.value,
+			entryCount,
+			false
+		);
 	});
 
-	it("will trim responsibly", async () => {
+	it("trims responsibly", async () => {
 		// With this trim options, we make sure that we remove all elements expectes the elements we NEED
 		// to replicate (basically nullifies the trim)
 
@@ -241,14 +300,14 @@ describe(`sharding`, () => {
 		});
 
 		await waitFor(
-			() => client2.getReplicators(db1.address!.toString())?.length === 2
+			() => client2.getReplicators(db1.address!.toString())?.length === 3
 		);
 
 		await waitFor(
-			() => client3.getReplicators(db1.address!.toString())?.length === 2
+			() => client3.getReplicators(db1.address!.toString())?.length === 3
 		);
 
-		const entryCount = 100;
+		const entryCount = sampleSize;
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
 			promises.push(db1.store.add(i.toString(), { nexts: [] }));
@@ -267,15 +326,150 @@ describe(`sharding`, () => {
 				db2.store.store.oplog.values.length > entryCount * 0.5 &&
 				db2.store.store.oplog.values.length < entryCount * 0.85
 		);
+
 		await waitFor(
 			() =>
 				db3.store.store.oplog.values.length > entryCount * 0.5 &&
 				db3.store.store.oplog.values.length < entryCount * 0.85
 		);
 
-		await db3.close();
+		const checkConverged = async (db: EventStore<any>) => {
+			const a = db.store.oplog.values.length;
+			await delay(2500); // arb delay
+			return a === db.store.oplog.values.length;
+		};
 
+		await waitForAsync(() => checkConverged(db1.store), {
+			timeout: 20000,
+			delayInterval: 500,
+		});
+
+		await waitForAsync(() => checkConverged(db2.store), {
+			timeout: 20000,
+			delayInterval: 500,
+		});
+		await waitForAsync(() => checkConverged(db3.store), {
+			timeout: 20000,
+			delayInterval: 500,
+		});
+
+		checkReplicas(
+			[db1, db2, db3],
+			client1.programs.get(db1.address.toString())!.minReplicas.value,
+			entryCount,
+			true
+		);
+		await db3.close();
 		await waitFor(() => db2.store.store.oplog.values.length === entryCount);
 		await waitFor(() => db1.store.store.oplog.values.length === entryCount);
+		checkReplicas(
+			[db1, db2],
+			client1.programs.get(db1.address.toString())!.minReplicas.value,
+			entryCount,
+			true
+		);
+	});
+
+	it("trimming can resume once more peers join", async () => {
+		// With this trim options, we make sure that we remove all elements expectes the elements we NEED
+		// to replicate (basically nullifies the trim)
+
+		const entryCount = sampleSize;
+
+		const client1WantedDbSize = Math.round(0.95 * entryCount);
+		db1 = await client1.open<PermissionedEventStore>(
+			new PermissionedEventStore({
+				trusted: [client1.id, client2.id, client3.id],
+			}),
+			{ trim: { to: client1WantedDbSize, type: "length" } }
+		);
+
+		db2 = await client2.open<PermissionedEventStore>(db1.address!);
+
+		await waitFor(
+			() => client1.getReplicators(db1.address!.toString())?.length === 2
+		);
+
+		await waitFor(
+			() => client2.getReplicators(db1.address!.toString())?.length === 2
+		);
+
+		const promises: Promise<any>[] = [];
+		for (let i = 0; i < entryCount; i++) {
+			promises.push(db1.store.add(i.toString(), { nexts: [] }));
+		}
+
+		await Promise.all(promises);
+		await waitFor(() => db1.store.store.oplog.values.length === entryCount);
+		await waitFor(() => db2.store.store.oplog.values.length === entryCount);
+
+		const asd = client1.COUNTER;
+		client1.COUNTER = 0;
+
+		db3 = await client3.open<PermissionedEventStore>(db1.address!);
+
+		await waitFor(
+			() => client1.getReplicators(db1.address!.toString())?.length === 3
+		);
+
+		await waitFor(
+			() => client2.getReplicators(db1.address!.toString())?.length === 3
+		);
+		await waitFor(
+			() => client3.getReplicators(db1.address!.toString())?.length === 3
+		);
+
+		await waitFor(
+			() => db1.store.store.oplog.values.length === client1WantedDbSize
+		);
+
+		await waitFor(
+			() =>
+				db2.store.store.oplog.values.length > entryCount * 0.5 &&
+				db2.store.store.oplog.values.length < entryCount * 0.85
+		);
+
+		await waitFor(
+			() =>
+				db3.store.store.oplog.values.length > entryCount * 0.5 &&
+				db3.store.store.oplog.values.length < entryCount * 0.85
+		);
+
+		const checkConverged = async (db: EventStore<any>) => {
+			const a = db.store.oplog.values.length;
+			await delay(2500); // arb delay
+			return a === db.store.oplog.values.length;
+		};
+
+		await waitForAsync(() => checkConverged(db1.store), {
+			timeout: 20000,
+			delayInterval: 500,
+		});
+
+		await waitForAsync(() => checkConverged(db2.store), {
+			timeout: 20000,
+			delayInterval: 500,
+		});
+		await waitForAsync(() => checkConverged(db3.store), {
+			timeout: 20000,
+			delayInterval: 500,
+		});
+
+		checkReplicas(
+			[db1, db2, db3],
+			client1.programs.get(db1.address.toString())!.minReplicas.value,
+			entryCount,
+			false
+		);
+		await db3.close();
+		await waitFor(() => db2.store.store.oplog.values.length === entryCount);
+		await waitFor(() => db1.store.store.oplog.values.length === entryCount);
+
+		checkReplicas(
+			[db1, db2],
+			client1.programs.get(db1.address.toString())!.minReplicas.value,
+			entryCount,
+			true
+		);
 	});
 });

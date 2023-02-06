@@ -2,9 +2,8 @@ import { Entry } from "@dao-xyz/peerbit-log";
 import { Peerbit } from "../peer";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { Ed25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
-import { jest } from "@jest/globals";
 import { KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 
 // Include test utilities
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";

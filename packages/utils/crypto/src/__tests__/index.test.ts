@@ -27,7 +27,9 @@ describe("Ed25519", () => {
 	it("ser/der", async () => {
 		const keypair = await Ed25519Keypair.create();
 		const derser = deserialize(serialize(keypair), Ed25519Keypair);
-		expect(derser.publicKey.publicKey).toEqual(keypair.publicKey.publicKey);
+		expect(new Uint8Array(derser.publicKey.publicKey)).toEqual(
+			keypair.publicKey.publicKey
+		);
 	});
 
 	describe("native", () => {
@@ -159,7 +161,9 @@ describe("X25519", () => {
 	it("ser/der", async () => {
 		const keypair = await X25519Keypair.create();
 		const derser = deserialize(serialize(keypair), X25519Keypair);
-		expect(derser.publicKey.publicKey).toEqual(keypair.publicKey.publicKey);
+		expect(new Uint8Array(derser.publicKey.publicKey)).toEqual(
+			keypair.publicKey.publicKey
+		);
 	});
 });
 
@@ -207,6 +211,6 @@ describe("Sepck2561k1Keccak256", () => {
 			address: wallet.address,
 		});
 		const derser = deserialize(serialize(pk), Secp256k1Keccak256PublicKey);
-		expect(derser.address).toEqual(pk.address);
+		expect(new Uint8Array(derser.address)).toEqual(pk.address);
 	});
 });

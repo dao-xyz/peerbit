@@ -21,7 +21,7 @@ export class EventIndex<T> {
 	}
 
 	get() {
-		return this._store ? this._store.oplog.values : [];
+		return this._store ? this._store.oplog.values.toArray() : [];
 	}
 }
 

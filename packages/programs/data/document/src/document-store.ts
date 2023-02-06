@@ -207,8 +207,8 @@ export class Documents<T> extends ComposableProgram {
 
 		try {
 			entry.init({
-				encoding: this.store.oplog._encoding,
-				encryption: this.store.oplog._encryption,
+				encoding: this.store.oplog.encoding,
+				encryption: this.store.oplog.encryption,
 			});
 			const operation = await entry.getPayloadValue();
 			if (operation instanceof PutOperation) {
@@ -309,7 +309,7 @@ export class Documents<T> extends ComposableProgram {
 		const removed = [...(change.removed || [])];
 		const removedSet = new Set<string>(removed.map((x) => x.hash));
 		const entries = [...change.added, ...(change.removed || [])]
-			.sort(this.store.oplog._sortFn)
+			.sort(this.store.oplog.sortFn)
 			.reverse(); // sort so we get newest to oldest
 
 		// There might be a case where change.added and change.removed contains the same document id. Usaully because you use the "trim" option
@@ -374,7 +374,7 @@ export class Documents<T> extends ComposableProgram {
 						if (
 							(await this._canOpen!(value, item)) &&
 							this.role instanceof ReplicatorType &&
-							(await this.store.options.replicator!(item))
+							(await this.store.options.replicator!(item.gid))
 						) {
 							await this.open!(value);
 						}

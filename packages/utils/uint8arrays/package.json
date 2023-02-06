@@ -1,7 +1,7 @@
 {
-	"name": "@dao-xyz/peerbit-borsh-utils",
-	"version": "0.1.3",
-	"description": "Utility methods for borsh",
+	"name": "@dao-xyz/uint8arrays",
+	"version": "0.0.1",
+	"description": "Utility methods for 8int8arrays",
 	"type": "module",
 	"sideEffects": false,
 	"module": "lib/esm/index.js",
@@ -31,6 +31,6 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.1.4"
+		"uint8arrays": "^4.0.3"
 	}
 }

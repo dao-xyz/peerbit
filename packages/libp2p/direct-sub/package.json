@@ -55,12 +55,12 @@
 	"dependencies": {
 		"@dao-xyz/libp2p-direct-stream": "^0.1.12",
 		"@dao-xyz/peerbit-logger": "^0.0.5",
+		"@dao-xyz/uint8arrays": "^0.0.1",
 		"@libp2p/interfaces": "^3.3.1",
 		"abstract-level": "^1.0.3",
 		"libp2p": "^0.42.2",
 		"memory-level": "^1.0.0",
 		"ngraph.graph": "^20.0.1",
-		"ngraph.path": "^1.4.0",
-		"uint8arrays": "^4.0.2"
+		"ngraph.path": "^1.4.0"
 	}
 }

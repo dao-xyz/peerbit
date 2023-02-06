@@ -65,7 +65,7 @@ describe("Signed Log", function () {
 			},
 			{ logId: "A" }
 		);
-		expect(log._identity.publicKey).toMatchSnapshot();
+		expect(log.identity.publicKey).toMatchSnapshot();
 	});
 
 	it("has the correct public key", () => {
@@ -77,7 +77,7 @@ describe("Signed Log", function () {
 			},
 			{ logId: "A" }
 		);
-		expect(log._identity.publicKey).toEqual(signKey.keypair.publicKey);
+		expect(log.identity.publicKey).toEqual(signKey.keypair.publicKey);
 	});
 
 	it("has the correct pkSignature", () => {
@@ -89,7 +89,7 @@ describe("Signed Log", function () {
 			},
 			{ logId: "A" }
 		);
-		expect(log._identity.publicKey).toEqual(signKey.keypair.publicKey);
+		expect(log.identity.publicKey).toEqual(signKey.keypair.publicKey);
 	});
 
 	it("has the correct signature", () => {
@@ -101,7 +101,7 @@ describe("Signed Log", function () {
 			},
 			{ logId: "A" }
 		);
-		expect(log._identity.publicKey).toEqual(signKey.keypair.publicKey);
+		expect(log.identity.publicKey).toEqual(signKey.keypair.publicKey);
 	});
 
 	it("entries contain an identity", async () => {
@@ -114,9 +114,9 @@ describe("Signed Log", function () {
 			{ logId: "A" }
 		);
 		await log.append("one");
-		assert.notStrictEqual(await log.values[0].signatures, null);
+		assert.notStrictEqual(await log.toArray()[0].signatures, null);
 		assert.deepStrictEqual(
-			await log.values[0].signatures[0].publicKey,
+			await log.toArray()[0].signatures[0].publicKey,
 			signKey.keypair.publicKey
 		);
 	});
@@ -138,7 +138,7 @@ describe("Signed Log", function () {
 		await log.append("one", { signers });
 		expect(
 			await Promise.all(
-				log.values[0].signatures.map((x) => x.publicKey.hashcode())
+				log.toArray()[0].signatures.map((x) => x.publicKey.hashcode())
 			)
 		).toContainAllValues([
 			await signKey.keypair.publicKey.hashcode(),
@@ -198,19 +198,19 @@ describe("Signed Log", function () {
 		try {
 			await log1.append("one");
 			await log2.append("two");
-			let entry: Entry<string> = log2.values[0];
-			entry._signatures = await log1.values[0]._signatures;
+			let entry: Entry<string> = log2.toArray()[0];
+			entry._signatures = await log1.toArray()[0]._signatures;
 			await log1.join(log2, { verifySignatures: true });
 		} catch (e: any) {
 			err = e.toString();
 		}
 
-		const entry = log2.values[0];
+		const entry = log2.toArray()[0];
 		expect(err).toEqual(
 			`Error: Invalid signature entry with hash "${entry.hash}"`
 		);
-		expect(log1.values.length).toEqual(1);
-		expect(log1.values[0].payload.getValue()).toEqual("one");
+		expect(log1.toArray().length).toEqual(1);
+		expect(log1.toArray()[0].payload.getValue()).toEqual("one");
 	});
 
 	/* 

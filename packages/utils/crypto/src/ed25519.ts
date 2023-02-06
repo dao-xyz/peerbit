@@ -1,6 +1,6 @@
-import { field, variant } from "@dao-xyz/borsh";
+import { field, fixedArray, variant } from "@dao-xyz/borsh";
 import { PrivateSignKey, PublicSignKey, Keypair } from "./key.js";
-import { arraysCompare, fixedUint8Array } from "@dao-xyz/peerbit-borsh-utils";
+import { equals } from "@dao-xyz/uint8arrays";
 import { Signer, SignWithKey } from "./signer.js";
 import { SignatureWithKey } from "./signature.js";
 import { toHexString } from "./utils.js";
@@ -14,7 +14,7 @@ import { PreHash } from "./prehash.js";
 
 @variant(0)
 export class Ed25519PublicKey extends PublicSignKey {
-	@field({ type: fixedUint8Array(32) })
+	@field({ type: fixedArray("u8", 32) })
 	publicKey: Uint8Array;
 
 	constructor(properties?: { publicKey: Uint8Array }) {
@@ -26,7 +26,7 @@ export class Ed25519PublicKey extends PublicSignKey {
 
 	equals(other: PublicSignKey): boolean {
 		if (other instanceof Ed25519PublicKey) {
-			return arraysCompare(this.publicKey, other.publicKey) === 0;
+			return equals(this.publicKey, other.publicKey);
 		}
 		return false;
 	}
@@ -67,7 +67,7 @@ export class Ed25519PublicKey extends PublicSignKey {
 
 @variant(0)
 export class Ed25519PrivateKey extends PrivateSignKey {
-	@field({ type: fixedUint8Array(64) })
+	@field({ type: fixedArray("u8", 64) })
 	privateKey: Uint8Array;
 
 	constructor(properties?: { privateKey: Uint8Array }) {
@@ -79,7 +79,7 @@ export class Ed25519PrivateKey extends PrivateSignKey {
 
 	equals(other: Ed25519PrivateKey): boolean {
 		if (other instanceof Ed25519PrivateKey) {
-			return arraysCompare(this.privateKey, other.privateKey) === 0;
+			return equals(this.privateKey, other.privateKey);
 		}
 		return false;
 	}

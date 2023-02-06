@@ -125,7 +125,8 @@ export class LogIndex extends ComposableProgram {
 
 	_queryEntries(filter: (entry: Entry<any>) => boolean): Entry<any>[] {
 		// Whether we return the full operation data or just the db value
-		return this._store.oplog.values.filter((doc) => filter(doc));
+		// TODO create an index
+		return this._store.oplog.values.toArray().filter((doc) => filter(doc));
 	}
 
 	responseHandler(query: LogQueryRequest): HeadsMessage | undefined {

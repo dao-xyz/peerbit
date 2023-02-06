@@ -8,7 +8,6 @@ import {
 	CanAppend,
 	JSON_ENCODING,
 	Change,
-	TrimOptions,
 	TrimToByteLengthOption,
 	TrimToLengthOption,
 } from "@dao-xyz/peerbit-log";
@@ -127,7 +126,8 @@ export interface IInitializationOptions<T>
 	extends IStoreOptions<T>,
 		IInitializationOptionsDefault<T> {
 	resolveCache: (store: Store<any>) => Promise<Cache> | Cache;
-	replicator?: (entry: Entry<T>) => Promise<boolean>;
+	replicator?: (gid: string) => Promise<boolean>;
+	replicatorsCacheId?: () => string;
 }
 
 interface IInitializationOptionsDefault<T> {
@@ -434,10 +434,12 @@ export class Store<T> implements Initiable<T> {
 			sortFn: this._options.sortFn,
 			trim: this._options.trim && {
 				// I can trim if I am not a replicator of an entry
-				canTrim:
-					this.options.replicator &&
-					(async (entry) => !(await this.options.replicator!(entry))),
+
 				...this._options.trim,
+				filter: this.options.replicator && {
+					canTrim: async (gid) => !(await this.options.replicator!(gid)),
+					cacheId: this.options.replicatorsCacheId,
+				},
 			},
 		};
 	}
@@ -560,7 +562,7 @@ export class Store<T> implements Initiable<T> {
 
 		// Update the index
 		if (heads.length > 0) {
-			await this._updateIndex({ added: log.values, removed: [] });
+			await this._updateIndex({ added: log.toArray(), removed: [] });
 		}
 		this._options.onReady && this._options.onReady(this);
 	}
@@ -682,8 +684,8 @@ export class Store<T> implements Initiable<T> {
 			await Promise.all(
 				allEntries.map((h) =>
 					h.init({
-						encoding: this.oplog._encoding,
-						encryption: this.oplog._encryption,
+						encoding: this.oplog.encoding,
+						encryption: this.oplog.encryption,
 					})
 				)
 			);
@@ -830,7 +832,7 @@ export class Store<T> implements Initiable<T> {
 					}
 				);
 				await this._updateIndex({
-					added: this._oplog.values,
+					added: this._oplog.values.toArray(),
 					removed: [],
 				});
 				this._options.onReplicationComplete &&

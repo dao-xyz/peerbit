@@ -1,23 +1,23 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`Log get returns an Entry 1`] = `"zb2rhftZtGCUmjC9thQusLUJHT8tXUitGkFz3cd7nu9Q9ATrt"`;
+exports[`Log get returns an Entry 1`] = `"zb2rhZuUctpZ846A1Nvozec9U4firNGnpxbsskMPLfakkLtyH"`;
 
-exports[`Log serialize fromEntryHash calls fromEntryHash 1`] = `"{"id":"X","heads":["zb2rhftZtGCUmjC9thQusLUJHT8tXUitGkFz3cd7nu9Q9ATrt"]}"`;
+exports[`Log serialize fromEntryHash calls fromEntryHash 1`] = `"{"id":"X","heads":["zb2rhZuUctpZ846A1Nvozec9U4firNGnpxbsskMPLfakkLtyH"]}"`;
 
-exports[`Log serialize fromMultihash calls fromMultihash 1`] = `"{"id":"X","heads":["zb2rhftZtGCUmjC9thQusLUJHT8tXUitGkFz3cd7nu9Q9ATrt"]}"`;
+exports[`Log serialize fromMultihash calls fromMultihash 1`] = `"{"id":"X","heads":["zb2rhZuUctpZ846A1Nvozec9U4firNGnpxbsskMPLfakkLtyH"]}"`;
 
-exports[`Log serialize fromMultihash calls fromMultihash with custom tiebreaker 1`] = `"{"id":"X","heads":["zb2rhftZtGCUmjC9thQusLUJHT8tXUitGkFz3cd7nu9Q9ATrt"]}"`;
+exports[`Log serialize fromMultihash calls fromMultihash with custom tiebreaker 1`] = `"{"id":"X","heads":["zb2rhZuUctpZ846A1Nvozec9U4firNGnpxbsskMPLfakkLtyH"]}"`;
 
-exports[`Log serialize fromMultihash creates a log from ipfs CID - one entry 1`] = `"{"id":"X","heads":["zb2rhftZtGCUmjC9thQusLUJHT8tXUitGkFz3cd7nu9Q9ATrt"]}"`;
+exports[`Log serialize fromMultihash creates a log from ipfs CID - one entry 1`] = `"{"id":"X","heads":["zb2rhZuUctpZ846A1Nvozec9U4firNGnpxbsskMPLfakkLtyH"]}"`;
 
-exports[`Log serialize fromMultihash creates a log from ipfs multihash (backwards compat) 1`] = `"{"id":"X","heads":["zb2rhftZtGCUmjC9thQusLUJHT8tXUitGkFz3cd7nu9Q9ATrt"]}"`;
+exports[`Log serialize fromMultihash creates a log from ipfs multihash (backwards compat) 1`] = `"{"id":"X","heads":["zb2rhZuUctpZ846A1Nvozec9U4firNGnpxbsskMPLfakkLtyH"]}"`;
 
-exports[`Log serialize toMultihash - cbor log serialized to ipfs contains the correct data 1`] = `"zdpuAvF2cfn6fwQsk3cjdawyPUYjmTkQeppDJmT4gqFbMp6TM"`;
+exports[`Log serialize toMultihash - cbor log serialized to ipfs contains the correct data 1`] = `"zdpuAsXcqfFFSs5V6mMJdqgMhS5uLD5btUuV1xB6PbHuJJyGo"`;
 
 exports[`Log serialize toMultihash - cbor log serialized to ipfs contains the correct data 2`] = `
 [
-  "bafkreiejmix4u7i7scsgajpbpaf6ha65rdtbwgc5f6222ctrp34c2yflhu",
+  "bafkreibqo6yvxvlnvo5irxnqlnk5rlky4ej2voughlycjt7p5eyu3ahdwq",
 ]
 `;
 
-exports[`Log serialize toMultihash - cbor returns the log as ipfs CID 1`] = `"zdpuAvF2cfn6fwQsk3cjdawyPUYjmTkQeppDJmT4gqFbMp6TM"`;
+exports[`Log serialize toMultihash - cbor returns the log as ipfs CID 1`] = `"zdpuAsXcqfFFSs5V6mMJdqgMhS5uLD5btUuV1xB6PbHuJJyGo"`;
