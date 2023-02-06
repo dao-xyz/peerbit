@@ -501,13 +501,13 @@ export class Peerbit {
 	// Callback for receiving a message from the network
 	async _onMessage(evt: CustomEvent<PubSubData>) {
 		const message = evt.detail;
-		logger.debug(
+		/* logger.debug(
 			`${this.id}: Recieved message on topics: ${
 				message.topics.length > 1
 					? "#" + message.topics.length
 					: message.topics[0]
 			} ${message.data.length}`
-		);
+		); */
 		if (this._disconnecting) {
 			logger.warn("Got message while disconnecting");
 			return;
@@ -1045,6 +1045,10 @@ export class Peerbit {
 			);
 		} else {
 			peers = peersPreFilter;
+		}
+
+		if (peers.length === 0) {
+			return [];
 		}
 
 		numberOfLeaders = Math.min(numberOfLeaders, peers.length);
