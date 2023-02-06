@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/peerbit-log",
-	"version": "0.1.17",
+	"version": "0.1.18",
 	"description": "Append-only log CRDT",
 	"author": "dao.xyz",
 	"license": "MIT",
@@ -32,10 +32,10 @@
 	],
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.4",
-		"@dao-xyz/libp2p-direct-block": "^0.1.13",
-		"@dao-xyz/peerbit-crypto": "^0.1.8",
+		"@dao-xyz/cache": "^0.0.3",
+		"@dao-xyz/libp2p-direct-block": "^0.1.14",
+		"@dao-xyz/peerbit-crypto": "^0.1.9",
 		"@dao-xyz/peerbit-logger": "^0.0.5",
-		"@dao-xyz/cache": "^0.0.2",
 		"json-stringify-deterministic": "^1.0.7",
 		"libp2p": "^0.42.2",
 		"p-do-whilst": "^1.1.0",
@@ -44,13 +44,13 @@
 		"yallist": "^4.0.0"
 	},
 	"devDependencies": {
-		"p-each-series": "^3.0.0",
-		"@dao-xyz/peerbit-keystore": "^0.1.16",
-		"@dao-xyz/peerbit-test-utils": "^0.1.15",
+		"@dao-xyz/peerbit-keystore": "^0.1.17",
+		"@dao-xyz/peerbit-test-utils": "^0.1.16",
 		"@types/yallist": "^4.0.1",
 		"assert": "^2.0.0",
 		"fs-extra": "^10.0.1",
-		"is-node": "^1.0.2"
+		"is-node": "^1.0.2",
+		"p-each-series": "^3.0.0"
 	},
 	"contributors": [
 		"haadcode",
