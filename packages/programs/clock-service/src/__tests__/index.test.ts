@@ -39,7 +39,7 @@ class P extends Program {
 
 describe("clock", () => {
 	let session: LSession, responder: P, reader: P;
-	beforeAll(async () => {
+	beforeEach(async () => {
 		session = await LSession.connected(3);
 		const responderIdentity = await createIdentity();
 		responder = new P({
@@ -72,7 +72,9 @@ describe("clock", () => {
 		}
 		await waitForPeers(session.peers[1], [session.peers[0]], topic);
 	});
-	afterAll(async () => {
+	afterEach(async () => {
+		await reader.drop();
+		await responder.drop();
 		await session.stop();
 	});
 
