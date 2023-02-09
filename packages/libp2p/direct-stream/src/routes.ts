@@ -1,6 +1,3 @@
-import type { PeerId } from "@libp2p/interface-peer-id";
-import { default as path, PathFinder } from "ngraph.path";
-/* import createGraph, { Graph } from "ngraph.graph"; */
 import Graphs from "graphology";
 import type { MultiUndirectedGraph } from "graphology";
 import { dijkstra, unweighted } from "graphology-shortest-path";
@@ -12,7 +9,6 @@ interface EdgeData {
 }
 export class Routes {
 	graph: MultiUndirectedGraph<any, EdgeData>;
-	private pathFinder: PathFinder<any>;
 	private peerId: string;
 	constructor(peerId: string) {
 		this.peerId = peerId;
@@ -20,11 +16,11 @@ export class Routes {
 	}
 
 	get linksCount() {
-		return this.graph.edges().length; //this.graph();
+		return this.graph.edges().length;
 	}
 
 	get nodeCount() {
-		return this.graph.nodes().length; //
+		return this.graph.nodes().length;
 	}
 
 	/**

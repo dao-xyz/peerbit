@@ -8256,23 +8256,6 @@ netmask@^2.0.2:
   resolved "https://registry.yarnpkg.com/netmask/-/netmask-2.0.2.tgz#8b01a07644065d536383835823bc52004ebac5e7"
   integrity sha512-dBpDMdxv9Irdq66304OLfEmQ9tbNRFnFTuZiLo+bD+r332bBmMJ8GBLXklIXXgxd3+v9+KUnZaUR5PJMa75Gsg==
 
-ngraph.events@^1.2.1:
-  version "1.2.2"
-  resolved "https://registry.yarnpkg.com/ngraph.events/-/ngraph.events-1.2.2.tgz#3ceb92d676a04a4e7ce60a09fa8e17a4f0346d7f"
-  integrity sha512-JsUbEOzANskax+WSYiAPETemLWYXmixuPAlmZmhIbIj6FH/WDgEGCGnRwUQBK0GjOnVm8Ui+e5IJ+5VZ4e32eQ==
-
-ngraph.graph@^20.0.1:
-  version "20.0.1"
-  resolved "https://registry.yarnpkg.com/ngraph.graph/-/ngraph.graph-20.0.1.tgz#579470d1d805583239704dc913e2095540aaf371"
-  integrity sha512-VFsQ+EMkT+7lcJO1QP8Ik3w64WbHJl27Q53EO9hiFU9CRyxJ8HfcXtfWz/U8okuoYKDctbciL6pX3vG5dt1rYA==
-  dependencies:
-    ngraph.events "^1.2.1"
-
-ngraph.path@^1.4.0:
-  version "1.4.0"
-  resolved "https://registry.yarnpkg.com/ngraph.path/-/ngraph.path-1.4.0.tgz#0b6701b187d92d3e72ba8ecfe094a4154fc69aba"
-  integrity sha512-yJZay4tP0wcjqkkf8zlMQ/T+JOgU+EWfdE4w4TG8OS94B12J/+Z44UOYxVJErE8E6/wFunX1hMZEB1/GHsBYHg==
-
 node-addon-api@^3.2.1:
   version "3.2.1"
   resolved "https://registry.yarnpkg.com/node-addon-api/-/node-addon-api-3.2.1.tgz#81325e0a2117789c0128dab65e7e38f07ceba161"
