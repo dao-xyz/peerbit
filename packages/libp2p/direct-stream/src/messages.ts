@@ -89,10 +89,12 @@ class PublicKeys {
 	}
 }
 
+const SIGNATURES_SIZE_ENCODING = "u8"; // with 7 steps you know everyone in the world?, so u8 *should* suffice
 @variant(0)
 export class Signatures {
-	@field({ type: vec(SignatureWithKey, "u8") })
+	@field({ type: vec(SignatureWithKey, SIGNATURES_SIZE_ENCODING) })
 	signatures: SignatureWithKey[];
+
 	constructor(signatures: SignatureWithKey[] = []) {
 		this.signatures = signatures;
 	}
@@ -117,18 +119,21 @@ const keyMap: Map<string, PublicSignKey> = new Map();
 interface Signed {
 	get signatures(): Signatures;
 }
+interface Suffix {
+	getSuffix(iteration: number): Uint8Array | Uint8Array[];
+}
 
 const verifyMultiSig = async (
-	message: Signed & Prefixed,
+	message: Suffix & Prefixed & Signed,
 	expectSignatures: boolean
 ) => {
 	const signatures = message.signatures.signatures;
-
 	if (signatures.length === 0) {
 		return !expectSignatures;
 	}
 
 	await message.createPrefix();
+
 	const dataGenerator = getMultiSigDataToSignHistory(message, 0);
 	let done: boolean | undefined = false;
 	for (const signature of signatures) {
@@ -152,7 +157,7 @@ interface Prefixed {
 
 const emptySignatures = serialize(new Signatures());
 function* getMultiSigDataToSignHistory(
-	message: Signed & Prefixed,
+	message: Suffix & Prefixed & Signed,
 	from = 0
 ): Generator<Uint8Array, undefined, void> {
 	if (from === 0) {
@@ -162,41 +167,49 @@ function* getMultiSigDataToSignHistory(
 		);
 	}
 
-	const signatures = message.signatures.signatures;
-	for (let i = Math.max(from, 1); i < signatures.length + 1; i++) {
-		const bytes = serialize(new Signatures(signatures.slice(0, i))); // TODO make more performant
-		yield concatBytes(
-			[message.prefix, bytes],
-			message.prefix.length + bytes.length
-		);
+	for (
+		let i = Math.max(from - 1, 0);
+		i < message.signatures.signatures.length;
+		i++
+	) {
+		const bytes = message.getSuffix(i); // TODO make more performant
+		const concat = [message.prefix];
+		let len = message.prefix.length;
+		if (bytes instanceof Uint8Array) {
+			concat.push(bytes);
+			len += bytes.byteLength;
+		} else {
+			for (const arr of bytes) {
+				concat.push(arr);
+				len += arr.byteLength;
+			}
+		}
+		yield concatBytes(concat, len);
 	}
 	return;
 }
 
 export abstract class Message {
 	static deserialize(bytes: Uint8ArrayList) {
-		if (bytes.get(0) === 0) {
+		if (bytes.get(0) === DATA_VARIANT) {
 			// Data
 			return DataMessage.deserialize(bytes);
-		} else if (bytes.get(0) === 1) {
+		} else if (bytes.get(0) === HELLO_VARIANT) {
 			// heartbeat
 			return Hello.deserialize(bytes);
-		} else if (bytes.get(0) === 2) {
+		} else if (bytes.get(0) === GOODBYE_VARIANT) {
 			// heartbeat
 			return Goodbye.deserialize(bytes);
+		} else if (bytes.get(0) === PING_VARIANT) {
+			return PingPong.deserialize(bytes);
 		}
-		/* 	else if (bytes.get(0) === 3) // Connections
-			{
-				return NetworkInfo.deserialize(bytes)
-			} */
+
 		throw new Error("Unsupported");
 	}
 
 	abstract serialize(): Uint8ArrayList | Uint8Array;
 	abstract equals(other: Message): boolean;
 	abstract verify(expectSignatures: boolean): Promise<boolean>;
-	abstract get header(): MessageHeader;
-	abstract get signatures(): Signatures;
 }
 
 // I pack data with this message
@@ -277,6 +290,12 @@ export class DataMessage extends Message {
 		return this._prefix;
 	}
 
+	getSuffix(iteration: number): Uint8Array {
+		return serialize(
+			new Signatures(this.signatures.signatures.slice(0, iteration + 1))
+		);
+	}
+
 	async sign(sign: (bytes: Uint8Array) => Promise<SignatureWithKey>) {
 		this._serialized = undefined; // because we will change this object, so the serialized version will not be applicable anymore
 		await this.createPrefix();
@@ -332,6 +351,15 @@ export class DataMessage extends Message {
 		return false;
 	}
 }
+@variant(0)
+export class NetworkInfo {
+	@field({ type: vec("u32", SIGNATURES_SIZE_ENCODING) })
+	pingLatencies: number[];
+
+	constructor(pingLatencies: number[]) {
+		this.pingLatencies = pingLatencies;
+	}
+}
 
 // I send this too all my peers
 const HELLO_VARIANT = 1;
@@ -343,6 +371,9 @@ export class Hello extends Message {
 	@field({ type: option(Uint8Array) })
 	data?: Uint8Array;
 
+	@field({ type: NetworkInfo })
+	networkInfo: NetworkInfo;
+
 	@field({ type: Signatures })
 	signatures: Signatures;
 
@@ -351,6 +382,7 @@ export class Hello extends Message {
 		this.header = new MessageHeader();
 		this.data = options?.data;
 		this.signatures = new Signatures();
+		this.networkInfo = new NetworkInfo([]);
 	}
 
 	get sender(): PublicSignKey {
@@ -388,18 +420,38 @@ export class Hello extends Message {
 		return this._prefix;
 	}
 
+	getSuffix(iteration: number): Uint8Array[] {
+		return [
+			serialize(
+				new NetworkInfo(this.networkInfo.pingLatencies.slice(0, iteration + 1))
+			),
+			serialize(
+				new Signatures(this.signatures.signatures.slice(0, iteration + 1))
+			),
+		];
+	}
+
 	async sign(sign: (bytes: Uint8Array) => Promise<SignatureWithKey>) {
 		await this.createPrefix();
 		const toSign = getMultiSigDataToSignHistory(
 			this,
 			this.signatures.signatures.length
 		).next().value!;
-		this.signatures.signatures.push(await sign(toSign));
+		try {
+			this.signatures.signatures.push(await sign(toSign));
+		} catch (error) {
+			const q = 123;
+		}
 		return this;
 	}
 
 	async verify(expectSignatures: boolean): Promise<boolean> {
-		return this.header.verify() && verifyMultiSig(this, expectSignatures);
+		return (
+			this.header.verify() &&
+			this.networkInfo.pingLatencies.length ===
+				this.signatures.signatures.length - 1 &&
+			verifyMultiSig(this, expectSignatures)
+		);
 	}
 
 	equals(other: Message) {
@@ -485,6 +537,12 @@ export class Goodbye extends Message {
 		return this._prefix;
 	}
 
+	getSuffix(iteration: number): Uint8Array {
+		return serialize(
+			new Signatures(this.signatures.signatures.slice(0, iteration + 1))
+		);
+	}
+
 	async sign(sign: (bytes: Uint8Array) => Promise<SignatureWithKey>) {
 		await this.createPrefix();
 		this.signatures.signatures.push(
@@ -523,17 +581,57 @@ export class Goodbye extends Message {
 	}
 }
 
-@variant(0)
-export class NetworkInfoHeader {
-	@field({ type: fixedArray("u8", 32) })
-	id: Uint8Array;
+const PING_VARIANT = 3;
 
-	@field({ type: "u64" })
-	timestamp: bigint;
+@variant(PING_VARIANT)
+export abstract class PingPong extends Message {
+	static deserialize(bytes: Uint8ArrayList) {
+		return deserialize(bytes.subarray(), PingPong);
+	}
+
+	serialize(): Uint8ArrayList | Uint8Array {
+		return serialize(this);
+	}
+
+	verify(_expectSignatures: boolean): Promise<boolean> {
+		return Promise.resolve(true);
+	}
+
+	abstract get pingBytes(): Uint8Array;
+}
+
+@variant(0)
+export class Ping extends PingPong {
+	@field({ type: fixedArray("u8", 32) })
+	pingBytes: Uint8Array;
 
 	constructor() {
-		this.id = randomBytes(ID_LENGTH);
-		this.timestamp = BigInt(+new Date());
+		super();
+		this.pingBytes = randomBytes(32);
+	}
+	equals(other: Message) {
+		if (other instanceof Ping) {
+			return equals(this.pingBytes, other.pingBytes);
+		}
+		return false;
+	}
+}
+
+@variant(1)
+export class Pong extends PingPong {
+	@field({ type: fixedArray("u8", 32) })
+	pingBytes: Uint8Array;
+
+	constructor(pingBytes: Uint8Array) {
+		super();
+		this.pingBytes = pingBytes;
+	}
+
+	equals(other: Message) {
+		if (other instanceof Pong) {
+			return equals(this.pingBytes, other.pingBytes);
+		}
+		return false;
 	}
 }
 

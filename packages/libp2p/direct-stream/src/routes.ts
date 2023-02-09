@@ -1,52 +1,53 @@
 import type { PeerId } from "@libp2p/interface-peer-id";
 import { default as path, PathFinder } from "ngraph.path";
-import createGraph, { Graph } from "ngraph.graph";
+/* import createGraph, { Graph } from "ngraph.graph"; */
+import Graphs from "graphology";
+import type { MultiUndirectedGraph } from "graphology";
+import { dijkstra, unweighted } from "graphology-shortest-path";
+import { logger } from "./logger.js";
 
+interface EdgeData {
+	weight: number;
+	time: number;
+}
 export class Routes {
-	graph: Graph<PeerId, any>;
+	graph: MultiUndirectedGraph<any, EdgeData>;
 	private pathFinder: PathFinder<any>;
 	private peerId: string;
 	constructor(peerId: string) {
 		this.peerId = peerId;
-		this.graph = createGraph();
-		this.pathFinder = path.aGreedy(this.graph);
+		this.graph = new (Graphs as any).UndirectedGraph();
 	}
 
 	get linksCount() {
-		return this.graph.getLinksCount();
+		return this.graph.edges().length; //this.graph();
 	}
 
 	get nodeCount() {
-		return this.graph.getNodesCount();
+		return this.graph.nodes().length; //
 	}
 
-	get links(): [string, string][] {
-		const links: [string, string][] = [];
-		this.graph.forEachLink((link) => {
-			links.push([link.fromId.toString(), link.toId.toString()]);
-		});
-		return links;
-	}
 	/**
 	 *
 	 * @param from
 	 * @param to
 	 * @returns new nodes
 	 */
-	addLink(from: string, to: string, origin: string = this.peerId): string[] {
-		if (from > to) {
-			const temp = from;
-			from = to;
-			to = temp;
-		}
-
-		const linkExisted = !!this.getLink(from, to);
+	addLink(
+		from: string,
+		to: string,
+		weight: number,
+		origin: string = this.peerId
+	): string[] {
+		const linkExisted = this.hasLink(from, to);
 		const newReachableNodesFromOrigin: string[] = [];
 		if (!linkExisted) {
 			const currentTime = +new Date();
 			const fromWasReachable =
-				origin == from || this.getPath(origin, from).length;
-			const toWasReachable = origin === to || this.getPath(origin, to).length;
+				origin == from ||
+				this.getPath(origin, from, { unweighted: true }).length;
+			const toWasReachable =
+				origin === to || this.getPath(origin, to, { unweighted: true }).length;
 			const fromIsNowReachable = toWasReachable;
 			const toIsNowReachable = fromWasReachable;
 
@@ -65,48 +66,56 @@ export class Routes {
 				visited.add(to);
 			}
 
-			this.graph.addLink(from, to, currentTime);
+			if (!this.graph.hasNode(from)) {
+				this.graph.addNode(from);
+			}
+			if (!this.graph.hasNode(to)) {
+				this.graph.addNode(to);
+			}
+
+			this.graph.addUndirectedEdge(from, to, { weight, time: currentTime });
 
 			for (const newReachableNode of newReachableNodes) {
 				// get all nodes from this and add them to the new reachable set of nodes one can access from origin
 
-				const node = this.graph.getNode(newReachableNode); // iterate from the not reachable node
-				const stack = [node];
+				const stack = [newReachableNode]; // iterate from the not reachable node
 				while (stack.length > 0) {
 					const node = stack.shift();
 					if (!node) {
 						continue;
 					}
-					if (visited.has(node.id)) {
+					if (visited.has(node)) {
 						continue;
 					}
 
-					visited.add(node.id);
-
-					const links = node.links;
-
-					if (links) {
-						for (const link of links) {
-							if (link.data > currentTime) {
-								continue; // a new link has been added while we are iterating, dont follow this path
-							}
-
-							const toId = node.id === link.toId ? link.fromId : link.toId;
-							if (visited.has(toId)) {
-								continue;
-							}
-
-							const next = this.graph.getNode(toId);
-							if (next) {
-								stack.push(next);
-							}
+					visited.add(node);
+					const neighbors = this.graph.neighbors(node);
+					for (const neighbor of neighbors) {
+						const edge = this.graph.undirectedEdge(node, neighbor);
+						if (!edge) {
+							logger.warn(`Missing edge between: ${node} - ${neighbor}`);
+							continue;
 						}
+
+						const attributes = this.graph.getEdgeAttributes(edge);
+						if (attributes.time > currentTime) {
+							continue; // a new link has been added while we are iterating, dont follow this path
+						}
+
+						if (visited.has(neighbor)) {
+							continue;
+						}
+
+						stack.push(neighbor);
 					}
-					newReachableNodesFromOrigin.push(node.id.toString());
+					newReachableNodesFromOrigin.push(node);
 				}
 			}
 		} else {
-			this.graph.addLink(from, to, +new Date());
+			// update weight
+			const edge = this.graph.undirectedEdge(from, to);
+			this.graph.setEdgeAttribute(edge, "weight", weight);
+			this.graph.setEdgeAttribute(edge, "time", +new Date());
 		}
 
 		return newReachableNodesFromOrigin;
@@ -124,71 +133,71 @@ export class Routes {
 		if (link) {
 			const date = +new Date();
 			const fromWasReachable =
-				origin == from || this.getPath(origin, from).length;
-			const toWasReachable = origin === to || this.getPath(origin, to).length;
-			this.graph.removeLink(link);
+				origin == from ||
+				this.getPath(origin, from, { unweighted: true }).length;
+			const toWasReachable =
+				origin === to || this.getPath(origin, to, { unweighted: true }).length;
+			this.graph.dropEdge(link);
 
 			const unreachableNodesFromOrigin: string[] = [];
 			if (
 				fromWasReachable &&
 				origin !== from &&
-				this.getPath(origin, from).length === 0
+				this.getPath(origin, from, { unweighted: true }).length === 0
 			) {
 				unreachableNodesFromOrigin.push(from);
 			}
 			if (
 				toWasReachable &&
 				origin !== to &&
-				this.getPath(origin, to).length === 0
+				this.getPath(origin, to, { unweighted: true }).length === 0
 			) {
 				unreachableNodesFromOrigin.push(to);
 			}
 
 			// remove subgraphs that are now disconnected from me
 			for (const disconnected of [...unreachableNodesFromOrigin]) {
-				const node = this.graph.getNode(disconnected);
-
-				if (!node) {
+				const node = disconnected;
+				if (!this.graph.hasNode(node)) {
 					continue;
 				}
 
-				const stack = [node];
+				const stack = [disconnected];
 				const visited = new Set<string | number>();
 				while (stack.length > 0) {
 					const node = stack.shift();
-					if (!node) {
+					const nodeId = node;
+					if (!nodeId || !this.graph.hasNode(nodeId)) {
 						continue;
 					}
-					if (visited.has(node.id)) {
+					if (visited.has(nodeId)) {
 						continue;
 					}
 
-					visited.add(node.id);
+					visited.add(nodeId);
 
-					const links = node.links;
+					const neighbors = this.graph.neighbors(node);
 
-					if (links) {
-						for (const link of links) {
-							if (link.data > date) {
-								continue; // don't follow path because this is a new link that might provide some new connectivity
-							}
-
-							const toId = node.id === link.toId ? link.fromId : link.toId;
-							if (visited.has(toId)) {
-								continue;
-							}
-
-							const next = this.graph.getNode(toId);
-							if (next) {
-								stack.push(next);
-							}
+					for (const neighbor of neighbors) {
+						const edge = this.graph.undirectedEdge(node, neighbor);
+						if (!edge) {
+							logger.warn(`Missing edge between: ${node} - ${neighbor}`);
+							continue;
 						}
+						const attributes = this.graph.getEdgeAttributes(edge);
+						if (attributes.time > date) {
+							continue; // don't follow path because this is a new link that might provide some new connectivity
+						}
+
+						if (visited.has(neighbor)) {
+							continue;
+						}
+
+						stack.push(neighbor);
 					}
-					if (
-						this.graph.removeNode(node.id) &&
-						disconnected !== node.id.toString()
-					) {
-						unreachableNodesFromOrigin.push(node.id.toString());
+					this.graph.dropNode(nodeId);
+					if (disconnected !== nodeId) {
+						unreachableNodesFromOrigin.push(nodeId.toString());
 					}
 				}
 			}
@@ -197,19 +206,63 @@ export class Routes {
 		return [];
 	}
 
-	getLink(from: string, to: string) {
-		return from < to
-			? this.graph.getLink(from, to)
-			: this.graph.getLink(to, from);
+	getLink(from: string, to: string): string | undefined {
+		if (!this.graph.hasNode(from) || !this.graph.hasNode(to)) {
+			return undefined;
+		}
+
+		const edges = this.graph.edges(from, to);
+		if (edges.length > 1) {
+			throw new Error("Unexpected edge count: " + edges.length);
+		}
+		if (edges.length > 0) {
+			return edges[0];
+		}
+		return undefined;
 	}
 
-	getPath(from: string, to: string) {
+	getLinkData(from: string, to: string): EdgeData | undefined {
+		const edgeId = this.getLink(from, to);
+		if (edgeId) return this.graph.getEdgeAttributes(edgeId);
+		return undefined;
+	}
+
+	hasLink(from: string, to: string): any {
+		return this.graph.hasEdge(from, to);
+	}
+
+	getPath(
+		from: string,
+		to: string,
+		options?: { unweighted?: boolean } | { block?: string }
+	): unweighted.ShortestPath | dijkstra.BidirectionalDijstraResult {
 		try {
-			const path = this.pathFinder.find(from, to);
-			if (path?.length > 0 && path[0].id !== from) {
+			let prevBlockWeight: number;
+			let blockEdge: string;
+
+			if ((options as { block?: boolean })?.block) {
+				blockEdge = this.getLink(from, to)!;
+				prevBlockWeight = this.getLinkData(from, to)!.weight;
+				this.graph.setEdgeAttribute(
+					blockEdge,
+					"weight",
+					Number.MAX_SAFE_INTEGER
+				);
+			}
+
+			const path =
+				((options as { unweighted?: boolean })?.unweighted
+					? unweighted.bidirectional(this.graph, from, to)
+					: dijkstra.bidirectional(this.graph, from, to)) || [];
+			if (path?.length > 0 && path[0] !== from) {
 				path.reverse();
 			}
-			return path;
+
+			if ((options as { block?: boolean })?.block) {
+				this.graph.setEdgeAttribute(blockEdge!, "weight", prevBlockWeight!);
+			}
+
+			return path as any;
 		} catch (error) {
 			return [];
 		}

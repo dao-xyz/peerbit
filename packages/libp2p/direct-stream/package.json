@@ -52,9 +52,12 @@
 	],
 	"devDependencies": {
 		"@dao-xyz/libp2p-test-utils": "^0.1.6",
-		"@types/yallist": "^4.0.1"
+		"@types/yallist": "^4.0.1",
+		"graphology-types": "^0.24.7"
 	},
 	"dependencies": {
+		"graphology": "^0.25.1",
+		"graphology-shortest-path": "^2.0.1",
 		"@dao-xyz/borsh": "^5.1.4",
 		"@dao-xyz/cache": "^0.0.3",
 		"@dao-xyz/peerbit-crypto": "^0.1.9",
@@ -62,8 +65,6 @@
 		"abstract-level": "^1.0.3",
 		"libp2p": "^0.42.2",
 		"memory-level": "^1.0.0",
-		"ngraph.graph": "^20.0.1",
-		"ngraph.path": "^1.4.0",
 		"uint8arrays": "^4.0.2",
 		"yallist": "^4.0.0"
 	}

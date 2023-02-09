@@ -5,7 +5,6 @@ import { waitForPeers, DirectStream } from "..";
 import { Libp2p } from "libp2p";
 import { DataMessage, Message } from "../messages";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
-import { compare } from "uint8arrays/dist/src";
 
 class TestStreamImpl extends DirectStream {
 	constructor(libp2p: Libp2p, id = "test/0.0.0") {
@@ -17,24 +16,71 @@ class TestStreamImpl extends DirectStream {
 }
 
 describe("streams", function () {
+	describe("ping", () => {
+		let session: LSession, streams: TestStreamImpl[];
+
+		beforeEach(async () => {});
+
+		afterEach(async () => {
+			streams && (await Promise.all(streams.map((s) => s.stop())));
+			await session?.stop();
+		});
+
+		afterAll(async () => {});
+
+		it("2-ping", async () => {
+			// 0 and 2 not connected
+			session = await LSession.connected(2);
+
+			streams = session.peers.map((x) => new TestStreamImpl(x));
+			await Promise.all(streams.map((x) => x.start()));
+
+			await waitForPeers(...streams);
+
+			const ping = await streams[0].ping(
+				streams[0].peers.get(streams[1].publicKeyHash)!
+			);
+			expect(ping).toBeNumber();
+		});
+
+		it("4-ping", async () => {
+			// 0 and 2 not connected
+			session = await LSession.connected(4);
+
+			streams = session.peers.map((x) => new TestStreamImpl(x));
+			await Promise.all(streams.map((x) => x.start()));
+
+			await waitForPeers(...streams);
+
+			const ping = await streams[0].ping(
+				streams[0].peers.get(streams[1].publicKeyHash)!
+			);
+			expect(ping).toBeNumber();
+		});
+	});
+
 	describe("publish", () => {
-		let session: LSession,
-			stream1: TestStreamImpl,
-			stream2: TestStreamImpl,
-			stream3: TestStreamImpl;
-		let recievedMessages1: DataMessage[];
-		let recievedMessages2: DataMessage[];
-		let recievedMessages3: DataMessage[];
+		let session: LSession;
+		let peers: {
+			stream: TestStreamImpl;
+			messages: Message[];
+			recieved: DataMessage[];
+			reachable: PublicSignKey[];
+			unrechable: PublicSignKey[];
+		}[];
 		const data = new Uint8Array([1, 2, 3]);
 
 		beforeAll(async () => {});
 
 		beforeEach(async () => {
 			// 0 and 2 not connected
-			session = await LSession.disconnected(3);
+			session = await LSession.disconnected(4);
 
 			/* 
 			┌─┐
+			│0│
+			└┬┘
+			┌▽┐
 			│1│
 			└┬┘
 			┌▽┐
@@ -45,113 +91,211 @@ describe("streams", function () {
 			└─┘
 			*/
 
-			stream1 = new TestStreamImpl(session.peers[0]);
-			stream2 = new TestStreamImpl(session.peers[1]);
-			stream3 = new TestStreamImpl(session.peers[2]);
-			recievedMessages1 = [];
-			recievedMessages2 = [];
-			recievedMessages3 = [];
-
-			stream1.addEventListener("data", (msg) => {
-				recievedMessages1.push(msg.detail);
-			});
-			stream2.addEventListener("data", (msg) => {
-				recievedMessages2.push(msg.detail);
-			});
-			stream3.addEventListener("data", (msg) => {
-				recievedMessages3.push(msg.detail);
-			});
-
-			await stream1.start();
-			await stream2.start();
-			await stream3.start();
-
+			peers = [];
+			for (const peer of session.peers) {
+				const stream = new TestStreamImpl(peer);
+				const client: {
+					stream: TestStreamImpl;
+					messages: Message[];
+					recieved: DataMessage[];
+					reachable: PublicSignKey[];
+					unrechable: PublicSignKey[];
+				} = {
+					messages: [],
+					recieved: [],
+					reachable: [],
+					unrechable: [],
+					stream,
+				};
+				peers.push(client);
+				stream.addEventListener("message", (msg) => {
+					client.messages.push(msg.detail);
+				});
+				stream.addEventListener("data", (msg) => {
+					client.recieved.push(msg.detail);
+				});
+				stream.addEventListener("peer:reachable", (msg) => {
+					client.reachable.push(msg.detail);
+				});
+				stream.addEventListener("peer:unreachable", (msg) => {
+					client.unrechable.push(msg.detail);
+				});
+				await stream.start();
+			}
 			await session.connect([
 				// behaviour seems to be more predictable if we connect after start (TODO improve startup to use existing connections in a better way)
 				[session.peers[0], session.peers[1]],
 				[session.peers[1], session.peers[2]],
+				[session.peers[2], session.peers[3]],
 			]);
 
-			await waitForPeers(stream1, stream2);
-			await waitForPeers(stream2, stream3);
+			await waitForPeers(peers[0].stream, peers[1].stream);
+			await waitForPeers(peers[1].stream, peers[2].stream);
+			await waitForPeers(peers[2].stream, peers[3].stream);
 		});
 
 		afterEach(async () => {
-			await stream1?.stop();
-			await stream2?.stop();
-			await stream3?.stop();
+			await Promise.all(peers.map((peer) => peer.stream.stop()));
 			await session.stop();
 		});
 
 		afterAll(async () => {});
 
 		it("many", async () => {
-			let done = 0;
 			let iterations = 300;
-			const listener = () => {
-				done += 1;
-			};
-			stream3.addEventListener("data", listener);
 
 			for (let i = 0; i < iterations; i++) {
 				const small = crypto.randomBytes(1e3); // 1kb
-				stream1.publish(small);
+				peers[0].stream.publish(small);
 			}
-			try {
-				await waitFor(() => done === iterations, {
-					delayInterval: 300,
-					timeout: 30 * 1000,
-				});
-			} catch (error) {
-				console.log("failed but messages done:", done);
-				await delay(1000);
-				console.log("failed but messages done:", done);
-				throw error;
-			}
-			stream3.removeEventListener("data", listener);
+			await waitFor(() => peers[2].recieved.length === iterations, {
+				delayInterval: 300,
+				timeout: 30 * 1000,
+			});
 		});
 
 		it("1->unknown", async () => {
-			await stream1.publish(data);
-			await waitFor(() => recievedMessages2.length === 1);
-			expect(new Uint8Array(recievedMessages2[0].data)).toEqual(data);
-			await waitFor(() => recievedMessages3.length === 1);
-			expect(new Uint8Array(recievedMessages3[0].data)).toEqual(data);
+			await peers[0].stream.publish(data);
+			await waitFor(() => peers[1].recieved.length === 1);
+			expect(new Uint8Array(peers[1].recieved[0].data)).toEqual(data);
+			await waitFor(() => peers[2].recieved.length === 1);
+			expect(new Uint8Array(peers[2].recieved[0].data)).toEqual(data);
 			await delay(1000); // wait some more time to make sure we dont get more messages
-			expect(recievedMessages2).toHaveLength(1);
-			expect(recievedMessages3).toHaveLength(1);
+			expect(peers[1].recieved).toHaveLength(1);
+			expect(peers[2].recieved).toHaveLength(1);
 		});
 
 		it("1->2", async () => {
-			await stream1.publish(data, { to: [stream2.libp2p.peerId] });
-			await waitFor(() => recievedMessages2.length === 1);
-			expect(new Uint8Array(recievedMessages2[0].data)).toEqual(data);
+			await peers[0].stream.publish(data, {
+				to: [peers[1].stream.libp2p.peerId],
+			});
+			await waitFor(() => peers[1].recieved.length === 1);
+			expect(new Uint8Array(peers[1].recieved[0].data)).toEqual(data);
 			await delay(1000); // wait some more time to make sure we dont get more messages
-			expect(recievedMessages2).toHaveLength(1);
-			expect(recievedMessages3).toHaveLength(0);
+			expect(peers[1].recieved).toHaveLength(1);
+			expect(peers[2].recieved).toHaveLength(0);
 		});
 
 		it("1->3", async () => {
-			await stream1.publish(data, { to: [stream3.libp2p.peerId] });
-			await waitFor(() => recievedMessages3.length === 1);
-			expect(new Uint8Array(recievedMessages3[0].data)).toEqual(data);
+			await peers[0].stream.publish(data, {
+				to: [peers[2].stream.libp2p.peerId],
+			});
+			await waitFor(() => peers[2].recieved.length === 1);
+			expect(new Uint8Array(peers[2].recieved[0].data)).toEqual(data);
 			await delay(1000); // wait some more time to make sure we dont get more messages
-			expect(recievedMessages3).toHaveLength(1);
-			expect(recievedMessages2).toHaveLength(0);
+			expect(peers[2].recieved).toHaveLength(1);
+			expect(peers[1].recieved).toHaveLength(0);
 		});
 
 		it("1->3 10mb data", async () => {
 			const bigData = crypto.randomBytes(1e7);
-			await stream1.publish(bigData, { to: [stream3.libp2p.peerId] });
-			await waitFor(() => recievedMessages3.length === 1, {
-				delayInterval: 10,
-				timeout: 50 * 1000,
+			await peers[0].stream.publish(bigData, {
+				to: [peers[2].stream.libp2p.peerId],
 			});
-			expect(new Uint8Array(recievedMessages3[0].data)).toHaveLength(
+			await waitFor(() => peers[2].recieved.length === 1, {
+				delayInterval: 10,
+				timeout: 10 * 1000,
+			});
+			expect(new Uint8Array(peers[2].recieved[0].data)).toHaveLength(
 				bigData.length
 			);
-			expect(recievedMessages3).toHaveLength(1);
-			expect(recievedMessages2).toHaveLength(0);
+			expect(peers[2].recieved).toHaveLength(1);
+			expect(peers[1].recieved).toHaveLength(0);
+		});
+		it("publishes on direct stream, even path is longer", async () => {
+			await session.connect([[session.peers[0], session.peers[2]]]);
+			await waitForPeers(peers[0].stream, peers[2].stream);
+
+			// make path 1->3 longest, to make sure we send over it directly anyways because it is a direct path
+			peers[0].stream.routes.graph.setEdgeAttribute(
+				peers[0].stream.routes.getLink(
+					peers[0].stream.publicKeyHash,
+					peers[2].stream.publicKeyHash
+				),
+				"weight",
+				1e5
+			);
+			await peers[0].stream.publish(crypto.randomBytes(1e2), {
+				to: [peers[2].stream.libp2p.peerId],
+			});
+			peers[1].messages = [];
+			await waitFor(() => peers[2].recieved.length === 1, {
+				delayInterval: 10,
+				timeout: 10 * 1000,
+			});
+			expect(
+				peers[1].messages.filter((x) => x instanceof DataMessage)
+			).toHaveLength(0);
+		});
+
+		it("will favor shortest path", async () => {
+			/* 
+			┌───┐
+			│0  │
+			└┬─┬┘
+			 │┌▽┐
+			 ││1│
+			 │└┬┘
+			┌▽─▽┐
+			│2  │
+			└┬──┘
+			┌▽┐  
+			│3│  
+			└─┘   
+			*/
+
+			await session.connect([[session.peers[0], session.peers[2]]]);
+
+			await waitForPeers(peers[0].stream, peers[2].stream);
+
+			// make path long
+			peers[0].stream.routes.graph.setEdgeAttribute(
+				peers[0].stream.routes.getLink(
+					peers[0].stream.publicKeyHash,
+					peers[2].stream.publicKeyHash
+				),
+				"weight",
+				1e5
+			);
+
+			await peers[0].stream.publish(crypto.randomBytes(1e2), {
+				to: [peers[3].stream.libp2p.peerId],
+			});
+
+			peers[1].messages = [];
+
+			await waitFor(
+				() =>
+					peers[1].messages.filter((x) => x instanceof DataMessage).length === 1
+			); // will send through peer [1] since path [0] -> [2] -> [3] directly is currently longer
+			await waitFor(() => peers[3].recieved.length === 1);
+
+			peers[1].messages = [];
+
+			// Make [0] -> [2] path short
+			peers[0].stream.routes.graph.setEdgeAttribute(
+				peers[0].stream.routes.getLink(
+					peers[0].stream.publicKeyHash,
+					peers[2].stream.publicKeyHash
+				),
+				"weight",
+				0
+			);
+			expect(
+				peers[0].stream.routes.getPath(
+					peers[0].stream.publicKeyHash,
+					peers[2].stream.publicKeyHash
+				).length
+			).toEqual(2);
+			await peers[0].stream.publish(crypto.randomBytes(1e2), {
+				to: [peers[2].stream.libp2p.peerId],
+			});
+			await waitFor(() => peers[2].recieved.length === 1, {
+				delayInterval: 10,
+				timeout: 10 * 1000,
+			});
+			expect(peers[1].messages).toHaveLength(0); // no new messages for peer 2, because sending 1 -> 3 directly is now faster
+			expect(peers[1].recieved).toHaveLength(0);
 		});
 	});
 
@@ -459,7 +603,7 @@ describe("streams", function () {
 		});
 	});
 
-	describe("lifecycle", () => {
+	describe("start/stop", () => {
 		let session: LSession, stream1: TestStreamImpl, stream2: TestStreamImpl;
 
 		beforeEach(async () => {

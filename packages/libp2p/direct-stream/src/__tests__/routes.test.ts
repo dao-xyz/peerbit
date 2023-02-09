@@ -39,14 +39,50 @@ describe("routes", () => {
 	beforeEach(() => {
 		routes = new Routes("_");
 		set();
-		expect(routes.addLink(a, b)).toContainAllValues([]);
-		expect(routes.addLink(b, c)).toContainAllValues([]);
-		expect(routes.addLink(x, y)).toContainAllValues([]);
+		expect(routes.addLink(a, b, 1)).toContainAllValues([]);
+		expect(routes.addLink(b, c, 1)).toContainAllValues([]);
+		expect(routes.addLink(x, y, 1)).toContainAllValues([]);
 	});
 	describe("path", () => {
 		it("will find path", () => {
 			const path = routes.getPath(a, c);
-			expect(path.map((x) => x.id.toString())).toEqual([a, b, c]);
+			expect(path).toEqual([a, b, c]);
+		});
+
+		it("will find shortest path", () => {
+			let path = routes.getPath(a, c);
+			expect(path).toEqual([a, b, c]);
+
+			// add a longer path directly from a to c
+			expect(routes.addLink(a, c, 2.00001)).toContainAllValues([]);
+
+			// shortest path is still the same
+			path = routes.getPath(a, c);
+			expect(path).toEqual([a, b, c]);
+
+			// Update the weight tobeless than 2
+			expect(routes.addLink(a, c, 1.99999)).toContainAllValues([]);
+			path = routes.getPath(a, c);
+			expect(path).toEqual([a, c]);
+		});
+
+		it("can block path", () => {
+			let path = routes.getPath(a, c);
+			expect(path).toEqual([a, b, c]);
+
+			// Update the weight tobeless than 2
+			expect(routes.addLink(a, c, 0)).toContainAllValues([]);
+			path = routes.getPath(a, c);
+			expect(path).toEqual([a, c]);
+
+			// shortest path is still the same
+			let block = c;
+			path = routes.getPath(a, c, { block });
+			expect(path).toEqual([a, b, c]);
+
+			// Make sure notthing has changed
+			path = routes.getPath(a, c);
+			expect(path).toEqual([a, c]);
 		});
 
 		it("missing node", () => {
@@ -75,13 +111,13 @@ describe("routes", () => {
 		});
 
 		it("symmetric", () => {
-			routes.addLink(b, a);
+			routes.addLink(b, a, 1);
 			expect(routes.deleteLink(b, a)).toEqual([]); // netiher a or b was reachablee (because of origin arg)
 			expect(routes.getPath(a, c)).toHaveLength(0);
 		});
 
 		it("subgraph 1", () => {
-			expect(routes.addLink(a, x, x)).toEqual([a, b, c]);
+			expect(routes.addLink(a, x, 1, x)).toEqual([a, b, c]);
 			expect(routes.getPath(x, c).length === 4);
 			expect(routes.linksCount).toEqual(4);
 
@@ -91,7 +127,7 @@ describe("routes", () => {
 		});
 
 		it("subgraph 2", () => {
-			expect(routes.addLink(a, x, x)).toEqual([a, b, c]);
+			expect(routes.addLink(a, x, 1, x)).toEqual([a, b, c]);
 			expect(routes.getPath(x, c).length === 4);
 			expect(routes.linksCount).toEqual(4);
 
@@ -102,7 +138,7 @@ describe("routes", () => {
 		});
 
 		it("subgraph 3", () => {
-			expect(routes.addLink(a, x, y)).toEqual([a, b, c]);
+			expect(routes.addLink(a, x, 1, y)).toEqual([a, b, c]);
 			expect(routes.getPath(x, c).length === 4);
 			expect(routes.linksCount).toEqual(4);
 

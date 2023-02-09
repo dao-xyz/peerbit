@@ -16,7 +16,15 @@ import { Libp2p } from "libp2p";
 import { Routes } from "./routes.js";
 
 import { PeerMap } from "./peer-map.js";
-import { Hello, DataMessage, Message, Goodbye } from "./messages.js";
+import {
+	Hello,
+	DataMessage,
+	Message,
+	Goodbye,
+	Ping,
+	PingPong,
+	Pong,
+} from "./messages.js";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import {
 	getKeypairFromPeerId,
@@ -241,6 +249,7 @@ export abstract class DirectStream<
 	 */
 	public peers: PeerMap<PeerStreams>;
 	public peerKeyHashToPublicKey: Map<string, PublicSignKey>;
+	public peerIdToPublicKey: Map<string, PublicSignKey>;
 	public routes: Routes;
 	/**
 	 * If router can relay received messages, even if not subscribed
@@ -261,7 +270,8 @@ export abstract class DirectStream<
 	private readonly maxInboundStreams: number;
 	private readonly maxOutboundStreams: number;
 	private topology: any;
-	private startConnections: Set<string> = new Set();
+	private _pingWaiting: Cache<() => void> = new Cache({ max: 1e4 }); // 1e4 max outgoing ping awaits, TODO choose this lim correctly
+
 	constructor(
 		libp2p: Libp2p,
 		multicodecs: string[],
@@ -296,6 +306,7 @@ export abstract class DirectStream<
 		this.maxOutboundStreams = maxOutboundStreams;
 		this.seenCache = new Cache({ max: 1e3, ttl: 10 * 60 * 1e3 });
 		this.peerKeyHashToPublicKey = new Map();
+		this.peerIdToPublicKey = new Map();
 		this._onIncomingStream = this._onIncomingStream.bind(this);
 		this.onPeerConnected = this.onPeerConnected.bind(this);
 		this.onPeerDisconnected = this.onPeerDisconnected.bind(this);
@@ -322,9 +333,6 @@ export abstract class DirectStream<
 
 		// register protocol with topology
 		// Topology callbacks called on connection manager changes
-		this.startConnections = new Set([
-			...this.libp2p.getConnections().map((conn) => conn.id),
-		]);
 
 		this.topology = createTopology({
 			onConnect: this.onPeerConnected,
@@ -374,6 +382,10 @@ export abstract class DirectStream<
 			peerStreams.close();
 		}
 
+		this._pingWaiting.map.forEach((v) => {
+			v.value && v.value(); //  resolve all timeouts
+		});
+		this._pingWaiting.clear();
 		this.queue.clear();
 		this.hellosToReplay.clear();
 		this.earlyGoodbyes.clear();
@@ -382,6 +394,7 @@ export abstract class DirectStream<
 		this.started = false;
 		this.routes.clear();
 		this.peerKeyHashToPublicKey.clear();
+		this.peerIdToPublicKey.clear();
 		logger.debug("stopped");
 	}
 
@@ -438,8 +451,6 @@ export abstract class DirectStream<
 				stream = await conn.newStream(this.multicodecs);
 				if (stream.stat.protocol == null) {
 					stream.abort(new Error("Stream was not multiplexed"));
-
-					console.log("here");
 					return;
 				}
 			} catch (error) {
@@ -451,9 +462,19 @@ export abstract class DirectStream<
 
 			const peer = this.addPeer(peerId, peerKey, stream.stat.protocol);
 			await peer.attachOutboundStream(stream);
-			this.addRouteConnection(this.publicKey, peerKey);
 
+			// Add connection with assumed large latency
+			this.addRouteConnection(this.publicKey, peerKey, Number.MAX_SAFE_INTEGER);
+
+			this.peerIdToPublicKey.set(peerId.toString(), peerKey);
 			const promises: Promise<any>[] = [];
+
+			// Get accurate latency
+			promises.push(
+				this.ping(peer).then((latency) => {
+					this.addRouteConnection(this.publicKey, peerKey, latency);
+				})
+			);
 
 			// Say hello
 			promises.push(
@@ -499,17 +520,21 @@ export abstract class DirectStream<
 		}
 	}
 
-	private addRouteConnection(from: PublicSignKey, to: PublicSignKey) {
+	private addRouteConnection(
+		from: PublicSignKey,
+		to: PublicSignKey,
+		latency: number
+	) {
 		this.peerKeyHashToPublicKey.set(from.hashcode(), from);
 		this.peerKeyHashToPublicKey.set(to.hashcode(), to);
-		this.routes.addLink(from.hashcode(), to.hashcode()).forEach((added) => {
-			const key = this.peerKeyHashToPublicKey.get(added);
-			if (key?.equals(this.publicKey) === false) {
-				this.onPeerReachable(key!);
-			} else {
-				const x = 123;
-			}
-		});
+		this.routes
+			.addLink(from.hashcode(), to.hashcode(), latency)
+			.forEach((added) => {
+				const key = this.peerKeyHashToPublicKey.get(added);
+				if (key?.equals(this.publicKey) === false) {
+					this.onPeerReachable(key!);
+				}
+			});
 	}
 
 	removeRouteConnection(from: PublicSignKey, to: PublicSignKey) {
@@ -536,8 +561,8 @@ export abstract class DirectStream<
 		if (!this.publicKey.equals(peerKey)) {
 			this.removeRouteConnection(this.publicKey, peerKey);
 		}
+		this.peerIdToPublicKey.delete(peerId.toString());
 
-		this.startConnections.clear();
 		// Notify network
 		const earlyGoodBye = this.earlyGoodbyes.get(peerKeyHash);
 		if (earlyGoodBye) {
@@ -743,6 +768,10 @@ export abstract class DirectStream<
 			await this.onHello(from, peerStream, message);
 		} else if (message instanceof Goodbye) {
 			await this.onGoodbye(from, peerStream, message);
+		} else if (message instanceof PingPong) {
+			await this.onPing(from, peerStream, message);
+		} else {
+			throw new Error("Unsupported");
 		}
 	}
 
@@ -786,7 +815,7 @@ export abstract class DirectStream<
 	}
 	async onHello(from: PeerId, peerStream: PeerStreams, message: Hello) {
 		if (!(await message.verify(false))) {
-			logger.warn("Recieved message with invalid signature or timestamp");
+			logger.warn("Recieved hello message that did not verify");
 			return false;
 		}
 
@@ -800,9 +829,13 @@ export abstract class DirectStream<
 		for (let i = 0; i < signatures.signatures.length - 1; i++) {
 			this.addRouteConnection(
 				signatures.signatures[i].publicKey,
-				signatures.signatures[i + 1].publicKey
+				signatures.signatures[i + 1].publicKey,
+				message.networkInfo.pingLatencies[0]
 			);
 		}
+
+		const latency = await this.ping(peerStream); // ping the sender
+		message.networkInfo.pingLatencies.push(latency);
 
 		await message.sign(this.sign); // sign it so othere peers can now I have seen it (and can build a network graph from trace info)
 
@@ -845,12 +878,14 @@ export abstract class DirectStream<
 			this.earlyGoodbyes.set(peerKeyHash, message);
 		} else {
 			const signatures = message.signatures;
+			/*  TODO Should we update routes on goodbye?
 			for (let i = 1; i < signatures.signatures.length - 1; i++) {
 				this.addRouteConnection(
 					signatures.signatures[i].publicKey,
 					signatures.signatures[i + 1].publicKey
 				);
-			}
+			} 
+			*/
 
 			//let neighbour = message.trace[1] || this.peerIdStr;
 			this.removeRouteConnection(
@@ -877,6 +912,58 @@ export abstract class DirectStream<
 			await this.relayMessage(from, message);
 		}
 		return true;
+	}
+
+	async onPing(from: PeerId, peerStream: PeerStreams, message: PingPong) {
+		if (message instanceof Ping) {
+			// respond with pong
+			await this.publishMessage(
+				this.libp2p.peerId,
+				new Pong(message.pingBytes),
+				[peerStream]
+			);
+		} else if (message instanceof Pong) {
+			// Let the (waiting) thread know that we have recieved the pong
+			const resolver = this._pingWaiting.get(
+				await sha256Base64(message.pingBytes)
+			);
+			if (resolver) {
+				resolver();
+			}
+		} else {
+			throw new Error("Unsupported");
+		}
+	}
+
+	async ping(stream: PeerStreams): Promise<number> {
+		return new Promise<number>((resolve, reject) => {
+			const ping = new Ping();
+			sha256Base64(ping.pingBytes)
+				.then((hash) => {
+					const start = +new Date();
+					const timeout = setTimeout(() => {
+						this._pingWaiting.del(hash);
+						reject(new Error("Ping timed out"));
+					}, 10000);
+					const resolver = () => {
+						const end = +new Date();
+						this._pingWaiting.del(hash);
+						clearTimeout(timeout);
+						resolve(end - start);
+					};
+					this._pingWaiting.add(hash, resolver);
+					this.publishMessage(this.libp2p.peerId, ping, [stream]).catch(
+						(err) => {
+							this._pingWaiting.del(hash);
+							clearTimeout(timeout);
+							reject(err);
+						}
+					);
+				})
+				.catch((err) => {
+					reject(err);
+				});
+		});
 	}
 
 	/**
@@ -984,19 +1071,26 @@ export abstract class DirectStream<
 			if (message instanceof DataMessage && message.to.length > 0) {
 				peers = [];
 				for (const to of message.to) {
-					try {
-						const path = this.routes.getPath(this.publicKeyHash, to);
+					const directStream = this.peers.get(to);
+					if (directStream) {
+						// always favor direct stream, even path seems longer
+						peers.push(directStream);
+						continue;
+					} else {
+						const path = this.routes.getPath(this.publicKeyHash, to, {
+							block:
+								from !== this.libp2p.peerId
+									? this.peerIdToPublicKey.get(from.toString())!.hashcode()
+									: undefined,
+						});
 						if (path && path.length > 0) {
-							const stream = this.peers.get(path[1].id.toString());
+							const stream = this.peers.get(path[1]);
 							if (stream) {
 								peers.push(stream);
 								continue;
 							}
 						}
-					} catch (error) {
-						// Can't find path
 					}
-
 					// we can't find path, send message to all peers
 					peers = this.peers;
 					break;
@@ -1096,6 +1190,20 @@ export const waitForPeers = async (...libs: DirectStream<any>[]) => {
 					continue;
 				}
 				if (!libs[i].peers.has(libs[j].publicKeyHash)) {
+					return false;
+				}
+				if (
+					!libs[i].routes.hasLink(libs[i].publicKeyHash, libs[j].publicKeyHash)
+				) {
+					return false;
+				}
+
+				if (!libs[j].peers.has(libs[i].publicKeyHash)) {
+					return false;
+				}
+				if (
+					!libs[j].routes.hasLink(libs[j].publicKeyHash, libs[i].publicKeyHash)
+				) {
 					return false;
 				}
 			}
