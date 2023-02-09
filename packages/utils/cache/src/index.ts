@@ -1,8 +1,9 @@
 // Fifo
 import yallist from "yallist";
 
+export type CacheData<T> = { value?: T | null; time: number };
 export class Cache<T = undefined> {
-	private map: Map<string, { value?: T | null; time: number }>;
+	private _map: Map<string, CacheData<T>>;
 	private deleted: Set<string>;
 	private list: yallist<string>;
 	max: number;
@@ -20,7 +21,11 @@ export class Cache<T = undefined> {
 		if (this.deleted.has(key)) {
 			return false;
 		}
-		return this.map.has(key);
+		return this._map.has(key);
+	}
+
+	get map(): Map<string, CacheData<T>> {
+		return this._map;
 	}
 
 	get(key: string): T | null | undefined {
@@ -28,7 +33,7 @@ export class Cache<T = undefined> {
 		if (this.deleted.has(key)) {
 			return undefined;
 		}
-		return this.map.get(key)?.value;
+		return this._map.get(key)?.value;
 	}
 
 	trim(time = +new Date()) {
@@ -36,13 +41,13 @@ export class Cache<T = undefined> {
 		let outOfDate =
 			peek &&
 			this.ttl !== undefined &&
-			this.map.get(peek.value)!.time < time - this.ttl;
+			this._map.get(peek.value)!.time < time - this.ttl;
 		while (outOfDate || this.list.length > this.max) {
 			const key = this.list.shift();
 			if (key !== undefined) {
 				outOfDate =
-					this.ttl !== undefined && this.map.get(key)!.time < time - this.ttl;
-				this.map.delete(key);
+					this.ttl !== undefined && this._map.get(key)!.time < time - this.ttl;
+				this._map.delete(key);
 				this.deleted.delete(key);
 			} else {
 				break;
@@ -57,15 +62,15 @@ export class Cache<T = undefined> {
 	add(key: string, value?: T) {
 		const time = +new Date();
 		this.trim(time);
-		if (!this.map.has(key)) {
+		if (!this._map.has(key)) {
 			this.list.push(key);
 		}
-		this.map.set(key, { time, value: value ?? null });
+		this._map.set(key, { time, value: value ?? null });
 		this.deleted.delete(key);
 	}
 	clear() {
 		this.list = yallist.create();
-		this.map = new Map();
+		this._map = new Map();
 		this.deleted = new Set();
 	}
 
