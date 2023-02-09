@@ -59,8 +59,6 @@
 		"@libp2p/interfaces": "^3.3.1",
 		"abstract-level": "^1.0.3",
 		"libp2p": "^0.42.2",
-		"memory-level": "^1.0.0",
-		"ngraph.graph": "^20.0.1",
-		"ngraph.path": "^1.4.0"
+		"memory-level": "^1.0.0"
 	}
 }
