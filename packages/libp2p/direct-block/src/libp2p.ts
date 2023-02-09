@@ -11,7 +11,7 @@ import { CID } from "multiformats/cid";
 import { DirectStream, DataMessage } from "@dao-xyz/libp2p-direct-stream";
 import * as Block from "multiformats/block";
 
-export class BlockMessage { }
+export class BlockMessage {}
 
 @variant(0)
 export class BlockRequest extends BlockMessage {
