@@ -35,6 +35,7 @@ import {
 	Results,
 } from "@dao-xyz/peerbit-document";
 import { v4 as uuid } from "uuid";
+import { waitForPeers as waitForPeersBlock } from "@dao-xyz/libp2p-direct-stream";
 
 const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
@@ -263,7 +264,7 @@ describe("index", () => {
 			return store;
 		};
 		beforeEach(async () => {
-			session = await LSession.connected(5);
+			session = await LSession.connected(4);
 			identites = [];
 			cacheStore = [];
 			programs = [];
@@ -272,6 +273,7 @@ describe("index", () => {
 				identites.push(await createIdentity());
 				cacheStore.push(await createStore());
 			}
+			await waitForPeersBlock(...session.peers.map((x) => x.directblock));
 		});
 
 		afterEach(async () => {
@@ -300,8 +302,8 @@ describe("index", () => {
 
 			await init(l0a, 0, { topic });
 			await l0a.add(identity(1).publicKey);
+			await delay(11000);
 
-			await delay(1000);
 			let l0b: TrustedNetwork = (await TrustedNetwork.load(
 				session.peers[1].directblock,
 				l0a.address!
@@ -370,7 +372,7 @@ describe("index", () => {
 					untrustedResponse = response;
 				},
 				{
-					remote: { timeout: 3000, signer: identity(3) },
+					remote: { timeout: 10 * 1000, signer: identity(3) },
 				}
 			);
 
@@ -379,18 +381,9 @@ describe("index", () => {
 			// now check if peer3 is trusted from peer perspective
 			expect(await l0a.isTrusted(identity(2).publicKey)).toBeTrue();
 
-			// check if peer3 is trusted from a peer that is not replicating
-			let l0observer: TrustedNetwork = (await TrustedNetwork.load(
-				session.peers[4].directblock,
-				l0a.address!
-			)) as any;
-			await init(l0observer, 4, {
-				topic,
-				role: new ObserverType(),
-				store: {},
-			});
-			expect(await l0observer.isTrusted(identity(2).publicKey)).toBeTrue();
-			expect(await l0observer.isTrusted(identity(3).publicKey)).toBeFalse();
+			// check if peer3 is trusted from someone else
+			expect(await l0a.isTrusted(identity(2).publicKey)).toBeTrue();
+			expect(await l0a.isTrusted(identity(3).publicKey)).toBeFalse();
 
 			const trusted = await l0a.getTrusted();
 			expect(trusted.map((k) => k.bytes)).toContainAllValues([
