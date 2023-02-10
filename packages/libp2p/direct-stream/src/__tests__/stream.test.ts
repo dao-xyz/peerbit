@@ -2,9 +2,12 @@ import { LSession } from "@dao-xyz/libp2p-test-utils";
 import { waitFor, delay } from "@dao-xyz/peerbit-time";
 import crypto from "crypto";
 import { waitForPeers, DirectStream } from "..";
-import { Libp2p } from "libp2p";
+import { createLibp2p, Libp2p } from "libp2p";
 import { DataMessage, Message } from "../messages";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import { noise } from "@dao-xyz/libp2p-noise";
+import { mplex } from "@libp2p/mplex";
+import { tcp } from "@libp2p/tcp";
 
 class TestStreamImpl extends DirectStream {
 	constructor(libp2p: Libp2p, id = "test/0.0.0") {
@@ -19,14 +22,14 @@ describe("streams", function () {
 	describe("ping", () => {
 		let session: LSession, streams: TestStreamImpl[];
 
-		beforeEach(async () => {});
+		beforeEach(async () => { });
 
 		afterEach(async () => {
 			streams && (await Promise.all(streams.map((s) => s.stop())));
 			await session?.stop();
 		});
 
-		afterAll(async () => {});
+		afterAll(async () => { });
 
 		it("2-ping", async () => {
 			// 0 and 2 not connected
@@ -70,7 +73,7 @@ describe("streams", function () {
 		}[];
 		const data = new Uint8Array([1, 2, 3]);
 
-		beforeAll(async () => {});
+		beforeAll(async () => { });
 
 		beforeEach(async () => {
 			// 0 and 2 not connected
@@ -139,7 +142,7 @@ describe("streams", function () {
 			await session.stop();
 		});
 
-		afterAll(async () => {});
+		afterAll(async () => { });
 
 		it("many", async () => {
 			let iterations = 300;
@@ -692,6 +695,97 @@ describe("streams", function () {
 			await waitFor(() => !!stream2.peers.size);
 			await waitFor(() => !!stream1b.peers.size);
 			await waitFor(() => !!stream2b.peers.size);
+		});
+	});
+
+	describe("concurrency", () => {
+		let session: LSession, streamA1: TestStreamImpl, streamA2: TestStreamImpl, streamB: TestStreamImpl;
+
+		beforeEach(async () => {
+			session = await LSession.connected(2);
+
+			const clone = await createLibp2p({
+				peerId: session.peers[0].peerId,
+				connectionManager: {
+					autoDial: false,
+				},
+				addresses: {
+					listen: ["/ip4/127.0.0.1/tcp/0"],
+				},
+				transports: [tcp()],
+				connectionEncryption: [noise()],
+				streamMuxers: [mplex()],
+			});
+			session.peers.unshift(clone)
+		});
+
+		afterEach(async () => {
+			await session.stop();
+			await streamA1?.stop();
+			await streamA2?.stop();
+			await streamB?.stop();
+
+		});
+
+		it("can broadcast between peers", async () => {
+			streamA1 = new TestStreamImpl(session.peers[1]);
+			streamA1.start()
+
+
+			streamB = new TestStreamImpl(session.peers[2]);
+			streamB.start()
+
+			/* 	const broadcast = (from: TestStreamImpl, to: TestStreamImpl) => {
+					const fn = from.processMessage.bind(from);
+					from.processMessage = (from, msg) => {
+						to.processMessageBR(from, msg)
+						return fn(from, msg)
+					}
+				}
+				await delay(5000)
+	
+				streamA2 = new TestStreamImpl(session.peers[1]);
+				streamA2.start()
+				await delay(5000)
+	
+	
+				broadcast(streamA1, streamA2);
+				broadcast(streamA2, streamA1);
+	 */
+
+
+			try {
+				await waitFor(() => streamA1.peers.size/*  + streamA2.peers.size */ === 1);
+				await waitFor(() => streamB.peers.size === 1);
+			} catch (error) {
+				const qwe = 123;
+			}
+			const t = 123;
+
+			await delay(5000)
+			const aasdbc = 123;
+			streamA2 = new TestStreamImpl(session.peers[0]);
+			await streamA2.start()
+
+
+			await session.connect([[session.peers[0], session.peers[2]]])
+			await delay(5000)
+			await streamA2.stop();
+			await delay(5000)
+
+			const abc = 123;
+
+			/* stream2 = new TestStreamImpl(session.peers[1]);
+			stream1b = new TestStreamImpl(session.peers[0], "alt");
+			stream2b = new TestStreamImpl(session.peers[1], "alt");
+			stream1.start();
+			stream2.start();
+			stream1b.start();
+			stream2b.start();
+			await waitFor(() => !!stream1.peers.size);
+			await waitFor(() => !!stream2.peers.size);
+			await waitFor(() => !!stream1b.peers.size);
+			await waitFor(() => !!stream2b.peers.size); */
 		});
 	});
 });

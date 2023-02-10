@@ -265,5 +265,7 @@ export class Routes {
 	}
 	clear() {
 		this.graph.clear();
+		this.graph.clearEdges();
+
 	}
 }

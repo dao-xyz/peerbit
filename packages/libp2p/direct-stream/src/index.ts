@@ -698,9 +698,9 @@ export abstract class DirectStream<
 		} catch (err: any) {
 			logger.error(
 				"error on processing messages to id: " +
-					peerStreams.peerId.toString() +
-					". " +
-					err?.message
+				peerStreams.peerId.toString() +
+				". " +
+				err?.message
 			);
 			this.onPeerDisconnected(peerStreams.peerId);
 		}
@@ -726,7 +726,7 @@ export abstract class DirectStream<
 			await this.queue
 				.add(async () => {
 					try {
-						await this.processMessage(from, peerStreams, message);
+						await this.processMessage(from, message);
 					} catch (err: any) {
 						logger.error(err);
 					}
@@ -737,12 +737,18 @@ export abstract class DirectStream<
 		return true;
 	}
 
+	async processMessage(
+		from: PeerId,
+		msg: Uint8ArrayList
+	) {
+		return this.processMessageBR(from, msg)
+	}
+
 	/**
 	 * Handles a message from a peer
 	 */
-	async processMessage(
+	async processMessageBR(
 		from: PeerId,
-		peerStream: PeerStreams,
 		msg: Uint8ArrayList
 	) {
 		if (!from.publicKey) {
@@ -763,13 +769,13 @@ export abstract class DirectStream<
 		);
 
 		if (message instanceof DataMessage) {
-			await this.onDataMessage(from, peerStream, message);
+			await this.onDataMessage(from, message);
 		} else if (message instanceof Hello) {
-			await this.onHello(from, peerStream, message);
+			await this.onHello(from, message);
 		} else if (message instanceof Goodbye) {
-			await this.onGoodbye(from, peerStream, message);
+			await this.onGoodbye(from, message);
 		} else if (message instanceof PingPong) {
-			await this.onPing(from, peerStream, message);
+			await this.onPing(from, message);
 		} else {
 			throw new Error("Unsupported");
 		}
@@ -777,7 +783,6 @@ export abstract class DirectStream<
 
 	async onDataMessage(
 		from: PeerId,
-		peerStream: PeerStreams,
 		message: DataMessage
 	) {
 		const isFromSelf = this.libp2p.peerId.equals(from);
@@ -813,7 +818,7 @@ export abstract class DirectStream<
 		await this.relayMessage(from, message);
 		return true;
 	}
-	async onHello(from: PeerId, peerStream: PeerStreams, message: Hello) {
+	async onHello(from: PeerId, message: Hello) {
 		if (!(await message.verify(false))) {
 			logger.warn("Recieved hello message that did not verify");
 			return false;
@@ -834,7 +839,11 @@ export abstract class DirectStream<
 			);
 		}
 
-		const latency = await this.ping(peerStream); // ping the sender
+		const stream = this.peers.get(getPublicKeyFromPeerId(from).hashcode());
+		if (!stream) {
+			return;
+		}
+		const latency = await this.ping(stream); // ping the sender
 		message.networkInfo.pingLatencies.push(latency);
 
 		await message.sign(this.sign); // sign it so othere peers can now I have seen it (and can build a network graph from trace info)
@@ -860,7 +869,7 @@ export abstract class DirectStream<
 		return true;
 	}
 
-	async onGoodbye(from: PeerId, peerStream: PeerStreams, message: Goodbye) {
+	async onGoodbye(from: PeerId, message: Goodbye) {
 		if (!(await message.verify(false))) {
 			logger.warn("Recieved message with invalid signature or timestamp");
 			return false;
@@ -914,13 +923,18 @@ export abstract class DirectStream<
 		return true;
 	}
 
-	async onPing(from: PeerId, peerStream: PeerStreams, message: PingPong) {
+	async onPing(from: PeerId, message: PingPong) {
 		if (message instanceof Ping) {
 			// respond with pong
+			const stream = this.peers.get(getPublicKeyFromPeerId(from).hashcode()!) // await waitFor(() => this.peerIdToPublicKey.get(from.toString()) && this.peers.get(this.peerIdToPublicKey.get(from.toString())!.hashcode()))
+			if (!stream) {
+				//throw new Error("X")
+				return;
+			}
 			await this.publishMessage(
 				this.libp2p.peerId,
 				new Pong(message.pingBytes),
-				[peerStream]
+				[stream]
 			);
 		} else if (message instanceof Pong) {
 			// Let the (waiting) thread know that we have recieved the pong
@@ -1012,8 +1026,8 @@ export abstract class DirectStream<
 					to instanceof PublicSignKey
 						? to.hashcode()
 						: typeof to === "string"
-						? to
-						: getPublicKeyFromPeerId(to).hashcode();
+							? to
+							: getPublicKeyFromPeerId(to).hashcode();
 			}
 		} else {
 			toHashes = [];
@@ -1099,6 +1113,9 @@ export abstract class DirectStream<
 				peers = this.peers;
 			}
 		} else {
+			if (to?.[0] === undefined) {
+				const q0 = 123;
+			}
 			peers = to;
 		}
 		if (message instanceof DataMessage) {
@@ -1201,9 +1218,7 @@ export const waitForPeers = async (...libs: DirectStream<any>[]) => {
 				if (!libs[j].peers.has(libs[i].publicKeyHash)) {
 					return false;
 				}
-				if (
-					!libs[j].routes.hasLink(libs[j].publicKeyHash, libs[i].publicKeyHash)
-				) {
+				if (!libs[j].routes.hasLink(libs[j].publicKeyHash, libs[i].publicKeyHash)) {
 					return false;
 				}
 			}
