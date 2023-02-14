@@ -18,6 +18,7 @@ import {
 } from "@dao-xyz/peerbit-program";
 import { DocumentIndex } from "../document-index.js";
 import { v4 as uuid } from "uuid";
+import crypto from "crypto";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
 // put x 11,456 ops/sec ±3.08% (77 runs sampled)
@@ -33,11 +34,15 @@ class Document {
 	@field({ type: option("u64") })
 	number?: bigint;
 
+	@field({ type: Uint8Array })
+	bytes: Uint8Array;
+
 	constructor(opts: Document) {
 		if (opts) {
 			this.id = opts.id;
 			this.name = opts.name;
 			this.number = opts.number;
+			this.bytes = opts.bytes;
 		}
 	}
 }
@@ -65,7 +70,6 @@ const session = await LSession.connected(peersCount);
 for (let i = 0; i < peersCount; i++) {
 	cacheStores.push(await createStore());
 }
-const stores: TestStore[] = [];
 const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
 	return {
@@ -75,59 +79,60 @@ const createIdentity = async () => {
 };
 
 // Create store
-for (let i = 0; i < peersCount; i++) {
-	const store =
-		i > 0
-			? (await TestStore.load<TestStore>(
-					session.peers[i].directblock,
-					stores[0].address!
-			  ))!
-			: new TestStore({
-					docs: new Documents<Document>({
-						index: new DocumentIndex({
-							indexBy: "id",
-						}),
-					}),
-			  });
-	const keypair = await X25519Keypair.create();
-	await store.init(session.peers[i], await createIdentity(), {
-		role: i === 0 ? new ReplicatorType() : new ObserverType(),
-		store: {
-			...DefaultOptions,
-			encryption: {
-				getEncryptionKeypair: () => keypair,
-				getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
-					for (let i = 0; i < publicKeys.length; i++) {
-						if (publicKeys[i].equals((keypair as X25519Keypair).publicKey)) {
-							return {
-								index: i,
-								keypair: keypair as Ed25519Keypair | X25519Keypair,
-							};
-						}
+const store = new TestStore({
+	docs: new Documents<Document>({
+		index: new DocumentIndex({
+			indexBy: "id",
+		}),
+	}),
+});
+const keypair = await X25519Keypair.create();
+await store.init(session.peers[0], await createIdentity(), {
+	role: new ReplicatorType(),
+	store: {
+		...DefaultOptions,
+		encryption: {
+			getEncryptionKeypair: () => keypair,
+			getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
+				for (let i = 0; i < publicKeys.length; i++) {
+					if (publicKeys[i].equals((keypair as X25519Keypair).publicKey)) {
+						return {
+							index: i,
+							keypair: keypair as Ed25519Keypair | X25519Keypair,
+						};
 					}
-				},
+				}
 			},
-			trim: { type: "length", to: 100 },
-			resolveCache: () =>
-				new Cache(cacheStores[i], { batch: { interval: 100 } }),
 		},
+		trim: { type: "length", to: 100 },
+		resolveCache: () => new Cache(cacheStores[0], { batch: { interval: 100 } }),
+	},
+});
+
+const resolver: Map<string, () => void> = new Map();
+store.docs.events.addEventListener("change", (change) => {
+	change.detail.added.forEach((doc) => {
+		resolver.get(doc.id)!();
+		resolver.delete(doc.id);
 	});
-	stores.push(store);
-}
+});
 
 const suite = new B.Suite();
 suite
 	.add("put", {
 		fn: async (deferred) => {
-			const writeStore = stores[0];
 			const doc = new Document({
 				id: uuid(),
 				name: "hello",
 				number: 1n,
+				bytes: crypto.randomBytes(1200),
 			});
-			await writeStore.docs.put(doc);
-			deferred.resolve();
+			resolver.set(doc.id, () => {
+				deferred.resolve();
+			});
+			await store.docs.put(doc);
 		},
+
 		defer: true,
 	})
 	.on("cycle", (event: any) => {
@@ -137,8 +142,7 @@ suite
 		throw err;
 	})
 	.on("complete", async function (this: any, ...args: any[]) {
-		await Promise.all(stores.map((x) => x.drop()));
-		await Promise.all(cacheStores.map((x) => x.close()));
+		await store.drop();
 		await session.stop();
 	})
 	.run();
