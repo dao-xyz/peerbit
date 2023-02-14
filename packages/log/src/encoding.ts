@@ -1,4 +1,4 @@
-import { Constructor, deserialize, serialize } from "@dao-xyz/borsh";
+import { AbstractType, deserialize, serialize } from "@dao-xyz/borsh";
 import stringify from "json-stringify-deterministic";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -16,7 +16,7 @@ export const JSON_ENCODING: Encoding<any> = {
 	},
 };
 
-export const BORSH_ENCODING = <T>(clazz: Constructor<T>): Encoding<T> => {
+export const BORSH_ENCODING = <T>(clazz: AbstractType<T>): Encoding<T> => {
 	return {
 		decoder: (bytes: Uint8Array) => deserialize(bytes, clazz),
 		encoder: (data: any) => serialize(data),

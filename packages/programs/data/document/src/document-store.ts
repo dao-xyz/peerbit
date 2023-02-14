@@ -5,7 +5,7 @@ import {
 	PutOperation,
 } from "./document-index.js";
 import {
-	Constructor,
+	AbstractType,
 	deserialize,
 	field,
 	serialize,
@@ -59,7 +59,7 @@ export class Documents<T> extends ComposableProgram {
 	@field({ type: LogIndex })
 	_logIndex: LogIndex;
 
-	_clazz?: Constructor<T>;
+	_clazz?: AbstractType<T>;
 
 	_valueEncoding: Encoding<T>;
 
@@ -96,7 +96,7 @@ export class Documents<T> extends ComposableProgram {
 	}
 
 	async setup(options: {
-		type: Constructor<T>;
+		type: AbstractType<T>;
 		canRead?: CanRead;
 		canAppend?: CanAppend<Operation<T>>;
 		canOpen?: (program: Program) => Promise<boolean>;

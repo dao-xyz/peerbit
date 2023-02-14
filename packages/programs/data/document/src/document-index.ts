@@ -1,4 +1,4 @@
-import { Constructor, field, serialize, variant } from "@dao-xyz/borsh";
+import { AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
 import { asString, Keyable } from "./utils.js";
 import { BORSH_ENCODING, Encoding, Entry } from "@dao-xyz/peerbit-log";
 import { equals } from "@dao-xyz/uint8arrays";
@@ -109,7 +109,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 
 	_sync: (result: Results<T>) => Promise<void>;
 	_index: Map<string, IndexedValue<T>>;
-	type: Constructor<T>;
+	type: AbstractType<T>;
 	_store: Store<Operation<T>>;
 
 	constructor(properties: {
@@ -122,7 +122,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 	}
 
 	async setup(properties: {
-		type: Constructor<T>;
+		type: AbstractType<T>;
 		store: Store<Operation<T>>;
 		canRead: CanRead;
 		sync: (result: Results<T>) => Promise<void>;
