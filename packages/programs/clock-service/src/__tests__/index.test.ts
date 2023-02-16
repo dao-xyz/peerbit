@@ -51,6 +51,7 @@ describe("clock", () => {
 		});
 		await responder.init(session.peers[0], responderIdentity, {
 			role: new ReplicatorType(),
+			replicators: () => undefined,
 			store: {
 				cacheId: "id",
 				resolveCache: () => Promise.resolve(new Cache(new MemoryLevel())),

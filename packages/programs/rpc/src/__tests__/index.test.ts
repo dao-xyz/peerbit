@@ -9,7 +9,15 @@ import {
 	X25519Keypair,
 	X25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
-import { RequestV0, ResponseV0, send, respond, RPC, RPCMessage } from "../";
+import {
+	RequestV0,
+	ResponseV0,
+	send,
+	respond,
+	RPC,
+	RPCMessage,
+	RPCResponse,
+} from "../";
 import { Ed25519Identity } from "@dao-xyz/peerbit-log";
 import {
 	ObserverType,
@@ -76,6 +84,7 @@ describe("rpc", () => {
 		await responder.init(session.peers[0], await createIdentity(), {
 			role: new ReplicatorType(),
 			store: {} as any,
+			replicators: () => [],
 		});
 		reader = deserialize(serialize(responder), RPCTest);
 		reader.setup(topic); // set topic manually because we are not going to have a parent program with address
@@ -83,6 +92,7 @@ describe("rpc", () => {
 		await reader.init(session.peers[1], await createIdentity(), {
 			role: new ObserverType(),
 			store: {} as any,
+			replicators: () => [],
 		});
 
 		await waitForPeers(
@@ -96,55 +106,91 @@ describe("rpc", () => {
 	});
 
 	it("any", async () => {
+		let results: RPCResponse<Body>[] = await reader.query.send(
+			new Body({
+				arr: new Uint8Array([0, 1, 2]),
+			}),
+			{ amount: 1 }
+		);
+
+		await waitFor(() => results.length === 1);
+		expect(results[0].from?.hashcode()).toEqual(
+			responder.libp2p.directsub.publicKey.hashcode()
+		);
+	});
+
+	it("onResponse", async () => {
 		let results: Body[] = [];
 		await reader.query.send(
 			new Body({
 				arr: new Uint8Array([0, 1, 2]),
 			}),
-			(resp) => {
-				results.push(resp);
-			},
-			{ amount: 1 }
+
+			{
+				amount: 1,
+				onResponse: (resp) => {
+					results.push(resp);
+				},
+			}
 		);
 
 		await waitFor(() => results.length === 1);
 	});
 
-	it("context", async () => {
-		let results: Body[] = [];
+	it("to", async () => {
+		let results: Body[] = (
+			await reader.query.send(
+				new Body({
+					arr: new Uint8Array([0, 1, 2]),
+				}),
+				{ timeout: 3000, amount: 1, to: [] }
+			)
+		).map((x) => x.response);
+		expect(results.length).toEqual(0);
+		results = (
+			await reader.query.send(
+				new Body({
+					arr: new Uint8Array([0, 1, 2]),
+				}),
+				{ to: [responder.libp2p.directsub.publicKey] }
+			)
+		).map((x) => x.response);
+		await waitFor(() => results.length === 1);
+	});
 
+	it("context", async () => {
 		// Unknown context (expect no results)
-		await reader.query.send(
-			new Body({
-				arr: new Uint8Array([0, 1, 2]),
-			}),
-			(resp) => {
-				results.push(resp);
-			},
-			{ timeout: 3000, context: "wrong context" }
-		);
+		let results: Body[] = (
+			await reader.query.send(
+				new Body({
+					arr: new Uint8Array([0, 1, 2]),
+				}),
+				{ timeout: 3000, context: "wrong context" }
+			)
+		).map((x) => x.response);
+		expect(results).toHaveLength(0);
 
 		// Explicit
-		await reader.query.send(
-			new Body({
-				arr: new Uint8Array([0, 1, 2]),
-			}),
-			(resp) => {
-				results.push(resp);
-			},
-			{ amount: 1, context: reader.address.toString() }
-		);
+		results = (
+			await reader.query.send(
+				new Body({
+					arr: new Uint8Array([0, 1, 2]),
+				}),
+				{ amount: 1, context: reader.address.toString() }
+			)
+		).map((x) => x.response);
 		expect(results).toHaveLength(1);
 
 		// Implicit
-		await reader.query.send(
-			new Body({
-				arr: new Uint8Array([0, 1, 2]),
-			}),
-			(resp) => {
-				results.push(resp);
-			},
-			{ amount: 1 }
+		results.push(
+			...(
+				await reader.query.send(
+					new Body({
+						arr: new Uint8Array([0, 1, 2]),
+					}),
+					{ amount: 1 }
+				)
+			).map((x) => x.response)
 		);
 		expect(results).toHaveLength(2);
 	});
@@ -152,19 +198,17 @@ describe("rpc", () => {
 	it("timeout", async () => {
 		let waitFor = 5000;
 
-		let results: Body[] = [];
 		const t0 = +new Date();
-		await reader.query.send(
-			new Body({
-				arr: new Uint8Array([0, 1, 2]),
-			}),
-			(resp) => {
-				results.push(resp);
-			},
-			{
-				timeout: waitFor,
-			}
-		);
+		let results: Body[] = (
+			await reader.query.send(
+				new Body({
+					arr: new Uint8Array([0, 1, 2]),
+				}),
+				{
+					timeout: waitFor,
+				}
+			)
+		).map((x) => x.response);
 		const t1 = +new Date();
 		expect(Math.abs(t1 - t0 - waitFor)).toBeLessThan(200); // some threshold
 		expect(results).toHaveLength(1);
@@ -222,7 +266,7 @@ describe("rpc", () => {
 			topic
 		);
 
-		let results: Uint8Array[] = [];
+		let results: Body[] = [];
 		await send(
 			session.peers[0],
 			topic,
@@ -231,13 +275,14 @@ describe("rpc", () => {
 				request: serialize(new Body({ arr: new Uint8Array([0, 1, 2]) })),
 				respondTo: kp.publicKey,
 			}),
-			(resp) => {
-				results.push(resp.response);
-			},
+			Body,
 			kp,
 			{
 				timeout,
 				amount,
+				onResponse: (resp) => {
+					results.push(resp);
+				},
 			}
 		);
 
@@ -279,10 +324,12 @@ describe("rpc", () => {
 								topic,
 								request,
 								new ResponseV0({
-									response: new Uint8Array([0, 1, 2]),
+									response: serialize(
+										new Body({ arr: new Uint8Array([0, 1, 2]) })
+									),
 									context: "context",
 								}),
-								{ signer: responder }
+								{ signer: responder.sign.bind(responder) }
 							);
 						}
 					} catch (error) {
@@ -298,7 +345,7 @@ describe("rpc", () => {
 
 		await waitForPeers(session.peers[0], [session.peers[1].peerId], topic);
 
-		let results: Uint8Array[] = [];
+		let results: Body[] = [];
 		const kp = await X25519Keypair.create();
 
 		await send(
@@ -309,31 +356,30 @@ describe("rpc", () => {
 				request: new Uint8Array([0, 1, 2]),
 				respondTo: kp.publicKey,
 			}),
-			(resp, from) => {
-				if (!from) {
-					return; // from message
-				}
-
-				// Check that it was signed by the responder
-				expect(from).toBeInstanceOf(Ed25519PublicKey);
-				expect(
-					(from as Ed25519PublicKey).equals(responder.publicKey)
-				).toBeTrue();
-
-				results.push(resp.response);
-			},
+			Body,
 			kp,
 			{
 				timeout: timeout,
 				amount,
 				signer: sender,
+				onResponse: (resp, from) => {
+					if (!from) {
+						return; // from message
+					}
+
+					// Check that it was signed by the responder
+					expect(from).toBeInstanceOf(Ed25519PublicKey);
+					expect(
+						(from as Ed25519PublicKey).equals(responder.publicKey)
+					).toBeTrue();
+					results.push(resp);
+				},
 			}
 		);
 
 		try {
 			await waitFor(() => results.length == amount);
 		} catch (error) {
-			console.log("????", results.length, amount, x);
 			throw error;
 		}
 	});
@@ -376,7 +422,9 @@ describe("rpc", () => {
 									topic,
 									request,
 									new ResponseV0({
-										response: new Uint8Array([0, 1, 2]),
+										response: serialize(
+											new Body({ arr: new Uint8Array([0, 1, 2]) })
+										),
 										context: "context",
 									})
 								);
@@ -394,7 +442,7 @@ describe("rpc", () => {
 
 		await waitForPeers(session.peers[0], [session.peers[1].peerId], topic);
 
-		let results: Uint8Array[] = [];
+		let results: Body[] = [];
 		await send(
 			session.peers[0],
 			topic,
@@ -403,15 +451,15 @@ describe("rpc", () => {
 				request: new Uint8Array([0, 1, 2]),
 				respondTo: await X25519PublicKey.from(requester.publicKey),
 			}),
-			(resp) => {
-				results.push(resp.response);
-			},
+			Body,
 			await X25519Keypair.from(new Ed25519Keypair({ ...requester })),
 			{
 				timeout,
 				amount,
 				signer: requester,
-
+				onResponse: (resp) => {
+					results.push(resp);
+				},
 				encryption: {
 					key: () => new Ed25519Keypair({ ...requester }),
 					responders: [await X25519PublicKey.from(responder.publicKey)],

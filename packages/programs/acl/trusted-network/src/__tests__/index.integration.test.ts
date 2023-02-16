@@ -76,6 +76,7 @@ describe("index", () => {
 			store.init &&
 				(await store.init(session.peers[i], identites[i], {
 					...options,
+					replicators: () => undefined,
 					role: options.role || new ReplicatorType(),
 					store: {
 						...DefaultOptions,
@@ -253,6 +254,7 @@ describe("index", () => {
 			store.init &&
 				(await store.init(session.peers[i], identites[i], {
 					...options,
+					replicators: () => undefined,
 					role: options.role ?? new ReplicatorType(),
 					store: {
 						...DefaultOptions,
@@ -328,7 +330,6 @@ describe("index", () => {
 			);
 
 			// Try query with trusted
-			let responses: Results<IdentityRelation>[] = [];
 			let l0c: TrustedNetwork = (await TrustedNetwork.load(
 				session.peers[2].directblock,
 				l0a.address!
@@ -337,22 +338,20 @@ describe("index", () => {
 
 			await delay(3000); // with github ci this fails for some reason, hence this delay. TODO identify what proecss to wait for
 
-			await l0c.trustGraph.index.query(
-				new DocumentQueryRequest({
-					queries: [],
-				}),
-				(response) => {
-					responses.push(response);
-				},
-				{
-					remote: {
-						signer: identity(2),
-						timeout: 20000,
-						amount: 2, // response from peer and peer2
-					},
-					local: false,
-				}
-			);
+			let responses: Results<IdentityRelation>[] =
+				await l0c.trustGraph.index.query(
+					new DocumentQueryRequest({
+						queries: [],
+					}),
+					{
+						remote: {
+							signer: identity(2),
+							timeout: 20000,
+							amount: 2, // response from peer and peer2
+						},
+						local: false,
+					}
+				);
 
 			expect(responses).toHaveLength(2);
 
@@ -363,20 +362,17 @@ describe("index", () => {
 			)) as any;
 			await init(l0d, 3, { topic });
 
-			let untrustedResponse: any = undefined;
-			await l0d.trustGraph.index.query(
-				new DocumentQueryRequest({
-					queries: [],
-				}),
-				(response) => {
-					untrustedResponse = response;
-				},
-				{
-					remote: { timeout: 10 * 1000, signer: identity(3) },
-				}
-			);
+			let untrustedResponse: Results<IdentityRelation>[] =
+				await l0d.trustGraph.index.query(
+					new DocumentQueryRequest({
+						queries: [],
+					}),
+					{
+						remote: { timeout: 10 * 1000, signer: identity(3) },
+					}
+				);
 
-			expect(untrustedResponse).toBeUndefined();
+			expect(untrustedResponse).toHaveLength(0);
 
 			// now check if peer3 is trusted from peer perspective
 			expect(await l0a.isTrusted(identity(2).publicKey)).toBeTrue();

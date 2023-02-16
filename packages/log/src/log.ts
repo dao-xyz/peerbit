@@ -25,11 +25,11 @@ import {
 	PublicKeyEncryptionResolver,
 	SignatureWithKey,
 } from "@dao-xyz/peerbit-crypto";
-import { serialize } from "@dao-xyz/borsh";
+import { deserialize, serialize } from "@dao-xyz/borsh";
 import { Encoding, JSON_ENCODING } from "./encoding.js";
 import { Identity } from "./identity.js";
 import { HeadsIndex } from "./heads.js";
-import { BlockStore } from "@dao-xyz/libp2p-direct-block";
+import { BlockStore, getBlockValue } from "@dao-xyz/libp2p-direct-block";
 import { Values } from "./values.js";
 import Yallist from "yallist";
 import { Trim, TrimOptions } from "./trim.js";
@@ -287,9 +287,8 @@ export class Log<T> {
 	/**
 	 * Find an entry.
 	 * @param {string} [hash] The hashes of the entry
-	 * @returns {Entry|undefined}
 	 */
-	get(hash: string) {
+	get(hash: string): Entry<T> | undefined {
 		return this._entryIndex.get(hash);
 	}
 

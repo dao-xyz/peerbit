@@ -102,6 +102,7 @@ describe("index", () => {
 		programs.push(store);
 		const result = await store.init(session.peers[i], identites[i], {
 			...options,
+			replicators: () => undefined,
 			store: {
 				...DefaultOptions,
 				resolveCache: async () => new Cache(createStore()),
@@ -417,9 +418,7 @@ describe("index", () => {
 				options
 			);
 			const q = async (): Promise<Results<Document>> => {
-				let results: Results<Document> = undefined as any;
-
-				await l0b.store.index.query(
+				let results: Results<Document>[] = await l0b.store.index.query(
 					new DocumentQueryRequest({
 						queries: [
 							new FieldStringMatchQuery({
@@ -428,9 +427,6 @@ describe("index", () => {
 							}),
 						],
 					}),
-					(response) => {
-						results = response;
-					},
 					{
 						remote: {
 							signer: identity(1),
@@ -440,7 +436,7 @@ describe("index", () => {
 						local: false,
 					}
 				);
-				return results;
+				return results[0];
 			};
 
 			//expect(await q()).toBeUndefined(); // Because no read access
@@ -511,24 +507,21 @@ describe("index", () => {
 		await waitFor(() => l0a.accessController.access.index.size === 1);
 		await waitFor(() => l0b.accessController.access.index.size === 1);
 
-		let results: Results<Document> = undefined as any;
-		await l0b.accessController.access.index.query(
-			new DocumentQueryRequest({
-				queries: [],
-			}),
-			(response) => {
-				results = response;
-			},
-			{
-				remote: {
-					signer: identity(1),
-					amount: 1,
-				},
-				local: false,
-			}
-		);
+		let results: Results<Document>[] =
+			await l0b.accessController.access.index.query(
+				new DocumentQueryRequest({
+					queries: [],
+				}),
+				{
+					remote: {
+						signer: identity(1),
+						amount: 1,
+					},
+					local: false,
+				}
+			);
 
-		await waitFor(() => !!results);
+		await waitFor(() => results.length > 0);
 
 		// Now trusted because append all is 'true'c
 	});

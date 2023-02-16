@@ -73,7 +73,7 @@ export class IdentityAccessController extends Program {
 
 		// Else check whether its trusted by this access controller
 		const canReadCheck = async (key: PublicSignKey) => {
-			for (const value of this.access.index._index.values()) {
+			for (const value of this.access.index.index.values()) {
 				const access = value.value;
 				if (access instanceof Access) {
 					if (
@@ -117,7 +117,7 @@ export class IdentityAccessController extends Program {
 			}
 			// Else check whether its trusted by this access controller
 			const canWriteCheck = async (key: PublicSignKey) => {
-				for (const value of this.access.index._index.values()) {
+				for (const value of this.access.index.index.values()) {
 					const access = value.value;
 					if (access instanceof Access) {
 						if (

@@ -100,6 +100,7 @@ describe("query", () => {
 				},
 				{
 					role: i === 0 ? new ReplicatorType() : new ObserverType(),
+					replicators: () => undefined,
 					store: {
 						...DefaultOptions,
 						encryption,
@@ -127,16 +128,15 @@ describe("query", () => {
 			for (let i = 0; i < headsCount; i++) {
 				await logIndices[0].store.addOperation(i, { nexts: [] });
 			}
-			const responses: HeadsMessage[] = [];
-			await logIndices[1].query.send(
-				new LogQueryRequest({
-					queries: [],
-				}),
-				(m) => {
-					responses.push(m);
-				},
-				{ amount: 1 }
-			);
+			const responses: HeadsMessage[] = (
+				await logIndices[1].query.send(
+					new LogQueryRequest({
+						queries: [],
+					}),
+
+					{ amount: 1 }
+				)
+			).map((x) => x.response);
 			expect(responses).toHaveLength(1);
 			expect(responses[0].heads).toHaveLength(headsCount);
 		});
@@ -169,28 +169,25 @@ describe("query", () => {
 			);
 
 			// read from observer 1
-			const responses: HeadsMessage[] = [];
-
-			await logIndices[2].query.send(
-				new LogQueryRequest({
-					queries: [
-						new LogEntryEncryptionQuery({
-							payload: [
-								await X25519PublicKey.from(
-									logIndices[2].store.identity.publicKey as Ed25519PublicKey
-								),
-							],
-							next: [],
-							metadata: [],
-							signatures: [],
-						}),
-					],
-				}),
-				(m) => {
-					responses.push(m);
-				},
-				{ amount: 1 }
-			);
+			const responses: HeadsMessage[] = (
+				await logIndices[2].query.send(
+					new LogQueryRequest({
+						queries: [
+							new LogEntryEncryptionQuery({
+								payload: [
+									await X25519PublicKey.from(
+										logIndices[2].store.identity.publicKey as Ed25519PublicKey
+									),
+								],
+								next: [],
+								metadata: [],
+								signatures: [],
+							}),
+						],
+					}),
+					{ amount: 1 }
+				)
+			).map((x) => x.response);
 			expect(responses).toHaveLength(1);
 			expect(responses[0].heads).toHaveLength(headsCount);
 		});

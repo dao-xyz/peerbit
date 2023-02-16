@@ -182,21 +182,26 @@ export class DString extends Program {
 	async toString(options?: {
 		remote: {
 			callback: (string: string) => any;
-			queryOptions: RPCOptions;
+			queryOptions: RPCOptions<StringResult>;
 		};
 	}): Promise<string | undefined> {
 		if (options?.remote) {
 			const counter: Map<string, number> = new Map();
-			await this.query.send(
+			const responses = await this.query.send(
 				new StringQueryRequest({
 					queries: [],
 				}),
-				(response) => {
-					options?.remote.callback && options?.remote.callback(response.string);
-					counter.set(response.string, (counter.get(response.string) || 0) + 1);
-				},
 				options.remote.queryOptions
 			);
+			for (const response of responses) {
+				options?.remote.callback &&
+					options?.remote.callback(response.response.string);
+				counter.set(
+					response.response.string,
+					(counter.get(response.response.string) || 0) + 1
+				);
+			}
+
 			let max = -1;
 			let ret: string | undefined = undefined;
 			counter.forEach((v, k) => {

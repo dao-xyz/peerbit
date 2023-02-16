@@ -184,12 +184,13 @@ export const hasPath = async (
 	return hasPathToTarget(start, (key) => end.equals(key), db, resolver);
 };
 
-export const getRelation = (
+export const getRelation = async (
 	from: PublicSignKey,
 	to: PublicSignKey,
 	db: Documents<IdentityRelation>
-): IndexedValue<IdentityRelation> | undefined => {
-	return db.index.get(new IdentityRelation({ from, to }).id);
+): Promise<IdentityRelation | undefined> => {
+	return (await db.index.get(new IdentityRelation({ from, to }).id))
+		?.results?.[0].value;
 };
 
 export const createIdentityGraphStore = (props: {

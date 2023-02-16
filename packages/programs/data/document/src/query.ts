@@ -98,11 +98,73 @@ export class StateFieldQuery extends StateQuery {
 	@field({ type: vec("string") })
 	key: string[];
 
-	constructor(props?: { key: string[] | string }) {
+	constructor(props: { key: string[] | string }) {
 		super();
-		if (props) {
-			this.key = Array.isArray(props.key) ? props.key : [props.key];
+		this.key = Array.isArray(props.key) ? props.key : [props.key];
+	}
+}
+
+export abstract class PrimitiveValue {}
+
+@variant(0)
+export class StringValue extends PrimitiveValue {
+	@field({ type: "string" })
+	string: string;
+
+	constructor(string: string) {
+		super();
+		this.string = string;
+	}
+}
+
+@variant(1)
+abstract class NumberValue extends PrimitiveValue {
+	abstract get value(): number | bigint;
+}
+
+@variant(0)
+abstract class IntegerValue extends NumberValue {}
+
+@variant(0)
+export class UnsignedIntegerValue extends IntegerValue {
+	@field({ type: "u32" })
+	number: number;
+
+	constructor(number: number) {
+		super();
+		if (
+			Number.isInteger(number) === false ||
+			number > 4294967295 ||
+			number < 0
+		) {
+			throw new Error("Number is not u32");
 		}
+		this.number = number;
+	}
+
+	get value() {
+		return this.number;
+	}
+}
+
+@variant(1)
+export class BigUnsignedIntegerValue extends IntegerValue {
+	@field({ type: "u64" })
+	number: bigint;
+
+	constructor(number: bigint) {
+		super();
+		if (
+			Number.isInteger(number) === false ||
+			number > 18446744073709551615n ||
+			number < 0
+		) {
+			throw new Error("Number is not u32");
+		}
+		this.number = number;
+	}
+	get value() {
+		return this.number;
 	}
 }
 
@@ -111,24 +173,37 @@ export class FieldByteMatchQuery extends StateFieldQuery {
 	@field({ type: Uint8Array })
 	value: Uint8Array;
 
-	constructor(props?: { key: string[]; value: Uint8Array }) {
+	@field({ type: "u8" })
+	private _reserved: number; // Replcate MemoryCompare query with this?
+
+	constructor(props: { key: string[]; value: Uint8Array }) {
 		super(props);
-		if (props) {
-			this.value = props.value;
-		}
+		this.value = props.value;
+		this._reserved = 0;
 	}
 }
 
+export enum StringMatchMethod {
+	"exact" = 0,
+	"prefix" = 1,
+	"fuzzy" = 2,
+}
 @variant(2)
 export class FieldStringMatchQuery extends StateFieldQuery {
 	@field({ type: "string" })
 	value: string;
 
-	constructor(props?: { key: string[] | string; value: string }) {
+	@field({ type: "u8" })
+	method?: StringMatchMethod;
+
+	constructor(props: {
+		key: string[] | string;
+		value: string;
+		method?: StringMatchMethod;
+	}) {
 		super(props);
-		if (props) {
-			this.value = props.value;
-		}
+		this.value = props.value;
+		this.method = props.method ?? StringMatchMethod.exact;
 	}
 }
 
@@ -137,29 +212,37 @@ export class FieldBigIntCompareQuery extends StateFieldQuery {
 	@field({ type: "u8" })
 	compare: Compare;
 
-	@field({ type: "u64" })
-	value: bigint;
+	@field({ type: IntegerValue })
+	value: IntegerValue;
 
-	constructor(props?: {
+	constructor(props: {
 		key: string[] | string;
-		value: bigint;
+		value: bigint | number | IntegerValue;
 		compare: Compare;
 	}) {
 		super(props);
-		if (props) {
+		if (props.value instanceof IntegerValue) {
 			this.value = props.value;
-			this.compare = props.compare;
+		} else {
+			if (typeof props.value === "bigint") {
+				this.value = new BigUnsignedIntegerValue(props.value);
+			} else {
+				this.value = new UnsignedIntegerValue(props.value);
+			}
 		}
+
+		this.compare = props.compare;
 	}
 }
 
 @variant(4)
 export class FieldMissingQuery extends StateFieldQuery {
-	constructor(props?: { key: string[] | string }) {
+	constructor(props: { key: string[] | string }) {
 		super(props);
 	}
 }
 
+// TODO MemoryCompareQuery can be replaces with ByteMatchQuery? Or Nesteed Queries + ByteMatchQuery?
 @variant(0)
 export class MemoryCompare {
 	@field({ type: Uint8Array })

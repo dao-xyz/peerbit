@@ -96,17 +96,16 @@ export class ClockService extends Program {
 	async sign(data: Uint8Array): Promise<SignatureWithKey> {
 		const signatures: SignatureWithKey[] = [];
 		let error: Error | undefined = undefined;
-		await this._remoteSigner.send(
-			data,
-			(response) => {
+		await this._remoteSigner.send(data, {
+			amount: 1,
+			onResponse: (response) => {
 				if (response instanceof Ok) {
 					signatures.push(response.signature);
 				} else {
 					error = new Error(response.message);
 				}
 			},
-			{ amount: 1 }
-		);
+		});
 		if (error) {
 			throw error;
 		}

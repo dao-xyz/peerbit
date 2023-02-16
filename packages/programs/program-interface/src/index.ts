@@ -198,6 +198,7 @@ export type OpenProgram = (program: Program) => Promise<Program>;
 export type ProgramInitializationOptions = {
 	store: IInitializationOptions<any>;
 	role: ReplicatorType | ObserverType | NoType;
+	replicators: () => string[][] | undefined; // array of replicators in each shard
 	parent?: AbstractProgram;
 	onClose?: () => void;
 	onDrop?: () => void;

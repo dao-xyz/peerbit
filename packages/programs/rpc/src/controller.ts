@@ -8,7 +8,7 @@ import {
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
-import { send, RPCOptions, respond, logger } from "./io.js";
+import { send, RPCOptions, respond, logger, RPCResponse } from "./io.js";
 import {
 	AbstractProgram,
 	Address,
@@ -42,44 +42,7 @@ export type ResponseHandler<Q, R> = (
 	query: Q,
 	context: QueryContext
 ) => Promise<R | undefined> | R | undefined;
-/* 
-export abstract class RPCTopic {
-	abstract from(address: Address): string;
-}
 
-@variant(0)
-export class RPCRegion extends RPCTopic {
-	@field({ type: "string" })
-	id: string;
-
-	constructor(properties?: { id: string }) {
-		super();
-		if (properties) {
-			this.id = properties.id;
-		}
-	}
-
-	from(_address: Address) {
-		return this.id;
-	}
-}
-
-@variant(1)
-export class RPCAddressSuffix extends RPCTopic {
-	@field({ type: "string" })
-	suffix: string;
-	constructor(properties?: { suffix: string }) {
-		super();
-		if (properties) {§
-			this.suffix = properties.suffix;
-		}
-	}
-
-	from(address: Address) {
-		return address.toString() + "/" + this.suffix;
-	}
-}
- */
 @variant("rpc")
 export class RPC<Q, R> extends ComposableProgram {
 	/* rpcRegion?: RPCTopic; */
@@ -213,7 +176,14 @@ export class RPC<Q, R> extends ComposableProgram {
 									}),
 									{
 										encryption: this.encryption,
-										signer: this.identity,
+
+										// we use the peerId/libp2p identity for signatures, since we want to be able to send a message
+										// with directsub with a certain reciever. If we use (this.identity) we are going to use an identity
+										// that is now known in the .directsub network, hence the message might not be delivired if we
+										// send with { to: [RECIEVER] } param
+										signer: this.libp2p.directsub.sign.bind(
+											this.libp2p.directsub
+										),
 									}
 								);
 							}
@@ -248,9 +218,8 @@ export class RPC<Q, R> extends ComposableProgram {
 
 	public async send(
 		request: Q,
-		responseHandler: (response: R, from?: PublicSignKey) => void,
-		options?: RPCOptions
-	): Promise<void> {
+		options?: RPCOptions<R>
+	): Promise<RPCResponse<R>[]> {
 		// We are generatinga new encryption keypair for each send, so we now that when we get the responses, they are encrypted specifcally for me, and for this request
 		// this allows us to easily disregard a bunch of message just beacuse they are for a different reciever!
 		const keypair = await X25519Keypair.create();
@@ -267,12 +236,7 @@ export class RPC<Q, R> extends ComposableProgram {
 			this.rpcTopic,
 			this.getRpcResponseTopic(r),
 			r,
-			(response, from) => {
-				responseHandler(
-					deserialize(response.response, this._responseType),
-					from
-				);
-			},
+			this._responseType,
 			keypair,
 			options
 		);
