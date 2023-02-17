@@ -17,7 +17,8 @@ import {
 	Documents,
 	DocumentIndex,
 	DocumentQueryRequest,
-	FieldStringMatchQuery,
+	StringMatchQuery,
+	StringMatchMethod,
 	Results,
 } from "@dao-xyz/peerbit-document";
 
@@ -93,9 +94,10 @@ const store2 = peer2.open(store.address);
 let responses: Results<Document>[] = await store2.docs.index.query(
     new DocumentQueryRequest({
         queries: [
-            new FieldStringMatchQuery({
+          new StringMatchQuery({
                 key: "name",
                 value: "ello",
+				method: StringMatchMethod.contains
             }),
         ],
     })
