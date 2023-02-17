@@ -277,7 +277,9 @@ describe("index", () => {
 				cacheStore.push(await createStore());
 			}
 
-			replicators = session.peers.map((x) => [x.directsub.publicKey.hashcode()])
+			replicators = session.peers.map((x) => [
+				x.directsub.publicKey.hashcode(),
+			]);
 		});
 
 		afterEach(async () => {
@@ -445,7 +447,10 @@ describe("index", () => {
 			)) as any;
 			await init(l0b, 1, { topic });
 
-			replicators = [[session.peers[0].directsub.publicKey.hashcode()], [session.peers[1].directsub.publicKey.hashcode()]];
+			replicators = [
+				[session.peers[0].directsub.publicKey.hashcode()],
+				[session.peers[1].directsub.publicKey.hashcode()],
+			];
 
 			// Can not append peer3Key since its not trusted by the root
 			await expect(l0b.add(identity(2).publicKey)).rejects.toBeInstanceOf(
