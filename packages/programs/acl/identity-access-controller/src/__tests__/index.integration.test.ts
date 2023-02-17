@@ -12,7 +12,7 @@ import {
 	Documents,
 	DocumentIndex,
 	DocumentQueryRequest,
-	FieldStringMatchQuery,
+	StringMatchQuery,
 	Results,
 } from "@dao-xyz/peerbit-document";
 import type { CanAppend, Identity } from "@dao-xyz/peerbit-log";
@@ -87,6 +87,7 @@ class TestStore extends Program {
 
 describe("index", () => {
 	let session: LSession, programs: Program[], identites: Identity[];
+	let replicators: string[][];
 
 	const identity = (i: number) => identites[i];
 	const init = async <T extends Program>(
@@ -102,8 +103,7 @@ describe("index", () => {
 		programs.push(store);
 		const result = await store.init(session.peers[i], identites[i], {
 			...options,
-			replicators: () =>
-				session.peers.map((x) => [x.directsub.publicKey.hashcode()]),
+			replicators: () => replicators,
 			store: {
 				...DefaultOptions,
 				resolveCache: async () => new Cache(createStore()),
@@ -120,6 +120,9 @@ describe("index", () => {
 		for (let i = 0; i < session.peers.length; i++) {
 			identites.push(await createIdentity());
 		}
+	});
+	beforeEach(() => {
+		replicators = [];
 	});
 
 	afterEach(async () => {
@@ -147,17 +150,19 @@ describe("index", () => {
 		};
 		const l0a = await init(s, 0, options);
 
-		await l0a.store.put(
-			new Document({
-				id: "1",
-			})
-		);
-
 		const l0b = (await init(
 			(await TestStore.load(session.peers[1].directblock, l0a.address!))!,
 			1,
 			options
 		)) as TestStore;
+
+		replicators = [];
+
+		await l0a.store.put(
+			new Document({
+				id: "1",
+			})
+		);
 
 		await expect(
 			l0b.store.put(
@@ -166,20 +171,25 @@ describe("index", () => {
 				})
 			)
 		).rejects.toBeInstanceOf(AccessError); // Not trusted
+
 		await l0a.accessController.trustedNetwork.add(identity(1).publicKey);
+		await l0a.accessController.trustedNetwork.add(
+			session.peers[1].directblock.publicKey
+		);
 
 		await l0b.accessController.trustedNetwork.trustGraph.store.sync(
 			l0a.accessController.trustedNetwork.trustGraph.store.oplog.heads
 		);
 
+		replicators = [
+			[session.peers[0].directblock.publicKeyHash],
+			[session.peers[1].directblock.publicKeyHash],
+		];
+
 		await waitFor(
 			() =>
-				l0b.accessController.trustedNetwork.trustGraph.store.oplog.length === 1
+				l0b.accessController.trustedNetwork.trustGraph.store.oplog.length === 2
 		);
-		await waitFor(
-			() => l0b.accessController.trustedNetwork.trustGraph._index.size === 1
-		);
-
 		await l0b.store.put(
 			new Document({
 				id: "2",
@@ -219,6 +229,7 @@ describe("index", () => {
 			)) as TestStore;
 
 			await l0b.store.store.sync(l0a.store.store.oplog.heads);
+
 			await waitFor(() => l0b.store.index.size === 1);
 			await expect(
 				l0b.store.put(
@@ -237,10 +248,19 @@ describe("index", () => {
 				})
 			);
 
+			await l0a.accessController.access.put(
+				new Access({
+					accessCondition: new PublicKeyAccessCondition({
+						key: session.peers[1].directblock.publicKey,
+					}),
+					accessTypes: [AccessType.Any],
+				})
+			);
+
 			await l0b.accessController.access.store.sync(
 				l0a.accessController.access.store.oplog.heads
 			);
-			await waitFor(() => l0b.accessController.access.index.size === 1);
+			await waitFor(() => l0b.accessController.access.index.size === 2);
 			await l0b.store.put(
 				new Document({
 					id: "2",
@@ -306,6 +326,15 @@ describe("index", () => {
 				})
 			);
 
+			await l0a.accessController.access.put(
+				new Access({
+					accessCondition: new PublicKeyAccessCondition({
+						key: session.peers[1].directblock.publicKey,
+					}),
+					accessTypes: [AccessType.Any],
+				})
+			);
+
 			await l0b.accessController.access.store.sync(
 				l0a.accessController.access.store.oplog.heads
 			);
@@ -321,7 +350,7 @@ describe("index", () => {
 				)
 			).rejects.toBeInstanceOf(AccessError); // Not trusted
 
-			await waitFor(() => l0b.accessController.access.index.size == 1);
+			await waitFor(() => l0b.accessController.access.index.size == 2);
 			await l0b.accessController.identityGraphController.addRelation(
 				identity(2).publicKey
 			);
@@ -418,11 +447,14 @@ describe("index", () => {
 				1,
 				options
 			);
+
+			replicators = [[session.peers[0].directblock.publicKeyHash]];
+
 			const q = async (): Promise<Results<Document>> => {
 				let results: Results<Document>[] = await l0b.store.index.query(
 					new DocumentQueryRequest({
 						queries: [
-							new FieldStringMatchQuery({
+							new StringMatchQuery({
 								key: "id",
 								value: "1",
 							}),
@@ -430,7 +462,6 @@ describe("index", () => {
 					}),
 					{
 						remote: {
-							signer: identity(1),
 							amount: 1,
 							timeout: 3000,
 						},
@@ -448,6 +479,11 @@ describe("index", () => {
 					accessTypes: [AccessType.Read],
 				}).initialize()
 			);
+			await l0b.accessController.access.store.sync(
+				l0a.accessController.access.store.oplog.heads
+			);
+			await waitFor(() => l0b.accessController.access.index.size === 1);
+
 			const result = await q();
 			expect(result).toBeDefined(); // Because read access
 		});
@@ -489,6 +525,8 @@ describe("index", () => {
 			}).initialize()
 		);
 
+		replicators = [[session.peers[0].directsub.publicKeyHash]];
+
 		const dbb = (await TestStore.load(
 			session.peers[0].directblock,
 			l0a.address!
@@ -515,7 +553,6 @@ describe("index", () => {
 				}),
 				{
 					remote: {
-						signer: identity(1),
 						amount: 1,
 					},
 					local: false,
