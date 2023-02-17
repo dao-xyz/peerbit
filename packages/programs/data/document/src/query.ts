@@ -165,7 +165,7 @@ export class BigUnsignedIntegerValue extends IntegerValue {
 }
 
 @variant(1)
-export class FieldByteMatchQuery extends StateFieldQuery {
+export class ByteMatchQuery extends StateFieldQuery {
 	@field({ type: Uint8Array })
 	value: Uint8Array;
 
@@ -182,29 +182,35 @@ export class FieldByteMatchQuery extends StateFieldQuery {
 export enum StringMatchMethod {
 	"exact" = 0,
 	"prefix" = 1,
-	"fuzzy" = 2,
+	"contains" = 2,
 }
+
 @variant(2)
-export class FieldStringMatchQuery extends StateFieldQuery {
+export class StringMatchQuery extends StateFieldQuery {
 	@field({ type: "string" })
 	value: string;
 
 	@field({ type: "u8" })
-	method?: StringMatchMethod;
+	method: StringMatchMethod;
+
+	@field({ type: "bool" })
+	caseSensitive: boolean;
 
 	constructor(props: {
 		key: string[] | string;
 		value: string;
 		method?: StringMatchMethod;
+		caseSensitive?: boolean;
 	}) {
 		super(props);
 		this.value = props.value;
 		this.method = props.method ?? StringMatchMethod.exact;
+		this.caseSensitive = props.caseSensitive ?? false;
 	}
 }
 
 @variant(3)
-export class FieldIntegerCompareQuery extends StateFieldQuery {
+export class IntegerCompareQuery extends StateFieldQuery {
 	@field({ type: "u8" })
 	compare: Compare;
 
@@ -232,7 +238,7 @@ export class FieldIntegerCompareQuery extends StateFieldQuery {
 }
 
 @variant(4)
-export class FieldMissingQuery extends StateFieldQuery {
+export class MissingQuery extends StateFieldQuery {
 	constructor(props: { key: string[] | string }) {
 		super(props);
 	}

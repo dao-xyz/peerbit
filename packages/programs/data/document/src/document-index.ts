@@ -4,9 +4,9 @@ import { BORSH_ENCODING, Encoding, Entry } from "@dao-xyz/peerbit-log";
 import { equals } from "@dao-xyz/uint8arrays";
 import { ComposableProgram } from "@dao-xyz/peerbit-program";
 import {
-	FieldIntegerCompareQuery,
-	FieldByteMatchQuery,
-	FieldStringMatchQuery,
+	IntegerCompareQuery,
+	ByteMatchQuery,
+	StringMatchQuery,
 	MemoryCompareQuery,
 	DocumentQueryRequest,
 	Query,
@@ -16,7 +16,8 @@ import {
 	ModifiedAtQuery,
 	compare,
 	Context,
-	FieldMissingQuery,
+	MissingQuery,
+	StringMatchMethod,
 } from "./query.js";
 import {
 	CanRead,
@@ -181,9 +182,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 		if (key instanceof Uint8Array) {
 			results = await this.query(
 				new DocumentQueryRequest({
-					queries: [
-						new FieldByteMatchQuery({ key: [this.indexBy], value: key }),
-					],
+					queries: [new ByteMatchQuery({ key: [this.indexBy], value: key })],
 				})
 			);
 		} else {
@@ -191,7 +190,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 			results = await this.query(
 				new DocumentQueryRequest({
 					queries: [
-						new FieldStringMatchQuery({
+						new StringMatchQuery({
 							key: [this.indexBy],
 							value: stringValue,
 						}),
@@ -228,14 +227,14 @@ export class DocumentIndex<T> extends ComposableProgram {
 		const queries: Query[] = query.queries;
 		if (
 			query.queries.length === 1 &&
-			(query.queries[0] instanceof FieldByteMatchQuery ||
-				query.queries[0] instanceof FieldStringMatchQuery) &&
+			(query.queries[0] instanceof ByteMatchQuery ||
+				query.queries[0] instanceof StringMatchQuery) &&
 			query.queries[0].key.length === 1 &&
 			query.queries[0].key[0] === this.indexBy
 		) {
 			if (
-				query.queries[0] instanceof FieldStringMatchQuery ||
-				query.queries[0] instanceof FieldByteMatchQuery
+				query.queries[0] instanceof StringMatchQuery ||
+				query.queries[0] instanceof ByteMatchQuery
 			) {
 				const doc = this._index.get(asString(query.queries[0].value)); // TODO could there be a issue with types here?
 				return doc ? [doc] : [];
@@ -252,17 +251,31 @@ export class DocumentIndex<T> extends ComposableProgram {
 									fv = fv[f.key[i]];
 								}
 
-								if (f instanceof FieldStringMatchQuery) {
+								if (f instanceof StringMatchQuery) {
 									if (typeof fv !== "string") {
 										return false;
 									}
-									return fv.toLowerCase().indexOf(f.value.toLowerCase()) !== -1;
-								} else if (f instanceof FieldByteMatchQuery) {
+									let compare = f.value;
+									if (!f.caseSensitive) {
+										fv = fv.toLowerCase();
+										compare = compare.toLowerCase();
+									}
+
+									if (f.method === StringMatchMethod.exact) {
+										return fv === compare;
+									}
+									if (f.method === StringMatchMethod.prefix) {
+										return fv.startsWith(compare);
+									}
+									if (f.method === StringMatchMethod.contains) {
+										return fv.includes(compare);
+									}
+								} else if (f instanceof ByteMatchQuery) {
 									if (fv instanceof Uint8Array === false) {
 										return false;
 									}
 									return equals(fv, f.value);
-								} else if (f instanceof FieldIntegerCompareQuery) {
+								} else if (f instanceof IntegerCompareQuery) {
 									const value: bigint | number = fv;
 
 									if (typeof value !== "bigint" && typeof value !== "number") {
@@ -270,7 +283,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 									}
 
 									return compare(value, f.compare, f.value.value);
-								} else if (f instanceof FieldMissingQuery) {
+								} else if (f instanceof MissingQuery) {
 									return fv == null; // null or undefined
 								}
 							} else if (f instanceof MemoryCompareQuery) {

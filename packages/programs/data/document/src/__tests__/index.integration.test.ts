@@ -1,8 +1,8 @@
 import { field, option, serialize, variant } from "@dao-xyz/borsh";
 import { Documents, DocumentsChange } from "../document-store";
 import {
-	FieldIntegerCompareQuery,
-	FieldStringMatchQuery,
+	IntegerCompareQuery,
+	StringMatchQuery,
 	MemoryCompareQuery,
 	MemoryCompare,
 	DocumentQueryRequest,
@@ -10,7 +10,8 @@ import {
 	CreatedAtQuery,
 	U64Compare,
 	Compare,
-	FieldMissingQuery,
+	MissingQuery,
+	StringMatchMethod,
 } from "../query.js";
 import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";
@@ -394,7 +395,7 @@ describe("index", () => {
 
 				let doc2Edit = new Document({
 					id: "2",
-					name: "hello world",
+					name: "Hello World",
 					number: 2n,
 				});
 
@@ -466,30 +467,116 @@ describe("index", () => {
 				await waitFor(() => stores[1].docs.index.size === 4);
 			});
 
-			it("string", async () => {
-				let responses: Results<Document>[] = await stores[1].docs.index.query(
-					new DocumentQueryRequest({
-						queries: [
-							new FieldStringMatchQuery({
-								key: "name",
-								value: "ello",
-							}),
-						],
-					}),
-					{ remote: { amount: 1 } }
-				);
-				expect(responses[0].results).toHaveLength(2);
-				expect(responses[0].results.map((x) => x.value.id)).toContainAllValues([
-					"1",
-					"2",
-				]);
+			describe("string", () => {
+				it("exact", async () => {
+					let responses: Results<Document>[] = await stores[1].docs.index.query(
+						new DocumentQueryRequest({
+							queries: [
+								new StringMatchQuery({
+									key: "name",
+									value: "hello world",
+								}),
+							],
+						})
+					);
+					expect(responses[0].results).toHaveLength(2);
+					expect(
+						responses[0].results.map((x) => x.value.id)
+					).toContainAllValues(["1", "2"]);
+				});
+
+				it("exact-case-insensitive", async () => {
+					let responses: Results<Document>[] = await stores[1].docs.index.query(
+						new DocumentQueryRequest({
+							queries: [
+								new StringMatchQuery({
+									key: "name",
+									value: "Hello World",
+								}),
+							],
+						})
+					);
+					expect(responses[0].results).toHaveLength(2);
+					expect(
+						responses[0].results.map((x) => x.value.id)
+					).toContainAllValues(["1", "2"]);
+				});
+
+				it("exact case sensitive", async () => {
+					let responses: Results<Document>[] = await stores[1].docs.index.query(
+						new DocumentQueryRequest({
+							queries: [
+								new StringMatchQuery({
+									key: "name",
+									value: "hello world",
+									caseSensitive: true,
+								}),
+							],
+						})
+					);
+					expect(responses[0].results).toHaveLength(1);
+					expect(
+						responses[0].results.map((x) => x.value.id)
+					).toContainAllValues(["1"]);
+					responses = await stores[1].docs.index.query(
+						new DocumentQueryRequest({
+							queries: [
+								new StringMatchQuery({
+									key: "name",
+									value: "Hello World",
+									caseSensitive: true,
+								}),
+							],
+						})
+					);
+					expect(responses[0].results).toHaveLength(1);
+					expect(
+						responses[0].results.map((x) => x.value.id)
+					).toContainAllValues(["2"]);
+				});
+				it("prefix", async () => {
+					let responses: Results<Document>[] = await stores[1].docs.index.query(
+						new DocumentQueryRequest({
+							queries: [
+								new StringMatchQuery({
+									key: "name",
+									value: "hel",
+									method: StringMatchMethod.prefix,
+								}),
+							],
+						}),
+						{ remote: { amount: 1 } }
+					);
+					expect(responses[0].results).toHaveLength(2);
+					expect(
+						responses[0].results.map((x) => x.value.id)
+					).toContainAllValues(["1", "2"]);
+				});
+
+				it("contains", async () => {
+					let responses: Results<Document>[] = await stores[1].docs.index.query(
+						new DocumentQueryRequest({
+							queries: [
+								new StringMatchQuery({
+									key: "name",
+									value: "ello",
+									method: StringMatchMethod.contains,
+								}),
+							],
+						})
+					);
+					expect(responses[0].results).toHaveLength(2);
+					expect(
+						responses[0].results.map((x) => x.value.id)
+					).toContainAllValues(["1", "2"]);
+				});
 			});
 
 			it("missing", async () => {
 				let responses: Results<Document>[] = await stores[1].docs.index.query(
 					new DocumentQueryRequest({
 						queries: [
-							new FieldMissingQuery({
+							new MissingQuery({
 								key: "name",
 							}),
 						],
@@ -606,7 +693,7 @@ describe("index", () => {
 					let response: Results<Document>[] = await stores[1].docs.index.query(
 						new DocumentQueryRequest({
 							queries: [
-								new FieldIntegerCompareQuery({
+								new IntegerCompareQuery({
 									key: "number",
 									compare: Compare.Equal,
 									value: 2n,
@@ -623,7 +710,7 @@ describe("index", () => {
 					let response: Results<Document>[] = await stores[1].docs.index.query(
 						new DocumentQueryRequest({
 							queries: [
-								new FieldIntegerCompareQuery({
+								new IntegerCompareQuery({
 									key: "number",
 									compare: Compare.Greater,
 									value: 2n,
@@ -640,7 +727,7 @@ describe("index", () => {
 					let response: Results<Document>[] = await stores[1].docs.index.query(
 						new DocumentQueryRequest({
 							queries: [
-								new FieldIntegerCompareQuery({
+								new IntegerCompareQuery({
 									key: "number",
 									compare: Compare.GreaterOrEqual,
 									value: 2n,
@@ -661,7 +748,7 @@ describe("index", () => {
 					let response: Results<Document>[] = await stores[1].docs.index.query(
 						new DocumentQueryRequest({
 							queries: [
-								new FieldIntegerCompareQuery({
+								new IntegerCompareQuery({
 									key: "number",
 									compare: Compare.Less,
 									value: 2n,
@@ -678,7 +765,7 @@ describe("index", () => {
 					let response: Results<Document>[] = await stores[1].docs.index.query(
 						new DocumentQueryRequest({
 							queries: [
-								new FieldIntegerCompareQuery({
+								new IntegerCompareQuery({
 									key: "number",
 									compare: Compare.LessOrEqual,
 									value: 2n,
